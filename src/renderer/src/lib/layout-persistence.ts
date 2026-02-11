@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'termgraph:layout'
+const STORAGE_KEY = 'spaceterm:layout'
 
 export interface SavedLayout {
   camera: { x: number; y: number; z: number }

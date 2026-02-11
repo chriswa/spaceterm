@@ -1,5 +1,5 @@
 {
-  "name": "termgraph",
+  "name": "spaceterm",
   "version": "0.1.0",
   "description": "Multiple terminals on a zoomable canvas",
   "main": "./out/main/index.js",

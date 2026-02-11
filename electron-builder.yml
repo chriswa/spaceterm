@@ -1,5 +1,5 @@
-appId: com.termgraph.app
-productName: Termgraph
+appId: com.spaceterm.app
+productName: Spaceterm
 directories:
   buildResources: build
 files:
