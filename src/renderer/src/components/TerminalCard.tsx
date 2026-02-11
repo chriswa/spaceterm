@@ -9,6 +9,7 @@ interface TerminalCardProps {
   sessionId: string
   x: number
   y: number
+  zIndex: number
   zoom: number
   focusMode: 'none' | 'soft' | 'hard'
   onSoftFocus: (sessionId: string) => void
@@ -19,7 +20,7 @@ interface TerminalCardProps {
 }
 
 export function TerminalCard({
-  sessionId, x, y, zoom, focusMode,
+  sessionId, x, y, zIndex, zoom, focusMode,
   onSoftFocus, onHardFocus, onUnfocus, onClose, onMove
 }: TerminalCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
@@ -139,10 +140,9 @@ export function TerminalCard({
   }, [focusMode, sessionId])
 
   // Mouse coordinate correction for CSS transform scaling.
-  // xterm uses pageX/offsetLeft traversal which doesn't account for
-  // ancestor CSS transforms. We intercept mouse events in the capture
-  // phase and patch pageX/pageY so xterm's math yields the correct
-  // unscaled position.
+  // xterm uses clientX - getBoundingClientRect().left for mouse position.
+  // We intercept mouse events in the capture phase and patch coordinates
+  // so xterm's math yields the correct unscaled position.
   useEffect(() => {
     const container = containerRef.current
     if (!container || focusMode !== 'hard') return
@@ -150,33 +150,30 @@ export function TerminalCard({
     const screen = container.querySelector('.xterm-screen') as HTMLElement
     if (!screen) return
 
-    const currentZoom = propsRef.current.zoom
-    if (currentZoom === 1) return
-
     const adjustCoords = (e: MouseEvent) => {
+      const z = propsRef.current.zoom
+      if (z === 1) return
+
       const rect = screen.getBoundingClientRect()
 
-      // Position within the visual element (screen space, scaled)
+      // Offset within element in screen pixels (scaled)
       const screenX = e.clientX - rect.left
       const screenY = e.clientY - rect.top
 
-      // Convert to unscaled position
-      const unscaledX = screenX / currentZoom
-      const unscaledY = screenY / currentZoom
+      // Convert to unscaled (CSS pixel) offset
+      const unscaledX = screenX / z
+      const unscaledY = screenY / z
 
-      // Sum the offsetLeft/offsetTop chain (what xterm subtracts from pageX)
-      let offsetSumX = 0
-      let offsetSumY = 0
-      let el: HTMLElement | null = screen
-      while (el) {
-        offsetSumX += el.offsetLeft
-        offsetSumY += el.offsetTop
-        el = el.offsetParent as HTMLElement | null
-      }
+      // Patch clientX/clientY so xterm's (clientX - rect.left) = unscaledX
+      const correctedClientX = rect.left + unscaledX
+      const correctedClientY = rect.top + unscaledY
 
-      // Patch so xterm's (pageX - offsetSum) yields unscaledX
-      Object.defineProperty(e, 'pageX', { value: unscaledX + offsetSumX, configurable: true })
-      Object.defineProperty(e, 'pageY', { value: unscaledY + offsetSumY, configurable: true })
+      Object.defineProperty(e, 'clientX', { value: correctedClientX, configurable: true })
+      Object.defineProperty(e, 'clientY', { value: correctedClientY, configurable: true })
+      Object.defineProperty(e, 'pageX', { value: correctedClientX, configurable: true })
+      Object.defineProperty(e, 'pageY', { value: correctedClientY, configurable: true })
+      Object.defineProperty(e, 'offsetX', { value: unscaledX, configurable: true })
+      Object.defineProperty(e, 'offsetY', { value: unscaledY, configurable: true })
     }
 
     screen.addEventListener('mousedown', adjustCoords, { capture: true })
@@ -261,7 +258,8 @@ export function TerminalCard({
         left: x,
         top: y,
         width: TERMINAL_WIDTH,
-        height: TERMINAL_HEIGHT
+        height: TERMINAL_HEIGHT,
+        zIndex
       }}
       onMouseDown={handleMouseDown}
       onMouseEnter={handleMouseEnter}

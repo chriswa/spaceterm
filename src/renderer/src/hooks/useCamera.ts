@@ -1,10 +1,10 @@
 import { useCallback, useRef, useState } from 'react'
 import { Camera, panCamera, zoomCamera } from '../lib/camera'
 
-const INITIAL_CAMERA: Camera = { x: 0, y: 0, z: 1 }
+const DEFAULT_CAMERA: Camera = { x: 0, y: 0, z: 1 }
 
-export function useCamera() {
-  const [camera, setCamera] = useState<Camera>(INITIAL_CAMERA)
+export function useCamera(initialCamera?: Camera) {
+  const [camera, setCamera] = useState<Camera>(initialCamera ?? DEFAULT_CAMERA)
   const cameraRef = useRef(camera)
   cameraRef.current = camera
 
@@ -23,7 +23,7 @@ export function useCamera() {
   }, [])
 
   const resetCamera = useCallback(() => {
-    setCamera(INITIAL_CAMERA)
+    setCamera(DEFAULT_CAMERA)
   }, [])
 
   return { camera, handleWheel, resetCamera, setCamera }

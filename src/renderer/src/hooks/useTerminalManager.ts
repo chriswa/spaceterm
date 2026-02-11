@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { TERMINAL_WIDTH, TERMINAL_HEIGHT, GRID_GAP, GRID_COLS } from '../lib/constants'
 
 export interface TerminalInfo {
   sessionId: string
   x: number
   y: number
+  zIndex: number
 }
 
 function gridPosition(index: number): { x: number; y: number } {
@@ -16,8 +17,14 @@ function gridPosition(index: number): { x: number; y: number } {
   }
 }
 
-export function useTerminalManager() {
+interface UseTerminalManagerOptions {
+  savedTerminals?: Record<string, { x: number; y: number; zIndex: number }>
+  initialNextZIndex?: number
+}
+
+export function useTerminalManager(options?: UseTerminalManagerOptions) {
   const [terminals, setTerminals] = useState<TerminalInfo[]>([])
+  const nextZIndex = useRef<number>(options?.initialNextZIndex ?? 1)
 
   // On mount, discover existing sessions from the server
   useEffect(() => {
@@ -28,10 +35,14 @@ export function useTerminalManager() {
         const sessions = await window.api.pty.list()
         if (cancelled || sessions.length === 0) return
 
-        const restored: TerminalInfo[] = sessions.map((s, i) => ({
-          sessionId: s.sessionId,
-          ...gridPosition(i)
-        }))
+        const saved = options?.savedTerminals
+        const restored: TerminalInfo[] = sessions.map((s, i) => {
+          if (saved && saved[s.sessionId]) {
+            const entry = saved[s.sessionId]
+            return { sessionId: s.sessionId, x: entry.x, y: entry.y, zIndex: entry.zIndex }
+          }
+          return { sessionId: s.sessionId, ...gridPosition(i), zIndex: 0 }
+        })
 
         setTerminals(restored)
       } catch {
@@ -51,7 +62,7 @@ export function useTerminalManager() {
 
     setTerminals((prev) => {
       const pos = gridPosition(prev.length)
-      return [...prev, { sessionId, ...pos }]
+      return [...prev, { sessionId, ...pos, zIndex: 0 }]
     })
   }, [])
 
@@ -66,5 +77,12 @@ export function useTerminalManager() {
     )
   }, [])
 
-  return { terminals, addTerminal, removeTerminal, moveTerminal }
+  const bringToFront = useCallback((sessionId: string) => {
+    const z = nextZIndex.current++
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, zIndex: z } : t))
+    )
+  }, [])
+
+  return { terminals, addTerminal, removeTerminal, moveTerminal, bringToFront, nextZIndex }
 }

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { ServerClient } from './server-client'
+import * as logger from './logger'
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
@@ -89,18 +90,24 @@ function wireClientEvents(): void {
 }
 
 app.whenReady().then(async () => {
+  logger.init()
+  logger.log('Electron app starting')
+
   client = new ServerClient()
   setupIPC()
   wireClientEvents()
 
   try {
     await client.connect()
+    logger.log('Server connection established')
   } catch {
+    logger.log('Server connection failed')
     console.error('Failed to connect to terminal server. Is it running? (npm run server)')
     // Will auto-reconnect, so proceed with creating window
   }
 
   createWindow()
+  logger.log('Window created')
 })
 
 app.on('window-all-closed', () => {

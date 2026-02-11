@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { TerminalCard } from './components/TerminalCard'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTerminalManager } from './hooks/useTerminalManager'
+import { loadLayout, saveLayout } from './lib/layout-persistence'
 
 type FocusMode = 'soft' | 'hard'
 
@@ -12,10 +13,42 @@ interface FocusState {
   mode: FocusMode
 }
 
+const savedLayout = loadLayout()
+
 export function App() {
-  const { camera, handleWheel, resetCamera } = useCamera()
-  const { terminals, addTerminal, removeTerminal, moveTerminal } = useTerminalManager()
+  const savedTerminals = useMemo(() => {
+    if (!savedLayout) return undefined
+    const map: Record<string, { x: number; y: number; zIndex: number }> = {}
+    for (const t of savedLayout.terminals) {
+      map[t.sessionId] = { x: t.x, y: t.y, zIndex: t.zIndex }
+    }
+    return map
+  }, [])
+
+  const { camera, handleWheel, resetCamera } = useCamera(savedLayout?.camera)
+  const { terminals, addTerminal, removeTerminal, moveTerminal, bringToFront, nextZIndex } =
+    useTerminalManager({
+      savedTerminals,
+      initialNextZIndex: savedLayout?.nextZIndex
+    })
   const [focus, setFocus] = useState<FocusState | null>(null)
+
+  // Debounced save of layout state
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      saveLayout({
+        camera,
+        terminals: terminals.map((t) => ({
+          sessionId: t.sessionId,
+          x: t.x,
+          y: t.y,
+          zIndex: t.zIndex
+        })),
+        nextZIndex: nextZIndex.current
+      })
+    }, 500)
+    return () => clearTimeout(timeout)
+  }, [camera, terminals])
 
   const handleSoftFocus = useCallback((sessionId: string) => {
     setFocus((prev) => {
@@ -26,7 +59,8 @@ export function App() {
 
   const handleHardFocus = useCallback((sessionId: string) => {
     setFocus({ id: sessionId, mode: 'hard' })
-  }, [])
+    bringToFront(sessionId)
+  }, [bringToFront])
 
   const handleUnfocus = useCallback(() => {
     setFocus(null)
@@ -51,6 +85,7 @@ export function App() {
             sessionId={t.sessionId}
             x={t.x}
             y={t.y}
+            zIndex={t.zIndex}
             zoom={camera.z}
             focusMode={getFocusMode(t.sessionId)}
             onSoftFocus={handleSoftFocus}

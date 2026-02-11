@@ -1,4 +1,4 @@
-export const TERMINAL_WIDTH = 640
+export const TERMINAL_WIDTH = 700
 export const TERMINAL_HEIGHT = 400
 export const GRID_GAP = 40
 export const GRID_COLS = 3
