@@ -26,7 +26,7 @@ export class SessionManager {
     this.onExit = onExit
   }
 
-  create(): string {
+  create(): SessionInfo {
     const sessionId = randomUUID()
     const cols = 160
     const rows = 45
@@ -65,7 +65,7 @@ export class SessionManager {
       rows
     })
 
-    return sessionId
+    return { sessionId, cols, rows }
   }
 
   write(sessionId: string, data: string): void {

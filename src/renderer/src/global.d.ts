@@ -5,7 +5,7 @@ interface SessionInfo {
 }
 
 interface PtyApi {
-  create(): Promise<string>
+  create(): Promise<SessionInfo>
   list(): Promise<SessionInfo[]>
   attach(sessionId: string): Promise<string>
   write(sessionId: string, data: string): void
@@ -18,6 +18,7 @@ interface PtyApi {
 
 interface Api {
   pty: PtyApi
+  log(message: string): void
 }
 
 declare interface Window {

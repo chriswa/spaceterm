@@ -48,3 +48,51 @@ export function zoomCamera(camera: Camera, screenPoint: Point, delta: number): C
 export function getCameraTransform(camera: Camera): string {
   return `translate(${camera.x}px, ${camera.y}px) scale(${camera.z})`
 }
+
+export interface Bounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export function cameraToFitBounds(
+  bounds: Bounds,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 0.1
+): Camera {
+  const usableW = viewportWidth * (1 - 2 * padding)
+  const usableH = viewportHeight * (1 - 2 * padding)
+
+  const zoom = Math.min(usableW / bounds.width, usableH / bounds.height, MAX_ZOOM)
+
+  const centerX = bounds.x + bounds.width / 2
+  const centerY = bounds.y + bounds.height / 2
+
+  return {
+    x: viewportWidth / 2 - centerX * zoom,
+    y: viewportHeight / 2 - centerY * zoom,
+    z: zoom
+  }
+}
+
+export function unionBounds(
+  rects: Array<{ x: number; y: number; width: number; height: number }>
+): Bounds | null {
+  if (rects.length === 0) return null
+
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+
+  for (const r of rects) {
+    minX = Math.min(minX, r.x)
+    minY = Math.min(minY, r.y)
+    maxX = Math.max(maxX, r.x + r.width)
+    maxY = Math.max(maxY, r.y + r.height)
+  }
+
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}

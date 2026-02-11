@@ -7,7 +7,7 @@ export interface SessionInfo {
 }
 
 export interface PtyApi {
-  create(): Promise<string>
+  create(): Promise<SessionInfo>
   list(): Promise<SessionInfo[]>
   attach(sessionId: string): Promise<string>
   write(sessionId: string, data: string): void
@@ -53,5 +53,6 @@ const ptyApi: PtyApi = {
 }
 
 contextBridge.exposeInMainWorld('api', {
-  pty: ptyApi
+  pty: ptyApi,
+  log: (message: string) => ipcRenderer.send('log', message)
 })

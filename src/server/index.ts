@@ -33,8 +33,8 @@ function broadcastToAttached(sessionId: string, msg: ServerMessage): void {
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   switch (msg.type) {
     case 'create': {
-      const sessionId = sessionManager.create()
-      send(client.socket, { type: 'created', seq: msg.seq, sessionId })
+      const { sessionId, cols, rows } = sessionManager.create()
+      send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
       break
     }
 

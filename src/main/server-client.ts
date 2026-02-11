@@ -128,9 +128,9 @@ export class ServerClient extends EventEmitter {
     this.socket.write(JSON.stringify(msg) + '\n')
   }
 
-  async create(): Promise<string> {
+  async create(): Promise<SessionInfo> {
     const resp = await this.sendRequest({ type: 'create' })
-    if (resp.type === 'created') return resp.sessionId
+    if (resp.type === 'created') return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
     throw new Error('Unexpected response')
   }
 

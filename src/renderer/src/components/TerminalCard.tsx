@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { TERMINAL_WIDTH, TERMINAL_HEIGHT } from '../lib/constants'
+import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize } from '../lib/constants'
 
 const DRAG_THRESHOLD = 5
 
@@ -9,6 +9,8 @@ interface TerminalCardProps {
   sessionId: string
   x: number
   y: number
+  cols: number
+  rows: number
   zIndex: number
   zoom: number
   focusMode: 'none' | 'soft' | 'hard'
@@ -17,22 +19,24 @@ interface TerminalCardProps {
   onUnfocus: () => void
   onClose: (sessionId: string) => void
   onMove: (sessionId: string, x: number, y: number) => void
+  onResize: (sessionId: string, cols: number, rows: number) => void
 }
 
 export function TerminalCard({
-  sessionId, x, y, zIndex, zoom, focusMode,
-  onSoftFocus, onHardFocus, onUnfocus, onClose, onMove
+  sessionId, x, y, cols, rows, zIndex, zoom, focusMode,
+  onSoftFocus, onHardFocus, onUnfocus, onClose, onMove, onResize
 }: TerminalCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const [cardWidth, setCardWidth] = useState(TERMINAL_WIDTH)
-  const [cardHeight, setCardHeight] = useState(TERMINAL_HEIGHT)
 
   // Keep current props in refs for event handlers
   const propsRef = useRef({ x, y, zoom, focusMode, sessionId })
   propsRef.current = { x, y, zoom, focusMode, sessionId }
+
+  // Derive pixel size from cols/rows
+  const { width, height } = terminalPixelSize(cols, rows)
 
   // Mount terminal
   useEffect(() => {
@@ -88,6 +92,14 @@ export function TerminalCard({
       fitAddon.fit()
     } catch {
       // Container may not be sized yet
+    }
+
+    // Log actual cell dimensions from xterm's renderer for calibration
+    try {
+      const dims = (term as any)._core._renderService.dimensions
+      window.api.log(`[TerminalCard ${sessionId.slice(0, 8)}] cell dimensions: cellWidth=${dims.css.cell.width} cellHeight=${dims.css.cell.height} constantCellWidth=${CELL_WIDTH} constantCellHeight=${CELL_HEIGHT} termCols=${term.cols} termRows=${term.rows}`)
+    } catch {
+      // Renderer not ready yet
     }
 
     // Attach to server session and replay scrollback before subscribing to live data
@@ -254,13 +266,14 @@ export function TerminalCard({
   return (
     <div
       ref={cardRef}
+      data-session-id={sessionId}
       className={`terminal-card ${focusClass}`}
       style={{
         position: 'absolute',
         left: x,
         top: y,
-        width: cardWidth,
-        height: cardHeight,
+        width,
+        height,
         zIndex
       }}
       onMouseDown={handleMouseDown}
@@ -275,29 +288,7 @@ export function TerminalCard({
             title="Reset to 160×45"
             onClick={(e) => {
               e.stopPropagation()
-              const term = terminalRef.current
-              const fitAddon = fitAddonRef.current
-              if (!term || !fitAddon) return
-
-              // Get actual cell pixel dimensions from xterm's renderer
-              const dims = (term as any)._core._renderService.dimensions
-              const cellWidth = dims.css.cell.width
-              const cellHeight = dims.css.cell.height
-
-              // Measure chrome (header + padding + borders) by subtracting
-              // the current terminal area from the current card size
-              const chromeW = cardRef.current!.offsetWidth - term.cols * cellWidth
-              const chromeH = cardRef.current!.offsetHeight - term.rows * cellHeight
-
-              const targetCols = 160
-              const targetRows = 45
-              setCardWidth(Math.ceil(targetCols * cellWidth + chromeW))
-              setCardHeight(Math.ceil(targetRows * cellHeight + chromeH))
-
-              // FitAddon will pick up the new container size on next frame
-              requestAnimationFrame(() => {
-                try { fitAddon.fit() } catch { /* not ready */ }
-              })
+              onResize(sessionId, 160, 45)
             }}
             onMouseDown={(e) => e.stopPropagation()}
           >

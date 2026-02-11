@@ -68,6 +68,8 @@ export interface CreatedMessage {
   type: 'created'
   seq: number
   sessionId: string
+  cols: number
+  rows: number
 }
 
 export interface ListedMessage {

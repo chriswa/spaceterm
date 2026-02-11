@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { TERMINAL_WIDTH, TERMINAL_HEIGHT, GRID_GAP, GRID_COLS } from '../lib/constants'
+import { DEFAULT_COLS, DEFAULT_ROWS, GRID_GAP, GRID_COLS } from '../lib/constants'
+import { terminalPixelSize } from '../lib/constants'
 
 export interface TerminalInfo {
   sessionId: string
   x: number
   y: number
   zIndex: number
+  cols: number
+  rows: number
 }
 
 function gridPosition(index: number): { x: number; y: number } {
+  const { width, height } = terminalPixelSize(DEFAULT_COLS, DEFAULT_ROWS)
   const col = index % GRID_COLS
   const row = Math.floor(index / GRID_COLS)
   return {
-    x: col * (TERMINAL_WIDTH + GRID_GAP),
-    y: row * (TERMINAL_HEIGHT + GRID_GAP)
+    x: col * (width + GRID_GAP),
+    y: row * (height + GRID_GAP)
   }
 }
 
@@ -39,9 +43,16 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
         const restored: TerminalInfo[] = sessions.map((s, i) => {
           if (saved && saved[s.sessionId]) {
             const entry = saved[s.sessionId]
-            return { sessionId: s.sessionId, x: entry.x, y: entry.y, zIndex: entry.zIndex }
+            return {
+              sessionId: s.sessionId,
+              x: entry.x,
+              y: entry.y,
+              zIndex: entry.zIndex,
+              cols: s.cols,
+              rows: s.rows
+            }
           }
-          return { sessionId: s.sessionId, ...gridPosition(i), zIndex: 0 }
+          return { sessionId: s.sessionId, ...gridPosition(i), zIndex: 0, cols: s.cols, rows: s.rows }
         })
 
         setTerminals(restored)
@@ -58,12 +69,12 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
   }, [])
 
   const addTerminal = useCallback(async (position?: { x: number; y: number }) => {
-    const sessionId = await window.api.pty.create()
+    const { sessionId, cols, rows } = await window.api.pty.create()
     const z = nextZIndex.current++
 
     setTerminals((prev) => {
       const pos = position ?? gridPosition(prev.length)
-      return [...prev, { sessionId, ...pos, zIndex: z }]
+      return [...prev, { sessionId, ...pos, zIndex: z, cols, rows }]
     })
   }, [])
 
@@ -78,6 +89,12 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     )
   }, [])
 
+  const resizeTerminal = useCallback((sessionId: string, cols: number, rows: number) => {
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, cols, rows } : t))
+    )
+  }, [])
+
   const bringToFront = useCallback((sessionId: string) => {
     const z = nextZIndex.current++
     setTerminals((prev) =>
@@ -85,5 +102,5 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     )
   }, [])
 
-  return { terminals, addTerminal, removeTerminal, moveTerminal, bringToFront, nextZIndex }
+  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, nextZIndex }
 }

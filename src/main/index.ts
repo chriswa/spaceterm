@@ -32,10 +32,10 @@ function createWindow(): void {
 
 function setupIPC(): void {
   ipcMain.handle('pty:create', async () => {
-    const sessionId = await client!.create()
+    const session = await client!.create()
     // Auto-attach so we receive data events for this session
-    await client!.attach(sessionId)
-    return sessionId
+    await client!.attach(session.sessionId)
+    return session
   })
 
   ipcMain.handle('pty:list', async () => {
@@ -52,6 +52,10 @@ function setupIPC(): void {
 
   ipcMain.on('pty:resize', (_event, sessionId: string, cols: number, rows: number) => {
     client!.resize(sessionId, cols, rows)
+  })
+
+  ipcMain.on('log', (_event, message: string) => {
+    logger.log(message)
   })
 
   ipcMain.handle('pty:destroy', async (_event, sessionId: string) => {
