@@ -107,6 +107,7 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+  mainWindow!.setFullScreen(true)
   logger.log('Window created')
 })
 

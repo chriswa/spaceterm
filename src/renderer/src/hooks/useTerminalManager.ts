@@ -57,12 +57,13 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     }
   }, [])
 
-  const addTerminal = useCallback(async () => {
+  const addTerminal = useCallback(async (position?: { x: number; y: number }) => {
     const sessionId = await window.api.pty.create()
+    const z = nextZIndex.current++
 
     setTerminals((prev) => {
-      const pos = gridPosition(prev.length)
-      return [...prev, { sessionId, ...pos, zIndex: 0 }]
+      const pos = position ?? gridPosition(prev.length)
+      return [...prev, { sessionId, ...pos, zIndex: z }]
     })
   }, [])
 

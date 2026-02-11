@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { TERMINAL_WIDTH, TERMINAL_HEIGHT } from '../lib/constants'
@@ -27,6 +27,8 @@ export function TerminalCard({
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const [cardWidth, setCardWidth] = useState(TERMINAL_WIDTH)
+  const [cardHeight, setCardHeight] = useState(TERMINAL_HEIGHT)
 
   // Keep current props in refs for event handlers
   const propsRef = useRef({ x, y, zoom, focusMode, sessionId })
@@ -189,8 +191,8 @@ export function TerminalCard({
 
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Don't interfere with close button
-    if ((e.target as HTMLElement).closest('.terminal-card__close')) return
+    // Don't interfere with header buttons
+    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__reset-size')) return
 
     // In hard focus, only allow drag from the header (body goes to xterm)
     if (focusMode === 'hard') {
@@ -257,8 +259,8 @@ export function TerminalCard({
         position: 'absolute',
         left: x,
         top: y,
-        width: TERMINAL_WIDTH,
-        height: TERMINAL_HEIGHT,
+        width: cardWidth,
+        height: cardHeight,
         zIndex
       }}
       onMouseDown={handleMouseDown}
@@ -267,13 +269,48 @@ export function TerminalCard({
     >
       <div className="terminal-card__header">
         <span className="terminal-card__title">{sessionId.slice(0, 8)}</span>
-        <button
-          className="terminal-card__close"
-          onClick={(e) => { e.stopPropagation(); onClose(sessionId) }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          &times;
-        </button>
+        <div className="terminal-card__actions">
+          <button
+            className="terminal-card__reset-size"
+            title="Reset to 160×45"
+            onClick={(e) => {
+              e.stopPropagation()
+              const term = terminalRef.current
+              const fitAddon = fitAddonRef.current
+              if (!term || !fitAddon) return
+
+              // Get actual cell pixel dimensions from xterm's renderer
+              const dims = (term as any)._core._renderService.dimensions
+              const cellWidth = dims.css.cell.width
+              const cellHeight = dims.css.cell.height
+
+              // Measure chrome (header + padding + borders) by subtracting
+              // the current terminal area from the current card size
+              const chromeW = cardRef.current!.offsetWidth - term.cols * cellWidth
+              const chromeH = cardRef.current!.offsetHeight - term.rows * cellHeight
+
+              const targetCols = 160
+              const targetRows = 45
+              setCardWidth(Math.ceil(targetCols * cellWidth + chromeW))
+              setCardHeight(Math.ceil(targetRows * cellHeight + chromeH))
+
+              // FitAddon will pick up the new container size on next frame
+              requestAnimationFrame(() => {
+                try { fitAddon.fit() } catch { /* not ready */ }
+              })
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            ⬡
+          </button>
+          <button
+            className="terminal-card__close"
+            onClick={(e) => { e.stopPropagation(); onClose(sessionId) }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            &times;
+          </button>
+        </div>
       </div>
       <div className="terminal-card__body" ref={containerRef} />
     </div>

@@ -28,8 +28,8 @@ export class SessionManager {
 
   create(): string {
     const sessionId = randomUUID()
-    const cols = 80
-    const rows = 24
+    const cols = 160
+    const rows = 45
     const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
 
     const ptyProcess = pty.spawn(shell, [], {

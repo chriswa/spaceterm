@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { TerminalCard } from './components/TerminalCard'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTerminalManager } from './hooks/useTerminalManager'
+import { screenToCanvas } from './lib/camera'
+import { TERMINAL_WIDTH, TERMINAL_HEIGHT } from './lib/constants'
 import { loadLayout, saveLayout } from './lib/layout-persistence'
 
 type FocusMode = 'soft' | 'hard'
@@ -26,12 +28,41 @@ export function App() {
   }, [])
 
   const { camera, handleWheel, resetCamera } = useCamera(savedLayout?.camera)
+  const cameraRef = useRef(camera)
+  cameraRef.current = camera
+
   const { terminals, addTerminal, removeTerminal, moveTerminal, bringToFront, nextZIndex } =
     useTerminalManager({
       savedTerminals,
       initialNextZIndex: savedLayout?.nextZIndex
     })
   const [focus, setFocus] = useState<FocusState | null>(null)
+
+  const addTerminalAtCenter = useCallback(() => {
+    const cam = cameraRef.current
+    const viewportCenter = {
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2
+    }
+    const canvasCenter = screenToCanvas(viewportCenter, cam)
+    addTerminal({
+      x: canvasCenter.x - TERMINAL_WIDTH / 2,
+      y: canvasCenter.y - TERMINAL_HEIGHT / 2
+    })
+  }, [addTerminal])
+
+  // Global Cmd+T shortcut to create a new terminal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey && e.key === 't') {
+        e.preventDefault()
+        e.stopPropagation()
+        addTerminalAtCenter()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
+  }, [addTerminalAtCenter])
 
   // Debounced save of layout state
   useEffect(() => {
@@ -75,7 +106,7 @@ export function App() {
     <div className="app">
       <Toolbar
         zoom={camera.z}
-        onAddTerminal={addTerminal}
+        onAddTerminal={addTerminalAtCenter}
         onResetView={resetCamera}
       />
       <Canvas camera={camera} onWheel={handleWheel}>

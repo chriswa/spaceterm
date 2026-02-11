@@ -116,6 +116,31 @@ html, body, #root {
   color: #6c7086;
 }
 
+.terminal-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-card__reset-size {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-card__reset-size:hover {
+  background: #89b4fa;
+  color: #1e1e2e;
+}
+
 .terminal-card__close {
   width: 20px;
   height: 20px;
