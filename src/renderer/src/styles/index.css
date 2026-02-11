@@ -1,0 +1,189 @@
+@import '@xterm/xterm/css/xterm.css';
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #11111b;
+  color: #cdd6f4;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.toolbar__btn {
+  padding: 6px 14px;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toolbar__btn:hover {
+  background: #313244;
+}
+
+.toolbar__zoom {
+  margin-left: auto;
+  font-size: 13px;
+  color: #6c7086;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Canvas */
+.canvas-viewport {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+}
+
+.canvas-viewport:active {
+  cursor: grabbing;
+}
+
+.canvas-surface {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+/* Terminal Card */
+.terminal-card {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid #313244;
+  background: #1e1e2e;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s;
+}
+
+.terminal-card--soft {
+  border-color: #585b70;
+}
+
+.terminal-card--hard {
+  border-color: #fab387;
+}
+
+.terminal-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+  font-size: 12px;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  cursor: grab;
+}
+
+.terminal-card__header:active {
+  cursor: grabbing;
+}
+
+.terminal-card__title {
+  color: #6c7086;
+}
+
+.terminal-card__close {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-card__close:hover {
+  background: #f38ba8;
+  color: #1e1e2e;
+}
+
+.terminal-card__body {
+  flex: 1;
+  padding: 2px 2px 0 2px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.terminal-card__body .xterm {
+  height: 100%;
+}
+
+/*
+ * Custom scrollbar: always 8px wide so the gutter is always reserved.
+ * Thumb is invisible when not hard-focused, visible when hard-focused.
+ * This prevents any layout shift when toggling focus modes.
+ */
+.terminal-card .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-card .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-card .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.terminal-card--hard .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #585b70;
+}
+
+/*
+ * Block ALL mouse interaction with xterm when not hard focused.
+ * Targets .xterm itself (the container where xterm attaches its wheel listener),
+ * not just viewport/screen children. pointer-events: none is inherited by
+ * all children, so nothing inside xterm receives pointer events.
+ */
+.terminal-card:not(.terminal-card--hard) .xterm {
+  pointer-events: none !important;
+}
+
+/* Grab cursor on the body area when not hard focused (draggable) */
+.terminal-card:not(.terminal-card--hard) .terminal-card__body {
+  cursor: grab;
+}
+
+.terminal-card:not(.terminal-card--hard) .terminal-card__body:active {
+  cursor: grabbing;
+}
