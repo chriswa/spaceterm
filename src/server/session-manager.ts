@@ -4,28 +4,36 @@ import { randomUUID } from 'crypto'
 import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
+import { TitleParser } from './title-parser'
 import type { SessionInfo, CreateOptions } from '../shared/protocol'
+
+const MAX_TITLE_HISTORY = 50
 
 interface Session {
   id: string
   process: pty.IPty
   batcher: DataBatcher
   scrollback: ScrollbackBuffer
+  titleParser: TitleParser
+  shellTitleHistory: string[]
   cols: number
   rows: number
 }
 
 export type DataCallback = (sessionId: string, data: string) => void
 export type ExitCallback = (sessionId: string, exitCode: number) => void
+export type TitleHistoryCallback = (sessionId: string, history: string[]) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
   private onData: DataCallback
   private onExit: ExitCallback
+  private onTitleHistory: TitleHistoryCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback) {
     this.onData = onData
     this.onExit = onExit
+    this.onTitleHistory = onTitleHistory
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -56,6 +64,15 @@ export class SessionManager {
     })
 
     const scrollback = new ScrollbackBuffer()
+    const shellTitleHistory: string[] = []
+
+    const titleParser = new TitleParser((title) => {
+      shellTitleHistory.push(title)
+      if (shellTitleHistory.length > MAX_TITLE_HISTORY) {
+        shellTitleHistory.shift()
+      }
+      this.onTitleHistory(sessionId, shellTitleHistory)
+    })
 
     const batcher = new DataBatcher((data) => {
       scrollback.write(data)
@@ -63,6 +80,7 @@ export class SessionManager {
     })
 
     ptyProcess.onData((data) => {
+      titleParser.write(data)
       batcher.write(data)
     })
 
@@ -76,6 +94,8 @@ export class SessionManager {
       process: ptyProcess,
       batcher,
       scrollback,
+      titleParser,
+      shellTitleHistory,
       cols,
       rows
     })
@@ -129,6 +149,11 @@ export class SessionManager {
   getScrollback(sessionId: string): string | null {
     const session = this.sessions.get(sessionId)
     return session ? session.scrollback.getContents() : null
+  }
+
+  getShellTitleHistory(sessionId: string): string[] {
+    const session = this.sessions.get(sessionId)
+    return session ? session.shellTitleHistory : []
   }
 
   has(sessionId: string): boolean {

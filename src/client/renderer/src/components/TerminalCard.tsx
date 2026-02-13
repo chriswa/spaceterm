@@ -21,10 +21,11 @@ interface TerminalCardProps {
   colorPresetId?: string
   shellTitle?: string
   shellTitleHistory?: string[]
-  focusMode: 'none' | 'soft' | 'hard'
-  onSoftFocus: (sessionId: string) => void
-  onHardFocus: (sessionId: string) => void
+  focused: boolean
+  scrollMode: boolean
+  onFocus: (sessionId: string) => void
   onUnfocus: () => void
+  onDisableScrollMode: () => void
   onClose: (sessionId: string) => void
   onMove: (sessionId: string, x: number, y: number) => void
   onResize: (sessionId: string, cols: number, rows: number) => void
@@ -32,12 +33,13 @@ interface TerminalCardProps {
   onColorChange: (sessionId: string, color: string) => void
   onCwdChange?: (sessionId: string, cwd: string) => void
   onShellTitleChange?: (sessionId: string, title: string) => void
+  onShellTitleHistoryChange?: (sessionId: string, history: string[]) => void
 }
 
 export function TerminalCard({
-  sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, focusMode,
-  onSoftFocus, onHardFocus, onUnfocus, onClose, onMove, onResize, onRename, onColorChange,
-  onCwdChange, onShellTitleChange
+  sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, focused, scrollMode,
+  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
+  onCwdChange, onShellTitleChange, onShellTitleHistoryChange
 }: TerminalCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
@@ -47,8 +49,11 @@ export function TerminalCard({
   const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focusMode, sessionId, onUnfocus, onCwdChange, onShellTitleChange })
-  propsRef.current = { x, y, zoom, focusMode, sessionId, onUnfocus, onCwdChange, onShellTitleChange }
+  const propsRef = useRef({ x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onDisableScrollMode })
+  propsRef.current = { x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onDisableScrollMode }
+
+  const scrollModeRef = useRef(false)
+  scrollModeRef.current = scrollMode
 
   // Derive pixel size from cols/rows
   const { width, height } = terminalPixelSize(cols, rows)
@@ -128,17 +133,20 @@ export function TerminalCard({
     // canvas propagation. Attached once at mount — no race condition
     // since propsRef is updated synchronously during render.
     term.attachCustomWheelEventHandler((ev) => {
-      if (propsRef.current.focusMode === 'hard') {
-        // Pinch-to-zoom: ctrlKey (how macOS reports pinch) + above threshold.
-        // Per-event check is fine since ctrlKey is a strong disambiguator.
-        if (ev.ctrlKey && Math.abs(ev.deltaY) > PINCH_ZOOM_THRESHOLD) {
-          propsRef.current.onUnfocus()
+      if (propsRef.current.focused) {
+        // Scroll mode off: all events go to canvas
+        if (!scrollModeRef.current) {
           return false
         }
 
-        // Accumulate deltas over a time window for frame-rate-independent
-        // gesture detection. At 60Hz each event has ~2× the delta of 120Hz,
-        // but summed over WHEEL_WINDOW_MS they converge to the same total.
+        // Pinch-to-zoom: disable scroll mode, let canvas handle
+        if (ev.ctrlKey && Math.abs(ev.deltaY) > PINCH_ZOOM_THRESHOLD) {
+          scrollModeRef.current = false
+          propsRef.current.onDisableScrollMode()
+          return false
+        }
+
+        // Accumulate deltas for gesture detection
         const now = performance.now()
         const acc = wheelAccRef.current
         if (now - acc.t > WHEEL_WINDOW_MS) {
@@ -149,22 +157,20 @@ export function TerminalCard({
         acc.dy += Math.abs(ev.deltaY)
         acc.t = now
 
-        // Horizontal scroll: accumulated horizontal exceeds threshold
-        // AND dominates vertical over the window
+        // Horizontal scroll: disable scroll mode, let canvas handle
         if (acc.dx > HORIZONTAL_SCROLL_THRESHOLD && acc.dx > acc.dy) {
           acc.dx = 0
           acc.dy = 0
-          propsRef.current.onUnfocus()
-          // Return false (block xterm) but DON'T stopPropagation —
-          // event bubbles to canvas which handles pan/zoom immediately
+          scrollModeRef.current = false
+          propsRef.current.onDisableScrollMode()
           return false
         }
 
-        // Normal vertical scroll: xterm handles it, canvas doesn't see it
+        // Vertical scroll: xterm handles, canvas doesn't see it
         ev.stopPropagation()
         return true
       }
-      // Block xterm's scroll processing in soft/none focus
+      // Block xterm's scroll processing when not focused
       return false
     })
 
@@ -201,10 +207,13 @@ export function TerminalCard({
 
     // Attach to server session and replay scrollback before subscribing to live data
     let cancelled = false
-    window.api.pty.attach(sessionId).then((scrollback) => {
+    window.api.pty.attach(sessionId).then((result) => {
       if (cancelled) return
-      if (scrollback.length > 0) {
-        term.write(textEncoder.encode(scrollback))
+      if (result.scrollback.length > 0) {
+        term.write(textEncoder.encode(result.scrollback))
+      }
+      if (result.shellTitleHistory && result.shellTitleHistory.length > 0) {
+        propsRef.current.onShellTitleHistoryChange?.(propsRef.current.sessionId, result.shellTitleHistory)
       }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
@@ -217,6 +226,10 @@ export function TerminalCard({
 
     const cleanupExit = window.api.pty.onExit(sessionId, () => {
       term.write('\r\n[Process exited]\r\n')
+    })
+
+    const cleanupTitleHistory = window.api.pty.onShellTitleHistory(sessionId, (history) => {
+      propsRef.current.onShellTitleHistoryChange?.(propsRef.current.sessionId, history)
     })
 
     term.onData((data) => {
@@ -234,6 +247,7 @@ export function TerminalCard({
       cancelled = true
       cleanupData()
       cleanupExit()
+      cleanupTitleHistory()
       term.dispose()
     }
   }, [sessionId])
@@ -251,12 +265,12 @@ export function TerminalCard({
     const term = terminalRef.current
     if (!term) return
 
-    if (focusMode === 'soft' || focusMode === 'hard') {
+    if (focused) {
       term.focus()
     } else {
       term.blur()
     }
-  }, [focusMode, sessionId])
+  }, [focused, sessionId])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
@@ -264,7 +278,7 @@ export function TerminalCard({
   // so xterm's math yields the correct unscaled position.
   useEffect(() => {
     const container = containerRef.current
-    if (!container || focusMode !== 'hard') return
+    if (!container || !focused) return
 
     const screen = container.querySelector('.xterm-screen') as HTMLElement
     if (!screen) return
@@ -304,13 +318,13 @@ export function TerminalCard({
       screen.removeEventListener('mousemove', adjustCoords, { capture: true })
       screen.removeEventListener('mouseup', adjustCoords, { capture: true })
     }
-  }, [focusMode])
+  }, [focused])
 
-  // Filter non-left-click mouse buttons from reaching xterm during hard focus.
+  // Filter non-left-click mouse buttons from reaching xterm during focus.
   // Blocks right-click, middle-click, and buttons 3/4 (prep for future custom actions).
   useEffect(() => {
     const container = containerRef.current
-    if (!container || focusMode !== 'hard') return
+    if (!container || !focused) return
 
     const screen = container.querySelector('.xterm-screen') as HTMLElement
     if (!screen) return
@@ -334,7 +348,7 @@ export function TerminalCard({
       screen.removeEventListener('auxclick', filter, { capture: true })
       screen.removeEventListener('contextmenu', filter, { capture: true })
     }
-  }, [focusMode])
+  }, [focused])
 
   // Editable title state
   const [editing, setEditing] = useState(false)
@@ -362,12 +376,14 @@ export function TerminalCard({
     // Don't interfere with header buttons or editable title/color picker
     if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__title, .terminal-card__title-input, .terminal-card__color-picker')) return
 
-    // In hard focus, only allow drag from the header (body goes to xterm)
-    if (focusMode === 'hard') {
-      if (!(e.target as HTMLElement).closest('.terminal-card__header')) return
-    }
+    const isHeader = !!(e.target as HTMLElement).closest('.terminal-card__header')
 
-    e.preventDefault()
+    // When focused and clicking body: let xterm handle the event
+    // but still detect click (no drag) for re-centering the camera
+    const bodyClickWhileFocused = focused && !isHeader
+    if (!bodyClickWhileFocused) {
+      e.preventDefault()
+    }
 
     const startScreenX = e.clientX
     const startScreenY = e.clientY
@@ -384,7 +400,7 @@ export function TerminalCard({
         dragging = true
       }
 
-      if (dragging) {
+      if (dragging && !bodyClickWhileFocused) {
         onMove(sessionId, startX + dx / currentZoom, startY + dy / currentZoom)
       }
     }
@@ -394,7 +410,7 @@ export function TerminalCard({
       window.removeEventListener('mouseup', onMouseUp)
 
       if (!dragging) {
-        onHardFocus(sessionId)
+        onFocus(sessionId)
       }
     }
 
@@ -402,22 +418,11 @@ export function TerminalCard({
     window.addEventListener('mouseup', onMouseUp)
   }
 
-  const handleMouseEnter = () => {
-    onSoftFocus(sessionId)
-  }
-
-  const handleMouseLeave = (e: React.MouseEvent) => {
-    // Ignore spurious mouseleave from pointer-events toggling on .xterm.
-    // If relatedTarget is still inside the card, the mouse hasn't truly left.
-    if (cardRef.current && e.relatedTarget instanceof Node && cardRef.current.contains(e.relatedTarget)) {
-      return
-    }
-    onUnfocus()
-  }
-
-  const focusClass =
-    focusMode === 'hard' ? 'terminal-card--hard' :
-    focusMode === 'soft' ? 'terminal-card--soft' : ''
+  const focusClass = focused
+    ? scrollMode
+      ? 'terminal-card--focused terminal-card--scroll-mode'
+      : 'terminal-card--focused'
+    : ''
 
   return (
     <div
@@ -433,8 +438,6 @@ export function TerminalCard({
         zIndex
       }}
       onMouseDown={handleMouseDown}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
       <div
         className="terminal-card__header"
@@ -532,7 +535,15 @@ export function TerminalCard({
       </div>
       <div className="terminal-card__body" ref={containerRef} />
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
-        {(shellTitleHistory ?? []).join(' ◀ ').slice(0, 5000)}
+        {(() => {
+          const seen = new Set<string>()
+          const unique = (shellTitleHistory ?? []).filter((t) => {
+            if (seen.has(t)) return false
+            seen.add(t)
+            return true
+          })
+          return unique.join(' \u25C0 ')
+        })()}
       </div>
     </div>
   )

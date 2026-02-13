@@ -73,7 +73,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           type: 'attached',
           seq: msg.seq,
           sessionId: msg.sessionId,
-          scrollback
+          scrollback,
+          shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId)
         })
       } else {
         // Session doesn't exist — send attached with empty scrollback
@@ -161,6 +162,10 @@ function startServer(): void {
       clients.forEach((client) => {
         client.attachedSessions.delete(sessionId)
       })
+    },
+    // onTitleHistory: broadcast to all attached clients
+    (sessionId, history) => {
+      broadcastToAttached(sessionId, { type: 'shell-title-history', sessionId, history })
     }
   )
 

@@ -98,6 +98,7 @@ export interface AttachedMessage {
   seq: number
   sessionId: string
   scrollback: string
+  shellTitleHistory?: string[]
 }
 
 export interface DetachedMessage {
@@ -123,6 +124,12 @@ export interface ExitMessage {
   exitCode: number
 }
 
+export interface ShellTitleHistoryMessage {
+  type: 'shell-title-history'
+  sessionId: string
+  history: string[]
+}
+
 export type ServerMessage =
   | CreatedMessage
   | ListedMessage
@@ -131,3 +138,4 @@ export type ServerMessage =
   | DestroyedMessage
   | DataMessage
   | ExitMessage
+  | ShellTitleHistoryMessage

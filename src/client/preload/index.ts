@@ -12,15 +12,21 @@ export interface CreateOptions {
   args?: string[]
 }
 
+export interface AttachResult {
+  scrollback: string
+  shellTitleHistory?: string[]
+}
+
 export interface PtyApi {
   create(options?: CreateOptions): Promise<SessionInfo>
   list(): Promise<SessionInfo[]>
-  attach(sessionId: string): Promise<string>
+  attach(sessionId: string): Promise<AttachResult>
   write(sessionId: string, data: string): void
   resize(sessionId: string, cols: number, rows: number): void
   destroy(sessionId: string): Promise<void>
   onData(sessionId: string, callback: (data: string) => void): () => void
   onExit(sessionId: string, callback: (exitCode: number) => void): () => void
+  onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
   onServerStatus(callback: (connected: boolean) => void): () => void
 }
 
@@ -47,6 +53,13 @@ const ptyApi: PtyApi = {
   onExit: (sessionId, callback) => {
     const channel = `pty:exit:${sessionId}`
     const listener = (_event: Electron.IpcRendererEvent, exitCode: number) => callback(exitCode)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
+  onShellTitleHistory: (sessionId, callback) => {
+    const channel = `pty:shell-title-history:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, history: string[]) => callback(history)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
   },

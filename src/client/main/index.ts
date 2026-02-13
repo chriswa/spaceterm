@@ -34,8 +34,8 @@ function setupIPC(): void {
   ipcMain.handle('pty:create', async (_event, options?: Record<string, unknown>) => {
     const session = await client!.create(options as any)
     // Auto-attach so we receive data events for this session
-    await client!.attach(session.sessionId)
-    return session
+    const { shellTitleHistory } = await client!.attach(session.sessionId)
+    return { ...session, shellTitleHistory }
   })
 
   ipcMain.handle('pty:list', async () => {
@@ -43,7 +43,8 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
-    return client!.attach(sessionId)
+    const { scrollback, shellTitleHistory } = await client!.attach(sessionId)
+    return { scrollback, shellTitleHistory }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -83,6 +84,12 @@ function wireClientEvents(): void {
   client!.on('exit', (sessionId: string, exitCode: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:exit:${sessionId}`, exitCode)
+    }
+  })
+
+  client!.on('shell-title-history', (sessionId: string, history: string[]) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`pty:shell-title-history:${sessionId}`, history)
     }
   })
 

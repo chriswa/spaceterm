@@ -100,6 +100,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'shell-title-history') {
+      this.emit('shell-title-history', msg.sessionId, msg.history)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)
@@ -141,9 +146,9 @@ export class ServerClient extends EventEmitter {
     throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<string> {
+  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[] }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return resp.scrollback
+    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory }
     throw new Error('Unexpected response')
   }
 

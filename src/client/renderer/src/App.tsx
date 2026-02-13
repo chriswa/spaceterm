@@ -8,13 +8,6 @@ import { screenToCanvas, cameraToFitBounds, unionBounds } from './lib/camera'
 import { terminalPixelSize } from './lib/constants'
 import { loadLayout, saveLayout } from './lib/layout-persistence'
 
-type FocusMode = 'soft' | 'hard'
-
-interface FocusState {
-  id: string
-  mode: FocusMode
-}
-
 const savedLayout = loadLayout()
 
 export function App() {
@@ -31,7 +24,7 @@ export function App() {
   const cameraRef = useRef(camera)
   cameraRef.current = camera
 
-  const { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, nextZIndex } =
+  const { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, nextZIndex } =
     useTerminalManager({
       savedTerminals,
       initialNextZIndex: savedLayout?.nextZIndex
@@ -39,9 +32,10 @@ export function App() {
 
   // CWD tracking — ref so updates don't trigger re-renders
   const cwdMapRef = useRef(new Map<string, string>())
-  const [focus, setFocus] = useState<FocusState | null>(null)
-  const focusRef = useRef(focus)
-  focusRef.current = focus
+  const [focusedId, setFocusedId] = useState<string | null>(null)
+  const [scrollMode, setScrollMode] = useState(false)
+  const focusRef = useRef(focusedId)
+  focusRef.current = focusedId
   const terminalsRef = useRef(terminals)
   terminalsRef.current = terminals
 
@@ -55,30 +49,41 @@ export function App() {
     setShellTitle(sessionId, stripped)
   }, [setShellTitle])
 
+  const handleShellTitleHistoryChange = useCallback((sessionId: string, history: string[]) => {
+    setShellTitleHistory(sessionId, history)
+  }, [setShellTitleHistory])
+
   const handleRemoveTerminal = useCallback(async (sessionId: string) => {
     cwdMapRef.current.delete(sessionId)
     await removeTerminal(sessionId)
   }, [removeTerminal])
 
-  const addTerminalAtCenter = useCallback(() => {
+  const centerPosition = useCallback(() => {
     const cam = cameraRef.current
-    const viewportCenter = {
-      x: window.innerWidth / 2,
-      y: window.innerHeight / 2
-    }
+    const viewportCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
     const canvasCenter = screenToCanvas(viewportCenter, cam)
     const { width, height } = terminalPixelSize(80, 24)
+    return { x: canvasCenter.x - width / 2, y: canvasCenter.y - height / 2 }
+  }, [])
 
-    // Inherit CWD from the focused terminal (if any)
-    const focusedId = focusRef.current?.id
-    const cwd = focusedId ? cwdMapRef.current.get(focusedId) : undefined
-    const options = cwd ? { cwd } : undefined
+  const focusedCwd = useCallback(() => {
+    const id = focusRef.current
+    return id ? cwdMapRef.current.get(id) : undefined
+  }, [])
 
-    addTerminal({
-      x: canvasCenter.x - width / 2,
-      y: canvasCenter.y - height / 2
-    }, options)
-  }, [addTerminal])
+  const addTerminalAtCenter = useCallback(() => {
+    const cwd = focusedCwd()
+    addTerminal(centerPosition(), cwd ? { cwd } : undefined)
+  }, [addTerminal, centerPosition, focusedCwd])
+
+  const addClaudeCodeAtCenter = useCallback(() => {
+    const cwd = focusedCwd()
+    addTerminal(centerPosition(), {
+      cwd,
+      command: 'claude',
+      args: ['--plugin-dir', 'src/claude-code-plugin', '--', 'hello']
+    })
+  }, [addTerminal, centerPosition, focusedCwd])
 
   const fitAllTerminals = useCallback(() => {
     const terms = terminalsRef.current
@@ -103,9 +108,16 @@ export function App() {
         addTerminalAtCenter()
       }
 
+      if (e.metaKey && e.key === 'e') {
+        e.preventDefault()
+        e.stopPropagation()
+        addClaudeCodeAtCenter()
+      }
+
       if (e.key === 'CapsLock') {
-        if (focusRef.current?.mode === 'hard') {
-          setFocus(null)
+        if (focusRef.current) {
+          setFocusedId(null)
+          setScrollMode(false)
         } else {
           fitAllTerminals()
         }
@@ -113,7 +125,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [addTerminalAtCenter, fitAllTerminals])
+  }, [addTerminalAtCenter, addClaudeCodeAtCenter, fitAllTerminals])
 
   // Debounced save of layout state
   useEffect(() => {
@@ -134,15 +146,9 @@ export function App() {
     return () => clearTimeout(timeout)
   }, [camera, terminals])
 
-  const handleSoftFocus = useCallback((sessionId: string) => {
-    setFocus((prev) => {
-      if (prev && prev.id === sessionId && prev.mode === 'hard') return prev
-      return { id: sessionId, mode: 'soft' }
-    })
-  }, [])
-
-  const handleHardFocus = useCallback((sessionId: string) => {
-    setFocus({ id: sessionId, mode: 'hard' })
+  const handleFocus = useCallback((sessionId: string) => {
+    setFocusedId(sessionId)
+    setScrollMode(true)
     bringToFront(sessionId)
 
     const t = terminalsRef.current.find(t => t.sessionId === sessionId)
@@ -166,13 +172,13 @@ export function App() {
   }, [bringToFront, animateTo])
 
   const handleUnfocus = useCallback(() => {
-    setFocus(null)
+    setFocusedId(null)
+    setScrollMode(false)
   }, [])
 
-  const getFocusMode = (sessionId: string): 'none' | 'soft' | 'hard' => {
-    if (!focus || focus.id !== sessionId) return 'none'
-    return focus.mode
-  }
+  const handleDisableScrollMode = useCallback(() => {
+    setScrollMode(false)
+  }, [])
 
   return (
     <div className="app">
@@ -201,10 +207,11 @@ export function App() {
             colorPresetId={t.colorPresetId}
             shellTitle={t.shellTitle}
             shellTitleHistory={t.shellTitleHistory}
-            focusMode={getFocusMode(t.sessionId)}
-            onSoftFocus={handleSoftFocus}
-            onHardFocus={handleHardFocus}
+            focused={focusedId === t.sessionId}
+            scrollMode={focusedId === t.sessionId && scrollMode}
+            onFocus={handleFocus}
             onUnfocus={handleUnfocus}
+            onDisableScrollMode={handleDisableScrollMode}
             onClose={handleRemoveTerminal}
             onMove={moveTerminal}
             onResize={resizeTerminal}
@@ -212,6 +219,7 @@ export function App() {
             onColorChange={setTerminalColor}
             onCwdChange={handleCwdChange}
             onShellTitleChange={handleShellTitleChange}
+            onShellTitleHistoryChange={handleShellTitleHistoryChange}
           />
         ))}
       </Canvas>

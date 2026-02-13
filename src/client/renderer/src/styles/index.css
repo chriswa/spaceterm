@@ -105,11 +105,15 @@ html, body, #root {
   transition: border-color 0.15s;
 }
 
-.terminal-card--soft {
+.terminal-card:hover {
   border-color: #585b70;
 }
 
-.terminal-card--hard {
+.terminal-card.terminal-card--focused {
+  border-color: #cba6f7;
+}
+
+.terminal-card.terminal-card--focused.terminal-card--scroll-mode {
   border-color: #fab387;
 }
 
@@ -267,8 +271,8 @@ html, body, #root {
 
 /*
  * Custom scrollbar: always 8px wide so the gutter is always reserved.
- * Thumb is invisible when not hard-focused, visible when hard-focused.
- * This prevents any layout shift when toggling focus modes.
+ * Thumb is invisible when not focused, visible when focused.
+ * This prevents any layout shift when toggling focus.
  */
 .terminal-card .xterm-viewport::-webkit-scrollbar {
   width: 8px;
@@ -283,25 +287,25 @@ html, body, #root {
   border-radius: 4px;
 }
 
-.terminal-card--hard .xterm-viewport::-webkit-scrollbar-thumb {
+.terminal-card--focused .xterm-viewport::-webkit-scrollbar-thumb {
   background: #585b70;
 }
 
 /*
- * Block ALL mouse interaction with xterm when not hard focused.
+ * Block ALL mouse interaction with xterm when not focused.
  * Targets .xterm itself (the container where xterm attaches its wheel listener),
  * not just viewport/screen children. pointer-events: none is inherited by
  * all children, so nothing inside xterm receives pointer events.
  */
-.terminal-card:not(.terminal-card--hard) .xterm {
+.terminal-card:not(.terminal-card--focused) .xterm {
   pointer-events: none !important;
 }
 
-/* Grab cursor on the body area when not hard focused (draggable) */
-.terminal-card:not(.terminal-card--hard) .terminal-card__body {
+/* Grab cursor on the body area when not focused (draggable) */
+.terminal-card:not(.terminal-card--focused) .terminal-card__body {
   cursor: grab;
 }
 
-.terminal-card:not(.terminal-card--hard) .terminal-card__body:active {
+.terminal-card:not(.terminal-card--focused) .terminal-card__body:active {
   cursor: grabbing;
 }

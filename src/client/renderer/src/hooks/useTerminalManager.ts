@@ -122,14 +122,15 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
 
   const setShellTitle = useCallback((sessionId: string, shellTitle: string) => {
     setTerminals((prev) =>
-      prev.map((t) => {
-        if (t.sessionId !== sessionId) return t
-        const history = t.shellTitleHistory ?? []
-        const newHistory = history[0] === shellTitle ? history : [shellTitle, ...history]
-        return { ...t, shellTitle, shellTitleHistory: newHistory }
-      })
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, shellTitle } : t))
     )
   }, [])
 
-  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, nextZIndex }
+  const setShellTitleHistory = useCallback((sessionId: string, shellTitleHistory: string[]) => {
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, shellTitleHistory } : t))
+    )
+  }, [])
+
+  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, nextZIndex }
 }
