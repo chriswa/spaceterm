@@ -2,7 +2,7 @@ const STORAGE_KEY = 'spaceterm:layout'
 
 export interface SavedLayout {
   camera: { x: number; y: number; z: number }
-  terminals: { sessionId: string; x: number; y: number; zIndex: number }[]
+  terminals: { sessionId: string; x: number; y: number; zIndex: number; name?: string; headerColor?: string }[]
   nextZIndex: number
 }
 

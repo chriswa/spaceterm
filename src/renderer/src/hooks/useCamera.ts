@@ -22,10 +22,15 @@ function lerpCamera(from: Camera, to: Camera, t: number): Camera {
   }
 }
 
+export type InputDevice = 'mouse' | 'trackpad'
+
 export function useCamera(initialCamera?: Camera) {
   const [camera, setCamera] = useState<Camera>(initialCamera ?? DEFAULT_CAMERA)
   const cameraRef = useRef(camera)
   cameraRef.current = camera
+
+  const inputDeviceRef = useRef<InputDevice>('mouse')
+  const [inputDevice, setInputDevice] = useState<InputDevice>('mouse')
 
   const targetRef = useRef<CameraTarget | null>(null)
   const rafRef = useRef<number>(0)
@@ -72,15 +77,50 @@ export function useCamera(initialCamera?: Camera) {
     targetRef.current = null
     cancelAnimationFrame(rafRef.current)
 
+    // Detect trackpad: mice can't produce simultaneous X+Y scroll
+    if (e.deltaX !== 0 && inputDeviceRef.current === 'mouse') {
+      inputDeviceRef.current = 'trackpad'
+      setInputDevice('trackpad')
+    }
+
     const point = { x: e.clientX, y: e.clientY }
 
     if (e.ctrlKey || e.metaKey) {
       // Pinch-to-zoom or Ctrl+scroll
       setCamera((cam) => zoomCamera(cam, point, e.deltaY))
-    } else {
-      // Pan
+    } else if (inputDeviceRef.current === 'trackpad') {
+      // Trackpad: pan
       setCamera((cam) => panCamera(cam, e.deltaX, e.deltaY))
+    } else {
+      // Mouse wheel: zoom toward cursor
+      setCamera((cam) => zoomCamera(cam, point, e.deltaY))
     }
+  }, [])
+
+  const handlePanStart = useCallback((e: MouseEvent) => {
+    // Cancel any in-flight animation
+    targetRef.current = null
+    cancelAnimationFrame(rafRef.current)
+
+    const startX = e.clientX
+    const startY = e.clientY
+    const snap = { ...cameraRef.current }
+
+    const onMouseMove = (ev: MouseEvent) => {
+      setCamera({
+        ...snap,
+        x: snap.x + (ev.clientX - startX),
+        y: snap.y + (ev.clientY - startY)
+      })
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
   }, [])
 
   const resetCamera = useCallback(() => {
@@ -89,5 +129,5 @@ export function useCamera(initialCamera?: Camera) {
     setCamera(DEFAULT_CAMERA)
   }, [])
 
-  return { camera, handleWheel, resetCamera, setCamera, animateTo }
+  return { camera, handleWheel, resetCamera, setCamera, animateTo, handlePanStart, inputDevice }
 }

@@ -9,6 +9,8 @@ export interface TerminalInfo {
   zIndex: number
   cols: number
   rows: number
+  name?: string
+  headerColor?: string
 }
 
 function gridPosition(index: number): { x: number; y: number } {
@@ -22,7 +24,7 @@ function gridPosition(index: number): { x: number; y: number } {
 }
 
 interface UseTerminalManagerOptions {
-  savedTerminals?: Record<string, { x: number; y: number; zIndex: number }>
+  savedTerminals?: Record<string, { x: number; y: number; zIndex: number; name?: string; headerColor?: string }>
   initialNextZIndex?: number
 }
 
@@ -49,7 +51,9 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
               y: entry.y,
               zIndex: entry.zIndex,
               cols: s.cols,
-              rows: s.rows
+              rows: s.rows,
+              name: entry.name,
+              headerColor: entry.headerColor
             }
           }
           return { sessionId: s.sessionId, ...gridPosition(i), zIndex: 0, cols: s.cols, rows: s.rows }
@@ -102,5 +106,17 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     )
   }, [])
 
-  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, nextZIndex }
+  const renameTerminal = useCallback((sessionId: string, name: string) => {
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, name } : t))
+    )
+  }, [])
+
+  const setTerminalColor = useCallback((sessionId: string, headerColor: string) => {
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, headerColor } : t))
+    )
+  }, [])
+
+  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, nextZIndex }
 }

@@ -1,9 +1,38 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize } from '../lib/constants'
 
 const DRAG_THRESHOLD = 5
+
+const PRESET_COLORS = [
+  '#f38ba8', '#fab387', '#f9e2af', '#a6e3a1',
+  '#94e2d5', '#89b4fa', '#b4befe', '#cba6f7',
+  '#f5c2e7', '#eba0ac', '#74c7ec', '#7f849c',
+  '#585b70', '#45475a', '#313244', '#181825',
+]
+
+function contrastForeground(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.5 ? '#1e1e2e' : '#cdd6f4'
+}
+
+const TINT_AMOUNT = 0.35
+const DARKEN = 0.55
+
+function tintedBackground(hex: string): string {
+  // Mix the color in, then darken the result
+  let r = Math.round(0x1e + (parseInt(hex.slice(1, 3), 16) - 0x1e) * TINT_AMOUNT)
+  let g = Math.round(0x1e + (parseInt(hex.slice(3, 5), 16) - 0x1e) * TINT_AMOUNT)
+  let b = Math.round(0x2e + (parseInt(hex.slice(5, 7), 16) - 0x2e) * TINT_AMOUNT)
+  r = Math.round(r * DARKEN)
+  g = Math.round(g * DARKEN)
+  b = Math.round(b * DARKEN)
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
 
 interface TerminalCardProps {
   sessionId: string
@@ -13,6 +42,8 @@ interface TerminalCardProps {
   rows: number
   zIndex: number
   zoom: number
+  name?: string
+  headerColor?: string
   focusMode: 'none' | 'soft' | 'hard'
   onSoftFocus: (sessionId: string) => void
   onHardFocus: (sessionId: string) => void
@@ -20,11 +51,13 @@ interface TerminalCardProps {
   onClose: (sessionId: string) => void
   onMove: (sessionId: string, x: number, y: number) => void
   onResize: (sessionId: string, cols: number, rows: number) => void
+  onRename: (sessionId: string, name: string) => void
+  onColorChange: (sessionId: string, color: string) => void
 }
 
 export function TerminalCard({
-  sessionId, x, y, cols, rows, zIndex, zoom, focusMode,
-  onSoftFocus, onHardFocus, onUnfocus, onClose, onMove, onResize
+  sessionId, x, y, cols, rows, zIndex, zoom, name, headerColor, focusMode,
+  onSoftFocus, onHardFocus, onUnfocus, onClose, onMove, onResize, onRename, onColorChange
 }: TerminalCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -88,6 +121,19 @@ export function TerminalCard({
       return false
     })
 
+    term.attachCustomKeyEventHandler((ev) => {
+      window.api.log(`[KeyHandler] type=${ev.type} key=${ev.key} shiftKey=${ev.shiftKey} code=${ev.code}`)
+      if (ev.type === 'keydown' && ev.key === 'Enter' && ev.shiftKey) {
+        // Send CSI u encoding for Shift+Enter: ESC [ 13 ; 2 u
+        // This matches what iTerm2/Ghostty/kitty send, allowing apps
+        // like Claude Code to distinguish newline from submit.
+        window.api.log(`[KeyHandler] Shift+Enter detected, sending CSI u sequence to session ${propsRef.current.sessionId}`)
+        window.api.pty.write(propsRef.current.sessionId, '\x1b[13;2u')
+        return false // prevent xterm's default Enter handling
+      }
+      return true
+    })
+
     try {
       fitAddon.fit()
     } catch {
@@ -140,6 +186,14 @@ export function TerminalCard({
       term.dispose()
     }
   }, [sessionId])
+
+  // Tint xterm background to match header color
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    const bg = headerColor ? tintedBackground(headerColor) : '#1e1e2e'
+    term.options.theme = { ...term.options.theme, background: bg }
+  }, [headerColor])
 
   // Keyboard focus management
   useEffect(() => {
@@ -201,10 +255,31 @@ export function TerminalCard({
     }
   }, [focusMode])
 
+  // Editable title state
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Color picker state
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+
+  // Close color picker on outside click
+  useEffect(() => {
+    if (!pickerOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [pickerOpen])
+
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Don't interfere with header buttons
-    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__reset-size')) return
+    // Don't interfere with header buttons or editable title/color picker
+    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__title, .terminal-card__title-input, .terminal-card__color-picker')) return
 
     // In hard focus, only allow drag from the header (body goes to xterm)
     if (focusMode === 'hard') {
@@ -280,22 +355,85 @@ export function TerminalCard({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <div className="terminal-card__header">
-        <span className="terminal-card__title">{sessionId.slice(0, 8)}</span>
-        <div className="terminal-card__actions">
-          <button
-            className="terminal-card__reset-size"
-            title="Reset to 160×45"
+      <div
+        className="terminal-card__header"
+        style={headerColor ? {
+          backgroundColor: headerColor,
+          color: contrastForeground(headerColor),
+          borderBottomColor: headerColor
+        } : undefined}
+      >
+        {editing ? (
+          <input
+            ref={inputRef}
+            className="terminal-card__title-input"
+            value={editValue}
+            style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
+            onChange={(e) => setEditValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                onRename(sessionId, editValue)
+                setEditing(false)
+              } else if (e.key === 'Escape') {
+                setEditing(false)
+              }
+              e.stopPropagation()
+            }}
+            onBlur={() => {
+              onRename(sessionId, editValue)
+              setEditing(false)
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            autoFocus
+          />
+        ) : (
+          <span
+            className="terminal-card__title"
+            style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
             onClick={(e) => {
               e.stopPropagation()
-              onResize(sessionId, 160, 45)
+              setEditValue(name || sessionId.slice(0, 8))
+              setEditing(true)
             }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            ⬡
-          </button>
+            {name || sessionId.slice(0, 8)}
+          </span>
+        )}
+        <div className="terminal-card__actions">
+          <div style={{ position: 'relative' }} ref={pickerRef}>
+            <button
+              className="terminal-card__color-btn"
+              title="Header color"
+              style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
+              onClick={(e) => {
+                e.stopPropagation()
+                setPickerOpen((prev) => !prev)
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              ●
+            </button>
+            {pickerOpen && (
+              <div className="terminal-card__color-picker" onMouseDown={(e) => e.stopPropagation()}>
+                {PRESET_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    className="terminal-card__color-swatch"
+                    style={{ backgroundColor: color }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onColorChange(sessionId, color)
+                      setPickerOpen(false)
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
           <button
             className="terminal-card__close"
+            style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
             onClick={(e) => { e.stopPropagation(); onClose(sessionId) }}
             onMouseDown={(e) => e.stopPropagation()}
           >

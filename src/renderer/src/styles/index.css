@@ -99,10 +99,10 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 10px;
+  padding: 6px 10px;
   background: #181825;
   border-bottom: 1px solid #313244;
-  font-size: 12px;
+  font-size: 15px;
   user-select: none;
   -webkit-app-region: no-drag;
   cursor: grab;
@@ -113,7 +113,27 @@ html, body, #root {
 }
 
 .terminal-card__title {
-  color: #6c7086;
+  color: #bac2de;
+  cursor: text;
+  font-weight: 700;
+}
+
+.terminal-card__title-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #bac2de;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+  border-bottom: 1px solid #585b70;
+}
+
+.terminal-card__title-input:focus {
+  border-bottom-color: #89b4fa;
 }
 
 .terminal-card__actions {
@@ -122,23 +142,52 @@ html, body, #root {
   gap: 4px;
 }
 
-.terminal-card__reset-size {
+.terminal-card__color-btn {
   width: 20px;
   height: 20px;
   border: none;
   border-radius: 4px;
   background: transparent;
   color: #6c7086;
-  font-size: 12px;
+  font-size: 10px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.terminal-card__reset-size:hover {
-  background: #89b4fa;
-  color: #1e1e2e;
+.terminal-card__color-btn:hover {
+  background: rgba(137, 180, 250, 0.2);
+}
+
+.terminal-card__color-picker {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(4, 20px);
+  gap: 3px;
+  padding: 6px;
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+}
+
+.terminal-card__color-swatch {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.terminal-card__color-swatch:hover {
+  border-color: #cdd6f4;
+  transform: scale(1.15);
 }
 
 .terminal-card__close {

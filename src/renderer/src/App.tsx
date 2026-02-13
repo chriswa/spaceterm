@@ -20,18 +20,18 @@ const savedLayout = loadLayout()
 export function App() {
   const savedTerminals = useMemo(() => {
     if (!savedLayout) return undefined
-    const map: Record<string, { x: number; y: number; zIndex: number }> = {}
+    const map: Record<string, { x: number; y: number; zIndex: number; name?: string; headerColor?: string }> = {}
     for (const t of savedLayout.terminals) {
-      map[t.sessionId] = { x: t.x, y: t.y, zIndex: t.zIndex }
+      map[t.sessionId] = { x: t.x, y: t.y, zIndex: t.zIndex, name: t.name, headerColor: t.headerColor }
     }
     return map
   }, [])
 
-  const { camera, handleWheel, resetCamera, animateTo } = useCamera(savedLayout?.camera)
+  const { camera, handleWheel, resetCamera, animateTo, handlePanStart, inputDevice } = useCamera(savedLayout?.camera)
   const cameraRef = useRef(camera)
   cameraRef.current = camera
 
-  const { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, nextZIndex } =
+  const { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, nextZIndex } =
     useTerminalManager({
       savedTerminals,
       initialNextZIndex: savedLayout?.nextZIndex
@@ -96,7 +96,9 @@ export function App() {
           sessionId: t.sessionId,
           x: t.x,
           y: t.y,
-          zIndex: t.zIndex
+          zIndex: t.zIndex,
+          name: t.name,
+          headerColor: t.headerColor
         })),
         nextZIndex: nextZIndex.current
       })
@@ -141,10 +143,11 @@ export function App() {
     <div className="app">
       <Toolbar
         zoom={camera.z}
+        inputDevice={inputDevice}
         onAddTerminal={addTerminalAtCenter}
         onResetView={resetCamera}
       />
-      <Canvas camera={camera} onWheel={handleWheel}>
+      <Canvas camera={camera} onWheel={handleWheel} onPanStart={handlePanStart} onCanvasClick={handleUnfocus}>
         {terminals.map((t) => (
           <TerminalCard
             key={t.sessionId}
@@ -155,6 +158,8 @@ export function App() {
             rows={t.rows}
             zIndex={t.zIndex}
             zoom={camera.z}
+            name={t.name}
+            headerColor={t.headerColor}
             focusMode={getFocusMode(t.sessionId)}
             onSoftFocus={handleSoftFocus}
             onHardFocus={handleHardFocus}
@@ -162,6 +167,8 @@ export function App() {
             onClose={removeTerminal}
             onMove={moveTerminal}
             onResize={resizeTerminal}
+            onRename={renameTerminal}
+            onColorChange={setTerminalColor}
           />
         ))}
       </Canvas>
