@@ -31,8 +31,8 @@ function createWindow(): void {
 }
 
 function setupIPC(): void {
-  ipcMain.handle('pty:create', async () => {
-    const session = await client!.create()
+  ipcMain.handle('pty:create', async (_event, options?: Record<string, unknown>) => {
+    const session = await client!.create(options as any)
     // Auto-attach so we receive data events for this session
     await client!.attach(session.sessionId)
     return session

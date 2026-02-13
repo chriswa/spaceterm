@@ -12,9 +12,16 @@ export interface SessionInfo {
 
 // --- Client → Server messages ---
 
+export interface CreateOptions {
+  cwd?: string
+  command?: string
+  args?: string[]
+}
+
 export interface CreateMessage {
   type: 'create'
   seq: number
+  options?: CreateOptions
 }
 
 export interface ListMessage {

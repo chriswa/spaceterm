@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import { SOCKET_DIR, SOCKET_PATH } from '../shared/protocol'
 import type { ClientMessage, ServerMessage } from '../shared/protocol'
 import { SessionManager } from './session-manager'
+import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 
 interface ClientConnection {
@@ -33,7 +34,7 @@ function broadcastToAttached(sessionId: string, msg: ServerMessage): void {
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   switch (msg.type) {
     case 'create': {
-      const { sessionId, cols, rows } = sessionManager.create()
+      const { sessionId, cols, rows } = sessionManager.create(msg.options)
       send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
       break
     }
@@ -96,6 +97,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 }
 
 function startServer(): void {
+  // Write shell integration scripts (OSC 7 hooks for CWD reporting)
+  setupShellIntegration()
+
   // Ensure socket directory exists
   fs.mkdirSync(SOCKET_DIR, { recursive: true })
 

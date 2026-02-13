@@ -4,7 +4,7 @@
   "description": "Multiple terminals on a zoomable canvas",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "dev": "concurrently --restart-tries -1 --restart-after 0 \"npm run server:dev\" \"npm run client:dev\"",
     "server:dev": "tsx src/server/index.ts",
     "client:dev": "electron-vite dev",
     "client:build": "electron-vite build",

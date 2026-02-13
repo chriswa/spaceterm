@@ -35,8 +35,18 @@ export function useCamera(initialCamera?: Camera) {
   const targetRef = useRef<CameraTarget | null>(null)
   const rafRef = useRef<number>(0)
 
-  // Animation loop
+  // Cleanup on unmount
   useEffect(() => {
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [])
+
+  const animateTo = useCallback((to: Camera) => {
+    cancelAnimationFrame(rafRef.current)
+    targetRef.current = {
+      from: cameraRef.current,
+      to,
+      startedAt: performance.now()
+    }
     function tick() {
       const target = targetRef.current
       if (!target) return
@@ -53,21 +63,7 @@ export function useCamera(initialCamera?: Camera) {
         rafRef.current = requestAnimationFrame(tick)
       }
     }
-
-    if (targetRef.current) {
-      rafRef.current = requestAnimationFrame(tick)
-    }
-
-    return () => cancelAnimationFrame(rafRef.current)
-  })
-
-  const animateTo = useCallback((to: Camera) => {
-    cancelAnimationFrame(rafRef.current)
-    targetRef.current = {
-      from: cameraRef.current,
-      to,
-      startedAt: performance.now()
-    }
+    rafRef.current = requestAnimationFrame(tick)
   }, [])
 
   const handleWheel = useCallback((e: WheelEvent) => {
@@ -129,5 +125,11 @@ export function useCamera(initialCamera?: Camera) {
     setCamera(DEFAULT_CAMERA)
   }, [])
 
-  return { camera, handleWheel, resetCamera, setCamera, animateTo, handlePanStart, inputDevice }
+  const toggleInputDevice = useCallback(() => {
+    const next = inputDeviceRef.current === 'mouse' ? 'trackpad' : 'mouse'
+    inputDeviceRef.current = next
+    setInputDevice(next)
+  }, [])
+
+  return { camera, handleWheel, resetCamera, setCamera, animateTo, handlePanStart, inputDevice, toggleInputDevice }
 }

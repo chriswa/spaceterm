@@ -6,8 +6,14 @@ export interface SessionInfo {
   rows: number
 }
 
+export interface CreateOptions {
+  cwd?: string
+  command?: string
+  args?: string[]
+}
+
 export interface PtyApi {
-  create(): Promise<SessionInfo>
+  create(options?: CreateOptions): Promise<SessionInfo>
   list(): Promise<SessionInfo[]>
   attach(sessionId: string): Promise<string>
   write(sessionId: string, data: string): void
@@ -19,7 +25,7 @@ export interface PtyApi {
 }
 
 const ptyApi: PtyApi = {
-  create: () => ipcRenderer.invoke('pty:create'),
+  create: (options?) => ipcRenderer.invoke('pty:create', options),
 
   list: () => ipcRenderer.invoke('pty:list'),
 

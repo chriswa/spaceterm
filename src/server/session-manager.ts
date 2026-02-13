@@ -1,8 +1,10 @@
 import * as pty from 'node-pty'
+import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
-import type { SessionInfo } from '../shared/protocol'
+import { getShellEnv } from './shell-integration'
+import type { SessionInfo, CreateOptions } from '../shared/protocol'
 
 interface Session {
   id: string
@@ -26,18 +28,29 @@ export class SessionManager {
     this.onExit = onExit
   }
 
-  create(): SessionInfo {
+  create(options?: CreateOptions): SessionInfo {
     const sessionId = randomUUID()
     const cols = 160
     const rows = 45
     const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
+    const home = process.env.HOME || '/'
 
-    const ptyProcess = pty.spawn(shell, [], {
+    // Resolve working directory: use options.cwd if it exists on disk, else $HOME
+    const cwd = options?.cwd && existsSync(options.cwd) ? options.cwd : home
+
+    const baseEnv = process.env as Record<string, string>
+    const isCommand = !!options?.command
+    const executable = isCommand ? options!.command! : shell
+    const args = isCommand ? (options!.args || []) : []
+    // Only apply shell integration env when spawning a shell (not a command)
+    const env = isCommand ? baseEnv : getShellEnv(shell, baseEnv)
+
+    const ptyProcess = pty.spawn(executable, args, {
       name: 'xterm-256color',
       cols,
       rows,
-      cwd: process.env.HOME || '/',
-      env: process.env as Record<string, string>
+      cwd,
+      env
     })
 
     const scrollback = new ScrollbackBuffer()

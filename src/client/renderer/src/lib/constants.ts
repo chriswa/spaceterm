@@ -7,6 +7,10 @@ export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 1.25
 export const ZOOM_SENSITIVITY = 0.004
 
+export const WHEEL_WINDOW_MS = 150              // accumulation window for gesture detection
+export const HORIZONTAL_SCROLL_THRESHOLD = 15   // min accumulated |deltaX| in pixels over WHEEL_WINDOW_MS
+export const PINCH_ZOOM_THRESHOLD = 2           // min |deltaY| per event with ctrlKey
+
 // xterm.js cell pixel dimensions for Menlo 14px.
 // Measured via: (term as any)._core._renderService.dimensions.css.cell
 // Slightly overestimated to avoid single-character wrapping; check console logs to calibrate.

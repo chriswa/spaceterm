@@ -56,6 +56,24 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
 }
 
+.toolbar__status-btn {
+  background: transparent;
+  border: none;
+  color: #6c7086;
+  font-size: 13px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.toolbar__status-btn:hover {
+  background: #313244;
+  color: #cdd6f4;
+}
+
 /* Canvas */
 .canvas-viewport {
   flex: 1;
@@ -136,10 +154,24 @@ html, body, #root {
   border-bottom-color: #89b4fa;
 }
 
+.terminal-card__shell-title {
+  color: #6c7086;
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: auto;
+  margin-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+  flex-shrink: 1;
+}
+
 .terminal-card__actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .terminal-card__color-btn {

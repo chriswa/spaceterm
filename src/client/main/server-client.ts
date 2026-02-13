@@ -3,6 +3,7 @@ import { EventEmitter } from 'events'
 import { SOCKET_PATH } from '../../shared/protocol'
 import type {
   ClientMessage,
+  CreateOptions,
   ServerMessage,
   SessionInfo
 } from '../../shared/protocol'
@@ -128,8 +129,8 @@ export class ServerClient extends EventEmitter {
     this.socket.write(JSON.stringify(msg) + '\n')
   }
 
-  async create(): Promise<SessionInfo> {
-    const resp = await this.sendRequest({ type: 'create' })
+  async create(options?: CreateOptions): Promise<SessionInfo> {
+    const resp = await this.sendRequest({ type: 'create', options })
     if (resp.type === 'created') return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
     throw new Error('Unexpected response')
   }

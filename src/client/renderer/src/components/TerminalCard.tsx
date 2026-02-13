@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize } from '../lib/constants'
+import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_WINDOW_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
 
 const DRAG_THRESHOLD = 5
 
@@ -44,6 +44,7 @@ interface TerminalCardProps {
   zoom: number
   name?: string
   headerColor?: string
+  shellTitle?: string
   focusMode: 'none' | 'soft' | 'hard'
   onSoftFocus: (sessionId: string) => void
   onHardFocus: (sessionId: string) => void
@@ -53,20 +54,24 @@ interface TerminalCardProps {
   onResize: (sessionId: string, cols: number, rows: number) => void
   onRename: (sessionId: string, name: string) => void
   onColorChange: (sessionId: string, color: string) => void
+  onCwdChange?: (sessionId: string, cwd: string) => void
+  onShellTitleChange?: (sessionId: string, title: string) => void
 }
 
 export function TerminalCard({
-  sessionId, x, y, cols, rows, zIndex, zoom, name, headerColor, focusMode,
-  onSoftFocus, onHardFocus, onUnfocus, onClose, onMove, onResize, onRename, onColorChange
+  sessionId, x, y, cols, rows, zIndex, zoom, name, headerColor, shellTitle, focusMode,
+  onSoftFocus, onHardFocus, onUnfocus, onClose, onMove, onResize, onRename, onColorChange,
+  onCwdChange, onShellTitleChange
 }: TerminalCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focusMode, sessionId })
-  propsRef.current = { x, y, zoom, focusMode, sessionId }
+  const propsRef = useRef({ x, y, zoom, focusMode, sessionId, onUnfocus, onCwdChange, onShellTitleChange })
+  propsRef.current = { x, y, zoom, focusMode, sessionId, onUnfocus, onCwdChange, onShellTitleChange }
 
   // Derive pixel size from cols/rows
   const { width, height } = terminalPixelSize(cols, rows)
@@ -107,14 +112,64 @@ export function TerminalCard({
     term.loadAddon(fitAddon)
     term.open(containerRef.current)
 
+    // Register OSC 7 handler for CWD reporting
+    term.parser.registerOscHandler(7, (data) => {
+      // data is "file://HOST/path" — extract the path
+      try {
+        const url = new URL(data)
+        const cwd = decodeURIComponent(url.pathname)
+        if (cwd) {
+          propsRef.current.onCwdChange?.(propsRef.current.sessionId, cwd)
+        }
+      } catch {
+        // Malformed URL, ignore
+      }
+      return true
+    })
+
+    // Register shell title change handler (OSC 0 / OSC 2)
+    term.onTitleChange((title) => {
+      propsRef.current.onShellTitleChange?.(propsRef.current.sessionId, title)
+    })
+
     // Custom wheel handler: controls both xterm scroll processing AND
     // canvas propagation. Attached once at mount — no race condition
     // since propsRef is updated synchronously during render.
     term.attachCustomWheelEventHandler((ev) => {
       if (propsRef.current.focusMode === 'hard') {
-        // Prevent the event from bubbling to the canvas (no pan/zoom)
+        // Pinch-to-zoom: ctrlKey (how macOS reports pinch) + above threshold.
+        // Per-event check is fine since ctrlKey is a strong disambiguator.
+        if (ev.ctrlKey && Math.abs(ev.deltaY) > PINCH_ZOOM_THRESHOLD) {
+          propsRef.current.onUnfocus()
+          return false
+        }
+
+        // Accumulate deltas over a time window for frame-rate-independent
+        // gesture detection. At 60Hz each event has ~2× the delta of 120Hz,
+        // but summed over WHEEL_WINDOW_MS they converge to the same total.
+        const now = performance.now()
+        const acc = wheelAccRef.current
+        if (now - acc.t > WHEEL_WINDOW_MS) {
+          acc.dx = 0
+          acc.dy = 0
+        }
+        acc.dx += Math.abs(ev.deltaX)
+        acc.dy += Math.abs(ev.deltaY)
+        acc.t = now
+
+        // Horizontal scroll: accumulated horizontal exceeds threshold
+        // AND dominates vertical over the window
+        if (acc.dx > HORIZONTAL_SCROLL_THRESHOLD && acc.dx > acc.dy) {
+          acc.dx = 0
+          acc.dy = 0
+          propsRef.current.onUnfocus()
+          // Return false (block xterm) but DON'T stopPropagation —
+          // event bubbles to canvas which handles pan/zoom immediately
+          return false
+        }
+
+        // Normal vertical scroll: xterm handles it, canvas doesn't see it
         ev.stopPropagation()
-        // Let xterm handle the scroll
         return true
       }
       // Block xterm's scroll processing in soft/none focus
@@ -124,11 +179,14 @@ export function TerminalCard({
     term.attachCustomKeyEventHandler((ev) => {
       window.api.log(`[KeyHandler] type=${ev.type} key=${ev.key} shiftKey=${ev.shiftKey} code=${ev.code}`)
       if (ev.type === 'keydown' && ev.key === 'Enter' && ev.shiftKey) {
-        // Send CSI u encoding for Shift+Enter: ESC [ 13 ; 2 u
-        // This matches what iTerm2/Ghostty/kitty send, allowing apps
-        // like Claude Code to distinguish newline from submit.
-        window.api.log(`[KeyHandler] Shift+Enter detected, sending CSI u sequence to session ${propsRef.current.sessionId}`)
-        window.api.pty.write(propsRef.current.sessionId, '\x1b[13;2u')
+        // Send ESC + CR (\x1b\r) for Shift+Enter.
+        // Ink's parseKeypress interprets this as meta+return, which Claude Code
+        // (and other Ink-based CLIs) treat as "insert newline" instead of submit.
+        // This is more compatible than CSI u (\x1b[13;2u) which only works
+        // with recent Ink versions. ESC+CR works across Claude Code versions,
+        // tmux, and SSH sessions.
+        window.api.log(`[KeyHandler] Shift+Enter detected, sending ESC+CR to session ${propsRef.current.sessionId}`)
+        window.api.pty.write(propsRef.current.sessionId, '\x1b\r')
         return false // prevent xterm's default Enter handling
       }
       return true
@@ -252,6 +310,36 @@ export function TerminalCard({
       screen.removeEventListener('mousedown', adjustCoords, { capture: true })
       screen.removeEventListener('mousemove', adjustCoords, { capture: true })
       screen.removeEventListener('mouseup', adjustCoords, { capture: true })
+    }
+  }, [focusMode])
+
+  // Filter non-left-click mouse buttons from reaching xterm during hard focus.
+  // Blocks right-click, middle-click, and buttons 3/4 (prep for future custom actions).
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || focusMode !== 'hard') return
+
+    const screen = container.querySelector('.xterm-screen') as HTMLElement
+    if (!screen) return
+
+    const filter = (e: MouseEvent) => {
+      if (e.button !== 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+      }
+    }
+
+    screen.addEventListener('mousedown', filter, { capture: true })
+    screen.addEventListener('mouseup', filter, { capture: true })
+    screen.addEventListener('auxclick', filter, { capture: true })
+    screen.addEventListener('contextmenu', filter, { capture: true })
+
+    return () => {
+      screen.removeEventListener('mousedown', filter, { capture: true })
+      screen.removeEventListener('mouseup', filter, { capture: true })
+      screen.removeEventListener('auxclick', filter, { capture: true })
+      screen.removeEventListener('contextmenu', filter, { capture: true })
     }
   }, [focusMode])
 
@@ -398,6 +486,14 @@ export function TerminalCard({
             onMouseDown={(e) => e.stopPropagation()}
           >
             {name || sessionId.slice(0, 8)}
+          </span>
+        )}
+        {shellTitle && (
+          <span
+            className="terminal-card__shell-title"
+            style={headerColor ? { color: contrastForeground(headerColor), opacity: 0.6 } : undefined}
+          >
+            {shellTitle}
           </span>
         )}
         <div className="terminal-card__actions">

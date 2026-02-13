@@ -11,6 +11,7 @@ export interface TerminalInfo {
   rows: number
   name?: string
   headerColor?: string
+  shellTitle?: string
 }
 
 function gridPosition(index: number): { x: number; y: number } {
@@ -72,8 +73,8 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     }
   }, [])
 
-  const addTerminal = useCallback(async (position?: { x: number; y: number }) => {
-    const { sessionId, cols, rows } = await window.api.pty.create()
+  const addTerminal = useCallback(async (position?: { x: number; y: number }, options?: CreateOptions) => {
+    const { sessionId, cols, rows } = await window.api.pty.create(options)
     const z = nextZIndex.current++
 
     setTerminals((prev) => {
@@ -118,5 +119,11 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     )
   }, [])
 
-  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, nextZIndex }
+  const setShellTitle = useCallback((sessionId: string, shellTitle: string) => {
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, shellTitle } : t))
+    )
+  }, [])
+
+  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, nextZIndex }
 }

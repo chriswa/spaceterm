@@ -4,8 +4,14 @@ interface SessionInfo {
   rows: number
 }
 
+interface CreateOptions {
+  cwd?: string
+  command?: string
+  args?: string[]
+}
+
 interface PtyApi {
-  create(): Promise<SessionInfo>
+  create(options?: CreateOptions): Promise<SessionInfo>
   list(): Promise<SessionInfo[]>
   attach(sessionId: string): Promise<string>
   write(sessionId: string, data: string): void
