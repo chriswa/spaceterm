@@ -4,13 +4,14 @@
   "description": "Multiple terminals on a zoomable canvas",
   "main": "./out/main/index.js",
   "scripts": {
-    "server": "tsx src/server/index.ts",
-    "dev": "electron-vite dev",
-    "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "postinstall": "electron-rebuild",
-    "package": "electron-vite build && electron-builder"
+    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "server:dev": "tsx src/server/index.ts",
+    "client:dev": "electron-vite dev",
+    "client:build": "electron-vite build",
+    "client:preview": "electron-vite preview",
+    "client:package": "electron-vite build && electron-builder",
+    "build": "npm run client:build",
+    "postinstall": "electron-rebuild"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

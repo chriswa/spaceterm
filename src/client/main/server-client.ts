@@ -1,12 +1,12 @@
 import * as net from 'net'
 import { EventEmitter } from 'events'
-import { SOCKET_PATH } from '../shared/protocol'
+import { SOCKET_PATH } from '../../shared/protocol'
 import type {
   ClientMessage,
   ServerMessage,
   SessionInfo
-} from '../shared/protocol'
-import { LineParser } from '../server/line-parser'
+} from '../../shared/protocol'
+import { LineParser } from '../../server/line-parser'
 
 const RECONNECT_DELAY = 2000
 
