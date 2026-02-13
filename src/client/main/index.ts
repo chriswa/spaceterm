@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
@@ -58,6 +58,12 @@ function setupIPC(): void {
     logger.log(message)
   })
 
+  ipcMain.handle('shell:openExternal', (_event, url: string) => {
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://')) {
+      shell.openExternal(url)
+    }
+  })
+
   ipcMain.handle('pty:destroy', async (_event, sessionId: string) => {
     await client!.destroy(sessionId)
   })
@@ -92,6 +98,8 @@ function wireClientEvents(): void {
     }
   })
 }
+
+app.setName('Spaceterm')
 
 app.whenReady().then(async () => {
   logger.init()

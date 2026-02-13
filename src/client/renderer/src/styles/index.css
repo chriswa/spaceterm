@@ -249,6 +249,18 @@ html, body, #root {
   min-height: 0;
 }
 
+.terminal-card__footer {
+  background: #181825;
+  border-top: 1px solid #313244;
+  padding: 2px 10px;
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  white-space: nowrap;
+  user-select: none;
+  color: #6c7086;
+}
+
 .terminal-card__body .xterm {
   height: 100%;
 }

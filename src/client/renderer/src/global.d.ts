@@ -25,6 +25,7 @@ interface PtyApi {
 interface Api {
   pty: PtyApi
   log(message: string): void
+  openExternal(url: string): Promise<void>
 }
 
 declare interface Window {

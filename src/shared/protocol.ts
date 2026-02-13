@@ -3,6 +3,7 @@ import { homedir } from 'os'
 
 export const SOCKET_DIR = join(homedir(), '.spaceterm')
 export const SOCKET_PATH = join(SOCKET_DIR, 'spaceterm.sock')
+export const HOOK_LOG_DIR = join(SOCKET_DIR, 'hook-logs')
 
 export interface SessionInfo {
   sessionId: string
@@ -60,6 +61,12 @@ export interface ResizeMessage {
   rows: number
 }
 
+export interface HookMessage {
+  type: 'hook'
+  surfaceId: string
+  payload: Record<string, unknown>
+}
+
 export type ClientMessage =
   | CreateMessage
   | ListMessage
@@ -68,6 +75,7 @@ export type ClientMessage =
   | DestroyMessage
   | WriteMessage
   | ResizeMessage
+  | HookMessage
 
 // --- Server → Client messages ---
 

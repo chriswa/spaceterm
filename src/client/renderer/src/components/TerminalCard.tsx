@@ -1,38 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_WINDOW_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
+import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
 
 const DRAG_THRESHOLD = 5
-
-const PRESET_COLORS = [
-  '#f38ba8', '#fab387', '#f9e2af', '#a6e3a1',
-  '#94e2d5', '#89b4fa', '#b4befe', '#cba6f7',
-  '#f5c2e7', '#eba0ac', '#74c7ec', '#7f849c',
-  '#585b70', '#45475a', '#313244', '#181825',
-]
-
-function contrastForeground(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return luminance > 0.5 ? '#1e1e2e' : '#cdd6f4'
-}
-
-const TINT_AMOUNT = 0.35
-const DARKEN = 0.55
-
-function tintedBackground(hex: string): string {
-  // Mix the color in, then darken the result
-  let r = Math.round(0x1e + (parseInt(hex.slice(1, 3), 16) - 0x1e) * TINT_AMOUNT)
-  let g = Math.round(0x1e + (parseInt(hex.slice(3, 5), 16) - 0x1e) * TINT_AMOUNT)
-  let b = Math.round(0x2e + (parseInt(hex.slice(5, 7), 16) - 0x2e) * TINT_AMOUNT)
-  r = Math.round(r * DARKEN)
-  g = Math.round(g * DARKEN)
-  b = Math.round(b * DARKEN)
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-}
+const textEncoder = new TextEncoder()
 
 interface TerminalCardProps {
   sessionId: string
@@ -43,8 +18,9 @@ interface TerminalCardProps {
   zIndex: number
   zoom: number
   name?: string
-  headerColor?: string
+  colorPresetId?: string
   shellTitle?: string
+  shellTitleHistory?: string[]
   focusMode: 'none' | 'soft' | 'hard'
   onSoftFocus: (sessionId: string) => void
   onHardFocus: (sessionId: string) => void
@@ -59,10 +35,11 @@ interface TerminalCardProps {
 }
 
 export function TerminalCard({
-  sessionId, x, y, cols, rows, zIndex, zoom, name, headerColor, shellTitle, focusMode,
+  sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, focusMode,
   onSoftFocus, onHardFocus, onUnfocus, onClose, onMove, onResize, onRename, onColorChange,
   onCwdChange, onShellTitleChange
 }: TerminalCardProps) {
+  const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -110,7 +87,22 @@ export function TerminalCard({
 
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
+    term.loadAddon(new WebLinksAddon((event, url) => {
+      if (event.metaKey) {
+        window.api.openExternal(url)
+      }
+    }))
+    term.options.linkHandler = {
+      activate: (event, url) => {
+        if (event.metaKey) {
+          window.api.openExternal(url)
+        }
+      },
+      allowNonHttpProtocols: true
+    }
+    term.loadAddon(new Unicode11Addon())
     term.open(containerRef.current)
+    term.unicode.activeVersion = '11'
 
     // Register OSC 7 handler for CWD reporting
     term.parser.registerOscHandler(7, (data) => {
@@ -178,16 +170,17 @@ export function TerminalCard({
 
     term.attachCustomKeyEventHandler((ev) => {
       window.api.log(`[KeyHandler] type=${ev.type} key=${ev.key} shiftKey=${ev.shiftKey} code=${ev.code}`)
-      if (ev.type === 'keydown' && ev.key === 'Enter' && ev.shiftKey) {
-        // Send ESC + CR (\x1b\r) for Shift+Enter.
-        // Ink's parseKeypress interprets this as meta+return, which Claude Code
-        // (and other Ink-based CLIs) treat as "insert newline" instead of submit.
-        // This is more compatible than CSI u (\x1b[13;2u) which only works
-        // with recent Ink versions. ESC+CR works across Claude Code versions,
-        // tmux, and SSH sessions.
-        window.api.log(`[KeyHandler] Shift+Enter detected, sending ESC+CR to session ${propsRef.current.sessionId}`)
-        window.api.pty.write(propsRef.current.sessionId, '\x1b\r')
-        return false // prevent xterm's default Enter handling
+      if (ev.key === 'Enter' && ev.shiftKey) {
+        if (ev.type === 'keydown') {
+          // Send ESC + CR (\x1b\r) for Shift+Enter.
+          // Ink's parseKeypress interprets this as meta+return, which Claude Code
+          // (and other Ink-based CLIs) treat as "insert newline" instead of submit.
+          window.api.log(`[KeyHandler] Shift+Enter detected, sending ESC+CR to session ${propsRef.current.sessionId}`)
+          window.api.pty.write(propsRef.current.sessionId, '\x1b\r')
+        }
+        // Block all event types (keydown, keypress, keyup) for Shift+Enter
+        // to prevent xterm from also sending a regular \r via the keypress event.
+        return false
       }
       return true
     })
@@ -211,7 +204,7 @@ export function TerminalCard({
     window.api.pty.attach(sessionId).then((scrollback) => {
       if (cancelled) return
       if (scrollback.length > 0) {
-        term.write(scrollback)
+        term.write(textEncoder.encode(scrollback))
       }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
@@ -219,7 +212,7 @@ export function TerminalCard({
 
     // Wire up IPC
     const cleanupData = window.api.pty.onData(sessionId, (data) => {
-      term.write(data)
+      term.write(textEncoder.encode(data))
     })
 
     const cleanupExit = window.api.pty.onExit(sessionId, () => {
@@ -245,13 +238,13 @@ export function TerminalCard({
     }
   }, [sessionId])
 
-  // Tint xterm background to match header color
+  // Tint xterm background to match color preset
   useEffect(() => {
     const term = terminalRef.current
     if (!term) return
-    const bg = headerColor ? tintedBackground(headerColor) : '#1e1e2e'
+    const bg = preset?.terminalBg ?? '#1e1e2e'
     term.options.theme = { ...term.options.theme, background: bg }
-  }, [headerColor])
+  }, [preset])
 
   // Keyboard focus management
   useEffect(() => {
@@ -445,10 +438,10 @@ export function TerminalCard({
     >
       <div
         className="terminal-card__header"
-        style={headerColor ? {
-          backgroundColor: headerColor,
-          color: contrastForeground(headerColor),
-          borderBottomColor: headerColor
+        style={preset ? {
+          backgroundColor: preset.titleBarBg,
+          color: preset.titleBarFg,
+          borderBottomColor: preset.titleBarBg
         } : undefined}
       >
         {editing ? (
@@ -456,7 +449,7 @@ export function TerminalCard({
             ref={inputRef}
             className="terminal-card__title-input"
             value={editValue}
-            style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
+            style={preset ? { color: preset.titleBarFg } : undefined}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -477,7 +470,7 @@ export function TerminalCard({
         ) : (
           <span
             className="terminal-card__title"
-            style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
+            style={preset ? { color: preset.titleBarFg } : undefined}
             onClick={(e) => {
               e.stopPropagation()
               setEditValue(name || sessionId.slice(0, 8))
@@ -491,7 +484,7 @@ export function TerminalCard({
         {shellTitle && (
           <span
             className="terminal-card__shell-title"
-            style={headerColor ? { color: contrastForeground(headerColor), opacity: 0.6 } : undefined}
+            style={preset ? { color: preset.titleBarFg, opacity: 0.6 } : undefined}
           >
             {shellTitle}
           </span>
@@ -501,7 +494,7 @@ export function TerminalCard({
             <button
               className="terminal-card__color-btn"
               title="Header color"
-              style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
+              style={preset ? { color: preset.titleBarFg } : undefined}
               onClick={(e) => {
                 e.stopPropagation()
                 setPickerOpen((prev) => !prev)
@@ -512,14 +505,14 @@ export function TerminalCard({
             </button>
             {pickerOpen && (
               <div className="terminal-card__color-picker" onMouseDown={(e) => e.stopPropagation()}>
-                {PRESET_COLORS.map((color) => (
+                {COLOR_PRESETS.map((p) => (
                   <button
-                    key={color}
+                    key={p.id}
                     className="terminal-card__color-swatch"
-                    style={{ backgroundColor: color }}
+                    style={{ backgroundColor: p.titleBarBg }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onColorChange(sessionId, color)
+                      onColorChange(sessionId, p.id)
                       setPickerOpen(false)
                     }}
                   />
@@ -529,7 +522,7 @@ export function TerminalCard({
           </div>
           <button
             className="terminal-card__close"
-            style={headerColor ? { color: contrastForeground(headerColor) } : undefined}
+            style={preset ? { color: preset.titleBarFg } : undefined}
             onClick={(e) => { e.stopPropagation(); onClose(sessionId) }}
             onMouseDown={(e) => e.stopPropagation()}
           >
@@ -538,6 +531,9 @@ export function TerminalCard({
         </div>
       </div>
       <div className="terminal-card__body" ref={containerRef} />
+      <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
+        {(shellTitleHistory ?? []).join(' ◀ ').slice(0, 5000)}
+      </div>
     </div>
   )
 }

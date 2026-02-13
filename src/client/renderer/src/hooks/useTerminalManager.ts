@@ -10,8 +10,9 @@ export interface TerminalInfo {
   cols: number
   rows: number
   name?: string
-  headerColor?: string
+  colorPresetId?: string
   shellTitle?: string
+  shellTitleHistory?: string[]
 }
 
 function gridPosition(index: number): { x: number; y: number } {
@@ -25,7 +26,7 @@ function gridPosition(index: number): { x: number; y: number } {
 }
 
 interface UseTerminalManagerOptions {
-  savedTerminals?: Record<string, { x: number; y: number; zIndex: number; name?: string; headerColor?: string }>
+  savedTerminals?: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string }>
   initialNextZIndex?: number
 }
 
@@ -54,10 +55,10 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
               cols: s.cols,
               rows: s.rows,
               name: entry.name,
-              headerColor: entry.headerColor
+              colorPresetId: entry.colorPresetId
             }
           }
-          return { sessionId: s.sessionId, ...gridPosition(i), zIndex: 0, cols: s.cols, rows: s.rows }
+          return { sessionId: s.sessionId, ...gridPosition(i), zIndex: 0, cols: s.cols, rows: s.rows, colorPresetId: 'default' }
         })
 
         setTerminals(restored)
@@ -79,7 +80,7 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
 
     setTerminals((prev) => {
       const pos = position ?? gridPosition(prev.length)
-      return [...prev, { sessionId, ...pos, zIndex: z, cols, rows }]
+      return [...prev, { sessionId, ...pos, zIndex: z, cols, rows, colorPresetId: 'default' }]
     })
   }, [])
 
@@ -113,15 +114,20 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     )
   }, [])
 
-  const setTerminalColor = useCallback((sessionId: string, headerColor: string) => {
+  const setTerminalColor = useCallback((sessionId: string, colorPresetId: string) => {
     setTerminals((prev) =>
-      prev.map((t) => (t.sessionId === sessionId ? { ...t, headerColor } : t))
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, colorPresetId } : t))
     )
   }, [])
 
   const setShellTitle = useCallback((sessionId: string, shellTitle: string) => {
     setTerminals((prev) =>
-      prev.map((t) => (t.sessionId === sessionId ? { ...t, shellTitle } : t))
+      prev.map((t) => {
+        if (t.sessionId !== sessionId) return t
+        const history = t.shellTitleHistory ?? []
+        const newHistory = history[0] === shellTitle ? history : [shellTitle, ...history]
+        return { ...t, shellTitle, shellTitleHistory: newHistory }
+      })
     )
   }, [])
 

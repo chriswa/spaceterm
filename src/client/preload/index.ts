@@ -60,5 +60,6 @@ const ptyApi: PtyApi = {
 
 contextBridge.exposeInMainWorld('api', {
   pty: ptyApi,
-  log: (message: string) => ipcRenderer.send('log', message)
+  log: (message: string) => ipcRenderer.send('log', message),
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
 })

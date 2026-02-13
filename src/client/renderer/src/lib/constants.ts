@@ -17,11 +17,11 @@ export const PINCH_ZOOM_THRESHOLD = 2           // min |deltaY| per event with c
 export const CELL_WIDTH = 8.4375
 export const CELL_HEIGHT = 16
 
-// Card chrome (borders + header + body padding) around the terminal area.
+// Card chrome (borders + header + body padding + footer) around the terminal area.
 // Horizontal: 2px border × 2 + 2px body padding × 2 + 8px scrollbar gutter = 16px
-// Vertical: 2px border × 2 + 28px header + 1px header border-bottom + 2px body padding-top = 35px
+// Vertical: 2px border × 2 + 28px header + 1px header border-bottom + 2px body padding-top + 1px footer border-top + 4px footer padding + 16px footer line = 56px
 export const CHROME_W = 16
-export const CHROME_H = 35
+export const CHROME_H = 56
 
 export function terminalPixelSize(cols: number, rows: number): { width: number; height: number } {
   return {

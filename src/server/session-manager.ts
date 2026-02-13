@@ -43,7 +43,9 @@ export class SessionManager {
     const executable = isCommand ? options!.command! : shell
     const args = isCommand ? (options!.args || []) : []
     // Only apply shell integration env when spawning a shell (not a command)
-    const env = isCommand ? baseEnv : getShellEnv(shell, baseEnv)
+    // Always copy env to avoid mutating process.env
+    const env = isCommand ? { ...baseEnv } : getShellEnv(shell, baseEnv)
+    env.SPACETERM_SURFACE_ID = sessionId
 
     const ptyProcess = pty.spawn(executable, args, {
       name: 'xterm-256color',

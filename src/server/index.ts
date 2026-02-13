@@ -1,6 +1,7 @@
 import * as net from 'net'
 import * as fs from 'fs'
-import { SOCKET_DIR, SOCKET_PATH } from '../shared/protocol'
+import * as path from 'path'
+import { SOCKET_DIR, SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, ServerMessage } from '../shared/protocol'
 import { SessionManager } from './session-manager'
 import { setupShellIntegration } from './shell-integration'
@@ -14,6 +15,25 @@ interface ClientConnection {
 
 const clients = new Set<ClientConnection>()
 let sessionManager: SessionManager
+
+function localISOTimestamp(): string {
+  const now = new Date()
+  const offset = -now.getTimezoneOffset()
+  const sign = offset >= 0 ? '+' : '-'
+  const abs = Math.abs(offset)
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0')
+  const mm = String(abs % 60).padStart(2, '0')
+  return (
+    now.getFullYear() +
+    '-' + String(now.getMonth() + 1).padStart(2, '0') +
+    '-' + String(now.getDate()).padStart(2, '0') +
+    'T' + String(now.getHours()).padStart(2, '0') +
+    ':' + String(now.getMinutes()).padStart(2, '0') +
+    ':' + String(now.getSeconds()).padStart(2, '0') +
+    '.' + String(now.getMilliseconds()).padStart(3, '0') +
+    sign + hh + ':' + mm
+  )
+}
 
 function send(socket: net.Socket, msg: ServerMessage): void {
   try {
@@ -93,6 +113,24 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       sessionManager.resize(msg.sessionId, msg.cols, msg.rows)
       break
     }
+
+    case 'hook': {
+      const hookType =
+        msg.payload && typeof msg.payload === 'object' && 'hook_event_name' in msg.payload
+          ? String(msg.payload.hook_event_name)
+          : 'unknown'
+      const logEntry =
+        JSON.stringify({
+          timestamp: localISOTimestamp(),
+          hookType,
+          payload: msg.payload
+        }) + '\n'
+      const logPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
+      fs.appendFile(logPath, logEntry, (err) => {
+        if (err) console.error(`Failed to write hook log: ${err.message}`)
+      })
+      break
+    }
   }
 }
 
@@ -102,6 +140,7 @@ function startServer(): void {
 
   // Ensure socket directory exists
   fs.mkdirSync(SOCKET_DIR, { recursive: true })
+  fs.mkdirSync(HOOK_LOG_DIR, { recursive: true })
 
   // Remove stale socket file
   try {

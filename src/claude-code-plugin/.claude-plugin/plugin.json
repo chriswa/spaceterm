@@ -1,0 +1,5 @@
+{
+  "name": "spaceterm-hooks",
+  "version": "0.1.0",
+  "description": "Captures all Claude Code hook events and sends them to the spaceterm server"
+}

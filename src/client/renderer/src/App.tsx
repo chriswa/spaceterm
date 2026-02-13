@@ -20,9 +20,9 @@ const savedLayout = loadLayout()
 export function App() {
   const savedTerminals = useMemo(() => {
     if (!savedLayout) return undefined
-    const map: Record<string, { x: number; y: number; zIndex: number; name?: string; headerColor?: string }> = {}
+    const map: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string }> = {}
     for (const t of savedLayout.terminals) {
-      map[t.sessionId] = { x: t.x, y: t.y, zIndex: t.zIndex, name: t.name, headerColor: t.headerColor }
+      map[t.sessionId] = { x: t.x, y: t.y, zIndex: t.zIndex, name: t.name, colorPresetId: t.colorPresetId }
     }
     return map
   }, [])
@@ -50,7 +50,9 @@ export function App() {
   }, [])
 
   const handleShellTitleChange = useCallback((sessionId: string, title: string) => {
-    setShellTitle(sessionId, title)
+    const stripped = title.replace(/^[^\x20-\x7E]+\s*/, '').trim()
+    if (!stripped) return
+    setShellTitle(sessionId, stripped)
   }, [setShellTitle])
 
   const handleRemoveTerminal = useCallback(async (sessionId: string) => {
@@ -124,7 +126,7 @@ export function App() {
           y: t.y,
           zIndex: t.zIndex,
           name: t.name,
-          headerColor: t.headerColor
+          colorPresetId: t.colorPresetId
         })),
         nextZIndex: nextZIndex.current
       })
@@ -196,8 +198,9 @@ export function App() {
             zIndex={t.zIndex}
             zoom={camera.z}
             name={t.name}
-            headerColor={t.headerColor}
+            colorPresetId={t.colorPresetId}
             shellTitle={t.shellTitle}
+            shellTitleHistory={t.shellTitleHistory}
             focusMode={getFocusMode(t.sessionId)}
             onSoftFocus={handleSoftFocus}
             onHardFocus={handleHardFocus}

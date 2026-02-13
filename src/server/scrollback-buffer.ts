@@ -1,4 +1,6 @@
-const MAX_SIZE = 1024 * 1024 // 1MB
+const MAX_SIZE = 1024 * 1024 // 1MB — trigger eviction
+const TRIM_TARGET = 512 * 1024 // 512KB — trim down to this
+const NEWLINE_SCAN_LIMIT = 10_000
 
 export class ScrollbackBuffer {
   private chunks: string[] = []
@@ -8,15 +10,15 @@ export class ScrollbackBuffer {
     this.chunks.push(data)
     this.totalLength += data.length
 
-    while (this.totalLength > MAX_SIZE && this.chunks.length > 1) {
-      const dropped = this.chunks.shift()!
-      this.totalLength -= dropped.length
-    }
-
-    // If a single chunk exceeds MAX_SIZE, trim it from the front
-    if (this.totalLength > MAX_SIZE && this.chunks.length === 1) {
-      const chunk = this.chunks[0]
-      this.chunks[0] = chunk.slice(chunk.length - MAX_SIZE)
+    if (this.totalLength > MAX_SIZE) {
+      const joined = this.chunks.join('')
+      let cutPoint = joined.length - TRIM_TARGET
+      const scanEnd = Math.min(cutPoint + NEWLINE_SCAN_LIMIT, joined.length)
+      const newlineIndex = joined.indexOf('\n', cutPoint)
+      if (newlineIndex !== -1 && newlineIndex < scanEnd) {
+        cutPoint = newlineIndex + 1
+      }
+      this.chunks = [joined.slice(cutPoint)]
       this.totalLength = this.chunks[0].length
     }
   }

@@ -2,7 +2,7 @@ const STORAGE_KEY = 'spaceterm:layout'
 
 export interface SavedLayout {
   camera: { x: number; y: number; z: number }
-  terminals: { sessionId: string; x: number; y: number; zIndex: number; name?: string; headerColor?: string }[]
+  terminals: { sessionId: string; x: number; y: number; zIndex: number; name?: string; colorPresetId?: string }[]
   nextZIndex: number
 }
 
@@ -12,6 +12,13 @@ export function loadLayout(): SavedLayout | null {
     if (!raw) return null
     const parsed = JSON.parse(raw)
     if (!parsed || !parsed.camera || !Array.isArray(parsed.terminals)) return null
+    // Migrate old headerColor (hex) to colorPresetId
+    for (const t of parsed.terminals) {
+      if (t.headerColor && t.headerColor.startsWith('#')) {
+        t.colorPresetId = 'default'
+        delete t.headerColor
+      }
+    }
     return parsed as SavedLayout
   } catch {
     return null
