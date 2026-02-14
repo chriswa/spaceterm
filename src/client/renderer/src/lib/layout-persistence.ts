@@ -2,7 +2,7 @@ const STORAGE_KEY = 'spaceterm:layout'
 
 export interface SavedLayout {
   camera: { x: number; y: number; z: number }
-  terminals: { sessionId: string; x: number; y: number; zIndex: number; name?: string; colorPresetId?: string }[]
+  terminals: { sessionId: string; x: number; y: number; zIndex: number; name?: string; colorPresetId?: string; parentId: string }[]
   nextZIndex: number
 }
 
@@ -18,6 +18,8 @@ export function loadLayout(): SavedLayout | null {
         t.colorPresetId = 'default'
         delete t.headerColor
       }
+      // Migrate old layouts without parentId
+      t.parentId ??= 'root'
     }
     return parsed as SavedLayout
   } catch {

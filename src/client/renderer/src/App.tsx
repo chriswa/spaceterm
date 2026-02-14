@@ -1,26 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
+import { RootNode } from './components/RootNode'
 import { TerminalCard } from './components/TerminalCard'
+import { TreeLines } from './components/TreeLines'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTerminalManager } from './hooks/useTerminalManager'
-import { screenToCanvas, cameraToFitBounds, unionBounds } from './lib/camera'
-import { terminalPixelSize } from './lib/constants'
+import { cameraToFitBounds, unionBounds } from './lib/camera'
+import { terminalPixelSize, CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUSED_MAX_ZOOM } from './lib/constants'
 import { loadLayout, saveLayout } from './lib/layout-persistence'
+import { computeChildPlacement, nodeCenter } from './lib/tree-placement'
 
 const savedLayout = loadLayout()
 
 export function App() {
   const savedTerminals = useMemo(() => {
     if (!savedLayout) return undefined
-    const map: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string }> = {}
+    const map: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string; parentId?: string }> = {}
     for (const t of savedLayout.terminals) {
-      map[t.sessionId] = { x: t.x, y: t.y, zIndex: t.zIndex, name: t.name, colorPresetId: t.colorPresetId }
+      map[t.sessionId] = { x: t.x, y: t.y, zIndex: t.zIndex, name: t.name, colorPresetId: t.colorPresetId, parentId: t.parentId }
     }
     return map
   }, [])
 
-  const { camera, handleWheel, resetCamera, animateTo, handlePanStart, inputDevice, toggleInputDevice } = useCamera(savedLayout?.camera)
+  const [focusedId, setFocusedId] = useState<string | null>(null)
+  const [scrollMode, setScrollMode] = useState(false)
+  const focusRef = useRef<string | null>(focusedId)
+  focusRef.current = focusedId
+
+  const { camera, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice } = useCamera(savedLayout?.camera, focusRef)
   const cameraRef = useRef(camera)
   cameraRef.current = camera
 
@@ -32,10 +40,6 @@ export function App() {
 
   // CWD tracking — ref so updates don't trigger re-renders
   const cwdMapRef = useRef(new Map<string, string>())
-  const [focusedId, setFocusedId] = useState<string | null>(null)
-  const [scrollMode, setScrollMode] = useState(false)
-  const focusRef = useRef(focusedId)
-  focusRef.current = focusedId
   const terminalsRef = useRef(terminals)
   terminalsRef.current = terminals
 
@@ -58,32 +62,63 @@ export function App() {
     await removeTerminal(sessionId)
   }, [removeTerminal])
 
-  const centerPosition = useCallback(() => {
-    const cam = cameraRef.current
-    const viewportCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-    const canvasCenter = screenToCanvas(viewportCenter, cam)
+  const computeChildPosition = useCallback((parentId: string) => {
+    const terms = terminalsRef.current
+
+    // Parent center
+    let parentCenter: { x: number; y: number }
+    let grandparentCenter: { x: number; y: number } | null = null
+    let cwd: string | undefined
+
+    if (parentId === 'root') {
+      parentCenter = { x: 0, y: 0 }
+    } else {
+      const parent = terms.find((t) => t.sessionId === parentId)
+      if (!parent) return { position: { x: 0, y: 0 }, cwd: undefined }
+      const ps = terminalPixelSize(parent.cols, parent.rows)
+      parentCenter = nodeCenter(parent.x, parent.y, ps.width, ps.height)
+      cwd = cwdMapRef.current.get(parentId)
+
+      // Grandparent center
+      if (parent.parentId === 'root') {
+        grandparentCenter = { x: 0, y: 0 }
+      } else {
+        const gp = terms.find((t) => t.sessionId === parent.parentId)
+        if (gp) {
+          const gs = terminalPixelSize(gp.cols, gp.rows)
+          grandparentCenter = nodeCenter(gp.x, gp.y, gs.width, gs.height)
+        }
+      }
+    }
+
+    // Sibling centers
+    const siblings = terms.filter((t) => t.parentId === parentId)
+    const siblingCenters = siblings.map((s) => {
+      const ss = terminalPixelSize(s.cols, s.rows)
+      return nodeCenter(s.x, s.y, ss.width, ss.height)
+    })
+
+    const center = computeChildPlacement(parentCenter, grandparentCenter, siblingCenters, CHILD_PLACEMENT_DISTANCE)
     const { width, height } = terminalPixelSize(80, 24)
-    return { x: canvasCenter.x - width / 2, y: canvasCenter.y - height / 2 }
+    return {
+      position: { x: center.x - width / 2, y: center.y - height / 2 },
+      cwd
+    }
   }, [])
 
-  const focusedCwd = useCallback(() => {
-    const id = focusRef.current
-    return id ? cwdMapRef.current.get(id) : undefined
-  }, [])
+  const addTerminalAsChild = useCallback((parentId: string) => {
+    const { position, cwd } = computeChildPosition(parentId)
+    addTerminal(position, parentId, cwd ? { cwd } : undefined)
+  }, [addTerminal, computeChildPosition])
 
-  const addTerminalAtCenter = useCallback(() => {
-    const cwd = focusedCwd()
-    addTerminal(centerPosition(), cwd ? { cwd } : undefined)
-  }, [addTerminal, centerPosition, focusedCwd])
-
-  const addClaudeCodeAtCenter = useCallback(() => {
-    const cwd = focusedCwd()
-    addTerminal(centerPosition(), {
+  const addClaudeCodeAsChild = useCallback((parentId: string) => {
+    const { position, cwd } = computeChildPosition(parentId)
+    addTerminal(position, parentId, {
       cwd,
       command: 'claude',
       args: ['--plugin-dir', 'src/claude-code-plugin', '--', 'hello']
     })
-  }, [addTerminal, centerPosition, focusedCwd])
+  }, [addTerminal, computeChildPosition])
 
   const fitAllTerminals = useCallback(() => {
     const terms = terminalsRef.current
@@ -91,13 +126,25 @@ export function App() {
       const { width, height } = terminalPixelSize(t.cols, t.rows)
       return { x: t.x, y: t.y, width, height }
     })
+    // Include root node in bounds
+    rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
     const bounds = unionBounds(rects)
     if (!bounds) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
-    const target = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05)
-    animateTo(target)
-  }, [animateTo])
+    const target = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUSED_MAX_ZOOM)
+    flyTo(target)
+  }, [flyTo])
+
+  const handleUnfocus = useCallback(() => {
+    focusRef.current = null
+    setFocusedId(null)
+    setScrollMode(false)
+  }, [])
+
+  const handleDisableScrollMode = useCallback(() => {
+    setScrollMode(false)
+  }, [])
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -105,27 +152,21 @@ export function App() {
       if (e.metaKey && e.key === 't') {
         e.preventDefault()
         e.stopPropagation()
-        addTerminalAtCenter()
+        if (!focusRef.current) return
+        addTerminalAsChild(focusRef.current)
       }
 
       if (e.metaKey && e.key === 'e') {
         e.preventDefault()
         e.stopPropagation()
-        addClaudeCodeAtCenter()
+        if (!focusRef.current) return
+        addClaudeCodeAsChild(focusRef.current)
       }
 
-      if (e.key === 'CapsLock') {
-        if (focusRef.current) {
-          setFocusedId(null)
-          setScrollMode(false)
-        } else {
-          fitAllTerminals()
-        }
-      }
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [addTerminalAtCenter, addClaudeCodeAtCenter, fitAllTerminals])
+  }, [addTerminalAsChild, addClaudeCodeAsChild])
 
   // Debounced save of layout state
   useEffect(() => {
@@ -138,7 +179,8 @@ export function App() {
           y: t.y,
           zIndex: t.zIndex,
           name: t.name,
-          colorPresetId: t.colorPresetId
+          colorPresetId: t.colorPresetId,
+          parentId: t.parentId
         })),
         nextZIndex: nextZIndex.current
       })
@@ -166,19 +208,45 @@ export function App() {
     const target = cameraToFitBounds(
       { x: t.x, y: t.y, width, height },
       viewport.clientWidth, viewport.clientHeight,
+      0.025
+    )
+    flyTo(target)
+  }, [bringToFront, flyTo])
+
+  const handleFocusRoot = useCallback(() => {
+    setFocusedId('root')
+    setScrollMode(false)
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+    const target = cameraToFitBounds(
+      { x: -200, y: -200, width: 400, height: 400 },
+      viewport.clientWidth, viewport.clientHeight,
       0.05
     )
-    animateTo(target)
-  }, [bringToFront, animateTo])
+    flyTo(target)
+  }, [flyTo])
 
-  const handleUnfocus = useCallback(() => {
-    setFocusedId(null)
-    setScrollMode(false)
-  }, [])
+  const handleCanvasWheel = useCallback((e: WheelEvent) => {
+    if (focusRef.current) {
+      e.preventDefault()
+      handleUnfocus()
+      flyToUnfocusZoom()
+    }
+    handleWheel(e)
+  }, [handleWheel, flyToUnfocusZoom, handleUnfocus])
 
-  const handleDisableScrollMode = useCallback(() => {
-    setScrollMode(false)
-  }, [])
+  const handleCanvasPanStart = useCallback((e: MouseEvent) => {
+    if (focusRef.current) {
+      handleUnfocus()
+      flyToUnfocusZoom()
+    }
+    handlePanStart(e)
+  }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
+
+  const handleCanvasUnfocus = useCallback(() => {
+    handleUnfocus()
+    flyToUnfocusZoom()
+  }, [handleUnfocus, flyToUnfocusZoom])
 
   return (
     <div className="app">
@@ -187,12 +255,14 @@ export function App() {
         cameraX={camera.x}
         cameraY={camera.y}
         inputDevice={inputDevice}
-        onAddTerminal={addTerminalAtCenter}
+        onAddTerminal={() => addTerminalAsChild('root')}
         onResetView={resetCamera}
         onFitAll={fitAllTerminals}
         onToggleInputDevice={toggleInputDevice}
       />
-      <Canvas camera={camera} onWheel={handleWheel} onPanStart={handlePanStart} onCanvasClick={handleUnfocus}>
+      <Canvas camera={camera} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus}>
+        <TreeLines terminals={terminals} />
+        <RootNode focused={focusedId === 'root'} onClick={handleFocusRoot} />
         {terminals.map((t) => (
           <TerminalCard
             key={t.sessionId}

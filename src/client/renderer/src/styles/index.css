@@ -309,3 +309,34 @@ html, body, #root {
 .terminal-card:not(.terminal-card--focused) .terminal-card__body:active {
   cursor: grabbing;
 }
+
+/* Tree connection lines */
+.tree-line {
+  stroke: #585b70;
+  stroke-width: 2;
+  stroke-dasharray: 8 6;
+  fill: none;
+  animation: marching-ants 0.8s linear infinite;
+}
+
+@keyframes marching-ants {
+  to { stroke-dashoffset: 14; }
+}
+
+/* Root node */
+.root-node {
+  border-radius: 50%;
+  background: #45475a;
+  border: 2px solid #585b70;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.root-node:hover {
+  border-color: #a6adc8;
+  background: #585b70;
+}
+.root-node--focused {
+  border-color: #cba6f7;
+  background: #585b70;
+  box-shadow: 0 0 0 4px rgba(203, 166, 247, 0.3);
+}

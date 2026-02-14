@@ -1,18 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, panCamera, zoomCamera } from '../lib/camera'
+import { Camera, screenToCanvas, zoomCamera } from '../lib/camera'
+import { MAX_ZOOM, UNFOCUSED_MAX_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED } from '../lib/constants'
 
 const DEFAULT_CAMERA: Camera = { x: 0, y: 0, z: 1 }
-const ANIMATION_DURATION = 300
-
-interface CameraTarget {
-  from: Camera
-  to: Camera
-  startedAt: number
-}
-
-function easeOutCubic(t: number): number {
-  return 1 - (1 - t) ** 3
-}
 
 function lerpCamera(from: Camera, to: Camera, t: number): Camera {
   return {
@@ -22,56 +12,104 @@ function lerpCamera(from: Camera, to: Camera, t: number): Camera {
   }
 }
 
+function camerasClose(a: Camera, b: Camera): boolean {
+  return Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.z - b.z) < 0.001
+}
+
 export type InputDevice = 'mouse' | 'trackpad'
 
-export function useCamera(initialCamera?: Camera) {
-  const [camera, setCamera] = useState<Camera>(initialCamera ?? DEFAULT_CAMERA)
-  const cameraRef = useRef(camera)
-  cameraRef.current = camera
+export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<string | null>) {
+  const initial = initialCamera ?? DEFAULT_CAMERA
+  const [camera, setCamera] = useState<Camera>(initial)
+  const cameraRef = useRef<Camera>(initial)
+  const targetRef = useRef<Camera>({ ...initial })
+  const speedRef = useRef(FOCUS_SPEED)
+  const animatingRef = useRef(false)
+  const lastTimeRef = useRef(0)
+  const rafRef = useRef<number>(0)
 
   const inputDeviceRef = useRef<InputDevice>('mouse')
   const [inputDevice, setInputDevice] = useState<InputDevice>('mouse')
 
-  const targetRef = useRef<CameraTarget | null>(null)
-  const rafRef = useRef<number>(0)
+  // Keep cameraRef in sync with React state
+  cameraRef.current = camera
 
   // Cleanup on unmount
   useEffect(() => {
     return () => cancelAnimationFrame(rafRef.current)
   }, [])
 
-  const animateTo = useCallback((to: Camera) => {
-    cancelAnimationFrame(rafRef.current)
-    targetRef.current = {
-      from: cameraRef.current,
-      to,
-      startedAt: performance.now()
-    }
-    function tick() {
-      const target = targetRef.current
-      if (!target) return
+  // Animation tick — exponential smoothing
+  const tick = useCallback((now: number) => {
+    const dt = Math.min((now - lastTimeRef.current) / 1000, 0.1)
+    lastTimeRef.current = now
+    const factor = 1 - Math.exp(-speedRef.current * dt)
 
-      const elapsed = performance.now() - target.startedAt
-      const t = Math.min(elapsed / ANIMATION_DURATION, 1)
-      const eased = easeOutCubic(t)
-      const cam = lerpCamera(target.from, target.to, eased)
-      setCamera(cam)
+    const next = lerpCamera(cameraRef.current, targetRef.current, factor)
 
-      if (t >= 1) {
-        targetRef.current = null
-      } else {
-        rafRef.current = requestAnimationFrame(tick)
-      }
+    if (camerasClose(next, targetRef.current)) {
+      cameraRef.current = { ...targetRef.current }
+      setCamera(cameraRef.current)
+      animatingRef.current = false
+      return
     }
+
+    cameraRef.current = next
+    setCamera(next)
     rafRef.current = requestAnimationFrame(tick)
+  }, [])
+
+  const ensureAnimating = useCallback(() => {
+    if (animatingRef.current) return
+    animatingRef.current = true
+    lastTimeRef.current = performance.now()
+    rafRef.current = requestAnimationFrame(tick)
+  }, [tick])
+
+  const flyTo = useCallback((to: Camera, speed = FOCUS_SPEED) => {
+    targetRef.current = to
+    speedRef.current = speed
+    ensureAnimating()
+  }, [ensureAnimating])
+
+  const flyToUnfocusZoom = useCallback(() => {
+    const cam = cameraRef.current
+    if (cam.z <= UNFOCUSED_MAX_ZOOM) return
+
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+
+    const centerCanvas = screenToCanvas(
+      { x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cam
+    )
+    flyTo({
+      x: viewport.clientWidth / 2 - centerCanvas.x * UNFOCUSED_MAX_ZOOM,
+      y: viewport.clientHeight / 2 - centerCanvas.y * UNFOCUSED_MAX_ZOOM,
+      z: UNFOCUSED_MAX_ZOOM
+    }, UNFOCUS_SPEED)
+  }, [flyTo])
+
+  const userPan = useCallback((dx: number, dy: number) => {
+    // Scale delta so panning feels like target zoom speed
+    const scale = cameraRef.current.z / targetRef.current.z
+    const sdx = dx * scale
+    const sdy = dy * scale
+
+    cameraRef.current = {
+      ...cameraRef.current,
+      x: cameraRef.current.x - sdx,
+      y: cameraRef.current.y - sdy
+    }
+    targetRef.current = {
+      ...targetRef.current,
+      x: targetRef.current.x - sdx,
+      y: targetRef.current.y - sdy
+    }
+    setCamera({ ...cameraRef.current })
   }, [])
 
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
-
-    // Cancel any in-flight animation
-    targetRef.current = null
-    cancelAnimationFrame(rafRef.current)
 
     // Detect trackpad: mice can't produce simultaneous X+Y scroll
     if (e.deltaX !== 0 && inputDeviceRef.current === 'mouse') {
@@ -79,35 +117,40 @@ export function useCamera(initialCamera?: Camera) {
       setInputDevice('trackpad')
     }
 
-    const point = { x: e.clientX, y: e.clientY }
+    const isZoomAnimating = Math.abs(cameraRef.current.z - targetRef.current.z) > 0.001
 
     if (e.ctrlKey || e.metaKey) {
-      // Pinch-to-zoom or Ctrl+scroll
-      setCamera((cam) => zoomCamera(cam, point, e.deltaY))
+      // Pinch-to-zoom or Ctrl+scroll — suppress during zoom animation
+      if (isZoomAnimating) return
+      const point = { x: e.clientX, y: e.clientY }
+      const maxZoom = focusedRef?.current ? MAX_ZOOM : UNFOCUSED_MAX_ZOOM
+      const next = zoomCamera(cameraRef.current, point, e.deltaY, maxZoom)
+      cameraRef.current = next
+      targetRef.current = { ...next }
+      setCamera(next)
     } else if (inputDeviceRef.current === 'trackpad') {
-      // Trackpad: pan
-      setCamera((cam) => panCamera(cam, e.deltaX, e.deltaY))
+      // Trackpad pan — always allowed, scaled for target zoom feel
+      userPan(e.deltaX, e.deltaY)
     } else {
-      // Mouse wheel: zoom toward cursor
-      setCamera((cam) => zoomCamera(cam, point, e.deltaY))
+      // Mouse wheel zoom — suppress during zoom animation
+      if (isZoomAnimating) return
+      const point = { x: e.clientX, y: e.clientY }
+      const maxZoom = focusedRef?.current ? MAX_ZOOM : UNFOCUSED_MAX_ZOOM
+      const next = zoomCamera(cameraRef.current, point, e.deltaY, maxZoom)
+      cameraRef.current = next
+      targetRef.current = { ...next }
+      setCamera(next)
     }
-  }, [])
+  }, [focusedRef, userPan])
 
   const handlePanStart = useCallback((e: MouseEvent) => {
-    // Cancel any in-flight animation
-    targetRef.current = null
-    cancelAnimationFrame(rafRef.current)
-
-    const startX = e.clientX
-    const startY = e.clientY
-    const snap = { ...cameraRef.current }
+    let lastX = e.clientX
+    let lastY = e.clientY
 
     const onMouseMove = (ev: MouseEvent) => {
-      setCamera({
-        ...snap,
-        x: snap.x + (ev.clientX - startX),
-        y: snap.y + (ev.clientY - startY)
-      })
+      userPan(lastX - ev.clientX, lastY - ev.clientY)
+      lastX = ev.clientX
+      lastY = ev.clientY
     }
 
     const onMouseUp = () => {
@@ -117,11 +160,13 @@ export function useCamera(initialCamera?: Camera) {
 
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
-  }, [])
+  }, [userPan])
 
   const resetCamera = useCallback(() => {
-    targetRef.current = null
     cancelAnimationFrame(rafRef.current)
+    animatingRef.current = false
+    cameraRef.current = DEFAULT_CAMERA
+    targetRef.current = { ...DEFAULT_CAMERA }
     setCamera(DEFAULT_CAMERA)
   }, [])
 
@@ -131,5 +176,5 @@ export function useCamera(initialCamera?: Camera) {
     setInputDevice(next)
   }, [])
 
-  return { camera, handleWheel, resetCamera, setCamera, animateTo, handlePanStart, inputDevice, toggleInputDevice }
+  return { camera, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice }
 }

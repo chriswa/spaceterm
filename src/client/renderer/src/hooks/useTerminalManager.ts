@@ -4,6 +4,7 @@ import { terminalPixelSize } from '../lib/constants'
 
 export interface TerminalInfo {
   sessionId: string
+  parentId: string
   x: number
   y: number
   zIndex: number
@@ -26,7 +27,7 @@ function gridPosition(index: number): { x: number; y: number } {
 }
 
 interface UseTerminalManagerOptions {
-  savedTerminals?: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string }>
+  savedTerminals?: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string; parentId?: string }>
   initialNextZIndex?: number
 }
 
@@ -49,6 +50,7 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
             const entry = saved[s.sessionId]
             return {
               sessionId: s.sessionId,
+              parentId: entry.parentId ?? 'root',
               x: entry.x,
               y: entry.y,
               zIndex: entry.zIndex,
@@ -58,7 +60,7 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
               colorPresetId: entry.colorPresetId
             }
           }
-          return { sessionId: s.sessionId, ...gridPosition(i), zIndex: 0, cols: s.cols, rows: s.rows, colorPresetId: 'default' }
+          return { sessionId: s.sessionId, parentId: 'root', ...gridPosition(i), zIndex: 0, cols: s.cols, rows: s.rows, colorPresetId: 'default' }
         })
 
         setTerminals(restored)
@@ -74,19 +76,24 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     }
   }, [])
 
-  const addTerminal = useCallback(async (position?: { x: number; y: number }, options?: CreateOptions) => {
+  const addTerminal = useCallback(async (position: { x: number; y: number }, parentId: string, options?: CreateOptions) => {
     const { sessionId, cols, rows } = await window.api.pty.create(options)
     const z = nextZIndex.current++
 
     setTerminals((prev) => {
-      const pos = position ?? gridPosition(prev.length)
-      return [...prev, { sessionId, ...pos, zIndex: z, cols, rows, colorPresetId: 'default' }]
+      return [...prev, { sessionId, parentId, ...position, zIndex: z, cols, rows, colorPresetId: 'default' }]
     })
   }, [])
 
   const removeTerminal = useCallback(async (sessionId: string) => {
     await window.api.pty.destroy(sessionId)
-    setTerminals((prev) => prev.filter((t) => t.sessionId !== sessionId))
+    setTerminals((prev) => {
+      const removed = prev.find((t) => t.sessionId === sessionId)
+      const newParent = removed?.parentId ?? 'root'
+      return prev
+        .filter((t) => t.sessionId !== sessionId)
+        .map((t) => t.parentId === sessionId ? { ...t, parentId: newParent } : t)
+    })
   }, [])
 
   const moveTerminal = useCallback((sessionId: string, x: number, y: number) => {

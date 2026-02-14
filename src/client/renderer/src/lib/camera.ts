@@ -33,8 +33,8 @@ export function panCamera(camera: Camera, dx: number, dy: number): Camera {
   }
 }
 
-export function zoomCamera(camera: Camera, screenPoint: Point, delta: number): Camera {
-  const newZ = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.z - delta * ZOOM_SENSITIVITY * camera.z))
+export function zoomCamera(camera: Camera, screenPoint: Point, delta: number, maxZoom = MAX_ZOOM): Camera {
+  const newZ = Math.min(maxZoom, Math.max(MIN_ZOOM, camera.z - delta * ZOOM_SENSITIVITY * camera.z))
 
   // Keep the point under the cursor fixed
   const canvasPoint = screenToCanvas(screenPoint, camera)
@@ -60,12 +60,13 @@ export function cameraToFitBounds(
   bounds: Bounds,
   viewportWidth: number,
   viewportHeight: number,
-  padding = 0.1
+  padding = 0.1,
+  maxZoom = MAX_ZOOM
 ): Camera {
   const usableW = viewportWidth * (1 - 2 * padding)
   const usableH = viewportHeight * (1 - 2 * padding)
 
-  const zoom = Math.min(usableW / bounds.width, usableH / bounds.height, MAX_ZOOM)
+  const zoom = Math.min(usableW / bounds.width, usableH / bounds.height, maxZoom)
 
   const centerX = bounds.x + bounds.width / 2
   const centerY = bounds.y + bounds.height / 2
