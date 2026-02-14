@@ -74,7 +74,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           seq: msg.seq,
           sessionId: msg.sessionId,
           scrollback,
-          shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId)
+          shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId),
+          cwd: sessionManager.getCwd(msg.sessionId)
         })
       } else {
         // Session doesn't exist — send attached with empty scrollback
@@ -166,6 +167,10 @@ function startServer(): void {
     // onTitleHistory: broadcast to all attached clients
     (sessionId, history) => {
       broadcastToAttached(sessionId, { type: 'shell-title-history', sessionId, history })
+    },
+    // onCwd: broadcast to all attached clients
+    (sessionId, cwd) => {
+      broadcastToAttached(sessionId, { type: 'cwd', sessionId, cwd })
     }
   )
 

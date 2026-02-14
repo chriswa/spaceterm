@@ -21,6 +21,7 @@ interface TerminalCardProps {
   colorPresetId?: string
   shellTitle?: string
   shellTitleHistory?: string[]
+  cwd?: string
   focused: boolean
   scrollMode: boolean
   onFocus: (sessionId: string) => void
@@ -37,7 +38,7 @@ interface TerminalCardProps {
 }
 
 export function TerminalCard({
-  sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, focused, scrollMode,
+  sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange
 }: TerminalCardProps) {
@@ -108,21 +109,6 @@ export function TerminalCard({
     term.loadAddon(new Unicode11Addon())
     term.open(containerRef.current)
     term.unicode.activeVersion = '11'
-
-    // Register OSC 7 handler for CWD reporting
-    term.parser.registerOscHandler(7, (data) => {
-      // data is "file://HOST/path" — extract the path
-      try {
-        const url = new URL(data)
-        const cwd = decodeURIComponent(url.pathname)
-        if (cwd) {
-          propsRef.current.onCwdChange?.(propsRef.current.sessionId, cwd)
-        }
-      } catch {
-        // Malformed URL, ignore
-      }
-      return true
-    })
 
     // Register shell title change handler (OSC 0 / OSC 2)
     term.onTitleChange((title) => {
@@ -215,6 +201,9 @@ export function TerminalCard({
       if (result.shellTitleHistory && result.shellTitleHistory.length > 0) {
         propsRef.current.onShellTitleHistoryChange?.(propsRef.current.sessionId, result.shellTitleHistory)
       }
+      if (result.cwd) {
+        propsRef.current.onCwdChange?.(propsRef.current.sessionId, result.cwd)
+      }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
     })
@@ -230,6 +219,10 @@ export function TerminalCard({
 
     const cleanupTitleHistory = window.api.pty.onShellTitleHistory(sessionId, (history) => {
       propsRef.current.onShellTitleHistoryChange?.(propsRef.current.sessionId, history)
+    })
+
+    const cleanupCwd = window.api.pty.onCwd(sessionId, (cwd) => {
+      propsRef.current.onCwdChange?.(propsRef.current.sessionId, cwd)
     })
 
     term.onData((data) => {
@@ -248,6 +241,7 @@ export function TerminalCard({
       cleanupData()
       cleanupExit()
       cleanupTitleHistory()
+      cleanupCwd()
       term.dispose()
     }
   }, [sessionId])
@@ -536,13 +530,21 @@ export function TerminalCard({
       <div className="terminal-card__body" ref={containerRef} />
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
         {(() => {
+          // Abbreviate home directory to ~
+          const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
+
           const seen = new Set<string>()
           const unique = (shellTitleHistory ?? []).filter((t) => {
             if (seen.has(t)) return false
             seen.add(t)
             return true
           })
-          return unique.join(' \u25C0 ')
+          const history = unique.join(' \u25C0 ')
+
+          const displayCwd = abbrevCwd || 'no CWD'
+
+          if (history) return `${displayCwd} \u2014 ${history}`
+          return displayCwd
         })()}
       </div>
     </div>

@@ -7,22 +7,24 @@ const enum State {
 }
 
 /**
- * Stateful parser that scans pty data chunks for OSC 0 and OSC 2 title sequences.
- * Handles sequences split across chunks.
+ * Stateful parser that scans pty data chunks for OSC 0/2 title sequences
+ * and OSC 7 CWD sequences. Handles sequences split across chunks.
  *
- * OSC format: ESC ] <0|2> ; <text> <BEL|ST>
+ * OSC format: ESC ] <0|2|7> ; <text> <BEL|ST>
  *   BEL = \x07
  *   ST  = ESC \
  */
 export class TitleParser {
   onTitle: (title: string) => void
+  onCwd: (cwd: string) => void
 
   private state: State = State.Idle
   private oscCode = 0
   private buf = ''
 
-  constructor(onTitle: (title: string) => void) {
+  constructor(onTitle: (title: string) => void, onCwd: (cwd: string) => void) {
     this.onTitle = onTitle
+    this.onCwd = onCwd
   }
 
   write(data: string): void {
@@ -57,7 +59,7 @@ export class TitleParser {
 
         case State.CollectDigit:
           if (ch === ';') {
-            if (this.oscCode === 0 || this.oscCode === 2) {
+            if (this.oscCode === 0 || this.oscCode === 2 || this.oscCode === 7) {
               this.state = State.CollectPayload
             } else {
               this.state = State.Idle
@@ -99,9 +101,22 @@ export class TitleParser {
   }
 
   private emitTitle(): void {
-    const stripped = this.buf.replace(/^[^\x20-\x7E]+\s*/, '').trim()
-    if (stripped) {
-      this.onTitle(stripped)
+    if (this.oscCode === 7) {
+      // OSC 7: file://host/path — extract path
+      try {
+        const url = new URL(this.buf)
+        const cwd = decodeURIComponent(url.pathname)
+        if (cwd) {
+          this.onCwd(cwd)
+        }
+      } catch {
+        // Malformed URL, ignore
+      }
+    } else {
+      const stripped = this.buf.replace(/^[^\x20-\x7E]+\s*/, '').trim()
+      if (stripped) {
+        this.onTitle(stripped)
+      }
     }
     this.buf = ''
   }

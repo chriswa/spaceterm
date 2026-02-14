@@ -10,6 +10,7 @@
     "client:build": "electron-vite build",
     "client:preview": "electron-vite preview",
     "client:package": "electron-vite build && electron-builder",
+    "start": "npm run client:build && concurrently \"npm run server:dev\" \"npm run client:preview\"",
     "build": "npm run client:build",
     "postinstall": "electron-rebuild"
   },

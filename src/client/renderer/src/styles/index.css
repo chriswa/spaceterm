@@ -316,7 +316,7 @@ html, body, #root {
   stroke-width: 2;
   stroke-dasharray: 8 6;
   fill: none;
-  animation: marching-ants 0.8s linear infinite;
+  animation: marching-ants 2.0s linear infinite;
 }
 
 @keyframes marching-ants {

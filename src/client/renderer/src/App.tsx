@@ -13,6 +13,14 @@ import { computeChildPlacement, nodeCenter } from './lib/tree-placement'
 
 const savedLayout = loadLayout()
 
+function buildClaudeCodeOptions({ prompt, cwd }: { prompt?: string; cwd?: string } = {}): CreateOptions {
+  const args = ['--plugin-dir', 'src/claude-code-plugin']
+  if (prompt) {
+    args.push('--', prompt)
+  }
+  return { cwd, command: 'claude', args }
+}
+
 export function App() {
   const savedTerminals = useMemo(() => {
     if (!savedLayout) return undefined
@@ -32,7 +40,7 @@ export function App() {
   const cameraRef = useRef(camera)
   cameraRef.current = camera
 
-  const { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, nextZIndex } =
+  const { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, setCwd, nextZIndex } =
     useTerminalManager({
       savedTerminals,
       initialNextZIndex: savedLayout?.nextZIndex
@@ -45,7 +53,8 @@ export function App() {
 
   const handleCwdChange = useCallback((sessionId: string, cwd: string) => {
     cwdMapRef.current.set(sessionId, cwd)
-  }, [])
+    setCwd(sessionId, cwd)
+  }, [setCwd])
 
   const handleShellTitleChange = useCallback((sessionId: string, title: string) => {
     const stripped = title.replace(/^[^\x20-\x7E]+\s*/, '').trim()
@@ -106,19 +115,17 @@ export function App() {
     }
   }, [])
 
-  const addTerminalAsChild = useCallback((parentId: string) => {
+  const addTerminalAsChild = useCallback(async (parentId: string) => {
     const { position, cwd } = computeChildPosition(parentId)
-    addTerminal(position, parentId, cwd ? { cwd } : undefined)
-  }, [addTerminal, computeChildPosition])
+    const result = await addTerminal(position, parentId, cwd ? { cwd } : undefined)
+    if (cwd) handleCwdChange(result.sessionId, cwd)
+  }, [addTerminal, computeChildPosition, handleCwdChange])
 
-  const addClaudeCodeAsChild = useCallback((parentId: string) => {
+  const addClaudeCodeAsChild = useCallback(async (parentId: string) => {
     const { position, cwd } = computeChildPosition(parentId)
-    addTerminal(position, parentId, {
-      cwd,
-      command: 'claude',
-      args: ['--plugin-dir', 'src/claude-code-plugin', '--', 'hello']
-    })
-  }, [addTerminal, computeChildPosition])
+    const result = await addTerminal(position, parentId, buildClaudeCodeOptions({ cwd }))
+    if (cwd) handleCwdChange(result.sessionId, cwd)
+  }, [addTerminal, computeChildPosition, handleCwdChange])
 
   const fitAllTerminals = useCallback(() => {
     const terms = terminalsRef.current
@@ -146,27 +153,50 @@ export function App() {
     setScrollMode(false)
   }, [])
 
+  const focusNewTerminal = useCallback((sessionId: string, position: { x: number; y: number }, cols: number, rows: number) => {
+    setFocusedId(sessionId)
+    setScrollMode(true)
+    bringToFront(sessionId)
+
+    const { width, height } = terminalPixelSize(cols, rows)
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+
+    const target = cameraToFitBounds(
+      { x: position.x, y: position.y, width, height },
+      viewport.clientWidth, viewport.clientHeight,
+      0.025
+    )
+    flyTo(target)
+  }, [bringToFront, flyTo])
+
   // Global keyboard shortcuts
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
       if (e.metaKey && e.key === 't') {
         e.preventDefault()
         e.stopPropagation()
         if (!focusRef.current) return
-        addTerminalAsChild(focusRef.current)
+        const { position, cwd } = computeChildPosition(focusRef.current)
+        const result = await addTerminal(position, focusRef.current, cwd ? { cwd } : undefined)
+        if (cwd) handleCwdChange(result.sessionId, cwd)
+        focusNewTerminal(result.sessionId, position, result.cols, result.rows)
       }
 
       if (e.metaKey && e.key === 'e') {
         e.preventDefault()
         e.stopPropagation()
         if (!focusRef.current) return
-        addClaudeCodeAsChild(focusRef.current)
+        const { position, cwd } = computeChildPosition(focusRef.current)
+        const result = await addTerminal(position, focusRef.current, buildClaudeCodeOptions({ cwd }))
+        if (cwd) handleCwdChange(result.sessionId, cwd)
+        focusNewTerminal(result.sessionId, position, result.cols, result.rows)
       }
 
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [addTerminalAsChild, addClaudeCodeAsChild])
+  }, [addTerminal, computeChildPosition, focusNewTerminal, handleCwdChange])
 
   // Debounced save of layout state
   useEffect(() => {
@@ -277,6 +307,7 @@ export function App() {
             colorPresetId={t.colorPresetId}
             shellTitle={t.shellTitle}
             shellTitleHistory={t.shellTitleHistory}
+            cwd={t.cwd}
             focused={focusedId === t.sessionId}
             scrollMode={focusedId === t.sessionId && scrollMode}
             onFocus={handleFocus}

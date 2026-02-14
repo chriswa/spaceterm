@@ -30,7 +30,7 @@ export const CELL_HEIGHT = 16
 export const CHROME_W = 16
 export const CHROME_H = 56
 
-export const CHILD_PLACEMENT_DISTANCE = 600
+export const CHILD_PLACEMENT_DISTANCE = 1250
 export const ROOT_NODE_RADIUS = 12
 
 export function terminalPixelSize(cols: number, rows: number): { width: number; height: number } {

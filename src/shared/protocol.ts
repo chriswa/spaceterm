@@ -99,6 +99,7 @@ export interface AttachedMessage {
   sessionId: string
   scrollback: string
   shellTitleHistory?: string[]
+  cwd?: string
 }
 
 export interface DetachedMessage {
@@ -130,6 +131,12 @@ export interface ShellTitleHistoryMessage {
   history: string[]
 }
 
+export interface CwdMessage {
+  type: 'cwd'
+  sessionId: string
+  cwd: string
+}
+
 export type ServerMessage =
   | CreatedMessage
   | ListedMessage
@@ -139,3 +146,4 @@ export type ServerMessage =
   | DataMessage
   | ExitMessage
   | ShellTitleHistoryMessage
+  | CwdMessage
