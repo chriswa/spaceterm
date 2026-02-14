@@ -25,10 +25,13 @@ interface MarkdownCardProps {
   onClose: (id: string) => void
   onMove: (id: string, x: number, y: number) => void
   onResize: (id: string, width: number, height: number) => void
+  onAutoResize?: (id: string, x: number, y: number, width: number, height: number) => void
   onContentChange: (id: string, content: string) => void
   onRename: (id: string, name: string) => void
   onColorChange: (id: string, color: string) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
+  onDragStart?: (id: string) => void
+  onDragEnd?: (id: string) => void
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -332,13 +335,14 @@ const linkClickHandler = EditorView.domEventHandlers({
 
 export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, colorPresetId, focused,
-  onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onNodeReady
+  onFocus, onClose, onMove, onResize, onAutoResize, onContentChange, onColorChange, onNodeReady,
+  onDragStart, onDragEnd
 }: MarkdownCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  const propsRef = useRef({ x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize })
-  propsRef.current = { x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize }
+  const propsRef = useRef({ x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize, onAutoResize })
+  propsRef.current = { x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize, onAutoResize }
 
   // Auto-size helper: collapse scroller to 0×0 so scrollWidth/scrollHeight
   // report intrinsic content size (otherwise they never shrink below container).
@@ -353,9 +357,15 @@ export function MarkdownCard({
       const newHeight = Math.max(MARKDOWN_MIN_HEIGHT, scroller.scrollHeight + 4)
       scroller.style.width = ''
       scroller.style.height = ''
-      const { width: curW, height: curH } = propsRef.current
+      const { width: curW, height: curH, x: curX, y: curY } = propsRef.current
       if (Math.abs(newWidth - curW) > 1 || Math.abs(newHeight - curH) > 1) {
-        propsRef.current.onResize(propsRef.current.id, newWidth, newHeight)
+        if (propsRef.current.onAutoResize) {
+          const newX = Math.round(curX - (newWidth - curW) / 2)
+          const newY = Math.round(curY - (newHeight - curH) / 2)
+          propsRef.current.onAutoResize(propsRef.current.id, newX, newY, newWidth, newHeight)
+        } else {
+          propsRef.current.onResize(propsRef.current.id, newWidth, newHeight)
+        }
       }
     })
   }
@@ -463,6 +473,7 @@ export function MarkdownCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
+        onDragStart?.(id)
       }
 
       if (dragging && !bodyClickWhileFocused) {
@@ -473,7 +484,9 @@ export function MarkdownCard({
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
-      if (!dragging) {
+      if (dragging) {
+        onDragEnd?.(id)
+      } else {
         onFocus(id)
       }
     }

@@ -45,6 +45,14 @@ export const MARKDOWN_MIN_HEIGHT = 60
 export const REMNANT_WIDTH = Math.ceil(DEFAULT_COLS * CELL_WIDTH + CHROME_W)
 export const REMNANT_HEIGHT = 90
 
+// Force-directed layout
+export const FORCE_REPULSION_STRENGTH = 2.0
+export const FORCE_ATTRACTION_STRENGTH = 0.3
+export const FORCE_PADDING = 80
+export const FORCE_DEFAULT_SPEED = 20
+export const FORCE_MIN_SPEED = 5
+export const FORCE_MAX_SPEED = 640
+
 export function terminalPixelSize(cols: number, rows: number): { width: number; height: number } {
   return {
     width: Math.ceil(cols * CELL_WIDTH + CHROME_W),

@@ -11,6 +11,12 @@ interface TTSChunk {
 let selectedVoice: string = 'en-US'
 let abortFlag = false
 
+function ensureTrailingPunctuation(line: string): string {
+  const trimmed = line.trimEnd()
+  if (trimmed.length === 0) return trimmed
+  return /[.!?;:,]$/.test(trimmed) ? trimmed : trimmed + '.'
+}
+
 function stripMarkdown(text: string): string {
   return text
     // Fenced code blocks
@@ -25,13 +31,13 @@ function stripMarkdown(text: string): string {
     .replace(/_(.+?)_/g, '$1')
     // Links
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // Headers
-    .replace(/^#{1,6}\s+/gm, '')
-    // Blockquotes
-    .replace(/^>\s+/gm, '')
-    // List markers
-    .replace(/^[\s]*[-*+]\s+/gm, '')
-    .replace(/^[\s]*\d+\.\s+/gm, '')
+    // Headers — strip marker and ensure trailing punctuation for TTS pause
+    .replace(/^#{1,6}\s+(.*)/gm, (_m, content: string) => ensureTrailingPunctuation(content))
+    // Blockquotes — strip marker and ensure trailing punctuation
+    .replace(/^>\s+(.*)/gm, (_m, content: string) => ensureTrailingPunctuation(content))
+    // List markers — strip marker and ensure trailing punctuation
+    .replace(/^[\s]*[-*+]\s+(.*)/gm, (_m, content: string) => ensureTrailingPunctuation(content))
+    .replace(/^[\s]*\d+\.\s+(.*)/gm, (_m, content: string) => ensureTrailingPunctuation(content))
     // Horizontal rules
     .replace(/^[-*_]{3,}\s*$/gm, '')
     // Clean up extra whitespace
@@ -41,7 +47,7 @@ function stripMarkdown(text: string): string {
 
 function splitIntoChunks(text: string): { text: string; pauseAfterMs: number }[] {
   return text
-    .split(/\n\n+/)
+    .split(/\n+/)
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0)
     .map((segment) => ({ text: segment, pauseAfterMs: 600 }))

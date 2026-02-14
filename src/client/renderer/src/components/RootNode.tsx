@@ -21,157 +21,77 @@ void main() {
 `
 
 const FRAG_SRC = `
-// Shader by misterprada — https://www.shadertoy.com/user/misterprada
-// Ref: celestianmaze — https://x.com/cmzw_/status/1787147460772864188
+// Shader by Trisomie21 — https://www.shadertoy.com/view/lsf3RH
 
 precision highp float;
 uniform vec2 iResolution;
 uniform float iTime;
+uniform float uFocused;
 
-vec4 permute_3d(vec4 x){ return mod(((x*34.0)+1.0)*x, 289.0); }
-vec4 taylorInvSqrt3d(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
-
-float simplexNoise3d(vec3 v)
+float snoise(vec3 uv, float res)
 {
-    const vec2  C = vec2(1.0/6.0, 1.0/3.0);
-    const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+    const vec3 s = vec3(1e0, 1e2, 1e3);
 
-    vec3 i  = floor(v + dot(v, C.yyy));
-    vec3 x0 =   v - i + dot(i, C.xxx);
+    uv *= res;
 
-    vec3 g = step(x0.yzx, x0.xyz);
-    vec3 l = 1.0 - g;
-    vec3 i1 = min( g.xyz, l.zxy );
-    vec3 i2 = max( g.xyz, l.zxy );
+    vec3 uv0 = floor(mod(uv, res))*s;
+    vec3 uv1 = floor(mod(uv+vec3(1.), res))*s;
 
-    vec3 x1 = x0 - i1 + 1.0 * C.xxx;
-    vec3 x2 = x0 - i2 + 2.0 * C.xxx;
-    vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
+    vec3 f = fract(uv); f = f*f*(3.0-2.0*f);
 
-    i = mod(i, 289.0);
-    vec4 p = permute_3d( permute_3d( permute_3d(
-             i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
-           + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
-           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+    vec4 v = vec4(uv0.x+uv0.y+uv0.z, uv1.x+uv0.y+uv0.z,
+                    uv0.x+uv1.y+uv0.z, uv1.x+uv1.y+uv0.z);
 
-    float n_ = 1.0/7.0;
-    vec3  ns = n_ * D.wyz - D.xzx;
+    vec4 r = fract(sin(v*1e-1)*1e3);
+    float r0 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
 
-    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
-    vec4 x_ = floor(j * ns.z);
-    vec4 y_ = floor(j - 7.0 * x_);
+    r = fract(sin((v + uv1.z - uv0.z)*1e-1)*1e3);
+    float r1 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
 
-    vec4 x = x_ * ns.x + ns.yyyy;
-    vec4 y = y_ * ns.x + ns.yyyy;
-    vec4 h = 1.0 - abs(x) - abs(y);
-
-    vec4 b0 = vec4( x.xy, y.xy );
-    vec4 b1 = vec4( x.zw, y.zw );
-
-    vec4 s0 = floor(b0)*2.0 + 1.0;
-    vec4 s1 = floor(b1)*2.0 + 1.0;
-    vec4 sh = -step(h, vec4(0.0));
-
-    vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
-    vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
-
-    vec3 p0 = vec3(a0.xy,h.x);
-    vec3 p1 = vec3(a0.zw,h.y);
-    vec3 p2 = vec3(a1.xy,h.z);
-    vec3 p3 = vec3(a1.zw,h.w);
-
-    vec4 norm = taylorInvSqrt3d(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
-    p0 *= norm.x;
-    p1 *= norm.y;
-    p2 *= norm.z;
-    p3 *= norm.w;
-
-    vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-    m = m * m;
-    return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+    return mix(r0, r1, f.z)*2.-1.;
 }
 
-float fbm3d(vec3 x, const in int it) {
-    float v = 0.0;
-    float a = 0.5;
-    vec3 shift = vec3(100);
-
-    for (int i = 0; i < 32; ++i) {
-        if(i<it) {
-            v += a * simplexNoise3d(x);
-            x = x * 2.0 + shift;
-            a *= 0.5;
-        }
-    }
-    return v;
-}
-
-vec3 rotateZ(vec3 v, float angle) {
-    float cosAngle = cos(angle);
-    float sinAngle = sin(angle);
-    return vec3(
-        v.x * cosAngle - v.y * sinAngle,
-        v.x * sinAngle + v.y * cosAngle,
-        v.z
-    );
-}
-
-float facture(vec3 vector) {
-    vec3 n = normalize(vector);
-    return max(max(n.x, n.y), n.z);
-}
-
-vec3 emission(vec3 color, float strength) {
-    return color * strength;
-}
+const float shrink = 1.2;
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
-    vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
+    vec2 p = -.5 + fragCoord.xy / iResolution.xy;
+    p.x *= iResolution.x/iResolution.y;
 
-    vec3 color = vec3(uv.xy, 0.0);
-    color.z += 0.5;
+    float color = 3.0 - (3.*length(2.*p*shrink));
 
-    color = normalize(color);
-    color -= 0.2 * vec3(0.0, 0.0, iTime);
+    vec3 coord = vec3(atan(p.x,p.y)/6.2832+.5, length(p*shrink)*.4, .5);
 
-    float angle = -log2(length(uv));
+    for(int i = 1; i <= 7; i++)
+    {
+        float power = pow(2.0, float(i));
+        color += (1.5 / power) * snoise(coord + vec3(0.,iTime*.05, -iTime*.01), power*16.);
+    }
+    float c = max(color, 0.0);
 
-    color = rotateZ( color, angle );
+    // Shared base curve
+    float lum = smoothstep(0.0, 0.5, c) * 0.4
+              + smoothstep(0.5, 1.5, c) * 0.3
+              + smoothstep(1.5, 2.5, c) * 0.3;
+    float grey = 0.3 + lum * 0.7;
+    float base = grey * grey * grey;
+    float whiteBlend = smoothstep(1.5, 2.5, c);
 
-    float frequency = 1.4;
-    float distortion = 0.01;
-    color.x = fbm3d(color * frequency + 0.0, 5) + distortion;
-    color.y = fbm3d(color * frequency + 1.0, 5) + distortion;
-    color.z = fbm3d(color * frequency + 2.0, 5) + distortion;
+    // Unselected: cyan/purple with white center
+    vec3 tintU = mix(vec3(0.6, 0.1, 0.9), vec3(0.0, 0.8, 1.0), smoothstep(0.3, 1.5, c));
+    vec3 unselected = mix(tintU * base, vec3(1.0), whiteBlend);
 
-    vec3 emissionColor = emission(vec3(0.961,0.592,0.078), 0.5);
+    // Selected: orange/purple with white center
+    vec3 tintS = mix(vec3(0.8, 0.0, 0.0), vec3(1.0, 0.5, 0.0), smoothstep(0.3, 1.5, c));
+    vec3 selected = mix(tintS * base, vec3(1.0), whiteBlend);
 
-    float fac = length(uv) - facture(color + 0.32);
-    fac += 0.1;
-    fac *= 3.0;
-
-    color = mix(emissionColor, vec3(fac), fac + 1.2);
-
-    fragColor = vec4(color, 1.0);
+    vec3 rgb = mix(unselected, selected, uFocused);
+    float alpha = mix(clamp(c, 0.0, 1.0), smoothstep(0.0, 0.5, c), uFocused);
+    fragColor = vec4(rgb, alpha);
 }
 
 void main() {
-    vec4 col;
-    mainImage(col, gl_FragCoord.xy);
-
-    float brightness = dot(col.rgb, vec3(0.299, 0.587, 0.114));
-    float lum = 1.0 - brightness; // invert to grayscale
-    float alpha = clamp(lum * 2.0, 0.0, 1.0);
-
-    // Radial tint: white inside, dark grey outside
-    vec2 uv = (gl_FragCoord.xy * 2.0 - iResolution.xy) / iResolution.y;
-    float dist = length(uv);
-
-    float fade = smoothstep(0.05, 0.6, dist);
-    vec3 tint = mix(vec3(1.0), vec3(0.3), fade);
-
-    gl_FragColor = vec4(vec3(lum) * tint, alpha);
+    mainImage(gl_FragColor, gl_FragCoord.xy);
 }
 `
 
@@ -201,6 +121,8 @@ export function RootNode({ focused, onClick }: RootNodeProps) {
   const canvasSize = size * CANVAS_SCALE
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -252,6 +174,7 @@ export function RootNode({ focused, onClick }: RootNodeProps) {
     // Uniforms
     const resLoc = gl.getUniformLocation(prog, 'iResolution')
     const timeLoc = gl.getUniformLocation(prog, 'iTime')
+    const focusedLoc = gl.getUniformLocation(prog, 'uFocused')
     gl.uniform2f(resLoc, pxW, pxH)
 
     gl.enable(gl.BLEND)
@@ -260,7 +183,8 @@ export function RootNode({ focused, onClick }: RootNodeProps) {
     const t0 = performance.now()
 
     const tick = (now: number) => {
-      gl.uniform1f(timeLoc, (now - t0) / 10000)
+      gl.uniform1f(timeLoc, (now - t0) / 3333)
+      gl.uniform1f(focusedLoc, focusedRef.current ? 1.0 : 0.0)
       gl.viewport(0, 0, pxW, pxH)
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)

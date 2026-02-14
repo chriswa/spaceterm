@@ -1,7 +1,7 @@
 import { nodeCenter } from '../lib/tree-placement'
 
-export interface TreeNode {
-  sessionId: string
+export interface TreeLineNode {
+  id: string
   parentId: string
   x: number
   y: number
@@ -10,7 +10,7 @@ export interface TreeNode {
 }
 
 interface TreeLinesProps {
-  nodes: TreeNode[]
+  nodes: TreeLineNode[]
 }
 
 export function TreeLines({ nodes }: TreeLinesProps) {
@@ -32,7 +32,7 @@ export function TreeLines({ nodes }: TreeLinesProps) {
         if (n.parentId === 'root') {
           parent = { x: 0, y: 0 }
         } else {
-          const parentNode = nodes.find((p) => p.sessionId === n.parentId)
+          const parentNode = nodes.find((p) => p.id === n.parentId)
           if (!parentNode) {
             parent = { x: 0, y: 0 }
           } else {
@@ -42,7 +42,7 @@ export function TreeLines({ nodes }: TreeLinesProps) {
 
         return (
           <line
-            key={n.sessionId}
+            key={n.id}
             x1={parent.x}
             y1={parent.y}
             x2={child.x}

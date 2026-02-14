@@ -112,7 +112,12 @@ export class SessionManager {
 
     ptyProcess.onExit(({ exitCode }) => {
       this.onExit(sessionId, exitCode)
-      this.sessions.delete(sessionId)
+      const session = this.sessions.get(sessionId)
+      if (session) {
+        session.batcher.dispose()
+        session.process.kill()
+        this.sessions.delete(sessionId)
+      }
     })
 
     this.sessions.set(sessionId, {

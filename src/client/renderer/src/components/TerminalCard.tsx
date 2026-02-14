@@ -12,7 +12,7 @@ const textEncoder = new TextEncoder()
 export const terminalSelectionGetters = new Map<string, () => string>()
 
 interface TerminalCardProps {
-  sessionId: string
+  id: string
   x: number
   y: number
   cols: number
@@ -26,29 +26,32 @@ interface TerminalCardProps {
   cwd?: string
   focused: boolean
   scrollMode: boolean
-  onFocus: (sessionId: string) => void
+  onFocus: (id: string) => void
   onUnfocus: () => void
   onDisableScrollMode: () => void
-  onClose: (sessionId: string) => void
-  onMove: (sessionId: string, x: number, y: number) => void
-  onResize: (sessionId: string, cols: number, rows: number) => void
-  onRename: (sessionId: string, name: string) => void
-  onColorChange: (sessionId: string, color: string) => void
-  onCwdChange?: (sessionId: string, cwd: string) => void
-  onShellTitleChange?: (sessionId: string, title: string) => void
-  onShellTitleHistoryChange?: (sessionId: string, history: string[]) => void
+  onClose: (id: string) => void
+  onMove: (id: string, x: number, y: number) => void
+  onResize: (id: string, cols: number, rows: number) => void
+  onRename: (id: string, name: string) => void
+  onColorChange: (id: string, color: string) => void
+  onCwdChange?: (id: string, cwd: string) => void
+  onShellTitleChange?: (id: string, title: string) => void
+  onShellTitleHistoryChange?: (id: string, history: string[]) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
-  onClaudeSessionHistoryChange?: (sessionId: string, history: ClaudeSessionEntry[]) => void
+  onClaudeSessionHistoryChange?: (id: string, history: ClaudeSessionEntry[]) => void
   waitingForUser?: boolean
-  onWaitingForUserChange?: (sessionId: string, waiting: boolean) => void
-  onExit?: (sessionId: string, exitCode: number) => void
+  onWaitingForUserChange?: (id: string, waiting: boolean) => void
+  onExit?: (id: string, exitCode: number) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
+  onDragStart?: (id: string) => void
+  onDragEnd?: (id: string) => void
 }
 
 export function TerminalCard({
-  sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
+  id, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
-  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, waitingForUser, onWaitingForUserChange, onExit, onNodeReady
+  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, waitingForUser, onWaitingForUserChange, onExit, onNodeReady,
+  onDragStart, onDragEnd
 }: TerminalCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
@@ -58,8 +61,8 @@ export function TerminalCard({
   const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady })
-  propsRef.current = { x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, focused, id, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, focused, id, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady }
 
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
@@ -120,7 +123,7 @@ export function TerminalCard({
 
     // Register shell title change handler (OSC 0 / OSC 2)
     term.onTitleChange((title) => {
-      propsRef.current.onShellTitleChange?.(propsRef.current.sessionId, title)
+      propsRef.current.onShellTitleChange?.(propsRef.current.id, title)
     })
 
     // Custom wheel handler: controls both xterm scroll processing AND
@@ -175,8 +178,8 @@ export function TerminalCard({
           // Send ESC + CR (\x1b\r) for Shift+Enter.
           // Ink's parseKeypress interprets this as meta+return, which Claude Code
           // (and other Ink-based CLIs) treat as "insert newline" instead of submit.
-          window.api.log(`[KeyHandler] Shift+Enter detected, sending ESC+CR to session ${propsRef.current.sessionId}`)
-          window.api.pty.write(propsRef.current.sessionId, '\x1b\r')
+          window.api.log(`[KeyHandler] Shift+Enter detected, sending ESC+CR to session ${propsRef.current.id}`)
+          window.api.pty.write(propsRef.current.id, '\x1b\r')
         }
         // Block all event types (keydown, keypress, keyup) for Shift+Enter
         // to prevent xterm from also sending a regular \r via the keypress event.
@@ -194,74 +197,74 @@ export function TerminalCard({
     // Log actual cell dimensions from xterm's renderer for calibration
     try {
       const dims = (term as any)._core._renderService.dimensions
-      window.api.log(`[TerminalCard ${sessionId.slice(0, 8)}] cell dimensions: cellWidth=${dims.css.cell.width} cellHeight=${dims.css.cell.height} constantCellWidth=${CELL_WIDTH} constantCellHeight=${CELL_HEIGHT} termCols=${term.cols} termRows=${term.rows}`)
+      window.api.log(`[TerminalCard ${id.slice(0, 8)}] cell dimensions: cellWidth=${dims.css.cell.width} cellHeight=${dims.css.cell.height} constantCellWidth=${CELL_WIDTH} constantCellHeight=${CELL_HEIGHT} termCols=${term.cols} termRows=${term.rows}`)
     } catch {
       // Renderer not ready yet
     }
 
     // Attach to server session and replay scrollback before subscribing to live data
     let cancelled = false
-    window.api.pty.attach(sessionId).then((result) => {
+    window.api.pty.attach(id).then((result) => {
       if (cancelled) return
       if (result.scrollback.length > 0) {
         term.write(textEncoder.encode(result.scrollback))
       }
       if (result.shellTitleHistory && result.shellTitleHistory.length > 0) {
-        propsRef.current.onShellTitleHistoryChange?.(propsRef.current.sessionId, result.shellTitleHistory)
+        propsRef.current.onShellTitleHistoryChange?.(propsRef.current.id, result.shellTitleHistory)
       }
       if (result.cwd) {
-        propsRef.current.onCwdChange?.(propsRef.current.sessionId, result.cwd)
+        propsRef.current.onCwdChange?.(propsRef.current.id, result.cwd)
       }
       if (result.claudeSessionHistory && result.claudeSessionHistory.length > 0) {
-        propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.sessionId, result.claudeSessionHistory)
+        propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.id, result.claudeSessionHistory)
       }
       if (result.waitingForUser !== undefined) {
-        propsRef.current.onWaitingForUserChange?.(propsRef.current.sessionId, result.waitingForUser)
+        propsRef.current.onWaitingForUserChange?.(propsRef.current.id, result.waitingForUser)
       }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
     })
 
     // Wire up IPC
-    const cleanupData = window.api.pty.onData(sessionId, (data) => {
+    const cleanupData = window.api.pty.onData(id, (data) => {
       term.write(textEncoder.encode(data))
     })
 
-    const cleanupExit = window.api.pty.onExit(sessionId, (exitCode) => {
-      propsRef.current.onExit?.(propsRef.current.sessionId, exitCode)
+    const cleanupExit = window.api.pty.onExit(id, (exitCode) => {
+      propsRef.current.onExit?.(propsRef.current.id, exitCode)
     })
 
-    const cleanupTitleHistory = window.api.pty.onShellTitleHistory(sessionId, (history) => {
-      propsRef.current.onShellTitleHistoryChange?.(propsRef.current.sessionId, history)
+    const cleanupTitleHistory = window.api.pty.onShellTitleHistory(id, (history) => {
+      propsRef.current.onShellTitleHistoryChange?.(propsRef.current.id, history)
     })
 
-    const cleanupCwd = window.api.pty.onCwd(sessionId, (cwd) => {
-      propsRef.current.onCwdChange?.(propsRef.current.sessionId, cwd)
+    const cleanupCwd = window.api.pty.onCwd(id, (cwd) => {
+      propsRef.current.onCwdChange?.(propsRef.current.id, cwd)
     })
 
-    const cleanupClaudeSessionHistory = window.api.pty.onClaudeSessionHistory(sessionId, (history) => {
-      propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.sessionId, history)
+    const cleanupClaudeSessionHistory = window.api.pty.onClaudeSessionHistory(id, (history) => {
+      propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.id, history)
     })
 
-    const cleanupWaitingForUser = window.api.pty.onWaitingForUser(sessionId, (waiting) => {
-      propsRef.current.onWaitingForUserChange?.(propsRef.current.sessionId, waiting)
+    const cleanupWaitingForUser = window.api.pty.onWaitingForUser(id, (waiting) => {
+      propsRef.current.onWaitingForUserChange?.(propsRef.current.id, waiting)
     })
 
     term.onData((data) => {
-      window.api.pty.write(sessionId, data)
+      window.api.pty.write(id, data)
     })
 
     term.onResize(({ cols, rows }) => {
-      window.api.pty.resize(sessionId, cols, rows)
+      window.api.pty.resize(id, cols, rows)
     })
 
     terminalRef.current = term
     fitAddonRef.current = fitAddon
-    terminalSelectionGetters.set(sessionId, () => term.getSelection())
+    terminalSelectionGetters.set(id, () => term.getSelection())
 
     return () => {
       cancelled = true
-      terminalSelectionGetters.delete(sessionId)
+      terminalSelectionGetters.delete(id)
       cleanupData()
       cleanupExit()
       cleanupTitleHistory()
@@ -270,7 +273,7 @@ export function TerminalCard({
       cleanupWaitingForUser()
       term.dispose()
     }
-  }, [sessionId])
+  }, [id])
 
   // Tint xterm background to match color preset
   useEffect(() => {
@@ -290,14 +293,14 @@ export function TerminalCard({
     } else {
       term.blur()
     }
-  }, [focused, sessionId])
+  }, [focused, id])
 
   // Notify parent when focused node size is known (mount or resize)
   useEffect(() => {
     if (!focused) return
     const { width, height } = terminalPixelSize(cols, rows)
-    propsRef.current.onNodeReady?.(sessionId, { x: propsRef.current.x, y: propsRef.current.y, width, height })
-  }, [focused, cols, rows, sessionId])
+    propsRef.current.onNodeReady?.(id, { x: propsRef.current.x, y: propsRef.current.y, width, height })
+  }, [focused, cols, rows, id])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
@@ -432,10 +435,11 @@ export function TerminalCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
+        onDragStart?.(id)
       }
 
       if (dragging && !bodyClickWhileFocused) {
-        onMove(sessionId, startX + dx / currentZoom, startY + dy / currentZoom)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom)
       }
     }
 
@@ -443,8 +447,10 @@ export function TerminalCard({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
 
-      if (!dragging) {
-        onFocus(sessionId)
+      if (dragging) {
+        onDragEnd?.(id)
+      } else {
+        onFocus(id)
       }
     }
 
@@ -475,7 +481,7 @@ export function TerminalCard({
     >
       <div
         ref={cardRef}
-        data-session-id={sessionId}
+        data-node-id={id}
         className={`terminal-card canvas-node ${focusClass} ${waitingClass}`}
         onMouseDown={handleMouseDown}
       >
@@ -506,7 +512,7 @@ export function TerminalCard({
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    onRename(sessionId, editValue)
+                    onRename(id, editValue)
                     setEditing(false)
                   } else if (e.key === 'Escape') {
                     setEditing(false)
@@ -514,7 +520,7 @@ export function TerminalCard({
                   e.stopPropagation()
                 }}
                 onBlur={() => {
-                  onRename(sessionId, editValue)
+                  onRename(id, editValue)
                   setEditing(false)
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
@@ -556,7 +562,7 @@ export function TerminalCard({
                     style={{ backgroundColor: p.titleBarBg }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onColorChange(sessionId, p.id)
+                      onColorChange(id, p.id)
                       setPickerOpen(false)
                     }}
                   />
@@ -567,7 +573,7 @@ export function TerminalCard({
           <button
             className="terminal-card__close"
             style={preset ? { color: preset.titleBarFg } : undefined}
-            onClick={(e) => { e.stopPropagation(); onClose(sessionId) }}
+            onClick={(e) => { e.stopPropagation(); onClose(id) }}
             onMouseDown={(e) => e.stopPropagation()}
           >
             &times;
@@ -577,12 +583,12 @@ export function TerminalCard({
       <div className="terminal-card__body" ref={containerRef} />
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
         {waitingForUser && <span className="terminal-card__waiting-indicator" title="Waiting for input" />}
-        {sessionId.slice(0, 8)}
+        {id.slice(0, 8)}
       </div>
       </div>
       {claudeSessionHistory && claudeSessionHistory.length > 0 && (
         <div className="terminal-card__session-history">
-          {claudeSessionHistory.map((entry, i) => (
+          {[...claudeSessionHistory].reverse().map((entry, i) => (
             <div key={i} className={`terminal-card__session-entry terminal-card__session-entry--${entry.reason}`}>
               <span className="terminal-card__session-id">{entry.claudeSessionId.slice(0, 8)}</span>
               {' '}

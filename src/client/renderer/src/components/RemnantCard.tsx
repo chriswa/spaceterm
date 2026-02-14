@@ -5,7 +5,7 @@ import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
 const DRAG_THRESHOLD = 5
 
 interface RemnantCardProps {
-  sessionId: string
+  id: string
   x: number
   y: number
   zIndex: number
@@ -14,23 +14,28 @@ interface RemnantCardProps {
   colorPresetId?: string
   shellTitleHistory?: string[]
   cwd?: string
+  claudeSessionHistory?: ClaudeSessionEntry[]
   exitCode: number
   focused: boolean
-  onFocus: (sessionId: string) => void
-  onClose: (sessionId: string) => void
-  onMove: (sessionId: string, x: number, y: number) => void
-  onRename: (sessionId: string, name: string) => void
-  onColorChange: (sessionId: string, color: string) => void
+  onFocus: (id: string) => void
+  onClose: (id: string) => void
+  onMove: (id: string, x: number, y: number) => void
+  onRename: (id: string, name: string) => void
+  onColorChange: (id: string, color: string) => void
+  onResumeSession?: (remnantId: string, claudeSessionId: string) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
+  onDragStart?: (id: string) => void
+  onDragEnd?: (id: string) => void
 }
 
 export function RemnantCard({
-  sessionId, x, y, zIndex, zoom, name, colorPresetId, shellTitleHistory, cwd, exitCode, focused,
-  onFocus, onClose, onMove, onRename, onColorChange, onNodeReady
+  id, x, y, zIndex, zoom, name, colorPresetId, shellTitleHistory, cwd, claudeSessionHistory, exitCode, focused,
+  onFocus, onClose, onMove, onRename, onColorChange, onResumeSession, onNodeReady,
+  onDragStart, onDragEnd
 }: RemnantCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
-  const propsRef = useRef({ x, y, zoom, sessionId, onNodeReady })
-  propsRef.current = { x, y, zoom, sessionId, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, id, onNodeReady })
+  propsRef.current = { x, y, zoom, id, onNodeReady }
 
   // Editable title state
   const [editing, setEditing] = useState(false)
@@ -63,8 +68,8 @@ export function RemnantCard({
   // Notify parent when focused node is ready
   useEffect(() => {
     if (!focused) return
-    propsRef.current.onNodeReady?.(sessionId, { x: propsRef.current.x, y: propsRef.current.y, width: REMNANT_WIDTH, height: REMNANT_HEIGHT })
-  }, [focused, sessionId])
+    propsRef.current.onNodeReady?.(id, { x: propsRef.current.x, y: propsRef.current.y, width: REMNANT_WIDTH, height: REMNANT_HEIGHT })
+  }, [focused, id])
 
   // Mousedown handler: drag-to-move or click-to-focus
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -85,10 +90,11 @@ export function RemnantCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
+        onDragStart?.(id)
       }
 
       if (dragging) {
-        onMove(sessionId, startX + dx / currentZoom, startY + dy / currentZoom)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom)
       }
     }
 
@@ -96,8 +102,10 @@ export function RemnantCard({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
 
-      if (!dragging) {
-        onFocus(sessionId)
+      if (dragging) {
+        onDragEnd?.(id)
+      } else {
+        onFocus(id)
       }
     }
 
@@ -117,14 +125,13 @@ export function RemnantCard({
 
   return (
     <div
-      data-session-id={sessionId}
+      data-node-id={id}
       className={`remnant-card canvas-node ${focused ? 'remnant-card--focused' : ''}`}
       style={{
         position: 'absolute',
         left: x,
         top: y,
         width: REMNANT_WIDTH,
-        height: REMNANT_HEIGHT,
         zIndex
       }}
       onMouseDown={handleMouseDown}
@@ -156,7 +163,7 @@ export function RemnantCard({
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    onRename(sessionId, editValue)
+                    onRename(id, editValue)
                     setEditing(false)
                   } else if (e.key === 'Escape') {
                     setEditing(false)
@@ -164,7 +171,7 @@ export function RemnantCard({
                   e.stopPropagation()
                 }}
                 onBlur={() => {
-                  onRename(sessionId, editValue)
+                  onRename(id, editValue)
                   setEditing(false)
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
@@ -206,7 +213,7 @@ export function RemnantCard({
                     style={{ backgroundColor: p.titleBarBg }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onColorChange(sessionId, p.id)
+                      onColorChange(id, p.id)
                       setPickerOpen(false)
                     }}
                   />
@@ -217,7 +224,7 @@ export function RemnantCard({
           <button
             className="terminal-card__close"
             style={preset ? { color: preset.titleBarFg } : undefined}
-            onClick={(e) => { e.stopPropagation(); onClose(sessionId) }}
+            onClick={(e) => { e.stopPropagation(); onClose(id) }}
             onMouseDown={(e) => e.stopPropagation()}
           >
             &times;
@@ -226,9 +233,28 @@ export function RemnantCard({
       </div>
       <div className="remnant-card__body">
         <div className="remnant-card__exit">exited ({exitCode})</div>
+        {claudeSessionHistory && claudeSessionHistory.length > 0 && (
+          <div className="remnant-card__sessions">
+            {[...claudeSessionHistory].reverse().map((entry, i) => (
+              <div
+                key={i}
+                className={`terminal-card__session-entry terminal-card__session-entry--${entry.reason} terminal-card__session-entry--clickable`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onResumeSession?.(id, entry.claudeSessionId)
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <span className="terminal-card__session-id">{entry.claudeSessionId.slice(0, 8)}</span>
+                {' '}
+                <span className="terminal-card__session-reason">({entry.reason})</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
-        {sessionId.slice(0, 8)}
+        {id.slice(0, 8)}
       </div>
     </div>
   )
