@@ -107,6 +107,7 @@ export interface AttachedMessage {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
+  waitingForUser?: boolean
 }
 
 export interface DetachedMessage {
@@ -150,6 +151,12 @@ export interface ClaudeSessionHistoryMessage {
   history: ClaudeSessionEntry[]
 }
 
+export interface WaitingForUserMessage {
+  type: 'waiting-for-user'
+  sessionId: string
+  waiting: boolean
+}
+
 export type ServerMessage =
   | CreatedMessage
   | ListedMessage
@@ -161,3 +168,4 @@ export type ServerMessage =
   | ShellTitleHistoryMessage
   | CwdMessage
   | ClaudeSessionHistoryMessage
+  | WaitingForUserMessage

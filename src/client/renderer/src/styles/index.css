@@ -121,6 +121,19 @@ html, body, #root {
   border-color: #fab387;
 }
 
+.terminal-card.terminal-card--waiting {
+  animation: waiting-outline 1.5s ease-in-out infinite;
+}
+
+@keyframes waiting-outline {
+  0% {
+    box-shadow: 0 0 0 10px rgba(137, 220, 235, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 0 2px rgba(137, 220, 235, 0);
+  }
+}
+
 .terminal-card__header {
   display: flex;
   align-items: center;
@@ -290,6 +303,22 @@ html, body, #root {
   color: #6c7086;
 }
 
+.terminal-card__waiting-indicator {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f9e2af;
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: waiting-pulse 2s ease-in-out infinite;
+}
+
+@keyframes waiting-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 .terminal-card__body .xterm {
   height: 100%;
 }
@@ -391,7 +420,7 @@ html, body, #root {
   width: 100%;
   height: 100%;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   border: 2px solid #313244;
   background: #1e1e2e;
   display: flex;
@@ -419,7 +448,7 @@ html, body, #root {
 }
 
 .markdown-card__body .cm-scroller {
-  overflow: auto;
+  overflow: hidden;
 }
 
 /* Block mouse interaction with CodeMirror when not focused */
@@ -435,45 +464,62 @@ html, body, #root {
   cursor: grabbing;
 }
 
-/* Resize handle */
-.markdown-card__resize-handle {
+/* Floating action buttons (color + close) */
+.markdown-card__actions {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 12px;
-  height: 12px;
-  cursor: nwse-resize;
-  background: linear-gradient(135deg, transparent 50%, #585b70 50%);
-  border-radius: 0 0 6px 0;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.15s;
+  z-index: 10;
 }
 
-.markdown-card:hover .markdown-card__resize-handle,
-.markdown-card--focused .markdown-card__resize-handle {
-  opacity: 0.6;
+.markdown-card:hover .markdown-card__actions,
+.markdown-card--focused .markdown-card__actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.markdown-card__resize-handle:hover {
-  opacity: 1 !important;
-}
-
-/* Custom scrollbar for CodeMirror */
-.markdown-card .cm-scroller::-webkit-scrollbar {
-  width: 8px;
-}
-
-.markdown-card .cm-scroller::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.markdown-card .cm-scroller::-webkit-scrollbar-thumb {
-  background: transparent;
+.markdown-card__color-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
   border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.markdown-card--focused .cm-scroller::-webkit-scrollbar-thumb {
-  background: #585b70;
+.markdown-card__color-btn:hover {
+  background: rgba(137, 180, 250, 0.3);
+}
+
+.markdown-card__close-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.markdown-card__close-btn:hover {
+  background: #f38ba8;
+  color: #1e1e2e;
 }
 
 /* Tree connection lines */

@@ -35,10 +35,10 @@ export const CHILD_PLACEMENT_DISTANCE = 1250
 export const ROOT_NODE_RADIUS = 150
 
 // Markdown node dimensions
-export const MARKDOWN_DEFAULT_WIDTH = 400
-export const MARKDOWN_DEFAULT_HEIGHT = 200
-export const MARKDOWN_MIN_WIDTH = 100
-export const MARKDOWN_MIN_HEIGHT = 30
+export const MARKDOWN_DEFAULT_WIDTH = 200
+export const MARKDOWN_DEFAULT_HEIGHT = 60
+export const MARKDOWN_MIN_WIDTH = 200
+export const MARKDOWN_MIN_HEIGHT = 60
 
 // Remnant node dimensions (dead terminal placeholder)
 // Width matches default 80-col terminal for visual consistency

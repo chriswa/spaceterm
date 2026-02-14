@@ -20,6 +20,7 @@ interface Session {
   claudeSessionHistory: ClaudeSessionEntry[]
   lastClaudeSessionId: string | null
   pendingStop: boolean
+  waitingForUser: boolean
   cwd: string
   cols: number
   rows: number
@@ -30,6 +31,7 @@ export type ExitCallback = (sessionId: string, exitCode: number) => void
 export type TitleHistoryCallback = (sessionId: string, history: string[]) => void
 export type CwdCallback = (sessionId: string, cwd: string) => void
 export type ClaudeSessionHistoryCallback = (sessionId: string, history: ClaudeSessionEntry[]) => void
+export type WaitingForUserCallback = (sessionId: string, waiting: boolean) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -38,13 +40,15 @@ export class SessionManager {
   private onTitleHistory: TitleHistoryCallback
   private onCwd: CwdCallback
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
+  private onWaitingForUser: WaitingForUserCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onWaitingForUser: WaitingForUserCallback) {
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
     this.onCwd = onCwd
     this.onClaudeSessionHistory = onClaudeSessionHistory
+    this.onWaitingForUser = onWaitingForUser
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -121,6 +125,7 @@ export class SessionManager {
       claudeSessionHistory: [],
       lastClaudeSessionId: null,
       pendingStop: false,
+      waitingForUser: false,
       cwd,
       cols,
       rows
@@ -223,6 +228,17 @@ export class SessionManager {
   handleClaudeStop(surfaceId: string): void {
     const session = this.sessions.get(surfaceId)
     if (session) session.pendingStop = true
+  }
+
+  setWaitingForUser(surfaceId: string, waiting: boolean): void {
+    const session = this.sessions.get(surfaceId)
+    if (!session || session.waitingForUser === waiting) return
+    session.waitingForUser = waiting
+    this.onWaitingForUser(surfaceId, waiting)
+  }
+
+  getWaitingForUser(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.waitingForUser ?? false
   }
 
   getClaudeSessionHistory(sessionId: string): ClaudeSessionEntry[] {

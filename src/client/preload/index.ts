@@ -27,6 +27,7 @@ export interface AttachResult {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
+  waitingForUser?: boolean
 }
 
 export interface PtyApi {
@@ -41,6 +42,7 @@ export interface PtyApi {
   onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
+  onWaitingForUser(sessionId: string, callback: (waiting: boolean) => void): () => void
   onServerStatus(callback: (connected: boolean) => void): () => void
 }
 
@@ -92,6 +94,13 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
+  onWaitingForUser: (sessionId, callback) => {
+    const channel = `pty:waiting-for-user:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, waiting: boolean) => callback(waiting)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
   onServerStatus: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, connected: boolean) => callback(connected)
     ipcRenderer.on('server:status', listener)
@@ -102,5 +111,9 @@ const ptyApi: PtyApi = {
 contextBridge.exposeInMainWorld('api', {
   pty: ptyApi,
   log: (message: string) => ipcRenderer.send('log', message),
-  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  tts: {
+    speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
+    stop: () => ipcRenderer.send('tts:stop')
+  }
 })

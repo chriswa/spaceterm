@@ -9,6 +9,8 @@ import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
 const DRAG_THRESHOLD = 5
 const textEncoder = new TextEncoder()
 
+export const terminalSelectionGetters = new Map<string, () => string>()
+
 interface TerminalCardProps {
   sessionId: string
   x: number
@@ -37,6 +39,8 @@ interface TerminalCardProps {
   onShellTitleHistoryChange?: (sessionId: string, history: string[]) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
   onClaudeSessionHistoryChange?: (sessionId: string, history: ClaudeSessionEntry[]) => void
+  waitingForUser?: boolean
+  onWaitingForUserChange?: (sessionId: string, waiting: boolean) => void
   onExit?: (sessionId: string, exitCode: number) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
 }
@@ -44,7 +48,7 @@ interface TerminalCardProps {
 export function TerminalCard({
   sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
-  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, onExit, onNodeReady
+  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, waitingForUser, onWaitingForUserChange, onExit, onNodeReady
 }: TerminalCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
@@ -54,8 +58,8 @@ export function TerminalCard({
   const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onDisableScrollMode, onExit, onNodeReady })
-  propsRef.current = { x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onDisableScrollMode, onExit, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady }
 
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
@@ -211,6 +215,9 @@ export function TerminalCard({
       if (result.claudeSessionHistory && result.claudeSessionHistory.length > 0) {
         propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.sessionId, result.claudeSessionHistory)
       }
+      if (result.waitingForUser !== undefined) {
+        propsRef.current.onWaitingForUserChange?.(propsRef.current.sessionId, result.waitingForUser)
+      }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
     })
@@ -236,6 +243,10 @@ export function TerminalCard({
       propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.sessionId, history)
     })
 
+    const cleanupWaitingForUser = window.api.pty.onWaitingForUser(sessionId, (waiting) => {
+      propsRef.current.onWaitingForUserChange?.(propsRef.current.sessionId, waiting)
+    })
+
     term.onData((data) => {
       window.api.pty.write(sessionId, data)
     })
@@ -246,14 +257,17 @@ export function TerminalCard({
 
     terminalRef.current = term
     fitAddonRef.current = fitAddon
+    terminalSelectionGetters.set(sessionId, () => term.getSelection())
 
     return () => {
       cancelled = true
+      terminalSelectionGetters.delete(sessionId)
       cleanupData()
       cleanupExit()
       cleanupTitleHistory()
       cleanupCwd()
       cleanupClaudeSessionHistory()
+      cleanupWaitingForUser()
       term.dispose()
     }
   }, [sessionId])
@@ -446,6 +460,7 @@ export function TerminalCard({
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
     : ''
+  const waitingClass = waitingForUser ? 'terminal-card--waiting' : ''
 
   return (
     <div
@@ -461,7 +476,7 @@ export function TerminalCard({
       <div
         ref={cardRef}
         data-session-id={sessionId}
-        className={`terminal-card canvas-node ${focusClass}`}
+        className={`terminal-card canvas-node ${focusClass} ${waitingClass}`}
         onMouseDown={handleMouseDown}
       >
       <div
@@ -561,6 +576,7 @@ export function TerminalCard({
       </div>
       <div className="terminal-card__body" ref={containerRef} />
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
+        {waitingForUser && <span className="terminal-card__waiting-indicator" title="Waiting for input" />}
         {sessionId.slice(0, 8)}
       </div>
       </div>

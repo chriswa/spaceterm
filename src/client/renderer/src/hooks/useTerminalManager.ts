@@ -16,6 +16,7 @@ export interface TerminalInfo {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
+  waitingForUser?: boolean
 }
 
 export interface MarkdownInfo {
@@ -190,6 +191,12 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     )
   }, [])
 
+  const setWaitingForUser = useCallback((sessionId: string, waitingForUser: boolean) => {
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, waitingForUser } : t))
+    )
+  }, [])
+
   const convertToRemnant = useCallback((sessionId: string, exitCode: number) => {
     setTerminals((prev) => {
       const terminal = prev.find((t) => t.sessionId === sessionId)
@@ -329,7 +336,7 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
   }, [])
 
   return {
-    terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, setCwd, setClaudeSessionHistory,
+    terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, setCwd, setClaudeSessionHistory, setWaitingForUser,
     remnants, convertToRemnant, removeRemnant, moveRemnant, bringRemnantToFront, renameRemnant, setRemnantColor,
     markdowns, addMarkdown, removeMarkdown, moveMarkdown, resizeMarkdown, updateMarkdownContent, bringMarkdownToFront, renameMarkdown, setMarkdownColor,
     nextZIndex

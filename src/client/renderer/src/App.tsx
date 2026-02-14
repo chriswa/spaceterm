@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { RootNode } from './components/RootNode'
-import { TerminalCard } from './components/TerminalCard'
+import { TerminalCard, terminalSelectionGetters } from './components/TerminalCard'
 import { RemnantCard } from './components/RemnantCard'
 import { MarkdownCard } from './components/MarkdownCard'
 import { TreeLines } from './components/TreeLines'
 import type { TreeNode } from './components/TreeLines'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
+import { useTTS } from './hooks/useTTS'
 import { useTerminalManager } from './hooks/useTerminalManager'
 import { cameraToFitBounds, unionBounds } from './lib/camera'
 import { terminalPixelSize, CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUSED_MAX_ZOOM, REMNANT_WIDTH, REMNANT_HEIGHT, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT } from './lib/constants'
@@ -56,12 +57,13 @@ export function App() {
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
 
+  const { speak, stop: ttsStop, isSpeaking } = useTTS()
   const { camera, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice } = useCamera(savedLayout?.camera, focusRef)
   const cameraRef = useRef(camera)
   cameraRef.current = camera
 
   const {
-    terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, setCwd, setClaudeSessionHistory,
+    terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, setCwd, setClaudeSessionHistory, setWaitingForUser,
     remnants, convertToRemnant, removeRemnant, moveRemnant, bringRemnantToFront, renameRemnant, setRemnantColor,
     markdowns, addMarkdown, removeMarkdown, moveMarkdown, resizeMarkdown, updateMarkdownContent, bringMarkdownToFront, renameMarkdown, setMarkdownColor,
     nextZIndex
@@ -325,10 +327,30 @@ export function App() {
         handleNodeFocus(mdId)
       }
 
+      // Cmd+Shift+S: speak selected text or stop speaking
+      if (e.metaKey && e.shiftKey && e.key === 's') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (isSpeaking()) {
+          ttsStop()
+        } else if (focusRef.current) {
+          const getter = terminalSelectionGetters.get(focusRef.current)
+          const selection = getter?.()
+          if (selection && selection.length > 0) {
+            speak(selection)
+          }
+        }
+      }
+
+      // Escape: stop TTS if speaking
+      if (e.key === 'Escape' && isSpeaking()) {
+        ttsStop()
+      }
+
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [addTerminal, addMarkdown, computeChildPosition, handleNodeFocus, handleCwdChange])
+  }, [addTerminal, addMarkdown, computeChildPosition, handleNodeFocus, handleCwdChange, speak, ttsStop, isSpeaking])
 
   // Debounced save of layout state
   useEffect(() => {
@@ -459,6 +481,8 @@ export function App() {
             onShellTitleHistoryChange={handleShellTitleHistoryChange}
             claudeSessionHistory={t.claudeSessionHistory}
             onClaudeSessionHistoryChange={handleClaudeSessionHistoryChange}
+            waitingForUser={t.waitingForUser}
+            onWaitingForUserChange={setWaitingForUser}
             onExit={handleTerminalExit}
             onNodeReady={handleNodeReady}
           />

@@ -26,6 +26,7 @@ interface AttachResult {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
+  waitingForUser?: boolean
 }
 
 interface PtyApi {
@@ -40,13 +41,20 @@ interface PtyApi {
   onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
+  onWaitingForUser(sessionId: string, callback: (waiting: boolean) => void): () => void
   onServerStatus(callback: (connected: boolean) => void): () => void
+}
+
+interface TtsApi {
+  speak(text: string): Promise<{ chunks: Array<{ samples: ArrayBuffer; sampleRate: number; pauseAfterMs: number }> }>
+  stop(): void
 }
 
 interface Api {
   pty: PtyApi
   log(message: string): void
   openExternal(url: string): Promise<void>
+  tts: TtsApi
 }
 
 declare interface Window {

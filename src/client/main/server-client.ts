@@ -115,6 +115,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'waiting-for-user') {
+      this.emit('waiting-for-user', msg.sessionId, msg.waiting)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)
@@ -156,9 +161,9 @@ export class ServerClient extends EventEmitter {
     throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }> }> {
+  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; waitingForUser?: boolean }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory }
+    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, waitingForUser: resp.waitingForUser }
     throw new Error('Unexpected response')
   }
 

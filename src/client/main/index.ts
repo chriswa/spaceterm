@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
+import { setupTTSHandlers } from './tts'
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
@@ -43,8 +44,8 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
-    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory } = await client!.attach(sessionId)
-    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory }
+    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, waitingForUser } = await client!.attach(sessionId)
+    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, waitingForUser }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -105,6 +106,12 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('waiting-for-user', (sessionId: string, waiting: boolean) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`pty:waiting-for-user:${sessionId}`, waiting)
+    }
+  })
+
   client!.on('connect', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('server:status', true)
@@ -132,6 +139,7 @@ app.whenReady().then(async () => {
 
   client = new ServerClient()
   setupIPC()
+  setupTTSHandlers()
   wireClientEvents()
 
   try {

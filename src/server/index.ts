@@ -76,7 +76,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           scrollback,
           shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId),
           cwd: sessionManager.getCwd(msg.sessionId),
-          claudeSessionHistory: sessionManager.getClaudeSessionHistory(msg.sessionId)
+          claudeSessionHistory: sessionManager.getClaudeSessionHistory(msg.sessionId),
+          waitingForUser: sessionManager.getWaitingForUser(msg.sessionId)
         })
       } else {
         // Session doesn't exist — send attached with empty scrollback
@@ -136,6 +137,25 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Track Stop hooks so we can distinguish real forks from claude -r startups
       if (hookType === 'Stop') {
         sessionManager.handleClaudeStop(msg.surfaceId)
+        sessionManager.setWaitingForUser(msg.surfaceId, true)
+      }
+
+      // Notification hooks: permission_prompt and elicitation_dialog mean user needs to act
+      if (hookType === 'Notification' && msg.payload && typeof msg.payload === 'object') {
+        const notificationType = 'notification_type' in msg.payload ? String(msg.payload.notification_type) : ''
+        if (notificationType === 'permission_prompt' || notificationType === 'elicitation_dialog') {
+          sessionManager.setWaitingForUser(msg.surfaceId, true)
+        }
+      }
+
+      // UserPromptSubmit: user just typed, Claude is about to work
+      if (hookType === 'UserPromptSubmit') {
+        sessionManager.setWaitingForUser(msg.surfaceId, false)
+      }
+
+      // SessionEnd: session is done
+      if (hookType === 'SessionEnd') {
+        sessionManager.setWaitingForUser(msg.surfaceId, false)
       }
 
       // Process SessionStart hooks for claude session history tracking
@@ -190,6 +210,10 @@ function startServer(): void {
     // onClaudeSessionHistory: broadcast to all attached clients
     (sessionId, history) => {
       broadcastToAttached(sessionId, { type: 'claude-session-history', sessionId, history })
+    },
+    // onWaitingForUser: broadcast to all attached clients
+    (sessionId, waiting) => {
+      broadcastToAttached(sessionId, { type: 'waiting-for-user', sessionId, waiting })
     }
   )
 

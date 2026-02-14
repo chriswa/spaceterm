@@ -7,7 +7,7 @@ import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT } from '../lib/constants'
 import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
 
 const DRAG_THRESHOLD = 5
-const RESIZE_HANDLE_SIZE = 12
+const URL_RE = /https?:\/\/[^\s\])<>]+/g
 
 interface MarkdownCardProps {
   id: string
@@ -31,11 +31,11 @@ interface MarkdownCardProps {
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
 }
 
-// CodeMirror theme matching the terminal dark theme
+// CodeMirror theme — colors use CSS custom properties so presets can override them
 const cmTheme = EditorView.theme({
   '&': {
     backgroundColor: '#1e1e2e',
-    color: '#cdd6f4',
+    color: 'var(--markdown-fg, #cdd6f4)',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     fontSize: '14px',
   },
@@ -59,27 +59,27 @@ const cmTheme = EditorView.theme({
     backgroundColor: 'rgba(88, 91, 112, 0.15)',
   },
   '.cm-scroller': {
-    overflow: 'auto',
+    overflow: 'hidden',
   },
   // Markdown heading decorations
   '.cm-header-1': {
     fontSize: '1.6em',
     fontWeight: '700',
-    color: '#89b4fa',
+    color: 'var(--markdown-accent, #89b4fa)',
   },
   '.cm-header-2': {
     fontSize: '1.3em',
     fontWeight: '700',
-    color: '#89b4fa',
+    color: 'var(--markdown-accent, #89b4fa)',
   },
   '.cm-header-3': {
     fontSize: '1.1em',
     fontWeight: '600',
-    color: '#89b4fa',
+    color: 'var(--markdown-accent, #89b4fa)',
   },
   '.cm-header-4, .cm-header-5, .cm-header-6': {
     fontWeight: '600',
-    color: '#89b4fa',
+    color: 'var(--markdown-accent, #89b4fa)',
   },
   // Inline code
   '.cm-inline-code': {
@@ -94,27 +94,35 @@ const cmTheme = EditorView.theme({
   // Bold
   '.cm-strong': {
     fontWeight: '700',
-    color: '#f9e2af',
+    color: 'var(--markdown-accent, #89b4fa)',
   },
   // Italic
   '.cm-emphasis': {
     fontStyle: 'italic',
-    color: '#a6e3a1',
+    color: 'var(--markdown-highlight, #f9e2af)',
   },
-  // Link
+  // Markdown link [text](url)
   '.cm-md-link': {
-    color: '#89b4fa',
+    color: 'var(--markdown-accent, #89b4fa)',
     textDecoration: 'underline',
+    cursor: 'pointer',
+  },
+  // Auto-detected bare URLs
+  '.cm-autolink': {
+    color: 'var(--markdown-accent, #89b4fa)',
+    textDecoration: 'underline',
+    cursor: 'pointer',
   },
   // Blockquote
   '.cm-blockquote-line': {
     borderLeft: '3px solid #585b70',
     paddingLeft: '8px',
-    color: '#a6adc8',
+    color: 'var(--markdown-fg, #cdd6f4)',
+    opacity: '0.7',
   },
   // List marker
   '.cm-list-marker': {
-    color: '#cba6f7',
+    color: 'var(--markdown-accent, #89b4fa)',
   },
   // Horizontal rule
   '.cm-hr-line': {
@@ -226,15 +234,131 @@ const markdownDecorations = ViewPlugin.fromClass(class {
   decorations: (v) => v.decorations
 })
 
+// Auto-detect bare URLs and decorate them as links
+const autolinkPlugin = ViewPlugin.fromClass(class {
+  decorations: DecorationSet
+
+  constructor(view: EditorView) {
+    this.decorations = this.build(view)
+  }
+
+  update(update: ViewUpdate) {
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = this.build(update.view)
+    }
+  }
+
+  build(view: EditorView): DecorationSet {
+    const widgets: any[] = []
+    const tree = syntaxTree(view.state)
+
+    for (const { from, to } of view.visibleRanges) {
+      const text = view.state.doc.sliceString(from, to)
+      URL_RE.lastIndex = 0
+      let m
+      while ((m = URL_RE.exec(text)) !== null) {
+        const start = from + m.index
+        const end = start + m[0].length
+        // Skip if inside a markdown Link node (already decorated by markdownDecorations)
+        let insideLink = false
+        tree.iterate({
+          from: start,
+          to: start + 1,
+          enter: (n) => {
+            if (n.type.name === 'Link') {
+              insideLink = true
+              return false
+            }
+          }
+        })
+        if (!insideLink) {
+          widgets.push(Decoration.mark({ class: 'cm-autolink' }).range(start, end))
+        }
+      }
+    }
+
+    widgets.sort((a, b) => a.from - b.from || a.startSide - b.startSide)
+    return Decoration.set(widgets, true)
+  }
+}, {
+  decorations: (v) => v.decorations
+})
+
+// Cmd+click to open links (both markdown [text](url) and bare URLs)
+const linkClickHandler = EditorView.domEventHandlers({
+  click: (event: MouseEvent, view: EditorView) => {
+    if (!event.metaKey && !event.ctrlKey) return false
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+    if (pos === null) return false
+
+    // Check bare URLs on this line
+    const line = view.state.doc.lineAt(pos)
+    URL_RE.lastIndex = 0
+    let m
+    while ((m = URL_RE.exec(line.text)) !== null) {
+      const start = line.from + m.index
+      const end = start + m[0].length
+      if (pos >= start && pos < end) {
+        window.api.openExternal(m[0])
+        event.preventDefault()
+        return true
+      }
+    }
+
+    // Check markdown links [text](url)
+    const tree = syntaxTree(view.state)
+    let url: string | null = null
+    tree.iterate({
+      from: pos,
+      to: pos + 1,
+      enter: (n) => {
+        if (n.type.name === 'Link') {
+          const linkText = view.state.doc.sliceString(n.from, n.to)
+          const urlMatch = linkText.match(/\((https?:\/\/[^)]+)\)/)
+          if (urlMatch) url = urlMatch[1]
+          return false
+        }
+      }
+    })
+    if (url) {
+      window.api.openExternal(url)
+      event.preventDefault()
+      return true
+    }
+
+    return false
+  }
+})
+
 export function MarkdownCard({
-  id, x, y, width, height, zIndex, zoom, content, name, colorPresetId, focused,
-  onFocus, onClose, onMove, onResize, onContentChange, onRename, onColorChange, onNodeReady
+  id, x, y, width, height, zIndex, zoom, content, colorPresetId, focused,
+  onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onNodeReady
 }: MarkdownCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  const propsRef = useRef({ x, y, zoom, id, onNodeReady, onContentChange })
-  propsRef.current = { x, y, zoom, id, onNodeReady, onContentChange }
+  const propsRef = useRef({ x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize })
+  propsRef.current = { x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize }
+
+  // Auto-size helper: collapse scroller to 0×0 so scrollWidth/scrollHeight
+  // report intrinsic content size (otherwise they never shrink below container).
+  // Both shrink + restore happen in the same rAF, before paint, so no flicker.
+  const autoSize = (view: EditorView) => {
+    requestAnimationFrame(() => {
+      const scroller = view.scrollDOM
+      scroller.style.width = '0px'
+      scroller.style.height = '0px'
+      // 4px chrome = 2px border × 2 sides
+      const newWidth = Math.max(MARKDOWN_MIN_WIDTH, scroller.scrollWidth + 4)
+      const newHeight = Math.max(MARKDOWN_MIN_HEIGHT, scroller.scrollHeight + 4)
+      scroller.style.width = ''
+      scroller.style.height = ''
+      const { width: curW, height: curH } = propsRef.current
+      if (Math.abs(newWidth - curW) > 1 || Math.abs(newHeight - curH) > 1) {
+        propsRef.current.onResize(propsRef.current.id, newWidth, newHeight)
+      }
+    })
+  }
 
   // Mount CodeMirror
   useEffect(() => {
@@ -246,14 +370,16 @@ export function MarkdownCard({
         markdown(),
         cmTheme,
         markdownDecorations,
+        autolinkPlugin,
+        linkClickHandler,
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged) {
             propsRef.current.onContentChange(propsRef.current.id, update.state.doc.toString())
+            autoSize(update.view)
           }
         }),
         // Prevent Cmd+M from being swallowed by CodeMirror
         keymap.of([]),
-        EditorView.lineWrapping,
       ]
     })
 
@@ -263,6 +389,9 @@ export function MarkdownCard({
     })
 
     viewRef.current = view
+
+    // Initial auto-size on mount for restored content
+    autoSize(view)
 
     return () => {
       view.destroy()
@@ -281,15 +410,20 @@ export function MarkdownCard({
     }
   }, [focused])
 
-  // Notify parent when focused node size is known
+  // Notify parent when focused node size is known (no width/height deps to avoid jitter)
   useEffect(() => {
     if (!focused) return
-    propsRef.current.onNodeReady?.(id, { x: propsRef.current.x, y: propsRef.current.y, width, height })
-  }, [focused, width, height, id])
+    const { x: px, y: py, width: pw, height: ph } = propsRef.current
+    propsRef.current.onNodeReady?.(id, { x: px, y: py, width: pw, height: ph })
+  }, [focused, id])
 
-  // Editable title state
-  const [editing, setEditing] = useState(false)
-  const [editValue, setEditValue] = useState('')
+  // Apply color to CodeMirror editor background
+  useEffect(() => {
+    const view = viewRef.current
+    if (view) {
+      view.dom.style.backgroundColor = preset?.terminalBg ?? '#1e1e2e'
+    }
+  }, [preset])
 
   // Color picker state
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -309,10 +443,9 @@ export function MarkdownCard({
 
   // Drag handler
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__title, .terminal-card__title-input, .terminal-card__color-picker, .markdown-card__resize-handle')) return
+    if ((e.target as HTMLElement).closest('.markdown-card__actions, .terminal-card__color-picker')) return
 
-    const isHeader = !!(e.target as HTMLElement).closest('.terminal-card__header')
-    const bodyClickWhileFocused = focused && !isHeader
+    const bodyClickWhileFocused = focused
     if (!bodyClickWhileFocused) {
       e.preventDefault()
     }
@@ -349,34 +482,6 @@ export function MarkdownCard({
     window.addEventListener('mouseup', onMouseUp)
   }
 
-  // Resize handler
-  const handleResizeMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-
-    const startScreenX = e.clientX
-    const startScreenY = e.clientY
-    const startWidth = width
-    const startHeight = height
-    const currentZoom = propsRef.current.zoom
-
-    const onMouseMove = (ev: MouseEvent) => {
-      const dx = (ev.clientX - startScreenX) / currentZoom
-      const dy = (ev.clientY - startScreenY) / currentZoom
-      const newWidth = Math.max(MARKDOWN_MIN_WIDTH, startWidth + dx)
-      const newHeight = Math.max(MARKDOWN_MIN_HEIGHT, startHeight + dy)
-      onResize(id, newWidth, newHeight)
-    }
-
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
-  }
-
   return (
     <div
       style={{
@@ -391,98 +496,55 @@ export function MarkdownCard({
       <div
         data-node-id={id}
         className={`markdown-card canvas-node ${focused ? 'markdown-card--focused' : ''}`}
+        style={{
+          backgroundColor: preset?.terminalBg ?? '#1e1e2e',
+          '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',
+          '--markdown-accent': preset?.markdownAccent ?? '#89b4fa',
+          '--markdown-highlight': preset?.markdownHighlight ?? '#f9e2af',
+        } as React.CSSProperties}
         onMouseDown={handleMouseDown}
       >
         <div
-          className="terminal-card__header"
-          style={preset ? {
-            backgroundColor: preset.titleBarBg,
-            color: preset.titleBarFg,
-            borderBottomColor: preset.titleBarBg
-          } : undefined}
+          className="markdown-card__actions"
+          onMouseDown={(e) => e.stopPropagation()}
         >
-          {editing ? (
-            <input
-              className="terminal-card__title-input"
-              value={editValue}
-              style={preset ? { color: preset.titleBarFg } : undefined}
-              onChange={(e) => setEditValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  onRename(id, editValue)
-                  setEditing(false)
-                } else if (e.key === 'Escape') {
-                  setEditing(false)
-                }
-                e.stopPropagation()
-              }}
-              onBlur={() => {
-                onRename(id, editValue)
-                setEditing(false)
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              autoFocus
-            />
-          ) : (
-            <span
-              className="terminal-card__title"
-              style={preset ? { color: preset.titleBarFg } : undefined}
+          <div style={{ position: 'relative' }} ref={pickerRef}>
+            <button
+              className="markdown-card__color-btn"
+              title="Color"
               onClick={(e) => {
                 e.stopPropagation()
-                setEditValue(name || 'note')
-                setEditing(true)
+                setPickerOpen((prev) => !prev)
               }}
-              onMouseDown={(e) => e.stopPropagation()}
             >
-              {name || 'note'}
-            </span>
-          )}
-          <div className="terminal-card__actions">
-            <div style={{ position: 'relative' }} ref={pickerRef}>
-              <button
-                className="terminal-card__color-btn"
-                title="Header color"
-                style={preset ? { color: preset.titleBarFg } : undefined}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setPickerOpen((prev) => !prev)
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                &#9679;
-              </button>
-              {pickerOpen && (
-                <div className="terminal-card__color-picker" onMouseDown={(e) => e.stopPropagation()}>
-                  {COLOR_PRESETS.map((p) => (
-                    <button
-                      key={p.id}
-                      className="terminal-card__color-swatch"
-                      style={{ backgroundColor: p.titleBarBg }}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onColorChange(id, p.id)
-                        setPickerOpen(false)
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-            <button
-              className="terminal-card__close"
-              style={preset ? { color: preset.titleBarFg } : undefined}
-              onClick={(e) => { e.stopPropagation(); onClose(id) }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              &times;
+              &#9679;
             </button>
+            {pickerOpen && (
+              <div className="terminal-card__color-picker" onMouseDown={(e) => e.stopPropagation()}>
+                {COLOR_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    className="terminal-card__color-swatch"
+                    style={{ backgroundColor: p.titleBarBg }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onColorChange(id, p.id)
+                      setPickerOpen(false)
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
+          <button
+            className="markdown-card__close-btn"
+            onClick={(e) => { e.stopPropagation(); onClose(id) }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            &times;
+          </button>
         </div>
         <div className="markdown-card__body" ref={bodyRef} />
-        <div
-          className="markdown-card__resize-handle"
-          onMouseDown={handleResizeMouseDown}
-        />
       </div>
     </div>
   )
