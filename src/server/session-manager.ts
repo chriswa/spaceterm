@@ -5,9 +5,10 @@ import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
 import { TitleParser } from './title-parser'
-import type { SessionInfo, CreateOptions } from '../shared/protocol'
+import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
 
 const MAX_TITLE_HISTORY = 50
+const MAX_CLAUDE_SESSION_HISTORY = 20
 
 interface Session {
   id: string
@@ -16,6 +17,9 @@ interface Session {
   scrollback: ScrollbackBuffer
   titleParser: TitleParser
   shellTitleHistory: string[]
+  claudeSessionHistory: ClaudeSessionEntry[]
+  lastClaudeSessionId: string | null
+  pendingStop: boolean
   cwd: string
   cols: number
   rows: number
@@ -25,6 +29,7 @@ export type DataCallback = (sessionId: string, data: string) => void
 export type ExitCallback = (sessionId: string, exitCode: number) => void
 export type TitleHistoryCallback = (sessionId: string, history: string[]) => void
 export type CwdCallback = (sessionId: string, cwd: string) => void
+export type ClaudeSessionHistoryCallback = (sessionId: string, history: ClaudeSessionEntry[]) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -32,12 +37,14 @@ export class SessionManager {
   private onExit: ExitCallback
   private onTitleHistory: TitleHistoryCallback
   private onCwd: CwdCallback
+  private onClaudeSessionHistory: ClaudeSessionHistoryCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback) {
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
     this.onCwd = onCwd
+    this.onClaudeSessionHistory = onClaudeSessionHistory
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -72,9 +79,11 @@ export class SessionManager {
 
     const titleParser = new TitleParser(
       (title) => {
-        shellTitleHistory.push(title)
+        const idx = shellTitleHistory.indexOf(title)
+        if (idx !== -1) shellTitleHistory.splice(idx, 1)
+        shellTitleHistory.unshift(title)
         if (shellTitleHistory.length > MAX_TITLE_HISTORY) {
-          shellTitleHistory.shift()
+          shellTitleHistory.pop()
         }
         this.onTitleHistory(sessionId, shellTitleHistory)
       },
@@ -109,6 +118,9 @@ export class SessionManager {
       scrollback,
       titleParser,
       shellTitleHistory,
+      claudeSessionHistory: [],
+      lastClaudeSessionId: null,
+      pendingStop: false,
       cwd,
       cols,
       rows
@@ -172,6 +184,50 @@ export class SessionManager {
 
   getCwd(sessionId: string): string | undefined {
     return this.sessions.get(sessionId)?.cwd
+  }
+
+  handleClaudeSessionStart(surfaceId: string, claudeSessionId: string, source: string): void {
+    const session = this.sessions.get(surfaceId)
+    if (!session) return
+
+    let reason: ClaudeSessionEntry['reason']
+    if (source === 'resume' && session.pendingStop && session.lastClaudeSessionId !== null && session.lastClaudeSessionId !== claudeSessionId) {
+      reason = 'fork'
+    } else if (source === 'startup') {
+      reason = 'startup'
+    } else if (source === 'clear') {
+      reason = 'clear'
+    } else if (source === 'compact') {
+      reason = 'compact'
+    } else {
+      reason = 'resume'
+    }
+
+    session.lastClaudeSessionId = claudeSessionId
+    if (reason !== 'fork') session.pendingStop = false
+
+    const entry: ClaudeSessionEntry = {
+      claudeSessionId,
+      reason,
+      timestamp: new Date().toISOString()
+    }
+
+    session.claudeSessionHistory.push(entry)
+    if (session.claudeSessionHistory.length > MAX_CLAUDE_SESSION_HISTORY) {
+      session.claudeSessionHistory.shift()
+    }
+
+    this.onClaudeSessionHistory(surfaceId, session.claudeSessionHistory)
+  }
+
+  handleClaudeStop(surfaceId: string): void {
+    const session = this.sessions.get(surfaceId)
+    if (session) session.pendingStop = true
+  }
+
+  getClaudeSessionHistory(sessionId: string): ClaudeSessionEntry[] {
+    const session = this.sessions.get(sessionId)
+    return session ? session.claudeSessionHistory : []
   }
 
   has(sessionId: string): boolean {

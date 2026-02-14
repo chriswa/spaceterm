@@ -24,7 +24,7 @@ export function Canvas({ camera, onWheel, onPanStart, onCanvasClick, children }:
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
-    if ((e.target as HTMLElement).closest('.terminal-card, .root-node')) return
+    if ((e.target as HTMLElement).closest('.canvas-node')) return
 
     const startX = e.clientX
     const startY = e.clientY

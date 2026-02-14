@@ -75,7 +75,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionId: msg.sessionId,
           scrollback,
           shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId),
-          cwd: sessionManager.getCwd(msg.sessionId)
+          cwd: sessionManager.getCwd(msg.sessionId),
+          claudeSessionHistory: sessionManager.getClaudeSessionHistory(msg.sessionId)
         })
       } else {
         // Session doesn't exist — send attached with empty scrollback
@@ -131,6 +132,20 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       fs.appendFile(logPath, logEntry, (err) => {
         if (err) console.error(`Failed to write hook log: ${err.message}`)
       })
+
+      // Track Stop hooks so we can distinguish real forks from claude -r startups
+      if (hookType === 'Stop') {
+        sessionManager.handleClaudeStop(msg.surfaceId)
+      }
+
+      // Process SessionStart hooks for claude session history tracking
+      if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
+        const claudeSessionId = 'session_id' in msg.payload ? String(msg.payload.session_id) : ''
+        const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
+        if (claudeSessionId) {
+          sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
+        }
+      }
       break
     }
   }
@@ -171,6 +186,10 @@ function startServer(): void {
     // onCwd: broadcast to all attached clients
     (sessionId, cwd) => {
       broadcastToAttached(sessionId, { type: 'cwd', sessionId, cwd })
+    },
+    // onClaudeSessionHistory: broadcast to all attached clients
+    (sessionId, history) => {
+      broadcastToAttached(sessionId, { type: 'claude-session-history', sessionId, history })
     }
   )
 

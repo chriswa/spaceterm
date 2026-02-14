@@ -16,10 +16,17 @@ export interface CreateResult extends SessionInfo {
   cwd?: string
 }
 
+export interface ClaudeSessionEntry {
+  claudeSessionId: string
+  reason: 'startup' | 'fork' | 'clear' | 'compact' | 'resume'
+  timestamp: string
+}
+
 export interface AttachResult {
   scrollback: string
   shellTitleHistory?: string[]
   cwd?: string
+  claudeSessionHistory?: ClaudeSessionEntry[]
 }
 
 export interface PtyApi {
@@ -33,6 +40,7 @@ export interface PtyApi {
   onExit(sessionId: string, callback: (exitCode: number) => void): () => void
   onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
+  onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
   onServerStatus(callback: (connected: boolean) => void): () => void
 }
 
@@ -73,6 +81,13 @@ const ptyApi: PtyApi = {
   onCwd: (sessionId, callback) => {
     const channel = `pty:cwd:${sessionId}`
     const listener = (_event: Electron.IpcRendererEvent, cwd: string) => callback(cwd)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
+  onClaudeSessionHistory: (sessionId, callback) => {
+    const channel = `pty:claude-session-history:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, history: ClaudeSessionEntry[]) => callback(history)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
   },

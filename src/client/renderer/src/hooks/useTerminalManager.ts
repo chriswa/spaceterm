@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { DEFAULT_COLS, DEFAULT_ROWS, GRID_GAP, GRID_COLS } from '../lib/constants'
+import { DEFAULT_COLS, DEFAULT_ROWS, GRID_GAP, GRID_COLS, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT } from '../lib/constants'
 import { terminalPixelSize } from '../lib/constants'
 
 export interface TerminalInfo {
@@ -15,6 +15,34 @@ export interface TerminalInfo {
   shellTitle?: string
   shellTitleHistory?: string[]
   cwd?: string
+  claudeSessionHistory?: ClaudeSessionEntry[]
+}
+
+export interface MarkdownInfo {
+  id: string
+  parentId: string
+  x: number
+  y: number
+  zIndex: number
+  width: number
+  height: number
+  content: string
+  name?: string
+  colorPresetId?: string
+}
+
+export interface RemnantInfo {
+  sessionId: string
+  parentId: string
+  x: number
+  y: number
+  zIndex: number
+  name?: string
+  colorPresetId?: string
+  shellTitleHistory?: string[]
+  cwd?: string
+  claudeSessionHistory?: ClaudeSessionEntry[]
+  exitCode: number
 }
 
 function gridPosition(index: number): { x: number; y: number } {
@@ -29,11 +57,19 @@ function gridPosition(index: number): { x: number; y: number } {
 
 interface UseTerminalManagerOptions {
   savedTerminals?: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string; parentId?: string }>
+  savedRemnants?: RemnantInfo[]
+  savedMarkdowns?: MarkdownInfo[]
   initialNextZIndex?: number
 }
 
 export function useTerminalManager(options?: UseTerminalManagerOptions) {
   const [terminals, setTerminals] = useState<TerminalInfo[]>([])
+  const [remnants, setRemnants] = useState<RemnantInfo[]>(options?.savedRemnants ?? [])
+  const remnantRef = useRef<RemnantInfo[]>(options?.savedRemnants ?? [])
+  remnantRef.current = remnants
+  const [markdowns, setMarkdowns] = useState<MarkdownInfo[]>(options?.savedMarkdowns ?? [])
+  const markdownRef = useRef<MarkdownInfo[]>(options?.savedMarkdowns ?? [])
+  markdownRef.current = markdowns
   const nextZIndex = useRef<number>(options?.initialNextZIndex ?? 1)
 
   // On mount, discover existing sessions from the server
@@ -148,5 +184,154 @@ export function useTerminalManager(options?: UseTerminalManagerOptions) {
     )
   }, [])
 
-  return { terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, setCwd, nextZIndex }
+  const setClaudeSessionHistory = useCallback((sessionId: string, claudeSessionHistory: ClaudeSessionEntry[]) => {
+    setTerminals((prev) =>
+      prev.map((t) => (t.sessionId === sessionId ? { ...t, claudeSessionHistory } : t))
+    )
+  }, [])
+
+  const convertToRemnant = useCallback((sessionId: string, exitCode: number) => {
+    setTerminals((prev) => {
+      const terminal = prev.find((t) => t.sessionId === sessionId)
+      if (!terminal) return prev
+      const remnant: RemnantInfo = {
+        sessionId: terminal.sessionId,
+        parentId: terminal.parentId,
+        x: terminal.x,
+        y: terminal.y,
+        zIndex: terminal.zIndex,
+        name: terminal.name,
+        colorPresetId: terminal.colorPresetId,
+        shellTitleHistory: terminal.shellTitleHistory,
+        cwd: terminal.cwd,
+        claudeSessionHistory: terminal.claudeSessionHistory,
+        exitCode
+      }
+      setRemnants((r) => [...r, remnant])
+      // Children keep their parentId pointing at the same sessionId (now a remnant)
+      return prev.filter((t) => t.sessionId !== sessionId)
+    })
+  }, [])
+
+  const removeRemnant = useCallback((sessionId: string) => {
+    setRemnants((prev) => {
+      const removed = prev.find((r) => r.sessionId === sessionId)
+      const newParent = removed?.parentId ?? 'root'
+      // Re-parent remnant children in remnants array
+      const updated = prev
+        .filter((r) => r.sessionId !== sessionId)
+        .map((r) => r.parentId === sessionId ? { ...r, parentId: newParent } : r)
+      return updated
+    })
+    // Re-parent children in terminals array
+    setTerminals((prev) => {
+      const removedRemnant = remnantRef.current.find((r) => r.sessionId === sessionId)
+      const newParent = removedRemnant?.parentId ?? 'root'
+      return prev.map((t) => t.parentId === sessionId ? { ...t, parentId: newParent } : t)
+    })
+  }, [])
+
+  const moveRemnant = useCallback((sessionId: string, x: number, y: number) => {
+    setRemnants((prev) =>
+      prev.map((r) => (r.sessionId === sessionId ? { ...r, x, y } : r))
+    )
+  }, [])
+
+  const bringRemnantToFront = useCallback((sessionId: string) => {
+    const z = nextZIndex.current++
+    setRemnants((prev) =>
+      prev.map((r) => (r.sessionId === sessionId ? { ...r, zIndex: z } : r))
+    )
+  }, [])
+
+  const renameRemnant = useCallback((sessionId: string, name: string) => {
+    setRemnants((prev) =>
+      prev.map((r) => (r.sessionId === sessionId ? { ...r, name } : r))
+    )
+  }, [])
+
+  const setRemnantColor = useCallback((sessionId: string, colorPresetId: string) => {
+    setRemnants((prev) =>
+      prev.map((r) => (r.sessionId === sessionId ? { ...r, colorPresetId } : r))
+    )
+  }, [])
+
+  const addMarkdown = useCallback((position: { x: number; y: number }, parentId: string) => {
+    const id = crypto.randomUUID()
+    const z = nextZIndex.current++
+    const md: MarkdownInfo = {
+      id,
+      parentId,
+      ...position,
+      zIndex: z,
+      width: MARKDOWN_DEFAULT_WIDTH,
+      height: MARKDOWN_DEFAULT_HEIGHT,
+      content: '',
+      colorPresetId: 'default'
+    }
+    setMarkdowns((prev) => [...prev, md])
+    return id
+  }, [])
+
+  const removeMarkdown = useCallback((id: string) => {
+    setMarkdowns((prev) => {
+      const removed = prev.find((m) => m.id === id)
+      const newParent = removed?.parentId ?? 'root'
+      return prev
+        .filter((m) => m.id !== id)
+        .map((m) => m.parentId === id ? { ...m, parentId: newParent } : m)
+    })
+    // Re-parent terminal children
+    setTerminals((prev) =>
+      prev.map((t) => t.parentId === id ? { ...t, parentId: markdownRef.current.find((m) => m.id === id)?.parentId ?? 'root' } : t)
+    )
+    // Re-parent remnant children
+    setRemnants((prev) =>
+      prev.map((r) => r.parentId === id ? { ...r, parentId: markdownRef.current.find((m) => m.id === id)?.parentId ?? 'root' } : r)
+    )
+  }, [])
+
+  const moveMarkdown = useCallback((id: string, x: number, y: number) => {
+    setMarkdowns((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, x, y } : m))
+    )
+  }, [])
+
+  const resizeMarkdown = useCallback((id: string, width: number, height: number) => {
+    setMarkdowns((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, width, height } : m))
+    )
+  }, [])
+
+  const updateMarkdownContent = useCallback((id: string, content: string) => {
+    setMarkdowns((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, content } : m))
+    )
+  }, [])
+
+  const bringMarkdownToFront = useCallback((id: string) => {
+    const z = nextZIndex.current++
+    setMarkdowns((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, zIndex: z } : m))
+    )
+  }, [])
+
+  const renameMarkdown = useCallback((id: string, name: string) => {
+    setMarkdowns((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, name } : m))
+    )
+  }, [])
+
+  const setMarkdownColor = useCallback((id: string, colorPresetId: string) => {
+    setMarkdowns((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, colorPresetId } : m))
+    )
+  }, [])
+
+  return {
+    terminals, addTerminal, removeTerminal, moveTerminal, resizeTerminal, bringToFront, renameTerminal, setTerminalColor, setShellTitle, setShellTitleHistory, setCwd, setClaudeSessionHistory,
+    remnants, convertToRemnant, removeRemnant, moveRemnant, bringRemnantToFront, renameRemnant, setRemnantColor,
+    markdowns, addMarkdown, removeMarkdown, moveMarkdown, resizeMarkdown, updateMarkdownContent, bringMarkdownToFront, renameMarkdown, setMarkdownColor,
+    nextZIndex
+  }
 }

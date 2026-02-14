@@ -34,8 +34,8 @@ function setupIPC(): void {
   ipcMain.handle('pty:create', async (_event, options?: Record<string, unknown>) => {
     const session = await client!.create(options as any)
     // Auto-attach so we receive data events for this session
-    const { shellTitleHistory, cwd } = await client!.attach(session.sessionId)
-    return { ...session, shellTitleHistory, cwd }
+    const { shellTitleHistory, cwd, claudeSessionHistory } = await client!.attach(session.sessionId)
+    return { ...session, shellTitleHistory, cwd, claudeSessionHistory }
   })
 
   ipcMain.handle('pty:list', async () => {
@@ -43,8 +43,8 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
-    const { scrollback, shellTitleHistory, cwd } = await client!.attach(sessionId)
-    return { scrollback, shellTitleHistory, cwd }
+    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory } = await client!.attach(sessionId)
+    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -99,6 +99,12 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('claude-session-history', (sessionId: string, history: unknown[]) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`pty:claude-session-history:${sessionId}`, history)
+    }
+  })
+
   client!.on('connect', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('server:status', true)
@@ -113,6 +119,12 @@ function wireClientEvents(): void {
 }
 
 app.setName('Spaceterm')
+
+// Strategy 6: Chromium GPU flags to increase tile memory headroom
+app.commandLine.appendSwitch('force-gpu-mem-available-mb', '4096')
+app.commandLine.appendSwitch('enable-gpu-rasterization')
+app.commandLine.appendSwitch('enable-zero-copy')
+app.commandLine.appendSwitch('ignore-gpu-blocklist')
 
 app.whenReady().then(async () => {
   logger.init()

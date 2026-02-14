@@ -110,6 +110,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'claude-session-history') {
+      this.emit('claude-session-history', msg.sessionId, msg.history)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)
@@ -151,9 +156,9 @@ export class ServerClient extends EventEmitter {
     throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string }> {
+  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }> }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd }
+    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory }
     throw new Error('Unexpected response')
   }
 

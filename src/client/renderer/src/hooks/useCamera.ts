@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, screenToCanvas, zoomCamera } from '../lib/camera'
-import { MAX_ZOOM, UNFOCUSED_MAX_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED } from '../lib/constants'
+import { MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED } from '../lib/constants'
 
 const DEFAULT_CAMERA: Camera = { x: 0, y: 0, z: 1 }
 
@@ -74,7 +74,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
 
   const flyToUnfocusZoom = useCallback(() => {
     const cam = cameraRef.current
-    if (cam.z <= UNFOCUSED_MAX_ZOOM) return
+    if (cam.z <= UNFOCUS_SNAP_ZOOM) return
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
@@ -83,9 +83,9 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
       { x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cam
     )
     flyTo({
-      x: viewport.clientWidth / 2 - centerCanvas.x * UNFOCUSED_MAX_ZOOM,
-      y: viewport.clientHeight / 2 - centerCanvas.y * UNFOCUSED_MAX_ZOOM,
-      z: UNFOCUSED_MAX_ZOOM
+      x: viewport.clientWidth / 2 - centerCanvas.x * UNFOCUS_SNAP_ZOOM,
+      y: viewport.clientHeight / 2 - centerCanvas.y * UNFOCUS_SNAP_ZOOM,
+      z: UNFOCUS_SNAP_ZOOM
     }, UNFOCUS_SPEED)
   }, [flyTo])
 

@@ -5,7 +5,8 @@ export const GRID_COLS = 3
 
 export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 1.25
-export const UNFOCUSED_MAX_ZOOM = 0.5
+export const UNFOCUSED_MAX_ZOOM = 1.0
+export const UNFOCUS_SNAP_ZOOM = 0.5
 export const ZOOM_SENSITIVITY = 0.004
 
 // Exponential smoothing speeds: higher = snappier.
@@ -31,7 +32,18 @@ export const CHROME_W = 16
 export const CHROME_H = 56
 
 export const CHILD_PLACEMENT_DISTANCE = 1250
-export const ROOT_NODE_RADIUS = 12
+export const ROOT_NODE_RADIUS = 150
+
+// Markdown node dimensions
+export const MARKDOWN_DEFAULT_WIDTH = 400
+export const MARKDOWN_DEFAULT_HEIGHT = 200
+export const MARKDOWN_MIN_WIDTH = 100
+export const MARKDOWN_MIN_HEIGHT = 30
+
+// Remnant node dimensions (dead terminal placeholder)
+// Width matches default 80-col terminal for visual consistency
+export const REMNANT_WIDTH = Math.ceil(DEFAULT_COLS * CELL_WIDTH + CHROME_W)
+export const REMNANT_HEIGHT = 90
 
 export function terminalPixelSize(cols: number, rows: number): { width: number; height: number } {
   return {

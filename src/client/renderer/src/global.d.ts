@@ -10,13 +10,26 @@ interface CreateOptions {
   args?: string[]
 }
 
+interface CreateResult extends SessionInfo {
+  cwd?: string
+  claudeSessionHistory?: ClaudeSessionEntry[]
+}
+
+interface ClaudeSessionEntry {
+  claudeSessionId: string
+  reason: 'startup' | 'fork' | 'clear' | 'compact' | 'resume'
+  timestamp: string
+}
+
 interface AttachResult {
   scrollback: string
   shellTitleHistory?: string[]
+  cwd?: string
+  claudeSessionHistory?: ClaudeSessionEntry[]
 }
 
 interface PtyApi {
-  create(options?: CreateOptions): Promise<SessionInfo>
+  create(options?: CreateOptions): Promise<CreateResult>
   list(): Promise<SessionInfo[]>
   attach(sessionId: string): Promise<AttachResult>
   write(sessionId: string, data: string): void
@@ -25,6 +38,8 @@ interface PtyApi {
   onData(sessionId: string, callback: (data: string) => void): () => void
   onExit(sessionId: string, callback: (exitCode: number) => void): () => void
   onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
+  onCwd(sessionId: string, callback: (cwd: string) => void): () => void
+  onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
   onServerStatus(callback: (connected: boolean) => void): () => void
 }
 

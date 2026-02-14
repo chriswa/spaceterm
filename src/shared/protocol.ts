@@ -93,6 +93,12 @@ export interface ListedMessage {
   sessions: SessionInfo[]
 }
 
+export interface ClaudeSessionEntry {
+  claudeSessionId: string
+  reason: 'startup' | 'fork' | 'clear' | 'compact' | 'resume'
+  timestamp: string
+}
+
 export interface AttachedMessage {
   type: 'attached'
   seq: number
@@ -100,6 +106,7 @@ export interface AttachedMessage {
   scrollback: string
   shellTitleHistory?: string[]
   cwd?: string
+  claudeSessionHistory?: ClaudeSessionEntry[]
 }
 
 export interface DetachedMessage {
@@ -137,6 +144,12 @@ export interface CwdMessage {
   cwd: string
 }
 
+export interface ClaudeSessionHistoryMessage {
+  type: 'claude-session-history'
+  sessionId: string
+  history: ClaudeSessionEntry[]
+}
+
 export type ServerMessage =
   | CreatedMessage
   | ListedMessage
@@ -147,3 +160,4 @@ export type ServerMessage =
   | ExitMessage
   | ShellTitleHistoryMessage
   | CwdMessage
+  | ClaudeSessionHistoryMessage

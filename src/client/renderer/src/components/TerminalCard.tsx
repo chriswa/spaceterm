@@ -35,12 +35,16 @@ interface TerminalCardProps {
   onCwdChange?: (sessionId: string, cwd: string) => void
   onShellTitleChange?: (sessionId: string, title: string) => void
   onShellTitleHistoryChange?: (sessionId: string, history: string[]) => void
+  claudeSessionHistory?: ClaudeSessionEntry[]
+  onClaudeSessionHistoryChange?: (sessionId: string, history: ClaudeSessionEntry[]) => void
+  onExit?: (sessionId: string, exitCode: number) => void
+  onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
 }
 
 export function TerminalCard({
   sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
-  onCwdChange, onShellTitleChange, onShellTitleHistoryChange
+  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, onExit, onNodeReady
 }: TerminalCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
@@ -50,8 +54,8 @@ export function TerminalCard({
   const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onDisableScrollMode })
-  propsRef.current = { x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onDisableScrollMode }
+  const propsRef = useRef({ x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onDisableScrollMode, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, focused, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onDisableScrollMode, onExit, onNodeReady }
 
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
@@ -204,6 +208,9 @@ export function TerminalCard({
       if (result.cwd) {
         propsRef.current.onCwdChange?.(propsRef.current.sessionId, result.cwd)
       }
+      if (result.claudeSessionHistory && result.claudeSessionHistory.length > 0) {
+        propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.sessionId, result.claudeSessionHistory)
+      }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
     })
@@ -213,8 +220,8 @@ export function TerminalCard({
       term.write(textEncoder.encode(data))
     })
 
-    const cleanupExit = window.api.pty.onExit(sessionId, () => {
-      term.write('\r\n[Process exited]\r\n')
+    const cleanupExit = window.api.pty.onExit(sessionId, (exitCode) => {
+      propsRef.current.onExit?.(propsRef.current.sessionId, exitCode)
     })
 
     const cleanupTitleHistory = window.api.pty.onShellTitleHistory(sessionId, (history) => {
@@ -223,6 +230,10 @@ export function TerminalCard({
 
     const cleanupCwd = window.api.pty.onCwd(sessionId, (cwd) => {
       propsRef.current.onCwdChange?.(propsRef.current.sessionId, cwd)
+    })
+
+    const cleanupClaudeSessionHistory = window.api.pty.onClaudeSessionHistory(sessionId, (history) => {
+      propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.sessionId, history)
     })
 
     term.onData((data) => {
@@ -242,6 +253,7 @@ export function TerminalCard({
       cleanupExit()
       cleanupTitleHistory()
       cleanupCwd()
+      cleanupClaudeSessionHistory()
       term.dispose()
     }
   }, [sessionId])
@@ -265,6 +277,13 @@ export function TerminalCard({
       term.blur()
     }
   }, [focused, sessionId])
+
+  // Notify parent when focused node size is known (mount or resize)
+  useEffect(() => {
+    if (!focused) return
+    const { width, height } = terminalPixelSize(cols, rows)
+    propsRef.current.onNodeReady?.(sessionId, { x: propsRef.current.x, y: propsRef.current.y, width, height })
+  }, [focused, cols, rows, sessionId])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
@@ -349,6 +368,13 @@ export function TerminalCard({
   const [editValue, setEditValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Select-all on edit start
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.select()
+    }
+  }, [editing])
+
   // Color picker state
   const [pickerOpen, setPickerOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -368,7 +394,7 @@ export function TerminalCard({
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or editable title/color picker
-    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__title, .terminal-card__title-input, .terminal-card__color-picker')) return
+    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__left-area, .terminal-card__title-input, .terminal-card__color-picker')) return
 
     const isHeader = !!(e.target as HTMLElement).closest('.terminal-card__header')
 
@@ -412,6 +438,9 @@ export function TerminalCard({
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
+  const history = (shellTitleHistory ?? []).join(' \u00A0\u21BC\u00A0\u00A0')
+
   const focusClass = focused
     ? scrollMode
       ? 'terminal-card--focused terminal-card--scroll-mode'
@@ -420,9 +449,6 @@ export function TerminalCard({
 
   return (
     <div
-      ref={cardRef}
-      data-session-id={sessionId}
-      className={`terminal-card ${focusClass}`}
       style={{
         position: 'absolute',
         left: x,
@@ -431,8 +457,13 @@ export function TerminalCard({
         height,
         zIndex
       }}
-      onMouseDown={handleMouseDown}
     >
+      <div
+        ref={cardRef}
+        data-session-id={sessionId}
+        className={`terminal-card canvas-node ${focusClass}`}
+        onMouseDown={handleMouseDown}
+      >
       <div
         className="terminal-card__header"
         style={preset ? {
@@ -441,50 +472,51 @@ export function TerminalCard({
           borderBottomColor: preset.titleBarBg
         } : undefined}
       >
-        {editing ? (
-          <input
-            ref={inputRef}
-            className="terminal-card__title-input"
-            value={editValue}
-            style={preset ? { color: preset.titleBarFg } : undefined}
-            onChange={(e) => setEditValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onRename(sessionId, editValue)
-                setEditing(false)
-              } else if (e.key === 'Escape') {
-                setEditing(false)
-              }
-              e.stopPropagation()
-            }}
-            onBlur={() => {
-              onRename(sessionId, editValue)
-              setEditing(false)
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            autoFocus
-          />
-        ) : (
-          <span
-            className="terminal-card__title"
-            style={preset ? { color: preset.titleBarFg } : undefined}
-            onClick={(e) => {
-              e.stopPropagation()
-              setEditValue(name || sessionId.slice(0, 8))
-              setEditing(true)
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            {name || sessionId.slice(0, 8)}
-          </span>
-        )}
-        {shellTitle && (
-          <span
-            className="terminal-card__shell-title"
-            style={preset ? { color: preset.titleBarFg, opacity: 0.6 } : undefined}
-          >
-            {shellTitle}
-          </span>
+        <div
+          className="terminal-card__left-area"
+          onClick={(e) => {
+            e.stopPropagation()
+            setEditValue(name || '')
+            setEditing(true)
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {editing ? (
+            <>
+              <input
+                ref={inputRef}
+                className="terminal-card__title-input"
+                value={editValue}
+                style={preset ? { color: preset.titleBarFg } : undefined}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    onRename(sessionId, editValue)
+                    setEditing(false)
+                  } else if (e.key === 'Escape') {
+                    setEditing(false)
+                  }
+                  e.stopPropagation()
+                }}
+                onBlur={() => {
+                  onRename(sessionId, editValue)
+                  setEditing(false)
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                autoFocus
+              />
+              {history && <span className="terminal-card__history" style={preset ? { color: preset.titleBarFg, opacity: 0.75 } : undefined}>{history}</span>}
+            </>
+          ) : (
+            <>
+              {name && <span className="terminal-card__custom-name" style={preset ? { color: preset.titleBarFg } : undefined}>{name}</span>}
+              {name && history && <span className="terminal-card__separator" style={preset ? { color: preset.titleBarFg, opacity: 0.7 } : undefined}>{'\u00A0\u21BC\u00A0'}</span>}
+              {history && <span className="terminal-card__history" style={preset ? { color: preset.titleBarFg, opacity: 0.75 } : undefined}>{history}</span>}
+            </>
+          )}
+        </div>
+        {abbrevCwd && (
+          <span className="terminal-card__cwd" style={preset ? { color: preset.titleBarFg, opacity: 0.75 } : undefined}>{abbrevCwd}</span>
         )}
         <div className="terminal-card__actions">
           <div style={{ position: 'relative' }} ref={pickerRef}>
@@ -529,24 +561,20 @@ export function TerminalCard({
       </div>
       <div className="terminal-card__body" ref={containerRef} />
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
-        {(() => {
-          // Abbreviate home directory to ~
-          const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
-
-          const seen = new Set<string>()
-          const unique = (shellTitleHistory ?? []).filter((t) => {
-            if (seen.has(t)) return false
-            seen.add(t)
-            return true
-          })
-          const history = unique.join(' \u25C0 ')
-
-          const displayCwd = abbrevCwd || 'no CWD'
-
-          if (history) return `${displayCwd} \u2014 ${history}`
-          return displayCwd
-        })()}
+        {sessionId.slice(0, 8)}
       </div>
+      </div>
+      {claudeSessionHistory && claudeSessionHistory.length > 0 && (
+        <div className="terminal-card__session-history">
+          {claudeSessionHistory.map((entry, i) => (
+            <div key={i} className={`terminal-card__session-entry terminal-card__session-entry--${entry.reason}`}>
+              <span className="terminal-card__session-id">{entry.claudeSessionId.slice(0, 8)}</span>
+              {' '}
+              <span className="terminal-card__session-reason">({entry.reason})</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

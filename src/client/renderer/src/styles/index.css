@@ -95,7 +95,8 @@ html, body, #root {
 
 /* Terminal Card */
 .terminal-card {
-  position: relative;
+  width: 100%;
+  height: 100%;
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid #313244;
@@ -103,6 +104,9 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
+  /* Strategy 7: Skip GPU tile creation for offscreen/unfocused cards */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px 400px;
 }
 
 .terminal-card:hover {
@@ -120,7 +124,6 @@ html, body, #root {
 .terminal-card__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 6px 10px;
   background: #181825;
   border-bottom: 1px solid #313244;
@@ -134,41 +137,63 @@ html, body, #root {
   cursor: grabbing;
 }
 
-.terminal-card__title {
-  color: #bac2de;
+.terminal-card__left-area {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   cursor: text;
+  display: flex;
+  align-items: center;
+}
+
+.terminal-card__custom-name {
   font-weight: 700;
+  color: #5d616f;
+  flex-shrink: 0;
+}
+
+.terminal-card__separator {
+  color: #2c2e38;
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.terminal-card__history {
+  color: #363843;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.terminal-card__cwd {
+  color: #363843;
+  font-size: 12px;
+  margin-left: 20px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .terminal-card__title-input {
   background: transparent;
   border: none;
   outline: none;
-  color: #bac2de;
+  color: #5d616f;
   font-size: 15px;
   font-weight: 700;
   font-family: inherit;
   padding: 0;
-  flex: 1;
-  min-width: 0;
+  min-width: 60px;
+  max-width: 200px;
+  flex-shrink: 0;
   border-bottom: 1px solid #585b70;
 }
 
 .terminal-card__title-input:focus {
   border-bottom-color: #89b4fa;
-}
-
-.terminal-card__shell-title {
-  color: #6c7086;
-  font-size: 12px;
-  font-weight: 400;
-  margin-left: auto;
-  margin-right: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 50%;
-  flex-shrink: 1;
 }
 
 .terminal-card__actions {
@@ -310,6 +335,147 @@ html, body, #root {
   cursor: grabbing;
 }
 
+/* Remnant Card (dead terminal placeholder) */
+.remnant-card {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px dashed #313244;
+  background: #1e1e2e;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s, opacity 0.15s;
+  opacity: 0.75;
+  cursor: grab;
+}
+
+.remnant-card:active {
+  cursor: grabbing;
+}
+
+.remnant-card:hover {
+  border-color: #585b70;
+  opacity: 0.9;
+}
+
+.remnant-card.remnant-card--focused {
+  border-color: #cba6f7;
+  opacity: 1;
+}
+
+.remnant-card__body {
+  flex: 1;
+  padding: 6px 10px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.remnant-card__info {
+  font-size: 11px;
+  line-height: 16px;
+  color: #6c7086;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remnant-card__exit {
+  font-size: 10px;
+  line-height: 14px;
+  color: #585b70;
+  margin-top: 2px;
+}
+
+/* Markdown Card */
+.markdown-card {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid #313244;
+  background: #1e1e2e;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s;
+  position: relative;
+}
+
+.markdown-card:hover {
+  border-color: #585b70;
+}
+
+.markdown-card.markdown-card--focused {
+  border-color: #cba6f7;
+}
+
+.markdown-card__body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.markdown-card__body .cm-editor {
+  height: 100%;
+}
+
+.markdown-card__body .cm-scroller {
+  overflow: auto;
+}
+
+/* Block mouse interaction with CodeMirror when not focused */
+.markdown-card:not(.markdown-card--focused) .cm-editor {
+  pointer-events: none !important;
+}
+
+.markdown-card:not(.markdown-card--focused) .markdown-card__body {
+  cursor: grab;
+}
+
+.markdown-card:not(.markdown-card--focused) .markdown-card__body:active {
+  cursor: grabbing;
+}
+
+/* Resize handle */
+.markdown-card__resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, #585b70 50%);
+  border-radius: 0 0 6px 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.markdown-card:hover .markdown-card__resize-handle,
+.markdown-card--focused .markdown-card__resize-handle {
+  opacity: 0.6;
+}
+
+.markdown-card__resize-handle:hover {
+  opacity: 1 !important;
+}
+
+/* Custom scrollbar for CodeMirror */
+.markdown-card .cm-scroller::-webkit-scrollbar {
+  width: 8px;
+}
+
+.markdown-card .cm-scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.markdown-card .cm-scroller::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.markdown-card--focused .cm-scroller::-webkit-scrollbar-thumb {
+  background: #585b70;
+}
+
 /* Tree connection lines */
 .tree-line {
   stroke: #585b70;
@@ -323,20 +489,50 @@ html, body, #root {
   to { stroke-dashoffset: 14; }
 }
 
-/* Root node */
+/* Root node / Shader vortex */
 .root-node {
-  border-radius: 50%;
-  background: #45475a;
-  border: 2px solid #585b70;
+  background: transparent;
+  border: none;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  overflow: visible;
 }
-.root-node:hover {
-  border-color: #a6adc8;
-  background: #585b70;
+
+.root-node--focused canvas {
+  filter: invert(1);
 }
-.root-node--focused {
-  border-color: #cba6f7;
-  background: #585b70;
-  box-shadow: 0 0 0 4px rgba(203, 166, 247, 0.3);
+
+/* Claude session history panel */
+.terminal-card__session-history {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.terminal-card__session-entry {
+  font-size: 10px;
+  line-height: 14px;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  color: #6c7086;
+}
+
+.terminal-card__session-id {
+  color: #89b4fa;
+}
+
+.terminal-card__session-entry--startup .terminal-card__session-reason {
+  color: #a6e3a1;
+}
+
+.terminal-card__session-entry--fork .terminal-card__session-reason {
+  color: #f9e2af;
 }
