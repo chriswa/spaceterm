@@ -196,7 +196,7 @@ export function CardShell({
       <div
         ref={cardRef}
         className={className}
-        style={{ ...style, width, height, overflow: 'visible' }}
+        style={{ ...style, position: 'relative', width, height, overflow: 'visible' }}
         onMouseDown={onMouseDown}
       >
         {headVariant === 'visible' && (
@@ -207,18 +207,20 @@ export function CardShell({
         )}
         {headVariant === 'overlay' && actionButtons}
         {hiddenHeadArchiveBtn}
-        {children}
-      </div>
-      {archiveOpen && archivedChildren.length > 0 && (
-        <div className="card-shell__archive-body" ref={archiveBodyRef}>
-          <ArchiveBody
-            parentId={nodeId}
-            archives={archivedChildren}
-            onUnarchive={onUnarchive}
-            onArchiveDelete={onArchiveDelete}
-          />
+        <div className="card-shell__body-wrapper">
+          {archiveOpen && archivedChildren.length > 0 && (
+            <div className="card-shell__archive-body" ref={archiveBodyRef}>
+              <ArchiveBody
+                parentId={nodeId}
+                archives={archivedChildren}
+                onUnarchive={onUnarchive}
+                onArchiveDelete={onArchiveDelete}
+              />
+            </div>
+          )}
+          {children}
         </div>
-      )}
+      </div>
     </div>
   )
 }

@@ -492,12 +492,16 @@ html, body, #root {
   height: 100%;
   border-radius: 8px;
   overflow: visible;
-  border: 2px solid #313244;
-  background: #1e1e2e;
+  border: 2px solid transparent;
+  background: transparent;
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
   position: relative;
+}
+
+.markdown-card--empty {
+  border-color: #313244;
 }
 
 .markdown-card:hover {
@@ -563,6 +567,147 @@ html, body, #root {
 
 .markdown-card .node-titlebar__color-btn:hover {
   background: rgba(137, 180, 250, 0.3);
+}
+
+/* Directory Card */
+.directory-card {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  overflow: visible;
+  border: 2px solid #313244;
+  background: #1e1e2e;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s;
+  position: relative;
+  cursor: grab;
+}
+
+.directory-card:active {
+  cursor: grabbing;
+}
+
+.directory-card:hover {
+  border-color: #585b70;
+}
+
+.directory-card.directory-card--focused {
+  border-color: #cba6f7;
+}
+
+.directory-card__body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.directory-card__label {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 20px;
+  color: #cdd6f4;
+  text-align: center;
+  padding: 0 12px;
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.directory-card__edit-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0 12px;
+}
+
+.directory-card__input {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 20px;
+  color: #cdd6f4;
+  background: transparent;
+  border: none;
+  outline: none;
+  text-align: center;
+  min-width: 60px;
+  max-width: 100%;
+  border-bottom: 1px solid #585b70;
+}
+
+.directory-card__input:focus {
+  border-bottom-color: #89b4fa;
+}
+
+.directory-card__measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 20px;
+}
+
+.directory-card__error {
+  font-size: 11px;
+  color: #f38ba8;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Floating action buttons for directory card */
+.directory-card .node-titlebar__actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+
+.directory-card:hover .node-titlebar__actions,
+.directory-card--focused .node-titlebar__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.directory-card .node-titlebar__color-btn,
+.directory-card .node-titlebar__close {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.directory-card .node-titlebar__color-btn:hover {
+  background: rgba(137, 180, 250, 0.3);
+}
+
+.directory-card .node-titlebar__archive-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.directory-card .node-titlebar__archive-btn:hover {
+  background: rgba(137, 180, 250, 0.3);
+}
+
+.directory-card .node-titlebar__reparent-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.directory-card .node-titlebar__reparent-btn:hover {
+  background: rgba(137, 180, 250, 0.3);
+}
+
+.directory-card .node-titlebar__reparent-btn--active {
+  background: rgba(203, 166, 247, 0.4);
+  color: #cba6f7;
 }
 
 /* Tree connection lines — chevron arrow pattern */
@@ -731,11 +876,22 @@ html, body, #root {
   cursor: grabbing;
 }
 
+.card-shell__body-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .card-shell__archive-body {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
   min-width: 380px;
   max-width: 500px;
-  margin: 0 auto;
-  align-self: center;
+  z-index: 50;
 }
 
 .card-shell__hidden-head-actions {
@@ -833,6 +989,49 @@ html, body, #root {
 
 .remnant-card__body:last-child {
   border-radius: 0 0 6px 6px;
+}
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10000;
+  pointer-events: none;
+}
+
+.toast {
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-left: 3px solid #f38ba8;
+  color: #cdd6f4;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  cursor: pointer;
+  animation: toast-in 0.2s ease-out;
+  max-width: 500px;
+  word-break: break-word;
+}
+
+.toast--exiting {
+  animation: toast-out 0.2s ease-in forwards;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(8px); }
 }
 
 /* Reparent preview line — white variant of chevron lines */

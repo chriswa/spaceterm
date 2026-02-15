@@ -51,7 +51,12 @@ export interface MarkdownNodeData extends BaseNodeData {
   content: string
 }
 
-export type NodeData = TerminalNodeData | MarkdownNodeData
+export interface DirectoryNodeData extends BaseNodeData {
+  type: 'directory'
+  cwd: string
+}
+
+export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData
 
 // --- Archived nodes ---
 

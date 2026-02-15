@@ -1,31 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
+import { Toast } from './components/Toast'
 import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters } from './components/TerminalCard'
 import { RemnantCard } from './components/RemnantCard'
 import { MarkdownCard } from './components/MarkdownCard'
+import { DirectoryCard } from './components/DirectoryCard'
 import { CanvasBackground } from './components/CanvasBackground'
-import { TreeLines } from './components/TreeLines'
-import type { TreeLineNode } from './components/TreeLines'
+import type { TreeLineNode } from './components/CanvasBackground'
 import { ReparentPreviewLine } from './components/ReparentPreviewLine'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useForceLayout } from './hooks/useForceLayout'
-import { cameraToFitBounds, screenToCanvas, unionBounds } from './lib/camera'
+import { cameraToFitBounds, unionBounds } from './lib/camera'
 import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM } from './lib/constants'
 import { computeChildPlacement } from './lib/tree-placement'
-import { isDescendantOf } from './lib/tree-utils'
+import { isDescendantOf, getDescendantIds, getAncestorCwd } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useShaderStore } from './stores/shaderStore'
 import { useEdgesStore } from './stores/edgesStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
 
 const archiveDismissFlag = { active: false, timer: 0 }
 
 function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: string; cwd?: string; resumeSessionId?: string } = {}): CreateOptions {
-  const args = ['--plugin-dir', 'src/claude-code-plugin']
+  const statusLineSettings = JSON.stringify({
+    statusLine: {
+      type: 'command',
+      command: 'src/claude-code-plugin/scripts/statusline-handler.sh'
+    }
+  })
+  const args = ['--plugin-dir', 'src/claude-code-plugin', '--settings', statusLineSettings]
   if (resumeSessionId) {
     args.push('-r', resumeSessionId)
   }
@@ -38,6 +45,8 @@ function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: str
 export function App() {
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [scrollMode, setScrollMode] = useState(false)
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; exiting?: boolean }>>([])
+  const toastIdRef = useRef(0)
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
 
@@ -50,6 +59,7 @@ export function App() {
   const liveTerminals = useNodeStore(s => s.liveTerminals)
   const deadTerminals = useNodeStore(s => s.deadTerminals)
   const markdowns = useNodeStore(s => s.markdowns)
+  const directories = useNodeStore(s => s.directories)
   const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
   const moveNode = useNodeStore(s => s.moveNode)
   const batchMoveNodes = useNodeStore(s => s.batchMoveNodes)
@@ -61,6 +71,8 @@ export function App() {
     nodeList.map((n): TreeLineNode => ({ id: n.id, parentId: n.parentId, x: n.x, y: n.y })),
     [nodeList]
   )
+  const edgesRef = useRef<TreeLineNode[]>([])
+  edgesRef.current = treeLineNodes
 
   const shadersEnabled = useShaderStore(s => s.shadersEnabled)
   const edgesEnabled = useEdgesStore(s => s.edgesEnabled)
@@ -72,6 +84,29 @@ export function App() {
   // Initialize server sync on mount
   useEffect(() => {
     initServerSync()
+  }, [])
+
+  // Subscribe to server errors → toast notifications
+  useEffect(() => {
+    const cleanup = window.api.node.onServerError((message: string) => {
+      console.error('[server]', message)
+      const id = ++toastIdRef.current
+      setToasts((prev) => [...prev, { id, message }])
+      setTimeout(() => {
+        setToasts((prev) => prev.map((t) => t.id === id ? { ...t, exiting: true } : t))
+        setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== id))
+        }, 200)
+      }, 5000)
+    })
+    return cleanup
+  }, [])
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.map((t) => t.id === id ? { ...t, exiting: true } : t))
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id))
+    }, 200)
   }, [])
 
   // Fit all nodes on initial load once server state has been received
@@ -97,6 +132,7 @@ export function App() {
 
   // Force-directed layout
   const draggingRef = useRef(new Set<string>())
+  const dragDescendantsRef = useRef<string[]>([])
   const { playing: forceLayoutPlaying, speed: forceLayoutSpeed, togglePlaying: forceLayoutToggle, increaseSpeed: forceLayoutIncrease, decreaseSpeed: forceLayoutDecrease } = useForceLayout({
     draggingRef,
     batchMoveNodes
@@ -104,14 +140,36 @@ export function App() {
 
   const handleDragStart = useCallback((id: string) => {
     draggingRef.current.add(id)
+    const descendants = getDescendantIds(useNodeStore.getState().nodes, id)
+    dragDescendantsRef.current = descendants
+    for (const d of descendants) {
+      draggingRef.current.add(d)
+    }
   }, [])
 
   const handleDragEnd = useCallback((id: string) => {
+    const descendants = dragDescendantsRef.current
     draggingRef.current.delete(id)
-    // Send final position to server
-    const node = useNodeStore.getState().nodes[id]
+    for (const d of descendants) {
+      draggingRef.current.delete(d)
+    }
+    dragDescendantsRef.current = []
+
+    // Send final positions to server for dragged node + descendants
+    const allNodes = useNodeStore.getState().nodes
+    const moves: Array<{ nodeId: string; x: number; y: number }> = []
+    const node = allNodes[id]
     if (node) {
-      sendMove(id, node.x, node.y)
+      moves.push({ nodeId: id, x: node.x, y: node.y })
+    }
+    for (const d of descendants) {
+      const dn = allNodes[d]
+      if (dn) {
+        moves.push({ nodeId: d, x: dn.x, y: dn.y })
+      }
+    }
+    if (moves.length > 0) {
+      sendBatchMove(moves)
     }
   }, [])
 
@@ -148,7 +206,7 @@ export function App() {
       if (!parent) return { position: { x: 0, y: 0 }, cwd: undefined }
 
       parentCenter = { x: parent.x, y: parent.y }
-      cwd = cwdMapRef.current.get(parentId) ?? (parent.type === 'terminal' ? parent.cwd : undefined)
+      cwd = getAncestorCwd(allNodes, parentId, cwdMapRef.current)
 
       if (parent.parentId === 'root') {
         grandparentCenter = { x: 0, y: 0 }
@@ -266,20 +324,18 @@ export function App() {
       clearTimeout(archiveDismissFlag.timer)
       archiveDismissFlag.timer = window.setTimeout(() => { archiveDismissFlag.active = false }, 500)
     }
-    requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-node-id="${nodeId}"]`)
-      if (!el) return
-      const viewport = document.querySelector('.canvas-viewport') as HTMLElement
-      if (!viewport) return
-      const rect = el.getBoundingClientRect()
-      const cam = cameraRef.current
-      const tl = screenToCanvas({ x: rect.left, y: rect.top }, cam)
-      const br = screenToCanvas({ x: rect.right, y: rect.bottom }, cam)
-      flyTo(cameraToFitBounds(
-        { x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y },
-        viewport.clientWidth, viewport.clientHeight, 0.025
-      ))
-    })
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement
+    if (!viewport) return
+    let bounds: { x: number; y: number; width: number; height: number }
+    if (nodeId === 'root') {
+      bounds = { x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 }
+    } else {
+      const node = useNodeStore.getState().nodes[nodeId]
+      if (!node) return
+      const size = nodePixelSize(node)
+      bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
+    }
+    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025))
   }, [flyTo])
 
   const handleRemoveNode = useCallback(async (id: string) => {
@@ -375,8 +431,17 @@ export function App() {
 
   // Handlers that send mutations to server
   const handleMove = useCallback((id: string, x: number, y: number) => {
-    moveNode(id, x, y)
-  }, [moveNode])
+    const currentNode = useNodeStore.getState().nodes[id]
+    const descendants = dragDescendantsRef.current
+    if (currentNode && descendants.length > 0) {
+      const dx = x - currentNode.x
+      const dy = y - currentNode.y
+      moveNode(id, x, y)
+      batchMoveNodes(descendants.map(d => ({ id: d, dx, dy })))
+    } else {
+      moveNode(id, x, y)
+    }
+  }, [moveNode, batchMoveNodes])
 
   const handleRename = useCallback((id: string, name: string) => {
     renameNode(id, name)
@@ -398,6 +463,11 @@ export function App() {
 
   const handleMarkdownContent = useCallback((id: string, content: string) => {
     sendMarkdownContent(id, content)
+  }, [])
+
+  const handleDirectoryCwdChange = useCallback((id: string, newCwd: string) => {
+    cwdMapRef.current.set(id, newCwd)
+    sendDirectoryCwd(id, newCwd)
   }, [])
 
   // Global keyboard shortcuts
@@ -429,9 +499,14 @@ export function App() {
         const parentId = focusRef.current ?? 'root'
         const { position } = computeChildPosition(parentId)
         await sendMarkdownAdd(parentId, position.x, position.y)
-        // The node will be added via server broadcast → store
-        // We can't focus it yet since we don't know its ID
-        // The server will broadcast node-added with the ID
+      }
+
+      if (e.metaKey && e.key === 'd') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!focusRef.current) return
+        const { position, cwd } = computeChildPosition(focusRef.current)
+        await sendDirectoryAdd(focusRef.current, position.x, position.y, cwd ?? '~')
       }
 
       // Cmd+Shift+S: speak selected text or stop speaking
@@ -536,8 +611,7 @@ export function App() {
         onForceLayoutIncrease={forceLayoutIncrease}
         onForceLayoutDecrease={forceLayoutDecrease}
       />
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} background={shadersEnabled ? <CanvasBackground camera={camera} cameraRef={cameraRef} /> : null}>
-        {edgesEnabled && <TreeLines nodes={treeLineNodes} />}
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null}>
         <RootNode
           focused={focusedId === 'root'}
           onClick={() => handleNodeFocus('root')}
@@ -654,6 +728,33 @@ export function App() {
             onReparentTarget={handleReparentTarget}
           />
         ))}
+        {directories.map((d) => (
+          <DirectoryCard
+            key={d.id}
+            id={d.id}
+            x={d.x}
+            y={d.y}
+            zIndex={d.zIndex}
+            zoom={camera.z}
+            cwd={d.cwd}
+            colorPresetId={d.colorPresetId}
+            archivedChildren={d.archivedChildren}
+            focused={focusedId === d.id}
+            onFocus={handleNodeFocus}
+            onClose={handleRemoveNode}
+            onMove={handleMove}
+            onCwdChange={handleDirectoryCwdChange}
+            onColorChange={handleColorChange}
+            onUnarchive={handleUnarchive}
+            onArchiveDelete={handleArchiveDelete}
+            onArchiveToggled={handleArchiveToggled}
+            onNodeReady={handleNodeReady}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onStartReparent={handleStartReparent}
+            onReparentTarget={handleReparentTarget}
+          />
+        ))}
         {edgesEnabled && reparentingNodeId && reparentHoveredNodeId && (() => {
           const allNodes = useNodeStore.getState().nodes
           const srcNode = allNodes[reparentingNodeId]
@@ -664,6 +765,7 @@ export function App() {
           return <ReparentPreviewLine fromX={tgtNode.x} fromY={tgtNode.y} toX={srcNode.x} toY={srcNode.y} />
         })()}
       </Canvas>
+      <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   )
 }

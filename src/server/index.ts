@@ -9,6 +9,13 @@ import { SnapshotManager } from './snapshot-manager'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 
+/**
+ * Claude Code reserves this many tokens as a buffer before triggering autocompact.
+ * The effective context window = context_window_size - this buffer.
+ * UPDATE THIS when Claude Code changes its compaction threshold.
+ */
+const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 33_000
+
 interface ClientConnection {
   socket: net.Socket
   attachedSessions: Set<string>
@@ -89,7 +96,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId),
           cwd: sessionManager.getCwd(msg.sessionId),
           claudeSessionHistory: sessionManager.getClaudeSessionHistory(msg.sessionId),
-          claudeState: sessionManager.getClaudeState(msg.sessionId)
+          claudeState: sessionManager.getClaudeState(msg.sessionId),
+          claudeContextPercent: sessionManager.getClaudeContextPercent(msg.sessionId) ?? undefined
         })
       } else {
         // Session doesn't exist — send attached with empty scrollback
@@ -143,7 +151,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }) + '\n'
       const logPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
       fs.appendFile(logPath, logEntry, (err) => {
-        if (err) console.error(`Failed to write hook log: ${err.message}`)
+        if (err) {
+          console.error(`Failed to write hook log: ${err.message}`)
+          send(client.socket, { type: 'server-error', message: `Failed to write hook log: ${err.message}` })
+        }
       })
 
       // Track Stop hooks so we can distinguish real forks from claude -r startups
@@ -188,6 +199,37 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
         if (claudeSessionId) {
           sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
+        }
+      }
+      break
+    }
+
+    case 'status-line': {
+      const logEntry =
+        JSON.stringify({
+          timestamp: localISOTimestamp(),
+          type: 'status-line',
+          payload: msg.payload
+        }) + '\n'
+      const slLogPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
+      fs.appendFile(slLogPath, logEntry, (err) => {
+        if (err) {
+          console.error(`Failed to write status-line log: ${err.message}`)
+          send(client.socket, { type: 'server-error', message: `Failed to write status-line log: ${err.message}` })
+        }
+      })
+
+      // Extract context window usage and calculate remaining %
+      const cw = msg.payload?.context_window as Record<string, unknown> | undefined
+      if (cw) {
+        const usage = cw.current_usage as Record<string, number> | undefined
+        const contextWindowSize = cw.context_window_size as number | undefined
+        if (usage && contextWindowSize) {
+          const totalTokens = (usage.input_tokens || 0) + (usage.output_tokens || 0)
+            + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0)
+          const effectiveSize = contextWindowSize - CLAUDE_AUTOCOMPACT_BUFFER_TOKENS
+          const remainingPercent = (1 - totalTokens / effectiveSize) * 100
+          sessionManager.setClaudeContextPercent(msg.surfaceId, remainingPercent)
         }
       }
       break
@@ -264,14 +306,19 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'terminal-create': {
-      const { sessionId, cols, rows } = sessionManager.create(msg.options)
-      snapshotManager.addSession(sessionId, cols, rows)
-      const cwd = sessionManager.getCwd(sessionId)
-      stateManager.createTerminal(sessionId, msg.parentId, msg.x, msg.y, cols, rows, cwd, msg.initialTitleHistory)
-      if (msg.initialTitleHistory?.length) {
-        sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
+      try {
+        const { sessionId, cols, rows } = sessionManager.create(msg.options)
+        snapshotManager.addSession(sessionId, cols, rows)
+        const cwd = sessionManager.getCwd(sessionId)
+        stateManager.createTerminal(sessionId, msg.parentId, msg.x, msg.y, cols, rows, cwd, msg.initialTitleHistory)
+        if (msg.initialTitleHistory?.length) {
+          sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
+        }
+        send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
+      } catch (err: any) {
+        console.error(`terminal-create failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `terminal-create failed: ${err.message}` })
       }
-      send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
       break
     }
 
@@ -286,21 +333,66 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'terminal-reincarnate': {
-      const rNode = stateManager.getNode(msg.nodeId)
-      if (!rNode || rNode.type !== 'terminal' || rNode.alive) {
+      try {
+        const rNode = stateManager.getNode(msg.nodeId)
+        if (!rNode || rNode.type !== 'terminal' || rNode.alive) {
+          send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+          break
+        }
+        const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(msg.options)
+        snapshotManager.addSession(newPtyId, rCols, rRows)
+        // Seed the new PTY session with the remnant's title history before reincarnation
+        if (rNode.shellTitleHistory?.length) {
+          sessionManager.seedTitleHistory(newPtyId, rNode.shellTitleHistory)
+        }
+        stateManager.reincarnateTerminal(msg.nodeId, newPtyId, rCols, rRows)
+        // Auto-attach client to the new PTY session
+        client.attachedSessions.add(newPtyId)
+        send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
+      } catch (err: any) {
+        console.error(`terminal-reincarnate failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `terminal-reincarnate failed: ${err.message}` })
+      }
+      break
+    }
+
+    case 'directory-add': {
+      try {
+        stateManager.createDirectory(msg.parentId, msg.x, msg.y, msg.cwd)
         send(client.socket, { type: 'mutation-ack', seq: msg.seq })
-        break
+      } catch (err: any) {
+        console.error(`directory-add failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `directory-add failed: ${err.message}` })
       }
-      const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(msg.options)
-      snapshotManager.addSession(newPtyId, rCols, rRows)
-      // Seed the new PTY session with the remnant's title history before reincarnation
-      if (rNode.shellTitleHistory?.length) {
-        sessionManager.seedTitleHistory(newPtyId, rNode.shellTitleHistory)
+      break
+    }
+
+    case 'directory-cwd': {
+      try {
+        stateManager.updateDirectoryCwd(msg.nodeId, msg.cwd)
+        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      } catch (err: any) {
+        console.error(`directory-cwd failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `directory-cwd failed: ${err.message}` })
       }
-      stateManager.reincarnateTerminal(msg.nodeId, newPtyId, rCols, rRows)
-      // Auto-attach client to the new PTY session
-      client.attachedSessions.add(newPtyId)
-      send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
+      break
+    }
+
+    case 'validate-directory': {
+      try {
+        let dirPath = msg.path
+        if (dirPath.startsWith('~')) {
+          dirPath = path.join(require('os').homedir(), dirPath.slice(1))
+        }
+        const stat = fs.statSync(dirPath)
+        if (stat.isDirectory()) {
+          send(client.socket, { type: 'validate-directory-result', seq: msg.seq, valid: true })
+        } else {
+          send(client.socket, { type: 'validate-directory-result', seq: msg.seq, valid: false, error: 'Path is a file, not a directory' })
+        }
+      } catch {
+        send(client.socket, { type: 'validate-directory-result', seq: msg.seq, valid: false, error: 'Path does not exist' })
+      }
       break
     }
 
@@ -331,6 +423,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       } else {
         client.snapshotSessions.delete(msg.sessionId)
       }
+      break
+    }
+
+    default: {
+      const unknownType = (msg as any).type
+      console.error(`Unknown message type: ${unknownType}`)
+      send(client.socket, { type: 'server-error', message: `Unknown message type: ${unknownType}` })
       break
     }
   }
@@ -409,6 +508,10 @@ function startServer(): void {
     (sessionId, state) => {
       stateManager.updateClaudeState(sessionId, state)
       broadcastToAttached(sessionId, { type: 'claude-state', sessionId, state })
+    },
+    // onClaudeContext: broadcast context remaining % to all attached clients
+    (sessionId, contextRemainingPercent) => {
+      broadcastToAttached(sessionId, { type: 'claude-context', sessionId, contextRemainingPercent })
     }
   )
 

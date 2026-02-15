@@ -46,8 +46,8 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
-    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState } = await client!.attach(sessionId)
-    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState }
+    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent } = await client!.attach(sessionId)
+    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -144,6 +144,20 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
+  ipcMain.handle('node:directory-add', async (_event, parentId: string, x: number, y: number, cwd: string) => {
+    await client!.directoryAdd(parentId, x, y, cwd)
+  })
+
+  ipcMain.handle('node:directory-cwd', async (_event, nodeId: string, cwd: string) => {
+    await client!.directoryCwd(nodeId, cwd)
+  })
+
+  ipcMain.handle('node:validate-directory', async (_event, path: string) => {
+    const resp = await client!.validateDirectory(path)
+    if (resp.type === 'validate-directory-result') return { valid: resp.valid, error: resp.error }
+    throw new Error('Unexpected response')
+  })
+
   ipcMain.handle('node:markdown-add', async (_event, parentId: string, x: number, y: number) => {
     await client!.markdownAdd(parentId, x, y)
   })
@@ -223,6 +237,12 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('claude-context', (sessionId: string, contextRemainingPercent: number) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`pty:claude-context:${sessionId}`, contextRemainingPercent)
+    }
+  })
+
   client!.on('node-updated', (nodeId: string, fields: Record<string, unknown>) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('node:updated', nodeId, fields)
@@ -244,6 +264,12 @@ function wireClientEvents(): void {
   client!.on('snapshot', (sessionId: string, snapshot: Record<string, unknown>) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`snapshot:${sessionId}`, snapshot)
+    }
+  })
+
+  client!.on('server-error', (message: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('server:error', message)
     }
   })
 

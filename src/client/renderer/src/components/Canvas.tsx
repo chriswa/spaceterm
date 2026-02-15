@@ -8,11 +8,12 @@ interface CanvasProps {
   onWheel: (e: WheelEvent) => void
   onPanStart: (e: MouseEvent) => void
   onCanvasClick: () => void
+  onDoubleClick: () => void
   background?: React.ReactNode
   children: React.ReactNode
 }
 
-export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick, background, children }: CanvasProps) {
+export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick, onDoubleClick, background, children }: CanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -52,8 +53,13 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick,
     window.addEventListener('mouseup', onMouseUp)
   }, [onPanStart, onCanvasClick])
 
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.canvas-node')) return
+    onDoubleClick()
+  }, [onDoubleClick])
+
   return (
-    <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown}>
+    <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown} onDoubleClick={handleDoubleClick}>
       {background}
       <div
         ref={surfaceRef}

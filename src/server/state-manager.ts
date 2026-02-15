@@ -4,6 +4,7 @@ import type {
   NodeData,
   TerminalNodeData,
   MarkdownNodeData,
+  DirectoryNodeData,
   TerminalSessionEntry
 } from '../shared/state'
 import type { ClaudeSessionEntry } from '../shared/protocol'
@@ -454,6 +455,38 @@ export class StateManager {
     node.claudeState = state
     this.onNodeUpdate(node.id, { claudeState: state } as Partial<TerminalNodeData>)
     // Don't persist for transient state changes
+  }
+
+  // --- Directory operations ---
+
+  createDirectory(parentId: string, x: number, y: number, cwd: string): DirectoryNodeData {
+    const id = randomUUID()
+    const zIndex = this.state.nextZIndex++
+
+    const node: DirectoryNodeData = {
+      id,
+      type: 'directory',
+      parentId,
+      x,
+      y,
+      zIndex,
+      cwd,
+      archivedChildren: [],
+      colorPresetId: 'default'
+    }
+
+    this.state.nodes[id] = node
+    this.onNodeAdd(node)
+    this.schedulePersist()
+    return node
+  }
+
+  updateDirectoryCwd(nodeId: string, cwd: string): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'directory') return
+    node.cwd = cwd
+    this.onNodeUpdate(nodeId, { cwd } as Partial<DirectoryNodeData>)
+    this.schedulePersist()
   }
 
   // --- Markdown operations ---

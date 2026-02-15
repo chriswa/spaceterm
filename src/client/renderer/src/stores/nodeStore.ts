@@ -1,6 +1,6 @@
 import { create } from 'zustand'
-import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, ArchivedNode } from '../../../../shared/state'
-import { terminalPixelSize, REMNANT_WIDTH, REMNANT_HEIGHT } from '../lib/constants'
+import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, ArchivedNode } from '../../../../shared/state'
+import { terminalPixelSize, REMNANT_WIDTH, REMNANT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
 
 // --- Helper to compute pixel size from node data ---
 
@@ -8,6 +8,9 @@ export function nodePixelSize(node: NodeData): { width: number; height: number }
   if (node.type === 'terminal') {
     if (node.alive) return terminalPixelSize(node.cols, node.rows)
     return { width: REMNANT_WIDTH, height: REMNANT_HEIGHT }
+  }
+  if (node.type === 'directory') {
+    return { width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT }
   }
   return { width: node.width, height: node.height }
 }
@@ -31,6 +34,7 @@ interface NodeStoreState {
   liveTerminals: TerminalNodeData[]
   deadTerminals: TerminalNodeData[]
   markdowns: MarkdownNodeData[]
+  directories: DirectoryNodeData[]
 
   // All node IDs in array form for iteration
   nodeList: NodeData[]
@@ -58,17 +62,20 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
   const liveTerminals: TerminalNodeData[] = []
   const deadTerminals: TerminalNodeData[] = []
   const markdowns: MarkdownNodeData[] = []
+  const directories: DirectoryNodeData[] = []
 
   for (const node of nodeList) {
     if (node.type === 'terminal') {
       if (node.alive) liveTerminals.push(node)
       else deadTerminals.push(node)
+    } else if (node.type === 'directory') {
+      directories.push(node)
     } else {
       markdowns.push(node)
     }
   }
 
-  return { nodeList, liveTerminals, deadTerminals, markdowns }
+  return { nodeList, liveTerminals, deadTerminals, markdowns, directories }
 }
 
 function mergeNodes(
@@ -99,6 +106,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   liveTerminals: [],
   deadTerminals: [],
   markdowns: [],
+  directories: [],
   nodeList: [],
 
   // --- Local mutations ---

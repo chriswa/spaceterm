@@ -114,6 +114,14 @@ export async function sendTerminalCreate(
   return window.api.node.terminalCreate(parentId, x, y, options, initialTitleHistory)
 }
 
+export async function sendDirectoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<void> {
+  await window.api.node.directoryAdd(parentId, x, y, cwd)
+}
+
+export async function sendDirectoryCwd(nodeId: string, cwd: string): Promise<void> {
+  await window.api.node.directoryCwd(nodeId, cwd)
+}
+
 export async function sendMarkdownAdd(parentId: string, x: number, y: number): Promise<void> {
   await window.api.node.markdownAdd(parentId, x, y)
 }

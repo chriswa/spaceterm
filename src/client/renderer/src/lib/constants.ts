@@ -8,6 +8,10 @@ export const MAX_ZOOM = 1.25
 export const UNFOCUSED_MAX_ZOOM = 1.0
 export const UNFOCUS_SNAP_ZOOM = 0.5
 export const ZOOM_SENSITIVITY = 0.004
+export const ZOOM_RUBBER_BAND_HIGH = 0.08   // max overshoot past maxZoom (asymptote)
+export const ZOOM_RUBBER_BAND_LOW = 0.02    // max overshoot below MIN_ZOOM (asymptote)
+export const ZOOM_SNAP_BACK_SPEED = 15      // ~200ms to 95%
+export const ZOOM_SNAP_BACK_DELAY = 150     // ms after last wheel event before snap-back
 
 // Exponential smoothing speeds: higher = snappier.
 // 95% of the gap is covered in ~3/speed seconds.
@@ -39,6 +43,10 @@ export const MARKDOWN_DEFAULT_WIDTH = 200
 export const MARKDOWN_DEFAULT_HEIGHT = 60
 export const MARKDOWN_MIN_WIDTH = 200
 export const MARKDOWN_MIN_HEIGHT = 60
+
+// Directory node dimensions
+export const DIRECTORY_WIDTH = 300
+export const DIRECTORY_HEIGHT = 60
 
 // Remnant node dimensions (dead terminal placeholder)
 // Width matches default 80-col terminal for visual consistency

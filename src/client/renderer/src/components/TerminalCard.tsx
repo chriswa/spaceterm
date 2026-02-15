@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -80,6 +80,8 @@ export function TerminalCard({
   const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady })
   propsRef.current = { x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady }
 
+  const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
+
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
 
@@ -95,7 +97,7 @@ export function TerminalCard({
       fontSize: 14,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: {
-        background: '#1e1e2e',
+        background: preset?.terminalBg ?? '#1e1e2e',
         foreground: '#cdd6f4',
         cursor: '#f5e0dc',
         selectionBackground: '#585b70',
@@ -241,6 +243,9 @@ export function TerminalCard({
       if (result.claudeState !== undefined) {
         propsRef.current.onClaudeStateChange?.(propsRef.current.id, result.claudeState)
       }
+      if (result.claudeContextPercent !== undefined) {
+        setClaudeContextPercent(result.claudeContextPercent)
+      }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
     })
@@ -270,6 +275,10 @@ export function TerminalCard({
       propsRef.current.onClaudeStateChange?.(propsRef.current.id, state)
     })
 
+    const cleanupClaudeContext = window.api.pty.onClaudeContext(sessionId, (percent) => {
+      setClaudeContextPercent(percent)
+    })
+
     term.onData((data) => {
       window.api.pty.write(propsRef.current.sessionId, data)
     })
@@ -291,6 +300,7 @@ export function TerminalCard({
       cleanupCwd()
       cleanupClaudeSessionHistory()
       cleanupClaudeState()
+      cleanupClaudeContext()
       term.dispose()
     }
   }, [focused, sessionId])
@@ -633,6 +643,9 @@ export function TerminalCard({
             <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId) }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
             {' | '}
             {claudeStateLabel(claudeState)}
+            {claudeContextPercent != null && (
+              <>{' | Remaining context: '}{claudeContextPercent.toFixed(2)}%</>
+            )}
           </>
         )}
       </div>

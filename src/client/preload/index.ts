@@ -28,6 +28,7 @@ export interface AttachResult {
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: string
+  claudeContextPercent?: number
 }
 
 export interface PtyApi {
@@ -43,6 +44,7 @@ export interface PtyApi {
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
   onClaudeState(sessionId: string, callback: (state: string) => void): () => void
+  onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
 }
 
 const ptyApi: PtyApi = {
@@ -100,6 +102,13 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
+  onClaudeContext: (sessionId, callback) => {
+    const channel = `pty:claude-context:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, percent: number) => callback(percent)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
 }
 
 interface NodeApi {
@@ -118,12 +127,16 @@ interface NodeApi {
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   onSnapshot(sessionId: string, callback: (snapshot: any) => void): () => void
+  directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<void>
+  directoryCwd(nodeId: string, cwd: string): Promise<void>
+  validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
   markdownAdd(parentId: string, x: number, y: number): Promise<void>
   markdownResize(nodeId: string, width: number, height: number): Promise<void>
   markdownContent(nodeId: string, content: string): Promise<void>
   onUpdated(callback: (nodeId: string, fields: any) => void): () => void
   onAdded(callback: (node: any) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
+  onServerError(callback: (message: string) => void): () => void
 }
 
 const nodeApi: NodeApi = {
@@ -140,6 +153,9 @@ const nodeApi: NodeApi = {
   terminalCreate: (parentId, x, y, options?, initialTitleHistory?) => ipcRenderer.invoke('node:terminal-create', parentId, x, y, options, initialTitleHistory),
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
+  directoryAdd: (parentId, x, y, cwd) => ipcRenderer.invoke('node:directory-add', parentId, x, y, cwd),
+  directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
+  validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
   markdownAdd: (parentId, x, y) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
   markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
   markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
@@ -165,6 +181,11 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, nodeId: string) => callback(nodeId)
     ipcRenderer.on('node:removed', listener)
     return () => ipcRenderer.removeListener('node:removed', listener)
+  },
+  onServerError: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, message: string) => callback(message)
+    ipcRenderer.on('server:error', listener)
+    return () => ipcRenderer.removeListener('server:error', listener)
   }
 }
 

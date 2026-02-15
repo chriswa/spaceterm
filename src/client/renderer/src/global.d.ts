@@ -27,6 +27,7 @@ interface AttachResult {
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: string
+  claudeContextPercent?: number
 }
 
 interface PtyApi {
@@ -42,6 +43,7 @@ interface PtyApi {
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
   onClaudeState(sessionId: string, callback: (state: string) => void): () => void
+  onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
 }
 
 interface NodeApi {
@@ -60,12 +62,16 @@ interface NodeApi {
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   onSnapshot(sessionId: string, callback: (snapshot: import('../../../shared/protocol').SnapshotMessage) => void): () => void
+  directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<void>
+  directoryCwd(nodeId: string, cwd: string): Promise<void>
+  validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
   markdownAdd(parentId: string, x: number, y: number): Promise<void>
   markdownResize(nodeId: string, width: number, height: number): Promise<void>
   markdownContent(nodeId: string, content: string): Promise<void>
   onUpdated(callback: (nodeId: string, fields: Partial<import('../../../shared/state').NodeData>) => void): () => void
   onAdded(callback: (node: import('../../../shared/state').NodeData) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
+  onServerError(callback: (message: string) => void): () => void
 }
 
 interface TtsApi {

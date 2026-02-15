@@ -22,6 +22,7 @@ interface Session {
   lastClaudeSessionId: string | null
   pendingStop: boolean
   claudeState: ClaudeState
+  claudeContextPercent: number | null
   cwd: string
   cols: number
   rows: number
@@ -33,6 +34,7 @@ export type TitleHistoryCallback = (sessionId: string, history: string[]) => voi
 export type CwdCallback = (sessionId: string, cwd: string) => void
 export type ClaudeSessionHistoryCallback = (sessionId: string, history: ClaudeSessionEntry[]) => void
 export type ClaudeStateCallback = (sessionId: string, state: ClaudeState) => void
+export type ClaudeContextCallback = (sessionId: string, contextRemainingPercent: number) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -42,14 +44,16 @@ export class SessionManager {
   private onCwd: CwdCallback
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
   private onClaudeState: ClaudeStateCallback
+  private onClaudeContext: ClaudeContextCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback) {
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
     this.onCwd = onCwd
     this.onClaudeSessionHistory = onClaudeSessionHistory
     this.onClaudeState = onClaudeState
+    this.onClaudeContext = onClaudeContext
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -132,6 +136,7 @@ export class SessionManager {
       lastClaudeSessionId: null,
       pendingStop: false,
       claudeState: 'stopped' as ClaudeState,
+      claudeContextPercent: null,
       cwd,
       cols,
       rows
@@ -245,6 +250,17 @@ export class SessionManager {
 
   getClaudeState(sessionId: string): ClaudeState {
     return this.sessions.get(sessionId)?.claudeState ?? 'stopped'
+  }
+
+  setClaudeContextPercent(surfaceId: string, percent: number): void {
+    const session = this.sessions.get(surfaceId)
+    if (!session) return
+    session.claudeContextPercent = percent
+    this.onClaudeContext(surfaceId, percent)
+  }
+
+  getClaudeContextPercent(sessionId: string): number | null {
+    return this.sessions.get(sessionId)?.claudeContextPercent ?? null
   }
 
   getClaudeSessionHistory(sessionId: string): ClaudeSessionEntry[] {

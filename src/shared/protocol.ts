@@ -67,6 +67,12 @@ export interface HookMessage {
   payload: Record<string, unknown>
 }
 
+export interface StatusLineMessage {
+  type: 'status-line'
+  surfaceId: string
+  payload: Record<string, unknown>
+}
+
 // --- Client → Server node mutation messages ---
 
 export interface NodeSyncRequestMessage {
@@ -183,6 +189,35 @@ export interface TerminalReincarnateMessage {
   options?: CreateOptions
 }
 
+export interface DirectoryAddMessage {
+  type: 'directory-add'
+  seq: number
+  parentId: string
+  x: number
+  y: number
+  cwd: string
+}
+
+export interface DirectoryCwdMessage {
+  type: 'directory-cwd'
+  seq: number
+  nodeId: string
+  cwd: string
+}
+
+export interface ValidateDirectoryMessage {
+  type: 'validate-directory'
+  seq: number
+  path: string
+}
+
+export interface ValidateDirectoryResult {
+  type: 'validate-directory-result'
+  seq: number
+  valid: boolean
+  error?: string
+}
+
 export interface SetTerminalModeMessage {
   type: 'set-terminal-mode'
   sessionId: string
@@ -198,6 +233,7 @@ export type ClientMessage =
   | WriteMessage
   | ResizeMessage
   | HookMessage
+  | StatusLineMessage
   | NodeSyncRequestMessage
   | NodeMoveMessage
   | NodeBatchMoveMessage
@@ -215,6 +251,9 @@ export type ClientMessage =
   | MarkdownContentMessage
   | TerminalReincarnateMessage
   | SetTerminalModeMessage
+  | DirectoryAddMessage
+  | DirectoryCwdMessage
+  | ValidateDirectoryMessage
 
 // --- Server → Client messages ---
 
@@ -247,6 +286,7 @@ export interface AttachedMessage {
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: import('./state').ClaudeState
+  claudeContextPercent?: number
 }
 
 export interface DetachedMessage {
@@ -294,6 +334,12 @@ export interface ClaudeStateMessage {
   type: 'claude-state'
   sessionId: string
   state: import('./state').ClaudeState
+}
+
+export interface ClaudeContextMessage {
+  type: 'claude-context'
+  sessionId: string
+  contextRemainingPercent: number
 }
 
 // --- Server → Client node state messages ---
@@ -352,6 +398,11 @@ export interface SnapshotMessage {
   lines: SnapshotRow[]
 }
 
+export interface ServerErrorMessage {
+  type: 'server-error'
+  message: string
+}
+
 export type ServerMessage =
   | CreatedMessage
   | ListedMessage
@@ -364,9 +415,12 @@ export type ServerMessage =
   | CwdMessage
   | ClaudeSessionHistoryMessage
   | ClaudeStateMessage
+  | ClaudeContextMessage
   | SyncStateMessage
   | NodeUpdatedMessage
   | NodeAddedMessage
   | NodeRemovedMessage
   | MutationAckMessage
   | SnapshotMessage
+  | ValidateDirectoryResult
+  | ServerErrorMessage

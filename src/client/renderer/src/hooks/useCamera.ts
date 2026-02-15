@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, screenToCanvas, zoomCamera } from '../lib/camera'
-import { MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED } from '../lib/constants'
+import { Camera, getCameraTransform, screenToCanvas, zoomCamera, zoomCameraElastic } from '../lib/camera'
+import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY } from '../lib/constants'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
 // zoom), we write the CSS transform directly to the DOM via surfaceRef instead
@@ -49,6 +49,10 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
   const inputDeviceRef = useRef<InputDevice>('mouse')
   const [inputDevice, setInputDevice] = useState<InputDevice>('mouse')
 
+  const snapBackTimerRef = useRef<number>(0)
+  const isSnapBackRef = useRef(false)
+  const lastZoomPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+
   const applyToDOM = useCallback((cam: Camera) => {
     if (surfaceRef.current) {
       surfaceRef.current.style.transform = getCameraTransform(cam)
@@ -67,6 +71,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     return () => {
       cancelAnimationFrame(rafRef.current)
       clearTimeout(syncTimerRef.current)
+      clearTimeout(snapBackTimerRef.current)
     }
   }, [])
 
@@ -83,6 +88,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
       applyToDOM(cameraRef.current)
       setCamera(cameraRef.current)
       animatingRef.current = false
+      isSnapBackRef.current = false
       return
     }
 
@@ -98,7 +104,9 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     rafRef.current = requestAnimationFrame(tick)
   }, [tick])
 
-  const flyTo = useCallback((to: Camera, speed = FOCUS_SPEED) => {
+  const flyTo = useCallback((to: Camera, speed = FOCUS_SPEED, isSnapBack = false) => {
+    clearTimeout(snapBackTimerRef.current)
+    isSnapBackRef.current = isSnapBack
     targetRef.current = to
     speedRef.current = speed
     ensureAnimating()
@@ -141,6 +149,20 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     scheduleSync()
   }, [applyToDOM, scheduleSync])
 
+  const scheduleSnapBack = useCallback((cam: Camera, maxZoom: number, anchor: { x: number; y: number }) => {
+    clearTimeout(snapBackTimerRef.current)
+    if (cam.z >= MIN_ZOOM && cam.z <= maxZoom) return
+    snapBackTimerRef.current = window.setTimeout(() => {
+      const clampedZ = Math.min(maxZoom, Math.max(MIN_ZOOM, cameraRef.current.z))
+      const canvasPoint = screenToCanvas(anchor, cameraRef.current)
+      flyTo({
+        x: anchor.x - canvasPoint.x * clampedZ,
+        y: anchor.y - canvasPoint.y * clampedZ,
+        z: clampedZ
+      }, ZOOM_SNAP_BACK_SPEED, true)
+    }, ZOOM_SNAP_BACK_DELAY)
+  }, [flyTo])
+
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
 
@@ -153,30 +175,43 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     const isZoomAnimating = Math.abs(cameraRef.current.z - targetRef.current.z) > 0.001
 
     if (e.ctrlKey || e.metaKey) {
-      // Pinch-to-zoom or Ctrl+scroll — suppress during zoom animation
-      if (isZoomAnimating) return
+      // Pinch-to-zoom or Ctrl+scroll — block during flyTo but allow during snap-back
+      if (isZoomAnimating && !isSnapBackRef.current) return
+      if (isSnapBackRef.current) {
+        // Cancel snap-back: sync target to current position
+        targetRef.current = { ...cameraRef.current }
+        isSnapBackRef.current = false
+      }
       const point = { x: e.clientX, y: e.clientY }
       const maxZoom = focusedRef?.current ? MAX_ZOOM : UNFOCUSED_MAX_ZOOM
-      const next = zoomCamera(cameraRef.current, point, e.deltaY, maxZoom)
+      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY, maxZoom)
       cameraRef.current = next
       targetRef.current = { ...next }
       applyToDOM(next)
       scheduleSync()
+      lastZoomPointRef.current = point
+      scheduleSnapBack(next, maxZoom, point)
     } else if (inputDeviceRef.current === 'trackpad') {
       // Trackpad pan — always allowed, scaled for target zoom feel
       userPan(e.deltaX, e.deltaY)
     } else {
-      // Mouse wheel zoom — suppress during zoom animation
-      if (isZoomAnimating) return
+      // Mouse wheel zoom — block during flyTo but allow during snap-back
+      if (isZoomAnimating && !isSnapBackRef.current) return
+      if (isSnapBackRef.current) {
+        targetRef.current = { ...cameraRef.current }
+        isSnapBackRef.current = false
+      }
       const point = { x: e.clientX, y: e.clientY }
       const maxZoom = focusedRef?.current ? MAX_ZOOM : UNFOCUSED_MAX_ZOOM
-      const next = zoomCamera(cameraRef.current, point, e.deltaY, maxZoom)
+      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY, maxZoom)
       cameraRef.current = next
       targetRef.current = { ...next }
       applyToDOM(next)
       scheduleSync()
+      lastZoomPointRef.current = point
+      scheduleSnapBack(next, maxZoom, point)
     }
-  }, [focusedRef, userPan, applyToDOM, scheduleSync])
+  }, [focusedRef, userPan, applyToDOM, scheduleSync, scheduleSnapBack])
 
   const handlePanStart = useCallback((e: MouseEvent) => {
     let lastX = e.clientX
@@ -199,7 +234,9 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
 
   const resetCamera = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
+    clearTimeout(snapBackTimerRef.current)
     animatingRef.current = false
+    isSnapBackRef.current = false
     cameraRef.current = DEFAULT_CAMERA
     targetRef.current = { ...DEFAULT_CAMERA }
     applyToDOM(DEFAULT_CAMERA)

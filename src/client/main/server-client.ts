@@ -121,6 +121,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'claude-context') {
+      this.emit('claude-context', msg.sessionId, msg.contextRemainingPercent)
+      return
+    }
+
     // Node state events (broadcast, no seq)
     if (msg.type === 'node-updated') {
       this.emit('node-updated', msg.nodeId, msg.fields)
@@ -139,6 +144,11 @@ export class ServerClient extends EventEmitter {
 
     if (msg.type === 'snapshot') {
       this.emit('snapshot', msg.sessionId, msg)
+      return
+    }
+
+    if (msg.type === 'server-error') {
+      this.emit('server-error', msg.message)
       return
     }
 
@@ -183,9 +193,9 @@ export class ServerClient extends EventEmitter {
     throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; claudeState?: string }> {
+  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; claudeState?: string; claudeContextPercent?: number }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, claudeState: resp.claudeState }
+    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, claudeState: resp.claudeState, claudeContextPercent: resp.claudeContextPercent }
     throw new Error('Unexpected response')
   }
 
@@ -257,6 +267,18 @@ export class ServerClient extends EventEmitter {
 
   async terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<ServerMessage> {
     return this.sendRequest({ type: 'terminal-reincarnate', nodeId, options })
+  }
+
+  async directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'directory-add', parentId, x, y, cwd })
+  }
+
+  async directoryCwd(nodeId: string, cwd: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'directory-cwd', nodeId, cwd })
+  }
+
+  async validateDirectory(path: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'validate-directory', path })
   }
 
   async markdownAdd(parentId: string, x: number, y: number): Promise<ServerMessage> {

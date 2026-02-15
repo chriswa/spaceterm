@@ -1,4 +1,4 @@
-import { MIN_ZOOM, MAX_ZOOM, ZOOM_SENSITIVITY } from './constants'
+import { MIN_ZOOM, MAX_ZOOM, ZOOM_SENSITIVITY, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW } from './constants'
 
 export interface Camera {
   x: number
@@ -35,6 +35,30 @@ export function panCamera(camera: Camera, dx: number, dy: number): Camera {
 
 export function zoomCamera(camera: Camera, screenPoint: Point, delta: number, maxZoom = MAX_ZOOM): Camera {
   const newZ = Math.min(maxZoom, Math.max(MIN_ZOOM, camera.z - delta * ZOOM_SENSITIVITY * camera.z))
+
+  // Keep the point under the cursor fixed
+  const canvasPoint = screenToCanvas(screenPoint, camera)
+  return {
+    x: screenPoint.x - canvasPoint.x * newZ,
+    y: screenPoint.y - canvasPoint.y * newZ,
+    z: newZ
+  }
+}
+
+function elasticClamp(z: number, min: number, max: number): number {
+  if (z >= min && z <= max) return z
+  if (z > max) {
+    const excess = z - max
+    return max + ZOOM_RUBBER_BAND_HIGH * Math.tanh(excess / ZOOM_RUBBER_BAND_HIGH)
+  }
+  // z < min
+  const excess = min - z
+  return Math.max(0.01, min - ZOOM_RUBBER_BAND_LOW * Math.tanh(excess / ZOOM_RUBBER_BAND_LOW))
+}
+
+export function zoomCameraElastic(camera: Camera, screenPoint: Point, delta: number, maxZoom = MAX_ZOOM): Camera {
+  const rawZ = camera.z - delta * ZOOM_SENSITIVITY * camera.z
+  const newZ = elasticClamp(rawZ, MIN_ZOOM, maxZoom)
 
   // Keep the point under the cursor fixed
   const canvasPoint = screenToCanvas(screenPoint, camera)

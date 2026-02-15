@@ -46,7 +46,7 @@ interface MarkdownCardProps {
 // CodeMirror theme — colors use CSS custom properties so presets can override them
 const cmTheme = EditorView.theme({
   '&': {
-    backgroundColor: '#1e1e2e',
+    backgroundColor: 'transparent',
     color: 'var(--markdown-fg, #cdd6f4)',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     fontSize: '14px',
@@ -435,7 +435,7 @@ export function MarkdownCard({
   useEffect(() => {
     const view = viewRef.current
     if (view) {
-      view.dom.style.backgroundColor = preset?.terminalBg ?? '#1e1e2e'
+      view.dom.style.backgroundColor = 'transparent'
     }
   }, [preset])
 
@@ -486,6 +486,7 @@ export function MarkdownCard({
   }
 
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const isEmpty = !content.trim()
 
   return (
     <CardShell
@@ -506,9 +507,9 @@ export function MarkdownCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
-      className={`markdown-card ${focused ? 'markdown-card--focused' : ''}`}
+      className={`markdown-card ${focused ? 'markdown-card--focused' : ''} ${isEmpty ? 'markdown-card--empty' : ''}`}
       style={{
-        backgroundColor: preset?.terminalBg ?? '#1e1e2e',
+        backgroundColor: 'transparent',
         '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',
         '--markdown-accent': preset?.markdownAccent ?? '#89b4fa',
         '--markdown-highlight': preset?.markdownHighlight ?? '#f9e2af',
