@@ -20,6 +20,28 @@ uniform float iTime;
 uniform vec2 uOrigin;
 uniform float uZoom;
 
+const float PI = 3.14159265358979;
+
+// OKLab → linear sRGB
+vec3 oklab2rgb(vec3 lab) {
+    float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+    float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+    float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+    float l = l_*l_*l_;
+    float m = m_*m_*m_;
+    float s = s_*s_*s_;
+    return vec3(
+        +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    );
+}
+
+// OKLCH → linear sRGB (hue in radians)
+vec3 oklch2rgb(float L, float C, float h) {
+    return oklab2rgb(vec3(L, C * cos(h), C * sin(h)));
+}
+
 float snoise(vec3 uv, float res)
 {
     const vec3 s = vec3(1e0, 1e2, 1e3);
@@ -72,9 +94,10 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
               + smoothstep(1.5, 2.5, c) * 0.3;
     float base = 0.15 + lum * 0.85;
 
-    // Purple at edges → dark teal mid → teal center
-    vec3 tint = mix(vec3(0.3, 0.05, 0.5), vec3(0.0, 0.4, 0.5), smoothstep(0.2, 0.8, c));
-    tint = mix(tint, vec3(0.0, 0.5, 0.6), smoothstep(0.8, 1.5, c));
+    // Radial rainbow — hue from angle, OKLCH for perceptual uniformity
+    // Remap: 0° at north (top), increasing clockwise
+    float hue = PI*8.0/12.0 - theta;
+    vec3 tint = max(oklch2rgb(0.65, 0.15, hue), 0.0);
     vec3 rgb = tint * base;
     fragColor = vec4(rgb * 0.5, 1.0);
 }
