@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, ViewPlugin, ViewUpdate, Decoration, DecorationSet, keymap } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT } from '../lib/constants'
-import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
+import { COLOR_PRESET_MAP, blendHex } from '../lib/color-presets'
+import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
 
 const DRAG_THRESHOLD = 5
 const URL_RE = /https?:\/\/[^\s\])<>]+/g
@@ -31,6 +32,7 @@ interface MarkdownCardProps {
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
+  children?: React.ReactNode
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -119,8 +121,7 @@ const cmTheme = EditorView.theme({
   '.cm-blockquote-line': {
     borderLeft: '3px solid #585b70',
     paddingLeft: '8px',
-    color: 'var(--markdown-fg, #cdd6f4)',
-    opacity: '0.7',
+    color: `var(--markdown-blockquote-fg, ${blendHex('#cdd6f4', '#1e1e2e', 0.7)})`,
   },
   // List marker
   '.cm-list-marker': {
@@ -335,7 +336,7 @@ const linkClickHandler = EditorView.domEventHandlers({
 export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, colorPresetId, focused,
   onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onNodeReady,
-  onDragStart, onDragEnd
+  onDragStart, onDragEnd, children
 }: MarkdownCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -428,25 +429,9 @@ export function MarkdownCard({
     }
   }, [preset])
 
-  // Color picker state
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const pickerRef = useRef<HTMLDivElement>(null)
-
-  // Close color picker on outside click
-  useEffect(() => {
-    if (!pickerOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setPickerOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [pickerOpen])
-
   // Drag handler
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.markdown-card__actions, .terminal-card__color-picker')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker')) return
 
     const bodyClickWhileFocused = focused
     if (!bodyClickWhileFocused) {
@@ -507,51 +492,14 @@ export function MarkdownCard({
           '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',
           '--markdown-accent': preset?.markdownAccent ?? '#89b4fa',
           '--markdown-highlight': preset?.markdownHighlight ?? '#f9e2af',
+          '--markdown-blockquote-fg': blendHex(preset?.markdownFg ?? '#cdd6f4', preset?.terminalBg ?? '#1e1e2e', 0.7),
         } as React.CSSProperties}
         onMouseDown={handleMouseDown}
       >
-        <div
-          className="markdown-card__actions"
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div style={{ position: 'relative' }} ref={pickerRef}>
-            <button
-              className="markdown-card__color-btn"
-              title="Color"
-              onClick={(e) => {
-                e.stopPropagation()
-                setPickerOpen((prev) => !prev)
-              }}
-            >
-              &#9679;
-            </button>
-            {pickerOpen && (
-              <div className="terminal-card__color-picker" onMouseDown={(e) => e.stopPropagation()}>
-                {COLOR_PRESETS.map((p) => (
-                  <button
-                    key={p.id}
-                    className="terminal-card__color-swatch"
-                    style={{ backgroundColor: p.titleBarBg }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onColorChange(id, p.id)
-                      setPickerOpen(false)
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-          <button
-            className="markdown-card__close-btn"
-            onClick={(e) => { e.stopPropagation(); onClose(id) }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            &times;
-          </button>
-        </div>
+        <NodeTitleBarSharedControls id={id} onClose={onClose} onColorChange={onColorChange} />
         <div className="markdown-card__body" ref={bodyRef} />
       </div>
+      {children}
     </div>
   )
 }

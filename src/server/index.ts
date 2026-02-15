@@ -89,7 +89,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId),
           cwd: sessionManager.getCwd(msg.sessionId),
           claudeSessionHistory: sessionManager.getClaudeSessionHistory(msg.sessionId),
-          waitingForUser: sessionManager.getWaitingForUser(msg.sessionId)
+          claudeState: sessionManager.getClaudeState(msg.sessionId)
         })
       } else {
         // Session doesn't exist — send attached with empty scrollback
@@ -149,30 +149,37 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Track Stop hooks so we can distinguish real forks from claude -r startups
       if (hookType === 'Stop') {
         sessionManager.handleClaudeStop(msg.surfaceId)
-        sessionManager.setWaitingForUser(msg.surfaceId, true)
+        sessionManager.setClaudeState(msg.surfaceId, 'stopped')
       }
 
-      // PermissionRequest: user needs to approve a tool use
+      // PermissionRequest: check tool_name to distinguish plan approval from other permissions
       if (hookType === 'PermissionRequest') {
-        sessionManager.setWaitingForUser(msg.surfaceId, true)
+        const toolName = msg.payload && typeof msg.payload === 'object' && 'tool_name' in msg.payload
+          ? String(msg.payload.tool_name)
+          : ''
+        sessionManager.setClaudeState(msg.surfaceId, toolName === 'ExitPlanMode' ? 'waiting_plan' : 'waiting_permission')
       }
 
       // Notification hooks: permission_prompt and elicitation_dialog mean user needs to act
+      // But don't overwrite waiting_plan — the PermissionRequest hook already set it correctly
       if (hookType === 'Notification' && msg.payload && typeof msg.payload === 'object') {
         const notificationType = 'notification_type' in msg.payload ? String(msg.payload.notification_type) : ''
         if (notificationType === 'permission_prompt' || notificationType === 'elicitation_dialog') {
-          sessionManager.setWaitingForUser(msg.surfaceId, true)
+          const currentState = sessionManager.getClaudeState(msg.surfaceId)
+          if (currentState !== 'waiting_plan') {
+            sessionManager.setClaudeState(msg.surfaceId, 'waiting_permission')
+          }
         }
       }
 
-      // UserPromptSubmit: user just typed, Claude is about to work
-      if (hookType === 'UserPromptSubmit') {
-        sessionManager.setWaitingForUser(msg.surfaceId, false)
+      // Claude is actively working
+      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart') {
+        sessionManager.setClaudeState(msg.surfaceId, 'working')
       }
 
       // SessionEnd: session is done
       if (hookType === 'SessionEnd') {
-        sessionManager.setWaitingForUser(msg.surfaceId, false)
+        sessionManager.setClaudeState(msg.surfaceId, 'stopped')
       }
 
       // Process SessionStart hooks for claude session history tracking
@@ -248,7 +255,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const { sessionId, cols, rows } = sessionManager.create(msg.options)
       snapshotManager.addSession(sessionId, cols, rows)
       const cwd = sessionManager.getCwd(sessionId)
-      stateManager.createTerminal(sessionId, msg.parentId, msg.x, msg.y, cols, rows, cwd)
+      stateManager.createTerminal(sessionId, msg.parentId, msg.x, msg.y, cols, rows, cwd, msg.initialTitleHistory)
+      if (msg.initialTitleHistory?.length) {
+        sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
+      }
       send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
       break
     }
@@ -271,6 +281,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }
       const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(msg.options)
       snapshotManager.addSession(newPtyId, rCols, rRows)
+      // Seed the new PTY session with the remnant's title history before reincarnation
+      if (rNode.shellTitleHistory?.length) {
+        sessionManager.seedTitleHistory(newPtyId, rNode.shellTitleHistory)
+      }
       stateManager.reincarnateTerminal(msg.nodeId, newPtyId, rCols, rRows)
       // Auto-attach client to the new PTY session
       client.attachedSessions.add(newPtyId)
@@ -379,14 +393,16 @@ function startServer(): void {
       stateManager.updateClaudeSessionHistory(sessionId, history)
       broadcastToAttached(sessionId, { type: 'claude-session-history', sessionId, history })
     },
-    // onWaitingForUser: broadcast to all attached clients + update state
-    (sessionId, waiting) => {
-      stateManager.updateWaitingForUser(sessionId, waiting)
-      broadcastToAttached(sessionId, { type: 'waiting-for-user', sessionId, waiting })
+    // onClaudeState: broadcast to all attached clients + update state
+    (sessionId, state) => {
+      stateManager.updateClaudeState(sessionId, state)
+      broadcastToAttached(sessionId, { type: 'claude-state', sessionId, state })
     }
   )
 
   const server = net.createServer((socket) => {
+    socket.setEncoding('utf8')
+
     const client: ClientConnection = {
       socket,
       attachedSessions: new Set(),
@@ -400,7 +416,7 @@ function startServer(): void {
     console.log(`Client connected (${clients.size} total)`)
 
     socket.on('data', (data) => {
-      client.parser.feed(data.toString())
+      client.parser.feed(data as string)
     })
 
     socket.on('close', () => {

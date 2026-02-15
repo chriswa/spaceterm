@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData } from '../../../../shared/state'
+import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, ArchivedNode } from '../../../../shared/state'
 import { terminalPixelSize, REMNANT_WIDTH, REMNANT_HEIGHT } from '../lib/constants'
 
 // --- Helper to compute pixel size from node data ---
@@ -19,6 +19,7 @@ interface NodeStoreState {
   serverNodes: Record<string, NodeData>
   nextZIndex: number
   initialSyncDone: boolean
+  rootArchivedChildren: ArchivedNode[]
 
   // Local overrides that temporarily win over server values
   localOverrides: Record<string, { fields: Partial<NodeData>; suppressFields: Set<string>; createdAt: number }>
@@ -92,6 +93,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   serverNodes: {},
   nextZIndex: 1,
   initialSyncDone: false,
+  rootArchivedChildren: [],
   localOverrides: {},
   nodes: {},
   liveTerminals: [],
@@ -205,6 +207,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
         serverNodes,
         nextZIndex: serverState.nextZIndex,
         initialSyncDone: true,
+        rootArchivedChildren: serverState.rootArchivedChildren ?? [],
         localOverrides: {},
         nodes: merged,
         ...recomputeDerived(merged)
@@ -214,6 +217,14 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
 
   applyServerNodeUpdate(id, fields) {
     set(state => {
+      // Special-case: root archives are broadcast as node-updated with id='root'
+      if (id === 'root') {
+        if ('archivedChildren' in fields) {
+          return { rootArchivedChildren: (fields as { archivedChildren: ArchivedNode[] }).archivedChildren }
+        }
+        return state
+      }
+
       const existing = state.serverNodes[id]
       if (!existing) return state
 

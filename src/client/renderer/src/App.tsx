@@ -4,6 +4,8 @@ import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters } from './components/TerminalCard'
 import { RemnantCard } from './components/RemnantCard'
 import { MarkdownCard } from './components/MarkdownCard'
+import { ArchiveStrip } from './components/ArchiveStrip'
+import { CanvasBackground } from './components/CanvasBackground'
 import { TreeLines } from './components/TreeLines'
 import type { TreeLineNode } from './components/TreeLines'
 import { Toolbar } from './components/Toolbar'
@@ -44,6 +46,7 @@ export function App() {
   const liveTerminals = useNodeStore(s => s.liveTerminals)
   const deadTerminals = useNodeStore(s => s.deadTerminals)
   const markdowns = useNodeStore(s => s.markdowns)
+  const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
   const moveNode = useNodeStore(s => s.moveNode)
   const batchMoveNodes = useNodeStore(s => s.batchMoveNodes)
   const renameNode = useNodeStore(s => s.renameNode)
@@ -233,13 +236,30 @@ export function App() {
 
   const handleResumeSession = useCallback(async (remnantId: string, claudeSessionId: string) => {
     const remnant = useNodeStore.getState().nodes[remnantId]
-    const cwd = remnant?.type === 'terminal' ? remnant.cwd : undefined
-    // Reincarnate the remnant in-place with claude -r to resume the session
-    await sendTerminalReincarnate(remnantId, buildClaudeCodeOptions({ cwd, resumeSessionId: claudeSessionId }))
-    if (cwd) cwdMapRef.current.set(remnantId, cwd)
-    // The node-updated broadcast will flip alive=true and set sessionId
-    handleNodeFocus(remnantId)
-  }, [handleNodeFocus])
+    if (remnant?.type !== 'terminal') return
+    const cwd = remnant.cwd
+
+    const history = remnant.claudeSessionHistory ?? []
+    const isMostRecent = history.length > 0 && history[history.length - 1].claudeSessionId === claudeSessionId
+
+    if (isMostRecent) {
+      // Reincarnate the remnant in-place with claude -r to resume the session
+      await sendTerminalReincarnate(remnantId, buildClaudeCodeOptions({ cwd, resumeSessionId: claudeSessionId }))
+      if (cwd) cwdMapRef.current.set(remnantId, cwd)
+      handleNodeFocus(remnantId)
+    } else {
+      // Spawn a new terminal surface for older sessions
+      const { position } = computeChildPosition(remnant.parentId)
+      const result = await sendTerminalCreate(
+        remnant.parentId,
+        position.x, position.y,
+        buildClaudeCodeOptions({ cwd, resumeSessionId: claudeSessionId }),
+        remnant.shellTitleHistory
+      )
+      if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
+      handleNodeFocus(result.sessionId)
+    }
+  }, [handleNodeFocus, computeChildPosition])
 
   const fitAllNodes = useCallback(() => {
     const allNodeList = useNodeStore.getState().nodeList
@@ -398,11 +418,16 @@ export function App() {
         onForceLayoutIncrease={forceLayoutIncrease}
         onForceLayoutDecrease={forceLayoutDecrease}
       />
-      <Canvas camera={camera} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus}>
+      <Canvas camera={camera} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} background={<CanvasBackground camera={camera} />}>
         <TreeLines nodes={nodeList.map((n): TreeLineNode => (
           { id: n.id, parentId: n.parentId, x: n.x, y: n.y }
         ))} />
         <RootNode focused={focusedId === 'root'} onClick={() => handleNodeFocus('root')} />
+        {rootArchivedChildren.length > 0 && (
+          <div style={{ position: 'absolute', left: -ROOT_NODE_RADIUS, top: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 }}>
+            <ArchiveStrip archives={rootArchivedChildren} />
+          </div>
+        )}
         {liveTerminals.map((t) => (
           <TerminalCard
             key={t.id}
@@ -433,12 +458,16 @@ export function App() {
             onShellTitleHistoryChange={handleShellTitleHistoryChange}
             claudeSessionHistory={t.claudeSessionHistory}
             onClaudeSessionHistoryChange={handleClaudeSessionHistoryChange}
-            waitingForUser={t.waitingForUser}
+            claudeState={t.claudeState}
             onExit={handleTerminalExit}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-          />
+          >
+            {t.archivedChildren.length > 0 && (
+              <ArchiveStrip archives={t.archivedChildren} />
+            )}
+          </TerminalCard>
         ))}
         {deadTerminals.map((r) => (
           <RemnantCard
@@ -453,6 +482,7 @@ export function App() {
             shellTitleHistory={r.shellTitleHistory}
             cwd={r.cwd}
             claudeSessionHistory={r.claudeSessionHistory}
+            terminalSessions={r.terminalSessions}
             exitCode={r.exitCode ?? 0}
             focused={focusedId === r.id}
             onFocus={handleNodeFocus}
@@ -464,7 +494,11 @@ export function App() {
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-          />
+          >
+            {r.archivedChildren.length > 0 && (
+              <ArchiveStrip archives={r.archivedChildren} />
+            )}
+          </RemnantCard>
         ))}
         {markdowns.map((m) => (
           <MarkdownCard
@@ -490,7 +524,11 @@ export function App() {
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-          />
+          >
+            {m.archivedChildren.length > 0 && (
+              <ArchiveStrip archives={m.archivedChildren} />
+            )}
+          </MarkdownCard>
         ))}
       </Canvas>
     </div>

@@ -33,6 +33,7 @@ export class ServerClient extends EventEmitter {
       }
 
       const socket = net.createConnection(SOCKET_PATH)
+      socket.setEncoding('utf8')
       this.socket = socket
 
       this.parser = new LineParser((msg) => {
@@ -46,7 +47,7 @@ export class ServerClient extends EventEmitter {
       })
 
       socket.on('data', (data) => {
-        this.parser!.feed(data.toString())
+        this.parser!.feed(data as string)
       })
 
       socket.on('close', () => {
@@ -115,8 +116,8 @@ export class ServerClient extends EventEmitter {
       return
     }
 
-    if (msg.type === 'waiting-for-user') {
-      this.emit('waiting-for-user', msg.sessionId, msg.waiting)
+    if (msg.type === 'claude-state') {
+      this.emit('claude-state', msg.sessionId, msg.state)
       return
     }
 
@@ -182,9 +183,9 @@ export class ServerClient extends EventEmitter {
     throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; waitingForUser?: boolean }> {
+  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; claudeState?: string }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, waitingForUser: resp.waitingForUser }
+    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, claudeState: resp.claudeState }
     throw new Error('Unexpected response')
   }
 
@@ -238,8 +239,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-reparent', nodeId, newParentId })
   }
 
-  async terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'terminal-create', parentId, x, y, options })
+  async terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-create', parentId, x, y, options, initialTitleHistory })
   }
 
   async terminalResize(nodeId: string, cols: number, rows: number): Promise<ServerMessage> {

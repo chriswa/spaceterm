@@ -86,7 +86,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     vec3 selected = mix(tintS * base, vec3(1.0), whiteBlend);
 
     vec3 rgb = mix(unselected, selected, uFocused);
-    float alpha = mix(clamp(c, 0.0, 1.0), smoothstep(0.0, 0.5, c), uFocused);
+    float alpha = mix(smoothstep(0.5, 1.8, c), smoothstep(0.4, 1.3, c), uFocused);
     fragColor = vec4(rgb, alpha);
 }
 
@@ -180,7 +180,7 @@ export function RootNode({ focused, onClick }: RootNodeProps) {
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
-    const t0 = performance.now()
+    const t0 = performance.now() - (Math.random() * 2_000_000 - 1_000_000)
 
     const tick = (now: number) => {
       gl.uniform1f(timeLoc, (now - t0) / 3333)

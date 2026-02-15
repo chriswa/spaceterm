@@ -1,4 +1,5 @@
 import type { InputDevice } from '../hooks/useCamera'
+import { useFps } from '../hooks/useFps'
 
 interface ToolbarProps {
   zoom: number
@@ -21,6 +22,7 @@ export function Toolbar({
   onAddTerminal, onResetView, onFitAll, onToggleInputDevice,
   forceLayoutPlaying, forceLayoutSpeed, onForceLayoutToggle, onForceLayoutIncrease, onForceLayoutDecrease
 }: ToolbarProps) {
+  const fps = useFps()
   return (
     <div className="toolbar">
       <button className="toolbar__btn" onClick={onAddTerminal}>
@@ -42,6 +44,8 @@ export function Toolbar({
         </button>
       </div>
       <span className="toolbar__zoom">
+        {fps} fps
+        <span> | </span>
         <button className="toolbar__status-btn" onClick={onFitAll}>{Math.round(zoom * 100)}%</button>
         <span> | </span>
         x:{Math.round(cameraX)} y:{Math.round(cameraY)}

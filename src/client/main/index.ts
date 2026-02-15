@@ -44,8 +44,8 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
-    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, waitingForUser } = await client!.attach(sessionId)
-    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, waitingForUser }
+    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState } = await client!.attach(sessionId)
+    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -110,8 +110,8 @@ function setupIPC(): void {
     await client!.nodeReparent(nodeId, newParentId)
   })
 
-  ipcMain.handle('node:terminal-create', async (_event, parentId: string, x: number, y: number, options?: Record<string, unknown>) => {
-    const resp = await client!.terminalCreate(parentId, x, y, options as any)
+  ipcMain.handle('node:terminal-create', async (_event, parentId: string, x: number, y: number, options?: Record<string, unknown>, initialTitleHistory?: string[]) => {
+    const resp = await client!.terminalCreate(parentId, x, y, options as any, initialTitleHistory)
     if (resp.type === 'created') {
       // Auto-attach so we receive data events for this session
       await client!.attach(resp.sessionId)
@@ -182,9 +182,9 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('waiting-for-user', (sessionId: string, waiting: boolean) => {
+  client!.on('claude-state', (sessionId: string, state: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:waiting-for-user:${sessionId}`, waiting)
+      mainWindow.webContents.send(`pty:claude-state:${sessionId}`, state)
     }
   })
 

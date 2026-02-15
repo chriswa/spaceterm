@@ -26,7 +26,7 @@ interface AttachResult {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
-  waitingForUser?: boolean
+  claudeState?: string
 }
 
 interface PtyApi {
@@ -41,7 +41,7 @@ interface PtyApi {
   onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
-  onWaitingForUser(sessionId: string, callback: (waiting: boolean) => void): () => void
+  onClaudeState(sessionId: string, callback: (state: string) => void): () => void
 }
 
 interface NodeApi {
@@ -53,7 +53,7 @@ interface NodeApi {
   archive(nodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
-  terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void

@@ -1,5 +1,9 @@
 import type { ClaudeSessionEntry } from './protocol'
 
+// --- Claude state enum ---
+
+export type ClaudeState = 'stopped' | 'working' | 'waiting_permission' | 'waiting_plan'
+
 // --- Terminal session tracking ---
 
 export interface TerminalSessionEntry {
@@ -33,7 +37,7 @@ export interface TerminalNodeData extends BaseNodeData {
   rows: number
   exitCode?: number // set when alive → false
   cwd?: string
-  waitingForUser: boolean
+  claudeState: ClaudeState
   terminalSessions: TerminalSessionEntry[]
   /** Legacy field — kept for backward compat with existing client code during migration */
   claudeSessionHistory: ClaudeSessionEntry[]
@@ -62,4 +66,5 @@ export interface ServerState {
   version: number
   nextZIndex: number
   nodes: Record<string, NodeData>
+  rootArchivedChildren: ArchivedNode[]
 }

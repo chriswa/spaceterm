@@ -7,10 +7,11 @@ interface CanvasProps {
   onWheel: (e: WheelEvent) => void
   onPanStart: (e: MouseEvent) => void
   onCanvasClick: () => void
+  background?: React.ReactNode
   children: React.ReactNode
 }
 
-export function Canvas({ camera, onWheel, onPanStart, onCanvasClick, children }: CanvasProps) {
+export function Canvas({ camera, onWheel, onPanStart, onCanvasClick, background, children }: CanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -52,6 +53,7 @@ export function Canvas({ camera, onWheel, onPanStart, onCanvasClick, children }:
 
   return (
     <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown}>
+      {background}
       <div
         className="canvas-surface"
         style={{ transform: getCameraTransform(camera), transformOrigin: '0 0' }}

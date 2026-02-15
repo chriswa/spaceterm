@@ -247,14 +247,14 @@ html, body, #root {
   border-bottom-color: #89b4fa;
 }
 
-.terminal-card__actions {
+.node-titlebar__actions {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
 }
 
-.terminal-card__color-btn {
+.node-titlebar__color-btn {
   width: 20px;
   height: 20px;
   border: none;
@@ -268,11 +268,11 @@ html, body, #root {
   justify-content: center;
 }
 
-.terminal-card__color-btn:hover {
+.node-titlebar__color-btn:hover {
   background: rgba(137, 180, 250, 0.2);
 }
 
-.terminal-card__color-picker {
+.node-titlebar__color-picker {
   position: absolute;
   top: 100%;
   right: 0;
@@ -288,7 +288,7 @@ html, body, #root {
   z-index: 100;
 }
 
-.terminal-card__color-swatch {
+.node-titlebar__color-swatch {
   width: 20px;
   height: 20px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -297,12 +297,12 @@ html, body, #root {
   padding: 0;
 }
 
-.terminal-card__color-swatch:hover {
+.node-titlebar__color-swatch:hover {
   border-color: #cdd6f4;
   transform: scale(1.15);
 }
 
-.terminal-card__close {
+.node-titlebar__close {
   width: 20px;
   height: 20px;
   border: none;
@@ -317,7 +317,7 @@ html, body, #root {
   justify-content: center;
 }
 
-.terminal-card__close:hover {
+.node-titlebar__close:hover {
   background: #f38ba8;
   color: #1e1e2e;
 }
@@ -339,6 +339,14 @@ html, body, #root {
   white-space: nowrap;
   user-select: none;
   color: #6c7086;
+}
+
+.terminal-card__footer-id {
+  cursor: pointer;
+}
+
+.terminal-card__footer-id:hover {
+  text-decoration: underline;
 }
 
 
@@ -392,12 +400,11 @@ html, body, #root {
   position: relative;
   border-radius: 8px;
   overflow: hidden;
-  border: 2px dashed #313244;
+  border: 2px solid #313244;
   background: #1e1e2e;
   display: flex;
   flex-direction: column;
-  transition: border-color 0.15s, opacity 0.15s;
-  opacity: 0.75;
+  transition: border-color 0.15s;
   cursor: grab;
 }
 
@@ -407,12 +414,10 @@ html, body, #root {
 
 .remnant-card:hover {
   border-color: #585b70;
-  opacity: 0.9;
 }
 
 .remnant-card.remnant-card--focused {
   border-color: #cba6f7;
-  opacity: 1;
 }
 
 .remnant-card__body {
@@ -443,6 +448,15 @@ html, body, #root {
   flex-direction: column;
   gap: 2px;
   margin-top: 6px;
+}
+
+.remnant-card__sessions-header {
+  font-size: 9px;
+  line-height: 12px;
+  color: #585b70;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
 }
 
 /* Markdown Card */
@@ -496,13 +510,11 @@ html, body, #root {
   cursor: grabbing;
 }
 
-/* Floating action buttons (color + close) */
-.markdown-card__actions {
+/* Floating action buttons for markdown card */
+.markdown-card .node-titlebar__actions {
   position: absolute;
   top: 4px;
   right: 4px;
-  display: flex;
-  align-items: center;
   gap: 2px;
   opacity: 0;
   pointer-events: none;
@@ -510,61 +522,34 @@ html, body, #root {
   z-index: 10;
 }
 
-.markdown-card:hover .markdown-card__actions,
-.markdown-card--focused .markdown-card__actions {
+.markdown-card:hover .node-titlebar__actions,
+.markdown-card--focused .node-titlebar__actions {
   opacity: 1;
   pointer-events: auto;
 }
 
-.markdown-card__color-btn {
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
+.markdown-card .node-titlebar__color-btn,
+.markdown-card .node-titlebar__close {
   background: rgba(0, 0, 0, 0.3);
   color: #cdd6f4;
-  font-size: 10px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.markdown-card__color-btn:hover {
+.markdown-card .node-titlebar__color-btn:hover {
   background: rgba(137, 180, 250, 0.3);
 }
 
-.markdown-card__close-btn {
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.3);
-  color: #cdd6f4;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.markdown-card__close-btn:hover {
-  background: #f38ba8;
-  color: #1e1e2e;
-}
-
-/* Tree connection lines */
-.tree-line {
-  stroke: #585b70;
+/* Tree connection lines — chevron arrow pattern */
+.tree-line-chevron {
+  stroke: #000000;
   stroke-width: 2;
-  stroke-dasharray: 8 6;
+  stroke-dasharray: 2 18;
+  stroke-linecap: round;
   fill: none;
-  animation: marching-ants 2.0s linear infinite;
+  animation: chevron-march 2.0s linear infinite;
 }
 
-@keyframes marching-ants {
-  to { stroke-dashoffset: 14; }
+@keyframes chevron-march {
+  to { stroke-dashoffset: 20; }
 }
 
 /* Root node / Shader vortex */
@@ -600,10 +585,6 @@ html, body, #root {
   color: #6c7086;
 }
 
-.terminal-card__session-id {
-  color: #89b4fa;
-}
-
 .terminal-card__session-entry--startup .terminal-card__session-reason {
   color: #a6e3a1;
 }
@@ -612,12 +593,38 @@ html, body, #root {
   color: #f9e2af;
 }
 
-.terminal-card__session-entry--clickable {
+.terminal-card__session-reason--clickable {
   cursor: pointer;
   pointer-events: auto;
 }
 
-.terminal-card__session-entry--clickable:hover .terminal-card__session-id {
-  color: #b4d0fb;
+.terminal-card__session-reason--clickable:hover {
   text-decoration: underline;
+}
+
+.terminal-card__session-history {
+  color: #585b70;
+}
+
+/* Archive strip — archived node entries below each node */
+.archive-strip {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  max-width: 800px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.archive-strip__line {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 10px;
+  line-height: 14px;
+  color: #6c7086;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 800px;
 }

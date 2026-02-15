@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { REMNANT_WIDTH, REMNANT_HEIGHT } from '../lib/constants'
-import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
+import { COLOR_PRESET_MAP } from '../lib/color-presets'
+import { TerminalTitleBarContent } from './TerminalTitleBarContent'
+import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
+import type { TerminalSessionEntry } from '../../../../shared/state'
 
 const DRAG_THRESHOLD = 5
 
@@ -15,6 +18,7 @@ interface RemnantCardProps {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
+  terminalSessions?: TerminalSessionEntry[]
   exitCode: number
   focused: boolean
   onFocus: (id: string) => void
@@ -26,44 +30,30 @@ interface RemnantCardProps {
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
+  children?: React.ReactNode
 }
 
 export function RemnantCard({
-  id, x, y, zIndex, zoom, name, colorPresetId, shellTitleHistory, cwd, claudeSessionHistory, exitCode, focused,
+  id, x, y, zIndex, zoom, name, colorPresetId, shellTitleHistory, cwd, claudeSessionHistory, terminalSessions, exitCode, focused,
   onFocus, onClose, onMove, onRename, onColorChange, onResumeSession, onNodeReady,
-  onDragStart, onDragEnd
+  onDragStart, onDragEnd, children
 }: RemnantCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const propsRef = useRef({ x, y, zoom, id, onNodeReady })
   propsRef.current = { x, y, zoom, id, onNodeReady }
 
-  // Editable title state
-  const [editing, setEditing] = useState(false)
-  const [editValue, setEditValue] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  // Select-all on edit start
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.select()
-    }
-  }, [editing])
-
-  // Color picker state
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const pickerRef = useRef<HTMLDivElement>(null)
-
-  // Close color picker on outside click
-  useEffect(() => {
-    if (!pickerOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setPickerOpen(false)
+  // Build a lookup from claudeSessionId → shellTitleHistory
+  const sessionTitleMap = useMemo(() => {
+    const map = new Map<string, string[]>()
+    if (terminalSessions) {
+      for (const ts of terminalSessions) {
+        if (ts.claudeSessionId) {
+          map.set(ts.claudeSessionId, ts.shellTitleHistory)
+        }
       }
     }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [pickerOpen])
+    return map
+  }, [terminalSessions])
 
   // Notify parent when focused node is ready
   useEffect(() => {
@@ -73,7 +63,7 @@ export function RemnantCard({
 
   // Mousedown handler: drag-to-move or click-to-focus
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__left-area, .terminal-card__title-input, .terminal-card__color-picker')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .terminal-card__left-area, .terminal-card__title-input, .node-titlebar__color-picker')) return
 
     e.preventDefault()
 
@@ -113,20 +103,8 @@ export function RemnantCard({
     window.addEventListener('mouseup', onMouseUp)
   }
 
-  // Build display text
-  const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
-  const seen = new Set<string>()
-  const unique = (shellTitleHistory ?? []).filter((t) => {
-    if (seen.has(t)) return false
-    seen.add(t)
-    return true
-  })
-  const history = unique.join(' \u25C0 ')
-
   return (
     <div
-      data-node-id={id}
-      className={`remnant-card canvas-node ${focused ? 'remnant-card--focused' : ''}`}
       style={{
         position: 'absolute',
         left: x - REMNANT_WIDTH / 2,
@@ -134,128 +112,67 @@ export function RemnantCard({
         width: REMNANT_WIDTH,
         zIndex
       }}
-      onMouseDown={handleMouseDown}
     >
       <div
-        className="terminal-card__header"
-        style={preset ? {
-          backgroundColor: preset.titleBarBg,
-          color: preset.titleBarFg,
-          borderBottomColor: preset.titleBarBg
-        } : undefined}
+        data-node-id={id}
+        className={`remnant-card canvas-node ${focused ? 'remnant-card--focused' : ''}`}
+        onMouseDown={handleMouseDown}
       >
         <div
-          className="terminal-card__left-area"
-          onClick={(e) => {
-            e.stopPropagation()
-            setEditValue(name || '')
-            setEditing(true)
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
+          className="terminal-card__header"
+          style={preset ? {
+            backgroundColor: preset.titleBarBg,
+            color: preset.titleBarFg,
+            borderBottomColor: preset.titleBarBg
+          } : undefined}
         >
-          {editing ? (
-            <>
-              <input
-                ref={inputRef}
-                className="terminal-card__title-input"
-                value={editValue}
-                style={preset ? { color: preset.titleBarFg } : undefined}
-                onChange={(e) => setEditValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    onRename(id, editValue)
-                    setEditing(false)
-                  } else if (e.key === 'Escape') {
-                    setEditing(false)
-                  }
-                  e.stopPropagation()
-                }}
-                onBlur={() => {
-                  onRename(id, editValue)
-                  setEditing(false)
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                autoFocus
-              />
-              {history && <span className="terminal-card__history" style={preset ? { color: preset.titleBarFg, opacity: 0.5 } : undefined}>{history}</span>}
-            </>
-          ) : (
-            <>
-              {name && <span className="terminal-card__custom-name" style={preset ? { color: preset.titleBarFg } : undefined}>{name}</span>}
-              {name && history && <span className="terminal-card__separator" style={preset ? { color: preset.titleBarFg, opacity: 0.4 } : undefined}>{'\u2014'}</span>}
-              {history && <span className="terminal-card__history" style={preset ? { color: preset.titleBarFg, opacity: 0.5 } : undefined}>{history}</span>}
-            </>
+          <TerminalTitleBarContent
+            name={name}
+            shellTitleHistory={shellTitleHistory}
+            cwd={cwd}
+            preset={preset}
+            id={id}
+            onRename={onRename}
+          />
+          <NodeTitleBarSharedControls id={id} preset={preset} onClose={onClose} onColorChange={onColorChange} />
+        </div>
+        <div className="remnant-card__body">
+          <div className="remnant-card__exit">exited ({exitCode})</div>
+          {claudeSessionHistory && claudeSessionHistory.length > 0 && (
+            <div className="remnant-card__sessions">
+              <div className="remnant-card__sessions-header">Terminal Sessions</div>
+              {[...claudeSessionHistory].reverse().map((entry, i) => {
+                const titleHistory = sessionTitleMap.get(entry.claudeSessionId) ?? []
+                const historyStr = titleHistory.join(' \u00A0\u21BC\u00A0\u00A0')
+                return (
+                  <div
+                    key={i}
+                    className={`terminal-card__session-entry terminal-card__session-entry--${entry.reason}`}
+                  >
+                    <span
+                      className={`terminal-card__session-reason${focused ? ' terminal-card__session-reason--clickable' : ''}`}
+                      onClick={focused ? (e) => {
+                        e.stopPropagation()
+                        onResumeSession?.(id, entry.claudeSessionId)
+                      } : undefined}
+                      onMouseDown={focused ? (e) => e.stopPropagation() : undefined}
+                    >
+                      {entry.reason}
+                    </span>
+                    {historyStr && (
+                      <span className="terminal-card__session-history"> &mdash; {historyStr}</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           )}
         </div>
-        {abbrevCwd && (
-          <span className="terminal-card__cwd" style={preset ? { color: preset.titleBarFg, opacity: 0.5 } : undefined}>{abbrevCwd}</span>
-        )}
-        <div className="terminal-card__actions">
-          <div style={{ position: 'relative' }} ref={pickerRef}>
-            <button
-              className="terminal-card__color-btn"
-              title="Header color"
-              style={preset ? { color: preset.titleBarFg } : undefined}
-              onClick={(e) => {
-                e.stopPropagation()
-                setPickerOpen((prev) => !prev)
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              ●
-            </button>
-            {pickerOpen && (
-              <div className="terminal-card__color-picker" onMouseDown={(e) => e.stopPropagation()}>
-                {COLOR_PRESETS.map((p) => (
-                  <button
-                    key={p.id}
-                    className="terminal-card__color-swatch"
-                    style={{ backgroundColor: p.titleBarBg }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onColorChange(id, p.id)
-                      setPickerOpen(false)
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-          <button
-            className="terminal-card__close"
-            style={preset ? { color: preset.titleBarFg } : undefined}
-            onClick={(e) => { e.stopPropagation(); onClose(id) }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            &times;
-          </button>
+        <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
+          Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
         </div>
       </div>
-      <div className="remnant-card__body">
-        <div className="remnant-card__exit">exited ({exitCode})</div>
-        {claudeSessionHistory && claudeSessionHistory.length > 0 && (
-          <div className="remnant-card__sessions">
-            {[...claudeSessionHistory].reverse().map((entry, i) => (
-              <div
-                key={i}
-                className={`terminal-card__session-entry terminal-card__session-entry--${entry.reason} terminal-card__session-entry--clickable`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onResumeSession?.(id, entry.claudeSessionId)
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <span className="terminal-card__session-id">{entry.claudeSessionId.slice(0, 8)}</span>
-                {' '}
-                <span className="terminal-card__session-reason">({entry.reason})</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
-        {id.slice(0, 8)}
-      </div>
+      {children}
     </div>
   )
 }

@@ -27,7 +27,7 @@ export interface AttachResult {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
-  waitingForUser?: boolean
+  claudeState?: string
 }
 
 export interface PtyApi {
@@ -42,7 +42,7 @@ export interface PtyApi {
   onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
-  onWaitingForUser(sessionId: string, callback: (waiting: boolean) => void): () => void
+  onClaudeState(sessionId: string, callback: (state: string) => void): () => void
 }
 
 const ptyApi: PtyApi = {
@@ -93,9 +93,9 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
-  onWaitingForUser: (sessionId, callback) => {
-    const channel = `pty:waiting-for-user:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, waiting: boolean) => callback(waiting)
+  onClaudeState: (sessionId, callback) => {
+    const channel = `pty:claude-state:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, state: string) => callback(state)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
   },
@@ -111,7 +111,7 @@ interface NodeApi {
   archive(nodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
-  terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
@@ -133,7 +133,7 @@ const nodeApi: NodeApi = {
   archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
-  terminalCreate: (parentId, x, y, options?) => ipcRenderer.invoke('node:terminal-create', parentId, x, y, options),
+  terminalCreate: (parentId, x, y, options?, initialTitleHistory?) => ipcRenderer.invoke('node:terminal-create', parentId, x, y, options, initialTitleHistory),
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
   markdownAdd: (parentId, x, y) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),

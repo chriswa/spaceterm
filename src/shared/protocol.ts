@@ -128,6 +128,7 @@ export interface TerminalCreateMessage {
   x: number
   y: number
   options?: CreateOptions
+  initialTitleHistory?: string[]
 }
 
 export interface TerminalResizeMessage {
@@ -229,7 +230,7 @@ export interface AttachedMessage {
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
-  waitingForUser?: boolean
+  claudeState?: import('./state').ClaudeState
 }
 
 export interface DetachedMessage {
@@ -273,10 +274,10 @@ export interface ClaudeSessionHistoryMessage {
   history: ClaudeSessionEntry[]
 }
 
-export interface WaitingForUserMessage {
-  type: 'waiting-for-user'
+export interface ClaudeStateMessage {
+  type: 'claude-state'
   sessionId: string
-  waiting: boolean
+  state: import('./state').ClaudeState
 }
 
 // --- Server → Client node state messages ---
@@ -346,7 +347,7 @@ export type ServerMessage =
   | ShellTitleHistoryMessage
   | CwdMessage
   | ClaudeSessionHistoryMessage
-  | WaitingForUserMessage
+  | ClaudeStateMessage
   | SyncStateMessage
   | NodeUpdatedMessage
   | NodeAddedMessage

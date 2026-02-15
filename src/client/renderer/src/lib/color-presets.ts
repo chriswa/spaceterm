@@ -32,3 +32,17 @@ export const COLOR_PRESET_MAP: Record<string, ColorPreset> = Object.fromEntries(
 )
 
 export const DEFAULT_PRESET = COLOR_PRESETS[0]
+
+/** Blend `fg` over `bg` at the given alpha (0–1). All values are '#rrggbb' hex strings. */
+export function blendHex(fg: string, bg: string, alpha: number): string {
+  const fr = parseInt(fg.slice(1, 3), 16)
+  const fg2 = parseInt(fg.slice(3, 5), 16)
+  const fb = parseInt(fg.slice(5, 7), 16)
+  const br = parseInt(bg.slice(1, 3), 16)
+  const bg2 = parseInt(bg.slice(3, 5), 16)
+  const bb = parseInt(bg.slice(5, 7), 16)
+  const r = Math.round(fr * alpha + br * (1 - alpha))
+  const g = Math.round(fg2 * alpha + bg2 * (1 - alpha))
+  const b = Math.round(fb * alpha + bb * (1 - alpha))
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}

@@ -6,6 +6,7 @@ import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
 import { TitleParser } from './title-parser'
 import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
+import type { ClaudeState } from '../shared/state'
 
 const MAX_TITLE_HISTORY = 50
 const MAX_CLAUDE_SESSION_HISTORY = 20
@@ -20,7 +21,7 @@ interface Session {
   claudeSessionHistory: ClaudeSessionEntry[]
   lastClaudeSessionId: string | null
   pendingStop: boolean
-  waitingForUser: boolean
+  claudeState: ClaudeState
   cwd: string
   cols: number
   rows: number
@@ -31,7 +32,7 @@ export type ExitCallback = (sessionId: string, exitCode: number) => void
 export type TitleHistoryCallback = (sessionId: string, history: string[]) => void
 export type CwdCallback = (sessionId: string, cwd: string) => void
 export type ClaudeSessionHistoryCallback = (sessionId: string, history: ClaudeSessionEntry[]) => void
-export type WaitingForUserCallback = (sessionId: string, waiting: boolean) => void
+export type ClaudeStateCallback = (sessionId: string, state: ClaudeState) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -40,15 +41,15 @@ export class SessionManager {
   private onTitleHistory: TitleHistoryCallback
   private onCwd: CwdCallback
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
-  private onWaitingForUser: WaitingForUserCallback
+  private onClaudeState: ClaudeStateCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onWaitingForUser: WaitingForUserCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback) {
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
     this.onCwd = onCwd
     this.onClaudeSessionHistory = onClaudeSessionHistory
-    this.onWaitingForUser = onWaitingForUser
+    this.onClaudeState = onClaudeState
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -130,7 +131,7 @@ export class SessionManager {
       claudeSessionHistory: [],
       lastClaudeSessionId: null,
       pendingStop: false,
-      waitingForUser: false,
+      claudeState: 'stopped' as ClaudeState,
       cwd,
       cols,
       rows
@@ -235,20 +236,26 @@ export class SessionManager {
     if (session) session.pendingStop = true
   }
 
-  setWaitingForUser(surfaceId: string, waiting: boolean): void {
+  setClaudeState(surfaceId: string, state: ClaudeState): void {
     const session = this.sessions.get(surfaceId)
-    if (!session || session.waitingForUser === waiting) return
-    session.waitingForUser = waiting
-    this.onWaitingForUser(surfaceId, waiting)
+    if (!session || session.claudeState === state) return
+    session.claudeState = state
+    this.onClaudeState(surfaceId, state)
   }
 
-  getWaitingForUser(sessionId: string): boolean {
-    return this.sessions.get(sessionId)?.waitingForUser ?? false
+  getClaudeState(sessionId: string): ClaudeState {
+    return this.sessions.get(sessionId)?.claudeState ?? 'stopped'
   }
 
   getClaudeSessionHistory(sessionId: string): ClaudeSessionEntry[] {
     const session = this.sessions.get(sessionId)
     return session ? session.claudeSessionHistory : []
+  }
+
+  seedTitleHistory(sessionId: string, history: string[]): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    session.shellTitleHistory.push(...history)
   }
 
   has(sessionId: string): boolean {

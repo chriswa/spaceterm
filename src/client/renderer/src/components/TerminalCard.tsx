@@ -1,17 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_WINDOW_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
-import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
+import { COLOR_PRESET_MAP } from '../lib/color-presets'
 import type { SnapshotMessage } from '../../../../shared/protocol'
+import { TerminalTitleBarContent } from './TerminalTitleBarContent'
+import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
 
 const DRAG_THRESHOLD = 5
 const LOW_ZOOM_THRESHOLD = 0.3
 const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
 const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
-const textEncoder = new TextEncoder()
 
 export const terminalSelectionGetters = new Map<string, () => string>()
 
@@ -44,19 +45,20 @@ interface TerminalCardProps {
   onShellTitleHistoryChange?: (id: string, history: string[]) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
   onClaudeSessionHistoryChange?: (id: string, history: ClaudeSessionEntry[]) => void
-  waitingForUser?: boolean
-  onWaitingForUserChange?: (id: string, waiting: boolean) => void
+  claudeState?: string
+  onClaudeStateChange?: (id: string, state: string) => void
   onExit?: (id: string, exitCode: number) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
+  children?: React.ReactNode
 }
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
-  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, waitingForUser, onWaitingForUserChange, onExit, onNodeReady,
-  onDragStart, onDragEnd
+  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
+  onDragStart, onDragEnd, children
 }: TerminalCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
@@ -68,8 +70,8 @@ export function TerminalCard({
   const snapshotRef = useRef<SnapshotMessage | null>(null)
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady })
-  propsRef.current = { x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady }
 
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
@@ -218,7 +220,7 @@ export function TerminalCard({
     window.api.pty.attach(sessionId).then((result) => {
       if (cancelled) return
       if (result.scrollback.length > 0) {
-        term.write(textEncoder.encode(result.scrollback))
+        term.write(result.scrollback)
       }
       if (result.shellTitleHistory && result.shellTitleHistory.length > 0) {
         propsRef.current.onShellTitleHistoryChange?.(propsRef.current.id, result.shellTitleHistory)
@@ -229,8 +231,8 @@ export function TerminalCard({
       if (result.claudeSessionHistory && result.claudeSessionHistory.length > 0) {
         propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.id, result.claudeSessionHistory)
       }
-      if (result.waitingForUser !== undefined) {
-        propsRef.current.onWaitingForUserChange?.(propsRef.current.id, result.waitingForUser)
+      if (result.claudeState !== undefined) {
+        propsRef.current.onClaudeStateChange?.(propsRef.current.id, result.claudeState)
       }
     }).catch(() => {
       // Session may not exist on server (e.g. newly created, already attached)
@@ -238,7 +240,7 @@ export function TerminalCard({
 
     // Wire up IPC — use sessionId for all PTY operations
     const cleanupData = window.api.pty.onData(sessionId, (data) => {
-      term.write(textEncoder.encode(data))
+      term.write(data)
     })
 
     const cleanupExit = window.api.pty.onExit(sessionId, (exitCode) => {
@@ -257,8 +259,8 @@ export function TerminalCard({
       propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.id, history)
     })
 
-    const cleanupWaitingForUser = window.api.pty.onWaitingForUser(sessionId, (waiting) => {
-      propsRef.current.onWaitingForUserChange?.(propsRef.current.id, waiting)
+    const cleanupClaudeState = window.api.pty.onClaudeState(sessionId, (state) => {
+      propsRef.current.onClaudeStateChange?.(propsRef.current.id, state)
     })
 
     term.onData((data) => {
@@ -281,7 +283,7 @@ export function TerminalCard({
       cleanupTitleHistory()
       cleanupCwd()
       cleanupClaudeSessionHistory()
-      cleanupWaitingForUser()
+      cleanupClaudeState()
       term.dispose()
     }
   }, [focused, sessionId])
@@ -478,39 +480,12 @@ export function TerminalCard({
     }
   }, [focused])
 
-  // Editable title state
-  const [editing, setEditing] = useState(false)
-  const [editValue, setEditValue] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
   const dragOccurredRef = useRef(false)
-
-  // Select-all on edit start
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.select()
-    }
-  }, [editing])
-
-  // Color picker state
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const pickerRef = useRef<HTMLDivElement>(null)
-
-  // Close color picker on outside click
-  useEffect(() => {
-    if (!pickerOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setPickerOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [pickerOpen])
 
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or color picker
-    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__color-picker')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker')) return
 
     const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
@@ -537,8 +512,8 @@ export function TerminalCard({
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
         onDragStart?.(id)
-        if (isInteractiveTitle && inputRef.current) {
-          inputRef.current.blur()
+        if (isInteractiveTitle && document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur()
         }
       }
 
@@ -566,15 +541,26 @@ export function TerminalCard({
     window.addEventListener('mouseup', onMouseUp)
   }
 
-  const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
-  const history = (shellTitleHistory ?? []).join(' \u00A0\u21BC\u00A0\u00A0')
-
   const focusClass = focused
     ? scrollMode
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
     : ''
-  const waitingClass = waitingForUser && !focused ? 'terminal-card--waiting' : ''
+  const isWaiting = claudeState === 'waiting_permission' || claudeState === 'waiting_plan'
+  const waitingClass = isWaiting && !focused ? 'terminal-card--waiting' : ''
+
+  const claudeStateLabel = (state?: string): string => {
+    switch (state) {
+      case 'working': return 'Working'
+      case 'waiting_permission': return 'Awaiting Permission'
+      case 'waiting_plan': return 'Awaiting Plan Approval'
+      default: return 'Stopped'
+    }
+  }
+
+  const lastClaudeSession = claudeSessionHistory && claudeSessionHistory.length > 0
+    ? claudeSessionHistory[claudeSessionHistory.length - 1]
+    : null
 
   return (
     <div
@@ -601,91 +587,16 @@ export function TerminalCard({
           borderBottomColor: preset.titleBarBg
         } : undefined}
       >
-        <div
-          className="terminal-card__left-area"
-          onClick={(e) => {
-            if (dragOccurredRef.current) return
-            e.stopPropagation()
-            setEditValue(name || '')
-            setEditing(true)
-          }}
-        >
-          {editing ? (
-            <>
-              <input
-                ref={inputRef}
-                className="terminal-card__title-input"
-                value={editValue}
-                style={preset ? { color: preset.titleBarFg } : undefined}
-                onChange={(e) => setEditValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    onRename(id, editValue)
-                    setEditing(false)
-                  } else if (e.key === 'Escape') {
-                    setEditing(false)
-                  }
-                  e.stopPropagation()
-                }}
-                onBlur={() => {
-                  onRename(id, editValue)
-                  setEditing(false)
-                }}
-                autoFocus
-              />
-              {history && <span className="terminal-card__history" style={preset ? { color: preset.titleBarFg, opacity: 0.75 } : undefined}>{history}</span>}
-            </>
-          ) : (
-            <>
-              {name && <span className="terminal-card__custom-name" style={preset ? { color: preset.titleBarFg } : undefined}>{name}</span>}
-              {name && history && <span className="terminal-card__separator" style={preset ? { color: preset.titleBarFg, opacity: 0.7 } : undefined}>{'\u00A0\u21BC\u00A0'}</span>}
-              {history && <span className="terminal-card__history" style={preset ? { color: preset.titleBarFg, opacity: 0.75 } : undefined}>{history}</span>}
-            </>
-          )}
-        </div>
-        {abbrevCwd && (
-          <span className="terminal-card__cwd" style={preset ? { color: preset.titleBarFg, opacity: 0.75 } : undefined}>{abbrevCwd}</span>
-        )}
-        <div className="terminal-card__actions">
-          <div style={{ position: 'relative' }} ref={pickerRef}>
-            <button
-              className="terminal-card__color-btn"
-              title="Header color"
-              style={preset ? { color: preset.titleBarFg } : undefined}
-              onClick={(e) => {
-                e.stopPropagation()
-                setPickerOpen((prev) => !prev)
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              ●
-            </button>
-            {pickerOpen && (
-              <div className="terminal-card__color-picker" onMouseDown={(e) => e.stopPropagation()}>
-                {COLOR_PRESETS.map((p) => (
-                  <button
-                    key={p.id}
-                    className="terminal-card__color-swatch"
-                    style={{ backgroundColor: p.titleBarBg }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onColorChange(id, p.id)
-                      setPickerOpen(false)
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-          <button
-            className="terminal-card__close"
-            style={preset ? { color: preset.titleBarFg } : undefined}
-            onClick={(e) => { e.stopPropagation(); onClose(id) }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            &times;
-          </button>
-        </div>
+        <TerminalTitleBarContent
+          name={name}
+          shellTitleHistory={shellTitleHistory}
+          cwd={cwd}
+          preset={preset}
+          id={id}
+          onRename={onRename}
+          canStartEdit={() => !dragOccurredRef.current}
+        />
+        <NodeTitleBarSharedControls id={id} preset={preset} onClose={onClose} onColorChange={onColorChange} />
       </div>
       <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none' }} />
       <div style={{ display: focused ? 'none' : undefined, padding: '2px 2px 0 2px', flex: 1 }}>
@@ -699,8 +610,15 @@ export function TerminalCard({
         />
       </div>
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
-        {id.slice(0, 8)}
-        {waitingForUser && <span className="terminal-card__footer-waiting-text"> — User Input Required!</span>}
+        Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
+        {lastClaudeSession && (
+          <>
+            {' | Claude: '}
+            <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId) }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+            {' | '}
+            {claudeStateLabel(claudeState)}
+          </>
+        )}
       </div>
       </div>
       {claudeSessionHistory && claudeSessionHistory.length > 0 && (
@@ -714,6 +632,7 @@ export function TerminalCard({
           ))}
         </div>
       )}
+      {children}
     </div>
   )
 }

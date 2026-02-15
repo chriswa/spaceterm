@@ -21,8 +21,8 @@ export class LineParser {
       if (line.length === 0) continue
       try {
         this.onMessage(JSON.parse(line))
-      } catch {
-        // Skip malformed JSON lines
+      } catch (err) {
+        console.error(`[LineParser] Malformed JSON: ${err}. Line (first 200 chars): ${line.slice(0, 200)}`)
       }
     }
   }

@@ -100,9 +100,10 @@ export async function sendTerminalCreate(
   parentId: string,
   x: number,
   y: number,
-  options?: CreateOptions
+  options?: CreateOptions,
+  initialTitleHistory?: string[]
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
-  return window.api.node.terminalCreate(parentId, x, y, options)
+  return window.api.node.terminalCreate(parentId, x, y, options, initialTitleHistory)
 }
 
 export async function sendMarkdownAdd(parentId: string, x: number, y: number): Promise<void> {

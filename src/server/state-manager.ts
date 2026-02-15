@@ -38,12 +38,17 @@ export class StateManager {
     const loaded = loadState()
     if (loaded) {
       this.state = loaded
+      // Backfill for state files that predate rootArchivedChildren
+      if (!this.state.rootArchivedChildren) {
+        this.state.rootArchivedChildren = []
+      }
       this.markAllTerminalsDead()
     } else {
       this.state = {
         version: STATE_VERSION,
         nextZIndex: 1,
-        nodes: {}
+        nodes: {},
+        rootArchivedChildren: []
       }
     }
   }
@@ -55,7 +60,11 @@ export class StateManager {
     for (const node of Object.values(this.state.nodes)) {
       if (node.type === 'terminal' && node.alive) {
         node.alive = false
-        node.waitingForUser = false
+        node.claudeState = 'stopped'
+      }
+      // Backward compat: remove old waitingForUser key if present in persisted state
+      if (node.type === 'terminal' && 'waitingForUser' in node) {
+        delete (node as any).waitingForUser
       }
     }
     persistNow(this.state)
@@ -81,15 +90,17 @@ export class StateManager {
     y: number,
     cols: number,
     rows: number,
-    cwd?: string
+    cwd?: string,
+    initialTitleHistory?: string[]
   ): TerminalNodeData {
     const zIndex = this.state.nextZIndex++
     const now = new Date().toISOString()
+    const seedHistory = initialTitleHistory ?? []
     const initialSession: TerminalSessionEntry = {
       sessionIndex: 0,
       startedAt: now,
       trigger: 'initial',
-      shellTitleHistory: []
+      shellTitleHistory: [...seedHistory]
     }
 
     const node: TerminalNodeData = {
@@ -104,10 +115,10 @@ export class StateManager {
       cols,
       rows,
       cwd,
-      waitingForUser: false,
+      claudeState: 'stopped',
       terminalSessions: [initialSession],
       claudeSessionHistory: [],
-      shellTitleHistory: [],
+      shellTitleHistory: [...seedHistory],
       archivedChildren: [],
       colorPresetId: 'default'
     }
@@ -142,7 +153,7 @@ export class StateManager {
 
     node.alive = false
     node.exitCode = exitCode
-    node.waitingForUser = false
+    node.claudeState = 'stopped'
 
     // End the current terminal session
     const currentSession = node.terminalSessions[node.terminalSessions.length - 1]
@@ -151,7 +162,7 @@ export class StateManager {
     }
 
     this.sessionToNodeId.delete(ptySessionId)
-    this.onNodeUpdate(node.id, { alive: false, exitCode, waitingForUser: false } as Partial<TerminalNodeData>)
+    this.onNodeUpdate(node.id, { alive: false, exitCode, claudeState: 'stopped' } as Partial<TerminalNodeData>)
     persistNow(this.state)
   }
 
@@ -170,7 +181,7 @@ export class StateManager {
     node.cols = cols
     node.rows = rows
     node.exitCode = undefined
-    node.waitingForUser = false
+    node.claudeState = 'stopped'
 
     // Start a new terminal session
     const prevSession = node.terminalSessions[node.terminalSessions.length - 1]
@@ -189,7 +200,7 @@ export class StateManager {
       cols,
       rows,
       exitCode: undefined,
-      waitingForUser: false
+      claudeState: 'stopped'
     } as Partial<TerminalNodeData>)
     this.schedulePersist()
   }
@@ -263,14 +274,18 @@ export class StateManager {
       this.sessionToNodeId.delete(node.sessionId)
     }
 
-    // Snapshot node into parent's archivedChildren (or discard if parent is root)
-    if (parentId !== 'root') {
+    // Snapshot node into parent's archivedChildren
+    const snapshot = {
+      archivedAt: new Date().toISOString(),
+      data: JSON.parse(JSON.stringify(node)) // deep copy
+    }
+    if (parentId === 'root') {
+      this.state.rootArchivedChildren.push(snapshot)
+      this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+    } else {
       const parent = this.state.nodes[parentId]
       if (parent) {
-        parent.archivedChildren.push({
-          archivedAt: new Date().toISOString(),
-          data: JSON.parse(JSON.stringify(node)) // deep copy
-        })
+        parent.archivedChildren.push(snapshot)
         this.onNodeUpdate(parentId, { archivedChildren: parent.archivedChildren })
       }
     }
@@ -355,12 +370,12 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateWaitingForUser(ptySessionId: string, waiting: boolean): void {
+  updateClaudeState(ptySessionId: string, state: import('../shared/state').ClaudeState): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    node.waitingForUser = waiting
-    this.onNodeUpdate(node.id, { waitingForUser: waiting } as Partial<TerminalNodeData>)
-    // Don't persist for transient waiting state changes
+    node.claudeState = state
+    this.onNodeUpdate(node.id, { claudeState: state } as Partial<TerminalNodeData>)
+    // Don't persist for transient state changes
   }
 
   // --- Markdown operations ---
