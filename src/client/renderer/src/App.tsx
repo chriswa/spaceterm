@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters } from './components/TerminalCard'
@@ -7,15 +7,22 @@ import { MarkdownCard } from './components/MarkdownCard'
 import { CanvasBackground } from './components/CanvasBackground'
 import { TreeLines } from './components/TreeLines'
 import type { TreeLineNode } from './components/TreeLines'
+import { ReparentPreviewLine } from './components/ReparentPreviewLine'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useForceLayout } from './hooks/useForceLayout'
-import { cameraToFitBounds, unionBounds } from './lib/camera'
+import { cameraToFitBounds, screenToCanvas, unionBounds } from './lib/camera'
 import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM } from './lib/constants'
 import { computeChildPlacement } from './lib/tree-placement'
+import { isDescendantOf } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize } from './lib/server-sync'
+import { useReparentStore } from './stores/reparentStore'
+import { useShaderStore } from './stores/shaderStore'
+import { useEdgesStore } from './stores/edgesStore'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent } from './lib/server-sync'
+
+const archiveDismissFlag = { active: false, timer: 0 }
 
 function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: string; cwd?: string; resumeSessionId?: string } = {}): CreateOptions {
   const args = ['--plugin-dir', 'src/claude-code-plugin']
@@ -35,9 +42,7 @@ export function App() {
   focusRef.current = focusedId
 
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice } = useCamera(undefined, focusRef)
-  const cameraRef = useRef(camera)
-  cameraRef.current = camera
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice } = useCamera(undefined, focusRef)
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
@@ -51,6 +56,18 @@ export function App() {
   const renameNode = useNodeStore(s => s.renameNode)
   const setNodeColor = useNodeStore(s => s.setNodeColor)
   const bringToFront = useNodeStore(s => s.bringToFront)
+
+  const treeLineNodes = useMemo(() =>
+    nodeList.map((n): TreeLineNode => ({ id: n.id, parentId: n.parentId, x: n.x, y: n.y })),
+    [nodeList]
+  )
+
+  const shadersEnabled = useShaderStore(s => s.shadersEnabled)
+  const edgesEnabled = useEdgesStore(s => s.edgesEnabled)
+
+  // Reparent mode state
+  const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const reparentHoveredNodeId = useReparentStore(s => s.hoveredNodeId)
 
   // Initialize server sync on mount
   useEffect(() => {
@@ -180,6 +197,40 @@ export function App() {
     flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding))
   }, [bringToFront, flyTo])
 
+  const handleReparentTarget = useCallback((targetId: string) => {
+    const srcId = useReparentStore.getState().reparentingNodeId
+    if (!srcId) return
+
+    const allNodes = useNodeStore.getState().nodes
+    const srcNode = allNodes[srcId]
+    const isInvalid = targetId === srcId || isDescendantOf(allNodes, targetId, srcId) || (srcNode && srcNode.parentId === targetId)
+
+    if (isInvalid) {
+      useReparentStore.getState().reset()
+      handleNodeFocus(srcId)
+      return
+    }
+
+    sendReparent(srcId, targetId)
+    useReparentStore.getState().reset()
+
+    // Fly camera to fit bounds of both nodes
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+    const tgtNode = allNodes[targetId]
+    if (srcNode && tgtNode) {
+      const srcSize = nodePixelSize(srcNode)
+      const tgtSize = nodePixelSize(tgtNode)
+      const bounds = unionBounds([
+        { x: srcNode.x - srcSize.width / 2, y: srcNode.y - srcSize.height / 2, ...srcSize },
+        { x: tgtNode.x - tgtSize.width / 2, y: tgtNode.y - tgtSize.height / 2, ...tgtSize },
+      ])
+      if (bounds) {
+        flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM))
+      }
+    }
+  }, [flyTo, handleNodeFocus])
+
   const handleClaudeSessionHistoryChange = useCallback((id: string, history: ClaudeSessionEntry[]) => {
     const lastSeen = forkHistoryLengthRef.current.get(id)
     forkHistoryLengthRef.current.set(id, history.length)
@@ -208,6 +259,28 @@ export function App() {
   const handleArchiveDelete = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
     await sendArchiveDelete(parentNodeId, archivedNodeId)
   }, [])
+
+  const handleArchiveToggled = useCallback((nodeId: string, open: boolean) => {
+    if (!open) {
+      archiveDismissFlag.active = true
+      clearTimeout(archiveDismissFlag.timer)
+      archiveDismissFlag.timer = window.setTimeout(() => { archiveDismissFlag.active = false }, 500)
+    }
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-node-id="${nodeId}"]`)
+      if (!el) return
+      const viewport = document.querySelector('.canvas-viewport') as HTMLElement
+      if (!viewport) return
+      const rect = el.getBoundingClientRect()
+      const cam = cameraRef.current
+      const tl = screenToCanvas({ x: rect.left, y: rect.top }, cam)
+      const br = screenToCanvas({ x: rect.right, y: rect.bottom }, cam)
+      flyTo(cameraToFitBounds(
+        { x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y },
+        viewport.clientWidth, viewport.clientHeight, 0.025
+      ))
+    })
+  }, [flyTo])
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
@@ -290,6 +363,12 @@ export function App() {
     setScrollMode(false)
   }, [])
 
+  const handleStartReparent = useCallback((nodeId: string) => {
+    useReparentStore.getState().startReparent(nodeId)
+    handleUnfocus()
+    flyToUnfocusZoom()
+  }, [handleUnfocus, flyToUnfocusZoom])
+
   const handleDisableScrollMode = useCallback(() => {
     setScrollMode(false)
   }, [])
@@ -370,14 +449,32 @@ export function App() {
         }
       }
 
-      // Escape: stop TTS if speaking
-      if (e.key === 'Escape' && isSpeaking()) {
-        ttsStop()
+      // Escape: cancel reparent mode or stop TTS
+      if (e.key === 'Escape') {
+        const srcId = useReparentStore.getState().reparentingNodeId
+        if (srcId) {
+          useReparentStore.getState().reset()
+          handleNodeFocus(srcId)
+          return
+        }
+        if (isSpeaking()) {
+          ttsStop()
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
   }, [computeChildPosition, handleNodeFocus, speak, ttsStop, isSpeaking])
+
+  // Globally suppress Chromium's Tab focus navigation.
+  // Bubble phase so xterm / CodeMirror process the key first.
+  useEffect(() => {
+    const suppressTab = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') e.preventDefault()
+    }
+    window.addEventListener('keydown', suppressTab)
+    return () => window.removeEventListener('keydown', suppressTab)
+  }, [])
 
   const handleNodeReady = useCallback((nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => {
     if (focusRef.current !== nodeId) return
@@ -396,6 +493,10 @@ export function App() {
   }, [handleWheel, flyToUnfocusZoom, handleUnfocus])
 
   const handleCanvasPanStart = useCallback((e: MouseEvent) => {
+    if (archiveDismissFlag.active) {
+      handlePanStart(e)
+      return
+    }
     if (focusRef.current) {
       handleUnfocus()
       flyToUnfocusZoom()
@@ -404,9 +505,19 @@ export function App() {
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
   const handleCanvasUnfocus = useCallback(() => {
+    if (archiveDismissFlag.active) {
+      archiveDismissFlag.active = false
+      return
+    }
+    const srcId = useReparentStore.getState().reparentingNodeId
+    if (srcId) {
+      useReparentStore.getState().reset()
+      handleNodeFocus(srcId)
+      return
+    }
     handleUnfocus()
     flyToUnfocusZoom()
-  }, [handleUnfocus, flyToUnfocusZoom])
+  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus])
 
   return (
     <div className="app">
@@ -425,11 +536,16 @@ export function App() {
         onForceLayoutIncrease={forceLayoutIncrease}
         onForceLayoutDecrease={forceLayoutDecrease}
       />
-      <Canvas camera={camera} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} background={<CanvasBackground camera={camera} />}>
-        <TreeLines nodes={nodeList.map((n): TreeLineNode => (
-          { id: n.id, parentId: n.parentId, x: n.x, y: n.y }
-        ))} />
-        <RootNode focused={focusedId === 'root'} onClick={() => handleNodeFocus('root')} />
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} background={shadersEnabled ? <CanvasBackground camera={camera} cameraRef={cameraRef} /> : null}>
+        {edgesEnabled && <TreeLines nodes={treeLineNodes} />}
+        <RootNode
+          focused={focusedId === 'root'}
+          onClick={() => handleNodeFocus('root')}
+          archivedChildren={rootArchivedChildren}
+          onUnarchive={handleUnarchive}
+          onArchiveDelete={handleArchiveDelete}
+          onArchiveToggled={handleArchiveToggled}
+        />
         {liveTerminals.map((t) => (
           <TerminalCard
             key={t.id}
@@ -458,6 +574,7 @@ export function App() {
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
+            onArchiveToggled={handleArchiveToggled}
             onCwdChange={handleCwdChange}
             onShellTitleChange={handleShellTitleChange}
             onShellTitleHistoryChange={handleShellTitleHistoryChange}
@@ -468,6 +585,8 @@ export function App() {
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onStartReparent={handleStartReparent}
+            onReparentTarget={handleReparentTarget}
           />
         ))}
         {deadTerminals.map((r) => (
@@ -494,10 +613,13 @@ export function App() {
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
+            onArchiveToggled={handleArchiveToggled}
             onResumeSession={handleResumeSession}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onStartReparent={handleStartReparent}
+            onReparentTarget={handleReparentTarget}
           />
         ))}
         {markdowns.map((m) => (
@@ -524,11 +646,23 @@ export function App() {
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
+            onArchiveToggled={handleArchiveToggled}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onStartReparent={handleStartReparent}
+            onReparentTarget={handleReparentTarget}
           />
         ))}
+        {edgesEnabled && reparentingNodeId && reparentHoveredNodeId && (() => {
+          const allNodes = useNodeStore.getState().nodes
+          const srcNode = allNodes[reparentingNodeId]
+          const isInvalid = reparentHoveredNodeId === reparentingNodeId || isDescendantOf(allNodes, reparentHoveredNodeId, reparentingNodeId) || (srcNode && srcNode.parentId === reparentHoveredNodeId)
+          if (isInvalid) return null
+          const tgtNode = allNodes[reparentHoveredNodeId]
+          if (!srcNode || !tgtNode) return null
+          return <ReparentPreviewLine fromX={tgtNode.x} fromY={tgtNode.y} toX={srcNode.x} toY={srcNode.y} />
+        })()}
       </Canvas>
     </div>
   )

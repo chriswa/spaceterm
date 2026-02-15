@@ -73,12 +73,18 @@ interface TtsApi {
   stop(): void
 }
 
+interface PerfApi {
+  startTrace(): Promise<void>
+  stopTrace(): Promise<string>
+}
+
 interface Api {
   pty: PtyApi
   node: NodeApi
   log(message: string): void
   openExternal(url: string): Promise<void>
   tts: TtsApi
+  perf: PerfApi
 }
 
 declare interface Window {

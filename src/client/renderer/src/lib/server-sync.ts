@@ -130,6 +130,10 @@ export async function sendTerminalResize(nodeId: string, cols: number, rows: num
   await window.api.node.terminalResize(nodeId, cols, rows)
 }
 
+export async function sendReparent(nodeId: string, newParentId: string): Promise<void> {
+  await window.api.node.reparent(nodeId, newParentId)
+}
+
 export async function sendTerminalReincarnate(
   nodeId: string,
   options?: CreateOptions

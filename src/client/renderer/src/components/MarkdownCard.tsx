@@ -2,11 +2,13 @@ import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, ViewPlugin, ViewUpdate, Decoration, DecorationSet, keymap } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
+import { indentWithTab } from '@codemirror/commands'
 import { syntaxTree } from '@codemirror/language'
 import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT } from '../lib/constants'
 import { COLOR_PRESET_MAP, blendHex } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
-import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
+import { CardShell } from './CardShell'
+import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
 const URL_RE = /https?:\/\/[^\s\])<>]+/g
@@ -33,9 +35,12 @@ interface MarkdownCardProps {
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveToggled: (nodeId: string, open: boolean) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
+  onStartReparent?: (id: string) => void
+  onReparentTarget?: (id: string) => void
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -338,8 +343,8 @@ const linkClickHandler = EditorView.domEventHandlers({
 
 export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, colorPresetId, archivedChildren, focused,
-  onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onUnarchive, onArchiveDelete, onNodeReady,
-  onDragStart, onDragEnd
+  onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget
 }: MarkdownCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -382,11 +387,13 @@ export function MarkdownCard({
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged) {
             propsRef.current.onContentChange(propsRef.current.id, update.state.doc.toString())
+          }
+          if (update.docChanged || update.geometryChanged) {
             autoSize(update.view)
           }
         }),
         // Prevent Cmd+M from being swallowed by CodeMirror
-        keymap.of([]),
+        keymap.of([indentWithTab]),
       ]
     })
 
@@ -434,7 +441,7 @@ export function MarkdownCard({
 
   // Drag handler
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-panel')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-body')) return
 
     const bodyClickWhileFocused = focused
     if (!bodyClickWhileFocused) {
@@ -467,6 +474,8 @@ export function MarkdownCard({
       window.removeEventListener('mouseup', onMouseUp)
       if (dragging) {
         onDragEnd?.(id)
+      } else if (useReparentStore.getState().reparentingNodeId) {
+        onReparentTarget?.(id)
       } else {
         onFocus(id)
       }
@@ -476,32 +485,39 @@ export function MarkdownCard({
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+
   return (
-    <div
+    <CardShell
+      nodeId={id}
+      x={x - width / 2}
+      y={y - height / 2}
+      width={width}
+      height={height}
+      zIndex={zIndex}
+      focused={focused}
+      headVariant="overlay"
+      archivedChildren={archivedChildren}
+      onClose={onClose}
+      onColorChange={onColorChange}
+      onUnarchive={onUnarchive}
+      onArchiveDelete={onArchiveDelete}
+      onArchiveToggled={onArchiveToggled}
+      onMouseDown={handleMouseDown}
+      onStartReparent={onStartReparent}
+      isReparenting={reparentingNodeId === id}
+      className={`markdown-card ${focused ? 'markdown-card--focused' : ''}`}
       style={{
-        position: 'absolute',
-        left: x - width / 2,
-        top: y - height / 2,
-        width,
-        height,
-        zIndex
-      }}
+        backgroundColor: preset?.terminalBg ?? '#1e1e2e',
+        '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',
+        '--markdown-accent': preset?.markdownAccent ?? '#89b4fa',
+        '--markdown-highlight': preset?.markdownHighlight ?? '#f9e2af',
+        '--markdown-blockquote-fg': blendHex(preset?.markdownFg ?? '#cdd6f4', preset?.terminalBg ?? '#1e1e2e', 0.7),
+      } as React.CSSProperties}
+      onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
+      onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
     >
-      <div
-        data-node-id={id}
-        className={`markdown-card canvas-node ${focused ? 'markdown-card--focused' : ''}`}
-        style={{
-          backgroundColor: preset?.terminalBg ?? '#1e1e2e',
-          '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',
-          '--markdown-accent': preset?.markdownAccent ?? '#89b4fa',
-          '--markdown-highlight': preset?.markdownHighlight ?? '#f9e2af',
-          '--markdown-blockquote-fg': blendHex(preset?.markdownFg ?? '#cdd6f4', preset?.terminalBg ?? '#1e1e2e', 0.7),
-        } as React.CSSProperties}
-        onMouseDown={handleMouseDown}
-      >
-        <NodeTitleBarSharedControls id={id} archivedChildren={archivedChildren} onClose={onClose} onColorChange={onColorChange} onUnarchive={onUnarchive} onArchiveDelete={onArchiveDelete} />
-        <div className="markdown-card__body" ref={bodyRef} />
-      </div>
-    </div>
+      <div className="markdown-card__body" ref={bodyRef} />
+    </CardShell>
   )
 }

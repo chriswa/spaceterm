@@ -26,7 +26,7 @@ interface ParallelLine {
   animationDelay: number
 }
 
-function computeParallelLines(
+export function computeParallelLines(
   px: number,
   py: number,
   cx: number,
@@ -49,12 +49,14 @@ function computeParallelLines(
       x2: cx + offset * nx,
       y2: cy + offset * ny,
       animationDelay:
-        (Math.abs(j) * STAGGER / PERIOD) * ANIMATION_DURATION,
+        -((PERIOD - Math.abs(j) * STAGGER) / PERIOD) * ANIMATION_DURATION,
     }
   })
 }
 
-export function TreeLines({ nodes }: TreeLinesProps) {
+import { memo } from 'react'
+
+export const TreeLines = memo(function TreeLines({ nodes }: TreeLinesProps) {
   return (
     <svg
       style={{
@@ -104,4 +106,4 @@ export function TreeLines({ nodes }: TreeLinesProps) {
       })}
     </svg>
   )
-}
+})

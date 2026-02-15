@@ -176,5 +176,9 @@ contextBridge.exposeInMainWorld('api', {
   tts: {
     speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
     stop: () => ipcRenderer.send('tts:stop')
+  },
+  perf: {
+    startTrace: () => ipcRenderer.invoke('perf:trace-start'),
+    stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
   }
 })

@@ -112,6 +112,33 @@ html, body, #root {
   color: #cdd6f4;
 }
 
+.toolbar__perf {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid #313244;
+}
+
+.toolbar__btn--active {
+  border-color: #89b4fa;
+  background: #232336;
+}
+
+.toolbar__btn--recording {
+  border-color: #f38ba8;
+  color: #f38ba8;
+}
+
+.toolbar__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.toolbar__btn:disabled:hover {
+  background: #1e1e2e;
+}
+
 /* Canvas */
 .canvas-viewport {
   flex: 1;
@@ -136,7 +163,7 @@ html, body, #root {
   width: 100%;
   height: 100%;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   border: 2px solid #313244;
   background: #1e1e2e;
   display: flex;
@@ -399,7 +426,7 @@ html, body, #root {
 .remnant-card {
   position: relative;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   border: 2px solid #313244;
   background: #1e1e2e;
   display: flex;
@@ -626,20 +653,113 @@ html, body, #root {
   background: rgba(137, 180, 250, 0.2);
 }
 
-/* Archive panel dropdown (portaled to document.body, positioned via inline styles) */
-.archive-panel {
+/* Markdown card archive button overrides */
+.markdown-card .node-titlebar__archive-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.markdown-card .node-titlebar__archive-btn:hover {
+  background: rgba(137, 180, 250, 0.3);
+}
+
+/* Reparent button in title bar */
+.node-titlebar__reparent-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__reparent-btn:hover {
+  background: rgba(137, 180, 250, 0.2);
+}
+
+.node-titlebar__reparent-btn--active {
+  background: rgba(203, 166, 247, 0.3);
+  color: #cba6f7;
+}
+
+.node-titlebar__reparent-btn--active:hover {
+  background: rgba(203, 166, 247, 0.4);
+}
+
+/* Markdown card reparent button overrides */
+.markdown-card .node-titlebar__reparent-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.markdown-card .node-titlebar__reparent-btn:hover {
+  background: rgba(137, 180, 250, 0.3);
+}
+
+.markdown-card .node-titlebar__reparent-btn--active {
+  background: rgba(203, 166, 247, 0.4);
+  color: #cba6f7;
+}
+
+/* Card Shell — outer wrapper for all card types */
+.card-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: transparent;
+  border: none;
+}
+
+.card-shell__head {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+  font-size: 15px;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  cursor: grab;
+  border-radius: 6px 6px 0 0;
+}
+
+.card-shell__head:active {
+  cursor: grabbing;
+}
+
+.card-shell__archive-body {
   min-width: 380px;
+  max-width: 500px;
+  margin: 0 auto;
+  align-self: center;
+}
+
+.card-shell__hidden-head-actions {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.card-shell__archive-btn {
+  color: #a6adc8;
+}
+
+/* ArchiveBody — inline archive list (replaces portal-based ArchivePanel) */
+.archive-body {
   max-height: 300px;
   overflow-y: auto;
   background: #1e1e2e;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  z-index: 10000;
   pointer-events: auto;
 }
 
-.archive-panel__header {
+.archive-body__header {
   padding: 8px 12px 4px;
   font-size: 10px;
   text-transform: uppercase;
@@ -647,11 +767,11 @@ html, body, #root {
   color: #585b70;
 }
 
-.archive-panel__list {
+.archive-body__list {
   padding: 4px 0;
 }
 
-.archive-panel__row {
+.archive-body__row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -662,11 +782,11 @@ html, body, #root {
   transition: background 0.1s;
 }
 
-.archive-panel__row:hover {
+.archive-body__row:hover {
   background: rgba(88, 91, 112, 0.2);
 }
 
-.archive-panel__name {
+.archive-body__name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -674,13 +794,13 @@ html, body, #root {
   white-space: nowrap;
 }
 
-.archive-panel__time {
+.archive-body__time {
   color: #585b70;
   font-size: 10px;
   flex-shrink: 0;
 }
 
-.archive-panel__action {
+.archive-body__action {
   width: 20px;
   height: 20px;
   border: none;
@@ -696,22 +816,26 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-.archive-panel__action--restore:hover {
+.archive-body__action--restore:hover {
   background: rgba(166, 227, 161, 0.2);
   color: #a6e3a1;
 }
 
-.archive-panel__action--delete:hover {
+.archive-body__action--delete:hover {
   background: rgba(243, 139, 168, 0.2);
   color: #f38ba8;
 }
 
-/* Markdown card archive button overrides */
-.markdown-card .node-titlebar__archive-btn {
-  background: rgba(0, 0, 0, 0.3);
-  color: #cdd6f4;
+/* Border-radius on first/last children when overflow is visible */
+.terminal-card__footer {
+  border-radius: 0 0 6px 6px;
 }
 
-.markdown-card .node-titlebar__archive-btn:hover {
-  background: rgba(137, 180, 250, 0.3);
+.remnant-card__body:last-child {
+  border-radius: 0 0 6px 6px;
+}
+
+/* Reparent preview line — white variant of chevron lines */
+.tree-line-chevron--reparent {
+  stroke: #ffffff;
 }

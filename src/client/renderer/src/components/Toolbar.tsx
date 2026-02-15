@@ -1,5 +1,8 @@
 import type { InputDevice } from '../hooks/useCamera'
 import { useFps } from '../hooks/useFps'
+import { usePerfStore } from '../stores/perfStore'
+import { useShaderStore } from '../stores/shaderStore'
+import { useEdgesStore } from '../stores/edgesStore'
 
 interface ToolbarProps {
   zoom: number
@@ -23,6 +26,14 @@ export function Toolbar({
   forceLayoutPlaying, forceLayoutSpeed, onForceLayoutToggle, onForceLayoutIncrease, onForceLayoutDecrease
 }: ToolbarProps) {
   const fps = useFps()
+  const recording = usePerfStore(s => s.recording)
+  const startTrace = usePerfStore(s => s.startTrace)
+  const tracing = recording === 'trace'
+  const shadersEnabled = useShaderStore(s => s.shadersEnabled)
+  const toggleShaders = useShaderStore(s => s.toggle)
+  const edgesEnabled = useEdgesStore(s => s.edgesEnabled)
+  const toggleEdges = useEdgesStore(s => s.toggle)
+
   return (
     <div className="toolbar">
       <button className="toolbar__btn" onClick={onAddTerminal}>
@@ -43,6 +54,30 @@ export function Toolbar({
           +
         </button>
       </div>
+      <div className="toolbar__perf">
+        <button
+          className={'toolbar__btn' + (tracing ? ' toolbar__btn--recording' : '')}
+          onClick={startTrace}
+          disabled={tracing}
+          title="Record 5s Chrome content trace"
+        >
+          {tracing ? 'Tracing...' : 'Trace'}
+        </button>
+      </div>
+      <button
+        className={'toolbar__btn' + (shadersEnabled ? ' toolbar__btn--active' : '')}
+        onClick={toggleShaders}
+        title={shadersEnabled ? 'Disable shaders' : 'Enable shaders'}
+      >
+        Shaders
+      </button>
+      <button
+        className={'toolbar__btn' + (edgesEnabled ? ' toolbar__btn--active' : '')}
+        onClick={toggleEdges}
+        title={edgesEnabled ? 'Disable edges' : 'Enable edges'}
+      >
+        Edges
+      </button>
       <span className="toolbar__zoom">
         {fps} fps
         <span> | </span>

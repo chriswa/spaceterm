@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, screenToCanvas, zoomCamera } from '../lib/camera'
+import { Camera, getCameraTransform, screenToCanvas, zoomCamera } from '../lib/camera'
 import { MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED } from '../lib/constants'
+
+// PERF: During camera animation and continuous user input (trackpad pan, wheel
+// zoom), we write the CSS transform directly to the DOM via surfaceRef instead
+// of calling setCamera(). This avoids React re-rendering the entire component
+// tree on every frame. React state is synced when:
+//   1. A flyTo animation completes (camerasClose)
+//   2. User input stops for SETTLE_DELAY ms (debounced sync)
+//   3. resetCamera() is called (immediate sync)
+//
+// cameraRef is the source of truth. React state `camera` may lag behind by up
+// to SETTLE_DELAY ms during continuous input, which only affects Toolbar display.
 
 // Start zoomed in tight on the root node (canvas origin) at screen center.
 // The initial fitAll flyTo will smoothly zoom out from here.
 const DEFAULT_CAMERA: Camera = { x: window.innerWidth / 2, y: window.innerHeight / 2, z: 10 }
+
+const SETTLE_DELAY = 150
 
 function lerpCamera(from: Camera, to: Camera, t: number): Camera {
   return {
@@ -30,15 +43,31 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
   const lastTimeRef = useRef(0)
   const rafRef = useRef<number>(0)
 
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const syncTimerRef = useRef<number>(0)
+
   const inputDeviceRef = useRef<InputDevice>('mouse')
   const [inputDevice, setInputDevice] = useState<InputDevice>('mouse')
 
-  // Keep cameraRef in sync with React state
-  cameraRef.current = camera
+  const applyToDOM = useCallback((cam: Camera) => {
+    if (surfaceRef.current) {
+      surfaceRef.current.style.transform = getCameraTransform(cam)
+    }
+  }, [])
+
+  const scheduleSync = useCallback(() => {
+    clearTimeout(syncTimerRef.current)
+    syncTimerRef.current = window.setTimeout(() => {
+      setCamera(cameraRef.current)
+    }, SETTLE_DELAY)
+  }, [])
 
   // Cleanup on unmount
   useEffect(() => {
-    return () => cancelAnimationFrame(rafRef.current)
+    return () => {
+      cancelAnimationFrame(rafRef.current)
+      clearTimeout(syncTimerRef.current)
+    }
   }, [])
 
   // Animation tick — exponential smoothing
@@ -51,15 +80,16 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
 
     if (camerasClose(next, targetRef.current)) {
       cameraRef.current = { ...targetRef.current }
+      applyToDOM(cameraRef.current)
       setCamera(cameraRef.current)
       animatingRef.current = false
       return
     }
 
     cameraRef.current = next
-    setCamera(next)
+    applyToDOM(next)
     rafRef.current = requestAnimationFrame(tick)
-  }, [])
+  }, [applyToDOM])
 
   const ensureAnimating = useCallback(() => {
     if (animatingRef.current) return
@@ -107,8 +137,9 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
       x: targetRef.current.x - sdx,
       y: targetRef.current.y - sdy
     }
-    setCamera({ ...cameraRef.current })
-  }, [])
+    applyToDOM(cameraRef.current)
+    scheduleSync()
+  }, [applyToDOM, scheduleSync])
 
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
@@ -129,7 +160,8 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
       const next = zoomCamera(cameraRef.current, point, e.deltaY, maxZoom)
       cameraRef.current = next
       targetRef.current = { ...next }
-      setCamera(next)
+      applyToDOM(next)
+      scheduleSync()
     } else if (inputDeviceRef.current === 'trackpad') {
       // Trackpad pan — always allowed, scaled for target zoom feel
       userPan(e.deltaX, e.deltaY)
@@ -141,9 +173,10 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
       const next = zoomCamera(cameraRef.current, point, e.deltaY, maxZoom)
       cameraRef.current = next
       targetRef.current = { ...next }
-      setCamera(next)
+      applyToDOM(next)
+      scheduleSync()
     }
-  }, [focusedRef, userPan])
+  }, [focusedRef, userPan, applyToDOM, scheduleSync])
 
   const handlePanStart = useCallback((e: MouseEvent) => {
     let lastX = e.clientX
@@ -169,8 +202,9 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     animatingRef.current = false
     cameraRef.current = DEFAULT_CAMERA
     targetRef.current = { ...DEFAULT_CAMERA }
+    applyToDOM(DEFAULT_CAMERA)
     setCamera(DEFAULT_CAMERA)
-  }, [])
+  }, [applyToDOM])
 
   const toggleInputDevice = useCallback(() => {
     const next = inputDeviceRef.current === 'mouse' ? 'trackpad' : 'mouse'
@@ -178,5 +212,5 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     setInputDevice(next)
   }, [])
 
-  return { camera, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice }
 }

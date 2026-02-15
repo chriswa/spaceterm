@@ -45,6 +45,10 @@ export const MARKDOWN_MIN_HEIGHT = 60
 export const REMNANT_WIDTH = Math.ceil(DEFAULT_COLS * CELL_WIDTH + CHROME_W)
 export const REMNANT_HEIGHT = 90
 
+// Archive body sizing
+export const ARCHIVE_BODY_MIN_WIDTH = 380
+export const ARCHIVE_BODY_MAX_WIDTH = 500
+
 // Force-directed layout
 export const FORCE_REPULSION_STRENGTH = 2.0
 export const FORCE_ATTRACTION_STRENGTH = 0.3

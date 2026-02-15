@@ -8,7 +8,8 @@ import { COLOR_PRESET_MAP } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
 import { TerminalTitleBarContent } from './TerminalTitleBarContent'
-import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
+import { CardShell } from './CardShell'
+import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
 const LOW_ZOOM_THRESHOLD = 0.3
@@ -44,6 +45,7 @@ interface TerminalCardProps {
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveToggled: (nodeId: string, open: boolean) => void
   onCwdChange?: (id: string, cwd: string) => void
   onShellTitleChange?: (id: string, title: string) => void
   onShellTitleHistoryChange?: (id: string, history: string[]) => void
@@ -55,13 +57,15 @@ interface TerminalCardProps {
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
+  onStartReparent?: (id: string) => void
+  onReparentTarget?: (id: string) => void
 }
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
-  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete,
+  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
-  onDragStart, onDragEnd
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget
 }: TerminalCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
@@ -488,11 +492,11 @@ export function TerminalCard({
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or color picker
-    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .archive-panel')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__reparent-btn, .archive-body')) return
 
     const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
-    const isHeader = !!(e.target as HTMLElement).closest('.terminal-card__header')
+    const isHeader = !!(e.target as HTMLElement).closest('.card-shell__head')
 
     // When focused and clicking body: let xterm handle the event
     // but still detect click (no drag) for re-centering the camera
@@ -535,6 +539,8 @@ export function TerminalCard({
           dragOccurredRef.current = true
           setTimeout(() => { dragOccurredRef.current = false }, 0)
         }
+      } else if (useReparentStore.getState().reparentingNodeId) {
+        onReparentTarget?.(id)
       } else {
         onFocus(id)
       }
@@ -565,31 +571,19 @@ export function TerminalCard({
     ? claudeSessionHistory[claudeSessionHistory.length - 1]
     : null
 
+  const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+
   return (
-    <div
-      style={{
-        position: 'absolute',
-        left: x - width / 2,
-        top: y - height / 2,
-        width,
-        height,
-        zIndex
-      }}
-    >
-      <div
-        ref={cardRef}
-        data-node-id={id}
-        className={`terminal-card canvas-node ${focusClass} ${waitingClass}`}
-        onMouseDown={handleMouseDown}
-      >
-      <div
-        className="terminal-card__header"
-        style={preset ? {
-          backgroundColor: preset.titleBarBg,
-          color: preset.titleBarFg,
-          borderBottomColor: preset.titleBarBg
-        } : undefined}
-      >
+    <CardShell
+      nodeId={id}
+      x={x - width / 2}
+      y={y - height / 2}
+      width={width}
+      height={height}
+      zIndex={zIndex}
+      focused={focused}
+      headVariant="visible"
+      titleContent={
         <TerminalTitleBarContent
           name={name}
           shellTitleHistory={shellTitleHistory}
@@ -599,8 +593,27 @@ export function TerminalCard({
           onRename={onRename}
           canStartEdit={() => !dragOccurredRef.current}
         />
-        <NodeTitleBarSharedControls id={id} preset={preset} archivedChildren={archivedChildren} onClose={onClose} onColorChange={onColorChange} onUnarchive={onUnarchive} onArchiveDelete={onArchiveDelete} />
-      </div>
+      }
+      headStyle={preset ? {
+        backgroundColor: preset.titleBarBg,
+        color: preset.titleBarFg,
+        borderBottomColor: preset.titleBarBg
+      } : undefined}
+      preset={preset}
+      archivedChildren={archivedChildren}
+      onClose={onClose}
+      onColorChange={onColorChange}
+      onUnarchive={onUnarchive}
+      onArchiveDelete={onArchiveDelete}
+      onArchiveToggled={onArchiveToggled}
+      onMouseDown={handleMouseDown}
+      onStartReparent={onStartReparent}
+      isReparenting={reparentingNodeId === id}
+      className={`terminal-card ${focusClass} ${waitingClass}`}
+      cardRef={cardRef}
+      onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
+      onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
+    >
       <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none' }} />
       <div style={{ display: focused ? 'none' : undefined, padding: '2px 2px 0 2px', flex: 1 }}>
         <canvas
@@ -623,7 +636,6 @@ export function TerminalCard({
           </>
         )}
       </div>
-      </div>
       {claudeSessionHistory && claudeSessionHistory.length > 0 && (
         <div className="terminal-card__session-history">
           {[...claudeSessionHistory].reverse().map((entry, i) => (
@@ -635,6 +647,6 @@ export function TerminalCard({
           ))}
         </div>
       )}
-    </div>
+    </CardShell>
   )
 }

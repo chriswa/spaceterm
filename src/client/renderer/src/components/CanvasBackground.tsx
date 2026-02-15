@@ -3,6 +3,7 @@ import type { Camera } from '../lib/camera'
 
 interface CanvasBackgroundProps {
   camera: Camera
+  cameraRef: React.RefObject<Camera>
 }
 
 const VERT_SRC = `
@@ -120,11 +121,9 @@ function compileShader(gl: WebGLRenderingContext, type: number, src: string): We
   return s
 }
 
-export function CanvasBackground({ camera }: CanvasBackgroundProps) {
+export function CanvasBackground({ cameraRef }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
-  const cameraRef = useRef(camera)
-  cameraRef.current = camera
 
   useEffect(() => {
     const canvas = canvasRef.current

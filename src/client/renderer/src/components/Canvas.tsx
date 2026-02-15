@@ -4,6 +4,7 @@ import type { Camera } from '../lib/camera'
 
 interface CanvasProps {
   camera: Camera
+  surfaceRef?: React.RefObject<HTMLDivElement | null>
   onWheel: (e: WheelEvent) => void
   onPanStart: (e: MouseEvent) => void
   onCanvasClick: () => void
@@ -11,7 +12,7 @@ interface CanvasProps {
   children: React.ReactNode
 }
 
-export function Canvas({ camera, onWheel, onPanStart, onCanvasClick, background, children }: CanvasProps) {
+export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick, background, children }: CanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -55,6 +56,7 @@ export function Canvas({ camera, onWheel, onPanStart, onCanvasClick, background,
     <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown}>
       {background}
       <div
+        ref={surfaceRef}
         className="canvas-surface"
         style={{ transform: getCameraTransform(camera), transformOrigin: '0 0' }}
       >

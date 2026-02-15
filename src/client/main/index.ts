@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, contentTracing, ipcMain, shell } from 'electron'
+import { mkdirSync } from 'fs'
+import { homedir } from 'os'
 import { join } from 'path'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
@@ -157,6 +159,31 @@ function setupIPC(): void {
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
     client!.setTerminalMode(sessionId, mode)
   })
+
+  // --- Perf capture ---
+
+  const perfDir = join(homedir(), '.spaceterm', 'perf-captures')
+
+  ipcMain.handle('perf:trace-start', async () => {
+    await contentTracing.startRecording({
+      included_categories: ['devtools.timeline', 'v8.execute', 'blink.user_timing', 'gpu', 'cc', 'viz']
+    })
+    logger.log('Content tracing started')
+  })
+
+  ipcMain.handle('perf:trace-stop', async () => {
+    const resultPath = await contentTracing.stopRecording()
+    mkdirSync(perfDir, { recursive: true })
+    const ts = new Date().toISOString().replace(/[:.]/g, '-')
+    const dest = join(perfDir, `trace-${ts}.json`)
+    // contentTracing writes to a temp file; copy to our directory
+    const { copyFileSync } = await import('fs')
+    copyFileSync(resultPath, dest)
+    clipboard.writeText(dest)
+    logger.log(`Content trace saved: ${dest}`)
+    return dest
+  })
+
 }
 
 function wireClientEvents(): void {

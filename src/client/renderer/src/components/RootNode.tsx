@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { ROOT_NODE_RADIUS } from '../lib/constants'
+import type { ArchivedNode } from '../../../../shared/state'
+import { CardShell } from './CardShell'
+import { useShaderStore } from '../stores/shaderStore'
+
+const noop = () => {}
 
 interface RootNodeProps {
   focused: boolean
   onClick: () => void
+  archivedChildren: ArchivedNode[]
+  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveToggled: (nodeId: string, open: boolean) => void
 }
 
 /** How much bigger the shader canvas is than the node hit-area */
@@ -116,13 +125,14 @@ function compileShader(gl: WebGLRenderingContext, type: number, src: string): We
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function RootNode({ focused, onClick }: RootNodeProps) {
+export function RootNode({ focused, onClick, archivedChildren, onUnarchive, onArchiveDelete, onArchiveToggled }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
   const canvasSize = size * CANVAS_SCALE
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
   const focusedRef = useRef(focused)
   focusedRef.current = focused
+  const shadersEnabled = useShaderStore(s => s.shadersEnabled)
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -133,6 +143,8 @@ export function RootNode({ focused, onClick }: RootNodeProps) {
   )
 
   useEffect(() => {
+    if (!shadersEnabled) return
+
     const canvas = canvasRef.current
     if (!canvas) return
 
@@ -200,31 +212,74 @@ export function RootNode({ focused, onClick }: RootNodeProps) {
       gl.deleteShader(fs)
       gl.deleteBuffer(buf)
     }
-  }, [canvasSize])
+  }, [canvasSize, shadersEnabled])
 
-  return (
-    <div
-      className={`root-node canvas-node${focused ? ' root-node--focused' : ''}`}
+  const orbContent = shadersEnabled ? (
+    <canvas
+      ref={canvasRef}
       style={{
         position: 'absolute',
-        left: -ROOT_NODE_RADIUS,
-        top: -ROOT_NODE_RADIUS,
-        width: size,
-        height: size,
+        left: (size - canvasSize) / 2,
+        top: (size - canvasSize) / 2,
+        width: canvasSize,
+        height: canvasSize,
+        pointerEvents: 'none',
       }}
-      onMouseDown={handleMouseDown}
+    />
+  ) : (
+    <div
+      style={{
+        position: 'absolute',
+        left: (size - canvasSize) / 2,
+        top: (size - canvasSize) / 2,
+        width: canvasSize,
+        height: canvasSize,
+        borderRadius: '50%',
+        border: `2px solid ${focused ? '#cc4400' : '#555'}`,
+        background: '#1a1a1a',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        pointerEvents: 'none',
+      }}
     >
-      <canvas
-        ref={canvasRef}
+      <span
         style={{
-          position: 'absolute',
-          left: (size - canvasSize) / 2,
-          top: (size - canvasSize) / 2,
-          width: canvasSize,
-          height: canvasSize,
-          pointerEvents: 'none',
+          color: focused ? '#cc4400' : '#888',
+          fontSize: 32,
+          fontWeight: 600,
+          userSelect: 'none',
+          letterSpacing: '0.05em',
         }}
-      />
+      >
+        root
+      </span>
     </div>
+  )
+
+  return (
+    <CardShell
+      nodeId="root"
+      x={-ROOT_NODE_RADIUS}
+      y={-ROOT_NODE_RADIUS}
+      width={size}
+      height={size}
+      zIndex={0}
+      focused={focused}
+      headVariant="hidden"
+      showClose={false}
+      showColorPicker={false}
+      archivedChildren={archivedChildren}
+      onClose={noop}
+      onColorChange={noop}
+      onUnarchive={onUnarchive}
+      onArchiveDelete={onArchiveDelete}
+      onArchiveToggled={onArchiveToggled}
+      onMouseDown={handleMouseDown}
+      className={`root-node${focused ? ' root-node--focused' : ''}`}
+      style={{ background: 'transparent', border: 'none' }}
+    >
+      {orbContent}
+    </CardShell>
   )
 }

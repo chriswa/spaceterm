@@ -11,11 +11,13 @@
     "client:preview": "electron-vite preview",
     "client:package": "electron-vite build && electron-builder",
     "start": "npm run client:build && concurrently \"npm run server:dev\" \"npm run client:preview\"",
+    "et": "tsx src/cli/emergency-terminal.ts",
     "lint": "eslint src/",
     "build": "npm run client:build",
     "postinstall": "electron-rebuild"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.2",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language": "^6.12.1",
     "@codemirror/state": "^6.5.4",
