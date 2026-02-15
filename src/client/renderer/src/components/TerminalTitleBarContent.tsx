@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ColorPreset } from '../lib/color-presets'
 import { blendHex } from '../lib/color-presets'
+import { terminalSubtitle } from '../lib/node-title'
 
 interface TerminalTitleBarContentProps {
   name: string | undefined
@@ -26,7 +27,7 @@ export function TerminalTitleBarContent({
     }
   }, [editing])
 
-  const history = (shellTitleHistory ?? []).join(' \u00A0\u21BC\u00A0\u00A0')
+  const history = terminalSubtitle(shellTitleHistory ?? [])
   const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
 
   return (

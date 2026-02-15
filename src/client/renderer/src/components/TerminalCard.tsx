@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_WINDOW_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
 import { COLOR_PRESET_MAP } from '../lib/color-presets'
+import type { ArchivedNode } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
 import { TerminalTitleBarContent } from './TerminalTitleBarContent'
 import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
@@ -39,7 +40,10 @@ interface TerminalCardProps {
   onMove: (id: string, x: number, y: number) => void
   onResize: (id: string, cols: number, rows: number) => void
   onRename: (id: string, name: string) => void
+  archivedChildren: ArchivedNode[]
   onColorChange: (id: string, color: string) => void
+  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onCwdChange?: (id: string, cwd: string) => void
   onShellTitleChange?: (id: string, title: string) => void
   onShellTitleHistoryChange?: (id: string, history: string[]) => void
@@ -51,14 +55,13 @@ interface TerminalCardProps {
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
-  children?: React.ReactNode
 }
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
-  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
+  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
-  onDragStart, onDragEnd, children
+  onDragStart, onDragEnd
 }: TerminalCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const cardRef = useRef<HTMLDivElement>(null)
@@ -485,7 +488,7 @@ export function TerminalCard({
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or color picker
-    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .archive-panel')) return
 
     const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
@@ -596,7 +599,7 @@ export function TerminalCard({
           onRename={onRename}
           canStartEdit={() => !dragOccurredRef.current}
         />
-        <NodeTitleBarSharedControls id={id} preset={preset} onClose={onClose} onColorChange={onColorChange} />
+        <NodeTitleBarSharedControls id={id} preset={preset} archivedChildren={archivedChildren} onClose={onClose} onColorChange={onColorChange} onUnarchive={onUnarchive} onArchiveDelete={onArchiveDelete} />
       </div>
       <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none' }} />
       <div style={{ display: focused ? 'none' : undefined, padding: '2px 2px 0 2px', flex: 1 }}>
@@ -632,7 +635,6 @@ export function TerminalCard({
           ))}
         </div>
       )}
-      {children}
     </div>
   )
 }

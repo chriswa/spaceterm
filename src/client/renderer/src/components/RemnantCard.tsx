@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { REMNANT_WIDTH, REMNANT_HEIGHT } from '../lib/constants'
 import { COLOR_PRESET_MAP } from '../lib/color-presets'
+import { terminalSubtitle } from '../lib/node-title'
 import { TerminalTitleBarContent } from './TerminalTitleBarContent'
 import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
-import type { TerminalSessionEntry } from '../../../../shared/state'
+import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 
 const DRAG_THRESHOLD = 5
 
@@ -15,6 +16,7 @@ interface RemnantCardProps {
   zoom: number
   name?: string
   colorPresetId?: string
+  archivedChildren: ArchivedNode[]
   shellTitleHistory?: string[]
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
@@ -26,17 +28,18 @@ interface RemnantCardProps {
   onMove: (id: string, x: number, y: number) => void
   onRename: (id: string, name: string) => void
   onColorChange: (id: string, color: string) => void
+  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onResumeSession?: (remnantId: string, claudeSessionId: string) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
-  children?: React.ReactNode
 }
 
 export function RemnantCard({
-  id, x, y, zIndex, zoom, name, colorPresetId, shellTitleHistory, cwd, claudeSessionHistory, terminalSessions, exitCode, focused,
-  onFocus, onClose, onMove, onRename, onColorChange, onResumeSession, onNodeReady,
-  onDragStart, onDragEnd, children
+  id, x, y, zIndex, zoom, name, colorPresetId, archivedChildren, shellTitleHistory, cwd, claudeSessionHistory, terminalSessions, exitCode, focused,
+  onFocus, onClose, onMove, onRename, onColorChange, onUnarchive, onArchiveDelete, onResumeSession, onNodeReady,
+  onDragStart, onDragEnd
 }: RemnantCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const propsRef = useRef({ x, y, zoom, id, onNodeReady })
@@ -63,7 +66,7 @@ export function RemnantCard({
 
   // Mousedown handler: drag-to-move or click-to-focus
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .terminal-card__left-area, .terminal-card__title-input, .node-titlebar__color-picker')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .terminal-card__left-area, .terminal-card__title-input, .node-titlebar__color-picker, .node-titlebar__archive-btn, .archive-panel')) return
 
     e.preventDefault()
 
@@ -134,7 +137,7 @@ export function RemnantCard({
             id={id}
             onRename={onRename}
           />
-          <NodeTitleBarSharedControls id={id} preset={preset} onClose={onClose} onColorChange={onColorChange} />
+          <NodeTitleBarSharedControls id={id} preset={preset} archivedChildren={archivedChildren} onClose={onClose} onColorChange={onColorChange} onUnarchive={onUnarchive} onArchiveDelete={onArchiveDelete} />
         </div>
         <div className="remnant-card__body">
           <div className="remnant-card__exit">exited ({exitCode})</div>
@@ -143,7 +146,7 @@ export function RemnantCard({
               <div className="remnant-card__sessions-header">Terminal Sessions</div>
               {[...claudeSessionHistory].reverse().map((entry, i) => {
                 const titleHistory = sessionTitleMap.get(entry.claudeSessionId) ?? []
-                const historyStr = titleHistory.join(' \u00A0\u21BC\u00A0\u00A0')
+                const historyStr = terminalSubtitle(titleHistory)
                 return (
                   <div
                     key={i}
@@ -172,7 +175,6 @@ export function RemnantCard({
           Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
         </div>
       </div>
-      {children}
     </div>
   )
 }

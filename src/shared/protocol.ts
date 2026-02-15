@@ -108,6 +108,20 @@ export interface NodeArchiveMessage {
   nodeId: string
 }
 
+export interface NodeUnarchiveMessage {
+  type: 'node-unarchive'
+  seq: number
+  parentNodeId: string
+  archivedNodeId: string
+}
+
+export interface NodeArchiveDeleteMessage {
+  type: 'node-archive-delete'
+  seq: number
+  parentNodeId: string
+  archivedNodeId: string
+}
+
 export interface NodeBringToFrontMessage {
   type: 'node-bring-to-front'
   seq: number
@@ -190,6 +204,8 @@ export type ClientMessage =
   | NodeRenameMessage
   | NodeSetColorMessage
   | NodeArchiveMessage
+  | NodeUnarchiveMessage
+  | NodeArchiveDeleteMessage
   | NodeBringToFrontMessage
   | NodeReparentMessage
   | TerminalCreateMessage

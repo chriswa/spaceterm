@@ -51,6 +51,8 @@ interface NodeApi {
   rename(nodeId: string, name: string): Promise<void>
   setColor(nodeId: string, colorPresetId: string): Promise<void>
   archive(nodeId: string): Promise<void>
+  unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
+  archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
   terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>

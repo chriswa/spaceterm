@@ -102,6 +102,14 @@ function setupIPC(): void {
     await client!.nodeArchive(nodeId)
   })
 
+  ipcMain.handle('node:unarchive', async (_event, parentNodeId: string, archivedNodeId: string) => {
+    await client!.nodeUnarchive(parentNodeId, archivedNodeId)
+  })
+
+  ipcMain.handle('node:archive-delete', async (_event, parentNodeId: string, archivedNodeId: string) => {
+    await client!.nodeArchiveDelete(parentNodeId, archivedNodeId)
+  })
+
   ipcMain.handle('node:bring-to-front', async (_event, nodeId: string) => {
     await client!.nodeBringToFront(nodeId)
   })

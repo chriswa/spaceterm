@@ -304,6 +304,84 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  /**
+   * Unarchive a node: restore from parent's archivedChildren back into the node tree.
+   */
+  unarchiveNode(parentNodeId: string, archivedNodeId: string): void {
+    // Find the archive array
+    let archiveArray: import('../shared/state').ArchivedNode[]
+    if (parentNodeId === 'root') {
+      archiveArray = this.state.rootArchivedChildren
+    } else {
+      const parent = this.state.nodes[parentNodeId]
+      if (!parent) return
+      archiveArray = parent.archivedChildren
+    }
+
+    // Find and remove the archived entry
+    const idx = archiveArray.findIndex(e => e.data.id === archivedNodeId)
+    if (idx === -1) return
+    const entry = archiveArray[idx]
+    archiveArray.splice(idx, 1)
+
+    // Restore node data
+    const restoredNode = JSON.parse(JSON.stringify(entry.data)) as import('../shared/state').NodeData
+    restoredNode.zIndex = this.state.nextZIndex++
+    restoredNode.parentId = parentNodeId
+    restoredNode.archivedChildren = []
+
+    // For terminals: mark as dead remnant (PTY is gone)
+    if (restoredNode.type === 'terminal') {
+      restoredNode.alive = false
+      restoredNode.claudeState = 'stopped'
+    }
+
+    this.state.nodes[restoredNode.id] = restoredNode
+    this.onNodeAdd(restoredNode)
+
+    // Broadcast updated archivedChildren on the parent
+    if (parentNodeId === 'root') {
+      this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+    } else {
+      const parent = this.state.nodes[parentNodeId]
+      if (parent) {
+        this.onNodeUpdate(parentNodeId, { archivedChildren: parent.archivedChildren })
+      }
+    }
+
+    this.schedulePersist()
+  }
+
+  /**
+   * Delete an archived node entry permanently.
+   */
+  deleteArchivedNode(parentNodeId: string, archivedNodeId: string): void {
+    let archiveArray: import('../shared/state').ArchivedNode[]
+    if (parentNodeId === 'root') {
+      archiveArray = this.state.rootArchivedChildren
+    } else {
+      const parent = this.state.nodes[parentNodeId]
+      if (!parent) return
+      archiveArray = parent.archivedChildren
+    }
+
+    const idx = archiveArray.findIndex(e => e.data.id === archivedNodeId)
+    if (idx === -1) return
+    archiveArray.splice(idx, 1)
+
+    // Broadcast updated archivedChildren on the parent
+    if (parentNodeId === 'root') {
+      this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+    } else {
+      const parent = this.state.nodes[parentNodeId]
+      if (parent) {
+        this.onNodeUpdate(parentNodeId, { archivedChildren: parent.archivedChildren })
+      }
+    }
+
+    this.schedulePersist()
+  }
+
   // --- Terminal metadata updates (from SessionManager callbacks) ---
 
   updateTerminalSize(ptySessionId: string, cols: number, rows: number): void {

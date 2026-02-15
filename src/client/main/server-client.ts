@@ -231,6 +231,14 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-archive', nodeId })
   }
 
+  async nodeUnarchive(parentNodeId: string, archivedNodeId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-unarchive', parentNodeId, archivedNodeId })
+  }
+
+  async nodeArchiveDelete(parentNodeId: string, archivedNodeId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-archive-delete', parentNodeId, archivedNodeId })
+  }
+
   async nodeBringToFront(nodeId: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-bring-to-front', nodeId })
   }

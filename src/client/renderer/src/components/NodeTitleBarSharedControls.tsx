@@ -1,17 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import { COLOR_PRESETS } from '../lib/color-presets'
 import type { ColorPreset } from '../lib/color-presets'
+import type { ArchivedNode } from '../../../../shared/state'
+import { ArchivePanel } from './ArchivePanel'
 
 interface NodeTitleBarSharedControlsProps {
   id: string
   preset?: ColorPreset
+  archivedChildren: ArchivedNode[]
   onClose: (id: string) => void
   onColorChange: (id: string, color: string) => void
+  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
 }
 
-export function NodeTitleBarSharedControls({ id, preset, onClose, onColorChange }: NodeTitleBarSharedControlsProps) {
+export function NodeTitleBarSharedControls({ id, preset, archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete }: NodeTitleBarSharedControlsProps) {
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const archiveBtnRef = useRef<HTMLButtonElement>(null)
 
   // Close color picker on outside click
   useEffect(() => {
@@ -24,6 +31,13 @@ export function NodeTitleBarSharedControls({ id, preset, onClose, onColorChange 
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [pickerOpen])
+
+  // Close archive panel when archives become empty
+  useEffect(() => {
+    if (archivedChildren.length === 0) {
+      setArchiveOpen(false)
+    }
+  }, [archivedChildren.length])
 
   return (
     <div className="node-titlebar__actions">
@@ -57,6 +71,33 @@ export function NodeTitleBarSharedControls({ id, preset, onClose, onColorChange 
           </div>
         )}
       </div>
+      {archivedChildren.length > 0 && (
+        <>
+          <button
+            ref={archiveBtnRef}
+            className="node-titlebar__archive-btn"
+            title="Archived children"
+            style={preset ? { color: preset.titleBarFg } : undefined}
+            onClick={(e) => {
+              e.stopPropagation()
+              setArchiveOpen((prev) => !prev)
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {archivedChildren.length}
+          </button>
+          {archiveOpen && (
+            <ArchivePanel
+              parentId={id}
+              archives={archivedChildren}
+              anchorRef={archiveBtnRef}
+              onUnarchive={onUnarchive}
+              onArchiveDelete={onArchiveDelete}
+              onClose={() => setArchiveOpen(false)}
+            />
+          )}
+        </>
+      )}
       <button
         className="node-titlebar__close"
         style={preset ? { color: preset.titleBarFg } : undefined}

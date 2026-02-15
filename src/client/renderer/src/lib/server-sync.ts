@@ -96,6 +96,14 @@ export async function sendArchive(nodeId: string): Promise<void> {
   await window.api.node.archive(nodeId)
 }
 
+export async function sendUnarchive(parentNodeId: string, archivedNodeId: string): Promise<void> {
+  await window.api.node.unarchive(parentNodeId, archivedNodeId)
+}
+
+export async function sendArchiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void> {
+  await window.api.node.archiveDelete(parentNodeId, archivedNodeId)
+}
+
 export async function sendTerminalCreate(
   parentId: string,
   x: number,

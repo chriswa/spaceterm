@@ -109,6 +109,8 @@ interface NodeApi {
   rename(nodeId: string, name: string): Promise<void>
   setColor(nodeId: string, colorPresetId: string): Promise<void>
   archive(nodeId: string): Promise<void>
+  unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
+  archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
   terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>
@@ -131,6 +133,8 @@ const nodeApi: NodeApi = {
   rename: (nodeId, name) => ipcRenderer.invoke('node:rename', nodeId, name),
   setColor: (nodeId, colorPresetId) => ipcRenderer.invoke('node:set-color', nodeId, colorPresetId),
   archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
+  unarchive: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:unarchive', parentNodeId, archivedNodeId),
+  archiveDelete: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:archive-delete', parentNodeId, archivedNodeId),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
   terminalCreate: (parentId, x, y, options?, initialTitleHistory?) => ipcRenderer.invoke('node:terminal-create', parentId, x, y, options, initialTitleHistory),

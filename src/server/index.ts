@@ -239,6 +239,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'node-unarchive': {
+      stateManager.unarchiveNode(msg.parentNodeId, msg.archivedNodeId)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'node-archive-delete': {
+      stateManager.deleteArchivedNode(msg.parentNodeId, msg.archivedNodeId)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'node-bring-to-front': {
       stateManager.bringToFront(msg.nodeId)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })

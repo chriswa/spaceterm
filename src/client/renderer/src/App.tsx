@@ -4,7 +4,6 @@ import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters } from './components/TerminalCard'
 import { RemnantCard } from './components/RemnantCard'
 import { MarkdownCard } from './components/MarkdownCard'
-import { ArchiveStrip } from './components/ArchiveStrip'
 import { CanvasBackground } from './components/CanvasBackground'
 import { TreeLines } from './components/TreeLines'
 import type { TreeLineNode } from './components/TreeLines'
@@ -16,7 +15,7 @@ import { cameraToFitBounds, unionBounds } from './lib/camera'
 import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM } from './lib/constants'
 import { computeChildPlacement } from './lib/tree-placement'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize } from './lib/server-sync'
 
 function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: string; cwd?: string; resumeSessionId?: string } = {}): CreateOptions {
   const args = ['--plugin-dir', 'src/claude-code-plugin']
@@ -201,6 +200,14 @@ export function App() {
       }
     }
   }, [computeChildPosition, handleNodeFocus])
+
+  const handleUnarchive = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
+    await sendUnarchive(parentNodeId, archivedNodeId)
+  }, [])
+
+  const handleArchiveDelete = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
+    await sendArchiveDelete(parentNodeId, archivedNodeId)
+  }, [])
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
@@ -423,11 +430,6 @@ export function App() {
           { id: n.id, parentId: n.parentId, x: n.x, y: n.y }
         ))} />
         <RootNode focused={focusedId === 'root'} onClick={() => handleNodeFocus('root')} />
-        {rootArchivedChildren.length > 0 && (
-          <div style={{ position: 'absolute', left: -ROOT_NODE_RADIUS, top: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 }}>
-            <ArchiveStrip archives={rootArchivedChildren} />
-          </div>
-        )}
         {liveTerminals.map((t) => (
           <TerminalCard
             key={t.id}
@@ -452,7 +454,10 @@ export function App() {
             onMove={handleMove}
             onResize={handleResizeTerminal}
             onRename={handleRename}
+            archivedChildren={t.archivedChildren}
             onColorChange={handleColorChange}
+            onUnarchive={handleUnarchive}
+            onArchiveDelete={handleArchiveDelete}
             onCwdChange={handleCwdChange}
             onShellTitleChange={handleShellTitleChange}
             onShellTitleHistoryChange={handleShellTitleHistoryChange}
@@ -463,11 +468,7 @@ export function App() {
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-          >
-            {t.archivedChildren.length > 0 && (
-              <ArchiveStrip archives={t.archivedChildren} />
-            )}
-          </TerminalCard>
+          />
         ))}
         {deadTerminals.map((r) => (
           <RemnantCard
@@ -479,6 +480,7 @@ export function App() {
             zoom={camera.z}
             name={r.name}
             colorPresetId={r.colorPresetId}
+            archivedChildren={r.archivedChildren}
             shellTitleHistory={r.shellTitleHistory}
             cwd={r.cwd}
             claudeSessionHistory={r.claudeSessionHistory}
@@ -490,15 +492,13 @@ export function App() {
             onMove={handleMove}
             onRename={handleRename}
             onColorChange={handleColorChange}
+            onUnarchive={handleUnarchive}
+            onArchiveDelete={handleArchiveDelete}
             onResumeSession={handleResumeSession}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-          >
-            {r.archivedChildren.length > 0 && (
-              <ArchiveStrip archives={r.archivedChildren} />
-            )}
-          </RemnantCard>
+          />
         ))}
         {markdowns.map((m) => (
           <MarkdownCard
@@ -513,6 +513,7 @@ export function App() {
             content={m.content}
             name={m.name}
             colorPresetId={m.colorPresetId}
+            archivedChildren={m.archivedChildren}
             focused={focusedId === m.id}
             onFocus={handleNodeFocus}
             onClose={handleRemoveNode}
@@ -521,14 +522,12 @@ export function App() {
             onContentChange={handleMarkdownContent}
             onRename={handleRename}
             onColorChange={handleColorChange}
+            onUnarchive={handleUnarchive}
+            onArchiveDelete={handleArchiveDelete}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-          >
-            {m.archivedChildren.length > 0 && (
-              <ArchiveStrip archives={m.archivedChildren} />
-            )}
-          </MarkdownCard>
+          />
         ))}
       </Canvas>
     </div>

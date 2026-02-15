@@ -5,6 +5,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT } from '../lib/constants'
 import { COLOR_PRESET_MAP, blendHex } from '../lib/color-presets'
+import type { ArchivedNode } from '../../../../shared/state'
 import { NodeTitleBarSharedControls } from './NodeTitleBarSharedControls'
 
 const DRAG_THRESHOLD = 5
@@ -21,6 +22,7 @@ interface MarkdownCardProps {
   content: string
   name?: string
   colorPresetId?: string
+  archivedChildren: ArchivedNode[]
   focused: boolean
   onFocus: (id: string) => void
   onClose: (id: string) => void
@@ -29,10 +31,11 @@ interface MarkdownCardProps {
   onContentChange: (id: string, content: string) => void
   onRename: (id: string, name: string) => void
   onColorChange: (id: string, color: string) => void
+  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
+  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string) => void
   onDragEnd?: (id: string) => void
-  children?: React.ReactNode
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -334,9 +337,9 @@ const linkClickHandler = EditorView.domEventHandlers({
 })
 
 export function MarkdownCard({
-  id, x, y, width, height, zIndex, zoom, content, colorPresetId, focused,
-  onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onNodeReady,
-  onDragStart, onDragEnd, children
+  id, x, y, width, height, zIndex, zoom, content, colorPresetId, archivedChildren, focused,
+  onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onUnarchive, onArchiveDelete, onNodeReady,
+  onDragStart, onDragEnd
 }: MarkdownCardProps) {
   const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -431,7 +434,7 @@ export function MarkdownCard({
 
   // Drag handler
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-panel')) return
 
     const bodyClickWhileFocused = focused
     if (!bodyClickWhileFocused) {
@@ -496,10 +499,9 @@ export function MarkdownCard({
         } as React.CSSProperties}
         onMouseDown={handleMouseDown}
       >
-        <NodeTitleBarSharedControls id={id} onClose={onClose} onColorChange={onColorChange} />
+        <NodeTitleBarSharedControls id={id} archivedChildren={archivedChildren} onClose={onClose} onColorChange={onColorChange} onUnarchive={onUnarchive} onArchiveDelete={onArchiveDelete} />
         <div className="markdown-card__body" ref={bodyRef} />
       </div>
-      {children}
     </div>
   )
 }
