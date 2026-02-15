@@ -341,21 +341,6 @@ html, body, #root {
   color: #6c7086;
 }
 
-.terminal-card__waiting-indicator {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #f9e2af;
-  margin-right: 6px;
-  vertical-align: middle;
-  animation: waiting-pulse 2s ease-in-out infinite;
-}
-
-@keyframes waiting-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
 
 .terminal-card__body .xterm {
   height: 100%;

@@ -73,6 +73,82 @@ function setupIPC(): void {
   ipcMain.handle('server:status', () => {
     return client!.isConnected()
   })
+
+  // --- Node state mutations ---
+
+  ipcMain.handle('node:sync-request', async () => {
+    const resp = await client!.nodeSyncRequest()
+    if (resp.type === 'sync-state') return resp.state
+    throw new Error('Unexpected response')
+  })
+
+  ipcMain.handle('node:move', async (_event, nodeId: string, x: number, y: number) => {
+    await client!.nodeMove(nodeId, x, y)
+  })
+
+  ipcMain.handle('node:batch-move', async (_event, moves: Array<{ nodeId: string; x: number; y: number }>) => {
+    await client!.nodeBatchMove(moves)
+  })
+
+  ipcMain.handle('node:rename', async (_event, nodeId: string, name: string) => {
+    await client!.nodeRename(nodeId, name)
+  })
+
+  ipcMain.handle('node:set-color', async (_event, nodeId: string, colorPresetId: string) => {
+    await client!.nodeSetColor(nodeId, colorPresetId)
+  })
+
+  ipcMain.handle('node:archive', async (_event, nodeId: string) => {
+    await client!.nodeArchive(nodeId)
+  })
+
+  ipcMain.handle('node:bring-to-front', async (_event, nodeId: string) => {
+    await client!.nodeBringToFront(nodeId)
+  })
+
+  ipcMain.handle('node:reparent', async (_event, nodeId: string, newParentId: string) => {
+    await client!.nodeReparent(nodeId, newParentId)
+  })
+
+  ipcMain.handle('node:terminal-create', async (_event, parentId: string, x: number, y: number, options?: Record<string, unknown>) => {
+    const resp = await client!.terminalCreate(parentId, x, y, options as any)
+    if (resp.type === 'created') {
+      // Auto-attach so we receive data events for this session
+      await client!.attach(resp.sessionId)
+      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
+    }
+    throw new Error('Unexpected response')
+  })
+
+  ipcMain.handle('node:terminal-resize', async (_event, nodeId: string, cols: number, rows: number) => {
+    await client!.terminalResize(nodeId, cols, rows)
+  })
+
+  ipcMain.handle('node:terminal-reincarnate', async (_event, nodeId: string, options?: Record<string, unknown>) => {
+    const resp = await client!.terminalReincarnate(nodeId, options as any)
+    if (resp.type === 'created') {
+      // Auto-attach so we receive data events for the new session
+      await client!.attach(resp.sessionId)
+      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
+    }
+    throw new Error('Unexpected response')
+  })
+
+  ipcMain.handle('node:markdown-add', async (_event, parentId: string, x: number, y: number) => {
+    await client!.markdownAdd(parentId, x, y)
+  })
+
+  ipcMain.handle('node:markdown-resize', async (_event, nodeId: string, width: number, height: number) => {
+    await client!.markdownResize(nodeId, width, height)
+  })
+
+  ipcMain.handle('node:markdown-content', async (_event, nodeId: string, content: string) => {
+    await client!.markdownContent(nodeId, content)
+  })
+
+  ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
+    client!.setTerminalMode(sessionId, mode)
+  })
 }
 
 function wireClientEvents(): void {
@@ -112,6 +188,30 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('node-updated', (nodeId: string, fields: Record<string, unknown>) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('node:updated', nodeId, fields)
+    }
+  })
+
+  client!.on('node-added', (node: Record<string, unknown>) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('node:added', node)
+    }
+  })
+
+  client!.on('node-removed', (nodeId: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('node:removed', nodeId)
+    }
+  })
+
+  client!.on('snapshot', (sessionId: string, snapshot: Record<string, unknown>) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`snapshot:${sessionId}`, snapshot)
+    }
+  })
+
   client!.on('connect', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('server:status', true)
@@ -119,9 +219,9 @@ function wireClientEvents(): void {
   })
 
   client!.on('disconnect', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('server:status', false)
-    }
+    console.error('Lost connection to the spaceterm server. Exiting.')
+    client!.disconnect() // stop auto-reconnect
+    app.quit()
   })
 }
 
@@ -146,9 +246,9 @@ app.whenReady().then(async () => {
     await client.connect()
     logger.log('Server connection established')
   } catch {
-    logger.log('Server connection failed')
     console.error('Failed to connect to terminal server. Is it running? (npm run server)')
-    // Will auto-reconnect, so proceed with creating window
+    app.quit()
+    return
   }
 
   createWindow()

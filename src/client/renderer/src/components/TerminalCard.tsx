@@ -5,14 +5,19 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_WINDOW_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
 import { COLOR_PRESETS, COLOR_PRESET_MAP } from '../lib/color-presets'
+import type { SnapshotMessage } from '../../../../shared/protocol'
 
 const DRAG_THRESHOLD = 5
+const LOW_ZOOM_THRESHOLD = 0.3
+const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
+const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
 const textEncoder = new TextEncoder()
 
 export const terminalSelectionGetters = new Map<string, () => string>()
 
 interface TerminalCardProps {
   id: string
+  sessionId: string
   x: number
   y: number
   cols: number
@@ -48,7 +53,7 @@ interface TerminalCardProps {
 }
 
 export function TerminalCard({
-  id, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
+  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, onColorChange,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, waitingForUser, onWaitingForUserChange, onExit, onNodeReady,
   onDragStart, onDragEnd
@@ -59,10 +64,12 @@ export function TerminalCard({
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const snapshotRef = useRef<SnapshotMessage | null>(null)
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, id, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady })
-  propsRef.current = { x, y, zoom, focused, id, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onWaitingForUserChange, onDisableScrollMode, onExit, onNodeReady }
 
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
@@ -70,8 +77,9 @@ export function TerminalCard({
   // Derive pixel size from cols/rows
   const { width, height } = terminalPixelSize(cols, rows)
 
-  // Mount terminal
+  // Mount terminal (only when focused)
   useEffect(() => {
+    if (!focused) return
     if (!containerRef.current) return
 
     const term = new Terminal({
@@ -178,8 +186,8 @@ export function TerminalCard({
           // Send ESC + CR (\x1b\r) for Shift+Enter.
           // Ink's parseKeypress interprets this as meta+return, which Claude Code
           // (and other Ink-based CLIs) treat as "insert newline" instead of submit.
-          window.api.log(`[KeyHandler] Shift+Enter detected, sending ESC+CR to session ${propsRef.current.id}`)
-          window.api.pty.write(propsRef.current.id, '\x1b\r')
+          window.api.log(`[KeyHandler] Shift+Enter detected, sending ESC+CR to session ${propsRef.current.sessionId}`)
+          window.api.pty.write(propsRef.current.sessionId, '\x1b\r')
         }
         // Block all event types (keydown, keypress, keyup) for Shift+Enter
         // to prevent xterm from also sending a regular \r via the keypress event.
@@ -202,9 +210,12 @@ export function TerminalCard({
       // Renderer not ready yet
     }
 
+    // Switch to live mode (stop receiving snapshots, start receiving raw data)
+    window.api.node.setTerminalMode(sessionId, 'live')
+
     // Attach to server session and replay scrollback before subscribing to live data
     let cancelled = false
-    window.api.pty.attach(id).then((result) => {
+    window.api.pty.attach(sessionId).then((result) => {
       if (cancelled) return
       if (result.scrollback.length > 0) {
         term.write(textEncoder.encode(result.scrollback))
@@ -225,37 +236,37 @@ export function TerminalCard({
       // Session may not exist on server (e.g. newly created, already attached)
     })
 
-    // Wire up IPC
-    const cleanupData = window.api.pty.onData(id, (data) => {
+    // Wire up IPC — use sessionId for all PTY operations
+    const cleanupData = window.api.pty.onData(sessionId, (data) => {
       term.write(textEncoder.encode(data))
     })
 
-    const cleanupExit = window.api.pty.onExit(id, (exitCode) => {
+    const cleanupExit = window.api.pty.onExit(sessionId, (exitCode) => {
       propsRef.current.onExit?.(propsRef.current.id, exitCode)
     })
 
-    const cleanupTitleHistory = window.api.pty.onShellTitleHistory(id, (history) => {
+    const cleanupTitleHistory = window.api.pty.onShellTitleHistory(sessionId, (history) => {
       propsRef.current.onShellTitleHistoryChange?.(propsRef.current.id, history)
     })
 
-    const cleanupCwd = window.api.pty.onCwd(id, (cwd) => {
+    const cleanupCwd = window.api.pty.onCwd(sessionId, (cwd) => {
       propsRef.current.onCwdChange?.(propsRef.current.id, cwd)
     })
 
-    const cleanupClaudeSessionHistory = window.api.pty.onClaudeSessionHistory(id, (history) => {
+    const cleanupClaudeSessionHistory = window.api.pty.onClaudeSessionHistory(sessionId, (history) => {
       propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.id, history)
     })
 
-    const cleanupWaitingForUser = window.api.pty.onWaitingForUser(id, (waiting) => {
+    const cleanupWaitingForUser = window.api.pty.onWaitingForUser(sessionId, (waiting) => {
       propsRef.current.onWaitingForUserChange?.(propsRef.current.id, waiting)
     })
 
     term.onData((data) => {
-      window.api.pty.write(id, data)
+      window.api.pty.write(propsRef.current.sessionId, data)
     })
 
     term.onResize(({ cols, rows }) => {
-      window.api.pty.resize(id, cols, rows)
+      window.api.pty.resize(propsRef.current.sessionId, cols, rows)
     })
 
     terminalRef.current = term
@@ -273,7 +284,7 @@ export function TerminalCard({
       cleanupWaitingForUser()
       term.dispose()
     }
-  }, [id])
+  }, [focused, sessionId])
 
   // Tint xterm background to match color preset
   useEffect(() => {
@@ -299,8 +310,95 @@ export function TerminalCard({
   useEffect(() => {
     if (!focused) return
     const { width, height } = terminalPixelSize(cols, rows)
-    propsRef.current.onNodeReady?.(id, { x: propsRef.current.x, y: propsRef.current.y, width, height })
+    propsRef.current.onNodeReady?.(id, { x: propsRef.current.x - width / 2, y: propsRef.current.y - height / 2, width, height })
   }, [focused, cols, rows, id])
+
+  // --- Snapshot mode (only when unfocused) ---
+
+  const paintCanvas = (snapshot: SnapshotMessage, currentZoom: number) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const cw = Math.ceil(cols * CELL_WIDTH)
+    const ch = Math.ceil(rows * CELL_HEIGHT)
+
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width = cw
+      canvas.height = ch
+    }
+
+    const bgColor = preset?.terminalBg ?? '#1e1e2e'
+    ctx.fillStyle = bgColor
+    ctx.fillRect(0, 0, cw, ch)
+
+    const lowDetail = currentZoom < LOW_ZOOM_THRESHOLD
+
+    for (let y = 0; y < snapshot.lines.length; y++) {
+      const row = snapshot.lines[y]
+      let xOffset = 0
+
+      for (const span of row) {
+        const spanWidth = span.text.length * CELL_WIDTH
+
+        if (span.bg !== bgColor && span.bg !== '#1e1e2e') {
+          ctx.fillStyle = span.bg
+          ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
+        }
+
+        if (lowDetail) {
+          if (span.fg !== '#000000' && span.text.trim().length > 0) {
+            ctx.fillStyle = span.fg
+            ctx.globalAlpha = 0.7
+            for (let i = 0; i < span.text.length; i++) {
+              if (span.text[i] !== ' ') {
+                ctx.fillRect(xOffset + i * CELL_WIDTH + 1, y * CELL_HEIGHT + 3, CELL_WIDTH - 2, CELL_HEIGHT - 6)
+              }
+            }
+            ctx.globalAlpha = 1.0
+          }
+        } else {
+          if (span.text.trim().length > 0) {
+            ctx.fillStyle = span.fg
+            ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
+            ctx.textBaseline = 'top'
+            for (let i = 0; i < span.text.length; i++) {
+              if (span.text[i] !== ' ') {
+                ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
+              }
+            }
+          }
+        }
+
+        xOffset += spanWidth
+      }
+    }
+  }
+
+  // Subscribe to snapshot events (only when unfocused)
+  useEffect(() => {
+    if (focused) return
+
+    window.api.node.setTerminalMode(sessionId, 'snapshot')
+
+    const cleanup = window.api.node.onSnapshot(sessionId, (snapshot) => {
+      snapshotRef.current = snapshot
+      paintCanvas(snapshot, propsRef.current.zoom)
+    })
+
+    return () => {
+      cleanup()
+    }
+  }, [focused, sessionId])
+
+  // Repaint snapshot when zoom changes
+  useEffect(() => {
+    if (focused) return
+    if (snapshotRef.current) {
+      paintCanvas(snapshotRef.current, zoom)
+    }
+  }, [focused, zoom])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
@@ -384,6 +482,7 @@ export function TerminalCard({
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const dragOccurredRef = useRef(false)
 
   // Select-all on edit start
   useEffect(() => {
@@ -410,15 +509,17 @@ export function TerminalCard({
 
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Don't interfere with header buttons or editable title/color picker
-    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__left-area, .terminal-card__title-input, .terminal-card__color-picker')) return
+    // Don't interfere with header buttons or color picker
+    if ((e.target as HTMLElement).closest('.terminal-card__close, .terminal-card__color-btn, .terminal-card__color-picker')) return
+
+    const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
     const isHeader = !!(e.target as HTMLElement).closest('.terminal-card__header')
 
     // When focused and clicking body: let xterm handle the event
     // but still detect click (no drag) for re-centering the camera
     const bodyClickWhileFocused = focused && !isHeader
-    if (!bodyClickWhileFocused) {
+    if (!bodyClickWhileFocused && !isInteractiveTitle) {
       e.preventDefault()
     }
 
@@ -436,6 +537,9 @@ export function TerminalCard({
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
         onDragStart?.(id)
+        if (isInteractiveTitle && inputRef.current) {
+          inputRef.current.blur()
+        }
       }
 
       if (dragging && !bodyClickWhileFocused) {
@@ -449,6 +553,10 @@ export function TerminalCard({
 
       if (dragging) {
         onDragEnd?.(id)
+        if (isInteractiveTitle) {
+          dragOccurredRef.current = true
+          setTimeout(() => { dragOccurredRef.current = false }, 0)
+        }
       } else {
         onFocus(id)
       }
@@ -466,14 +574,14 @@ export function TerminalCard({
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
     : ''
-  const waitingClass = waitingForUser ? 'terminal-card--waiting' : ''
+  const waitingClass = waitingForUser && !focused ? 'terminal-card--waiting' : ''
 
   return (
     <div
       style={{
         position: 'absolute',
-        left: x,
-        top: y,
+        left: x - width / 2,
+        top: y - height / 2,
         width,
         height,
         zIndex
@@ -496,11 +604,11 @@ export function TerminalCard({
         <div
           className="terminal-card__left-area"
           onClick={(e) => {
+            if (dragOccurredRef.current) return
             e.stopPropagation()
             setEditValue(name || '')
             setEditing(true)
           }}
-          onMouseDown={(e) => e.stopPropagation()}
         >
           {editing ? (
             <>
@@ -523,7 +631,6 @@ export function TerminalCard({
                   onRename(id, editValue)
                   setEditing(false)
                 }}
-                onMouseDown={(e) => e.stopPropagation()}
                 autoFocus
               />
               {history && <span className="terminal-card__history" style={preset ? { color: preset.titleBarFg, opacity: 0.75 } : undefined}>{history}</span>}
@@ -580,10 +687,20 @@ export function TerminalCard({
           </button>
         </div>
       </div>
-      <div className="terminal-card__body" ref={containerRef} />
+      <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none' }} />
+      <div style={{ display: focused ? 'none' : undefined, padding: '2px 2px 0 2px', flex: 1 }}>
+        <canvas
+          ref={canvasRef}
+          style={{
+            width: Math.ceil(cols * CELL_WIDTH),
+            height: Math.ceil(rows * CELL_HEIGHT),
+            display: 'block'
+          }}
+        />
+      </div>
       <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
-        {waitingForUser && <span className="terminal-card__waiting-indicator" title="Waiting for input" />}
         {id.slice(0, 8)}
+        {waitingForUser && <span className="terminal-card__footer-waiting-text"> — User Input Required!</span>}
       </div>
       </div>
       {claudeSessionHistory && claudeSessionHistory.length > 0 && (

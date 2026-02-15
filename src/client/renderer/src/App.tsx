@@ -9,14 +9,12 @@ import type { TreeLineNode } from './components/TreeLines'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
-import { useTerminalManager, nodePixelSize } from './hooks/useTerminalManager'
 import { useForceLayout } from './hooks/useForceLayout'
 import { cameraToFitBounds, unionBounds } from './lib/camera'
-import { terminalPixelSize, CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUSED_MAX_ZOOM } from './lib/constants'
-import { loadLayout, saveLayout } from './lib/layout-persistence'
-import { computeChildPlacement, nodeCenter } from './lib/tree-placement'
-
-const savedLayout = loadLayout()
+import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM } from './lib/constants'
+import { computeChildPlacement } from './lib/tree-placement'
+import { useNodeStore, nodePixelSize } from './stores/nodeStore'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize } from './lib/server-sync'
 
 function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: string; cwd?: string; resumeSessionId?: string } = {}): CreateOptions {
   const args = ['--plugin-dir', 'src/claude-code-plugin']
@@ -30,36 +28,57 @@ function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: str
 }
 
 export function App() {
-  const savedNodes = savedLayout?.nodes.filter(n => n.type !== 'terminal') ?? []
-  const savedTerminalPositions = savedLayout?.terminalPositions
-
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [scrollMode, setScrollMode] = useState(false)
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
 
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice } = useCamera(savedLayout?.camera, focusRef)
+  const { camera, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice } = useCamera(undefined, focusRef)
   const cameraRef = useRef(camera)
   cameraRef.current = camera
 
-  const {
-    nodes, nodesRef, terminals, remnants, markdowns,
-    removeNode, moveNode, batchMoveNodes, bringToFront, renameNode, setNodeColor,
-    addTerminal, resizeTerminal, setShellTitle, setShellTitleHistory, setCwd, setClaudeSessionHistory, setWaitingForUser,
-    convertToRemnant,
-    addMarkdown, resizeMarkdown, moveAndResizeMarkdown, updateMarkdownContent,
-    nextZIndex
-  } = useTerminalManager({
-    savedNodes,
-    savedTerminalPositions,
-    initialNextZIndex: savedLayout?.nextZIndex
-  })
+  // Subscribe to store
+  const nodes = useNodeStore(s => s.nodes)
+  const nodeList = useNodeStore(s => s.nodeList)
+  const liveTerminals = useNodeStore(s => s.liveTerminals)
+  const deadTerminals = useNodeStore(s => s.deadTerminals)
+  const markdowns = useNodeStore(s => s.markdowns)
+  const moveNode = useNodeStore(s => s.moveNode)
+  const batchMoveNodes = useNodeStore(s => s.batchMoveNodes)
+  const renameNode = useNodeStore(s => s.renameNode)
+  const setNodeColor = useNodeStore(s => s.setNodeColor)
+  const bringToFront = useNodeStore(s => s.bringToFront)
+
+  // Initialize server sync on mount
+  useEffect(() => {
+    initServerSync()
+  }, [])
+
+  // Fit all nodes on initial load once server state has been received
+  const initialSyncDone = useNodeStore(s => s.initialSyncDone)
+  const initialFitDone = useRef(false)
+  useEffect(() => {
+    if (initialFitDone.current || !initialSyncDone) return
+    initialFitDone.current = true
+    requestAnimationFrame(() => {
+      const allNodes = useNodeStore.getState().nodeList
+      const rects = allNodes.map(n => {
+        const size = nodePixelSize(n)
+        return { x: n.x - size.width / 2, y: n.y - size.height / 2, ...size }
+      })
+      rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+      const bounds = unionBounds(rects)
+      if (!bounds) return
+      const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+      if (!viewport) return
+      flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM))
+    })
+  }, [initialSyncDone, flyTo])
 
   // Force-directed layout
   const draggingRef = useRef(new Set<string>())
   const { playing: forceLayoutPlaying, speed: forceLayoutSpeed, togglePlaying: forceLayoutToggle, increaseSpeed: forceLayoutIncrease, decreaseSpeed: forceLayoutDecrease } = useForceLayout({
-    nodesRef,
     draggingRef,
     batchMoveNodes
   })
@@ -70,6 +89,11 @@ export function App() {
 
   const handleDragEnd = useCallback((id: string) => {
     draggingRef.current.delete(id)
+    // Send final position to server
+    const node = useNodeStore.getState().nodes[id]
+    if (node) {
+      sendMove(id, node.x, node.y)
+    }
   }, [])
 
   // CWD tracking — ref so updates don't trigger re-renders
@@ -78,23 +102,22 @@ export function App() {
 
   const handleCwdChange = useCallback((id: string, cwd: string) => {
     cwdMapRef.current.set(id, cwd)
-    setCwd(id, cwd)
-  }, [setCwd])
+  }, [])
 
   const handleShellTitleChange = useCallback((id: string, title: string) => {
     const stripped = title.replace(/^[^\x20-\x7E]+\s*/, '').trim()
     if (!stripped) return
-    setShellTitle(id, stripped)
-  }, [setShellTitle])
+    // Title is handled by the server now, no client state update needed
+  }, [])
 
-  const handleShellTitleHistoryChange = useCallback((id: string, history: string[]) => {
-    setShellTitleHistory(id, history)
-  }, [setShellTitleHistory])
+  const handleShellTitleHistoryChange = useCallback((_id: string, _history: string[]) => {
+    // Handled by server → store
+  }, [])
 
   const computeChildPosition = useCallback((parentId: string) => {
-    const allNodes = nodesRef.current
+    const allNodes = useNodeStore.getState().nodes
+    const allNodeList = Object.values(allNodes)
 
-    // Parent center
     let parentCenter: { x: number; y: number }
     let grandparentCenter: { x: number; y: number } | null = null
     let cwd: string | undefined
@@ -102,38 +125,27 @@ export function App() {
     if (parentId === 'root') {
       parentCenter = { x: 0, y: 0 }
     } else {
-      const parent = allNodes.find(n => n.id === parentId)
+      const parent = allNodes[parentId]
       if (!parent) return { position: { x: 0, y: 0 }, cwd: undefined }
 
-      const ps = nodePixelSize(parent)
-      parentCenter = nodeCenter(parent.x, parent.y, ps.width, ps.height)
-      cwd = cwdMapRef.current.get(parentId)
+      parentCenter = { x: parent.x, y: parent.y }
+      cwd = cwdMapRef.current.get(parentId) ?? (parent.type === 'terminal' ? parent.cwd : undefined)
 
-      // Grandparent center
       if (parent.parentId === 'root') {
         grandparentCenter = { x: 0, y: 0 }
       } else {
-        const gp = allNodes.find(n => n.id === parent.parentId)
+        const gp = allNodes[parent.parentId]
         if (gp) {
-          const gs = nodePixelSize(gp)
-          grandparentCenter = nodeCenter(gp.x, gp.y, gs.width, gs.height)
+          grandparentCenter = { x: gp.x, y: gp.y }
         }
       }
     }
 
-    // Sibling centers
-    const siblings = allNodes.filter(n => n.parentId === parentId)
-    const siblingCenters = siblings.map(s => {
-      const ss = nodePixelSize(s)
-      return nodeCenter(s.x, s.y, ss.width, ss.height)
-    })
+    const siblings = allNodeList.filter(n => n.parentId === parentId)
+    const siblingCenters = siblings.map(s => ({ x: s.x, y: s.y }))
 
-    const center = computeChildPlacement(parentCenter, grandparentCenter, siblingCenters, CHILD_PLACEMENT_DISTANCE)
-    const { width, height } = terminalPixelSize(80, 24)
-    return {
-      position: { x: center.x - width / 2, y: center.y - height / 2 },
-      cwd
-    }
+    const position = computeChildPlacement(parentCenter, grandparentCenter, siblingCenters, CHILD_PLACEMENT_DISTANCE)
+    return { position, cwd }
   }, [])
 
   const handleNodeFocus = useCallback((nodeId: string) => {
@@ -150,16 +162,16 @@ export function App() {
       padding = 0.05
       setScrollMode(false)
     } else {
-      const node = nodesRef.current.find(n => n.id === nodeId)
+      const node = useNodeStore.getState().nodes[nodeId]
       if (!node) {
         // Node not in state yet (newly created).
-        // No flyTo — onNodeReady will fire when the node mounts.
         setScrollMode(false)
         return
       }
       const size = nodePixelSize(node)
-      bounds = { x: node.x, y: node.y, ...size }
-      setScrollMode(node.type === 'terminal')
+      bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
+      setScrollMode(node.type === 'terminal' && node.alive)
+      sendBringToFront(nodeId)
       bringToFront(nodeId)
     }
 
@@ -167,8 +179,6 @@ export function App() {
   }, [bringToFront, flyTo])
 
   const handleClaudeSessionHistoryChange = useCallback((id: string, history: ClaudeSessionEntry[]) => {
-    setClaudeSessionHistory(id, history)
-
     const lastSeen = forkHistoryLengthRef.current.get(id)
     forkHistoryLengthRef.current.set(id, history.length)
 
@@ -181,13 +191,13 @@ export function App() {
       if (latestEntry.reason === 'fork') {
         const resumeSessionId = history[history.length - 2].claudeSessionId
         const { position, cwd } = computeChildPosition(id)
-        addTerminal(position, id, buildClaudeCodeOptions({ cwd, resumeSessionId })).then((result) => {
-          if (cwd) handleCwdChange(result.sessionId, cwd)
+        sendTerminalCreate(id, position.x, position.y, buildClaudeCodeOptions({ cwd, resumeSessionId })).then((result) => {
+          if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
           handleNodeFocus(result.sessionId)
         })
       }
     }
-  }, [setClaudeSessionHistory, computeChildPosition, addTerminal, handleCwdChange, handleNodeFocus])
+  }, [computeChildPosition, handleNodeFocus])
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
@@ -196,43 +206,46 @@ export function App() {
       setFocusedId(null)
       setScrollMode(false)
     }
-    await removeNode(id)
-  }, [removeNode])
+    await sendArchive(id)
+  }, [])
 
-  const handleTerminalExit = useCallback((id: string, exitCode: number) => {
+  const handleTerminalExit = useCallback((id: string, _exitCode: number) => {
+    // Server handles state transition (alive → false) via node-updated broadcast.
+    // We just handle focus cleanup here.
     if (focusRef.current === id) {
       focusRef.current = null
       setFocusedId(null)
       setScrollMode(false)
     }
-    convertToRemnant(id, exitCode)
-  }, [convertToRemnant])
+  }, [])
 
   const addTerminalAsChild = useCallback(async (parentId: string) => {
     const { position, cwd } = computeChildPosition(parentId)
-    const result = await addTerminal(position, parentId, cwd ? { cwd } : undefined)
-    if (cwd) handleCwdChange(result.sessionId, cwd)
-  }, [addTerminal, computeChildPosition, handleCwdChange])
+    const result = await sendTerminalCreate(parentId, position.x, position.y, cwd ? { cwd } : undefined)
+    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
+  }, [computeChildPosition])
 
   const addClaudeCodeAsChild = useCallback(async (parentId: string) => {
     const { position, cwd } = computeChildPosition(parentId)
-    const result = await addTerminal(position, parentId, buildClaudeCodeOptions({ cwd }))
-    if (cwd) handleCwdChange(result.sessionId, cwd)
-  }, [addTerminal, computeChildPosition, handleCwdChange])
+    const result = await sendTerminalCreate(parentId, position.x, position.y, buildClaudeCodeOptions({ cwd }))
+    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
+  }, [computeChildPosition])
 
   const handleResumeSession = useCallback(async (remnantId: string, claudeSessionId: string) => {
-    const { position } = computeChildPosition(remnantId)
-    const remnant = nodesRef.current.find(n => n.id === remnantId)
-    const cwd = remnant?.cwd
-    const result = await addTerminal(position, remnantId, buildClaudeCodeOptions({ cwd, resumeSessionId: claudeSessionId }))
-    if (cwd) handleCwdChange(result.sessionId, cwd)
-    handleNodeFocus(result.sessionId)
-  }, [addTerminal, computeChildPosition, handleCwdChange, handleNodeFocus, nodesRef])
+    const remnant = useNodeStore.getState().nodes[remnantId]
+    const cwd = remnant?.type === 'terminal' ? remnant.cwd : undefined
+    // Reincarnate the remnant in-place with claude -r to resume the session
+    await sendTerminalReincarnate(remnantId, buildClaudeCodeOptions({ cwd, resumeSessionId: claudeSessionId }))
+    if (cwd) cwdMapRef.current.set(remnantId, cwd)
+    // The node-updated broadcast will flip alive=true and set sessionId
+    handleNodeFocus(remnantId)
+  }, [handleNodeFocus])
 
   const fitAllNodes = useCallback(() => {
-    const rects = nodesRef.current.map(n => {
+    const allNodeList = useNodeStore.getState().nodeList
+    const rects = allNodeList.map(n => {
       const size = nodePixelSize(n)
-      return { x: n.x, y: n.y, ...size }
+      return { x: n.x - size.width / 2, y: n.y - size.height / 2, ...size }
     })
     // Include root node in bounds
     rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
@@ -240,7 +253,7 @@ export function App() {
     if (!bounds) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
-    const target = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUSED_MAX_ZOOM)
+    const target = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM)
     flyTo(target)
   }, [flyTo])
 
@@ -254,6 +267,33 @@ export function App() {
     setScrollMode(false)
   }, [])
 
+  // Handlers that send mutations to server
+  const handleMove = useCallback((id: string, x: number, y: number) => {
+    moveNode(id, x, y)
+  }, [moveNode])
+
+  const handleRename = useCallback((id: string, name: string) => {
+    renameNode(id, name)
+    sendRename(id, name)
+  }, [renameNode])
+
+  const handleColorChange = useCallback((id: string, colorPresetId: string) => {
+    setNodeColor(id, colorPresetId)
+    sendSetColor(id, colorPresetId)
+  }, [setNodeColor])
+
+  const handleResizeTerminal = useCallback((id: string, cols: number, rows: number) => {
+    sendTerminalResize(id, cols, rows)
+  }, [])
+
+  const handleResizeMarkdown = useCallback((id: string, width: number, height: number) => {
+    sendMarkdownResize(id, width, height)
+  }, [])
+
+  const handleMarkdownContent = useCallback((id: string, content: string) => {
+    sendMarkdownContent(id, content)
+  }, [])
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -262,8 +302,8 @@ export function App() {
         e.stopPropagation()
         if (!focusRef.current) return
         const { position, cwd } = computeChildPosition(focusRef.current)
-        const result = await addTerminal(position, focusRef.current, cwd ? { cwd } : undefined)
-        if (cwd) handleCwdChange(result.sessionId, cwd)
+        const result = await sendTerminalCreate(focusRef.current, position.x, position.y, cwd ? { cwd } : undefined)
+        if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
         handleNodeFocus(result.sessionId)
       }
 
@@ -272,8 +312,8 @@ export function App() {
         e.stopPropagation()
         if (!focusRef.current) return
         const { position, cwd } = computeChildPosition(focusRef.current)
-        const result = await addTerminal(position, focusRef.current, buildClaudeCodeOptions({ cwd }))
-        if (cwd) handleCwdChange(result.sessionId, cwd)
+        const result = await sendTerminalCreate(focusRef.current, position.x, position.y, buildClaudeCodeOptions({ cwd }))
+        if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
         handleNodeFocus(result.sessionId)
       }
 
@@ -282,8 +322,10 @@ export function App() {
         e.stopPropagation()
         const parentId = focusRef.current ?? 'root'
         const { position } = computeChildPosition(parentId)
-        const mdId = addMarkdown(position, parentId)
-        handleNodeFocus(mdId)
+        await sendMarkdownAdd(parentId, position.x, position.y)
+        // The node will be added via server broadcast → store
+        // We can't focus it yet since we don't know its ID
+        // The server will broadcast node-added with the ID
       }
 
       // Cmd+Shift+S: speak selected text or stop speaking
@@ -305,31 +347,10 @@ export function App() {
       if (e.key === 'Escape' && isSpeaking()) {
         ttsStop()
       }
-
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [addTerminal, addMarkdown, computeChildPosition, handleNodeFocus, handleCwdChange, speak, ttsStop, isSpeaking])
-
-  // Debounced save of layout state
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      // Build terminal positions map for restoring PTY sessions on reload
-      const terminalPositions: Record<string, { x: number; y: number; zIndex: number; name?: string; colorPresetId?: string; parentId?: string }> = {}
-      for (const t of terminals) {
-        terminalPositions[t.id] = { x: t.x, y: t.y, zIndex: t.zIndex, name: t.name, colorPresetId: t.colorPresetId, parentId: t.parentId }
-      }
-
-      saveLayout({
-        version: 2,
-        camera,
-        nodes,
-        nextZIndex: nextZIndex.current,
-        terminalPositions
-      })
-    }, 500)
-    return () => clearTimeout(timeout)
-  }, [camera, nodes, terminals])
+  }, [computeChildPosition, handleNodeFocus, speak, ttsStop, isSpeaking])
 
   const handleNodeReady = useCallback((nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => {
     if (focusRef.current !== nodeId) return
@@ -378,15 +399,15 @@ export function App() {
         onForceLayoutDecrease={forceLayoutDecrease}
       />
       <Canvas camera={camera} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus}>
-        <TreeLines nodes={nodes.map((n): TreeLineNode => {
-          const size = nodePixelSize(n)
-          return { id: n.id, parentId: n.parentId, x: n.x, y: n.y, ...size }
-        })} />
+        <TreeLines nodes={nodeList.map((n): TreeLineNode => (
+          { id: n.id, parentId: n.parentId, x: n.x, y: n.y }
+        ))} />
         <RootNode focused={focusedId === 'root'} onClick={() => handleNodeFocus('root')} />
-        {terminals.map((t) => (
+        {liveTerminals.map((t) => (
           <TerminalCard
             key={t.id}
             id={t.id}
+            sessionId={t.sessionId}
             x={t.x}
             y={t.y}
             cols={t.cols}
@@ -395,33 +416,31 @@ export function App() {
             zoom={camera.z}
             name={t.name}
             colorPresetId={t.colorPresetId}
-            shellTitle={t.shellTitle}
             shellTitleHistory={t.shellTitleHistory}
             cwd={t.cwd}
             focused={focusedId === t.id}
-            scrollMode={focusedId === t.id && scrollMode}
+            scrollMode={scrollMode}
             onFocus={handleNodeFocus}
             onUnfocus={handleUnfocus}
             onDisableScrollMode={handleDisableScrollMode}
             onClose={handleRemoveNode}
-            onMove={moveNode}
-            onResize={resizeTerminal}
-            onRename={renameNode}
-            onColorChange={setNodeColor}
+            onMove={handleMove}
+            onResize={handleResizeTerminal}
+            onRename={handleRename}
+            onColorChange={handleColorChange}
             onCwdChange={handleCwdChange}
             onShellTitleChange={handleShellTitleChange}
             onShellTitleHistoryChange={handleShellTitleHistoryChange}
             claudeSessionHistory={t.claudeSessionHistory}
             onClaudeSessionHistoryChange={handleClaudeSessionHistoryChange}
             waitingForUser={t.waitingForUser}
-            onWaitingForUserChange={setWaitingForUser}
             onExit={handleTerminalExit}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           />
         ))}
-        {remnants.map((r) => (
+        {deadTerminals.map((r) => (
           <RemnantCard
             key={r.id}
             id={r.id}
@@ -434,13 +453,13 @@ export function App() {
             shellTitleHistory={r.shellTitleHistory}
             cwd={r.cwd}
             claudeSessionHistory={r.claudeSessionHistory}
-            exitCode={r.exitCode}
+            exitCode={r.exitCode ?? 0}
             focused={focusedId === r.id}
             onFocus={handleNodeFocus}
             onClose={handleRemoveNode}
-            onMove={moveNode}
-            onRename={renameNode}
-            onColorChange={setNodeColor}
+            onMove={handleMove}
+            onRename={handleRename}
+            onColorChange={handleColorChange}
             onResumeSession={handleResumeSession}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
@@ -463,12 +482,11 @@ export function App() {
             focused={focusedId === m.id}
             onFocus={handleNodeFocus}
             onClose={handleRemoveNode}
-            onMove={moveNode}
-            onResize={resizeMarkdown}
-            onAutoResize={moveAndResizeMarkdown}
-            onContentChange={updateMarkdownContent}
-            onRename={renameNode}
-            onColorChange={setNodeColor}
+            onMove={handleMove}
+            onResize={handleResizeMarkdown}
+            onContentChange={handleMarkdownContent}
+            onRename={handleRename}
+            onColorChange={handleColorChange}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}

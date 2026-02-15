@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TreeNode } from './useTerminalManager'
-import { nodePixelSize } from './useTerminalManager'
-import { nodeCenter } from '../lib/tree-placement'
+import { useNodeStore, nodePixelSize } from '../stores/nodeStore'
 import {
   ROOT_NODE_RADIUS,
   CHILD_PLACEMENT_DISTANCE,
@@ -12,6 +10,7 @@ import {
   FORCE_MIN_SPEED,
   FORCE_MAX_SPEED
 } from '../lib/constants'
+import { sendBatchMove } from '../lib/server-sync'
 
 interface Body {
   id: string
@@ -27,10 +26,11 @@ interface Body {
 }
 
 interface ForceLayoutOptions {
-  nodesRef: React.RefObject<TreeNode[]>
   draggingRef: React.RefObject<Set<string>>
   batchMoveNodes: (moves: Array<{ id: string; dx: number; dy: number }>) => void
 }
+
+const SERVER_SYNC_INTERVAL = 500
 
 export function useForceLayout(opts: ForceLayoutOptions) {
   const [playing, setPlaying] = useState(false)
@@ -45,6 +45,8 @@ export function useForceLayout(opts: ForceLayoutOptions) {
   useEffect(() => {
     let lastTime = 0
     let rafId = 0
+    let lastServerSync = 0
+    let pendingServerMoves = new Map<string, { x: number; y: number }>()
 
     const tick = (now: number) => {
       rafId = requestAnimationFrame(tick)
@@ -62,9 +64,10 @@ export function useForceLayout(opts: ForceLayoutOptions) {
       const dt = Math.min((now - lastTime) / 1000, 0.05) // cap at 50ms
       lastTime = now
 
-      const { nodesRef, draggingRef, batchMoveNodes } = optsRef.current
-      const nodes = nodesRef.current
-      if (!nodes || nodes.length === 0) return
+      const { draggingRef, batchMoveNodes } = optsRef.current
+      const nodeMap = useNodeStore.getState().nodes
+      const nodes = Object.values(nodeMap)
+      if (nodes.length === 0) return
 
       // Build bodies
       const bodies: Body[] = []
@@ -86,11 +89,10 @@ export function useForceLayout(opts: ForceLayoutOptions) {
       const dragging = draggingRef.current
       for (const node of nodes) {
         const size = nodePixelSize(node)
-        const center = nodeCenter(node.x, node.y, size.width, size.height)
         bodies.push({
           id: node.id,
-          cx: center.x,
-          cy: center.y,
+          cx: node.x,
+          cy: node.y,
           hw: size.width / 2,
           hh: size.height / 2,
           parentId: node.parentId,
@@ -119,8 +121,6 @@ export function useForceLayout(opts: ForceLayoutOptions) {
           const dist = Math.sqrt(dx * dx + dy * dy)
 
           if (dist < 0.1) {
-            // Nodes at same position - push along axis of minimum overlap
-            // Use index comparison for deterministic opposite directions
             if (overlapX <= overlapY) {
               dx = i < j ? 1 : -1
               dy = 0
@@ -161,16 +161,13 @@ export function useForceLayout(opts: ForceLayoutOptions) {
         const ny = dy / dist
         const force = excess * FORCE_ATTRACTION_STRENGTH
 
-        // 100% to child, 20% counter-force to parent
         body.fx += nx * force
         body.fy += ny * force
         parent.fx -= nx * force * 0.2
         parent.fy -= ny * force * 0.2
       }
 
-      // Compute mass for each body: 1 + number of descendants in subtree.
-      // Heavier nodes (with more children) resist movement, so children
-      // spread out around their parent rather than pushing the parent away.
+      // Compute mass for each body
       const mass = new Map<string, number>()
       for (const body of bodies) mass.set(body.id, 1)
       for (const body of bodies) {
@@ -196,7 +193,6 @@ export function useForceLayout(opts: ForceLayoutOptions) {
         let moveX = (body.fx / m) * dt
         let moveY = (body.fy / m) * dt
 
-        // Cap displacement at maxSpeed * dt
         const moveDist = Math.sqrt(moveX * moveX + moveY * moveY)
         const maxDisplacement = maxSpeed * dt
         if (moveDist > maxDisplacement) {
@@ -204,7 +200,6 @@ export function useForceLayout(opts: ForceLayoutOptions) {
           moveY = (moveY / moveDist) * maxDisplacement
         }
 
-        // Skip negligible moves
         if (moveDist < 0.05) continue
 
         moves.push({ id: body.id, dx: moveX, dy: moveY })
@@ -212,6 +207,26 @@ export function useForceLayout(opts: ForceLayoutOptions) {
 
       if (moves.length > 0) {
         batchMoveNodes(moves)
+
+        // Track positions for batched server sync
+        for (const m of moves) {
+          const node = useNodeStore.getState().nodes[m.id]
+          if (node) {
+            pendingServerMoves.set(m.id, { x: node.x, y: node.y })
+          }
+        }
+      }
+
+      // Batch sync to server every SERVER_SYNC_INTERVAL ms
+      if (pendingServerMoves.size > 0 && now - lastServerSync > SERVER_SYNC_INTERVAL) {
+        lastServerSync = now
+        const serverMoves = Array.from(pendingServerMoves.entries()).map(([nodeId, pos]) => ({
+          nodeId,
+          x: pos.x,
+          y: pos.y
+        }))
+        pendingServerMoves = new Map()
+        sendBatchMove(serverMoves)
       }
     }
 

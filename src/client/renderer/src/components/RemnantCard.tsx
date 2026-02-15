@@ -68,7 +68,7 @@ export function RemnantCard({
   // Notify parent when focused node is ready
   useEffect(() => {
     if (!focused) return
-    propsRef.current.onNodeReady?.(id, { x: propsRef.current.x, y: propsRef.current.y, width: REMNANT_WIDTH, height: REMNANT_HEIGHT })
+    propsRef.current.onNodeReady?.(id, { x: propsRef.current.x - REMNANT_WIDTH / 2, y: propsRef.current.y - REMNANT_HEIGHT / 2, width: REMNANT_WIDTH, height: REMNANT_HEIGHT })
   }, [focused, id])
 
   // Mousedown handler: drag-to-move or click-to-focus
@@ -129,8 +129,8 @@ export function RemnantCard({
       className={`remnant-card canvas-node ${focused ? 'remnant-card--focused' : ''}`}
       style={{
         position: 'absolute',
-        left: x,
-        top: y,
+        left: x - REMNANT_WIDTH / 2,
+        top: y - REMNANT_HEIGHT / 2,
         width: REMNANT_WIDTH,
         zIndex
       }}

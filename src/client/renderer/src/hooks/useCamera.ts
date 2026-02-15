@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, screenToCanvas, zoomCamera } from '../lib/camera'
 import { MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED } from '../lib/constants'
 
-const DEFAULT_CAMERA: Camera = { x: 0, y: 0, z: 1 }
+// Start zoomed in tight on the root node (canvas origin) at screen center.
+// The initial fitAll flyTo will smoothly zoom out from here.
+const DEFAULT_CAMERA: Camera = { x: window.innerWidth / 2, y: window.innerHeight / 2, z: 10 }
 
 function lerpCamera(from: Camera, to: Camera, t: number): Camera {
   return {

@@ -120,6 +120,27 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    // Node state events (broadcast, no seq)
+    if (msg.type === 'node-updated') {
+      this.emit('node-updated', msg.nodeId, msg.fields)
+      return
+    }
+
+    if (msg.type === 'node-added') {
+      this.emit('node-added', msg.node)
+      return
+    }
+
+    if (msg.type === 'node-removed') {
+      this.emit('node-removed', msg.nodeId)
+      return
+    }
+
+    if (msg.type === 'snapshot') {
+      this.emit('snapshot', msg.sessionId, msg)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)
@@ -181,6 +202,68 @@ export class ServerClient extends EventEmitter {
 
   resize(sessionId: string, cols: number, rows: number): void {
     this.sendFireAndForget({ type: 'resize', sessionId, cols, rows })
+  }
+
+  // --- Node state mutations ---
+
+  async nodeSyncRequest(): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-sync-request' })
+  }
+
+  async nodeMove(nodeId: string, x: number, y: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-move', nodeId, x, y })
+  }
+
+  async nodeBatchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-batch-move', moves })
+  }
+
+  async nodeRename(nodeId: string, name: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-rename', nodeId, name })
+  }
+
+  async nodeSetColor(nodeId: string, colorPresetId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-set-color', nodeId, colorPresetId })
+  }
+
+  async nodeArchive(nodeId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-archive', nodeId })
+  }
+
+  async nodeBringToFront(nodeId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-bring-to-front', nodeId })
+  }
+
+  async nodeReparent(nodeId: string, newParentId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-reparent', nodeId, newParentId })
+  }
+
+  async terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-create', parentId, x, y, options })
+  }
+
+  async terminalResize(nodeId: string, cols: number, rows: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-resize', nodeId, cols, rows })
+  }
+
+  async terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-reincarnate', nodeId, options })
+  }
+
+  async markdownAdd(parentId: string, x: number, y: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'markdown-add', parentId, x, y })
+  }
+
+  async markdownResize(nodeId: string, width: number, height: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'markdown-resize', nodeId, width, height })
+  }
+
+  async markdownContent(nodeId: string, content: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'markdown-content', nodeId, content })
+  }
+
+  setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {
+    this.sendFireAndForget({ type: 'set-terminal-mode', sessionId, mode })
   }
 
   isConnected(): boolean {

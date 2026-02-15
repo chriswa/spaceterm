@@ -43,7 +43,6 @@ export interface PtyApi {
   onCwd(sessionId: string, callback: (cwd: string) => void): () => void
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
   onWaitingForUser(sessionId: string, callback: (waiting: boolean) => void): () => void
-  onServerStatus(callback: (connected: boolean) => void): () => void
 }
 
 const ptyApi: PtyApi = {
@@ -101,15 +100,73 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
-  onServerStatus: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, connected: boolean) => callback(connected)
-    ipcRenderer.on('server:status', listener)
-    return () => ipcRenderer.removeListener('server:status', listener)
+}
+
+interface NodeApi {
+  syncRequest(): Promise<any>
+  move(nodeId: string, x: number, y: number): Promise<void>
+  batchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void>
+  rename(nodeId: string, name: string): Promise<void>
+  setColor(nodeId: string, colorPresetId: string): Promise<void>
+  archive(nodeId: string): Promise<void>
+  bringToFront(nodeId: string): Promise<void>
+  reparent(nodeId: string, newParentId: string): Promise<void>
+  terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
+  terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
+  setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
+  onSnapshot(sessionId: string, callback: (snapshot: any) => void): () => void
+  markdownAdd(parentId: string, x: number, y: number): Promise<void>
+  markdownResize(nodeId: string, width: number, height: number): Promise<void>
+  markdownContent(nodeId: string, content: string): Promise<void>
+  onUpdated(callback: (nodeId: string, fields: any) => void): () => void
+  onAdded(callback: (node: any) => void): () => void
+  onRemoved(callback: (nodeId: string) => void): () => void
+}
+
+const nodeApi: NodeApi = {
+  syncRequest: () => ipcRenderer.invoke('node:sync-request'),
+  move: (nodeId, x, y) => ipcRenderer.invoke('node:move', nodeId, x, y),
+  batchMove: (moves) => ipcRenderer.invoke('node:batch-move', moves),
+  rename: (nodeId, name) => ipcRenderer.invoke('node:rename', nodeId, name),
+  setColor: (nodeId, colorPresetId) => ipcRenderer.invoke('node:set-color', nodeId, colorPresetId),
+  archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
+  bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
+  reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
+  terminalCreate: (parentId, x, y, options?) => ipcRenderer.invoke('node:terminal-create', parentId, x, y, options),
+  terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
+  terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
+  markdownAdd: (parentId, x, y) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
+  markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
+  markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
+
+  setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
+  onSnapshot: (sessionId, callback) => {
+    const channel = `snapshot:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: any) => callback(snapshot)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+  onUpdated: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, fields: any) => callback(nodeId, fields)
+    ipcRenderer.on('node:updated', listener)
+    return () => ipcRenderer.removeListener('node:updated', listener)
+  },
+  onAdded: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, node: any) => callback(node)
+    ipcRenderer.on('node:added', listener)
+    return () => ipcRenderer.removeListener('node:added', listener)
+  },
+  onRemoved: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: string) => callback(nodeId)
+    ipcRenderer.on('node:removed', listener)
+    return () => ipcRenderer.removeListener('node:removed', listener)
   }
 }
 
 contextBridge.exposeInMainWorld('api', {
   pty: ptyApi,
+  node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   tts: {

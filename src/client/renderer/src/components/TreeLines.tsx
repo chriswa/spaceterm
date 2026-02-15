@@ -1,12 +1,8 @@
-import { nodeCenter } from '../lib/tree-placement'
-
 export interface TreeLineNode {
   id: string
   parentId: string
   x: number
   y: number
-  width: number
-  height: number
 }
 
 interface TreeLinesProps {
@@ -26,8 +22,6 @@ export function TreeLines({ nodes }: TreeLinesProps) {
       }}
     >
       {nodes.map((n) => {
-        const child = nodeCenter(n.x, n.y, n.width, n.height)
-
         let parent: { x: number; y: number }
         if (n.parentId === 'root') {
           parent = { x: 0, y: 0 }
@@ -36,7 +30,7 @@ export function TreeLines({ nodes }: TreeLinesProps) {
           if (!parentNode) {
             parent = { x: 0, y: 0 }
           } else {
-            parent = nodeCenter(parentNode.x, parentNode.y, parentNode.width, parentNode.height)
+            parent = { x: parentNode.x, y: parentNode.y }
           }
         }
 
@@ -45,8 +39,8 @@ export function TreeLines({ nodes }: TreeLinesProps) {
             key={n.id}
             x1={parent.x}
             y1={parent.y}
-            x2={child.x}
-            y2={child.y}
+            x2={n.x}
+            y2={n.y}
             className="tree-line"
           />
         )
