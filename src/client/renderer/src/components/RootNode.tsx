@@ -86,16 +86,16 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     float base = grey * grey * grey;
     float whiteBlend = smoothstep(1.5, 2.5, c);
 
-    // Unselected: cyan/purple with white center
-    vec3 tintU = mix(vec3(0.6, 0.1, 0.9), vec3(0.0, 0.8, 1.0), smoothstep(0.3, 1.5, c));
-    vec3 unselected = mix(tintU * base, vec3(1.0), whiteBlend);
+    // Unselected: grey with black center (inverted)
+    vec3 tintU = vec3(mix(0.4, 0.8, smoothstep(0.3, 1.5, c)));
+    vec3 unselected = vec3(1.0) - mix(tintU * base, vec3(1.0), whiteBlend);
 
-    // Selected: orange/purple with white center
-    vec3 tintS = mix(vec3(0.8, 0.0, 0.0), vec3(1.0, 0.5, 0.0), smoothstep(0.3, 1.5, c));
-    vec3 selected = mix(tintS * base, vec3(1.0), whiteBlend);
+    // Selected: black/dark with white edges (inverted)
+    vec3 tintS = vec3(mix(0.0, 0.15, smoothstep(0.3, 1.5, c)));
+    vec3 selected = vec3(1.0) - mix(tintS * base, vec3(1.0), whiteBlend);
 
     vec3 rgb = mix(unselected, selected, uFocused);
-    float alpha = mix(smoothstep(0.5, 1.8, c), smoothstep(0.4, 1.3, c), uFocused);
+    float alpha = mix(smoothstep(0.8, 2.0, c), smoothstep(0.4, 1.3, c), uFocused);
     fragColor = vec4(rgb, alpha);
 }
 

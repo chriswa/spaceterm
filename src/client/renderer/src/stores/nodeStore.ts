@@ -1,13 +1,12 @@
 import { create } from 'zustand'
 import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, ArchivedNode } from '../../../../shared/state'
-import { terminalPixelSize, REMNANT_WIDTH, REMNANT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
+import { terminalPixelSize, DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
 
 // --- Helper to compute pixel size from node data ---
 
 export function nodePixelSize(node: NodeData): { width: number; height: number } {
   if (node.type === 'terminal') {
-    if (node.alive) return terminalPixelSize(node.cols, node.rows)
-    return { width: REMNANT_WIDTH, height: REMNANT_HEIGHT }
+    return terminalPixelSize(node.cols, node.rows)
   }
   if (node.type === 'directory') {
     return { width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT }
@@ -32,7 +31,6 @@ interface NodeStoreState {
 
   // Derived arrays
   liveTerminals: TerminalNodeData[]
-  deadTerminals: TerminalNodeData[]
   markdowns: MarkdownNodeData[]
   directories: DirectoryNodeData[]
 
@@ -60,14 +58,12 @@ interface NodeStoreState {
 function recomputeDerived(nodes: Record<string, NodeData>) {
   const nodeList = Object.values(nodes)
   const liveTerminals: TerminalNodeData[] = []
-  const deadTerminals: TerminalNodeData[] = []
   const markdowns: MarkdownNodeData[] = []
   const directories: DirectoryNodeData[] = []
 
   for (const node of nodeList) {
     if (node.type === 'terminal') {
-      if (node.alive) liveTerminals.push(node)
-      else deadTerminals.push(node)
+      liveTerminals.push(node)
     } else if (node.type === 'directory') {
       directories.push(node)
     } else {
@@ -75,7 +71,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
     }
   }
 
-  return { nodeList, liveTerminals, deadTerminals, markdowns, directories }
+  return { nodeList, liveTerminals, markdowns, directories }
 }
 
 function mergeNodes(
@@ -104,7 +100,6 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   localOverrides: {},
   nodes: {},
   liveTerminals: [],
-  deadTerminals: [],
   markdowns: [],
   directories: [],
   nodeList: [],

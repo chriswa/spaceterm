@@ -48,11 +48,6 @@ export const MARKDOWN_MIN_HEIGHT = 60
 export const DIRECTORY_WIDTH = 300
 export const DIRECTORY_HEIGHT = 60
 
-// Remnant node dimensions (dead terminal placeholder)
-// Width matches default 80-col terminal for visual consistency
-export const REMNANT_WIDTH = Math.ceil(DEFAULT_COLS * CELL_WIDTH + CHROME_W)
-export const REMNANT_HEIGHT = 90
-
 // Archive body sizing
 export const ARCHIVE_BODY_MIN_WIDTH = 380
 export const ARCHIVE_BODY_MAX_WIDTH = 500
@@ -64,6 +59,9 @@ export const FORCE_PADDING = 80
 export const FORCE_DEFAULT_SPEED = 20
 export const FORCE_MIN_SPEED = 5
 export const FORCE_MAX_SPEED = 640
+
+// Edge hover detection
+export const EDGE_HOVER_THRESHOLD_PX = 25
 
 export function terminalPixelSize(cols: number, rows: number): { width: number; height: number } {
   return {

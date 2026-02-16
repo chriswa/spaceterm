@@ -8,10 +8,18 @@ export interface TreeLineNode {
   y: number
 }
 
+export interface MaskRect {
+  x: number // center x (world space)
+  y: number // center y (world space)
+  width: number
+  height: number
+}
+
 interface CanvasBackgroundProps {
   camera: Camera
   cameraRef: React.RefObject<Camera>
   edgesRef: React.RefObject<TreeLineNode[]>
+  maskRectsRef: React.RefObject<MaskRect[]>
   edgesEnabled: boolean
   shadersEnabled: boolean
 }
@@ -136,7 +144,7 @@ void main() {
   float ndcX = 2.0 * screen.x / uResolution.x - 1.0;
   float ndcY = 1.0 - 2.0 * screen.y / uResolution.y;
   gl_Position = vec4(ndcX, ndcY, 0.0, 1.0);
-  vUV = vec2(a_uv.x, a_uv.y);
+  vUV = vec2(a_uv.x, a_uv.y + uTime);
 }
 `
 
@@ -218,7 +226,7 @@ const FLOATS_PER_EDGE = VERTS_PER_EDGE * FLOATS_PER_VERTEX // 24
 // Zoom exponent: (1/z)^0.7 gives ~5x at z=0.1, 1x at z=1.0
 const ZOOM_WIDTH_EXP = Math.log(5) / Math.log(10) // ≈ 0.699
 
-export function CanvasBackground({ cameraRef, edgesRef, edgesEnabled, shadersEnabled }: CanvasBackgroundProps) {
+export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, edgesEnabled, shadersEnabled }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
   const shadersEnabledRef = useRef(shadersEnabled)
@@ -282,6 +290,10 @@ export function CanvasBackground({ cameraRef, edgesRef, edgesEnabled, shadersEna
       edgeTexLoc = gl.getUniformLocation(edgeProg, 'uTexture')
       chevronTex = createChevronTexture(gl)
     }
+
+    // --- Mask buffer (reuses background program to paint over edges behind transparent cards) ---
+    const maskBuf = gl.createBuffer()
+    let maskVerts = new Float32Array(64 * 12) // 6 verts × 2 floats per rect
 
     // Reusable vertex array for edges — grows as needed
     let edgeVerts = new Float32Array(64 * FLOATS_PER_EDGE)
@@ -426,6 +438,56 @@ export function CanvasBackground({ cameraRef, edgesRef, edgesEnabled, shadersEna
         }
       }
 
+      // 3. Paint over edges behind transparent cards using the background shader
+      //    The bg fragment shader uses gl_FragCoord, so quads at any position
+      //    produce seamless background — effectively erasing the edges underneath.
+      if (shadersEnabledRef.current && edgesEnabledRef.current && bgProg && maskBuf) {
+        const rects = maskRectsRef.current
+        if (rects.length > 0) {
+          const needed = rects.length * 12 // 6 verts × 2 floats
+          if (maskVerts.length < needed) {
+            maskVerts = new Float32Array(needed)
+          }
+
+          let mOffset = 0
+          const w = canvas.width
+          const h = canvas.height
+
+          for (const rect of rects) {
+            // World → screen → NDC  (same transform as edge vertex shader)
+            const sl = (rect.x - rect.width / 2) * cam.z + cam.x
+            const sr = (rect.x + rect.width / 2) * cam.z + cam.x
+            const st = (rect.y - rect.height / 2) * cam.z + cam.y
+            const sb = (rect.y + rect.height / 2) * cam.z + cam.y
+
+            const nl = 2 * sl / w - 1
+            const nr = 2 * sr / w - 1
+            const nt = 1 - 2 * st / h
+            const nb = 1 - 2 * sb / h
+
+            // Triangle 1: TL, BL, TR
+            maskVerts[mOffset++] = nl; maskVerts[mOffset++] = nt
+            maskVerts[mOffset++] = nl; maskVerts[mOffset++] = nb
+            maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nt
+            // Triangle 2: BL, BR, TR
+            maskVerts[mOffset++] = nl; maskVerts[mOffset++] = nb
+            maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nb
+            maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nt
+          }
+
+          gl.useProgram(bgProg)
+          gl.bindBuffer(gl.ARRAY_BUFFER, maskBuf)
+          gl.bufferData(gl.ARRAY_BUFFER, maskVerts.subarray(0, mOffset), gl.DYNAMIC_DRAW)
+          gl.enableVertexAttribArray(bgPosLoc)
+          gl.vertexAttribPointer(bgPosLoc, 2, gl.FLOAT, false, 0, 0)
+          gl.uniform1f(bgTimeLoc, (now - bgT0) / 3333)
+          gl.uniform2f(bgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
+          gl.uniform1f(bgZoomLoc, cam.z)
+          gl.drawArrays(gl.TRIANGLES, 0, mOffset / 2)
+          gl.disableVertexAttribArray(bgPosLoc)
+        }
+      }
+
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
@@ -438,6 +500,7 @@ export function CanvasBackground({ cameraRef, edgesRef, edgesEnabled, shadersEna
       if (edgeProg) gl.deleteProgram(edgeProg)
       if (edgeBuf) gl.deleteBuffer(edgeBuf)
       if (chevronTex) gl.deleteTexture(chevronTex)
+      if (maskBuf) gl.deleteBuffer(maskBuf)
     }
   }, [])
 

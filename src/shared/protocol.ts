@@ -373,6 +373,12 @@ export interface MutationAckMessage {
   seq: number
 }
 
+export interface NodeAddAckMessage {
+  type: 'node-add-ack'
+  seq: number
+  nodeId: string
+}
+
 // --- Snapshot types ---
 
 /** A single run of characters with the same attributes */
@@ -421,6 +427,7 @@ export type ServerMessage =
   | NodeAddedMessage
   | NodeRemovedMessage
   | MutationAckMessage
+  | NodeAddAckMessage
   | SnapshotMessage
   | ValidateDirectoryResult
   | ServerErrorMessage

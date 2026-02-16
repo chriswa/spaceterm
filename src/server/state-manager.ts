@@ -43,7 +43,7 @@ export class StateManager {
       if (!this.state.rootArchivedChildren) {
         this.state.rootArchivedChildren = []
       }
-      this.markAllTerminalsDead()
+      // Dead terminal processing is done by the caller via processDeadTerminals()
     } else {
       this.state = {
         version: STATE_VERSION,
@@ -55,20 +55,45 @@ export class StateManager {
   }
 
   /**
-   * On startup, all terminals become remnants since PTY processes are gone.
+   * On startup, mark all terminals dead and return info for the caller to decide
+   * whether to revive (spawn new PTY) or archive each one.
    */
-  private markAllTerminalsDead(): void {
+  processDeadTerminals(): Array<{ nodeId: string; claudeSessionId?: string; cwd?: string }> {
+    const deadList: Array<{ nodeId: string; claudeSessionId?: string; cwd?: string }> = []
+
     for (const node of Object.values(this.state.nodes)) {
-      if (node.type === 'terminal' && node.alive) {
-        node.alive = false
-        node.claudeState = 'stopped'
-      }
       // Backward compat: remove old waitingForUser key if present in persisted state
       if (node.type === 'terminal' && 'waitingForUser' in node) {
         delete (node as any).waitingForUser
       }
+
+      if (node.type === 'terminal' && node.alive) {
+        node.alive = false
+        node.claudeState = 'stopped'
+
+        // End current terminal session
+        const currentSession = node.terminalSessions[node.terminalSessions.length - 1]
+        if (currentSession && !currentSession.endedAt) {
+          currentSession.endedAt = new Date().toISOString()
+        }
+
+        // Get most recent Claude session ID if any
+        const history = node.claudeSessionHistory ?? []
+        const latestClaude = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
+
+        deadList.push({ nodeId: node.id, claudeSessionId: latestClaude, cwd: node.cwd })
+      }
     }
+
     persistNow(this.state)
+    return deadList
+  }
+
+  /**
+   * Archive a specific terminal node (public wrapper for archiveNode).
+   */
+  archiveTerminal(nodeId: string): void {
+    this.archiveNode(nodeId)
   }
 
   getState(): ServerState {
@@ -146,7 +171,7 @@ export class StateManager {
   }
 
   /**
-   * Mark a terminal as dead (remnant) when its PTY exits.
+   * Handle terminal PTY exit: update metadata then immediately archive.
    */
   terminalExited(ptySessionId: string, exitCode: number): void {
     const node = this.getTerminalBySession(ptySessionId)
@@ -163,8 +188,9 @@ export class StateManager {
     }
 
     this.sessionToNodeId.delete(ptySessionId)
-    this.onNodeUpdate(node.id, { alive: false, exitCode, claudeState: 'stopped' } as Partial<TerminalNodeData>)
-    persistNow(this.state)
+
+    // Immediately archive instead of leaving as remnant
+    this.archiveNode(node.id)
   }
 
   /**

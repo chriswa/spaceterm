@@ -62,10 +62,10 @@ interface NodeApi {
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   onSnapshot(sessionId: string, callback: (snapshot: import('../../../shared/protocol').SnapshotMessage) => void): () => void
-  directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<void>
+  directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
-  markdownAdd(parentId: string, x: number, y: number): Promise<void>
+  markdownAdd(parentId: string, x: number, y: number): Promise<{ nodeId: string }>
   markdownResize(nodeId: string, width: number, height: number): Promise<void>
   markdownContent(nodeId: string, content: string): Promise<void>
   onUpdated(callback: (nodeId: string, fields: Partial<import('../../../shared/state').NodeData>) => void): () => void

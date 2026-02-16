@@ -2,7 +2,7 @@ import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import { SOCKET_DIR, SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
-import type { ClientMessage, ServerMessage } from '../shared/protocol'
+import type { ClientMessage, ServerMessage, CreateOptions } from '../shared/protocol'
 import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
@@ -15,6 +15,23 @@ import { LineParser } from './line-parser'
  * UPDATE THIS when Claude Code changes its compaction threshold.
  */
 const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 33_000
+
+/**
+ * Build CreateOptions for spawning a Claude Code PTY with full plugin/settings args.
+ */
+function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string): CreateOptions {
+  const statusLineSettings = JSON.stringify({
+    statusLine: {
+      type: 'command',
+      command: 'src/claude-code-plugin/scripts/statusline-handler.sh'
+    }
+  })
+  const args = ['--plugin-dir', 'src/claude-code-plugin', '--settings', statusLineSettings]
+  if (resumeSessionId) {
+    args.push('-r', resumeSessionId)
+  }
+  return { cwd, command: 'claude', args }
+}
 
 interface ClientConnection {
   socket: net.Socket
@@ -283,7 +300,37 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'node-unarchive': {
       stateManager.unarchiveNode(msg.parentNodeId, msg.archivedNodeId)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+
+      // Auto-reincarnate if the restored node is a terminal
+      const restoredNode = stateManager.getNode(msg.archivedNodeId)
+      if (restoredNode && restoredNode.type === 'terminal') {
+        const history = restoredNode.claudeSessionHistory ?? []
+        const latestClaudeId = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
+        if (latestClaudeId) {
+          try {
+            const options = buildClaudeCodeCreateOptions(restoredNode.cwd, latestClaudeId)
+            const { sessionId: newPtyId, cols, rows } = sessionManager.create(options)
+            snapshotManager.addSession(newPtyId, cols, rows)
+            if (restoredNode.shellTitleHistory?.length) {
+              sessionManager.seedTitleHistory(newPtyId, restoredNode.shellTitleHistory)
+            }
+            stateManager.reincarnateTerminal(msg.archivedNodeId, newPtyId, cols, rows)
+            client.attachedSessions.add(newPtyId)
+            send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols, rows })
+            console.log(`[unarchive] Reincarnated terminal ${msg.archivedNodeId.slice(0, 8)} with Claude session ${latestClaudeId.slice(0, 8)}`)
+          } catch (err: any) {
+            console.error(`[unarchive] Failed to reincarnate terminal ${msg.archivedNodeId.slice(0, 8)}: ${err.message}`)
+            stateManager.archiveTerminal(msg.archivedNodeId)
+            send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+          }
+        } else {
+          // No Claude session — archive it back
+          stateManager.archiveTerminal(msg.archivedNodeId)
+          send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        }
+      } else {
+        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      }
       break
     }
 
@@ -358,8 +405,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'directory-add': {
       try {
-        stateManager.createDirectory(msg.parentId, msg.x, msg.y, msg.cwd)
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        const dirNode = stateManager.createDirectory(msg.parentId, msg.x, msg.y, msg.cwd)
+        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: dirNode.id })
       } catch (err: any) {
         console.error(`directory-add failed: ${err.message}`)
         send(client.socket, { type: 'server-error', message: `directory-add failed: ${err.message}` })
@@ -397,8 +444,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'markdown-add': {
-      stateManager.createMarkdown(msg.parentId, msg.x, msg.y)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      const mdNode = stateManager.createMarkdown(msg.parentId, msg.x, msg.y)
+      send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: mdNode.id })
       break
     }
 
@@ -514,6 +561,26 @@ function startServer(): void {
       broadcastToAttached(sessionId, { type: 'claude-context', sessionId, contextRemainingPercent })
     }
   )
+
+  // --- Startup revival: revive terminals with Claude sessions, archive the rest ---
+  const deadTerminals = stateManager.processDeadTerminals()
+  for (const { nodeId, claudeSessionId, cwd } of deadTerminals) {
+    if (claudeSessionId) {
+      try {
+        const options = buildClaudeCodeCreateOptions(cwd, claudeSessionId)
+        const { sessionId, cols, rows } = sessionManager.create(options)
+        snapshotManager.addSession(sessionId, cols, rows)
+        stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
+        console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with Claude session ${claudeSessionId.slice(0, 8)}`)
+      } catch (err: any) {
+        console.error(`[startup] Failed to revive terminal ${nodeId.slice(0, 8)}: ${err.message}`)
+        stateManager.archiveTerminal(nodeId)
+      }
+    } else {
+      stateManager.archiveTerminal(nodeId)
+      console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (no Claude session)`)
+    }
+  }
 
   const server = net.createServer((socket) => {
     socket.setEncoding('utf8')

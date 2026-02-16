@@ -3,15 +3,15 @@ import { Canvas } from './components/Canvas'
 import { Toast } from './components/Toast'
 import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters } from './components/TerminalCard'
-import { RemnantCard } from './components/RemnantCard'
 import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { CanvasBackground } from './components/CanvasBackground'
-import type { TreeLineNode } from './components/CanvasBackground'
+import type { TreeLineNode, MaskRect } from './components/CanvasBackground'
 import { ReparentPreviewLine } from './components/ReparentPreviewLine'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
+import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
 import { cameraToFitBounds, unionBounds } from './lib/camera'
 import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM } from './lib/constants'
@@ -21,7 +21,7 @@ import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useShaderStore } from './stores/shaderStore'
 import { useEdgesStore } from './stores/edgesStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendTerminalReincarnate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
 
 const archiveDismissFlag = { active: false, timer: 0 }
 
@@ -47,17 +47,22 @@ export function App() {
   const [scrollMode, setScrollMode] = useState(false)
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; exiting?: boolean }>>([])
   const toastIdRef = useRef(0)
+  // Track "stopped unviewed" state for terminal animations
+  const prevClaudeStatesRef = useRef<Map<string, string>>(new Map())
+  const [stoppedUnviewedIds, setStoppedUnviewedIds] = useState<Set<string>>(new Set())
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
+  const lastFocusedRef = useRef<string | null>(null)
+  const navStackRef = useRef<string[]>([])
+  const pendingFlyToParentRef = useRef<string | null>(null)
 
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, flyToUnfocusZoom, inputDevice, toggleInputDevice } = useCamera(undefined, focusRef)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, inputDevice, toggleInputDevice } = useCamera(undefined, focusRef)
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
   const nodeList = useNodeStore(s => s.nodeList)
   const liveTerminals = useNodeStore(s => s.liveTerminals)
-  const deadTerminals = useNodeStore(s => s.deadTerminals)
   const markdowns = useNodeStore(s => s.markdowns)
   const directories = useNodeStore(s => s.directories)
   const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
@@ -74,6 +79,13 @@ export function App() {
   const edgesRef = useRef<TreeLineNode[]>([])
   edgesRef.current = treeLineNodes
 
+  const maskRects = useMemo(() =>
+    markdowns.map((n): MaskRect => ({ x: n.x, y: n.y, width: n.width, height: n.height })),
+    [markdowns]
+  )
+  const maskRectsRef = useRef<MaskRect[]>([])
+  maskRectsRef.current = maskRects
+
   const shadersEnabled = useShaderStore(s => s.shadersEnabled)
   const edgesEnabled = useEdgesStore(s => s.edgesEnabled)
 
@@ -81,10 +93,34 @@ export function App() {
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const reparentHoveredNodeId = useReparentStore(s => s.hoveredNodeId)
 
+  // Edge hover detection for edge splitting
+  const { hoveredEdge, hoveredEdgeRef } = useEdgeHover(cameraRef, edgesRef, edgesEnabled, !!reparentingNodeId)
+
+  // Toggle cursor when hovering an edge
+  useEffect(() => {
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+    if (hoveredEdge) {
+      viewport.style.cursor = 'pointer'
+      return () => { viewport.style.cursor = '' }
+    }
+  }, [hoveredEdge])
+
   // Initialize server sync on mount
   useEffect(() => {
     initServerSync()
   }, [])
+
+  // Track the focused node's parent so we can fly to it if the focused node disappears
+  const focusedParentRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!focusedId) {
+      focusedParentRef.current = null
+      return
+    }
+    const node = useNodeStore.getState().nodes[focusedId]
+    focusedParentRef.current = node ? node.parentId : null
+  }, [focusedId])
 
   // Subscribe to server errors → toast notifications
   useEffect(() => {
@@ -138,12 +174,16 @@ export function App() {
     batchMoveNodes
   })
 
-  const handleDragStart = useCallback((id: string) => {
+  const handleDragStart = useCallback((id: string, solo?: boolean) => {
     draggingRef.current.add(id)
-    const descendants = getDescendantIds(useNodeStore.getState().nodes, id)
-    dragDescendantsRef.current = descendants
-    for (const d of descendants) {
-      draggingRef.current.add(d)
+    if (solo) {
+      dragDescendantsRef.current = []
+    } else {
+      const descendants = getDescendantIds(useNodeStore.getState().nodes, id)
+      dragDescendantsRef.current = descendants
+      for (const d of descendants) {
+        draggingRef.current.add(d)
+      }
     }
   }, [])
 
@@ -225,8 +265,19 @@ export function App() {
     return { position, cwd }
   }, [])
 
+  const flashNode = useCallback((nodeId: string) => {
+    const el = document.querySelector(`[data-node-id="${nodeId}"]`)?.firstElementChild as HTMLElement | null
+    if (!el) return
+    el.classList.remove('card-shell--selection-flash')
+    void el.offsetWidth
+    el.classList.add('card-shell--selection-flash')
+  }, [])
+
   const handleNodeFocus = useCallback((nodeId: string) => {
+    flashNode(nodeId)
     setFocusedId(nodeId)
+    lastFocusedRef.current = nodeId
+    navStackRef.current = []
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
@@ -340,22 +391,8 @@ export function App() {
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
-    if (focusRef.current === id) {
-      focusRef.current = null
-      setFocusedId(null)
-      setScrollMode(false)
-    }
     await sendArchive(id)
-  }, [])
-
-  const handleTerminalExit = useCallback((id: string, _exitCode: number) => {
-    // Server handles state transition (alive → false) via node-updated broadcast.
-    // We just handle focus cleanup here.
-    if (focusRef.current === id) {
-      focusRef.current = null
-      setFocusedId(null)
-      setScrollMode(false)
-    }
+    // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
   }, [])
 
   const addTerminalAsChild = useCallback(async (parentId: string) => {
@@ -369,33 +406,6 @@ export function App() {
     const result = await sendTerminalCreate(parentId, position.x, position.y, buildClaudeCodeOptions({ cwd }))
     if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
   }, [computeChildPosition])
-
-  const handleResumeSession = useCallback(async (remnantId: string, claudeSessionId: string) => {
-    const remnant = useNodeStore.getState().nodes[remnantId]
-    if (remnant?.type !== 'terminal') return
-    const cwd = remnant.cwd
-
-    const history = remnant.claudeSessionHistory ?? []
-    const isMostRecent = history.length > 0 && history[history.length - 1].claudeSessionId === claudeSessionId
-
-    if (isMostRecent) {
-      // Reincarnate the remnant in-place with claude -r to resume the session
-      await sendTerminalReincarnate(remnantId, buildClaudeCodeOptions({ cwd, resumeSessionId: claudeSessionId }))
-      if (cwd) cwdMapRef.current.set(remnantId, cwd)
-      handleNodeFocus(remnantId)
-    } else {
-      // Spawn a new terminal surface for older sessions
-      const { position } = computeChildPosition(remnant.parentId)
-      const result = await sendTerminalCreate(
-        remnant.parentId,
-        position.x, position.y,
-        buildClaudeCodeOptions({ cwd, resumeSessionId: claudeSessionId }),
-        remnant.shellTitleHistory
-      )
-      if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-      handleNodeFocus(result.sessionId)
-    }
-  }, [handleNodeFocus, computeChildPosition])
 
   const fitAllNodes = useCallback(() => {
     const allNodeList = useNodeStore.getState().nodeList
@@ -418,6 +428,121 @@ export function App() {
     setFocusedId(null)
     setScrollMode(false)
   }, [])
+
+  const flyToParentAndChildren = useCallback((parentId: string) => {
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+
+    const allNodes = useNodeStore.getState().nodes
+    const rects: Array<{ x: number; y: number; width: number; height: number }> = []
+
+    if (parentId === 'root') {
+      rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+    } else {
+      const parent = allNodes[parentId]
+      if (parent) {
+        const size = nodePixelSize(parent)
+        rects.push({ x: parent.x - size.width / 2, y: parent.y - size.height / 2, ...size })
+      }
+    }
+
+    // Include immediate children
+    for (const node of Object.values(allNodes)) {
+      if (node.parentId === parentId) {
+        const size = nodePixelSize(node)
+        rects.push({ x: node.x - size.width / 2, y: node.y - size.height / 2, ...size })
+      }
+    }
+
+    const bounds = unionBounds(rects)
+    if (!bounds) return
+    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM))
+  }, [flyTo])
+
+  // Detect when focused node disappears (e.g. archived by server on terminal exit)
+  useEffect(() => {
+    const unsub = useNodeStore.subscribe((state, prevState) => {
+      const focused = focusRef.current
+      if (!focused || focused === 'root') return
+      if (!state.nodes[focused] && prevState.nodes[focused]) {
+        // Focused node was removed
+        const parentId = focusedParentRef.current ?? 'root'
+        focusRef.current = null
+        setFocusedId(null)
+        setScrollMode(false)
+        lastFocusedRef.current = parentId
+        flyToParentAndChildren(parentId)
+      }
+    })
+    return unsub
+  }, [flyToParentAndChildren])
+
+  // Track claudeState transitions to detect "stopped unviewed" terminals
+  useEffect(() => {
+    const unsub = useNodeStore.subscribe((state) => {
+      const prevStates = prevClaudeStatesRef.current
+      const additions: string[] = []
+      const removals: string[] = []
+
+      for (const node of Object.values(state.nodes)) {
+        if (node.type !== 'terminal') continue
+        const prev = prevStates.get(node.id)
+        if (prev === node.claudeState) continue
+
+        prevStates.set(node.id, node.claudeState)
+
+        if (node.claudeState === 'stopped' && prev !== undefined) {
+          // Transitioned TO stopped from an active state
+          additions.push(node.id)
+        } else if (node.claudeState !== 'stopped') {
+          // Transitioned AWAY from stopped (or new node with active state)
+          removals.push(node.id)
+        }
+      }
+
+      // Clean up removed nodes
+      for (const id of prevStates.keys()) {
+        if (!state.nodes[id]) {
+          prevStates.delete(id)
+          removals.push(id)
+        }
+      }
+
+      if (additions.length > 0 || removals.length > 0) {
+        setStoppedUnviewedIds(prev => {
+          const next = new Set(prev)
+          for (const id of additions) next.add(id)
+          for (const id of removals) next.delete(id)
+          return next
+        })
+      }
+    })
+    return unsub
+  }, [])
+
+  // Clear "stopped unviewed" flag when a terminal is focused
+  useEffect(() => {
+    if (!focusedId) return
+    setStoppedUnviewedIds(prev => {
+      if (!prev.has(focusedId)) return prev
+      const next = new Set(prev)
+      next.delete(focusedId)
+      return next
+    })
+  }, [focusedId])
+
+  // When a newly created node appears in the store, fly to its parent + siblings
+  useEffect(() => {
+    const unsub = useNodeStore.subscribe((state, prevState) => {
+      const pendingId = pendingFlyToParentRef.current
+      if (!pendingId) return
+      if (state.nodes[pendingId] && !prevState.nodes[pendingId]) {
+        pendingFlyToParentRef.current = null
+        flyToParentAndChildren(state.nodes[pendingId].parentId)
+      }
+    })
+    return unsub
+  }, [flyToParentAndChildren])
 
   const handleStartReparent = useCallback((nodeId: string) => {
     useReparentStore.getState().startReparent(nodeId)
@@ -473,24 +598,46 @@ export function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      // Don't steal keys from real text-editing controls (inputs, CodeMirror, etc.)
+      // Exclude xterm's hidden textarea — it's not a visible editing surface.
+      const active = document.activeElement as HTMLElement | null
+      if (active) {
+        const isXterm = !!active.closest('.xterm')
+        const isEditable = !isXterm && (
+          active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          active.isContentEditable
+        )
+        if (isEditable) {
+          // Allow Cmd+Arrow (word/line navigation) and Escape (exit editing) to reach the control
+          if (e.key === 'Escape' || (e.metaKey && e.key.startsWith('Arrow'))) return
+        }
+      }
+
       if (e.metaKey && e.key === 't') {
         e.preventDefault()
         e.stopPropagation()
         if (!focusRef.current) return
-        const { position, cwd } = computeChildPosition(focusRef.current)
-        const result = await sendTerminalCreate(focusRef.current, position.x, position.y, cwd ? { cwd } : undefined)
+        const parentId = focusRef.current
+        const { position, cwd } = computeChildPosition(parentId)
+        const result = await sendTerminalCreate(parentId, position.x, position.y, cwd ? { cwd } : undefined)
         if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-        handleNodeFocus(result.sessionId)
+        pendingFlyToParentRef.current = result.sessionId
+        setFocusedId(null)
+        setScrollMode(false)
       }
 
       if (e.metaKey && e.key === 'e') {
         e.preventDefault()
         e.stopPropagation()
         if (!focusRef.current) return
-        const { position, cwd } = computeChildPosition(focusRef.current)
-        const result = await sendTerminalCreate(focusRef.current, position.x, position.y, buildClaudeCodeOptions({ cwd }))
+        const parentId = focusRef.current
+        const { position, cwd } = computeChildPosition(parentId)
+        const result = await sendTerminalCreate(parentId, position.x, position.y, buildClaudeCodeOptions({ cwd }))
         if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-        handleNodeFocus(result.sessionId)
+        pendingFlyToParentRef.current = result.sessionId
+        setFocusedId(null)
+        setScrollMode(false)
       }
 
       if (e.metaKey && e.key === 'm') {
@@ -524,6 +671,142 @@ export function App() {
         }
       }
 
+      // Cmd+Up Arrow: navigate to parent node
+      if (e.metaKey && e.key === 'ArrowUp') {
+        e.preventDefault()
+        e.stopPropagation()
+        snapToTarget()
+        const target = focusRef.current ?? lastFocusedRef.current
+        if (!target) return
+        focusRef.current = null
+        setFocusedId(null)
+        setScrollMode(false)
+        navStackRef.current.push(target)
+        if (target === 'root') {
+          fitAllNodes()
+          lastFocusedRef.current = null
+        } else {
+          const node = useNodeStore.getState().nodes[target]
+          if (!node) return
+          flyToParentAndChildren(node.parentId)
+          lastFocusedRef.current = node.parentId
+          flashNode(node.parentId)
+        }
+      }
+
+      // Cmd+Down Arrow: navigate back down the nav stack, or into first child
+      if (e.metaKey && e.key === 'ArrowDown') {
+        e.preventDefault()
+        e.stopPropagation()
+        snapToTarget()
+        const stack = navStackRef.current
+        if (stack.length === 0) {
+          // Stack empty — navigate into the first child of the current node
+          const current = focusRef.current ?? lastFocusedRef.current
+          if (!current) return
+          const allNodes = useNodeStore.getState().nodes
+          const firstChild = Object.values(allNodes).find(n => n.parentId === current)
+          if (!firstChild) return
+          stack.push(current)
+          focusRef.current = null
+          setFocusedId(null)
+          setScrollMode(false)
+          flyToParentAndChildren(firstChild.id)
+          lastFocusedRef.current = firstChild.id
+          flashNode(firstChild.id)
+          return
+        }
+        const target = stack.pop()!
+        focusRef.current = null
+        setFocusedId(null)
+        setScrollMode(false)
+        if (stack.length === 0) {
+          // Bottom of the stack — actually focus the original node
+          handleNodeFocus(target)
+        } else {
+          // Still navigating — show target and its children
+          flyToParentAndChildren(target)
+          lastFocusedRef.current = target
+          flashNode(target)
+        }
+      }
+
+      // Cmd+Left/Right Arrow: cycle through siblings by angle around parent
+      if (e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault()
+        e.stopPropagation()
+        snapToTarget()
+        const target = focusRef.current ?? lastFocusedRef.current
+        if (!target || target === 'root') return
+        const allNodes = useNodeStore.getState().nodes
+        const node = allNodes[target]
+        if (!node) return
+        const parentId = node.parentId
+        const parentCenter = parentId === 'root' ? { x: 0, y: 0 } : allNodes[parentId] ? { x: allNodes[parentId].x, y: allNodes[parentId].y } : null
+        if (!parentCenter) return
+        const siblings = Object.values(allNodes).filter(n => n.parentId === parentId)
+        if (siblings.length <= 1) {
+          // Only child — do a full 360° tour back to the same node
+          const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+          if (!viewport) return
+          const size = nodePixelSize(node)
+          const bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
+          const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025)
+          flashNode(target)
+          setFocusedId(target)
+          lastFocusedRef.current = target
+          navStackRef.current = []
+          setScrollMode(node.type === 'terminal' && node.alive)
+          rotationalFlyTo({
+            parentCenter,
+            sourceCenter: { x: node.x, y: node.y },
+            targetCenter: { x: node.x, y: node.y },
+            targetCamera,
+            direction: e.key === 'ArrowRight' ? 'cw' : 'ccw'
+          })
+          return
+        }
+        // Sort siblings by angle from parent (atan2), clockwise in screen coords
+        const withAngles = siblings.map(s => ({
+          id: s.id,
+          angle: Math.atan2(s.y - parentCenter.y, s.x - parentCenter.x)
+        }))
+        withAngles.sort((a, b) => a.angle - b.angle)
+        const idx = withAngles.findIndex(s => s.id === target)
+        const len = withAngles.length
+        const nextIdx = e.key === 'ArrowRight'
+          ? (idx + 1) % len       // clockwise
+          : (idx - 1 + len) % len // counterclockwise
+        const nextId = withAngles[nextIdx].id
+        const nextNode = allNodes[nextId]
+        if (!nextNode) return
+
+        // Compute target camera (where we'd end up focused on the next node)
+        const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+        if (!viewport) return
+        const size = nodePixelSize(nextNode)
+        const bounds = { x: nextNode.x - size.width / 2, y: nextNode.y - size.height / 2, ...size }
+        const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025)
+
+        // Update focus state manually (same as handleNodeFocus but without flyTo)
+        flashNode(nextId)
+        setFocusedId(nextId)
+        lastFocusedRef.current = nextId
+        navStackRef.current = []
+        setScrollMode(nextNode.type === 'terminal' && nextNode.alive)
+        sendBringToFront(nextId)
+        bringToFront(nextId)
+
+        // Rotational fly-to: arc around the parent
+        rotationalFlyTo({
+          parentCenter,
+          sourceCenter: { x: node.x, y: node.y },
+          targetCenter: { x: nextNode.x, y: nextNode.y },
+          targetCamera,
+          direction: e.key === 'ArrowRight' ? 'cw' : 'ccw'
+        })
+      }
+
       // Escape: cancel reparent mode or stop TTS
       if (e.key === 'Escape') {
         const srcId = useReparentStore.getState().reparentingNodeId
@@ -539,7 +822,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [computeChildPosition, handleNodeFocus, speak, ttsStop, isSpeaking])
+  }, [computeChildPosition, handleNodeFocus, flyToParentAndChildren, fitAllNodes, snapToTarget, rotationalFlyTo, bringToFront, speak, ttsStop, isSpeaking])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -579,6 +862,13 @@ export function App() {
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
+  const handleEdgeSplit = useCallback(async (parentId: string, childId: string, point: { x: number; y: number }) => {
+    const result = await sendMarkdownAdd(parentId, point.x, point.y)
+    if (result?.nodeId) {
+      await sendReparent(childId, result.nodeId)
+    }
+  }, [])
+
   const handleCanvasUnfocus = useCallback(() => {
     if (archiveDismissFlag.active) {
       archiveDismissFlag.active = false
@@ -590,9 +880,16 @@ export function App() {
       handleNodeFocus(srcId)
       return
     }
+    // Edge split: click on a hovered edge to insert a markdown node
+    const edge = hoveredEdgeRef.current
+    if (edge && !focusRef.current) {
+      hoveredEdgeRef.current = null
+      handleEdgeSplit(edge.parentId, edge.childId, edge.point)
+      return
+    }
     handleUnfocus()
     flyToUnfocusZoom()
-  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus])
+  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, handleEdgeSplit, hoveredEdgeRef])
 
   return (
     <div className="app">
@@ -611,7 +908,7 @@ export function App() {
         onForceLayoutIncrease={forceLayoutIncrease}
         onForceLayoutDecrease={forceLayoutDecrease}
       />
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null}>
         <RootNode
           focused={focusedId === 'root'}
           onClick={() => handleNodeFocus('root')}
@@ -636,6 +933,8 @@ export function App() {
             shellTitleHistory={t.shellTitleHistory}
             cwd={t.cwd}
             focused={focusedId === t.id}
+            anyNodeFocused={focusedId !== null}
+            stoppedUnviewed={stoppedUnviewedIds.has(t.id)}
             scrollMode={scrollMode}
             onFocus={handleNodeFocus}
             onUnfocus={handleUnfocus}
@@ -655,40 +954,6 @@ export function App() {
             claudeSessionHistory={t.claudeSessionHistory}
             onClaudeSessionHistoryChange={handleClaudeSessionHistoryChange}
             claudeState={t.claudeState}
-            onExit={handleTerminalExit}
-            onNodeReady={handleNodeReady}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onStartReparent={handleStartReparent}
-            onReparentTarget={handleReparentTarget}
-          />
-        ))}
-        {deadTerminals.map((r) => (
-          <RemnantCard
-            key={r.id}
-            id={r.id}
-            x={r.x}
-            y={r.y}
-            zIndex={r.zIndex}
-            zoom={camera.z}
-            name={r.name}
-            colorPresetId={r.colorPresetId}
-            archivedChildren={r.archivedChildren}
-            shellTitleHistory={r.shellTitleHistory}
-            cwd={r.cwd}
-            claudeSessionHistory={r.claudeSessionHistory}
-            terminalSessions={r.terminalSessions}
-            exitCode={r.exitCode ?? 0}
-            focused={focusedId === r.id}
-            onFocus={handleNodeFocus}
-            onClose={handleRemoveNode}
-            onMove={handleMove}
-            onRename={handleRename}
-            onColorChange={handleColorChange}
-            onUnarchive={handleUnarchive}
-            onArchiveDelete={handleArchiveDelete}
-            onArchiveToggled={handleArchiveToggled}
-            onResumeSession={handleResumeSession}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
@@ -755,6 +1020,16 @@ export function App() {
             onReparentTarget={handleReparentTarget}
           />
         ))}
+        {hoveredEdge && (
+          <div
+            className="edge-split-indicator"
+            style={{
+              left: hoveredEdge.point.x,
+              top: hoveredEdge.point.y,
+              transform: `translate(-50%, -50%) scale(${1 / camera.z})`,
+            }}
+          />
+        )}
         {edgesEnabled && reparentingNodeId && reparentHoveredNodeId && (() => {
           const allNodes = useNodeStore.getState().nodes
           const srcNode = allNodes[reparentingNodeId]

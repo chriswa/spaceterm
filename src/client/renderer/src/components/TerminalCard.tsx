@@ -12,9 +12,17 @@ import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
-const LOW_ZOOM_THRESHOLD = 0.3
+const LOW_ZOOM_THRESHOLD = 0.2
 const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
 const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
+
+const darkenHex = (hex: string, amount: number): string => {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  const f = 1 - amount
+  return '#' + [r, g, b].map(c => Math.round(c * f).toString(16).padStart(2, '0')).join('')
+}
 
 export const terminalSelectionGetters = new Map<string, () => string>()
 
@@ -33,6 +41,8 @@ interface TerminalCardProps {
   shellTitleHistory?: string[]
   cwd?: string
   focused: boolean
+  anyNodeFocused: boolean
+  stoppedUnviewed: boolean
   scrollMode: boolean
   onFocus: (id: string) => void
   onUnfocus: () => void
@@ -55,14 +65,14 @@ interface TerminalCardProps {
   onClaudeStateChange?: (id: string, state: string) => void
   onExit?: (id: string, exitCode: number) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string) => void
+  onDragStart?: (id: string, solo?: boolean) => void
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
 }
 
 export function TerminalCard({
-  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, scrollMode,
+  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, anyNodeFocused, stoppedUnviewed, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget
@@ -528,7 +538,7 @@ export function TerminalCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
-        onDragStart?.(id)
+        onDragStart?.(id, ev.metaKey)
         if (isInteractiveTitle && document.activeElement instanceof HTMLElement) {
           document.activeElement.blur()
         }
@@ -565,8 +575,10 @@ export function TerminalCard({
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
     : ''
-  const isWaiting = claudeState === 'waiting_permission' || claudeState === 'waiting_plan'
-  const waitingClass = isWaiting && !focused ? 'terminal-card--waiting' : ''
+  const animationClass = anyNodeFocused ? '' :
+    claudeState === 'waiting_plan' ? 'terminal-card--waiting-plan' :
+    claudeState === 'waiting_permission' ? 'terminal-card--waiting-permission' :
+    stoppedUnviewed ? 'terminal-card--stopped-unviewed' : ''
 
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
@@ -619,7 +631,7 @@ export function TerminalCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
-      className={`terminal-card ${focusClass} ${waitingClass}`}
+      className={`terminal-card ${focusClass} ${animationClass}`}
       cardRef={cardRef}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
@@ -635,20 +647,30 @@ export function TerminalCard({
           }}
         />
       </div>
-      <div className="terminal-card__footer" style={preset ? { backgroundColor: preset.titleBarBg, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : undefined}>
-        Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
-        {lastClaudeSession && (
-          <>
-            {' | Claude: '}
-            <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId) }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
-            {' | '}
-            {claudeStateLabel(claudeState)}
-            {claudeContextPercent != null && (
-              <>{' | Remaining context: '}{claudeContextPercent.toFixed(2)}%</>
-            )}
-          </>
-        )}
+      {(() => {
+        const pct = Math.max(0, Math.min(100, claudeContextPercent ?? 100))
+        const bright = preset ? preset.titleBarBg : '#181825'
+        const dim = darkenHex(bright, 0.2)
+        return (
+      <div className="terminal-card__footer" style={preset ? { backgroundColor: dim, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : { backgroundColor: dim }}>
+        <div className="terminal-card__footer-healthbar" style={{ width: `${pct}%`, backgroundColor: bright }} />
+        <span className="terminal-card__footer-content">
+          Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
+          {lastClaudeSession && (
+            <>
+              {' | Claude: '}
+              <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId) }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+              {' | '}
+              {claudeStateLabel(claudeState)}
+            </>
+          )}
+          {claudeContextPercent != null && (
+            <span className="terminal-card__footer-context">Remaining context: {claudeContextPercent.toFixed(2)}%</span>
+          )}
+        </span>
       </div>
+        )
+      })()}
       {claudeSessionHistory && claudeSessionHistory.length > 0 && (
         <div className="terminal-card__session-history">
           {[...claudeSessionHistory].reverse().map((entry, i) => (

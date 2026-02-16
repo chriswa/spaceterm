@@ -186,17 +186,40 @@ html, body, #root {
   border-color: #fab387;
 }
 
-.terminal-card.terminal-card--waiting {
-  animation: waiting-outline 1.5s ease-in-out infinite;
+.terminal-card.terminal-card--waiting-plan {
+  animation: waiting-plan-outline 1.5s ease-in-out infinite;
 }
 
-@keyframes waiting-outline {
-  0% {
-    box-shadow: 0 0 0 10px rgba(137, 220, 235, 0.6);
-  }
-  100% {
-    box-shadow: 0 0 0 2px rgba(137, 220, 235, 0);
-  }
+@keyframes waiting-plan-outline {
+  0% { box-shadow: 0 0 0 10px rgba(203, 166, 247, 0.6); }
+  100% { box-shadow: 0 0 0 2px rgba(203, 166, 247, 0); }
+}
+
+.terminal-card.terminal-card--waiting-permission {
+  animation: waiting-permission-outline 1.5s ease-in-out infinite;
+}
+
+@keyframes waiting-permission-outline {
+  0% { box-shadow: 0 0 0 10px rgba(243, 139, 168, 0.6); }
+  100% { box-shadow: 0 0 0 2px rgba(243, 139, 168, 0); }
+}
+
+.terminal-card.terminal-card--stopped-unviewed {
+  animation: stopped-unviewed-outline 1.5s ease-in-out infinite;
+}
+
+@keyframes stopped-unviewed-outline {
+  0% { box-shadow: 0 0 0 10px rgba(137, 220, 235, 0.6); }
+  100% { box-shadow: 0 0 0 2px rgba(137, 220, 235, 0); }
+}
+
+.card-shell--selection-flash {
+  animation: selection-flash 0.5s ease-out forwards !important;
+}
+
+@keyframes selection-flash {
+  0% { box-shadow: 0 0 0 30px rgba(203, 166, 247, 0.7); }
+  100% { box-shadow: 0 0 0 0px rgba(203, 166, 247, 0); }
 }
 
 .terminal-card__header {
@@ -357,6 +380,7 @@ html, body, #root {
 }
 
 .terminal-card__footer {
+  position: relative;
   background: #181825;
   border-top: 1px solid #313244;
   padding: 2px 10px;
@@ -366,6 +390,24 @@ html, body, #root {
   white-space: nowrap;
   user-select: none;
   color: #6c7086;
+}
+
+.terminal-card__footer-healthbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  transition: width 0.5s ease;
+}
+
+.terminal-card__footer-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+}
+
+.terminal-card__footer-context {
+  margin-left: auto;
 }
 
 .terminal-card__footer-id {
@@ -420,70 +462,6 @@ html, body, #root {
 
 .terminal-card:not(.terminal-card--focused) .terminal-card__body:active {
   cursor: grabbing;
-}
-
-/* Remnant Card (dead terminal placeholder) */
-.remnant-card {
-  position: relative;
-  border-radius: 8px;
-  overflow: visible;
-  border: 2px solid #313244;
-  background: #1e1e2e;
-  display: flex;
-  flex-direction: column;
-  transition: border-color 0.15s;
-  cursor: grab;
-}
-
-.remnant-card:active {
-  cursor: grabbing;
-}
-
-.remnant-card:hover {
-  border-color: #585b70;
-}
-
-.remnant-card.remnant-card--focused {
-  border-color: #cba6f7;
-}
-
-.remnant-card__body {
-  flex: 1;
-  padding: 6px 10px;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.remnant-card__info {
-  font-size: 11px;
-  line-height: 16px;
-  color: #6c7086;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.remnant-card__exit {
-  font-size: 10px;
-  line-height: 14px;
-  color: #585b70;
-  margin-top: 2px;
-}
-
-.remnant-card__sessions {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 6px;
-}
-
-.remnant-card__sessions-header {
-  font-size: 9px;
-  line-height: 12px;
-  color: #585b70;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 2px;
 }
 
 /* Markdown Card */
@@ -987,10 +965,6 @@ html, body, #root {
   border-radius: 0 0 6px 6px;
 }
 
-.remnant-card__body:last-child {
-  border-radius: 0 0 6px 6px;
-}
-
 /* Toast notifications */
 .toast-container {
   position: fixed;
@@ -1032,6 +1006,19 @@ html, body, #root {
 @keyframes toast-out {
   from { opacity: 1; transform: translateY(0); }
   to   { opacity: 0; transform: translateY(8px); }
+}
+
+/* Edge split hover indicator */
+.edge-split-indicator {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 8px 2px rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+  transform-origin: center center;
+  transition: opacity 0.1s ease;
 }
 
 /* Reparent preview line — white variant of chevron lines */

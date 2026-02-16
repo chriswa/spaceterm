@@ -26,7 +26,7 @@ interface DirectoryCardProps {
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string) => void
+  onDragStart?: (id: string, solo?: boolean) => void
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
@@ -148,7 +148,7 @@ export function DirectoryCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
-        onDragStart?.(id)
+        onDragStart?.(id, ev.metaKey)
       }
 
       if (dragging) {

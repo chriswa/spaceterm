@@ -37,7 +37,7 @@ interface MarkdownCardProps {
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string) => void
+  onDragStart?: (id: string, solo?: boolean) => void
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
@@ -417,9 +417,7 @@ export function MarkdownCard({
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    if (focused) {
-      view.focus()
-    } else {
+    if (!focused) {
       view.contentDOM.blur()
     }
   }, [focused])
@@ -461,7 +459,7 @@ export function MarkdownCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
-        onDragStart?.(id)
+        onDragStart?.(id, ev.metaKey)
       }
 
       if (dragging && !bodyClickWhileFocused) {
@@ -478,6 +476,7 @@ export function MarkdownCard({
         onReparentTarget?.(id)
       } else {
         onFocus(id)
+        viewRef.current?.focus()
       }
     }
 

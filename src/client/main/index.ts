@@ -145,7 +145,9 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('node:directory-add', async (_event, parentId: string, x: number, y: number, cwd: string) => {
-    await client!.directoryAdd(parentId, x, y, cwd)
+    const resp = await client!.directoryAdd(parentId, x, y, cwd)
+    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
+    return {}
   })
 
   ipcMain.handle('node:directory-cwd', async (_event, nodeId: string, cwd: string) => {
@@ -159,7 +161,9 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('node:markdown-add', async (_event, parentId: string, x: number, y: number) => {
-    await client!.markdownAdd(parentId, x, y)
+    const resp = await client!.markdownAdd(parentId, x, y)
+    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
+    return {}
   })
 
   ipcMain.handle('node:markdown-resize', async (_event, nodeId: string, width: number, height: number) => {

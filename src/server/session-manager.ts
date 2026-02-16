@@ -1,5 +1,6 @@
 import * as pty from 'node-pty'
 import { existsSync } from 'fs'
+import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
@@ -63,8 +64,12 @@ export class SessionManager {
     const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
     const home = process.env.HOME || '/'
 
-    // Resolve working directory: use options.cwd if it exists on disk, else $HOME
-    const cwd = options?.cwd && existsSync(options.cwd) ? options.cwd : home
+    // Resolve working directory: expand ~ and use if it exists on disk, else $HOME
+    let resolvedCwd = options?.cwd
+    if (resolvedCwd?.startsWith('~')) {
+      resolvedCwd = join(home, resolvedCwd.slice(1))
+    }
+    const cwd = resolvedCwd && existsSync(resolvedCwd) ? resolvedCwd : home
 
     const baseEnv = process.env as Record<string, string>
     const isCommand = !!options?.command
