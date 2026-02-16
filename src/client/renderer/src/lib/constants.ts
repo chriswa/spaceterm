@@ -29,11 +29,25 @@ export const PINCH_ZOOM_THRESHOLD = 2           // min |deltaY| per event with c
 export const CELL_WIDTH = 8.4375
 export const CELL_HEIGHT = 16
 
-// Card chrome (borders + header + body padding + footer) around the terminal area.
+// Card chrome sub-constants — update these when CSS changes.
+// Terminal body gets an explicit height from CELL_HEIGHT × rows + BODY_PADDING_TOP,
+// so if CHROME_H drifts the card border will visibly overflow rather than silently
+// giving the terminal the wrong row count.
+export const CARD_BORDER = 2
+export const HEADER_PADDING_V = 6       // .card-shell__head padding top & bottom
+export const HEADER_CONTENT_H = 20      // tallest child: 20px action buttons
+export const HEADER_BORDER_BOTTOM = 1   // .card-shell__head border-bottom
+export const BODY_PADDING_TOP = 2       // .terminal-card__body padding-top
+export const FOOTER_HEIGHT = 20         // .terminal-card__footer height (border-box, includes 1px border-top)
+
 // Horizontal: 2px border × 2 + 2px body padding × 2 + 8px scrollbar gutter = 16px
-// Vertical: 2px border × 2 + 33px header (6px pad + 20px buttons + 6px pad + 1px border-bottom) + 2px body padding-top + 20px footer (border-box) + 2px border × 2 = 59px
 export const CHROME_W = 16
-export const CHROME_H = 59
+// Vertical: computed from sub-constants above
+export const CHROME_H =
+  CARD_BORDER * 2 +
+  HEADER_PADDING_V * 2 + HEADER_CONTENT_H + HEADER_BORDER_BOTTOM +
+  BODY_PADDING_TOP +
+  FOOTER_HEIGHT
 
 export const CHILD_PLACEMENT_DISTANCE = 1250
 export const ROOT_NODE_RADIUS = 150
@@ -61,7 +75,8 @@ export const FORCE_MIN_SPEED = 5
 export const FORCE_MAX_SPEED = 640
 
 // Edge hover detection
-export const EDGE_HOVER_THRESHOLD_PX = 25
+export const EDGE_HOVER_THRESHOLD_PX = 12
+export const EDGE_SPLIT_NODE_MARGIN_PX = 30
 
 export function terminalPixelSize(cols: number, rows: number): { width: number; height: number } {
   return {

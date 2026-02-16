@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage } from '../lib/camera'
+import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage } from '../lib/camera'
 import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY } from '../lib/constants'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
@@ -385,11 +385,76 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     rafRef.current = requestAnimationFrame(rotTick)
   }, [applyToDOM])
 
+  const hopFlyTo = useCallback((params: {
+    targetCamera: Camera
+    targetBounds: { x: number; y: number; width: number; height: number }
+    duration?: number
+  }) => {
+    const { targetCamera, targetBounds, duration = 1200 } = params
+
+    cancelAnimationFrame(rafRef.current)
+    animatingRef.current = true
+    clearTimeout(snapBackTimerRef.current)
+    targetRef.current = targetCamera
+
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
+
+    const startCamera = { ...cameraRef.current }
+
+    const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, startCamera)
+    const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, targetCamera)
+
+    const midBounds = unionBounds([
+      { x: sourceCenter.x, y: sourceCenter.y, width: 0, height: 0 },
+      targetBounds
+    ])
+    if (!midBounds) return
+
+    const midZoom = cameraToFitBounds(midBounds, vw, vh, 0.15, UNFOCUS_SNAP_ZOOM).z
+    const zoomArc = midZoom - (startCamera.z + targetCamera.z) / 2
+
+    const quarticEase = (t: number) =>
+      t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2
+
+    const startTime = performance.now()
+
+    const hopTick = (now: number) => {
+      const elapsed = now - startTime
+      const rawT = Math.min(elapsed / duration, 1)
+      const tPos = quarticEase(rawT)
+
+      const cx = sourceCenter.x + (targetCenter.x - sourceCenter.x) * tPos
+      const cy = sourceCenter.y + (targetCenter.y - sourceCenter.y) * tPos
+
+      const zoom = startCamera.z + (targetCamera.z - startCamera.z) * rawT + zoomArc * Math.sin(Math.PI * rawT)
+
+      const cam: Camera = { x: vw / 2 - cx * zoom, y: vh / 2 - cy * zoom, z: zoom }
+      cameraRef.current = cam
+      applyToDOM(cam)
+
+      if (rawT >= 1) {
+        cameraRef.current = { ...targetCamera }
+        targetRef.current = { ...targetCamera }
+        applyToDOM(targetCamera)
+        setCamera(targetCamera)
+        animatingRef.current = false
+        return
+      }
+
+      rafRef.current = requestAnimationFrame(hopTick)
+    }
+
+    rafRef.current = requestAnimationFrame(hopTick)
+  }, [applyToDOM])
+
   const toggleInputDevice = useCallback(() => {
     const next = inputDeviceRef.current === 'mouse' ? 'trackpad' : 'mouse'
     inputDeviceRef.current = next
     setInputDevice(next)
   }, [])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef }
 }

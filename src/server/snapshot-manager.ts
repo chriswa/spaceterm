@@ -1,5 +1,6 @@
 import { Terminal, type IBufferCell } from '@xterm/headless'
 import type { AttrSpan, SnapshotRow, SnapshotMessage } from '../shared/protocol'
+import { ANSI_COLORS, DEFAULT_FG, DEFAULT_BG, CUBE_STEPS } from '../shared/theme'
 
 const TICK_INTERVAL = 100 // 10 ticks/sec, one dirty session per tick
 
@@ -11,15 +12,6 @@ interface HeadlessSession {
   cols: number
   rows: number
 }
-
-// Default xterm.js ANSI color palette (matches client)
-const ANSI_COLORS = [
-  '#000000', '#cd3131', '#0dbc79', '#e5e510', '#2472c8', '#bc3fbc', '#11a8cd', '#e5e5e5',
-  '#666666', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#e5e5e5'
-]
-
-const DEFAULT_FG = '#cccccc'
-const DEFAULT_BG = '#1e1e2e'
 
 export class SnapshotManager {
   private sessions = new Map<string, HeadlessSession>()
@@ -195,9 +187,9 @@ export class SnapshotManager {
         // 256-color palette: just return a reasonable approximation
         if (idx >= 16 && idx < 232) {
           const n = idx - 16
-          const r = Math.floor(n / 36) * 51
-          const g = Math.floor((n % 36) / 6) * 51
-          const b = (n % 6) * 51
+          const r = CUBE_STEPS[Math.floor(n / 36) % 6]
+          const g = CUBE_STEPS[Math.floor((n % 36) / 6)]
+          const b = CUBE_STEPS[n % 6]
           return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
         }
         if (idx >= 232 && idx < 256) {
@@ -228,9 +220,9 @@ export class SnapshotManager {
         if (idx >= 0 && idx < 16) return ANSI_COLORS[idx]
         if (idx >= 16 && idx < 232) {
           const n = idx - 16
-          const r = Math.floor(n / 36) * 51
-          const g = Math.floor((n % 36) / 6) * 51
-          const b = (n % 6) * 51
+          const r = CUBE_STEPS[Math.floor(n / 36) % 6]
+          const g = CUBE_STEPS[Math.floor((n % 36) / 6)]
+          const b = CUBE_STEPS[n % 6]
           return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
         }
         if (idx >= 232 && idx < 256) {

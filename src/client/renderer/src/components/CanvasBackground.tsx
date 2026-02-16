@@ -15,11 +15,20 @@ export interface MaskRect {
   height: number
 }
 
+export interface ReparentEdge {
+  fromX: number
+  fromY: number
+  toX: number
+  toY: number
+}
+
 interface CanvasBackgroundProps {
   camera: Camera
   cameraRef: React.RefObject<Camera>
   edgesRef: React.RefObject<TreeLineNode[]>
   maskRectsRef: React.RefObject<MaskRect[]>
+  focusedIdRef: React.RefObject<string | null>
+  reparentEdgeRef: React.RefObject<ReparentEdge | null>
   edgesEnabled: boolean
   shadersEnabled: boolean
 }
@@ -218,6 +227,36 @@ function createChevronTexture(gl: WebGLRenderingContext): WebGLTexture | null {
   return tex
 }
 
+function createWhiteChevronTexture(gl: WebGLRenderingContext): WebGLTexture | null {
+  const size = 20
+  const offscreen = document.createElement('canvas')
+  offscreen.width = size
+  offscreen.height = size
+  const ctx = offscreen.getContext('2d')
+  if (!ctx) return null
+
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 3
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  ctx.moveTo(3, 16)
+  ctx.lineTo(10, 4)
+  ctx.lineTo(17, 16)
+  ctx.stroke()
+
+  const tex = gl.createTexture()
+  if (!tex) return null
+  gl.bindTexture(gl.TEXTURE_2D, tex)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offscreen)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+  return tex
+}
+
 const BASE_HALF_WIDTH = 10
 const BASE_TILE_SIZE = 40 // world units per texture repeat
 const FLOATS_PER_VERTEX = 4 // x, y, u, v
@@ -226,7 +265,7 @@ const FLOATS_PER_EDGE = VERTS_PER_EDGE * FLOATS_PER_VERTEX // 24
 // Zoom exponent: (1/z)^0.7 gives ~5x at z=0.1, 1x at z=1.0
 const ZOOM_WIDTH_EXP = Math.log(5) / Math.log(10) // ≈ 0.699
 
-export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, edgesEnabled, shadersEnabled }: CanvasBackgroundProps) {
+export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdRef, reparentEdgeRef, edgesEnabled, shadersEnabled }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
   const shadersEnabledRef = useRef(shadersEnabled)
@@ -278,6 +317,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, edgesEnabl
     let edgeTimeLoc: WebGLUniformLocation | null = null
     let edgeTexLoc: WebGLUniformLocation | null = null
     let chevronTex: WebGLTexture | null = null
+    let whiteChevronTex: WebGLTexture | null = null
 
     if (edgeProg) {
       edgeBuf = gl.createBuffer()
@@ -289,6 +329,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, edgesEnabl
       edgeTimeLoc = gl.getUniformLocation(edgeProg, 'uTime')
       edgeTexLoc = gl.getUniformLocation(edgeProg, 'uTexture')
       chevronTex = createChevronTexture(gl)
+      whiteChevronTex = createWhiteChevronTexture(gl)
     }
 
     // --- Mask buffer (reuses background program to paint over edges behind transparent cards) ---
@@ -435,6 +476,88 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, edgesEnabl
             gl.disableVertexAttribArray(edgePosLoc)
             gl.disableVertexAttribArray(edgeUVLoc)
           }
+
+          // 2b. Draw highlight edges (focused parent edge + reparent preview) with white texture
+          if (whiteChevronTex) {
+            let hlOffset = 0
+            let hlVertexCount = 0
+
+            // Helper to emit one quad into edgeVerts at hlOffset
+            const emitQuad = (px: number, py: number, cx: number, cy: number) => {
+              const dx = cx - px
+              const dy = cy - py
+              const len = Math.sqrt(dx * dx + dy * dy)
+              if (len === 0) return
+              const nx = -dy / len
+              const ny = dx / len
+              const vLen = len / tileSize
+              const v0x = px + nx * hw; const v0y = py + ny * hw
+              const v1x = px - nx * hw; const v1y = py - ny * hw
+              const v2x = cx + nx * hw; const v2y = cy + ny * hw
+              const v3x = cx - nx * hw; const v3y = cy - ny * hw
+              edgeVerts[hlOffset++] = v0x; edgeVerts[hlOffset++] = v0y
+              edgeVerts[hlOffset++] = 0;   edgeVerts[hlOffset++] = 0
+              edgeVerts[hlOffset++] = v1x; edgeVerts[hlOffset++] = v1y
+              edgeVerts[hlOffset++] = 1;   edgeVerts[hlOffset++] = 0
+              edgeVerts[hlOffset++] = v2x; edgeVerts[hlOffset++] = v2y
+              edgeVerts[hlOffset++] = 0;   edgeVerts[hlOffset++] = vLen
+              edgeVerts[hlOffset++] = v1x; edgeVerts[hlOffset++] = v1y
+              edgeVerts[hlOffset++] = 1;   edgeVerts[hlOffset++] = 0
+              edgeVerts[hlOffset++] = v3x; edgeVerts[hlOffset++] = v3y
+              edgeVerts[hlOffset++] = 1;   edgeVerts[hlOffset++] = vLen
+              edgeVerts[hlOffset++] = v2x; edgeVerts[hlOffset++] = v2y
+              edgeVerts[hlOffset++] = 0;   edgeVerts[hlOffset++] = vLen
+              hlVertexCount += 6
+            }
+
+            // Focused node → parent edge
+            const focusedId = focusedIdRef.current
+            if (focusedId) {
+              const focusedNode = edges.find(e => e.id === focusedId)
+              if (focusedNode) {
+                let parentPos: { x: number; y: number } | null = null
+                if (focusedNode.parentId === 'root') {
+                  parentPos = { x: 0, y: 0 }
+                } else {
+                  parentPos = posMap.get(focusedNode.parentId) ?? null
+                }
+                if (parentPos) {
+                  emitQuad(parentPos.x, parentPos.y, focusedNode.x, focusedNode.y)
+                }
+              }
+            }
+
+            // Reparent preview edge
+            const rEdge = reparentEdgeRef.current
+            if (rEdge) {
+              emitQuad(rEdge.fromX, rEdge.fromY, rEdge.toX, rEdge.toY)
+            }
+
+            if (hlVertexCount > 0) {
+              gl.useProgram(edgeProg)
+              gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf)
+              gl.bufferData(gl.ARRAY_BUFFER, edgeVerts.subarray(0, hlVertexCount * FLOATS_PER_VERTEX), gl.DYNAMIC_DRAW)
+
+              const stride = FLOATS_PER_VERTEX * 4
+              gl.enableVertexAttribArray(edgePosLoc)
+              gl.vertexAttribPointer(edgePosLoc, 2, gl.FLOAT, false, stride, 0)
+              gl.enableVertexAttribArray(edgeUVLoc)
+              gl.vertexAttribPointer(edgeUVLoc, 2, gl.FLOAT, false, stride, 8)
+
+              gl.activeTexture(gl.TEXTURE0)
+              gl.bindTexture(gl.TEXTURE_2D, whiteChevronTex)
+              gl.uniform1i(edgeTexLoc, 0)
+
+              gl.uniform2f(edgePanLoc, cam.x, cam.y)
+              gl.uniform1f(edgeZoomLoc, cam.z)
+              gl.uniform2f(edgeResLoc, canvas.width, canvas.height)
+              gl.uniform1f(edgeTimeLoc, (now - edgeT0) / 2000)
+
+              gl.drawArrays(gl.TRIANGLES, 0, hlVertexCount)
+              gl.disableVertexAttribArray(edgePosLoc)
+              gl.disableVertexAttribArray(edgeUVLoc)
+            }
+          }
         }
       }
 
@@ -500,6 +623,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, edgesEnabl
       if (edgeProg) gl.deleteProgram(edgeProg)
       if (edgeBuf) gl.deleteBuffer(edgeBuf)
       if (chevronTex) gl.deleteTexture(chevronTex)
+      if (whiteChevronTex) gl.deleteTexture(whiteChevronTex)
       if (maskBuf) gl.deleteBuffer(maskBuf)
     }
   }, [])

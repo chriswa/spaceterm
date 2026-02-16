@@ -3,29 +3,49 @@ import { useAudioStore } from '../stores/audioStore'
 
 /**
  * Drives --pulse-spread and --pulse-alpha CSS custom properties on #root
- * via a single requestAnimationFrame loop. Always outputs a consistent
- * oscillation: phase-locked to detected beats when a BPM estimate exists,
- * falling back to a gentle sine when there's no estimate yet.
+ * via a single requestAnimationFrame loop. Interpolates the PLP phase at
+ * 60fps for a smooth sine wave, falling back to a gentle sine when no
+ * BPM estimate exists.
  */
 export function useBeatPulse(): void {
   useEffect(() => {
     let rafId = 0
     const root = document.getElementById('root')
 
+    // Local interpolation state
+    let localPhase = 0
+    let lastBpm = 0
+    let lastStorePhase = 0
+    let prevTime = performance.now()
+
     const tick = () => {
       rafId = requestAnimationFrame(tick)
       if (!root) return
 
       const now = performance.now()
+      const dt = now - prevTime
+      prevTime = now
+
       const { phase, bpm } = useAudioStore.getState()
 
       let pulse: number
 
       if (bpm > 0) {
-        // Phase-driven beat pulse at full strength — no confidence scaling.
-        // Always outputs a consistent oscillation as long as we have a BPM estimate.
-        // Originally exp(-6 * phase) — reduced for a smoother, less spiky pulse
-        pulse = Math.exp(-1 * phase)
+        const beatPeriodMs = 60000 / bpm
+
+        // Sync local phase when store updates
+        if (phase !== lastStorePhase || bpm !== lastBpm) {
+          localPhase = phase
+          lastStorePhase = phase
+          lastBpm = bpm
+        } else {
+          // Advance local phase based on elapsed time
+          localPhase += dt / beatPeriodMs
+          if (localPhase >= 1) localPhase -= Math.floor(localPhase)
+        }
+
+        // Raised cosine: 1.0 on beat, 0.0 at midpoint
+        pulse = 0.5 + 0.5 * Math.cos(2 * Math.PI * localPhase)
       } else {
         // No BPM estimate yet: gentle sine oscillation at ~0.67Hz (period 1500ms)
         pulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * now / 1500)

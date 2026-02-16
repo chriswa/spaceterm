@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { Toast } from './components/Toast'
 import { RootNode } from './components/RootNode'
-import { TerminalCard, terminalSelectionGetters } from './components/TerminalCard'
+import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers } from './components/TerminalCard'
 import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { CanvasBackground } from './components/CanvasBackground'
-import type { TreeLineNode, MaskRect } from './components/CanvasBackground'
-import { ReparentPreviewLine } from './components/ReparentPreviewLine'
+import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
@@ -25,7 +24,7 @@ import { useEdgesStore } from './stores/edgesStore'
 import { useAudioStore } from './stores/audioStore'
 import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
 
-interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange'; addedAt: number }
+interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; addedAt: number }
 
 const archiveDismissFlag = { active: false, timer: 0 }
 
@@ -54,6 +53,8 @@ export function App() {
   // Track "stopped unviewed" state for terminal animations
   const prevClaudeStatesRef = useRef<Map<string, string>>(new Map())
   const [stoppedUnviewedIds, setStoppedUnviewedIds] = useState<Set<string>>(new Set())
+  const [permissionUnviewedIds, setPermissionUnviewedIds] = useState<Set<string>>(new Set())
+  const [planUnviewedIds, setPlanUnviewedIds] = useState<Set<string>>(new Set())
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
   const lastFocusedRef = useRef<string | null>(null)
@@ -61,7 +62,7 @@ export function App() {
   const crabTimestampsRef = useRef<Map<string, number>>(new Map())
 
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef)
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
@@ -90,6 +91,9 @@ export function App() {
   const maskRectsRef = useRef<MaskRect[]>([])
   maskRectsRef.current = maskRects
 
+  // Reparent preview edge for WebGL rendering
+  const reparentEdgeRef = useRef<ReparentEdge | null>(null)
+
   // Resolve inherited color presets for all nodes
   const resolvedPresets = useMemo(() => {
     const map: Record<string, import('./lib/color-presets').ColorPreset> = {}
@@ -111,19 +115,25 @@ export function App() {
     for (const node of Object.values(nodes)) {
       if (node.type !== 'terminal') continue
       let color: CrabEntry['color'] | null = null
-      if (node.claudeState === 'working') {
-        color = 'orange'
-      } else if (node.claudeState === 'waiting_permission') {
+      let unviewed = false
+      if (node.claudeState === 'waiting_permission') {
         color = 'red'
+        unviewed = permissionUnviewedIds.has(node.id)
       } else if (node.claudeState === 'waiting_plan') {
         color = 'purple'
+        unviewed = planUnviewedIds.has(node.id)
+      } else if (node.claudeState === 'working') {
+        color = 'orange'
       } else if (node.claudeState === 'stopped' && stoppedUnviewedIds.has(node.id)) {
         color = 'white'
+        unviewed = true
+      } else if (node.claudeSessionHistory.length > 0) {
+        color = 'gray'
       }
       if (color) {
         activeIds.add(node.id)
         if (!timestamps.has(node.id)) timestamps.set(node.id, Date.now())
-        entries.push({ nodeId: node.id, color, addedAt: timestamps.get(node.id)! })
+        entries.push({ nodeId: node.id, color, unviewed, addedAt: timestamps.get(node.id)! })
       }
     }
 
@@ -132,22 +142,44 @@ export function App() {
       if (!activeIds.has(id)) timestamps.delete(id)
     }
 
-    // Sort: working (orange) crabs first, then by arrival time
+    const colorPriority: Record<string, number> = {
+      gray: 0, white: 1, orange: 2, purple: 3, red: 4
+    }
     entries.sort((a, b) => {
-      const aWorking = a.color === 'orange' ? 0 : 1
-      const bWorking = b.color === 'orange' ? 0 : 1
-      if (aWorking !== bWorking) return aWorking - bWorking
+      const ap = colorPriority[a.color] ?? 4
+      const bp = colorPriority[b.color] ?? 4
+      if (ap !== bp) return ap - bp
+      if (a.unviewed !== b.unviewed) return a.unviewed ? 1 : -1
       return a.addedAt - b.addedAt
     })
     return entries
-  }, [nodes, stoppedUnviewedIds])
+  }, [nodes, stoppedUnviewedIds, permissionUnviewedIds, planUnviewedIds])
 
   // Reparent mode state
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const reparentHoveredNodeId = useReparentStore(s => s.hoveredNodeId)
 
+  // Update reparent edge ref for WebGL rendering
+  useEffect(() => {
+    if (!reparentingNodeId || !reparentHoveredNodeId) {
+      reparentEdgeRef.current = null
+      return
+    }
+    const allNodes = useNodeStore.getState().nodes
+    const srcNode = allNodes[reparentingNodeId]
+    const tgtNode = allNodes[reparentHoveredNodeId]
+    const isInvalid = reparentHoveredNodeId === reparentingNodeId ||
+      isDescendantOf(allNodes, reparentHoveredNodeId, reparentingNodeId) ||
+      (srcNode && srcNode.parentId === reparentHoveredNodeId)
+    if (isInvalid || !srcNode || !tgtNode) {
+      reparentEdgeRef.current = null
+      return
+    }
+    reparentEdgeRef.current = { fromX: tgtNode.x, fromY: tgtNode.y, toX: srcNode.x, toY: srcNode.y }
+  }, [reparentingNodeId, reparentHoveredNodeId])
+
   // Edge hover detection for edge splitting
-  const { hoveredEdge, hoveredEdgeRef } = useEdgeHover(cameraRef, edgesRef, edgesEnabled, !!reparentingNodeId)
+  const { hoveredEdge, hoveredEdgeRef, clearHoveredEdge } = useEdgeHover(cameraRef, edgesRef, edgesEnabled, !!reparentingNodeId)
 
   // Toggle cursor when hovering an edge
   useEffect(() => {
@@ -395,6 +427,47 @@ export function App() {
     flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding))
   }, [bringToFront, flyTo])
 
+  const handleCrabClick = useCallback((nodeId: string) => {
+    if (nodeId === 'root') {
+      handleNodeFocus(nodeId)
+      return
+    }
+
+    flashNode(nodeId)
+    setFocusedId(nodeId)
+    lastFocusedRef.current = nodeId
+    navStackRef.current = []
+
+    const node = useNodeStore.getState().nodes[nodeId]
+    if (!node) {
+      setScrollMode(false)
+      return
+    }
+
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+
+    const size = nodePixelSize(node)
+    const targetBounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
+    const targetCamera = cameraToFitBounds(targetBounds, viewport.clientWidth, viewport.clientHeight, 0.025)
+
+    setScrollMode(node.type === 'terminal' && node.alive)
+    sendBringToFront(nodeId)
+    bringToFront(nodeId)
+
+    // Short-distance guard: avoid jarring zoom-out wobble for nearby/same node
+    const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
+    const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
+    const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+
+    if (dist < 50) {
+      flyTo(targetCamera)
+      return
+    }
+
+    hopFlyTo({ targetCamera, targetBounds })
+  }, [handleNodeFocus, flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
+
   const handleReparentTarget = useCallback((targetId: string) => {
     const srcId = useReparentStore.getState().reparentingNodeId
     if (!srcId) return
@@ -570,8 +643,12 @@ export function App() {
   useEffect(() => {
     const unsub = useNodeStore.subscribe((state) => {
       const prevStates = prevClaudeStatesRef.current
-      const additions: string[] = []
-      const removals: string[] = []
+      const stoppedAdd: string[] = []
+      const stoppedRem: string[] = []
+      const permAdd: string[] = []
+      const permRem: string[] = []
+      const planAdd: string[] = []
+      const planRem: string[] = []
 
       for (const node of Object.values(state.nodes)) {
         if (node.type !== 'terminal') continue
@@ -580,12 +657,25 @@ export function App() {
 
         prevStates.set(node.id, node.claudeState)
 
+        // Stopped transitions
         if (node.claudeState === 'stopped' && prev !== undefined) {
-          // Transitioned TO stopped from an active state
-          additions.push(node.id)
+          stoppedAdd.push(node.id)
         } else if (node.claudeState !== 'stopped') {
-          // Transitioned AWAY from stopped (or new node with active state)
-          removals.push(node.id)
+          stoppedRem.push(node.id)
+        }
+
+        // Permission transitions
+        if (node.claudeState === 'waiting_permission') {
+          permAdd.push(node.id)
+        } else if (prev === 'waiting_permission') {
+          permRem.push(node.id)
+        }
+
+        // Plan transitions
+        if (node.claudeState === 'waiting_plan') {
+          planAdd.push(node.id)
+        } else if (prev === 'waiting_plan') {
+          planRem.push(node.id)
         }
       }
 
@@ -593,15 +683,33 @@ export function App() {
       for (const id of prevStates.keys()) {
         if (!state.nodes[id]) {
           prevStates.delete(id)
-          removals.push(id)
+          stoppedRem.push(id)
+          permRem.push(id)
+          planRem.push(id)
         }
       }
 
-      if (additions.length > 0 || removals.length > 0) {
+      if (stoppedAdd.length > 0 || stoppedRem.length > 0) {
         setStoppedUnviewedIds(prev => {
           const next = new Set(prev)
-          for (const id of additions) next.add(id)
-          for (const id of removals) next.delete(id)
+          for (const id of stoppedAdd) next.add(id)
+          for (const id of stoppedRem) next.delete(id)
+          return next
+        })
+      }
+      if (permAdd.length > 0 || permRem.length > 0) {
+        setPermissionUnviewedIds(prev => {
+          const next = new Set(prev)
+          for (const id of permAdd) next.add(id)
+          for (const id of permRem) next.delete(id)
+          return next
+        })
+      }
+      if (planAdd.length > 0 || planRem.length > 0) {
+        setPlanUnviewedIds(prev => {
+          const next = new Set(prev)
+          for (const id of planAdd) next.add(id)
+          for (const id of planRem) next.delete(id)
           return next
         })
       }
@@ -609,10 +717,22 @@ export function App() {
     return unsub
   }, [])
 
-  // Clear "stopped unviewed" flag when a terminal is focused
+  // Clear unviewed flags when a terminal is focused
   useEffect(() => {
     if (!focusedId) return
     setStoppedUnviewedIds(prev => {
+      if (!prev.has(focusedId)) return prev
+      const next = new Set(prev)
+      next.delete(focusedId)
+      return next
+    })
+    setPermissionUnviewedIds(prev => {
+      if (!prev.has(focusedId)) return prev
+      const next = new Set(prev)
+      next.delete(focusedId)
+      return next
+    })
+    setPlanUnviewedIds(prev => {
       if (!prev.has(focusedId)) return prev
       const next = new Set(prev)
       next.delete(focusedId)
@@ -695,6 +815,17 @@ export function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      // Cmd+F: open terminal search (before isEditable guard so it works from search input)
+      if (e.metaKey && e.key === 'f') {
+        const opener = terminalSearchOpeners.get(focusRef.current!)
+        if (opener) {
+          e.preventDefault()
+          e.stopPropagation()
+          opener()
+          return
+        }
+      }
+
       // Don't steal keys from real text-editing controls (inputs, CodeMirror, etc.)
       // Exclude xterm's hidden textarea — it's not a visible editing surface.
       const active = document.activeElement as HTMLElement | null
@@ -910,8 +1041,12 @@ export function App() {
         })
       }
 
-      // Escape: cancel reparent mode or stop TTS
+      // Escape: close search, cancel reparent mode, or stop TTS
       if (e.key === 'Escape') {
+        if (focusRef.current) {
+          const closer = terminalSearchClosers.get(focusRef.current)
+          if (closer?.()) return
+        }
         const srcId = useReparentStore.getState().reparentingNodeId
         if (srcId) {
           useReparentStore.getState().reset()
@@ -986,13 +1121,13 @@ export function App() {
     // Edge split: click on a hovered edge to insert a markdown node
     const edge = hoveredEdgeRef.current
     if (edge && !focusRef.current) {
-      hoveredEdgeRef.current = null
+      clearHoveredEdge()
       handleEdgeSplit(edge.parentId, edge.childId, edge.point)
       return
     }
     handleUnfocus()
     flyToUnfocusZoom()
-  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, handleEdgeSplit, hoveredEdgeRef])
+  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, handleEdgeSplit, hoveredEdgeRef, clearHoveredEdge])
 
   return (
     <div className="app">
@@ -1007,9 +1142,9 @@ export function App() {
         onForceLayoutIncrease={forceLayoutIncrease}
         onForceLayoutDecrease={forceLayoutDecrease}
         crabs={crabs}
-        onCrabClick={handleNodeFocus}
+        onCrabClick={handleCrabClick}
       />
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} focusedIdRef={focusRef} reparentEdgeRef={reparentEdgeRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null}>
         <RootNode
           focused={focusedId === 'root'}
           onClick={() => handleNodeFocus('root')}
@@ -1134,15 +1269,6 @@ export function App() {
             }}
           />
         )}
-        {edgesEnabled && reparentingNodeId && reparentHoveredNodeId && (() => {
-          const allNodes = useNodeStore.getState().nodes
-          const srcNode = allNodes[reparentingNodeId]
-          const isInvalid = reparentHoveredNodeId === reparentingNodeId || isDescendantOf(allNodes, reparentHoveredNodeId, reparentingNodeId) || (srcNode && srcNode.parentId === reparentHoveredNodeId)
-          if (isInvalid) return null
-          const tgtNode = allNodes[reparentHoveredNodeId]
-          if (!srcNode || !tgtNode) return null
-          return <ReparentPreviewLine fromX={tgtNode.x} fromY={tgtNode.y} toX={srcNode.x} toY={srcNode.y} />
-        })()}
       </Canvas>
       <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>

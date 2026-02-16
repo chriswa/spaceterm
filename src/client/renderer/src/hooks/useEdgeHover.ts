@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Camera } from '../lib/camera'
 import type { TreeLineNode } from '../components/CanvasBackground'
-import { EDGE_HOVER_THRESHOLD_PX } from '../lib/constants'
+import { EDGE_HOVER_THRESHOLD_PX, EDGE_SPLIT_NODE_MARGIN_PX, ROOT_NODE_RADIUS } from '../lib/constants'
+import { useNodeStore, nodePixelSize } from '../stores/nodeStore'
 
 export interface HoveredEdge {
   parentId: string
@@ -66,6 +67,30 @@ function findClosestEdge(
   }
 
   if (!bestEdge) return null
+
+  // Node proximity guard: suppress split indicator near any existing node
+  const m = EDGE_SPLIT_NODE_MARGIN_PX
+  const allNodes = useNodeStore.getState().nodeList
+  for (const node of allNodes) {
+    const size = nodePixelSize(node)
+    const hw = size.width / 2
+    const hh = size.height / 2
+    if (
+      bestPoint.x >= node.x - hw - m && bestPoint.x <= node.x + hw + m &&
+      bestPoint.y >= node.y - hh - m && bestPoint.y <= node.y + hh + m
+    ) {
+      return null
+    }
+  }
+  // Also check the root node at (0,0)
+  const rr = ROOT_NODE_RADIUS
+  if (
+    bestPoint.x >= -rr - m && bestPoint.x <= rr + m &&
+    bestPoint.y >= -rr - m && bestPoint.y <= rr + m
+  ) {
+    return null
+  }
+
   return { parentId: bestEdge.parentId, childId: bestEdge.id, point: bestPoint }
 }
 
@@ -166,5 +191,10 @@ export function useEdgeHover(
     return () => cancelAnimationFrame(rafId)
   }, [cameraRef, edgesRef, edgesEnabled, reparentActive])
 
-  return { hoveredEdge, hoveredEdgeRef }
+  const clearHoveredEdge = useCallback(() => {
+    hoveredEdgeRef.current = null
+    setHoveredEdge(null)
+  }, [])
+
+  return { hoveredEdge, hoveredEdgeRef, clearHoveredEdge }
 }

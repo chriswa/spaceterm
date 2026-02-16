@@ -12,6 +12,7 @@ interface AudioState {
   hasSignal: boolean
   listening: boolean
   plpEnabled: boolean
+  beatsVisible: boolean
   // Stored values from both sources for instant switching
   stdBpm: number
   stdPhase: number
@@ -21,6 +22,7 @@ interface AudioState {
   plpConfidence: number
   init: () => () => void
   togglePlp: () => void
+  toggleBeats: () => void
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
@@ -33,6 +35,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   hasSignal: false,
   listening: false,
   plpEnabled: true,
+  beatsVisible: false,
   stdBpm: 0,
   stdPhase: 0,
   stdConfidence: 0,
@@ -69,6 +72,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     })
     return cleanup
   },
+  toggleBeats: () => set({ beatsVisible: !get().beatsVisible }),
   togglePlp: () => {
     const state = get()
     const newPlpEnabled = !state.plpEnabled

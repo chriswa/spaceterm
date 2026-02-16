@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_DECAY_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
+import { SearchAddon } from '@xterm/addon-search'
+import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize, WHEEL_DECAY_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
+import { XTERM_THEME, DEFAULT_BG } from '../../../../shared/theme'
 import { TerminalTitleBarContent } from './TerminalTitleBarContent'
+import { TerminalSearchBar } from './TerminalSearchBar'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 
@@ -25,6 +28,8 @@ const darkenHex = (hex: string, amount: number): string => {
 }
 
 export const terminalSelectionGetters = new Map<string, () => string>()
+export const terminalSearchOpeners = new Map<string, () => void>()
+export const terminalSearchClosers = new Map<string, () => boolean>()
 
 interface TerminalCardProps {
   id: string
@@ -84,6 +89,8 @@ export function TerminalCard({
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
+  const pixelOffsetRef = useRef(0)
+  const searchAddonRef = useRef<SearchAddon | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const snapshotRef = useRef<SnapshotMessage | null>(null)
 
@@ -92,6 +99,25 @@ export function TerminalCard({
   propsRef.current = { x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady }
 
   const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
+  const [xtermReady, setXtermReady] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchOpenRef = useRef(false)
+
+  // Reset when unfocusing so it's always false on next focus
+  useEffect(() => {
+    if (!focused) {
+      setXtermReady(false)
+      setSearchOpen(false)
+      searchOpenRef.current = false
+    }
+  }, [focused])
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    searchOpenRef.current = false
+    searchAddonRef.current?.clearDecorations()
+    terminalRef.current?.focus()
+  }, [])
 
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
@@ -108,26 +134,8 @@ export function TerminalCard({
       fontSize: 14,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: {
-        background: preset?.terminalBg ?? '#1e1e2e',
-        foreground: '#cdd6f4',
-        cursor: '#f5e0dc',
-        selectionBackground: '#585b70',
-        black: '#45475a',
-        red: '#f38ba8',
-        green: '#a6e3a1',
-        yellow: '#f9e2af',
-        blue: '#89b4fa',
-        magenta: '#f5c2e7',
-        cyan: '#94e2d5',
-        white: '#bac2de',
-        brightBlack: '#585b70',
-        brightRed: '#f38ba8',
-        brightGreen: '#a6e3a1',
-        brightYellow: '#f9e2af',
-        brightBlue: '#89b4fa',
-        brightMagenta: '#f5c2e7',
-        brightCyan: '#94e2d5',
-        brightWhite: '#a6adc8'
+        ...XTERM_THEME,
+        background: preset?.terminalBg ?? DEFAULT_BG,
       },
       allowProposedApi: true
     })
@@ -148,8 +156,15 @@ export function TerminalCard({
       allowNonHttpProtocols: true
     }
     term.loadAddon(new Unicode11Addon())
+    const searchAddon = new SearchAddon()
+    term.loadAddon(searchAddon)
+    searchAddonRef.current = searchAddon
     term.open(containerRef.current)
     term.unicode.activeVersion = '11'
+
+    // Pixel-smooth scroll: grab screen element for CSS transforms
+    const screenEl = containerRef.current!.querySelector('.xterm-screen') as HTMLElement
+    screenEl.style.willChange = 'transform'
 
     // Register shell title change handler (OSC 0 / OSC 2)
     term.onTitleChange((title) => {
@@ -191,9 +206,36 @@ export function TerminalCard({
           return false
         }
 
-        // Vertical scroll: xterm handles, canvas doesn't see it
+        // Pixel-smooth vertical scroll: we handle it ourselves
+        ev.preventDefault()
         ev.stopPropagation()
-        return true
+
+        let deltaPixels = ev.deltaY
+        if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaPixels *= CELL_HEIGHT
+        if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaPixels *= CELL_HEIGHT * term.rows
+
+        pixelOffsetRef.current += deltaPixels
+
+        // Floor keeps offset in [0, CELL_HEIGHT): top row is always
+        // packed flush against the viewport, partial gap only at bottom.
+        const linesDelta = Math.floor(pixelOffsetRef.current / CELL_HEIGHT)
+        if (linesDelta !== 0) {
+          const prevViewportY = term.buffer.active.viewportY
+          term.scrollLines(linesDelta)
+          pixelOffsetRef.current -= (term.buffer.active.viewportY - prevViewportY) * CELL_HEIGHT
+        }
+
+        // Clamp at scroll boundaries
+        const viewportY = term.buffer.active.viewportY
+        const maxScroll = term.buffer.active.length - term.rows
+        if (viewportY <= 0 && pixelOffsetRef.current < 0) pixelOffsetRef.current = 0
+        if (viewportY >= maxScroll && pixelOffsetRef.current > 0) pixelOffsetRef.current = 0
+
+        screenEl.style.transform = pixelOffsetRef.current !== 0
+          ? `translateY(${-pixelOffsetRef.current}px)`
+          : ''
+
+        return false
       }
       // Block xterm's scroll processing when not focused
       return false
@@ -235,10 +277,29 @@ export function TerminalCard({
 
     // Attach to server session and replay scrollback before subscribing to live data
     let cancelled = false
+    let readyTimeout: ReturnType<typeof setTimeout> | undefined
+    let onRenderDisposable: { dispose(): void } | undefined
+
+    const markReady = () => {
+      if (readyTimeout !== undefined) clearTimeout(readyTimeout)
+      if (onRenderDisposable) onRenderDisposable.dispose()
+      readyTimeout = undefined
+      onRenderDisposable = undefined
+      setXtermReady(true)
+    }
+
+    // Safety timeout: if onRender never fires, unblock after 500ms
+    readyTimeout = setTimeout(markReady, 500)
+
     window.api.pty.attach(sessionId).then((result) => {
       if (cancelled) return
       if (result.scrollback.length > 0) {
-        term.write(result.scrollback)
+        term.write(result.scrollback, () => {
+          // Parsing complete — wait for the next render frame to mark ready
+          onRenderDisposable = term.onRender(() => markReady())
+        })
+      } else {
+        markReady()
       }
       if (result.shellTitleHistory && result.shellTitleHistory.length > 0) {
         propsRef.current.onShellTitleHistoryChange?.(propsRef.current.id, result.shellTitleHistory)
@@ -256,7 +317,8 @@ export function TerminalCard({
         setClaudeContextPercent(result.claudeContextPercent)
       }
     }).catch(() => {
-      // Session may not exist on server (e.g. newly created, already attached)
+      // Session may not exist on server — still unblock so we don't get stuck on snapshot
+      markReady()
     })
 
     // Wire up IPC — use sessionId for all PTY operations
@@ -295,10 +357,36 @@ export function TerminalCard({
     terminalRef.current = term
     fitAddonRef.current = fitAddon
     terminalSelectionGetters.set(id, () => term.getSelection())
+    terminalSearchOpeners.set(id, () => {
+      if (searchOpenRef.current) {
+        const input = cardRef.current?.querySelector('.terminal-search-bar__input') as HTMLInputElement | null
+        input?.focus()
+        input?.select()
+        return
+      }
+      setSearchOpen(true)
+      searchOpenRef.current = true
+    })
+    terminalSearchClosers.set(id, () => {
+      if (searchOpenRef.current) {
+        setSearchOpen(false)
+        searchOpenRef.current = false
+        searchAddon.clearDecorations()
+        term.focus()
+        return true
+      }
+      return false
+    })
 
     return () => {
       cancelled = true
+      pixelOffsetRef.current = 0
+      if (readyTimeout !== undefined) clearTimeout(readyTimeout)
+      if (onRenderDisposable) onRenderDisposable.dispose()
       terminalSelectionGetters.delete(id)
+      terminalSearchOpeners.delete(id)
+      terminalSearchClosers.delete(id)
+      searchAddonRef.current = null
       cleanupData()
       cleanupExit()
       cleanupTitleHistory()
@@ -327,7 +415,7 @@ export function TerminalCard({
   useEffect(() => {
     const term = terminalRef.current
     if (!term) return
-    const bg = preset?.terminalBg ?? '#1e1e2e'
+    const bg = preset?.terminalBg ?? DEFAULT_BG
     term.options.theme = { ...term.options.theme, background: bg }
   }, [preset])
 
@@ -366,7 +454,7 @@ export function TerminalCard({
       canvas.height = ch
     }
 
-    const bgColor = preset?.terminalBg ?? '#1e1e2e'
+    const bgColor = preset?.terminalBg ?? DEFAULT_BG
     ctx.fillStyle = bgColor
     ctx.fillRect(0, 0, cw, ch)
 
@@ -379,7 +467,7 @@ export function TerminalCard({
       for (const span of row) {
         const spanWidth = span.text.length * CELL_WIDTH
 
-        if (span.bg !== bgColor && span.bg !== '#1e1e2e') {
+        if (span.bg !== bgColor && span.bg !== DEFAULT_BG) {
           ctx.fillStyle = span.bg
           ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
         }
@@ -520,7 +608,7 @@ export function TerminalCard({
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or color picker
-    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__reparent-btn, .archive-body')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__reparent-btn, .archive-body, .terminal-search-bar')) return
 
     const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
@@ -644,8 +732,17 @@ export function TerminalCard({
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
     >
-      <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none' }} />
-      <div style={{ display: focused ? 'none' : undefined, padding: '2px 2px 0 2px', flex: 1 }}>
+      {searchOpen && searchAddonRef.current && (
+        <TerminalSearchBar searchAddon={searchAddonRef.current} onClose={closeSearch} />
+      )}
+      <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none', flex: 'none', height: rows * CELL_HEIGHT + BODY_PADDING_TOP }} />
+      <div style={
+        !focused
+          ? { padding: '2px 2px 0 2px', flex: 'none', height: rows * CELL_HEIGHT + BODY_PADDING_TOP }
+          : xtermReady
+            ? { display: 'none' }
+            : { position: 'absolute' as const, inset: 0, top: BODY_PADDING_TOP, zIndex: 1, pointerEvents: 'none' as const, padding: '2px 2px 0 2px' }
+      }>
         <canvas
           ref={canvasRef}
           style={{

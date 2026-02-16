@@ -19,7 +19,7 @@
 import type { BeatResult } from './beat-detector'
 
 const MIN_BPM = 80
-const MAX_BPM = 180
+const MAX_BPM = 160
 const MIN_PERIOD_MS = 60000 / MAX_BPM // ~333ms
 const MAX_PERIOD_MS = 60000 / MIN_BPM // ~750ms
 
