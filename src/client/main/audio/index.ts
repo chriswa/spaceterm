@@ -6,9 +6,11 @@ import * as audioTap from './audio-tap'
 import * as logger from '../logger'
 
 export function setupAudio(mainWindow: BrowserWindow): void {
+  logger.log('[audio] setupAudio: creating detectors...')
   const detector = new BeatDetector()
   const plpDetector = new PLPDetector()
   let chunkCount = 0
+  logger.log('[audio] setupAudio: detectors created, wiring callbacks...')
 
   audioTap.onData((chunk) => {
     chunkCount++
@@ -46,7 +48,10 @@ export function setupAudio(mainWindow: BrowserWindow): void {
   })
 
   // Auto-start audio capture
-  audioTap.start().catch((err: unknown) => {
+  logger.log('[audio] setupAudio: triggering auto-start...')
+  audioTap.start().then(() => {
+    logger.log('[audio] auto-start resolved successfully')
+  }).catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err)
     logger.log(`[audio] auto-start failed: ${msg}`)
   })

@@ -179,6 +179,26 @@ function setupIPC(): void {
     client!.setTerminalMode(sessionId, mode)
   })
 
+  // --- Window mode ---
+
+  ipcMain.handle('window:is-fullscreen', () => {
+    return mainWindow?.isFullScreen() ?? false
+  })
+
+  ipcMain.handle('window:set-fullscreen', (_event, enabled: boolean) => {
+    if (!mainWindow) return
+    mainWindow.setFullScreen(enabled)
+  })
+
+  ipcMain.handle('window:is-kiosk', () => {
+    return mainWindow?.isKiosk() ?? false
+  })
+
+  ipcMain.handle('window:set-kiosk', (_event, enabled: boolean) => {
+    if (!mainWindow) return
+    mainWindow.setKiosk(enabled)
+  })
+
   // --- Perf capture ---
 
   const perfDir = join(homedir(), '.spaceterm', 'perf-captures')
@@ -319,7 +339,21 @@ app.whenReady().then(async () => {
 
   createWindow()
   mainWindow!.setFullScreen(true)
-  setupAudio(mainWindow!)
+
+  // Bypass Cmd+P menu accelerator (Print) so it reaches the renderer for plan-jump.
+  // setIgnoreMenuShortcuts in before-input-event selectively disables menu shortcuts
+  // for individual keystrokes without modifying the menu itself.
+  mainWindow!.webContents.on('before-input-event', (_event, input) => {
+    mainWindow!.webContents.setIgnoreMenuShortcuts(input.meta && input.key.toLowerCase() === 'p')
+  })
+
+  try {
+    setupAudio(mainWindow!)
+    logger.log('[audio] setupAudio completed')
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.log(`[audio] setupAudio threw: ${msg}`)
+  }
   logger.log('Window created')
 })
 

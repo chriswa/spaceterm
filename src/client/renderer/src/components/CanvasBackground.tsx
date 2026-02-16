@@ -22,12 +22,15 @@ export interface ReparentEdge {
   toY: number
 }
 
+export type SelectionType = 'node' | 'edge'
+export interface Selection { id: string; type: SelectionType }
+
 interface CanvasBackgroundProps {
   camera: Camera
   cameraRef: React.RefObject<Camera>
   edgesRef: React.RefObject<TreeLineNode[]>
   maskRectsRef: React.RefObject<MaskRect[]>
-  focusedIdRef: React.RefObject<string | null>
+  selectionRef: React.RefObject<Selection | null>
   reparentEdgeRef: React.RefObject<ReparentEdge | null>
   edgesEnabled: boolean
   shadersEnabled: boolean
@@ -227,7 +230,7 @@ function createChevronTexture(gl: WebGLRenderingContext): WebGLTexture | null {
   return tex
 }
 
-function createWhiteChevronTexture(gl: WebGLRenderingContext): WebGLTexture | null {
+function createChevronTextureWithColor(gl: WebGLRenderingContext, color: string): WebGLTexture | null {
   const size = 20
   const offscreen = document.createElement('canvas')
   offscreen.width = size
@@ -235,7 +238,7 @@ function createWhiteChevronTexture(gl: WebGLRenderingContext): WebGLTexture | nu
   const ctx = offscreen.getContext('2d')
   if (!ctx) return null
 
-  ctx.strokeStyle = '#ffffff'
+  ctx.strokeStyle = color
   ctx.lineWidth = 3
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
@@ -265,7 +268,7 @@ const FLOATS_PER_EDGE = VERTS_PER_EDGE * FLOATS_PER_VERTEX // 24
 // Zoom exponent: (1/z)^0.7 gives ~5x at z=0.1, 1x at z=1.0
 const ZOOM_WIDTH_EXP = Math.log(5) / Math.log(10) // ≈ 0.699
 
-export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdRef, reparentEdgeRef, edgesEnabled, shadersEnabled }: CanvasBackgroundProps) {
+export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef, edgesEnabled, shadersEnabled }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
   const shadersEnabledRef = useRef(shadersEnabled)
@@ -318,6 +321,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdR
     let edgeTexLoc: WebGLUniformLocation | null = null
     let chevronTex: WebGLTexture | null = null
     let whiteChevronTex: WebGLTexture | null = null
+    let greyChevronTex: WebGLTexture | null = null
 
     if (edgeProg) {
       edgeBuf = gl.createBuffer()
@@ -329,7 +333,8 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdR
       edgeTimeLoc = gl.getUniformLocation(edgeProg, 'uTime')
       edgeTexLoc = gl.getUniformLocation(edgeProg, 'uTexture')
       chevronTex = createChevronTexture(gl)
-      whiteChevronTex = createWhiteChevronTexture(gl)
+      whiteChevronTex = createChevronTextureWithColor(gl, '#ffffff')
+      greyChevronTex = createChevronTextureWithColor(gl, '#888888')
     }
 
     // --- Mask buffer (reuses background program to paint over edges behind transparent cards) ---
@@ -477,17 +482,17 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdR
             gl.disableVertexAttribArray(edgeUVLoc)
           }
 
-          // 2b. Draw highlight edges (focused parent edge + reparent preview) with white texture
-          if (whiteChevronTex) {
-            let hlOffset = 0
-            let hlVertexCount = 0
-
-            // Helper to emit one quad into edgeVerts at hlOffset
-            const emitQuad = (px: number, py: number, cx: number, cy: number) => {
+          // 2b. Draw highlight edges with appropriate texture:
+          //     - Edge selected → white chevrons
+          //     - Node selected → grey chevrons on parent edge
+          //     - Reparent preview → white chevrons
+          if (whiteChevronTex && greyChevronTex) {
+            // Helper to emit one quad into edgeVerts at a given offset
+            const emitQuad = (offset: number, px: number, py: number, cx: number, cy: number): number => {
               const dx = cx - px
               const dy = cy - py
               const len = Math.sqrt(dx * dx + dy * dy)
-              if (len === 0) return
+              if (len === 0) return offset
               const nx = -dy / len
               const ny = dx / len
               const vLen = len / tileSize
@@ -495,48 +500,25 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdR
               const v1x = px - nx * hw; const v1y = py - ny * hw
               const v2x = cx + nx * hw; const v2y = cy + ny * hw
               const v3x = cx - nx * hw; const v3y = cy - ny * hw
-              edgeVerts[hlOffset++] = v0x; edgeVerts[hlOffset++] = v0y
-              edgeVerts[hlOffset++] = 0;   edgeVerts[hlOffset++] = 0
-              edgeVerts[hlOffset++] = v1x; edgeVerts[hlOffset++] = v1y
-              edgeVerts[hlOffset++] = 1;   edgeVerts[hlOffset++] = 0
-              edgeVerts[hlOffset++] = v2x; edgeVerts[hlOffset++] = v2y
-              edgeVerts[hlOffset++] = 0;   edgeVerts[hlOffset++] = vLen
-              edgeVerts[hlOffset++] = v1x; edgeVerts[hlOffset++] = v1y
-              edgeVerts[hlOffset++] = 1;   edgeVerts[hlOffset++] = 0
-              edgeVerts[hlOffset++] = v3x; edgeVerts[hlOffset++] = v3y
-              edgeVerts[hlOffset++] = 1;   edgeVerts[hlOffset++] = vLen
-              edgeVerts[hlOffset++] = v2x; edgeVerts[hlOffset++] = v2y
-              edgeVerts[hlOffset++] = 0;   edgeVerts[hlOffset++] = vLen
-              hlVertexCount += 6
+              edgeVerts[offset++] = v0x; edgeVerts[offset++] = v0y
+              edgeVerts[offset++] = 0;   edgeVerts[offset++] = 0
+              edgeVerts[offset++] = v1x; edgeVerts[offset++] = v1y
+              edgeVerts[offset++] = 1;   edgeVerts[offset++] = 0
+              edgeVerts[offset++] = v2x; edgeVerts[offset++] = v2y
+              edgeVerts[offset++] = 0;   edgeVerts[offset++] = vLen
+              edgeVerts[offset++] = v1x; edgeVerts[offset++] = v1y
+              edgeVerts[offset++] = 1;   edgeVerts[offset++] = 0
+              edgeVerts[offset++] = v3x; edgeVerts[offset++] = v3y
+              edgeVerts[offset++] = 1;   edgeVerts[offset++] = vLen
+              edgeVerts[offset++] = v2x; edgeVerts[offset++] = v2y
+              edgeVerts[offset++] = 0;   edgeVerts[offset++] = vLen
+              return offset
             }
 
-            // Focused node → parent edge
-            const focusedId = focusedIdRef.current
-            if (focusedId) {
-              const focusedNode = edges.find(e => e.id === focusedId)
-              if (focusedNode) {
-                let parentPos: { x: number; y: number } | null = null
-                if (focusedNode.parentId === 'root') {
-                  parentPos = { x: 0, y: 0 }
-                } else {
-                  parentPos = posMap.get(focusedNode.parentId) ?? null
-                }
-                if (parentPos) {
-                  emitQuad(parentPos.x, parentPos.y, focusedNode.x, focusedNode.y)
-                }
-              }
-            }
-
-            // Reparent preview edge
-            const rEdge = reparentEdgeRef.current
-            if (rEdge) {
-              emitQuad(rEdge.fromX, rEdge.fromY, rEdge.toX, rEdge.toY)
-            }
-
-            if (hlVertexCount > 0) {
+            const drawHighlightBatch = (tex: WebGLTexture, vertexCount: number) => {
               gl.useProgram(edgeProg)
               gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf)
-              gl.bufferData(gl.ARRAY_BUFFER, edgeVerts.subarray(0, hlVertexCount * FLOATS_PER_VERTEX), gl.DYNAMIC_DRAW)
+              gl.bufferData(gl.ARRAY_BUFFER, edgeVerts.subarray(0, vertexCount * FLOATS_PER_VERTEX), gl.DYNAMIC_DRAW)
 
               const stride = FLOATS_PER_VERTEX * 4
               gl.enableVertexAttribArray(edgePosLoc)
@@ -545,7 +527,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdR
               gl.vertexAttribPointer(edgeUVLoc, 2, gl.FLOAT, false, stride, 8)
 
               gl.activeTexture(gl.TEXTURE0)
-              gl.bindTexture(gl.TEXTURE_2D, whiteChevronTex)
+              gl.bindTexture(gl.TEXTURE_2D, tex)
               gl.uniform1i(edgeTexLoc, 0)
 
               gl.uniform2f(edgePanLoc, cam.x, cam.y)
@@ -553,9 +535,36 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdR
               gl.uniform2f(edgeResLoc, canvas.width, canvas.height)
               gl.uniform1f(edgeTimeLoc, (now - edgeT0) / 2000)
 
-              gl.drawArrays(gl.TRIANGLES, 0, hlVertexCount)
+              gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
               gl.disableVertexAttribArray(edgePosLoc)
               gl.disableVertexAttribArray(edgeUVLoc)
+            }
+
+            // Selection → highlight parent edge (grey for node, white for edge)
+            const sel = selectionRef.current
+            if (sel) {
+              const childNode = edges.find(e => e.id === sel.id)
+              if (childNode) {
+                let parentPos: { x: number; y: number } | null = null
+                if (childNode.parentId === 'root') {
+                  parentPos = { x: 0, y: 0 }
+                } else {
+                  parentPos = posMap.get(childNode.parentId) ?? null
+                }
+                if (parentPos) {
+                  const offset = emitQuad(0, parentPos.x, parentPos.y, childNode.x, childNode.y)
+                  const vertCount = offset / FLOATS_PER_VERTEX
+                  drawHighlightBatch(sel.type === 'edge' ? whiteChevronTex : greyChevronTex, vertCount)
+                }
+              }
+            }
+
+            // Reparent preview edge (always white)
+            const rEdge = reparentEdgeRef.current
+            if (rEdge) {
+              const offset = emitQuad(0, rEdge.fromX, rEdge.fromY, rEdge.toX, rEdge.toY)
+              const vertCount = offset / FLOATS_PER_VERTEX
+              drawHighlightBatch(whiteChevronTex, vertCount)
             }
           }
         }
@@ -624,6 +633,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, focusedIdR
       if (edgeBuf) gl.deleteBuffer(edgeBuf)
       if (chevronTex) gl.deleteTexture(chevronTex)
       if (whiteChevronTex) gl.deleteTexture(whiteChevronTex)
+      if (greyChevronTex) gl.deleteTexture(greyChevronTex)
       if (maskBuf) gl.deleteBuffer(maskBuf)
     }
   }, [])

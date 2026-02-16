@@ -4,15 +4,17 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
-import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize, WHEEL_DECAY_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
+import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '../lib/constants'
+import { classifyWheelEvent } from '../lib/wheel-gesture'
 import type { ColorPreset } from '../lib/color-presets'
-import type { ArchivedNode } from '../../../../shared/state'
+import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
 import { XTERM_THEME, DEFAULT_BG } from '../../../../shared/theme'
 import { TerminalTitleBarContent } from './TerminalTitleBarContent'
 import { TerminalSearchBar } from './TerminalSearchBar'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
+import { showToast } from '../lib/toast'
 
 const DRAG_THRESHOLD = 5
 const LOW_ZOOM_THRESHOLD = 0.2
@@ -30,6 +32,7 @@ const darkenHex = (hex: string, amount: number): string => {
 export const terminalSelectionGetters = new Map<string, () => string>()
 export const terminalSearchOpeners = new Map<string, () => void>()
 export const terminalSearchClosers = new Map<string, () => boolean>()
+export const terminalPlanJumpers = new Map<string, () => boolean>()
 
 interface TerminalCardProps {
   id: string
@@ -47,6 +50,7 @@ interface TerminalCardProps {
   shellTitleHistory?: string[]
   cwd?: string
   focused: boolean
+  selected: boolean
   anyNodeFocused: boolean
   stoppedUnviewed: boolean
   scrollMode: boolean
@@ -75,13 +79,18 @@ interface TerminalCardProps {
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
+  onMarkUnread?: (id: string) => void
+  isUnviewed?: boolean
+  terminalSessions?: TerminalSessionEntry[]
+  onSessionRevive?: (session: TerminalSessionEntry) => void
 }
 
 export function TerminalCard({
-  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, anyNodeFocused, stoppedUnviewed, scrollMode,
+  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, stoppedUnviewed, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onMarkUnread, isUnviewed,
+  terminalSessions, onSessionRevive
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -93,6 +102,7 @@ export function TerminalCard({
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const snapshotRef = useRef<SnapshotMessage | null>(null)
+  const autoJumpedRef = useRef(false)
 
   // Keep current props in refs for event handlers
   const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady })
@@ -166,6 +176,20 @@ export function TerminalCard({
     const screenEl = containerRef.current!.querySelector('.xterm-screen') as HTMLElement
     screenEl.style.willChange = 'transform'
 
+    // Set absolute scroll position with sub-line pixel precision.
+    // Clamps to valid range, updates xterm viewport + pixelOffsetRef + CSS transform.
+    const applyPixelScroll = (pixels: number) => {
+      const maxPixels = (term.buffer.active.length - term.rows) * CELL_HEIGHT
+      const clamped = Math.max(0, Math.min(pixels, maxPixels))
+      const line = Math.floor(clamped / CELL_HEIGHT)
+      const remainder = clamped - line * CELL_HEIGHT
+      term.scrollToLine(line)
+      pixelOffsetRef.current = remainder
+      screenEl.style.transform = remainder !== 0
+        ? `translateY(${-remainder}px)`
+        : ''
+    }
+
     // Register shell title change handler (OSC 0 / OSC 2)
     term.onTitleChange((title) => {
       propsRef.current.onShellTitleChange?.(propsRef.current.id, title)
@@ -181,26 +205,9 @@ export function TerminalCard({
           return false
         }
 
-        // Pinch-to-zoom: disable scroll mode, let canvas handle
-        if (ev.ctrlKey && Math.abs(ev.deltaY) > PINCH_ZOOM_THRESHOLD) {
-          scrollModeRef.current = false
-          propsRef.current.onDisableScrollMode()
-          return false
-        }
-
-        // Accumulate deltas with exponential decay for gesture detection
-        const now = performance.now()
-        const acc = wheelAccRef.current
-        const dt = now - acc.t
-        const decay = acc.t === 0 ? 0 : Math.exp(-dt / WHEEL_DECAY_MS)
-        acc.dx = acc.dx * decay + Math.abs(ev.deltaX)
-        acc.dy = acc.dy * decay + Math.abs(ev.deltaY)
-        acc.t = now
-
-        // Horizontal scroll: disable scroll mode, let canvas handle
-        if (acc.dx > HORIZONTAL_SCROLL_THRESHOLD && acc.dx > acc.dy) {
-          acc.dx = 0
-          acc.dy = 0
+        // Classify gesture: pinch or horizontal → escape to canvas
+        const gesture = classifyWheelEvent(wheelAccRef.current, ev)
+        if (gesture !== 'vertical') {
           scrollModeRef.current = false
           propsRef.current.onDisableScrollMode()
           return false
@@ -214,26 +221,8 @@ export function TerminalCard({
         if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaPixels *= CELL_HEIGHT
         if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaPixels *= CELL_HEIGHT * term.rows
 
-        pixelOffsetRef.current += deltaPixels
-
-        // Floor keeps offset in [0, CELL_HEIGHT): top row is always
-        // packed flush against the viewport, partial gap only at bottom.
-        const linesDelta = Math.floor(pixelOffsetRef.current / CELL_HEIGHT)
-        if (linesDelta !== 0) {
-          const prevViewportY = term.buffer.active.viewportY
-          term.scrollLines(linesDelta)
-          pixelOffsetRef.current -= (term.buffer.active.viewportY - prevViewportY) * CELL_HEIGHT
-        }
-
-        // Clamp at scroll boundaries
-        const viewportY = term.buffer.active.viewportY
-        const maxScroll = term.buffer.active.length - term.rows
-        if (viewportY <= 0 && pixelOffsetRef.current < 0) pixelOffsetRef.current = 0
-        if (viewportY >= maxScroll && pixelOffsetRef.current > 0) pixelOffsetRef.current = 0
-
-        screenEl.style.transform = pixelOffsetRef.current !== 0
-          ? `translateY(${-pixelOffsetRef.current}px)`
-          : ''
+        const currentPixels = term.buffer.active.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+        applyPixelScroll(currentPixels + deltaPixels)
 
         return false
       }
@@ -377,6 +366,75 @@ export function TerminalCard({
       }
       return false
     })
+    terminalPlanJumpers.set(id, () => {
+      const buffer = term.buffer.active
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        const line = buffer.getLine(i)
+        if (line && line.translateToString().includes("Here is Claude's plan:")) {
+          const startPixels = buffer.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+          const targetPixels = i * CELL_HEIGHT
+          const distance = Math.abs(targetPixels - startPixels)
+          const duration = 1000 * (1 - 1 / (1 + distance / 1067))
+          if (duration < 16) {
+            applyPixelScroll(targetPixels)
+            return true
+          }
+          const startTime = performance.now()
+          let lastLine = Math.floor(startPixels / CELL_HEIGHT)
+          const animate = () => {
+            if (cancelled) return
+            const t = Math.min((performance.now() - startTime) / duration, 1)
+            const eased = 1 - Math.pow(1 - t, 3)
+            const pixels = startPixels + (targetPixels - startPixels) * eased
+            const maxPixels = (term.buffer.active.length - term.rows) * CELL_HEIGHT
+            const clamped = Math.max(0, Math.min(pixels, maxPixels))
+            const line = Math.floor(clamped / CELL_HEIGHT)
+            const remainder = clamped - line * CELL_HEIGHT
+            if (line !== lastLine) {
+              // Line boundary crossed: update viewport but skip CSS transform
+              // this frame. xterm's RenderDebouncer defers row rendering to its
+              // own rAF, so setting the transform now would apply it to stale
+              // rows for one frame. Leaving the old transform in place keeps
+              // the visual position stable until xterm renders.
+              term.scrollToLine(line)
+              lastLine = line
+            } else {
+              pixelOffsetRef.current = remainder
+              screenEl.style.transform = remainder !== 0
+                ? `translateY(${-remainder}px)`
+                : ''
+            }
+            if (t < 1) {
+              requestAnimationFrame(animate)
+            } else {
+              // Final frame: snap to exact target
+              applyPixelScroll(targetPixels)
+
+              // Flash highlight on the plan heading text
+              const planText = "Here is Claude's plan:"
+              const lineContent = buffer.getLine(i)?.translateToString() || ''
+              const col = lineContent.indexOf(planText)
+              const marker = term.registerMarker(i - (buffer.baseY + buffer.cursorY))
+              if (marker) {
+                const decoration = term.registerDecoration({
+                  marker,
+                  x: col >= 0 ? col : 0,
+                  width: col >= 0 ? planText.length : term.cols,
+                  height: 1,
+                })
+                decoration?.onRender((el) => {
+                  el.classList.add('plan-jump-flash')
+                })
+                setTimeout(() => decoration?.dispose(), 900)
+              }
+            }
+          }
+          requestAnimationFrame(animate)
+          return true
+        }
+      }
+      return false
+    })
 
     return () => {
       cancelled = true
@@ -386,6 +444,7 @@ export function TerminalCard({
       terminalSelectionGetters.delete(id)
       terminalSearchOpeners.delete(id)
       terminalSearchClosers.delete(id)
+      terminalPlanJumpers.delete(id)
       searchAddonRef.current = null
       cleanupData()
       cleanupExit()
@@ -430,6 +489,18 @@ export function TerminalCard({
       term.blur()
     }
   }, [focused, id])
+
+  // Auto-scroll to plan when focusing a terminal in waiting_plan state
+  useEffect(() => {
+    if (!focused) {
+      autoJumpedRef.current = false
+      return
+    }
+    if (xtermReady && claudeState === 'waiting_plan' && !autoJumpedRef.current) {
+      autoJumpedRef.current = true
+      terminalPlanJumpers.get(id)?.()
+    }
+  }, [focused, xtermReady, claudeState, id])
 
   // Notify parent when focused node size is known (mount or resize)
   useEffect(() => {
@@ -608,7 +679,7 @@ export function TerminalCard({
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or color picker
-    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__reparent-btn, .archive-body, .terminal-search-bar')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__sessions-btn, .node-titlebar__reparent-btn, .node-titlebar__unread-btn, .archive-body, .terminal-search-bar')) return
 
     const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
@@ -670,20 +741,22 @@ export function TerminalCard({
     ? scrollMode
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
-    : ''
-  const animationClass = anyNodeFocused ? '' :
+    : selected ? 'terminal-card--selected' : ''
+  const animationClass = (anyNodeFocused || selected) ? '' :
     claudeState === 'waiting_plan' ? 'terminal-card--waiting-plan' :
     claudeState === 'waiting_permission' ? 'terminal-card--waiting-permission' :
     stoppedUnviewed ? 'terminal-card--stopped-unviewed' : ''
 
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
-      case 'working': return 'Working'
-      case 'waiting_permission': return 'Awaiting Permission'
-      case 'waiting_plan': return 'Awaiting Plan Approval'
-      default: return 'Stopped'
+      case 'working': return 'Claude is working'
+      case 'waiting_permission': return 'Claude is awaiting permission'
+      case 'waiting_plan': return 'Claude is awaiting plan approval'
+      default: return 'Claude is stopped'
     }
   }
+
+  const pastSessions = terminalSessions ? terminalSessions.slice(0, -1) : []
 
   const lastClaudeSession = claudeSessionHistory && claudeSessionHistory.length > 0
     ? claudeSessionHistory[claudeSessionHistory.length - 1]
@@ -705,7 +778,6 @@ export function TerminalCard({
         <TerminalTitleBarContent
           name={name}
           shellTitleHistory={shellTitleHistory}
-          cwd={cwd}
           preset={preset}
           id={id}
           onRename={onRename}
@@ -719,6 +791,8 @@ export function TerminalCard({
       } : undefined}
       preset={preset}
       archivedChildren={archivedChildren}
+      pastSessions={pastSessions}
+      onSessionRevive={onSessionRevive}
       onClose={onClose}
       onColorChange={onColorChange}
       onUnarchive={onUnarchive}
@@ -727,6 +801,8 @@ export function TerminalCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
+      onMarkUnread={onMarkUnread}
+      isUnviewed={isUnviewed}
       className={`terminal-card ${focusClass} ${animationClass}`}
       cardRef={cardRef}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
@@ -756,15 +832,17 @@ export function TerminalCard({
         const pct = Math.max(0, Math.min(100, claudeContextPercent ?? 100))
         const bright = preset ? preset.titleBarBg : '#181825'
         const dark = preset ? preset.terminalBg : '#181825'
+        const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
         const footerContent = (
           <>
-            Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
+            {abbrevCwd && <><span>{abbrevCwd}</span><span>&nbsp;|&nbsp;</span></>}
+            <span>Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id); showToast('Copied to clipboard') }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
             {lastClaudeSession && (
               <>
-                {' | Claude: '}
-                <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId) }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
-                {' | '}
-                {claudeStateLabel(claudeState)}
+                <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
+                <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId); showToast('Copied to clipboard') }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+                <span>&nbsp;|&nbsp;</span>
+                <span>{claudeStateLabel(claudeState)}</span>
               </>
             )}
             {claudeContextPercent != null && (

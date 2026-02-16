@@ -65,6 +65,7 @@ export const DIRECTORY_HEIGHT = 60
 // Archive body sizing
 export const ARCHIVE_BODY_MIN_WIDTH = 380
 export const ARCHIVE_BODY_MAX_WIDTH = 500
+export const ARCHIVE_POPUP_MAX_HEIGHT = 310  // 300 CSS max-height + border/gap
 
 // Force-directed layout
 export const FORCE_REPULSION_STRENGTH = 2.0

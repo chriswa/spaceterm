@@ -90,6 +90,13 @@ interface AudioApi {
   stop(): Promise<void>
 }
 
+interface WindowApi {
+  isFullScreen(): Promise<boolean>
+  setFullScreen(enabled: boolean): Promise<void>
+  isKiosk(): Promise<boolean>
+  setKiosk(enabled: boolean): Promise<void>
+}
+
 interface Api {
   pty: PtyApi
   node: NodeApi
@@ -98,6 +105,7 @@ interface Api {
   tts: TtsApi
   perf: PerfApi
   audio: AudioApi
+  window: WindowApi
 }
 
 declare interface Window {

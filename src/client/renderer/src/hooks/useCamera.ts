@@ -456,5 +456,43 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     setInputDevice(next)
   }, [])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef }
+  const shakeCamera = useCallback(() => {
+    cancelAnimationFrame(rafRef.current)
+    clearTimeout(snapBackTimerRef.current)
+    animatingRef.current = true
+
+    const origin = { ...cameraRef.current }
+    targetRef.current = { ...origin }
+    const startTime = performance.now()
+    const duration = 250
+    const radius = 6
+    const loops = 3
+
+    const shakeTick = (now: number) => {
+      const elapsed = now - startTime
+      const t = Math.min(elapsed / duration, 1)
+      const decay = 1 - t
+      const angle = t * loops * 2 * Math.PI
+      const ox = radius * decay * Math.sin(angle)
+      const oy = radius * decay * Math.cos(angle)
+
+      const cam: Camera = { x: origin.x + ox, y: origin.y + oy, z: origin.z }
+      cameraRef.current = cam
+      applyToDOM(cam)
+
+      if (t >= 1) {
+        cameraRef.current = { ...origin }
+        targetRef.current = { ...origin }
+        applyToDOM(origin)
+        animatingRef.current = false
+        return
+      }
+
+      rafRef.current = requestAnimationFrame(shakeTick)
+    }
+
+    rafRef.current = requestAnimationFrame(shakeTick)
+  }, [applyToDOM])
+
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef }
 }

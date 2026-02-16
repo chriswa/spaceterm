@@ -6,7 +6,6 @@ import { terminalSubtitle } from '../lib/node-title'
 interface TerminalTitleBarContentProps {
   name: string | undefined
   shellTitleHistory: string[] | undefined
-  cwd: string | undefined
   preset: ColorPreset | undefined
   id: string
   onRename: (id: string, name: string) => void
@@ -14,7 +13,7 @@ interface TerminalTitleBarContentProps {
 }
 
 export function TerminalTitleBarContent({
-  name, shellTitleHistory, cwd, preset, id, onRename, canStartEdit
+  name, shellTitleHistory, preset, id, onRename, canStartEdit
 }: TerminalTitleBarContentProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
@@ -28,7 +27,6 @@ export function TerminalTitleBarContent({
   }, [editing])
 
   const history = terminalSubtitle(shellTitleHistory ?? [])
-  const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
 
   return (
     <>
@@ -74,9 +72,6 @@ export function TerminalTitleBarContent({
           </>
         )}
       </div>
-      {abbrevCwd && (
-        <span className="terminal-card__cwd" style={preset ? { color: blendHex(preset.titleBarFg, preset.titleBarBg, 0.75) } : undefined}>{abbrevCwd}</span>
-      )}
     </>
   )
 }

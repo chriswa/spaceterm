@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { Toast } from './components/Toast'
+import { onToast, showToast } from './lib/toast'
 import { RootNode } from './components/RootNode'
-import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers } from './components/TerminalCard'
+import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers, terminalPlanJumpers } from './components/TerminalCard'
 import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { CanvasBackground } from './components/CanvasBackground'
-import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
+import type { TreeLineNode, MaskRect, ReparentEdge, Selection } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
+import { SearchModal } from './components/SearchModal'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
 import { useBeatPulse } from './hooks/useBeatPulse'
-import { cameraToFitBounds, unionBounds, screenToCanvas } from './lib/camera'
-import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM } from './lib/constants'
+import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas } from './lib/camera'
+import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT } from './lib/constants'
+import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { computeChildPlacement } from './lib/tree-placement'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
@@ -24,9 +27,10 @@ import { useEdgesStore } from './stores/edgesStore'
 import { useAudioStore } from './stores/audioStore'
 import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
 
-interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; addedAt: number }
+interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string }
 
 const archiveDismissFlag = { active: false, timer: 0 }
+const archiveWheelAcc = createWheelAccumulator()
 
 function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: string; cwd?: string; resumeSessionId?: string } = {}): CreateOptions {
   const statusLineSettings = JSON.stringify({
@@ -48,7 +52,10 @@ function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: str
 export function App() {
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [scrollMode, setScrollMode] = useState(false)
-  const [toasts, setToasts] = useState<Array<{ id: number; message: string; exiting?: boolean }>>([])
+  const [searchVisible, setSearchVisible] = useState(false)
+  const searchVisibleRef = useRef(false)
+  searchVisibleRef.current = searchVisible
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
   // Track "stopped unviewed" state for terminal animations
   const prevClaudeStatesRef = useRef<Map<string, string>>(new Map())
@@ -57,12 +64,13 @@ export function App() {
   const [planUnviewedIds, setPlanUnviewedIds] = useState<Set<string>>(new Set())
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
+  const [selection, setSelection] = useState<Selection | null>(null)
+  const selectionRef = useRef<Selection | null>(null)
+  selectionRef.current = selection
   const lastFocusedRef = useRef<string | null>(null)
-  const navStackRef = useRef<string[]>([])
-  const crabTimestampsRef = useRef<Map<string, number>>(new Map())
-
+  const navStackRef = useRef<Selection[]>([])
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef)
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
@@ -108,9 +116,7 @@ export function App() {
 
   // Derive crab indicators for toolbar
   const crabs = useMemo(() => {
-    const timestamps = crabTimestampsRef.current
     const entries: CrabEntry[] = []
-    const activeIds = new Set<string>()
 
     for (const node of Object.values(nodes)) {
       if (node.type !== 'terminal') continue
@@ -131,27 +137,12 @@ export function App() {
         color = 'gray'
       }
       if (color) {
-        activeIds.add(node.id)
-        if (!timestamps.has(node.id)) timestamps.set(node.id, Date.now())
-        entries.push({ nodeId: node.id, color, unviewed, addedAt: timestamps.get(node.id)! })
+        const createdAt = node.terminalSessions[0]?.startedAt ?? ''
+        entries.push({ nodeId: node.id, color, unviewed, createdAt })
       }
     }
 
-    // Clean up timestamps for nodes that no longer have a crab
-    for (const id of timestamps.keys()) {
-      if (!activeIds.has(id)) timestamps.delete(id)
-    }
-
-    const colorPriority: Record<string, number> = {
-      gray: 0, white: 1, orange: 2, purple: 3, red: 4
-    }
-    entries.sort((a, b) => {
-      const ap = colorPriority[a.color] ?? 4
-      const bp = colorPriority[b.color] ?? 4
-      if (ap !== bp) return ap - bp
-      if (a.unviewed !== b.unviewed) return a.unviewed ? 1 : -1
-      return a.addedAt - b.addedAt
-    })
+    entries.sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)
     return entries
   }, [nodes, stoppedUnviewedIds, permissionUnviewedIds, planUnviewedIds])
 
@@ -159,12 +150,13 @@ export function App() {
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const reparentHoveredNodeId = useReparentStore(s => s.hoveredNodeId)
 
-  // Update reparent edge ref for WebGL rendering
+  // Update reparent edge ref for WebGL rendering (node-to-node hover)
   useEffect(() => {
-    if (!reparentingNodeId || !reparentHoveredNodeId) {
+    if (!reparentingNodeId) {
       reparentEdgeRef.current = null
       return
     }
+    if (!reparentHoveredNodeId) return  // cursor-follow effect handles this case
     const allNodes = useNodeStore.getState().nodes
     const srcNode = allNodes[reparentingNodeId]
     const tgtNode = allNodes[reparentHoveredNodeId]
@@ -177,6 +169,67 @@ export function App() {
     }
     reparentEdgeRef.current = { fromX: tgtNode.x, fromY: tgtNode.y, toX: srcNode.x, toY: srcNode.y }
   }, [reparentingNodeId, reparentHoveredNodeId])
+
+  // Draw reparent edge from reparenting node to mouse cursor over empty canvas
+  useEffect(() => {
+    if (!reparentingNodeId) return
+
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+
+    let mouseX = 0
+    let mouseY = 0
+    let hasMousePos = false
+    let rafId = 0
+
+    const onMouseMove = (e: MouseEvent) => {
+      mouseX = e.clientX
+      mouseY = e.clientY
+      hasMousePos = true
+    }
+
+    const onMouseLeave = () => {
+      hasMousePos = false
+      reparentEdgeRef.current = null
+    }
+
+    const loop = () => {
+      rafId = requestAnimationFrame(loop)
+
+      // If hovering a card, the node-to-node effect handles it
+      if (useReparentStore.getState().hoveredNodeId) return
+
+      if (!hasMousePos) {
+        reparentEdgeRef.current = null
+        return
+      }
+
+      // Check if cursor is directly over a canvas-node element
+      const elUnder = document.elementFromPoint(mouseX, mouseY)
+      if (elUnder && elUnder.closest('.canvas-node')) return
+
+      const srcNode = useNodeStore.getState().nodes[reparentingNodeId]
+      if (!srcNode) return
+
+      const cam = cameraRef.current
+      const rect = viewport.getBoundingClientRect()
+      const worldX = (mouseX - rect.left - cam.x) / cam.z
+      const worldY = (mouseY - rect.top - cam.y) / cam.z
+
+      reparentEdgeRef.current = { fromX: worldX, fromY: worldY, toX: srcNode.x, toY: srcNode.y }
+    }
+
+    viewport.addEventListener('mousemove', onMouseMove)
+    viewport.addEventListener('mouseleave', onMouseLeave)
+    rafId = requestAnimationFrame(loop)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      viewport.removeEventListener('mousemove', onMouseMove)
+      viewport.removeEventListener('mouseleave', onMouseLeave)
+      reparentEdgeRef.current = null
+    }
+  }, [reparentingNodeId, cameraRef])
 
   // Edge hover detection for edge splitting
   const { hoveredEdge, hoveredEdgeRef, clearHoveredEdge } = useEdgeHover(cameraRef, edgesRef, edgesEnabled, !!reparentingNodeId)
@@ -216,27 +269,25 @@ export function App() {
     focusedParentRef.current = node ? node.parentId : null
   }, [focusedId])
 
+  const expireToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  // Subscribe to global toast emitter
+  useEffect(() => {
+    return onToast((message) => {
+      const id = ++toastIdRef.current
+      setToasts((prev) => [...prev, { id, message, createdAt: Date.now() }])
+    })
+  }, [])
+
   // Subscribe to server errors → toast notifications
   useEffect(() => {
     const cleanup = window.api.node.onServerError((message: string) => {
       console.error('[server]', message)
-      const id = ++toastIdRef.current
-      setToasts((prev) => [...prev, { id, message }])
-      setTimeout(() => {
-        setToasts((prev) => prev.map((t) => t.id === id ? { ...t, exiting: true } : t))
-        setTimeout(() => {
-          setToasts((prev) => prev.filter((t) => t.id !== id))
-        }, 200)
-      }, 5000)
+      showToast(message)
     })
     return cleanup
-  }, [])
-
-  const dismissToast = useCallback((id: number) => {
-    setToasts((prev) => prev.map((t) => t.id === id ? { ...t, exiting: true } : t))
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id))
-    }, 200)
   }, [])
 
   // Fit all nodes on initial load once server state has been received
@@ -397,6 +448,7 @@ export function App() {
   const handleNodeFocus = useCallback((nodeId: string) => {
     flashNode(nodeId)
     setFocusedId(nodeId)
+    setSelection({ id: nodeId, type: 'node' })
     lastFocusedRef.current = nodeId
     navStackRef.current = []
 
@@ -427,22 +479,24 @@ export function App() {
     flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding))
   }, [bringToFront, flyTo])
 
-  const handleCrabClick = useCallback((nodeId: string) => {
-    if (nodeId === 'root') {
-      handleNodeFocus(nodeId)
-      return
+  const navigateToNode = useCallback(async (nodeId: string) => {
+    // Wait for node to appear in store if not yet present
+    if (!useNodeStore.getState().nodes[nodeId]) {
+      await new Promise<void>(resolve => {
+        const unsub = useNodeStore.subscribe(state => {
+          if (state.nodes[nodeId]) { unsub(); resolve() }
+        })
+      })
     }
 
     flashNode(nodeId)
     setFocusedId(nodeId)
+    setSelection({ id: nodeId, type: 'node' })
     lastFocusedRef.current = nodeId
     navStackRef.current = []
 
     const node = useNodeStore.getState().nodes[nodeId]
-    if (!node) {
-      setScrollMode(false)
-      return
-    }
+    if (!node) return
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
@@ -455,7 +509,6 @@ export function App() {
     sendBringToFront(nodeId)
     bringToFront(nodeId)
 
-    // Short-distance guard: avoid jarring zoom-out wobble for nearby/same node
     const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
     const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
     const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
@@ -466,7 +519,16 @@ export function App() {
     }
 
     hopFlyTo({ targetCamera, targetBounds })
-  }, [handleNodeFocus, flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
+  }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
+
+  const handleCrabClick = useCallback((nodeId: string) => {
+    setSearchVisible(false)
+    if (nodeId === 'root') {
+      handleNodeFocus(nodeId)
+      return
+    }
+    navigateToNode(nodeId)
+  }, [handleNodeFocus, navigateToNode])
 
   const handleReparentTarget = useCallback((targetId: string) => {
     const srcId = useReparentStore.getState().reparentingNodeId
@@ -517,11 +579,11 @@ export function App() {
         const { position, cwd } = computeChildPosition(id)
         sendTerminalCreate(id, position.x, position.y, buildClaudeCodeOptions({ cwd, resumeSessionId })).then((result) => {
           if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-          handleNodeFocus(result.sessionId)
+          navigateToNode(result.sessionId)
         })
       }
     }
-  }, [computeChildPosition, handleNodeFocus])
+  }, [computeChildPosition, navigateToNode])
 
   const handleUnarchive = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
     await sendUnarchive(parentNodeId, archivedNodeId)
@@ -548,26 +610,29 @@ export function App() {
       const size = nodePixelSize(node)
       bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
     }
+    if (open) {
+      const popupWidth = Math.max(ARCHIVE_BODY_MIN_WIDTH, bounds.width)
+      const cardRight = bounds.x + bounds.width
+      const popupLeft = cardRight - popupWidth
+      bounds = {
+        x: Math.min(bounds.x, popupLeft),
+        y: bounds.y,
+        width: Math.max(bounds.width, popupWidth),
+        height: Math.max(bounds.height, ARCHIVE_POPUP_MAX_HEIGHT),
+      }
+    }
     flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025))
   }, [flyTo])
+
+  const handleSessionRevive = useCallback((_session: import('../../../shared/state').TerminalSessionEntry) => {
+    // No-op for now — plumbing in place for future implementation
+  }, [])
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
     await sendArchive(id)
     // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
   }, [])
-
-  const addTerminalAsChild = useCallback(async (parentId: string) => {
-    const { position, cwd } = computeChildPosition(parentId)
-    const result = await sendTerminalCreate(parentId, position.x, position.y, cwd ? { cwd } : undefined)
-    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-  }, [computeChildPosition])
-
-  const addClaudeCodeAsChild = useCallback(async (parentId: string) => {
-    const { position, cwd } = computeChildPosition(parentId)
-    const result = await sendTerminalCreate(parentId, position.x, position.y, buildClaudeCodeOptions({ cwd }))
-    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-  }, [computeChildPosition])
 
   const fitAllNodes = useCallback(() => {
     const allNodeList = useNodeStore.getState().nodeList
@@ -591,39 +656,74 @@ export function App() {
     setScrollMode(false)
   }, [])
 
-  const flyToParentAndChildren = useCallback((parentId: string) => {
+  const flyToSelection = useCallback((sel: Selection) => {
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
-
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
     const allNodes = useNodeStore.getState().nodes
-    const rects: Array<{ x: number; y: number; width: number; height: number }> = []
 
-    if (parentId === 'root') {
-      rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
-    } else {
-      const parent = allNodes[parentId]
-      if (parent) {
-        const size = nodePixelSize(parent)
-        rects.push({ x: parent.x - size.width / 2, y: parent.y - size.height / 2, ...size })
-      }
-    }
+    if (sel.type === 'node') {
+      // Center = node center, rects = node + all immediate children
+      let center: { x: number; y: number }
+      const rects: Array<{ x: number; y: number; width: number; height: number }> = []
 
-    // Include immediate children
-    for (const node of Object.values(allNodes)) {
-      if (node.parentId === parentId) {
+      if (sel.id === 'root') {
+        center = { x: 0, y: 0 }
+        rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+      } else {
+        const node = allNodes[sel.id]
+        if (!node) return
+        center = { x: node.x, y: node.y }
         const size = nodePixelSize(node)
         rects.push({ x: node.x - size.width / 2, y: node.y - size.height / 2, ...size })
       }
-    }
 
-    const bounds = unionBounds(rects)
-    if (!bounds) return
-    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM))
+      // Add immediate children
+      for (const node of Object.values(allNodes)) {
+        if (node.parentId === sel.id) {
+          const size = nodePixelSize(node)
+          rects.push({ x: node.x - size.width / 2, y: node.y - size.height / 2, ...size })
+        }
+      }
+
+      flyTo(cameraToFitBoundsWithCenter(center, rects, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
+    } else {
+      // Edge: center = midpoint of parent and child, rects = parent + child bboxes
+      const childNode = allNodes[sel.id]
+      if (!childNode) return
+
+      let parentCenter: { x: number; y: number }
+      const rects: Array<{ x: number; y: number; width: number; height: number }> = []
+
+      if (childNode.parentId === 'root') {
+        parentCenter = { x: 0, y: 0 }
+        rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+      } else {
+        const parent = allNodes[childNode.parentId]
+        if (!parent) return
+        parentCenter = { x: parent.x, y: parent.y }
+        const parentSize = nodePixelSize(parent)
+        rects.push({ x: parent.x - parentSize.width / 2, y: parent.y - parentSize.height / 2, ...parentSize })
+      }
+
+      const childSize = nodePixelSize(childNode)
+      rects.push({ x: childNode.x - childSize.width / 2, y: childNode.y - childSize.height / 2, ...childSize })
+
+      const center = { x: (parentCenter.x + childNode.x) / 2, y: (parentCenter.y + childNode.y) / 2 }
+      flyTo(cameraToFitBoundsWithCenter(center, rects, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
+    }
   }, [flyTo])
 
   // Detect when focused node disappears (e.g. archived by server on terminal exit)
   useEffect(() => {
     const unsub = useNodeStore.subscribe((state, prevState) => {
+      // Clear selection when selected node is removed
+      const sel = selectionRef.current
+      if (sel && sel.id !== 'root' && !state.nodes[sel.id] && prevState.nodes[sel.id]) {
+        setSelection(null)
+      }
+
       const focused = focusRef.current
       if (!focused || focused === 'root') return
       if (!state.nodes[focused] && prevState.nodes[focused]) {
@@ -633,11 +733,14 @@ export function App() {
         setFocusedId(null)
         setScrollMode(false)
         lastFocusedRef.current = parentId
-        flyToParentAndChildren(parentId)
+        const parentSel: Selection = { id: parentId, type: 'node' }
+        setSelection(parentSel)
+        flashNode(parentId)
+        flyToSelection(parentSel)
       }
     })
     return unsub
-  }, [flyToParentAndChildren])
+  }, [flyToSelection])
 
   // Track claudeState transitions to detect "stopped unviewed" terminals
   useEffect(() => {
@@ -770,6 +873,19 @@ export function App() {
     sendRename(id, name)
   }, [renameNode])
 
+  const handleMarkUnread = useCallback((nodeId: string) => {
+    const terminals = useNodeStore.getState().liveTerminals
+    const t = terminals.find(n => n.id === nodeId)
+    if (!t?.claudeState) return
+    if (t.claudeState === 'stopped') {
+      setStoppedUnviewedIds(prev => new Set(prev).add(nodeId))
+    } else if (t.claudeState === 'waiting_permission') {
+      setPermissionUnviewedIds(prev => new Set(prev).add(nodeId))
+    } else if (t.claudeState === 'waiting_plan') {
+      setPlanUnviewedIds(prev => new Set(prev).add(nodeId))
+    }
+  }, [])
+
   const handleColorChange = useCallback((id: string, colorPresetId: string) => {
     setNodeColor(id, colorPresetId)
     sendSetColor(id, colorPresetId)
@@ -793,28 +909,28 @@ export function App() {
   }, [])
 
   const spawnNode = useCallback(async (
-    create: (parentId: string, position: { x: number; y: number }, cwd: string | undefined) => Promise<string>
+    create: (parentId: string, position: { x: number; y: number }, cwd: string | undefined) => Promise<string>,
+    parentIdOverride?: string
   ) => {
     if (!focusRef.current) return
-    const parentId = focusRef.current
+    const parentId = parentIdOverride ?? focusRef.current
     const { position, cwd } = computeChildPosition(parentId)
     const nodeId = await create(parentId, position, cwd)
     if (cwd) cwdMapRef.current.set(nodeId, cwd)
-    setFocusedId(null)
-    setScrollMode(false)
-    if (!useNodeStore.getState().nodes[nodeId]) {
-      await new Promise<void>(resolve => {
-        const unsub = useNodeStore.subscribe(state => {
-          if (state.nodes[nodeId]) { unsub(); resolve() }
-        })
-      })
-    }
-    flyToParentAndChildren(parentId)
-  }, [computeChildPosition, flyToParentAndChildren])
+    await navigateToNode(nodeId)
+  }, [computeChildPosition, navigateToNode])
 
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      // Cmd+S: toggle search modal (before isEditable guard so it works from search input)
+      if (e.metaKey && !e.shiftKey && e.key === 's') {
+        e.preventDefault()
+        e.stopPropagation()
+        setSearchVisible(v => !v)
+        return
+      }
+
       // Cmd+F: open terminal search (before isEditable guard so it works from search input)
       if (e.metaKey && e.key === 'f') {
         const opener = terminalSearchOpeners.get(focusRef.current!)
@@ -822,6 +938,17 @@ export function App() {
           e.preventDefault()
           e.stopPropagation()
           opener()
+          return
+        }
+      }
+
+      // Cmd+P: jump to "Here is Claude's plan:" in focused terminal
+      if (e.metaKey && e.key === 'p') {
+        const jumper = terminalPlanJumpers.get(focusRef.current!)
+        if (jumper) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (!jumper()) shakeCamera()
           return
         }
       }
@@ -854,10 +981,17 @@ export function App() {
       if (e.metaKey && e.key === 'e') {
         e.preventDefault()
         e.stopPropagation()
+        let parentOverride: string | undefined
+        if (focusRef.current) {
+          const node = useNodeStore.getState().nodes[focusRef.current]
+          if (node?.type === 'terminal') {
+            parentOverride = node.parentId
+          }
+        }
         spawnNode(async (parentId, pos, cwd) => {
           const r = await sendTerminalCreate(parentId, pos.x, pos.y, buildClaudeCodeOptions({ cwd }))
           return r.sessionId
-        })
+        }, parentOverride)
       }
 
       if (e.metaKey && e.key === 'm') {
@@ -893,76 +1027,120 @@ export function App() {
         }
       }
 
-      // Cmd+Up Arrow: navigate to parent node
+      // Cmd+Enter: focus the selected node
+      if (e.metaKey && e.key === 'Enter') {
+        e.preventDefault()
+        e.stopPropagation()
+        const sel = selectionRef.current
+        if (sel && sel.type === 'node') {
+          handleNodeFocus(sel.id)
+        }
+        return
+      }
+
+      // Cmd+Up Arrow: navigate upward through edge → parent node → fitAll
       if (e.metaKey && e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
-        const target = focusRef.current ?? lastFocusedRef.current
+        const sel = selectionRef.current
+        const target = sel?.id ?? focusRef.current ?? lastFocusedRef.current
         if (!target) return
+
         focusRef.current = null
         setFocusedId(null)
         setScrollMode(false)
-        navStackRef.current.push(target)
+
         if (target === 'root') {
+          // Root node → fit all nodes
+          navStackRef.current.push({ id: 'root', type: 'node' })
+          setSelection(null)
           fitAllNodes()
           lastFocusedRef.current = null
+          return
+        }
+
+        const currentSel = sel ?? { id: target, type: 'node' as const }
+
+        if (currentSel.type === 'node') {
+          // Node selected → push, select edge (same id), fly to edge
+          navStackRef.current.push(currentSel)
+          const edgeSel: Selection = { id: currentSel.id, type: 'edge' }
+          setSelection(edgeSel)
+          lastFocusedRef.current = currentSel.id
+          flyToSelection(edgeSel)
         } else {
-          const node = useNodeStore.getState().nodes[target]
+          // Edge selected (child=id) → push, select parent node, fly to parent
+          navStackRef.current.push(currentSel)
+          const node = useNodeStore.getState().nodes[currentSel.id]
           if (!node) return
-          flyToParentAndChildren(node.parentId)
+          const parentSel: Selection = { id: node.parentId, type: 'node' }
+          setSelection(parentSel)
           lastFocusedRef.current = node.parentId
           flashNode(node.parentId)
+          flyToSelection(parentSel)
         }
       }
 
-      // Cmd+Down Arrow: navigate back down the nav stack, or into first child
+      // Cmd+Down Arrow: edge → child node, node → child edge
       if (e.metaKey && e.key === 'ArrowDown') {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
+        const sel = selectionRef.current
         const stack = navStackRef.current
-        const current = focusRef.current ?? lastFocusedRef.current
-        if (stack.length === 0) {
-          // Stack empty — navigate into the first child of the current node
-          if (!current) return
-          const allNodes = useNodeStore.getState().nodes
-          const firstChild = Object.values(allNodes).find(n => n.parentId === current)
-          if (!firstChild) {
-            // No children — focus the current node directly
-            handleNodeFocus(current)
-            return
-          }
-          stack.push(current)
+
+        if (sel && sel.type === 'edge') {
+          // Edge selected → select child node, fly to it
+          stack.push(sel)
+          const nodeSel: Selection = { id: sel.id, type: 'node' }
+          setSelection(nodeSel)
           focusRef.current = null
           setFocusedId(null)
           setScrollMode(false)
-          flyToParentAndChildren(firstChild.id)
-          lastFocusedRef.current = firstChild.id
-          flashNode(firstChild.id)
+          lastFocusedRef.current = sel.id
+          flashNode(sel.id)
+          flyToSelection(nodeSel)
           return
         }
-        // If we navigated to a sibling (current differs from what's on the stack),
-        // discard the stale stack and focus the current node instead
-        const stackTop = stack[stack.length - 1]
-        if (current && current !== stackTop) {
-          stack.length = 0
-          handleNodeFocus(current)
-          return
+
+        // Node selected (or no selection) → select a child edge
+        const current = sel?.id ?? focusRef.current ?? lastFocusedRef.current
+        if (!current) return
+        const allNodes = useNodeStore.getState().nodes
+        const children = Object.values(allNodes).filter(n => n.parentId === current)
+        if (children.length === 0) return
+
+        // Prefer the child we previously navigated up from (stack hint)
+        let preferredChild = children[0]
+        if (stack.length > 0) {
+          const stackTop = stack[stack.length - 1]
+          // If the stack top is an edge whose parent is the current node, prefer that child
+          if (stackTop.type === 'edge') {
+            const hintNode = allNodes[stackTop.id]
+            if (hintNode && hintNode.parentId === current) {
+              preferredChild = hintNode
+              stack.pop() // consume the hint
+            }
+          }
+          // If the stack top is a node that is a child of current, prefer its edge
+          if (stackTop.type === 'node') {
+            const hintNode = allNodes[stackTop.id]
+            if (hintNode && hintNode.parentId === current) {
+              preferredChild = hintNode
+              stack.pop() // consume the hint
+            }
+          }
         }
-        const target = stack.pop()!
+
+        stack.push(sel ?? { id: current, type: 'node' })
+        const edgeSel: Selection = { id: preferredChild.id, type: 'edge' }
+        setSelection(edgeSel)
         focusRef.current = null
         setFocusedId(null)
         setScrollMode(false)
-        if (stack.length === 0) {
-          // Bottom of the stack — actually focus the original node
-          handleNodeFocus(target)
-        } else {
-          // Still navigating — show target and its children
-          flyToParentAndChildren(target)
-          lastFocusedRef.current = target
-          flashNode(target)
-        }
+        lastFocusedRef.current = preferredChild.id
+        flyToSelection(edgeSel)
       }
 
       // Cmd+Left/Right Arrow: cycle through siblings by angle around parent
@@ -970,7 +1148,8 @@ export function App() {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
-        const target = focusRef.current ?? lastFocusedRef.current
+        const sel = selectionRef.current
+        const target = sel?.id ?? focusRef.current ?? lastFocusedRef.current
         if (!target || target === 'root') return
         const allNodes = useNodeStore.getState().nodes
         const node = allNodes[target]
@@ -979,25 +1158,12 @@ export function App() {
         const parentCenter = parentId === 'root' ? { x: 0, y: 0 } : allNodes[parentId] ? { x: allNodes[parentId].x, y: allNodes[parentId].y } : null
         if (!parentCenter) return
         const siblings = Object.values(allNodes).filter(n => n.parentId === parentId)
+
+        // Determine the selection type to maintain (node stays node, edge stays edge)
+        const selType = sel?.type ?? 'node'
+
         if (siblings.length <= 1) {
-          // Only child — do a full 360° tour back to the same node
-          const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
-          if (!viewport) return
-          const size = nodePixelSize(node)
-          const bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
-          const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025)
-          flashNode(target)
-          setFocusedId(target)
-          lastFocusedRef.current = target
-          navStackRef.current = []
-          setScrollMode(node.type === 'terminal' && node.alive)
-          rotationalFlyTo({
-            parentCenter,
-            sourceCenter: { x: node.x, y: node.y },
-            targetCenter: { x: node.x, y: node.y },
-            targetCamera,
-            direction: e.key === 'ArrowRight' ? 'cw' : 'ccw'
-          })
+          shakeCamera()
           return
         }
         // Sort siblings by angle from parent (atan2), clockwise in screen coords
@@ -1015,34 +1181,60 @@ export function App() {
         const nextNode = allNodes[nextId]
         if (!nextNode) return
 
-        // Compute target camera (where we'd end up focused on the next node)
+        // Compute target camera for the selection
         const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
         if (!viewport) return
-        const size = nodePixelSize(nextNode)
-        const bounds = { x: nextNode.x - size.width / 2, y: nextNode.y - size.height / 2, ...size }
-        const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025)
 
-        // Update focus state manually (same as handleNodeFocus but without flyTo)
-        flashNode(nextId)
-        setFocusedId(nextId)
+        const newSel: Selection = { id: nextId, type: selType }
+        const cameraTarget = selType === 'node'
+          ? (() => {
+              const size = nodePixelSize(nextNode)
+              const bounds = { x: nextNode.x - size.width / 2, y: nextNode.y - size.height / 2, ...size }
+              return cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025)
+            })()
+          : (() => {
+              const childSize = nodePixelSize(nextNode)
+              const rects = [{ x: nextNode.x - childSize.width / 2, y: nextNode.y - childSize.height / 2, ...childSize }]
+              if (parentId === 'root') {
+                rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+              } else {
+                const parent = allNodes[parentId]
+                if (parent) { const ps = nodePixelSize(parent); rects.push({ x: parent.x - ps.width / 2, y: parent.y - ps.height / 2, ...ps }) }
+              }
+              const center = { x: (parentCenter.x + nextNode.x) / 2, y: (parentCenter.y + nextNode.y) / 2 }
+              return cameraToFitBoundsWithCenter(center, rects, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM)
+            })()
+
+        // Does NOT focus — only updates selection
+        setSelection(newSel)
+        focusRef.current = null
+        setFocusedId(null)
+        setScrollMode(false)
         lastFocusedRef.current = nextId
         navStackRef.current = []
-        setScrollMode(nextNode.type === 'terminal' && nextNode.alive)
-        sendBringToFront(nextId)
-        bringToFront(nextId)
+        if (selType === 'node') flashNode(nextId)
 
-        // Rotational fly-to: arc around the parent
-        rotationalFlyTo({
-          parentCenter,
-          sourceCenter: { x: node.x, y: node.y },
-          targetCenter: { x: nextNode.x, y: nextNode.y },
-          targetCamera,
-          direction: e.key === 'ArrowRight' ? 'cw' : 'ccw'
-        })
+        if (selType === 'edge') {
+          // Simple fly-to for edges (nodes are too close together for arc animation)
+          flyTo(cameraTarget)
+        } else {
+          // Rotational fly-to: arc around the parent
+          rotationalFlyTo({
+            parentCenter,
+            sourceCenter: { x: node.x, y: node.y },
+            targetCenter: { x: nextNode.x, y: nextNode.y },
+            targetCamera: cameraTarget,
+            direction: e.key === 'ArrowRight' ? 'cw' : 'ccw'
+          })
+        }
       }
 
-      // Escape: close search, cancel reparent mode, or stop TTS
+      // Escape: close search modal, close terminal search, cancel reparent mode, or stop TTS
       if (e.key === 'Escape') {
+        if (searchVisibleRef.current) {
+          setSearchVisible(false)
+          return
+        }
         if (focusRef.current) {
           const closer = terminalSearchClosers.get(focusRef.current)
           if (closer?.()) return
@@ -1060,7 +1252,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [spawnNode, handleNodeFocus, flyToParentAndChildren, fitAllNodes, snapToTarget, rotationalFlyTo, bringToFront, speak, ttsStop, isSpeaking])
+  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, rotationalFlyTo, bringToFront, speak, ttsStop, isSpeaking])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -1080,6 +1272,14 @@ export function App() {
   }, [flyTo])
 
   const handleCanvasWheel = useCallback((e: WheelEvent) => {
+    // Search modal handles its own wheel events
+    if ((e.target as HTMLElement).closest('.search-modal')) return
+    setSearchVisible(false)
+    if ((e.target as HTMLElement).closest('.archive-body')) {
+      const gesture = classifyWheelEvent(archiveWheelAcc, e)
+      if (gesture === 'vertical') return  // let native CSS scroll handle it
+      // horizontal or pinch: fall through to unfocus/pan below
+    }
     if (focusRef.current) {
       e.preventDefault()
       handleUnfocus()
@@ -1089,6 +1289,7 @@ export function App() {
   }, [handleWheel, flyToUnfocusZoom, handleUnfocus])
 
   const handleCanvasPanStart = useCallback((e: MouseEvent) => {
+    setSearchVisible(false)
     if (archiveDismissFlag.active) {
       handlePanStart(e)
       return
@@ -1104,10 +1305,12 @@ export function App() {
     const result = await sendMarkdownAdd(parentId, point.x, point.y)
     if (result?.nodeId) {
       await sendReparent(childId, result.nodeId)
+      await navigateToNode(result.nodeId)
     }
-  }, [])
+  }, [navigateToNode])
 
   const handleCanvasUnfocus = useCallback(() => {
+    setSearchVisible(false)
     if (archiveDismissFlag.active) {
       archiveDismissFlag.active = false
       return
@@ -1125,28 +1328,22 @@ export function App() {
       handleEdgeSplit(edge.parentId, edge.childId, edge.point)
       return
     }
-    handleUnfocus()
-    flyToUnfocusZoom()
+    if (focusRef.current) {
+      handleUnfocus()
+      flyToUnfocusZoom()
+    } else {
+      setSelection(null)
+      handleUnfocus()
+      flyToUnfocusZoom()
+    }
   }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, handleEdgeSplit, hoveredEdgeRef, clearHoveredEdge])
 
   return (
     <div className="app">
-      <Toolbar
-        inputDevice={inputDevice}
-        onAddTerminal={() => addTerminalAsChild('root')}
-        onResetView={resetCamera}
-        onToggleInputDevice={toggleInputDevice}
-        forceLayoutPlaying={forceLayoutPlaying}
-        forceLayoutSpeed={forceLayoutSpeed}
-        onForceLayoutToggle={forceLayoutToggle}
-        onForceLayoutIncrease={forceLayoutIncrease}
-        onForceLayoutDecrease={forceLayoutDecrease}
-        crabs={crabs}
-        onCrabClick={handleCrabClick}
-      />
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} focusedIdRef={focusRef} reparentEdgeRef={reparentEdgeRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null} overlay={<SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} />}>
         <RootNode
           focused={focusedId === 'root'}
+          selected={selection?.id === 'root' && selection?.type === 'node'}
           onClick={() => handleNodeFocus('root')}
           archivedChildren={rootArchivedChildren}
           onUnarchive={handleUnarchive}
@@ -1170,6 +1367,7 @@ export function App() {
             shellTitleHistory={t.shellTitleHistory}
             cwd={t.cwd}
             focused={focusedId === t.id}
+            selected={selection?.id === t.id && selection?.type === 'node'}
             anyNodeFocused={focusedId !== null}
             stoppedUnviewed={stoppedUnviewedIds.has(t.id)}
             scrollMode={scrollMode}
@@ -1196,6 +1394,10 @@ export function App() {
             onDragEnd={handleDragEnd}
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
+            onMarkUnread={handleMarkUnread}
+            isUnviewed={stoppedUnviewedIds.has(t.id) || permissionUnviewedIds.has(t.id) || planUnviewedIds.has(t.id)}
+            terminalSessions={t.terminalSessions}
+            onSessionRevive={handleSessionRevive}
           />
         ))}
         {markdowns.map((m) => (
@@ -1214,7 +1416,9 @@ export function App() {
             resolvedPreset={resolvedPresets[m.id]}
             archivedChildren={m.archivedChildren}
             focused={focusedId === m.id}
+            selected={selection?.id === m.id && selection?.type === 'node'}
             onFocus={handleNodeFocus}
+            onUnfocus={() => { handleUnfocus(); flyToUnfocusZoom() }}
             onClose={handleRemoveNode}
             onMove={handleMove}
             onResize={handleResizeMarkdown}
@@ -1244,6 +1448,7 @@ export function App() {
             resolvedPreset={resolvedPresets[d.id]}
             archivedChildren={d.archivedChildren}
             focused={focusedId === d.id}
+            selected={selection?.id === d.id && selection?.type === 'node'}
             onFocus={handleNodeFocus}
             onClose={handleRemoveNode}
             onMove={handleMove}
@@ -1270,7 +1475,19 @@ export function App() {
           />
         )}
       </Canvas>
-      <Toast toasts={toasts} onDismiss={dismissToast} />
+      <Toolbar
+        inputDevice={inputDevice}
+        onToggleInputDevice={toggleInputDevice}
+        forceLayoutPlaying={forceLayoutPlaying}
+        forceLayoutSpeed={forceLayoutSpeed}
+        onForceLayoutToggle={forceLayoutToggle}
+        onForceLayoutIncrease={forceLayoutIncrease}
+        onForceLayoutDecrease={forceLayoutDecrease}
+        crabs={crabs}
+        onCrabClick={handleCrabClick}
+        selectedNodeId={focusedId}
+      />
+      <Toast toasts={toasts} onExpire={expireToast} />
     </div>
   )
 }

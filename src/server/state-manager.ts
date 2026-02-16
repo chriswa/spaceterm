@@ -10,6 +10,7 @@ import type {
 } from '../shared/state'
 import type { ClaudeSessionEntry } from '../shared/protocol'
 import { schedulePersist, persistNow, loadState } from './persistence'
+import { isDisposable } from '../shared/node-utils'
 
 const STATE_VERSION = 1
 const MARKDOWN_DEFAULT_WIDTH = 400
@@ -302,19 +303,21 @@ export class StateManager {
       this.sessionToNodeId.delete(node.sessionId)
     }
 
-    // Snapshot node into parent's archivedChildren
-    const snapshot = {
-      archivedAt: new Date().toISOString(),
-      data: JSON.parse(JSON.stringify(node)) // deep copy
-    }
-    if (parentId === 'root') {
-      this.state.rootArchivedChildren.push(snapshot)
-      this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
-    } else {
-      const parent = this.state.nodes[parentId]
-      if (parent) {
-        parent.archivedChildren.push(snapshot)
-        this.onNodeUpdate(parentId, { archivedChildren: parent.archivedChildren })
+    // Only snapshot into archive if the node has meaningful content
+    if (!isDisposable(node)) {
+      const snapshot = {
+        archivedAt: new Date().toISOString(),
+        data: JSON.parse(JSON.stringify(node)) // deep copy
+      }
+      if (parentId === 'root') {
+        this.state.rootArchivedChildren.push(snapshot)
+        this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+      } else {
+        const parent = this.state.nodes[parentId]
+        if (parent) {
+          parent.archivedChildren.push(snapshot)
+          this.onNodeUpdate(parentId, { archivedChildren: parent.archivedChildren })
+        }
       }
     }
 

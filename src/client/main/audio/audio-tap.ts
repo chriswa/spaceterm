@@ -12,8 +12,11 @@ export function onData(cb: (chunk: AudioChunk) => void): void {
 
 export async function start(): Promise<void> {
   if (tap) return
+  logger.log('[audio-tap] start() called')
   try {
+    logger.log('[audio-tap] loading audiotee module...')
     const { AudioTee } = await loadAudioTee()
+    logger.log('[audio-tap] audiotee module loaded, creating instance...')
     tap = new AudioTee({
       sampleRate: 44100,
       chunkDurationMs: 50,
@@ -32,6 +35,7 @@ export async function start(): Promise<void> {
       logger.log(`[audio-tap] ${level}: ${message.message}`)
     })
 
+    logger.log('[audio-tap] calling tap.start()...')
     await tap.start()
     logger.log('[audio-tap] started')
   } catch (err: unknown) {

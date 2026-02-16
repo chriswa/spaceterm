@@ -28,6 +28,7 @@ interface MarkdownCardProps {
   resolvedPreset?: ColorPreset
   archivedChildren: ArchivedNode[]
   focused: boolean
+  selected: boolean
   onFocus: (id: string) => void
   onClose: (id: string) => void
   onMove: (id: string, x: number, y: number) => void
@@ -41,6 +42,7 @@ interface MarkdownCardProps {
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string, solo?: boolean) => void
   onDragEnd?: (id: string) => void
+  onUnfocus: () => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
 }
@@ -344,15 +346,15 @@ const linkClickHandler = EditorView.domEventHandlers({
 })
 
 export function MarkdownCard({
-  id, x, y, width, height, zIndex, zoom, content, colorPresetId, resolvedPreset, archivedChildren, focused,
+  id, x, y, width, height, zIndex, zoom, content, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
   onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget
+  onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget
 }: MarkdownCardProps) {
   const preset = resolvedPreset
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  const propsRef = useRef({ x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize })
-  propsRef.current = { x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize }
+  const propsRef = useRef({ x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize, onUnfocus })
+  propsRef.current = { x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize, onUnfocus }
 
   // Auto-size helper: collapse scroller to 0×0 so scrollWidth/scrollHeight
   // report intrinsic content size (otherwise they never shrink below container).
@@ -395,7 +397,10 @@ export function MarkdownCard({
           }
         }),
         // Prevent Cmd+M from being swallowed by CodeMirror
-        keymap.of([indentWithTab]),
+        keymap.of([
+          { key: 'Escape', run: () => { propsRef.current.onUnfocus(); return true } },
+          indentWithTab,
+        ]),
       ]
     })
 
@@ -419,7 +424,9 @@ export function MarkdownCard({
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    if (!focused) {
+    if (focused) {
+      view.focus()
+    } else {
       view.contentDOM.blur()
     }
   }, [focused])
@@ -508,7 +515,7 @@ export function MarkdownCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
-      className={`markdown-card ${focused ? 'markdown-card--focused' : ''} ${isEmpty ? 'markdown-card--empty' : ''}`}
+      className={`markdown-card ${focused ? 'markdown-card--focused' : selected ? 'markdown-card--selected' : ''} ${isEmpty ? 'markdown-card--empty' : ''}`}
       style={{
         backgroundColor: 'transparent',
         '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',

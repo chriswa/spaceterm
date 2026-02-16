@@ -15,6 +15,7 @@ interface DirectoryCardProps {
   zoom: number
   cwd: string
   focused: boolean
+  selected: boolean
   colorPresetId?: string
   resolvedPreset?: ColorPreset
   archivedChildren: ArchivedNode[]
@@ -34,7 +35,7 @@ interface DirectoryCardProps {
 }
 
 export function DirectoryCard({
-  id, x, y, zIndex, zoom, cwd, focused, colorPresetId, resolvedPreset, archivedChildren,
+  id, x, y, zIndex, zoom, cwd, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget
@@ -192,7 +193,7 @@ export function DirectoryCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
-      className={`directory-card ${focused ? 'directory-card--focused' : ''}`}
+      className={`directory-card ${focused ? 'directory-card--focused' : selected ? 'directory-card--selected' : ''}`}
       style={{ backgroundColor: preset?.terminalBg ?? '#1e1e2e' }}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}

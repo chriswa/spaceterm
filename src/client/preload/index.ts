@@ -194,6 +194,12 @@ contextBridge.exposeInMainWorld('api', {
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  window: {
+    isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:is-fullscreen'),
+    setFullScreen: (enabled: boolean) => ipcRenderer.invoke('window:set-fullscreen', enabled),
+    isKiosk: (): Promise<boolean> => ipcRenderer.invoke('window:is-kiosk'),
+    setKiosk: (enabled: boolean) => ipcRenderer.invoke('window:set-kiosk', enabled)
+  },
   tts: {
     speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
     stop: () => ipcRenderer.send('tts:stop')

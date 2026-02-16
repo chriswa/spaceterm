@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useLayoutEffect, useState } from 'react'
 import type { InputDevice } from '../hooks/useCamera'
 import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
@@ -7,12 +7,10 @@ import { useEdgesStore } from '../stores/edgesStore'
 import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
 
-interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; addedAt: number }
+interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string }
 
 interface ToolbarProps {
   inputDevice: InputDevice
-  onAddTerminal: () => void
-  onResetView: () => void
   onToggleInputDevice: () => void
   forceLayoutPlaying: boolean
   forceLayoutSpeed: number
@@ -21,13 +19,14 @@ interface ToolbarProps {
   onForceLayoutDecrease: () => void
   crabs: CrabEntry[]
   onCrabClick: (nodeId: string) => void
+  selectedNodeId: string | null
 }
 
 export function Toolbar({
   inputDevice,
-  onAddTerminal, onResetView, onToggleInputDevice,
+  onToggleInputDevice,
   forceLayoutPlaying, forceLayoutSpeed, onForceLayoutToggle, onForceLayoutIncrease, onForceLayoutDecrease,
-  crabs, onCrabClick
+  crabs, onCrabClick, selectedNodeId
 }: ToolbarProps) {
   const fps = useFps()
   const recording = usePerfStore(s => s.recording)
@@ -40,12 +39,6 @@ export function Toolbar({
 
   return (
     <div className="toolbar">
-      <button className="toolbar__btn" onClick={onAddTerminal}>
-        + New Terminal
-      </button>
-      <button className="toolbar__btn" onClick={onResetView}>
-        Reset View
-      </button>
       <div className="toolbar__force-layout">
         <button className="toolbar__force-btn" onClick={onForceLayoutToggle} title={forceLayoutPlaying ? 'Pause force layout' : 'Play force layout'}>
           {forceLayoutPlaying ? '\u23F8' : '\u25B6'}
@@ -82,6 +75,8 @@ export function Toolbar({
       >
         Edges
       </button>
+      <FullscreenToggle />
+      <KioskToggle />
       <PlpToggle />
       <BeatsToggle />
       <span className="toolbar__zoom">
@@ -92,9 +87,51 @@ export function Toolbar({
         <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
       </span>
       {crabs.length > 0 && (
-        <CrabGroup crabs={crabs} onCrabClick={onCrabClick} />
+        <CrabGroup crabs={crabs} onCrabClick={onCrabClick} selectedNodeId={selectedNodeId} />
       )}
     </div>
+  )
+}
+
+function FullscreenToggle() {
+  const [on, setOn] = useState(true)
+
+  useEffect(() => { window.api.window.isFullScreen().then(setOn) }, [])
+
+  const toggle = () => {
+    const next = !on
+    window.api.window.setFullScreen(next).then(() => setOn(next))
+  }
+
+  return (
+    <button
+      className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
+      onClick={toggle}
+      title={on ? 'Exit fullscreen' : 'Enter fullscreen'}
+    >
+      Fullscreen
+    </button>
+  )
+}
+
+function KioskToggle() {
+  const [on, setOn] = useState(false)
+
+  useEffect(() => { window.api.window.isKiosk().then(setOn) }, [])
+
+  const toggle = () => {
+    const next = !on
+    window.api.window.setKiosk(next).then(() => setOn(next))
+  }
+
+  return (
+    <button
+      className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
+      onClick={toggle}
+      title={on ? 'Exit kiosk mode' : 'Enter kiosk mode'}
+    >
+      Kiosk
+    </button>
   )
 }
 
@@ -112,9 +149,116 @@ function PlpToggle() {
   )
 }
 
-function CrabGroup({ crabs, onCrabClick }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void }) {
+function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void; selectedNodeId: string | null }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const prevCrabsRef = useRef<CrabEntry[]>([])
+  const positionsRef = useRef<Map<string, number>>(new Map())
+  const isFirstRenderRef = useRef(true)
 
+  // Capture positions before paint, animate enter/exit/reorder.
+  // Positions are stored as distance from the slot's left edge to the
+  // container's right edge (offsetWidth - offsetLeft). The container's right
+  // edge is viewport-anchored (toolbar is full-width, crabs are the rightmost
+  // flex item), so this metric is stable: a crab that hasn't moved within the
+  // group keeps the same value even when siblings are added/removed.
+  //
+  // IMPORTANT: We use offsetLeft/offsetWidth (layout positions) instead of
+  // getBoundingClientRect() because the latter includes transforms from
+  // in-progress Web Animations, which creates a feedback loop: animations
+  // pollute measurements → bogus deltas → more animations.
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const prevCrabs = prevCrabsRef.current
+    const oldPositions = positionsRef.current
+    const newPositions = new Map<string, number>()
+
+    const slots = el.querySelectorAll<HTMLElement>('.toolbar__crab-slot')
+    const containerWidth = el.offsetWidth
+    for (const slot of slots) {
+      const nodeId = slot.dataset.nodeId
+      if (nodeId) {
+        newPositions.set(nodeId, containerWidth - slot.offsetLeft)
+      }
+    }
+
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false
+      positionsRef.current = newPositions
+      prevCrabsRef.current = crabs
+      return
+    }
+
+    const prevIds = new Set(prevCrabs.map(c => c.nodeId))
+    const currIds = new Set(crabs.map(c => c.nodeId))
+
+    // Exits — crabs in prev but not current
+    for (const prev of prevCrabs) {
+      if (!currIds.has(prev.nodeId)) {
+        const oldRightOffset = oldPositions.get(prev.nodeId)
+        if (oldRightOffset == null) continue
+
+        // Convert right-relative offset to left position within current container
+        const phantomLeft = containerWidth - oldRightOffset
+        const phantom = document.createElement('button')
+        phantom.className = `toolbar__crab toolbar__crab--${prev.color}`
+        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;-webkit-mask-image:url(${crabIcon});mask-image:url(${crabIcon});-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;`
+        el.appendChild(phantom)
+
+        const anim = phantom.animate(
+          [
+            { transform: 'translateY(0)', opacity: 1 },
+            { transform: 'translateY(40px)', opacity: 0 },
+          ],
+          { duration: 250, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' }
+        )
+        anim.onfinish = () => phantom.remove()
+      }
+    }
+
+    // Enters — crabs in current but not prev
+    for (const slot of slots) {
+      const nodeId = slot.dataset.nodeId
+      if (nodeId && !prevIds.has(nodeId)) {
+        slot.animate(
+          [
+            { transform: 'translateY(-40px)', opacity: 0 },
+            { transform: 'translateY(0)', opacity: 1 },
+          ],
+          { duration: 280, easing: 'cubic-bezier(0.4, 0, 1, 1)' }
+        )
+      }
+    }
+
+    // FLIP reorder — crabs present in both.
+    // delta = newRightOffset - oldRightOffset: positive means the crab moved
+    // further from the right edge (leftward), so we start shifted right.
+    for (const slot of slots) {
+      const nodeId = slot.dataset.nodeId
+      if (nodeId && prevIds.has(nodeId) && currIds.has(nodeId)) {
+        const oldRightOffset = oldPositions.get(nodeId)
+        const newRightOffset = newPositions.get(nodeId)
+        if (oldRightOffset != null && newRightOffset != null) {
+          const delta = newRightOffset - oldRightOffset
+          if (Math.abs(delta) > 1) {
+            slot.animate(
+              [
+                { transform: `translateX(${delta}px)` },
+                { transform: 'translateX(0)' },
+              ],
+              { duration: 300, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }
+            )
+          }
+        }
+      }
+    }
+
+    positionsRef.current = newPositions
+    prevCrabsRef.current = crabs
+  }, [crabs])
+
+  // Beat-synced glow/bounce/rock animation loop
   useEffect(() => {
     let rafId = 0
     // Continuous dance phase: 0→2 over FOUR beats (half-speed), single clock
@@ -198,9 +342,9 @@ function CrabGroup({ crabs, onCrabClick }: { crabs: CrabEntry[]; onCrabClick: (n
 
       const glowRadius = 2 + 4 * glowPulse
 
-      const children = el.children
-      for (let i = 0; i < children.length; i++) {
-        const child = children[i] as HTMLElement
+      // Target inner crab buttons, skipping exit phantoms
+      const crabButtons = el.querySelectorAll<HTMLElement>('.toolbar__crab-slot .toolbar__crab')
+      for (const child of crabButtons) {
         child.style.filter = `drop-shadow(0 0 ${glowRadius}px currentColor)`
         if (child.classList.contains('toolbar__crab--attention')) {
           child.style.translate = `0 ${-bounce}px`
@@ -219,13 +363,14 @@ function CrabGroup({ crabs, onCrabClick }: { crabs: CrabEntry[]; onCrabClick: (n
   return (
     <div className="toolbar__crabs" ref={containerRef}>
       {crabs.map(crab => (
-        <button
-          key={crab.nodeId}
-          className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}`}
-          style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
-          onClick={() => onCrabClick(crab.nodeId)}
-          title={{ orange: 'Working', white: 'Stopped', red: 'Permission', purple: 'Plan', gray: 'Session' }[crab.color]}
-        />
+        <div key={crab.nodeId} className="toolbar__crab-slot" data-node-id={crab.nodeId}>
+          <button
+            className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}`}
+            style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
+            onClick={() => onCrabClick(crab.nodeId)}
+            title={{ orange: 'Working', white: 'Stopped', red: 'Permission', purple: 'Plan', gray: 'Session' }[crab.color]}
+          />
+        </div>
       ))}
     </div>
   )
@@ -247,8 +392,6 @@ function BeatsToggle() {
 
 function BeatIndicators() {
   const beatsVisible = useAudioStore(s => s.beatsVisible)
-  const hasSignal = useAudioStore(s => s.hasSignal)
-  const listening = useAudioStore(s => s.listening)
   const energyRef = useRef<HTMLSpanElement>(null)
   const onsetRef = useRef<HTMLSpanElement>(null)
   const phaseRef = useRef<HTMLSpanElement>(null)
@@ -265,6 +408,7 @@ function BeatIndicators() {
     let lastBpm = 0
     let lastStorePhase = 0
     let prevTime = performance.now()
+    let logCounter = 0
 
     const tick = () => {
       rafId = requestAnimationFrame(tick)
@@ -277,7 +421,13 @@ function BeatIndicators() {
       const dt = now - prevTime
       prevTime = now
 
-      const { phase, bpm, energy, onset, confidence } = useAudioStore.getState()
+      const { phase, bpm, energy, onset, confidence, hasSignal, listening } = useAudioStore.getState()
+
+      // Periodic diagnostic logging
+      logCounter++
+      if (logCounter % 300 === 0) {
+        window.api.log(`[beat-indicators] listening=${listening} hasSignal=${hasSignal} energy=${energy.toFixed(4)} bpm=${bpm} phase=${phase.toFixed(3)} conf=${confidence.toFixed(2)} onset=${onset}`)
+      }
 
       // --- Energy indicator (most raw) ---
       smoothEnergy = smoothEnergy + 0.3 * (energy - smoothEnergy)
@@ -308,7 +458,7 @@ function BeatIndicators() {
       oEl.style.boxShadow = oGlow > 0.5 ? `0 0 ${oGlow}px hsl(30, 90%, ${oLightness}%)` : 'none'
       oEl.title = onset ? 'Onset detection: fired!' : `Onset detection: ${onsetLevel.toFixed(2)}`
 
-      // --- Phase indicator (existing logic, unchanged) ---
+      // --- Phase indicator ---
       let pulse: number
       if (bpm > 0) {
         const beatPeriodMs = 60000 / bpm
@@ -322,7 +472,8 @@ function BeatIndicators() {
         }
         pulse = 0.5 + 0.5 * Math.cos(2 * Math.PI * localPhase)
       } else {
-        pulse = 0
+        // No BPM estimate: gentle sine oscillation at ~0.67Hz (matches useBeatPulse fallback)
+        pulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * now / 1500)
       }
 
       const scale = 0.6 + pulse * 0.9 * Math.max(0.3, confidence)
@@ -336,7 +487,6 @@ function BeatIndicators() {
       pEl.style.opacity = String(opacity)
       pEl.style.background = `hsl(${hue}, 80%, 50%)`
       pEl.style.boxShadow = `0 0 ${glowRadius}px hsla(${hue}, 80%, 50%, ${glowAlpha})`
-      // Skip pEl.title — can't hover a 12px pulsing dot anyway
     }
 
     rafId = requestAnimationFrame(tick)
@@ -344,16 +494,6 @@ function BeatIndicators() {
   }, [])
 
   if (!beatsVisible) return null
-
-  if (listening && !hasSignal) {
-    return (
-      <span className="toolbar__beats">
-        <span className="toolbar__beat toolbar__beat--energy toolbar__beat--no-signal" />
-        <span className="toolbar__beat toolbar__beat--onset toolbar__beat--no-signal" />
-        <span className="toolbar__beat toolbar__beat--no-signal" />
-      </span>
-    )
-  }
 
   return (
     <span className="toolbar__beats">

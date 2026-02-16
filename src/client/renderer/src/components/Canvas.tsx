@@ -10,10 +10,11 @@ interface CanvasProps {
   onCanvasClick: () => void
   onDoubleClick: () => void
   background?: React.ReactNode
+  overlay?: React.ReactNode
   children: React.ReactNode
 }
 
-export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick, onDoubleClick, background, children }: CanvasProps) {
+export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick, onDoubleClick, background, overlay, children }: CanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -68,6 +69,7 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick,
       >
         {children}
       </div>
+      {overlay}
     </div>
   )
 }

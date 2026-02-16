@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import { COLOR_PRESETS } from '../lib/color-presets'
 import type { ColorPreset } from '../lib/color-presets'
-import type { ArchivedNode } from '../../../../shared/state'
+import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import { ArchiveBody } from './ArchiveBody'
+import { SessionsBody } from './SessionsBody'
 
 interface CardShellProps {
   nodeId: string
@@ -25,9 +26,14 @@ interface CardShellProps {
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
+  pastSessions?: TerminalSessionEntry[]
+  onSessionsToggled?: (nodeId: string, open: boolean) => void
+  onSessionRevive?: (session: TerminalSessionEntry) => void
   onMouseDown?: (e: React.MouseEvent) => void
   onStartReparent?: (id: string) => void
   isReparenting?: boolean
+  onMarkUnread?: (id: string) => void
+  isUnviewed?: boolean
   className?: string
   style?: CSSProperties
   cardRef?: RefObject<HTMLDivElement | null>
@@ -41,14 +47,18 @@ export function CardShell({
   headVariant, titleContent, headStyle, preset,
   showClose = true, showColorPicker = true,
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
-  onMouseDown, onStartReparent, isReparenting,
+  pastSessions, onSessionsToggled, onSessionRevive,
+  onMouseDown, onStartReparent, isReparenting, onMarkUnread, isUnviewed,
   className, style, cardRef, onMouseEnter, onMouseLeave, children
 }: CardShellProps) {
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [sessionsOpen, setSessionsOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
   const archiveBtnRef = useRef<HTMLButtonElement>(null)
   const archiveBodyRef = useRef<HTMLDivElement>(null)
+  const sessionsBtnRef = useRef<HTMLButtonElement>(null)
+  const sessionsBodyRef = useRef<HTMLDivElement>(null)
 
   // Close archive when archives become empty
   useEffect(() => {
@@ -57,6 +67,28 @@ export function CardShell({
       onArchiveToggled(nodeId, false)
     }
   }, [archivedChildren.length, archiveOpen, nodeId, onArchiveToggled])
+
+  // Close sessions panel when past sessions become empty
+  useEffect(() => {
+    if (pastSessions && pastSessions.length === 0 && sessionsOpen) {
+      setSessionsOpen(false)
+      onSessionsToggled?.(nodeId, false)
+    }
+  }, [pastSessions, sessionsOpen, nodeId, onSessionsToggled])
+
+  // Close archive when node loses focus
+  useEffect(() => {
+    if (!focused && archiveOpen) {
+      setArchiveOpen(false)
+    }
+  }, [focused, archiveOpen])
+
+  // Close sessions panel when node loses focus
+  useEffect(() => {
+    if (!focused && sessionsOpen) {
+      setSessionsOpen(false)
+    }
+  }, [focused, sessionsOpen])
 
   // Dismiss archive on outside click
   useEffect(() => {
@@ -72,6 +104,20 @@ export function CardShell({
     return () => document.removeEventListener('mousedown', handler, { capture: true })
   }, [archiveOpen, nodeId, onArchiveToggled])
 
+  // Dismiss sessions panel on outside click
+  useEffect(() => {
+    if (!sessionsOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (sessionsBodyRef.current?.contains(target)) return
+      if (sessionsBtnRef.current?.contains(target)) return
+      setSessionsOpen(false)
+      onSessionsToggled?.(nodeId, false)
+    }
+    document.addEventListener('mousedown', handler, { capture: true })
+    return () => document.removeEventListener('mousedown', handler, { capture: true })
+  }, [sessionsOpen, nodeId, onSessionsToggled])
+
   // Close color picker on outside click
   useEffect(() => {
     if (!pickerOpen) return
@@ -85,12 +131,22 @@ export function CardShell({
   }, [pickerOpen])
 
   const toggleArchive = useCallback(() => {
+    setSessionsOpen(false)
     setArchiveOpen(prev => {
       const next = !prev
       onArchiveToggled(nodeId, next)
       return next
     })
   }, [nodeId, onArchiveToggled])
+
+  const toggleSessions = useCallback(() => {
+    setArchiveOpen(false)
+    setSessionsOpen(prev => {
+      const next = !prev
+      onSessionsToggled?.(nodeId, next)
+      return next
+    })
+  }, [nodeId, onSessionsToggled])
 
   // Action buttons shared across head variants
   const actionButtons = (
@@ -99,12 +155,20 @@ export function CardShell({
         <div style={{ position: 'relative' }} ref={pickerRef}>
           <button
             className="node-titlebar__color-btn"
-            title="Header color"
+            title="Node color"
             style={preset ? { color: preset.titleBarFg } : undefined}
             onClick={(e) => { e.stopPropagation(); setPickerOpen(prev => !prev) }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            &#9679;
+            <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              <g transform="rotate(-45 7 7)">
+                <ellipse cx="7" cy="2.5" rx="3.2" ry="1.5" />
+                <path d="M3.8 2.5 L3.8 10" />
+                <path d="M10.2 2.5 L10.2 10" />
+                <path d="M3.8 10 Q7 12.5 10.2 10" />
+              </g>
+              <path d="M1.3 5.4 L1.3 10.5" strokeWidth="1" />
+            </svg>
           </button>
           {pickerOpen && (
             <div className="node-titlebar__color-picker" onMouseDown={(e) => e.stopPropagation()}>
@@ -125,18 +189,51 @@ export function CardShell({
           )}
         </div>
       )}
-      {archivedChildren.length > 0 && (
+      {onMarkUnread && (
         <button
-          ref={archiveBtnRef}
-          className="node-titlebar__archive-btn"
-          title="Archived children"
+          className="node-titlebar__unread-btn"
+          title="Mark as unread"
+          disabled={isUnviewed}
           style={preset ? { color: preset.titleBarFg } : undefined}
-          onClick={(e) => { e.stopPropagation(); toggleArchive() }}
+          onClick={(e) => { e.stopPropagation(); onMarkUnread(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {archivedChildren.length}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1" y="3" width="12" height="9" rx="1" />
+            <path d="M1 3 L7 8 L13 3" />
+          </svg>
         </button>
       )}
+      {pastSessions !== undefined && (
+        <button
+          ref={sessionsBtnRef}
+          className="node-titlebar__sessions-btn"
+          title="Past terminal sessions"
+          disabled={pastSessions.length === 0}
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); toggleSessions() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="18" height="18" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute' }}>
+            <path d="M2 1 L3 12 Q3 13 5 13 L9 13 Q11 13 11 12 L12 1" transform="rotate(-90 7 7)" />
+          </svg>
+          <span className="node-titlebar__archive-count" style={pastSessions.length >= 100 ? { fontSize: 7 } : pastSessions.length >= 10 ? { fontSize: 8 } : undefined}>{pastSessions.length}</span>
+        </button>
+      )}
+      <button
+        ref={archiveBtnRef}
+        className="node-titlebar__archive-btn"
+        title="Archived children"
+        disabled={archivedChildren.length === 0}
+        style={preset ? { color: preset.titleBarFg } : undefined}
+        onClick={(e) => { e.stopPropagation(); toggleArchive() }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <svg width="18" height="18" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute' }}>
+          <path d="M2 1 L3 12 Q3 13 5 13 L9 13 Q11 13 11 12 L12 1" />
+        </svg>
+        <span className="node-titlebar__archive-count" style={archivedChildren.length >= 100 ? { fontSize: 7 } : archivedChildren.length >= 10 ? { fontSize: 8 } : undefined}>{archivedChildren.length}</span>
+      </button>
       {onStartReparent && (
         <button
           className={`node-titlebar__reparent-btn${isReparenting ? ' node-titlebar__reparent-btn--active' : ''}`}
@@ -145,9 +242,10 @@ export function CardShell({
           onClick={(e) => { e.stopPropagation(); onStartReparent(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 8 L2 4 Q2 2 4 2 L8 2" />
-            <path d="M6 0 L8 2 L6 4" />
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="7" y1="11" x2="7" y2="4" />
+            <path d="M4 7 L7 4 L10 7" />
+            <line x1="3" y1="2" x2="11" y2="2" />
           </svg>
         </button>
       )}
@@ -158,26 +256,30 @@ export function CardShell({
           onClick={(e) => { e.stopPropagation(); onClose(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          &times;
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <line x1="3" y1="3" x2="11" y2="11" />
+            <line x1="11" y1="3" x2="3" y2="11" />
+          </svg>
         </button>
       )}
     </div>
   )
 
-  // Hidden head: only show archive button when archives exist
-  const hiddenHeadArchiveBtn = headVariant === 'hidden' && archivedChildren.length > 0 ? (
+  const hiddenHeadArchiveBtn = headVariant === 'hidden' ? (
     <div className="card-shell__hidden-head-actions">
-      {archivedChildren.length > 0 && (
-        <button
-          ref={archiveBtnRef}
-          className="node-titlebar__archive-btn card-shell__archive-btn"
-          title="Archived children"
-          onClick={(e) => { e.stopPropagation(); toggleArchive() }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {archivedChildren.length}
-        </button>
-      )}
+      <button
+        ref={archiveBtnRef}
+        className="node-titlebar__archive-btn card-shell__archive-btn"
+        title="Archived children"
+        disabled={archivedChildren.length === 0}
+        onClick={(e) => { e.stopPropagation(); toggleArchive() }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <svg width="18" height="18" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute' }}>
+          <path d="M2 1 L3 12 Q3 13 5 13 L9 13 Q11 13 11 12 L12 1" />
+        </svg>
+        <span className="node-titlebar__archive-count" style={archivedChildren.length >= 100 ? { fontSize: 7 } : archivedChildren.length >= 10 ? { fontSize: 8 } : undefined}>{archivedChildren.length}</span>
+      </button>
     </div>
   ) : null
 
@@ -221,6 +323,11 @@ export function CardShell({
                 onUnarchive={onUnarchive}
                 onArchiveDelete={onArchiveDelete}
               />
+            </div>
+          )}
+          {sessionsOpen && pastSessions && pastSessions.length > 0 && (
+            <div className="card-shell__sessions-body" ref={sessionsBodyRef}>
+              <SessionsBody sessions={pastSessions} onRevive={onSessionRevive!} />
             </div>
           )}
           {children}

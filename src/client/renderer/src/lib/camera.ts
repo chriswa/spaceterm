@@ -102,6 +102,38 @@ export function cameraToFitBounds(
   }
 }
 
+export function cameraToFitBoundsWithCenter(
+  center: Point,
+  rects: Array<{ x: number; y: number; width: number; height: number }>,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 0.1,
+  maxZoom = MAX_ZOOM
+): Camera {
+  // Compute max extent from center to each edge of each rect in all 4 directions
+  let halfW = 0
+  let halfH = 0
+  for (const r of rects) {
+    halfW = Math.max(halfW, Math.abs(r.x - center.x), Math.abs(r.x + r.width - center.x))
+    halfH = Math.max(halfH, Math.abs(r.y - center.y), Math.abs(r.y + r.height - center.y))
+  }
+
+  // Create symmetric bounds centered on the given point
+  const boundsWidth = halfW * 2
+  const boundsHeight = halfH * 2
+
+  const usableW = viewportWidth * (1 - 2 * padding)
+  const usableH = viewportHeight * (1 - 2 * padding)
+
+  const zoom = Math.min(usableW / boundsWidth, usableH / boundsHeight, maxZoom)
+
+  return {
+    x: viewportWidth / 2 - center.x * zoom,
+    y: viewportHeight / 2 - center.y * zoom,
+    z: zoom
+  }
+}
+
 export function unionBounds(
   rects: Array<{ x: number; y: number; width: number; height: number }>
 ): Bounds | null {

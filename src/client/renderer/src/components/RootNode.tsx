@@ -8,6 +8,7 @@ const noop = () => {}
 
 interface RootNodeProps {
   focused: boolean
+  selected: boolean
   onClick: () => void
   archivedChildren: ArchivedNode[]
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
@@ -118,7 +119,7 @@ function compileShader(gl: WebGLRenderingContext, type: number, src: string): We
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function RootNode({ focused, onClick, archivedChildren, onUnarchive, onArchiveDelete, onArchiveToggled }: RootNodeProps) {
+export function RootNode({ focused, selected, onClick, archivedChildren, onUnarchive, onArchiveDelete, onArchiveToggled }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
   const canvasSize = size * CANVAS_SCALE
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -254,7 +255,7 @@ export function RootNode({ focused, onClick, archivedChildren, onUnarchive, onAr
         width: canvasSize,
         height: canvasSize,
         borderRadius: '50%',
-        border: `2px solid ${focused ? '#cc4400' : '#555'}`,
+        border: `2px solid ${focused ? '#cc4400' : selected ? '#cdd6f4' : '#555'}`,
         background: '#1a1a1a',
         display: 'flex',
         alignItems: 'center',
@@ -264,7 +265,7 @@ export function RootNode({ focused, onClick, archivedChildren, onUnarchive, onAr
     >
       <span
         style={{
-          color: focused ? '#cc4400' : '#888',
+          color: focused ? '#cc4400' : selected ? '#cdd6f4' : '#888',
           fontSize: 32,
           fontWeight: 600,
           userSelect: 'none',

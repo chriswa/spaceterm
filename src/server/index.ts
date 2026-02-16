@@ -574,6 +574,10 @@ function startServer(): void {
         const options = buildClaudeCodeCreateOptions(cwd, claudeSessionId)
         const { sessionId, cols, rows } = sessionManager.create(options)
         snapshotManager.addSession(sessionId, cols, rows)
+        const revivingNode = stateManager.getNode(nodeId)
+        if (revivingNode?.type === 'terminal' && revivingNode.shellTitleHistory?.length) {
+          sessionManager.seedTitleHistory(sessionId, revivingNode.shellTitleHistory)
+        }
         stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
         console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with Claude session ${claudeSessionId.slice(0, 8)}`)
       } catch (err: any) {
