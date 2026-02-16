@@ -5,6 +5,7 @@ import { join } from 'path'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
+import { setupAudio } from './audio'
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
@@ -318,6 +319,7 @@ app.whenReady().then(async () => {
 
   createWindow()
   mainWindow!.setFullScreen(true)
+  setupAudio(mainWindow!)
   logger.log('Window created')
 })
 

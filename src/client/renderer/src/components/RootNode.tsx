@@ -86,16 +86,9 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     float base = grey * grey * grey;
     float whiteBlend = smoothstep(1.5, 2.5, c);
 
-    // Unselected: grey with black center (inverted)
-    vec3 tintU = vec3(mix(0.4, 0.8, smoothstep(0.3, 1.5, c)));
-    vec3 unselected = vec3(1.0) - mix(tintU * base, vec3(1.0), whiteBlend);
-
-    // Selected: black/dark with white edges (inverted)
-    vec3 tintS = vec3(mix(0.0, 0.15, smoothstep(0.3, 1.5, c)));
-    vec3 selected = vec3(1.0) - mix(tintS * base, vec3(1.0), whiteBlend);
-
-    vec3 rgb = mix(unselected, selected, uFocused);
-    float alpha = mix(smoothstep(0.8, 2.0, c), smoothstep(0.4, 1.3, c), uFocused);
+    // Always black with alpha
+    vec3 rgb = vec3(0.0);
+    float alpha = smoothstep(0.8, 2.0, c);
     fragColor = vec4(rgb, alpha);
 }
 
@@ -214,6 +207,32 @@ export function RootNode({ focused, onClick, archivedChildren, onUnarchive, onAr
     }
   }, [canvasSize, shadersEnabled])
 
+  const rootLabel = focused && (
+    <span
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: size,
+        height: size,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        pointerEvents: 'none',
+        color: '#fff',
+        fontSize: 34,
+        fontWeight: 800,
+        letterSpacing: '0.08em',
+        lineHeight: 1.1,
+        textAlign: 'center',
+        userSelect: 'none',
+        zIndex: 1,
+      }}
+    >
+      root<br />node
+    </span>
+  )
+
   const orbContent = shadersEnabled ? (
     <canvas
       ref={canvasRef}
@@ -280,6 +299,7 @@ export function RootNode({ focused, onClick, archivedChildren, onUnarchive, onAr
       style={{ background: 'transparent', border: 'none' }}
     >
       {orbContent}
+      {rootLabel}
     </CardShell>
   )
 }

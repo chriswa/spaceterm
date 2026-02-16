@@ -201,5 +201,14 @@ contextBridge.exposeInMainWorld('api', {
   perf: {
     startTrace: () => ipcRenderer.invoke('perf:trace-start'),
     stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
+  },
+  audio: {
+    onBeat: (callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean; plp?: { bpm: number; phase: number; confidence: number } }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean; plp?: { bpm: number; phase: number; confidence: number } }) => callback(data)
+      ipcRenderer.on('audio:beat', listener)
+      return () => ipcRenderer.removeListener('audio:beat', listener)
+    },
+    start: () => ipcRenderer.invoke('audio:start'),
+    stop: () => ipcRenderer.invoke('audio:stop')
   }
 })

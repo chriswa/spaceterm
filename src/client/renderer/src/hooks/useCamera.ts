@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic } from '../lib/camera'
+import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage } from '../lib/camera'
 import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY } from '../lib/constants'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
@@ -34,7 +34,9 @@ function camerasClose(a: Camera, b: Camera): boolean {
 export type InputDevice = 'mouse' | 'trackpad'
 
 export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<string | null>) {
-  const initial = initialCamera ?? DEFAULT_CAMERA
+  const storedCamera = loadCameraFromStorage()
+  const initial = initialCamera ?? storedCamera ?? DEFAULT_CAMERA
+  const restoredFromStorageRef = useRef(storedCamera !== null && !initialCamera)
   const [camera, setCamera] = useState<Camera>(initial)
   const cameraRef = useRef<Camera>(initial)
   const targetRef = useRef<Camera>({ ...initial })
@@ -65,6 +67,9 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
       setCamera(cameraRef.current)
     }, SETTLE_DELAY)
   }, [])
+
+  // Persist camera to localStorage on every change
+  useEffect(() => { saveCameraToStorage(camera) }, [camera])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -386,5 +391,5 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     setInputDevice(next)
   }, [])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, inputDevice, toggleInputDevice }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef }
 }

@@ -201,7 +201,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }
 
       // Claude is actively working
-      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart') {
+      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart' || hookType === 'PreCompact') {
         sessionManager.setClaudeState(msg.surfaceId, 'working')
       }
 
@@ -216,6 +216,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
         if (claudeSessionId) {
           sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
+        }
+        // Compaction finished — Claude is now idle waiting for input
+        if (source === 'compact') {
+          sessionManager.setClaudeState(msg.surfaceId, 'stopped')
         }
       }
       break

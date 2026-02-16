@@ -13,15 +13,19 @@ import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
-import { cameraToFitBounds, unionBounds } from './lib/camera'
+import { useBeatPulse } from './hooks/useBeatPulse'
+import { cameraToFitBounds, unionBounds, screenToCanvas } from './lib/camera'
 import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM } from './lib/constants'
 import { computeChildPlacement } from './lib/tree-placement'
-import { isDescendantOf, getDescendantIds, getAncestorCwd } from './lib/tree-utils'
+import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useShaderStore } from './stores/shaderStore'
 import { useEdgesStore } from './stores/edgesStore'
+import { useAudioStore } from './stores/audioStore'
 import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
+
+interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange'; addedAt: number }
 
 const archiveDismissFlag = { active: false, timer: 0 }
 
@@ -54,10 +58,10 @@ export function App() {
   focusRef.current = focusedId
   const lastFocusedRef = useRef<string | null>(null)
   const navStackRef = useRef<string[]>([])
-  const pendingFlyToParentRef = useRef<string | null>(null)
+  const crabTimestampsRef = useRef<Map<string, number>>(new Map())
 
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, inputDevice, toggleInputDevice } = useCamera(undefined, focusRef)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef)
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
@@ -86,8 +90,57 @@ export function App() {
   const maskRectsRef = useRef<MaskRect[]>([])
   maskRectsRef.current = maskRects
 
+  // Resolve inherited color presets for all nodes
+  const resolvedPresets = useMemo(() => {
+    const map: Record<string, import('./lib/color-presets').ColorPreset> = {}
+    for (const id in nodes) {
+      map[id] = resolveInheritedPreset(nodes, id)
+    }
+    return map
+  }, [nodes])
+
   const shadersEnabled = useShaderStore(s => s.shadersEnabled)
   const edgesEnabled = useEdgesStore(s => s.edgesEnabled)
+
+  // Derive crab indicators for toolbar
+  const crabs = useMemo(() => {
+    const timestamps = crabTimestampsRef.current
+    const entries: CrabEntry[] = []
+    const activeIds = new Set<string>()
+
+    for (const node of Object.values(nodes)) {
+      if (node.type !== 'terminal') continue
+      let color: CrabEntry['color'] | null = null
+      if (node.claudeState === 'working') {
+        color = 'orange'
+      } else if (node.claudeState === 'waiting_permission') {
+        color = 'red'
+      } else if (node.claudeState === 'waiting_plan') {
+        color = 'purple'
+      } else if (node.claudeState === 'stopped' && stoppedUnviewedIds.has(node.id)) {
+        color = 'white'
+      }
+      if (color) {
+        activeIds.add(node.id)
+        if (!timestamps.has(node.id)) timestamps.set(node.id, Date.now())
+        entries.push({ nodeId: node.id, color, addedAt: timestamps.get(node.id)! })
+      }
+    }
+
+    // Clean up timestamps for nodes that no longer have a crab
+    for (const id of timestamps.keys()) {
+      if (!activeIds.has(id)) timestamps.delete(id)
+    }
+
+    // Sort: working (orange) crabs first, then by arrival time
+    entries.sort((a, b) => {
+      const aWorking = a.color === 'orange' ? 0 : 1
+      const bWorking = b.color === 'orange' ? 0 : 1
+      if (aWorking !== bWorking) return aWorking - bWorking
+      return a.addedAt - b.addedAt
+    })
+    return entries
+  }, [nodes, stoppedUnviewedIds])
 
   // Reparent mode state
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
@@ -110,6 +163,15 @@ export function App() {
   useEffect(() => {
     initServerSync()
   }, [])
+
+  // Initialize audio beat detection
+  useEffect(() => {
+    const cleanup = useAudioStore.getState().init()
+    return cleanup
+  }, [])
+
+  // Drive pulse CSS vars from beat detection
+  useBeatPulse()
 
   // Track the focused node's parent so we can fly to it if the focused node disappears
   const focusedParentRef = useRef<string | null>(null)
@@ -152,6 +214,33 @@ export function App() {
     if (initialFitDone.current || !initialSyncDone) return
     initialFitDone.current = true
     requestAnimationFrame(() => {
+      const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+      if (!viewport) return
+      const vw = viewport.clientWidth
+      const vh = viewport.clientHeight
+
+      if (restoredFromStorageRef.current) {
+        // Camera was restored from localStorage — check if any nodes are visible
+        const cam = cameraRef.current
+        const topLeft = screenToCanvas({ x: 0, y: 0 }, cam)
+        const bottomRight = screenToCanvas({ x: vw, y: vh }, cam)
+        const allNodes = useNodeStore.getState().nodeList
+
+        const hasVisibleNode = allNodes.some(n => {
+          const size = nodePixelSize(n)
+          const half = { w: size.width / 2, h: size.height / 2 }
+          return (n.x + half.w > topLeft.x && n.x - half.w < bottomRight.x &&
+                  n.y + half.h > topLeft.y && n.y - half.h < bottomRight.y)
+        })
+        // Also check root node at origin
+        if (hasVisibleNode ||
+            (ROOT_NODE_RADIUS > topLeft.x && -ROOT_NODE_RADIUS < bottomRight.x &&
+             ROOT_NODE_RADIUS > topLeft.y && -ROOT_NODE_RADIUS < bottomRight.y)) {
+          return  // User can see something — keep restored camera
+        }
+      }
+
+      // Nothing visible (or no stored camera) → teleport to origin zoomed in, fly out
       const allNodes = useNodeStore.getState().nodeList
       const rects = allNodes.map(n => {
         const size = nodePixelSize(n)
@@ -160,11 +249,11 @@ export function App() {
       rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
       const bounds = unionBounds(rects)
       if (!bounds) return
-      const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
-      if (!viewport) return
-      flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM))
+
+      resetCamera()  // instant teleport to origin, zoomed in at z:10
+      flyTo(cameraToFitBounds(bounds, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
     })
-  }, [initialSyncDone, flyTo])
+  }, [initialSyncDone, flyTo, resetCamera])
 
   // Force-directed layout
   const draggingRef = useRef(new Set<string>())
@@ -531,18 +620,6 @@ export function App() {
     })
   }, [focusedId])
 
-  // When a newly created node appears in the store, fly to its parent + siblings
-  useEffect(() => {
-    const unsub = useNodeStore.subscribe((state, prevState) => {
-      const pendingId = pendingFlyToParentRef.current
-      if (!pendingId) return
-      if (state.nodes[pendingId] && !prevState.nodes[pendingId]) {
-        pendingFlyToParentRef.current = null
-        flyToParentAndChildren(state.nodes[pendingId].parentId)
-      }
-    })
-    return unsub
-  }, [flyToParentAndChildren])
 
   const handleStartReparent = useCallback((nodeId: string) => {
     useReparentStore.getState().startReparent(nodeId)
@@ -595,6 +672,26 @@ export function App() {
     sendDirectoryCwd(id, newCwd)
   }, [])
 
+  const spawnNode = useCallback(async (
+    create: (parentId: string, position: { x: number; y: number }, cwd: string | undefined) => Promise<string>
+  ) => {
+    if (!focusRef.current) return
+    const parentId = focusRef.current
+    const { position, cwd } = computeChildPosition(parentId)
+    const nodeId = await create(parentId, position, cwd)
+    if (cwd) cwdMapRef.current.set(nodeId, cwd)
+    setFocusedId(null)
+    setScrollMode(false)
+    if (!useNodeStore.getState().nodes[nodeId]) {
+      await new Promise<void>(resolve => {
+        const unsub = useNodeStore.subscribe(state => {
+          if (state.nodes[nodeId]) { unsub(); resolve() }
+        })
+      })
+    }
+    flyToParentAndChildren(parentId)
+  }, [computeChildPosition, flyToParentAndChildren])
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -617,43 +714,37 @@ export function App() {
       if (e.metaKey && e.key === 't') {
         e.preventDefault()
         e.stopPropagation()
-        if (!focusRef.current) return
-        const parentId = focusRef.current
-        const { position, cwd } = computeChildPosition(parentId)
-        const result = await sendTerminalCreate(parentId, position.x, position.y, cwd ? { cwd } : undefined)
-        if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-        pendingFlyToParentRef.current = result.sessionId
-        setFocusedId(null)
-        setScrollMode(false)
+        spawnNode(async (parentId, pos, cwd) => {
+          const r = await sendTerminalCreate(parentId, pos.x, pos.y, cwd ? { cwd } : undefined)
+          return r.sessionId
+        })
       }
 
       if (e.metaKey && e.key === 'e') {
         e.preventDefault()
         e.stopPropagation()
-        if (!focusRef.current) return
-        const parentId = focusRef.current
-        const { position, cwd } = computeChildPosition(parentId)
-        const result = await sendTerminalCreate(parentId, position.x, position.y, buildClaudeCodeOptions({ cwd }))
-        if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-        pendingFlyToParentRef.current = result.sessionId
-        setFocusedId(null)
-        setScrollMode(false)
+        spawnNode(async (parentId, pos, cwd) => {
+          const r = await sendTerminalCreate(parentId, pos.x, pos.y, buildClaudeCodeOptions({ cwd }))
+          return r.sessionId
+        })
       }
 
       if (e.metaKey && e.key === 'm') {
         e.preventDefault()
         e.stopPropagation()
-        const parentId = focusRef.current ?? 'root'
-        const { position } = computeChildPosition(parentId)
-        await sendMarkdownAdd(parentId, position.x, position.y)
+        spawnNode(async (parentId, pos) => {
+          const r = await sendMarkdownAdd(parentId, pos.x, pos.y)
+          return r.nodeId
+        })
       }
 
       if (e.metaKey && e.key === 'd') {
         e.preventDefault()
         e.stopPropagation()
-        if (!focusRef.current) return
-        const { position, cwd } = computeChildPosition(focusRef.current)
-        await sendDirectoryAdd(focusRef.current, position.x, position.y, cwd ?? '~')
+        spawnNode(async (parentId, pos, cwd) => {
+          const r = await sendDirectoryAdd(parentId, pos.x, pos.y, cwd ?? '~')
+          return r.nodeId
+        })
       }
 
       // Cmd+Shift+S: speak selected text or stop speaking
@@ -700,13 +791,17 @@ export function App() {
         e.stopPropagation()
         snapToTarget()
         const stack = navStackRef.current
+        const current = focusRef.current ?? lastFocusedRef.current
         if (stack.length === 0) {
           // Stack empty — navigate into the first child of the current node
-          const current = focusRef.current ?? lastFocusedRef.current
           if (!current) return
           const allNodes = useNodeStore.getState().nodes
           const firstChild = Object.values(allNodes).find(n => n.parentId === current)
-          if (!firstChild) return
+          if (!firstChild) {
+            // No children — focus the current node directly
+            handleNodeFocus(current)
+            return
+          }
           stack.push(current)
           focusRef.current = null
           setFocusedId(null)
@@ -714,6 +809,14 @@ export function App() {
           flyToParentAndChildren(firstChild.id)
           lastFocusedRef.current = firstChild.id
           flashNode(firstChild.id)
+          return
+        }
+        // If we navigated to a sibling (current differs from what's on the stack),
+        // discard the stale stack and focus the current node instead
+        const stackTop = stack[stack.length - 1]
+        if (current && current !== stackTop) {
+          stack.length = 0
+          handleNodeFocus(current)
           return
         }
         const target = stack.pop()!
@@ -822,7 +925,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [computeChildPosition, handleNodeFocus, flyToParentAndChildren, fitAllNodes, snapToTarget, rotationalFlyTo, bringToFront, speak, ttsStop, isSpeaking])
+  }, [spawnNode, handleNodeFocus, flyToParentAndChildren, fitAllNodes, snapToTarget, rotationalFlyTo, bringToFront, speak, ttsStop, isSpeaking])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -894,19 +997,17 @@ export function App() {
   return (
     <div className="app">
       <Toolbar
-        zoom={camera.z}
-        cameraX={camera.x}
-        cameraY={camera.y}
         inputDevice={inputDevice}
         onAddTerminal={() => addTerminalAsChild('root')}
         onResetView={resetCamera}
-        onFitAll={fitAllNodes}
         onToggleInputDevice={toggleInputDevice}
         forceLayoutPlaying={forceLayoutPlaying}
         forceLayoutSpeed={forceLayoutSpeed}
         onForceLayoutToggle={forceLayoutToggle}
         onForceLayoutIncrease={forceLayoutIncrease}
         onForceLayoutDecrease={forceLayoutDecrease}
+        crabs={crabs}
+        onCrabClick={handleNodeFocus}
       />
       <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null}>
         <RootNode
@@ -930,6 +1031,7 @@ export function App() {
             zoom={camera.z}
             name={t.name}
             colorPresetId={t.colorPresetId}
+            resolvedPreset={resolvedPresets[t.id]}
             shellTitleHistory={t.shellTitleHistory}
             cwd={t.cwd}
             focused={focusedId === t.id}
@@ -974,6 +1076,7 @@ export function App() {
             content={m.content}
             name={m.name}
             colorPresetId={m.colorPresetId}
+            resolvedPreset={resolvedPresets[m.id]}
             archivedChildren={m.archivedChildren}
             focused={focusedId === m.id}
             onFocus={handleNodeFocus}
@@ -1003,6 +1106,7 @@ export function App() {
             zoom={camera.z}
             cwd={d.cwd}
             colorPresetId={d.colorPresetId}
+            resolvedPreset={resolvedPresets[d.id]}
             archivedChildren={d.archivedChildren}
             focused={focusedId === d.id}
             onFocus={handleNodeFocus}

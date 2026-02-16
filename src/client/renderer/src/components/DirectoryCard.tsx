@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
-import { COLOR_PRESET_MAP } from '../lib/color-presets'
+import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
@@ -16,6 +16,7 @@ interface DirectoryCardProps {
   cwd: string
   focused: boolean
   colorPresetId?: string
+  resolvedPreset?: ColorPreset
   archivedChildren: ArchivedNode[]
   onFocus: (id: string) => void
   onClose: (id: string) => void
@@ -33,12 +34,12 @@ interface DirectoryCardProps {
 }
 
 export function DirectoryCard({
-  id, x, y, zIndex, zoom, cwd, focused, colorPresetId, archivedChildren,
+  id, x, y, zIndex, zoom, cwd, focused, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget
 }: DirectoryCardProps) {
-  const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
+  const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(cwd)
   const [error, setError] = useState<string | null>(null)

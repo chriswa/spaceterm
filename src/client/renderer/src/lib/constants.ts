@@ -19,8 +19,8 @@ export const ZOOM_SNAP_BACK_DELAY = 150     // ms after last wheel event before 
 export const FOCUS_SPEED = 10
 export const UNFOCUS_SPEED = 6
 
-export const WHEEL_WINDOW_MS = 150              // accumulation window for gesture detection
-export const HORIZONTAL_SCROLL_THRESHOLD = 15   // min accumulated |deltaX| in pixels over WHEEL_WINDOW_MS
+export const WHEEL_DECAY_MS = 80                 // exponential decay time constant for gesture detection
+export const HORIZONTAL_SCROLL_THRESHOLD = 15   // min accumulated |deltaX| in pixels
 export const PINCH_ZOOM_THRESHOLD = 2           // min |deltaY| per event with ctrlKey
 
 // xterm.js cell pixel dimensions for Menlo 14px.
@@ -31,9 +31,9 @@ export const CELL_HEIGHT = 16
 
 // Card chrome (borders + header + body padding + footer) around the terminal area.
 // Horizontal: 2px border × 2 + 2px body padding × 2 + 8px scrollbar gutter = 16px
-// Vertical: 2px border × 2 + 28px header + 1px header border-bottom + 2px body padding-top + 1px footer border-top + 4px footer padding + 16px footer line = 56px
+// Vertical: 2px border × 2 + 33px header (6px pad + 20px buttons + 6px pad + 1px border-bottom) + 2px body padding-top + 20px footer (border-box) + 2px border × 2 = 59px
 export const CHROME_W = 16
-export const CHROME_H = 56
+export const CHROME_H = 59
 
 export const CHILD_PLACEMENT_DISTANCE = 1250
 export const ROOT_NODE_RADIUS = 150

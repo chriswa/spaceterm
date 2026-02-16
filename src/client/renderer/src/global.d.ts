@@ -84,6 +84,12 @@ interface PerfApi {
   stopTrace(): Promise<string>
 }
 
+interface AudioApi {
+  onBeat(callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean; plp?: { bpm: number; phase: number; confidence: number } }) => void): () => void
+  start(): Promise<void>
+  stop(): Promise<void>
+}
+
 interface Api {
   pty: PtyApi
   node: NodeApi
@@ -91,6 +97,7 @@ interface Api {
   openExternal(url: string): Promise<void>
   tts: TtsApi
   perf: PerfApi
+  audio: AudioApi
 }
 
 declare interface Window {

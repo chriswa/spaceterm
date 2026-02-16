@@ -5,7 +5,8 @@ import { markdown } from '@codemirror/lang-markdown'
 import { indentWithTab } from '@codemirror/commands'
 import { syntaxTree } from '@codemirror/language'
 import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT } from '../lib/constants'
-import { COLOR_PRESET_MAP, blendHex } from '../lib/color-presets'
+import { blendHex } from '../lib/color-presets'
+import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
@@ -24,6 +25,7 @@ interface MarkdownCardProps {
   content: string
   name?: string
   colorPresetId?: string
+  resolvedPreset?: ColorPreset
   archivedChildren: ArchivedNode[]
   focused: boolean
   onFocus: (id: string) => void
@@ -342,11 +344,11 @@ const linkClickHandler = EditorView.domEventHandlers({
 })
 
 export function MarkdownCard({
-  id, x, y, width, height, zIndex, zoom, content, colorPresetId, archivedChildren, focused,
+  id, x, y, width, height, zIndex, zoom, content, colorPresetId, resolvedPreset, archivedChildren, focused,
   onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget
 }: MarkdownCardProps) {
-  const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
+  const preset = resolvedPreset
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const propsRef = useRef({ x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize })

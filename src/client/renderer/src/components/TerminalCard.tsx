@@ -3,8 +3,8 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_WINDOW_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
-import { COLOR_PRESET_MAP } from '../lib/color-presets'
+import { CELL_WIDTH, CELL_HEIGHT, terminalPixelSize, WHEEL_DECAY_MS, HORIZONTAL_SCROLL_THRESHOLD, PINCH_ZOOM_THRESHOLD } from '../lib/constants'
+import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
 import { TerminalTitleBarContent } from './TerminalTitleBarContent'
@@ -37,6 +37,7 @@ interface TerminalCardProps {
   zoom: number
   name?: string
   colorPresetId?: string
+  resolvedPreset?: ColorPreset
   shellTitle?: string
   shellTitleHistory?: string[]
   cwd?: string
@@ -72,12 +73,12 @@ interface TerminalCardProps {
 }
 
 export function TerminalCard({
-  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, shellTitle, shellTitleHistory, cwd, focused, anyNodeFocused, stoppedUnviewed, scrollMode,
+  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, anyNodeFocused, stoppedUnviewed, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget
 }: TerminalCardProps) {
-  const preset = colorPresetId ? COLOR_PRESET_MAP[colorPresetId] : undefined
+  const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -172,15 +173,13 @@ export function TerminalCard({
           return false
         }
 
-        // Accumulate deltas for gesture detection
+        // Accumulate deltas with exponential decay for gesture detection
         const now = performance.now()
         const acc = wheelAccRef.current
-        if (now - acc.t > WHEEL_WINDOW_MS) {
-          acc.dx = 0
-          acc.dy = 0
-        }
-        acc.dx += Math.abs(ev.deltaX)
-        acc.dy += Math.abs(ev.deltaY)
+        const dt = now - acc.t
+        const decay = acc.t === 0 ? 0 : Math.exp(-dt / WHEEL_DECAY_MS)
+        acc.dx = acc.dx * decay + Math.abs(ev.deltaX)
+        acc.dy = acc.dy * decay + Math.abs(ev.deltaY)
         acc.t = now
 
         // Horizontal scroll: disable scroll mode, let canvas handle
@@ -285,10 +284,6 @@ export function TerminalCard({
       propsRef.current.onClaudeStateChange?.(propsRef.current.id, state)
     })
 
-    const cleanupClaudeContext = window.api.pty.onClaudeContext(sessionId, (percent) => {
-      setClaudeContextPercent(percent)
-    })
-
     term.onData((data) => {
       window.api.pty.write(propsRef.current.sessionId, data)
     })
@@ -310,10 +305,23 @@ export function TerminalCard({
       cleanupCwd()
       cleanupClaudeSessionHistory()
       cleanupClaudeState()
-      cleanupClaudeContext()
       term.dispose()
     }
   }, [focused, sessionId])
+
+  // Subscribe to claude context updates (always, not just when focused)
+  useEffect(() => {
+    const cleanup = window.api.pty.onClaudeContext(sessionId, (percent) => {
+      setClaudeContextPercent(percent)
+    })
+    // Also fetch current value on mount
+    window.api.pty.attach(sessionId).then((result) => {
+      if (result.claudeContextPercent !== undefined) {
+        setClaudeContextPercent(result.claudeContextPercent)
+      }
+    }).catch(() => {})
+    return cleanup
+  }, [sessionId])
 
   // Tint xterm background to match color preset
   useEffect(() => {
@@ -650,23 +658,31 @@ export function TerminalCard({
       {(() => {
         const pct = Math.max(0, Math.min(100, claudeContextPercent ?? 100))
         const bright = preset ? preset.titleBarBg : '#181825'
-        const dim = darkenHex(bright, 0.2)
+        const dark = preset ? preset.terminalBg : '#181825'
+        const footerContent = (
+          <>
+            Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
+            {lastClaudeSession && (
+              <>
+                {' | Claude: '}
+                <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId) }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+                {' | '}
+                {claudeStateLabel(claudeState)}
+              </>
+            )}
+            {claudeContextPercent != null && (
+              <span className="terminal-card__footer-context">Remaining context: {claudeContextPercent.toFixed(2)}%</span>
+            )}
+          </>
+        )
         return (
-      <div className="terminal-card__footer" style={preset ? { backgroundColor: dim, color: preset.titleBarFg, borderTopColor: preset.titleBarBg } : { backgroundColor: dim }}>
+      <div className="terminal-card__footer" style={{ backgroundColor: dark, borderTopColor: preset ? preset.titleBarBg : undefined }}>
+        <span className="terminal-card__footer-content terminal-card__footer-content--light" style={{ color: bright }}>
+          {footerContent}
+        </span>
         <div className="terminal-card__footer-healthbar" style={{ width: `${pct}%`, backgroundColor: bright }} />
-        <span className="terminal-card__footer-content">
-          Surface ID: <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id) }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
-          {lastClaudeSession && (
-            <>
-              {' | Claude: '}
-              <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId) }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
-              {' | '}
-              {claudeStateLabel(claudeState)}
-            </>
-          )}
-          {claudeContextPercent != null && (
-            <span className="terminal-card__footer-context">Remaining context: {claudeContextPercent.toFixed(2)}%</span>
-          )}
+        <span className="terminal-card__footer-content terminal-card__footer-content--dark" style={{ color: preset ? preset.titleBarFg : undefined, clipPath: `inset(0 ${100 - pct}% 0 0)` }}>
+          {footerContent}
         </span>
       </div>
         )

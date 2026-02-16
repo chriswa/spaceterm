@@ -11,3 +11,11 @@ Multiple Claude Code agents may be running on this repo at the same time. Files 
 ## Logging
 
 Use the logger at `src/client/main/logger.ts` — never `console.log`/`console.error`. The log file lives at `~/.spaceterm/electron.log`, which the agent can read directly. Logs sent to the Electron terminal console or DevTools console are invisible to the agent and require the human to manually copy them, wasting time.
+
+## When finishing work
+
+When you're ready to stop working on a feature or task, always end your final message with a brief, product-focused sentence summarizing what was implemented. Preface the summary with "FEATURE: " so the user knows it came from this instruction. This helps the user quickly re-orient when context switching between tasks.
+
+## When providing a project plan
+
+At the bottom of every project plan, include a product-centric one-sentence explanation of what the change accomplishes. Preface it with "FEATURE: " so the user knows it came from this instruction.

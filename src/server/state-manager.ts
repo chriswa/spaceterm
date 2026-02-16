@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { homedir } from 'os'
 import type {
   ServerState,
   NodeData,
@@ -146,7 +147,7 @@ export class StateManager {
       claudeSessionHistory: [],
       shellTitleHistory: [...seedHistory],
       archivedChildren: [],
-      colorPresetId: 'default'
+      colorPresetId: 'inherit'
     }
 
     this.state.nodes[sessionId] = node
@@ -486,6 +487,13 @@ export class StateManager {
   // --- Directory operations ---
 
   createDirectory(parentId: string, x: number, y: number, cwd: string): DirectoryNodeData {
+    const home = homedir()
+    if (cwd === home) {
+      cwd = '~'
+    } else if (cwd.startsWith(home + '/')) {
+      cwd = '~' + cwd.slice(home.length)
+    }
+
     const id = randomUUID()
     const zIndex = this.state.nextZIndex++
 
@@ -498,7 +506,7 @@ export class StateManager {
       zIndex,
       cwd,
       archivedChildren: [],
-      colorPresetId: 'default'
+      colorPresetId: 'inherit'
     }
 
     this.state.nodes[id] = node
@@ -532,7 +540,7 @@ export class StateManager {
       height: MARKDOWN_DEFAULT_HEIGHT,
       content: '',
       archivedChildren: [],
-      colorPresetId: 'default'
+      colorPresetId: 'inherit'
     }
 
     this.state.nodes[id] = node

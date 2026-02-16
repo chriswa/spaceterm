@@ -1,5 +1,18 @@
 @import '@xterm/xterm/css/xterm.css';
 
+/* Shared pulse animation properties — animated on #root so all cards stay in sync */
+@property --pulse-spread {
+  syntax: '<length>';
+  initial-value: 2px;
+  inherits: true;
+}
+
+@property --pulse-alpha {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: true;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -14,6 +27,8 @@ html, body, #root {
   color: #cdd6f4;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
+
+/* --pulse-spread and --pulse-alpha are driven by useBeatPulse.ts via rAF */
 
 .app {
   width: 100%;
@@ -89,9 +104,24 @@ html, body, #root {
 
 .toolbar__zoom {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   color: #6c7086;
   font-variant-numeric: tabular-nums;
+}
+
+.toolbar__status-item {
+  font-size: 13px;
+  color: #6c7086;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar__status-sep {
+  width: 1px;
+  height: 16px;
+  background: #313244;
 }
 
 .toolbar__status-btn {
@@ -102,8 +132,12 @@ html, body, #root {
   font-family: inherit;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 2px 4px 2px 4px;
   border-radius: 4px;
+}
+
+.toolbar__zoom > :last-child {
+  padding-right: 0;
   transition: background 0.15s, color 0.15s;
 }
 
@@ -118,6 +152,77 @@ html, body, #root {
   margin-left: 4px;
   padding-left: 12px;
   border-left: 1px solid #313244;
+}
+
+/* Crab status indicators */
+.toolbar__crabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding-left: 12px;
+  border-left: 1px solid #313244;
+}
+
+.toolbar__crab {
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s ease;
+  animation: crab-glow 2s ease-in-out infinite alternate;
+}
+
+.toolbar__crab:hover {
+  transform: scale(1.3);
+}
+
+.toolbar__crab--white {
+  background-color: #ffffff;
+  color: #ffffff;
+}
+
+.toolbar__crab--red {
+  background-color: #ff2255;
+  color: #ff2255;
+}
+
+.toolbar__crab--purple {
+  background-color: #aa44ff;
+  color: #aa44ff;
+}
+
+.toolbar__crab--orange {
+  background-color: #ca7c5e;
+  color: #ca7c5e;
+}
+
+@keyframes crab-glow {
+  0% { filter: drop-shadow(0 0 2px transparent); }
+  100% { filter: drop-shadow(0 0 6px currentColor); }
+}
+
+/* Beat indicator */
+.toolbar__beat {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #1DB954;
+  flex-shrink: 0;
+}
+
+.toolbar__beat--no-signal {
+  background: #f38ba8;
+  opacity: 0.6;
+  box-shadow: none;
 }
 
 .toolbar__btn--active {
@@ -187,38 +292,24 @@ html, body, #root {
 }
 
 .terminal-card.terminal-card--waiting-plan {
-  animation: waiting-plan-outline 1.5s ease-in-out infinite;
-}
-
-@keyframes waiting-plan-outline {
-  0% { box-shadow: 0 0 0 10px rgba(203, 166, 247, 0.6); }
-  100% { box-shadow: 0 0 0 2px rgba(203, 166, 247, 0); }
+  box-shadow: 0 0 0 var(--pulse-spread) rgb(203 166 247 / var(--pulse-alpha));
 }
 
 .terminal-card.terminal-card--waiting-permission {
-  animation: waiting-permission-outline 1.5s ease-in-out infinite;
-}
-
-@keyframes waiting-permission-outline {
-  0% { box-shadow: 0 0 0 10px rgba(243, 139, 168, 0.6); }
-  100% { box-shadow: 0 0 0 2px rgba(243, 139, 168, 0); }
+  box-shadow: 0 0 0 var(--pulse-spread) rgb(243 139 168 / var(--pulse-alpha));
 }
 
 .terminal-card.terminal-card--stopped-unviewed {
-  animation: stopped-unviewed-outline 1.5s ease-in-out infinite;
-}
-
-@keyframes stopped-unviewed-outline {
-  0% { box-shadow: 0 0 0 10px rgba(137, 220, 235, 0.6); }
-  100% { box-shadow: 0 0 0 2px rgba(137, 220, 235, 0); }
+  box-shadow: 0 0 0 var(--pulse-spread) rgb(205 214 244 / var(--pulse-alpha));
 }
 
 .card-shell--selection-flash {
-  animation: selection-flash 0.5s ease-out forwards !important;
+  animation: selection-flash 1s ease-in-out forwards !important;
 }
 
 @keyframes selection-flash {
-  0% { box-shadow: 0 0 0 30px rgba(203, 166, 247, 0.7); }
+  0% { box-shadow: 0 0 0 0px rgba(203, 166, 247, 0); }
+  50% { box-shadow: 0 0 0 30px rgba(203, 166, 247, 0.7); }
   100% { box-shadow: 0 0 0 0px rgba(203, 166, 247, 0); }
 }
 
@@ -347,6 +438,14 @@ html, body, #root {
   padding: 0;
 }
 
+.node-titlebar__color-swatch--inherit {
+  background: linear-gradient(
+    to top right,
+    #000 calc(50% - 1px), #ff4444 calc(50% - 1px),
+    #ff4444 calc(50% + 1px), #000 calc(50% + 1px)
+  );
+}
+
 .node-titlebar__color-swatch:hover {
   border-color: #cdd6f4;
   transform: scale(1.15);
@@ -383,7 +482,7 @@ html, body, #root {
   position: relative;
   background: #181825;
   border-top: 1px solid #313244;
-  padding: 2px 10px;
+  height: 20px;
   font-size: 11px;
   line-height: 16px;
   overflow: hidden;
@@ -397,13 +496,29 @@ html, body, #root {
   top: 0;
   left: 0;
   bottom: 0;
+  z-index: 1;
   transition: width 0.5s ease;
 }
 
 .terminal-card__footer-content {
-  position: relative;
-  z-index: 1;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.terminal-card__footer-content--light {
+  z-index: 0;
+}
+
+.terminal-card__footer-content--dark {
+  color: #1a1a1a;
+  z-index: 2;
+  transition: clip-path 0.5s ease;
 }
 
 .terminal-card__footer-context {

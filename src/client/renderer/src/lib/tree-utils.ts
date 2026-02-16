@@ -1,4 +1,6 @@
 import type { NodeData } from '../../../../shared/state'
+import { COLOR_PRESET_MAP, DEFAULT_PRESET } from './color-presets'
+import type { ColorPreset } from './color-presets'
 
 /**
  * Collect all descendant IDs of a given node (children, grandchildren, etc.) via BFS.
@@ -62,6 +64,28 @@ export function getAncestorCwd(
     current = node.parentId
   }
   return undefined
+}
+
+/**
+ * Walk up the ancestor chain resolving color inheritance.
+ * Skips nodes whose colorPresetId is 'inherit' or missing.
+ * Returns the first valid ColorPreset, falling back to DEFAULT_PRESET at the root.
+ */
+export function resolveInheritedPreset(
+  nodes: Record<string, NodeData>,
+  nodeId: string
+): ColorPreset {
+  let current = nodeId
+  while (current && current !== 'root') {
+    const node = nodes[current]
+    if (!node) break
+    if (node.colorPresetId && node.colorPresetId !== 'inherit') {
+      const preset = COLOR_PRESET_MAP[node.colorPresetId]
+      if (preset) return preset
+    }
+    current = node.parentId
+  }
+  return DEFAULT_PRESET
 }
 
 export function isDescendantOf(

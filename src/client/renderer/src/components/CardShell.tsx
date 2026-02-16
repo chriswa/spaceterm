@@ -108,6 +108,11 @@ export function CardShell({
           </button>
           {pickerOpen && (
             <div className="node-titlebar__color-picker" onMouseDown={(e) => e.stopPropagation()}>
+              <button
+                className="node-titlebar__color-swatch node-titlebar__color-swatch--inherit"
+                title="Inherit from parent"
+                onClick={(e) => { e.stopPropagation(); onColorChange(nodeId, 'inherit'); setPickerOpen(false) }}
+              />
               {COLOR_PRESETS.map((p) => (
                 <button
                   key={p.id}

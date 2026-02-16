@@ -121,3 +121,23 @@ export function unionBounds(
 
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
+
+const CAMERA_STORAGE_KEY = 'spaceterm-camera'
+
+export function loadCameraFromStorage(): Camera | null {
+  try {
+    const raw = localStorage.getItem(CAMERA_STORAGE_KEY)
+    if (!raw) return null
+    const { x, y, z } = JSON.parse(raw)
+    if (typeof x === 'number' && typeof y === 'number' && typeof z === 'number') {
+      return { x, y, z }
+    }
+    return null
+  } catch { return null }
+}
+
+export function saveCameraToStorage(cam: Camera): void {
+  try {
+    localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify({ x: cam.x, y: cam.y, z: cam.z }))
+  } catch { /* ignore quota errors */ }
+}
