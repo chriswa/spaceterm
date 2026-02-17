@@ -19,6 +19,8 @@ export function isDisposable(node: NodeData): boolean {
       return node.content.trim() === ''
     case 'directory':
       return false
+    case 'file':
+      return false
     default:
       return false
   }

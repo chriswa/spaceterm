@@ -38,6 +38,7 @@ export interface TerminalNodeData extends BaseNodeData {
   exitCode?: number // set when alive → false
   cwd?: string
   claudeState: ClaudeState
+  claudeStatusUnread: boolean
   terminalSessions: TerminalSessionEntry[]
   /** Legacy field — kept for backward compat with existing client code during migration */
   claudeSessionHistory: ClaudeSessionEntry[]
@@ -51,6 +52,7 @@ export interface MarkdownNodeData extends BaseNodeData {
   content: string
   maxWidth?: number
   food?: boolean
+  fileBacked?: boolean  // true = content lives on disk, set permanently at creation
 }
 
 export interface DirectoryNodeData extends BaseNodeData {
@@ -58,7 +60,12 @@ export interface DirectoryNodeData extends BaseNodeData {
   cwd: string
 }
 
-export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData
+export interface FileNodeData extends BaseNodeData {
+  type: 'file'
+  filePath: string  // raw user input — may be relative, absolute, or ~-prefixed
+}
+
+export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData
 
 // --- Archived nodes ---
 

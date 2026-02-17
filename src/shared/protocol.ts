@@ -1,9 +1,10 @@
 import { join } from 'path'
 import { homedir } from 'os'
 
-export const SOCKET_DIR = join(homedir(), '.spaceterm')
+export const SOCKET_DIR = process.env.SPACETERM_HOME ?? join(homedir(), '.spaceterm')
 export const SOCKET_PATH = join(SOCKET_DIR, 'spaceterm.sock')
 export const HOOK_LOG_DIR = join(SOCKET_DIR, 'hook-logs')
+export const DECISION_LOG_DIR = join(SOCKET_DIR, 'decision-logs')
 
 export interface SessionInfo {
   sessionId: string
@@ -239,10 +240,46 @@ export interface ValidateDirectoryResult {
   error?: string
 }
 
+export interface FileAddMessage {
+  type: 'file-add'
+  seq: number
+  parentId: string
+  x?: number
+  y?: number
+  filePath: string
+}
+
+export interface FilePathMessage {
+  type: 'file-path'
+  seq: number
+  nodeId: string
+  filePath: string
+}
+
+export interface ValidateFileMessage {
+  type: 'validate-file'
+  seq: number
+  path: string
+  cwd?: string
+}
+
+export interface ValidateFileResult {
+  type: 'validate-file-result'
+  seq: number
+  valid: boolean
+  error?: string
+}
+
 export interface SetTerminalModeMessage {
   type: 'set-terminal-mode'
   sessionId: string
   mode: 'live' | 'snapshot'
+}
+
+export interface SetClaudeStatusUnreadMessage {
+  type: 'set-claude-status-unread'
+  sessionId: string
+  unread: boolean
 }
 
 export type ClientMessage =
@@ -275,9 +312,13 @@ export type ClientMessage =
   | TerminalReincarnateMessage
   | EmitMarkdownMessage
   | SetTerminalModeMessage
+  | SetClaudeStatusUnreadMessage
   | DirectoryAddMessage
   | DirectoryCwdMessage
   | ValidateDirectoryMessage
+  | FileAddMessage
+  | FilePathMessage
+  | ValidateFileMessage
 
 // --- Server → Client messages ---
 
@@ -310,6 +351,7 @@ export interface AttachedMessage {
   cwd?: string
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: import('./state').ClaudeState
+  claudeStatusUnread?: boolean
   claudeContextPercent?: number
   claudeSessionLineCount?: number
 }
@@ -435,6 +477,12 @@ export interface SnapshotMessage {
   lines: SnapshotRow[]
 }
 
+export interface FileContentMessage {
+  type: 'file-content'
+  nodeId: string   // markdown node ID
+  content: string  // full file contents
+}
+
 export interface ServerErrorMessage {
   type: 'server-error'
   message: string
@@ -462,4 +510,6 @@ export type ServerMessage =
   | NodeAddAckMessage
   | SnapshotMessage
   | ValidateDirectoryResult
+  | ValidateFileResult
+  | FileContentMessage
   | ServerErrorMessage

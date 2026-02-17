@@ -6,6 +6,7 @@ import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers, terminalPlanJumpers } from './components/TerminalCard'
 import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
+import { FileCard } from './components/FileCard'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge, Selection } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
@@ -18,13 +19,14 @@ import { useBeatPulse } from './hooks/useBeatPulse'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
-import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, gatherFoodPrompt } from './lib/tree-utils'
+import { nodeDisplayTitle } from './lib/node-title'
+import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetFood, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetFood, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath } from './lib/server-sync'
 
-interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string }
+interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string; title: string }
 
 const archiveDismissFlag = { active: false, timer: 0 }
 const archiveWheelAcc = createWheelAccumulator()
@@ -37,11 +39,6 @@ export function App() {
   searchVisibleRef.current = searchVisible
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
-  // Track "stopped unviewed" state for terminal animations
-  const prevClaudeStatesRef = useRef<Map<string, string>>(new Map())
-  const [stoppedUnviewedIds, setStoppedUnviewedIds] = useState<Set<string>>(new Set())
-  const [permissionUnviewedIds, setPermissionUnviewedIds] = useState<Set<string>>(new Set())
-  const [planUnviewedIds, setPlanUnviewedIds] = useState<Set<string>>(new Set())
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
   const [selection, setSelection] = useState<Selection | null>(null)
@@ -58,6 +55,8 @@ export function App() {
   const liveTerminals = useNodeStore(s => s.liveTerminals)
   const markdowns = useNodeStore(s => s.markdowns)
   const directories = useNodeStore(s => s.directories)
+  const files = useNodeStore(s => s.files)
+  const fileContents = useNodeStore(s => s.fileContents)
   const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
   const moveNode = useNodeStore(s => s.moveNode)
   const batchMoveNodes = useNodeStore(s => s.batchMoveNodes)
@@ -102,13 +101,13 @@ export function App() {
       let unviewed = false
       if (node.claudeState === 'waiting_permission') {
         color = 'red'
-        unviewed = permissionUnviewedIds.has(node.id)
+        unviewed = node.claudeStatusUnread
       } else if (node.claudeState === 'waiting_plan') {
         color = 'purple'
-        unviewed = planUnviewedIds.has(node.id)
+        unviewed = node.claudeStatusUnread
       } else if (node.claudeState === 'working') {
         color = 'orange'
-      } else if (node.claudeState === 'stopped' && stoppedUnviewedIds.has(node.id)) {
+      } else if (node.claudeState === 'stopped' && node.claudeStatusUnread) {
         color = 'white'
         unviewed = true
       } else if (node.claudeSessionHistory.length > 0) {
@@ -116,13 +115,13 @@ export function App() {
       }
       if (color) {
         const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-        entries.push({ nodeId: node.id, color, unviewed, createdAt })
+        entries.push({ nodeId: node.id, color, unviewed, createdAt, title: nodeDisplayTitle(node) })
       }
     }
 
     entries.sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)
     return entries
-  }, [nodes, stoppedUnviewedIds, permissionUnviewedIds, planUnviewedIds])
+  }, [nodes])
 
   // Reparent mode state
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
@@ -489,8 +488,16 @@ export function App() {
       handleNodeFocus(nodeId)
       return
     }
+    // If already focused, toggle unread state
+    if (focusedId === nodeId) {
+      const node = useNodeStore.getState().nodes[nodeId]
+      if (node?.type === 'terminal') {
+        window.api.node.setClaudeStatusUnread(node.sessionId, !node.claudeStatusUnread)
+      }
+      return
+    }
     navigateToNode(nodeId)
-  }, [handleNodeFocus, navigateToNode])
+  }, [focusedId, handleNodeFocus, navigateToNode])
 
   const handleReparentTarget = useCallback((targetId: string) => {
     const srcId = useReparentStore.getState().reparentingNodeId
@@ -610,6 +617,25 @@ export function App() {
     // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
   }, [])
 
+  const handleShipIt = useCallback((nodeId: string) => {
+    const { nodes } = useNodeStore.getState()
+    const node = nodes[nodeId]
+    if (!node || node.type !== 'markdown') return
+    const parent = nodes[node.parentId]
+    if (!parent || parent.type !== 'terminal' || !parent.alive) {
+      shakeCamera()
+      return
+    }
+    // Bracketed paste into parent terminal, then submit.
+    // Convert \n to \r to match xterm's prepareTextForTerminal behavior —
+    // Ink/Claude Code expects \r for line breaks inside bracketed paste.
+    const content = node.content.replace(/\r?\n/g, '\r')
+    const sessionId = parent.sessionId
+    window.api.pty.write(sessionId, '\x1b[200~' + content + '\x1b[201~')
+    setTimeout(() => window.api.pty.write(sessionId, '\r'), 200)
+    handleRemoveNode(nodeId)
+  }, [shakeCamera, handleRemoveNode])
+
   const fitAllNodes = useCallback(() => {
     const allNodeList = useNodeStore.getState().nodeList
     const rects = allNodeList.map(n => {
@@ -718,105 +744,13 @@ export function App() {
     return unsub
   }, [flyToSelection])
 
-  // Track claudeState transitions to detect "stopped unviewed" terminals
-  useEffect(() => {
-    const unsub = useNodeStore.subscribe((state) => {
-      const prevStates = prevClaudeStatesRef.current
-      const stoppedAdd: string[] = []
-      const stoppedRem: string[] = []
-      const permAdd: string[] = []
-      const permRem: string[] = []
-      const planAdd: string[] = []
-      const planRem: string[] = []
-
-      for (const node of Object.values(state.nodes)) {
-        if (node.type !== 'terminal') continue
-        const prev = prevStates.get(node.id)
-        if (prev === node.claudeState) continue
-
-        prevStates.set(node.id, node.claudeState)
-
-        // Stopped transitions
-        if (node.claudeState === 'stopped' && prev !== undefined) {
-          stoppedAdd.push(node.id)
-        } else if (node.claudeState !== 'stopped') {
-          stoppedRem.push(node.id)
-        }
-
-        // Permission transitions
-        if (node.claudeState === 'waiting_permission') {
-          permAdd.push(node.id)
-        } else if (prev === 'waiting_permission') {
-          permRem.push(node.id)
-        }
-
-        // Plan transitions
-        if (node.claudeState === 'waiting_plan') {
-          planAdd.push(node.id)
-        } else if (prev === 'waiting_plan') {
-          planRem.push(node.id)
-        }
-      }
-
-      // Clean up removed nodes
-      for (const id of prevStates.keys()) {
-        if (!state.nodes[id]) {
-          prevStates.delete(id)
-          stoppedRem.push(id)
-          permRem.push(id)
-          planRem.push(id)
-        }
-      }
-
-      if (stoppedAdd.length > 0 || stoppedRem.length > 0) {
-        setStoppedUnviewedIds(prev => {
-          const next = new Set(prev)
-          for (const id of stoppedAdd) next.add(id)
-          for (const id of stoppedRem) next.delete(id)
-          return next
-        })
-      }
-      if (permAdd.length > 0 || permRem.length > 0) {
-        setPermissionUnviewedIds(prev => {
-          const next = new Set(prev)
-          for (const id of permAdd) next.add(id)
-          for (const id of permRem) next.delete(id)
-          return next
-        })
-      }
-      if (planAdd.length > 0 || planRem.length > 0) {
-        setPlanUnviewedIds(prev => {
-          const next = new Set(prev)
-          for (const id of planAdd) next.add(id)
-          for (const id of planRem) next.delete(id)
-          return next
-        })
-      }
-    })
-    return unsub
-  }, [])
-
-  // Clear unviewed flags when a terminal is focused
+  // Clear unread flag on server when a terminal is focused
   useEffect(() => {
     if (!focusedId) return
-    setStoppedUnviewedIds(prev => {
-      if (!prev.has(focusedId)) return prev
-      const next = new Set(prev)
-      next.delete(focusedId)
-      return next
-    })
-    setPermissionUnviewedIds(prev => {
-      if (!prev.has(focusedId)) return prev
-      const next = new Set(prev)
-      next.delete(focusedId)
-      return next
-    })
-    setPlanUnviewedIds(prev => {
-      if (!prev.has(focusedId)) return prev
-      const next = new Set(prev)
-      next.delete(focusedId)
-      return next
-    })
+    const node = useNodeStore.getState().nodes[focusedId]
+    if (node?.type === 'terminal' && node.claudeStatusUnread) {
+      window.api.node.setClaudeStatusUnread(node.sessionId, false)
+    }
   }, [focusedId])
 
 
@@ -849,19 +783,6 @@ export function App() {
     sendRename(id, name)
   }, [renameNode])
 
-  const handleMarkUnread = useCallback((nodeId: string) => {
-    const terminals = useNodeStore.getState().liveTerminals
-    const t = terminals.find(n => n.id === nodeId)
-    if (!t?.claudeState) return
-    if (t.claudeState === 'stopped') {
-      setStoppedUnviewedIds(prev => new Set(prev).add(nodeId))
-    } else if (t.claudeState === 'waiting_permission') {
-      setPermissionUnviewedIds(prev => new Set(prev).add(nodeId))
-    } else if (t.claudeState === 'waiting_plan') {
-      setPlanUnviewedIds(prev => new Set(prev).add(nodeId))
-    }
-  }, [])
-
   const handleColorChange = useCallback((id: string, colorPresetId: string) => {
     setNodeColor(id, colorPresetId)
     sendSetColor(id, colorPresetId)
@@ -893,6 +814,10 @@ export function App() {
     sendDirectoryCwd(id, newCwd)
   }, [])
 
+  const handleFilePathChange = useCallback((id: string, newFilePath: string) => {
+    sendFilePath(id, newFilePath)
+  }, [])
+
   const spawnNode = useCallback(async (
     create: (parentId: string, cwd: string | undefined) => Promise<string>,
     parentIdOverride?: string
@@ -908,8 +833,8 @@ export function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      // Cmd+S: toggle search modal (before isEditable guard so it works from search input)
-      if (e.metaKey && !e.shiftKey && e.key === 's') {
+      // Cmd+S / Cmd+K: toggle search modal (before isEditable guard so it works from search input)
+      if (e.metaKey && !e.shiftKey && (e.key === 's' || e.key === 'k')) {
         e.preventDefault()
         e.stopPropagation()
         setSearchVisible(v => !v)
@@ -974,8 +899,7 @@ export function App() {
           }
         }
         spawnNode(async (parentId, cwd) => {
-          const prompt = gatherFoodPrompt(useNodeStore.getState().nodes, parentId)
-          const r = await sendTerminalCreate(parentId, { cwd, claude: { prompt } })
+          const r = await sendTerminalCreate(parentId, { cwd, claude: {} })
           return r.sessionId
         }, parentOverride)
       }
@@ -994,6 +918,15 @@ export function App() {
         e.stopPropagation()
         spawnNode(async (parentId, cwd) => {
           const r = await sendDirectoryAdd(parentId, cwd ?? '~')
+          return r.nodeId
+        })
+      }
+
+      if (e.metaKey && e.key === 'o') {
+        e.preventDefault()
+        e.stopPropagation()
+        spawnNode(async (parentId) => {
+          const r = await sendFileAdd(parentId, '')
           return r.nodeId
         })
       }
@@ -1367,7 +1300,7 @@ export function App() {
             focused={focusedId === t.id}
             selected={selection?.id === t.id && selection?.type === 'node'}
             anyNodeFocused={focusedId !== null}
-            stoppedUnviewed={stoppedUnviewedIds.has(t.id)}
+            stoppedUnviewed={t.claudeStatusUnread && t.claudeState === 'stopped'}
             scrollMode={scrollMode}
             onFocus={handleNodeFocus}
             onUnfocus={handleUnfocus}
@@ -1392,51 +1325,58 @@ export function App() {
             onDragEnd={handleDragEnd}
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
-            onMarkUnread={handleMarkUnread}
-            isUnviewed={stoppedUnviewedIds.has(t.id) || permissionUnviewedIds.has(t.id) || planUnviewedIds.has(t.id)}
             terminalSessions={t.terminalSessions}
             onSessionRevive={handleSessionRevive}
           />
         ))}
-        {markdowns.map((m) => (
-          <MarkdownCard
-            key={m.id}
-            id={m.id}
-            x={m.x}
-            y={m.y}
-            width={m.width}
-            height={m.height}
-            zIndex={m.zIndex}
-            zoom={camera.z}
-            content={m.content}
-            maxWidth={m.maxWidth}
-            name={m.name}
-            colorPresetId={m.colorPresetId}
-            resolvedPreset={resolvedPresets[m.id]}
-            archivedChildren={m.archivedChildren}
-            focused={focusedId === m.id}
-            selected={selection?.id === m.id && selection?.type === 'node'}
-            onFocus={handleNodeFocus}
-            onUnfocus={() => { handleUnfocus(); flyToUnfocusZoom() }}
-            onClose={handleRemoveNode}
-            onMove={handleMove}
-            onResize={handleResizeMarkdown}
-            onContentChange={handleMarkdownContent}
-            onMaxWidthChange={handleMaxWidthChange}
-            onRename={handleRename}
-            onColorChange={handleColorChange}
-            food={m.food}
-            onFoodToggle={handleFoodToggle}
-            onUnarchive={handleUnarchive}
-            onArchiveDelete={handleArchiveDelete}
-            onArchiveToggled={handleArchiveToggled}
-            onNodeReady={handleNodeReady}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onStartReparent={handleStartReparent}
-            onReparentTarget={handleReparentTarget}
-          />
-        ))}
+        {markdowns.map((m) => {
+          const isFileBacked = !!m.fileBacked
+          const parentNode = nodes[m.parentId]
+          const fileError = isFileBacked && parentNode?.type !== 'file'
+          const effectiveContent = isFileBacked ? (fileContents[m.id] ?? '') : m.content
+          return (
+            <MarkdownCard
+              key={m.id}
+              id={m.id}
+              x={m.x}
+              y={m.y}
+              width={m.width}
+              height={m.height}
+              zIndex={m.zIndex}
+              zoom={camera.z}
+              content={effectiveContent}
+              maxWidth={m.maxWidth}
+              name={m.name}
+              colorPresetId={m.colorPresetId}
+              resolvedPreset={resolvedPresets[m.id]}
+              archivedChildren={m.archivedChildren}
+              focused={focusedId === m.id}
+              selected={selection?.id === m.id && selection?.type === 'node'}
+              onFocus={handleNodeFocus}
+              onUnfocus={() => { handleUnfocus(); flyToUnfocusZoom() }}
+              onClose={handleRemoveNode}
+              onMove={handleMove}
+              onResize={handleResizeMarkdown}
+              onContentChange={handleMarkdownContent}
+              onMaxWidthChange={handleMaxWidthChange}
+              onRename={handleRename}
+              onColorChange={handleColorChange}
+              food={m.food}
+              onFoodToggle={handleFoodToggle}
+              onUnarchive={handleUnarchive}
+              onArchiveDelete={handleArchiveDelete}
+              onArchiveToggled={handleArchiveToggled}
+              onNodeReady={handleNodeReady}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onStartReparent={handleStartReparent}
+              onReparentTarget={handleReparentTarget}
+              onShipIt={handleShipIt}
+              fileBacked={isFileBacked}
+              fileError={fileError}
+            />
+          )
+        })}
         {directories.map((d) => (
           <DirectoryCard
             key={d.id}
@@ -1455,6 +1395,36 @@ export function App() {
             onClose={handleRemoveNode}
             onMove={handleMove}
             onCwdChange={handleDirectoryCwdChange}
+            onColorChange={handleColorChange}
+            onUnarchive={handleUnarchive}
+            onArchiveDelete={handleArchiveDelete}
+            onArchiveToggled={handleArchiveToggled}
+            onNodeReady={handleNodeReady}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onStartReparent={handleStartReparent}
+            onReparentTarget={handleReparentTarget}
+          />
+        ))}
+        {files.map((f) => (
+          <FileCard
+            key={f.id}
+            id={f.id}
+            x={f.x}
+            y={f.y}
+            zIndex={f.zIndex}
+            zoom={camera.z}
+            filePath={f.filePath}
+            inheritedCwd={getAncestorCwd(nodes, f.id, cwdMapRef.current)}
+            colorPresetId={f.colorPresetId}
+            resolvedPreset={resolvedPresets[f.id]}
+            archivedChildren={f.archivedChildren}
+            focused={focusedId === f.id}
+            selected={selection?.id === f.id && selection?.type === 'node'}
+            onFocus={handleNodeFocus}
+            onClose={handleRemoveNode}
+            onMove={handleMove}
+            onFilePathChange={handleFilePathChange}
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}

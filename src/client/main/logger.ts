@@ -1,8 +1,8 @@
 import { mkdirSync, unlinkSync, writeFileSync, appendFileSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
+import { SOCKET_DIR } from '../../shared/protocol'
 
-const DIR = join(homedir(), '.spaceterm')
+const DIR = SOCKET_DIR
 export const LOG_PATH = join(DIR, 'electron.log')
 
 export function init(): void {

@@ -141,6 +141,9 @@ interface NodeApi {
   directoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
+  fileAdd(parentId: string, filePath: string): Promise<{ nodeId: string }>
+  filePath(nodeId: string, filePath: string): Promise<void>
+  validateFile(path: string, cwd?: string): Promise<{ valid: boolean; error?: string }>
   markdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
   markdownResize(nodeId: string, width: number, height: number): Promise<void>
   markdownContent(nodeId: string, content: string): Promise<void>
@@ -148,6 +151,7 @@ interface NodeApi {
   onUpdated(callback: (nodeId: string, fields: any) => void): () => void
   onAdded(callback: (node: any) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
+  onFileContent(callback: (nodeId: string, content: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
 }
 
@@ -169,12 +173,16 @@ const nodeApi: NodeApi = {
   directoryAdd: (parentId, cwd) => ipcRenderer.invoke('node:directory-add', parentId, cwd),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
   validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
+  fileAdd: (parentId, filePath) => ipcRenderer.invoke('node:file-add', parentId, filePath),
+  filePath: (nodeId, filePath) => ipcRenderer.invoke('node:file-path', nodeId, filePath),
+  validateFile: (path, cwd) => ipcRenderer.invoke('node:validate-file', path, cwd),
   markdownAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
   markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
   markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
   markdownSetMaxWidth: (nodeId, maxWidth) => ipcRenderer.invoke('node:markdown-set-max-width', nodeId, maxWidth),
 
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
+  setClaudeStatusUnread: (sessionId: string, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
   onSnapshot: (sessionId, callback) => {
     const channel = `snapshot:${sessionId}`
     const listener = (_event: Electron.IpcRendererEvent, snapshot: any) => callback(snapshot)
@@ -195,6 +203,11 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, nodeId: string) => callback(nodeId)
     ipcRenderer.on('node:removed', listener)
     return () => ipcRenderer.removeListener('node:removed', listener)
+  },
+  onFileContent: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, content: string) => callback(nodeId, content)
+    ipcRenderer.on('node:file-content', listener)
+    return () => ipcRenderer.removeListener('node:file-content', listener)
   },
   onServerError: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, message: string) => callback(message)

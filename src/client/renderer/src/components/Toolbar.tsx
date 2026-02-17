@@ -5,7 +5,7 @@ import { usePerfStore } from '../stores/perfStore'
 import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
 
-interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string }
+interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string; title: string }
 
 interface ToolbarProps {
   inputDevice: InputDevice
@@ -59,8 +59,9 @@ export function Toolbar({
       <BeatsToggle />
       <span className="toolbar__zoom">
         <BeatIndicators />
+        <BpmIndicator />
         <span className="toolbar__status-sep" />
-        <span className="toolbar__status-item">{fps} fps</span>
+        <span className="toolbar__status-item toolbar__metric">{fps} <span className="toolbar__metric-label">fps</span></span>
         <span className="toolbar__status-sep" />
         <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
       </span>
@@ -332,7 +333,7 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
             className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}`}
             style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
             onClick={() => onCrabClick(crab.nodeId)}
-            title={{ orange: 'Working', white: 'Stopped', red: 'Permission', purple: 'Plan', gray: 'Session' }[crab.color]}
+            title={crab.title}
           />
         </div>
       ))}
@@ -351,6 +352,26 @@ function BeatsToggle() {
     >
       Beats
     </button>
+  )
+}
+
+function BpmIndicator() {
+  const [displayBpm, setDisplayBpm] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDisplayBpm(useAudioStore.getState().bpm)
+    }, 1000)
+    setDisplayBpm(useAudioStore.getState().bpm)
+    return () => clearInterval(id)
+  }, [])
+
+  if (displayBpm <= 0) return null
+
+  return (
+    <span className="toolbar__status-item toolbar__metric">
+      {Math.round(displayBpm)} <span className="toolbar__metric-label">bpm</span>
+    </span>
   )
 }
 

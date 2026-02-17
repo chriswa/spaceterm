@@ -3,6 +3,7 @@ import type { TerminalSessionEntry } from '../../../../shared/state'
 
 interface SessionsBodyProps {
   sessions: TerminalSessionEntry[]
+  currentSessionIndex?: number
   onRevive: (session: TerminalSessionEntry) => void
 }
 
@@ -40,23 +41,24 @@ function sessionDuration(session: TerminalSessionEntry): string | null {
   return `${hours}h ${minutes % 60}m`
 }
 
-export function SessionsBody({ sessions, onRevive }: SessionsBodyProps) {
+export function SessionsBody({ sessions, currentSessionIndex, onRevive }: SessionsBodyProps) {
   return (
     <div className="archive-body" onMouseDown={(e) => e.stopPropagation()}>
       <div className="archive-body__list">
         {[...sessions].reverse().map((session) => {
+          const isCurrent = session.sessionIndex === currentSessionIndex
           const duration = sessionDuration(session)
           return (
             <div
               key={session.sessionIndex}
-              className="archive-body__card"
-              onClick={(e) => {
+              className={`archive-body__card${isCurrent ? ' archive-body__card--disabled' : ''}`}
+              onClick={isCurrent ? undefined : (e) => {
                 e.stopPropagation()
                 onRevive(session)
               }}
             >
               <div className="archive-body__card-header">
-                <span className="archive-body__type">{triggerLabel(session.trigger)}</span>
+                <span className="archive-body__type">{isCurrent ? 'Current' : triggerLabel(session.trigger)}</span>
                 <span className="archive-body__time">{relativeTime(session.startedAt)}</span>
               </div>
               <div className="archive-body__card-title">{sessionTitle(session)}</div>

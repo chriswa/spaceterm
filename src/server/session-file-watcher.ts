@@ -7,7 +7,7 @@ export interface SessionFileEntry {
   [key: string]: unknown
 }
 
-type EntriesCallback = (surfaceId: string, newEntries: SessionFileEntry[], totalLineCount: number) => void
+type EntriesCallback = (surfaceId: string, newEntries: SessionFileEntry[], totalLineCount: number, isBackfill: boolean) => void
 
 interface WatchedFile {
   surfaceId: string
@@ -107,7 +107,7 @@ export class SessionFileWatcher {
       entry.lineCount = entries.length
       entry.byteOffset = Buffer.byteLength(content, 'utf-8')
       if (entries.length > 0) {
-        this.onEntries(entry.surfaceId, entries, entry.lineCount)
+        this.onEntries(entry.surfaceId, entries, entry.lineCount, true)
       }
     } catch {
       // File may have been removed between check and read
@@ -182,7 +182,7 @@ export class SessionFileWatcher {
         const newEntries = parseJsonlLines(text)
         if (newEntries.length > 0) {
           entry.lineCount += newEntries.length
-          this.onEntries(entry.surfaceId, newEntries, entry.lineCount)
+          this.onEntries(entry.surfaceId, newEntries, entry.lineCount, false)
         }
       } finally {
         fs.closeSync(fd)

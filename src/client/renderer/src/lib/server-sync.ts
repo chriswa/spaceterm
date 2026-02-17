@@ -30,6 +30,12 @@ export async function initServerSync(): Promise<void> {
     })
   )
 
+  cleanupFns.push(
+    window.api.node.onFileContent((nodeId: string, content: string) => {
+      useNodeStore.getState().applyFileContent(nodeId, content)
+    })
+  )
+
   // Request full state from server
   try {
     const serverState = await window.api.node.syncRequest()
@@ -126,6 +132,14 @@ export async function sendDirectoryAdd(parentId: string, cwd: string): Promise<{
 
 export async function sendDirectoryCwd(nodeId: string, cwd: string): Promise<void> {
   await window.api.node.directoryCwd(nodeId, cwd)
+}
+
+export async function sendFileAdd(parentId: string, filePath: string): Promise<{ nodeId: string }> {
+  return window.api.node.fileAdd(parentId, filePath)
+}
+
+export async function sendFilePath(nodeId: string, filePath: string): Promise<void> {
+  await window.api.node.filePath(nodeId, filePath)
 }
 
 export async function sendMarkdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }> {

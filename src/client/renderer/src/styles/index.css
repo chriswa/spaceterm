@@ -281,6 +281,15 @@ html, body, #root {
   height: 10px;
 }
 
+.toolbar__metric {
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar__metric-label {
+  font-size: 10px;
+  opacity: 0.6;
+}
+
 .toolbar__btn--active {
   border-color: #89b4fa;
   background: #232336;
@@ -728,6 +737,20 @@ html, body, #root {
   cursor: grabbing;
 }
 
+/* File-backed error overlay */
+.markdown-card__file-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  color: #f38ba8;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 13px;
+  text-align: center;
+  opacity: 0.8;
+}
+
 /* Right-edge resize handle — hidden until focused */
 .markdown-card__resize-handle {
   position: absolute;
@@ -962,6 +985,196 @@ html, body, #root {
   color: #cba6f7;
 }
 
+/* File card */
+.file-card {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  border: none;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  cursor: grab;
+}
+
+.file-card:active {
+  cursor: grabbing;
+}
+
+.file-card:not(.file-card--focused)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  cursor: grab;
+}
+
+.file-card:not(.file-card--focused):active::after {
+  cursor: grabbing;
+}
+
+.file-card__doc-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  color: #313244;
+  transition: color 0.15s;
+}
+
+.file-card:hover .file-card__doc-svg {
+  color: #585b70;
+}
+
+.file-card.file-card--selected:not(.file-card--focused) .file-card__doc-svg {
+  color: #cdd6f4;
+}
+
+.file-card.file-card--focused .file-card__doc-svg {
+  color: #cba6f7;
+}
+
+.file-card__body {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  padding-top: 28px;
+  box-sizing: border-box;
+  z-index: 1;
+}
+
+.file-card__label {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--file-fg, #1e1e2e);
+  text-align: center;
+  padding: 0 20px;
+  cursor: text;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.file-card__cwd {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--file-fg, #1e1e2e);
+  opacity: 0.5;
+  text-align: center;
+  padding: 2px 20px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.file-card__edit-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0 20px;
+}
+
+.file-card__input {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--file-fg, #1e1e2e);
+  background: transparent;
+  border: none;
+  outline: none;
+  text-align: center;
+  min-width: 60px;
+  max-width: 100%;
+  border-bottom: 1px solid #585b70;
+}
+
+.file-card__input:focus {
+  border-bottom-color: #89b4fa;
+}
+
+.file-card__measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.file-card__error {
+  font-size: 11px;
+  color: #f38ba8;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Floating action buttons for file card */
+.file-card .node-titlebar__actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+
+.file-card:hover .node-titlebar__actions,
+.file-card--focused .node-titlebar__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.file-card .node-titlebar__color-btn,
+.file-card .node-titlebar__close {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.file-card .node-titlebar__color-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+.file-card .node-titlebar__archive-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.file-card .node-titlebar__archive-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+.file-card .node-titlebar__reparent-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.file-card .node-titlebar__reparent-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+.file-card .node-titlebar__reparent-btn--active {
+  background: rgba(203, 166, 247, 0.4);
+  color: #cba6f7;
+}
+
 /* Root node / Shader vortex */
 .root-node {
   background: transparent;
@@ -1168,6 +1381,36 @@ html, body, #root {
   color: #cba6f7;
 }
 
+/* Ship It button in title bar */
+.node-titlebar__shipit-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__shipit-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+/* Markdown card ship-it button overrides */
+.markdown-card .node-titlebar__shipit-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.markdown-card .node-titlebar__shipit-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
 .node-titlebar__food-btn {
   width: 20px;
   height: 20px;
@@ -1295,6 +1538,12 @@ html, body, #root {
   background: rgba(88, 91, 112, 0.25);
 }
 
+.archive-body__card--disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
 .archive-body__card-header {
   display: flex;
   align-items: center;
@@ -1386,7 +1635,7 @@ html, body, #root {
   top: 0;
   left: 50%;
   transform: translate(-50%, 0%);
-  height: 50px;
+  height: calc(50px * max(1, 0.5 + 0.25 / var(--camera-zoom, 1)));
   aspect-ratio: 128 / 85;
   background-color: #ca7c5e;
   z-index: -1;

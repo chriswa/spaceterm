@@ -29,6 +29,7 @@ interface Session {
   lastClaudeSessionId: string | null
   pendingStop: boolean
   claudeState: ClaudeState
+  claudeStatusUnread: boolean
   claudeContextPercent: number | null
   claudeSessionLineCount: number | null
   cwd: string
@@ -44,6 +45,7 @@ export type ClaudeSessionHistoryCallback = (sessionId: string, history: ClaudeSe
 export type ClaudeStateCallback = (sessionId: string, state: ClaudeState) => void
 export type ClaudeContextCallback = (sessionId: string, contextRemainingPercent: number) => void
 export type ClaudeSessionLineCountCallback = (sessionId: string, lineCount: number) => void
+export type ClaudeStatusUnreadCallback = (sessionId: string, unread: boolean) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -55,8 +57,9 @@ export class SessionManager {
   private onClaudeState: ClaudeStateCallback
   private onClaudeContext: ClaudeContextCallback
   private onClaudeSessionLineCount: ClaudeSessionLineCountCallback
+  private onClaudeStatusUnread: ClaudeStatusUnreadCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback) {
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
@@ -65,6 +68,7 @@ export class SessionManager {
     this.onClaudeState = onClaudeState
     this.onClaudeContext = onClaudeContext
     this.onClaudeSessionLineCount = onClaudeSessionLineCount
+    this.onClaudeStatusUnread = onClaudeStatusUnread
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -89,6 +93,9 @@ export class SessionManager {
     // Always copy env to avoid mutating process.env
     const env = isCommand ? { ...baseEnv } : getShellEnv(shell, baseEnv)
     env.SPACETERM_SURFACE_ID = sessionId
+    if (process.env.SPACETERM_HOME) {
+      env.SPACETERM_HOME = process.env.SPACETERM_HOME
+    }
 
     const ptyProcess = pty.spawn(executable, args, {
       name: 'xterm-256color',
@@ -152,6 +159,7 @@ export class SessionManager {
       lastClaudeSessionId: null,
       pendingStop: false,
       claudeState: 'stopped' as ClaudeState,
+      claudeStatusUnread: false,
       claudeContextPercent: null,
       claudeSessionLineCount: null,
       cwd,
@@ -267,6 +275,17 @@ export class SessionManager {
 
   getClaudeState(sessionId: string): ClaudeState {
     return this.sessions.get(sessionId)?.claudeState ?? 'stopped'
+  }
+
+  setClaudeStatusUnread(surfaceId: string, unread: boolean): void {
+    const session = this.sessions.get(surfaceId)
+    if (!session || session.claudeStatusUnread === unread) return
+    session.claudeStatusUnread = unread
+    this.onClaudeStatusUnread(surfaceId, unread)
+  }
+
+  getClaudeStatusUnread(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.claudeStatusUnread ?? false
   }
 
   setClaudeContextPercent(surfaceId: string, percent: number): void {

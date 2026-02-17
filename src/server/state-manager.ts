@@ -6,6 +6,7 @@ import type {
   TerminalNodeData,
   MarkdownNodeData,
   DirectoryNodeData,
+  FileNodeData,
   TerminalSessionEntry
 } from '../shared/state'
 import type { ClaudeSessionEntry } from '../shared/protocol'
@@ -68,9 +69,14 @@ export class StateManager {
         delete (node as any).waitingForUser
       }
 
+      if (node.type === 'terminal' && node.claudeStatusUnread === undefined) {
+        (node as any).claudeStatusUnread = false
+      }
+
       if (node.type === 'terminal' && node.alive) {
         node.alive = false
         node.claudeState = 'stopped'
+        node.claudeStatusUnread = false
 
         // End current terminal session
         const currentSession = node.terminalSessions[node.terminalSessions.length - 1]
@@ -143,6 +149,7 @@ export class StateManager {
       rows,
       cwd,
       claudeState: 'stopped',
+      claudeStatusUnread: false,
       terminalSessions: [initialSession],
       claudeSessionHistory: [],
       shellTitleHistory: [...seedHistory],
@@ -210,6 +217,7 @@ export class StateManager {
     node.rows = rows
     node.exitCode = undefined
     node.claudeState = 'stopped'
+    node.claudeStatusUnread = false
 
     // Start a new terminal session
     const prevSession = node.terminalSessions[node.terminalSessions.length - 1]
@@ -228,7 +236,8 @@ export class StateManager {
       cols,
       rows,
       exitCode: undefined,
-      claudeState: 'stopped'
+      claudeState: 'stopped',
+      claudeStatusUnread: false
     } as Partial<TerminalNodeData>)
     this.schedulePersist()
   }
@@ -515,6 +524,14 @@ export class StateManager {
     // Don't persist for transient state changes
   }
 
+  updateClaudeStatusUnread(ptySessionId: string, unread: boolean): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node) return
+    node.claudeStatusUnread = unread
+    this.onNodeUpdate(node.id, { claudeStatusUnread: unread } as Partial<TerminalNodeData>)
+    this.schedulePersist()
+  }
+
   // --- Directory operations ---
 
   createDirectory(parentId: string, x: number, y: number, cwd: string): DirectoryNodeData {
@@ -554,9 +571,41 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  // --- File operations ---
+
+  createFile(parentId: string, x: number, y: number, filePath: string): FileNodeData {
+    const id = randomUUID()
+    const zIndex = this.state.nextZIndex++
+
+    const node: FileNodeData = {
+      id,
+      type: 'file',
+      parentId,
+      x,
+      y,
+      zIndex,
+      filePath,
+      archivedChildren: [],
+      colorPresetId: 'inherit'
+    }
+
+    this.state.nodes[id] = node
+    this.onNodeAdd(node)
+    this.schedulePersist()
+    return node
+  }
+
+  updateFilePath(nodeId: string, filePath: string): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'file') return
+    node.filePath = filePath
+    this.onNodeUpdate(nodeId, { filePath } as Partial<FileNodeData>)
+    this.schedulePersist()
+  }
+
   // --- Markdown operations ---
 
-  createMarkdown(parentId: string, x: number, y: number, content?: string): MarkdownNodeData {
+  createMarkdown(parentId: string, x: number, y: number, content?: string, fileBacked?: boolean): MarkdownNodeData {
     const id = randomUUID()
     const zIndex = this.state.nextZIndex++
 
@@ -572,7 +621,8 @@ export class StateManager {
       content: content ?? '',
       maxWidth: MARKDOWN_DEFAULT_MAX_WIDTH,
       archivedChildren: [],
-      colorPresetId: 'inherit'
+      colorPresetId: 'inherit',
+      ...(fileBacked ? { fileBacked: true } : {})
     }
 
     this.state.nodes[id] = node

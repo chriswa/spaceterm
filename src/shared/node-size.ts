@@ -38,6 +38,10 @@ export const MARKDOWN_MIN_MAX_WIDTH = 100
 export const DIRECTORY_WIDTH = 300
 export const DIRECTORY_HEIGHT = 144
 
+// File node dimensions
+export const FILE_WIDTH = 300
+export const FILE_HEIGHT = 144
+
 // Placement
 export const PLACEMENT_MARGIN = 80
 
@@ -51,6 +55,7 @@ export function terminalPixelSize(cols: number, rows: number): { width: number; 
 export type NodeLike =
   | { type: 'terminal'; cols: number; rows: number }
   | { type: 'directory' }
+  | { type: 'file' }
   | { type: 'markdown'; width: number; height: number }
 
 export function nodePixelSize(node: NodeLike): { width: number; height: number } {
@@ -59,6 +64,9 @@ export function nodePixelSize(node: NodeLike): { width: number; height: number }
   }
   if (node.type === 'directory') {
     return { width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT }
+  }
+  if (node.type === 'file') {
+    return { width: FILE_WIDTH, height: FILE_HEIGHT }
   }
   return { width: node.width, height: node.height }
 }

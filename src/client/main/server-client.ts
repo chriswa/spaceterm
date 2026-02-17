@@ -147,6 +147,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'file-content') {
+      this.emit('file-content', msg.nodeId, msg.content)
+      return
+    }
+
     if (msg.type === 'snapshot') {
       this.emit('snapshot', msg.sessionId, msg)
       return
@@ -290,6 +295,18 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'validate-directory', path })
   }
 
+  async fileAdd(parentId: string, filePath: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'file-add', parentId, filePath })
+  }
+
+  async filePath(nodeId: string, filePath: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'file-path', nodeId, filePath })
+  }
+
+  async validateFile(path: string, cwd?: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'validate-file', path, cwd })
+  }
+
   async markdownAdd(parentId: string, x?: number, y?: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-add', parentId, x, y })
   }
@@ -308,6 +325,10 @@ export class ServerClient extends EventEmitter {
 
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {
     this.sendFireAndForget({ type: 'set-terminal-mode', sessionId, mode })
+  }
+
+  setClaudeStatusUnread(sessionId: string, unread: boolean): void {
+    this.sendFireAndForget({ type: 'set-claude-status-unread', sessionId, unread } as ClientMessage)
   }
 
   isConnected(): boolean {

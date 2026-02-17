@@ -4,7 +4,9 @@ import * as os from 'os'
 import { z } from 'zod'
 import { defineTool } from './stdio-mcp.js'
 
-const SOCKET_PATH = path.join(os.homedir(), '.spaceterm', 'spaceterm.sock')
+const SOCKET_PATH = process.env.SPACETERM_HOME
+  ? path.join(process.env.SPACETERM_HOME, 'spaceterm.sock')
+  : path.join(os.homedir(), '.spaceterm', 'spaceterm.sock')
 const TIMEOUT_MS = 3000
 
 export const emitMarkdownTool = defineTool({

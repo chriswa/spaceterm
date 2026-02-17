@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, contentTracing, ipcMain, shell } from 'electron'
 import { mkdirSync } from 'fs'
-import { homedir } from 'os'
 import { join } from 'path'
+import { SOCKET_DIR } from '../../shared/protocol'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
@@ -165,6 +165,22 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
+  ipcMain.handle('node:file-add', async (_event, parentId: string, filePath: string) => {
+    const resp = await client!.fileAdd(parentId, filePath)
+    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
+    return {}
+  })
+
+  ipcMain.handle('node:file-path', async (_event, nodeId: string, filePath: string) => {
+    await client!.filePath(nodeId, filePath)
+  })
+
+  ipcMain.handle('node:validate-file', async (_event, path: string, cwd?: string) => {
+    const resp = await client!.validateFile(path, cwd)
+    if (resp.type === 'validate-file-result') return { valid: resp.valid, error: resp.error }
+    throw new Error('Unexpected response')
+  })
+
   ipcMain.handle('node:markdown-add', async (_event, parentId: string, x?: number, y?: number) => {
     const resp = await client!.markdownAdd(parentId, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
@@ -185,6 +201,10 @@ function setupIPC(): void {
 
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
     client!.setTerminalMode(sessionId, mode)
+  })
+
+  ipcMain.on('node:set-claude-status-unread', (_event, sessionId: string, unread: boolean) => {
+    client!.setClaudeStatusUnread(sessionId, unread)
   })
 
   // --- Window mode ---
@@ -209,7 +229,7 @@ function setupIPC(): void {
 
   // --- Perf capture ---
 
-  const perfDir = join(homedir(), '.spaceterm', 'perf-captures')
+  const perfDir = join(SOCKET_DIR, 'perf-captures')
 
   ipcMain.handle('perf:trace-start', async () => {
     await contentTracing.startRecording({
@@ -279,6 +299,12 @@ function wireClientEvents(): void {
   client!.on('claude-session-line-count', (sessionId: string, lineCount: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:claude-session-line-count:${sessionId}`, lineCount)
+    }
+  })
+
+  client!.on('file-content', (nodeId: string, content: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('node:file-content', nodeId, content)
     }
   })
 

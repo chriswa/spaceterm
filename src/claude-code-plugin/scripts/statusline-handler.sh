@@ -9,6 +9,6 @@ INPUT=$(cat)
 
 {
   printf '{"type":"status-line","surfaceId":"%s","payload":%s}\n' "$SPACETERM_SURFACE_ID" "$INPUT"
-} | nc -w 1 -U "$HOME/.spaceterm/spaceterm.sock" &
+} | nc -w 1 -U "${SPACETERM_HOME:-$HOME/.spaceterm}/spaceterm.sock" &
 
 exit 0

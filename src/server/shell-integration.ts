@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
+import { SOCKET_DIR } from '../shared/protocol'
 
-const INTEGRATION_DIR = join(homedir(), '.spaceterm', 'shell-integration')
+const INTEGRATION_DIR = join(SOCKET_DIR, 'shell-integration')
 const ZSH_DIR = join(INTEGRATION_DIR, 'zsh')
 
 // .zshenv that restores original ZDOTDIR and adds a precmd hook to emit OSC 7

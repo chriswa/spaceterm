@@ -128,6 +128,23 @@ function bestAngle(
   return normalize(bestMid)
 }
 
+// --- Fit check ---
+
+export function canFitAt(
+  nodes: Record<string, NodeData>,
+  position: { x: number; y: number },
+  size: { width: number; height: number }
+): boolean {
+  const existingRects = buildRects(nodes)
+  const candidateRect: Rect = {
+    cx: position.x + size.width / 2,
+    cy: position.y + size.height / 2,
+    hw: size.width / 2,
+    hh: size.height / 2
+  }
+  return !existingRects.some(r => rectsOverlap(r, candidateRect, PLACEMENT_MARGIN))
+}
+
 // --- Main placement ---
 
 export function computePlacement(

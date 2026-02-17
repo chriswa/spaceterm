@@ -58,6 +58,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
   const applyToDOM = useCallback((cam: Camera) => {
     if (surfaceRef.current) {
       surfaceRef.current.style.transform = getCameraTransform(cam)
+      surfaceRef.current.style.setProperty('--camera-zoom', String(cam.z))
     }
   }, [])
 

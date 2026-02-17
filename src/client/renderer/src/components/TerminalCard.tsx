@@ -80,8 +80,6 @@ interface TerminalCardProps {
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
-  onMarkUnread?: (id: string) => void
-  isUnviewed?: boolean
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (session: TerminalSessionEntry) => void
 }
@@ -90,7 +88,7 @@ export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, stoppedUnviewed, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onMarkUnread, isUnviewed,
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget,
   terminalSessions, onSessionRevive
 }: TerminalCardProps) {
   const preset = resolvedPreset
@@ -691,7 +689,7 @@ export function TerminalCard({
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or color picker
-    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__sessions-btn, .node-titlebar__reparent-btn, .node-titlebar__unread-btn, .archive-body, .terminal-search-bar')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__sessions-btn, .node-titlebar__reparent-btn, .archive-body, .terminal-search-bar')) return
 
     const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
@@ -768,7 +766,8 @@ export function TerminalCard({
     }
   }
 
-  const pastSessions = terminalSessions ? terminalSessions.slice(0, -1) : []
+  const pastSessions = terminalSessions ?? []
+  const currentSessionIndex = terminalSessions ? terminalSessions.length - 1 : -1
 
   const lastClaudeSession = claudeSessionHistory && claudeSessionHistory.length > 0
     ? claudeSessionHistory[claudeSessionHistory.length - 1]
@@ -804,6 +803,7 @@ export function TerminalCard({
       preset={preset}
       archivedChildren={archivedChildren}
       pastSessions={pastSessions}
+      currentSessionIndex={currentSessionIndex}
       onSessionRevive={onSessionRevive}
       onClose={onClose}
       onColorChange={onColorChange}
@@ -813,8 +813,6 @@ export function TerminalCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
-      onMarkUnread={onMarkUnread}
-      isUnviewed={isUnviewed}
       className={`terminal-card ${focusClass} ${animationClass}`}
       cardRef={cardRef}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}

@@ -29,13 +29,13 @@ interface CardShellProps {
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
   pastSessions?: TerminalSessionEntry[]
+  currentSessionIndex?: number
   onSessionsToggled?: (nodeId: string, open: boolean) => void
   onSessionRevive?: (session: TerminalSessionEntry) => void
   onMouseDown?: (e: React.MouseEvent) => void
   onStartReparent?: (id: string) => void
+  onShipIt?: (id: string) => void
   isReparenting?: boolean
-  onMarkUnread?: (id: string) => void
-  isUnviewed?: boolean
   food?: boolean
   onFoodToggle?: (id: string, food: boolean) => void
   className?: string
@@ -52,8 +52,8 @@ export function CardShell({
   headVariant, titleContent, headStyle, preset,
   showClose = true, showColorPicker = true,
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
-  pastSessions, onSessionsToggled, onSessionRevive,
-  onMouseDown, onStartReparent, isReparenting, onMarkUnread, isUnviewed,
+  pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
+  onMouseDown, onStartReparent, onShipIt, isReparenting,
   food, onFoodToggle,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
@@ -157,6 +157,24 @@ export function CardShell({
   // Action buttons shared across head variants
   const actionButtons = (
     <div className="node-titlebar__actions">
+      {onShipIt && (
+        <button
+          className="node-titlebar__shipit-btn"
+          title="Ship it — paste into parent terminal"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onShipIt(nodeId) }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            {/* hull */}
+            <path d="M1 10 L3 12 L11 12 L13 10 Z" fill="currentColor" stroke="none" />
+            {/* mast */}
+            <line x1="7" y1="3" x2="7" y2="11" />
+            {/* sail */}
+            <path d="M7 3 L11 7 L7 8 Z" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      )}
       {onFoodToggle && (
         <button
           className={`node-titlebar__food-btn${food ? ' node-titlebar__food-btn--active' : ''}`}
@@ -222,26 +240,11 @@ export function CardShell({
           )}
         </div>
       )}
-      {onMarkUnread && (
-        <button
-          className="node-titlebar__unread-btn"
-          title="Mark as unread"
-          disabled={isUnviewed}
-          style={preset ? { color: preset.titleBarFg } : undefined}
-          onClick={(e) => { e.stopPropagation(); onMarkUnread(nodeId) }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="1" y="3" width="12" height="9" rx="1" />
-            <path d="M1 3 L7 8 L13 3" />
-          </svg>
-        </button>
-      )}
       {pastSessions !== undefined && (
         <button
           ref={sessionsBtnRef}
           className="node-titlebar__sessions-btn"
-          title="Past terminal sessions"
+          title="Terminal sessions"
           disabled={pastSessions.length === 0}
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); toggleSessions() }}
@@ -361,7 +364,7 @@ export function CardShell({
           )}
           {sessionsOpen && pastSessions && pastSessions.length > 0 && (
             <div className={`card-shell__sessions-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={sessionsBodyRef}>
-              <SessionsBody sessions={pastSessions} onRevive={onSessionRevive!} />
+              <SessionsBody sessions={pastSessions} currentSessionIndex={currentSessionIndex} onRevive={onSessionRevive!} />
             </div>
           )}
           {children}

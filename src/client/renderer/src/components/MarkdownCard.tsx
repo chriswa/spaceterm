@@ -48,8 +48,11 @@ interface MarkdownCardProps {
   onUnfocus: () => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
+  onShipIt?: (id: string) => void
   food?: boolean
   onFoodToggle?: (id: string, food: boolean) => void
+  fileBacked?: boolean
+  fileError?: boolean
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -353,7 +356,8 @@ const linkClickHandler = EditorView.domEventHandlers({
 export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, maxWidth, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
   onFocus, onClose, onMove, onResize, onContentChange, onMaxWidthChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, food, onFoodToggle
+  onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, onShipIt, food, onFoodToggle,
+  fileBacked, fileError
 }: MarkdownCardProps) {
   const preset = resolvedPreset
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -361,8 +365,10 @@ export function MarkdownCard({
   const isDraggingRef = useRef(false)
   const draftMaxWidthRef = useRef<number | null>(null)
   const [draftDims, setDraftDims] = useState<{ width: number; height: number } | null>(null)
-  const propsRef = useRef({ x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus })
-  propsRef.current = { x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus }
+  const suppressNextChangeRef = useRef(false)
+  const fileWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const propsRef = useRef({ x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus, fileBacked })
+  propsRef.current = { x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus, fileBacked }
 
   // Clear draft state when server-synced maxWidth changes
   useEffect(() => {
@@ -430,7 +436,18 @@ export function MarkdownCard({
         linkClickHandler,
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged) {
-            propsRef.current.onContentChange(propsRef.current.id, update.state.doc.toString())
+            if (suppressNextChangeRef.current) {
+              suppressNextChangeRef.current = false
+            } else if (propsRef.current.fileBacked) {
+              // Debounce file writes (300ms)
+              if (fileWriteTimerRef.current) clearTimeout(fileWriteTimerRef.current)
+              fileWriteTimerRef.current = setTimeout(() => {
+                fileWriteTimerRef.current = null
+                propsRef.current.onContentChange(propsRef.current.id, update.state.doc.toString())
+              }, 300)
+            } else {
+              propsRef.current.onContentChange(propsRef.current.id, update.state.doc.toString())
+            }
           }
           if (update.docChanged || update.geometryChanged) {
             autoSize(update.view)
@@ -455,10 +472,33 @@ export function MarkdownCard({
     autoSize(view)
 
     return () => {
+      if (fileWriteTimerRef.current) {
+        clearTimeout(fileWriteTimerRef.current)
+        fileWriteTimerRef.current = null
+      }
       view.destroy()
       viewRef.current = null
     }
-  }, [id]) // Only remount if id changes
+  }, [id, fileError]) // Remount when id changes or error state toggles (body div is conditional)
+
+  // External content injection — sync editor when content prop changes (file-backed)
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const currentDoc = view.state.doc.toString()
+    if (content === currentDoc) return
+
+    // Cancel any pending debounced write (external change takes precedence)
+    if (fileWriteTimerRef.current) {
+      clearTimeout(fileWriteTimerRef.current)
+      fileWriteTimerRef.current = null
+    }
+
+    suppressNextChangeRef.current = true
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: content }
+    })
+  }, [content])
 
   // Re-run autoSize when maxWidth changes from server
   useEffect(() => {
@@ -615,6 +655,7 @@ export function MarkdownCard({
       onArchiveToggled={onArchiveToggled}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
+      onShipIt={onShipIt}
       isReparenting={reparentingNodeId === id}
       food={food}
       onFoodToggle={onFoodToggle}
@@ -629,7 +670,13 @@ export function MarkdownCard({
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
     >
-      <div className="markdown-card__body" ref={bodyRef} />
+      {fileError ? (
+        <div className="markdown-card__file-error">
+          File-backed node — requires a File parent
+        </div>
+      ) : (
+        <div className="markdown-card__body" ref={bodyRef} />
+      )}
       <div className="markdown-card__resize-handle" onMouseDown={handleResizeMouseDown} />
     </CardShell>
   )

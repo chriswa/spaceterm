@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, ArchivedNode } from '../../../../shared/state'
+import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, ArchivedNode } from '../../../../shared/state'
 import { nodePixelSize } from '../../../../shared/node-size'
 
 export { nodePixelSize }
@@ -23,9 +23,13 @@ interface NodeStoreState {
   liveTerminals: TerminalNodeData[]
   markdowns: MarkdownNodeData[]
   directories: DirectoryNodeData[]
+  files: FileNodeData[]
 
   // All node IDs in array form for iteration
   nodeList: NodeData[]
+
+  // File-backed markdown content (nodeId → file content, overlayed at render time)
+  fileContents: Record<string, string>
 
   // --- Local mutations (optimistic, instant) ---
   moveNode(id: string, x: number, y: number): void
@@ -34,6 +38,9 @@ interface NodeStoreState {
   setNodeColor(id: string, colorPresetId: string): void
   setNodeFood(id: string, food: boolean): void
   bringToFront(id: string): void
+
+  // --- File content ---
+  applyFileContent(nodeId: string, content: string): void
 
   // --- Server sync handlers ---
   applyServerState(state: ServerState): void
@@ -51,18 +58,21 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
   const liveTerminals: TerminalNodeData[] = []
   const markdowns: MarkdownNodeData[] = []
   const directories: DirectoryNodeData[] = []
+  const files: FileNodeData[] = []
 
   for (const node of nodeList) {
     if (node.type === 'terminal') {
       liveTerminals.push(node)
     } else if (node.type === 'directory') {
       directories.push(node)
+    } else if (node.type === 'file') {
+      files.push(node)
     } else {
       markdowns.push(node)
     }
   }
 
-  return { nodeList, liveTerminals, markdowns, directories }
+  return { nodeList, liveTerminals, markdowns, directories, files }
 }
 
 function mergeNodes(
@@ -93,7 +103,9 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   liveTerminals: [],
   markdowns: [],
   directories: [],
+  files: [],
   nodeList: [],
+  fileContents: {},
 
   // --- Local mutations ---
 
@@ -209,6 +221,14 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
     })
   },
 
+  // --- File content ---
+
+  applyFileContent(nodeId, content) {
+    set(state => ({
+      fileContents: { ...state.fileContents, [nodeId]: content }
+    }))
+  },
+
   // --- Server sync handlers ---
 
   applyServerState(serverState) {
@@ -273,8 +293,9 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
     set(state => {
       const { [id]: _removed, ...restServer } = state.serverNodes
       const { [id]: _removedOverride, ...restOverrides } = state.localOverrides
+      const { [id]: _removedFile, ...restFileContents } = state.fileContents
       const newNodes = mergeNodes(restServer, restOverrides)
-      return { serverNodes: restServer, localOverrides: restOverrides, nodes: newNodes, ...recomputeDerived(newNodes) }
+      return { serverNodes: restServer, localOverrides: restOverrides, fileContents: restFileContents, nodes: newNodes, ...recomputeDerived(newNodes) }
     })
   },
 
