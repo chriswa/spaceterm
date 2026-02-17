@@ -607,9 +607,17 @@ export function App() {
     flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025))
   }, [flyTo])
 
-  const handleSessionRevive = useCallback((_session: import('../../../shared/state').TerminalSessionEntry) => {
-    // No-op for now — plumbing in place for future implementation
-  }, [])
+  const handleSessionRevive = useCallback(async (nodeId: string, session: import('../../../shared/state').TerminalSessionEntry) => {
+    if (!session.claudeSessionId) return
+    const cwd = getParentCwd(nodeId)
+    const result = await sendTerminalCreate(
+      nodeId,
+      { cwd, claude: { resumeSessionId: session.claudeSessionId } },
+      session.shellTitleHistory
+    )
+    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
+    navigateToNode(result.sessionId)
+  }, [getParentCwd, navigateToNode])
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)

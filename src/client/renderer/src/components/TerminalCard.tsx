@@ -18,7 +18,6 @@ import { showToast } from '../lib/toast'
 import crabIcon from '../assets/crab.png'
 
 const DRAG_THRESHOLD = 5
-const LOW_ZOOM_THRESHOLD = 0.2
 const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
 const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
 
@@ -81,7 +80,7 @@ interface TerminalCardProps {
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
   terminalSessions?: TerminalSessionEntry[]
-  onSessionRevive?: (session: TerminalSessionEntry) => void
+  onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
 }
 
 export function TerminalCard({
@@ -521,7 +520,7 @@ export function TerminalCard({
 
   // --- Snapshot mode (only when unfocused) ---
 
-  const paintCanvas = (snapshot: SnapshotMessage, currentZoom: number) => {
+  const paintCanvas = (snapshot: SnapshotMessage) => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -539,8 +538,6 @@ export function TerminalCard({
     ctx.fillStyle = bgColor
     ctx.fillRect(0, 0, cw, ch)
 
-    const lowDetail = currentZoom < LOW_ZOOM_THRESHOLD
-
     for (let y = 0; y < snapshot.lines.length; y++) {
       const row = snapshot.lines[y]
       let xOffset = 0
@@ -553,26 +550,13 @@ export function TerminalCard({
           ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
         }
 
-        if (lowDetail) {
-          if (span.fg !== '#000000' && span.text.trim().length > 0) {
-            ctx.fillStyle = span.fg
-            ctx.globalAlpha = 0.7
-            for (let i = 0; i < span.text.length; i++) {
-              if (span.text[i] !== ' ') {
-                ctx.fillRect(xOffset + i * CELL_WIDTH + 1, y * CELL_HEIGHT + 3, CELL_WIDTH - 2, CELL_HEIGHT - 6)
-              }
-            }
-            ctx.globalAlpha = 1.0
-          }
-        } else {
-          if (span.text.trim().length > 0) {
-            ctx.fillStyle = span.fg
-            ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
-            ctx.textBaseline = 'top'
-            for (let i = 0; i < span.text.length; i++) {
-              if (span.text[i] !== ' ') {
-                ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
-              }
+        if (span.text.trim().length > 0) {
+          ctx.fillStyle = span.fg
+          ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
+          ctx.textBaseline = 'top'
+          for (let i = 0; i < span.text.length; i++) {
+            if (span.text[i] !== ' ') {
+              ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
             }
           }
         }
@@ -590,21 +574,13 @@ export function TerminalCard({
 
     const cleanup = window.api.node.onSnapshot(sessionId, (snapshot) => {
       snapshotRef.current = snapshot
-      paintCanvas(snapshot, propsRef.current.zoom)
+      paintCanvas(snapshot)
     })
 
     return () => {
       cleanup()
     }
   }, [focused, sessionId])
-
-  // Repaint snapshot when zoom changes
-  useEffect(() => {
-    if (focused) return
-    if (snapshotRef.current) {
-      paintCanvas(snapshotRef.current, zoom)
-    }
-  }, [focused, zoom])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.

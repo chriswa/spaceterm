@@ -1,2 +1,3 @@
-This is a test
-VIM says hi
+- Apples
+- Oranges
+- Mangoes

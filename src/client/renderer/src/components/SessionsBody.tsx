@@ -2,9 +2,10 @@ import { relativeTime } from '../lib/search'
 import type { TerminalSessionEntry } from '../../../../shared/state'
 
 interface SessionsBodyProps {
+  nodeId: string
   sessions: TerminalSessionEntry[]
   currentSessionIndex?: number
-  onRevive: (session: TerminalSessionEntry) => void
+  onRevive: (nodeId: string, session: TerminalSessionEntry) => void
 }
 
 function triggerLabel(trigger: TerminalSessionEntry['trigger']): string {
@@ -41,7 +42,7 @@ function sessionDuration(session: TerminalSessionEntry): string | null {
   return `${hours}h ${minutes % 60}m`
 }
 
-export function SessionsBody({ sessions, currentSessionIndex, onRevive }: SessionsBodyProps) {
+export function SessionsBody({ nodeId, sessions, currentSessionIndex, onRevive }: SessionsBodyProps) {
   return (
     <div className="archive-body" onMouseDown={(e) => e.stopPropagation()}>
       <div className="archive-body__list">
@@ -54,7 +55,7 @@ export function SessionsBody({ sessions, currentSessionIndex, onRevive }: Sessio
               className={`archive-body__card${isCurrent ? ' archive-body__card--disabled' : ''}`}
               onClick={isCurrent ? undefined : (e) => {
                 e.stopPropagation()
-                onRevive(session)
+                onRevive(nodeId, session)
               }}
             >
               <div className="archive-body__card-header">

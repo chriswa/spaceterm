@@ -31,7 +31,7 @@ interface CardShellProps {
   pastSessions?: TerminalSessionEntry[]
   currentSessionIndex?: number
   onSessionsToggled?: (nodeId: string, open: boolean) => void
-  onSessionRevive?: (session: TerminalSessionEntry) => void
+  onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
   onMouseDown?: (e: React.MouseEvent) => void
   onStartReparent?: (id: string) => void
   onShipIt?: (id: string) => void
@@ -364,7 +364,7 @@ export function CardShell({
           )}
           {sessionsOpen && pastSessions && pastSessions.length > 0 && (
             <div className={`card-shell__sessions-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={sessionsBodyRef}>
-              <SessionsBody sessions={pastSessions} currentSessionIndex={currentSessionIndex} onRevive={onSessionRevive!} />
+              <SessionsBody nodeId={nodeId} sessions={pastSessions} currentSessionIndex={currentSessionIndex} onRevive={onSessionRevive!} />
             </div>
           )}
           {children}

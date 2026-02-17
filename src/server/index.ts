@@ -46,7 +46,7 @@ function gatherFoodPrompt(nodes: Record<string, import('../shared/state').NodeDa
     } else if (node.type === 'file' && node.filePath) {
       const cwd = getAncestorCwd(nodes, node.parentId)
       const absPath = resolveFilePath(node.filePath, cwd)
-      parts.push(`Read this file and treat it as part of my prompt: ${absPath}`)
+      parts.push(absPath)
     }
     current = node.parentId
   }
@@ -351,7 +351,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }
 
       // Claude is actively working
-      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart' || hookType === 'PreCompact') {
+      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart' || hookType === 'PreCompact' || hookType === 'PostToolUse' || hookType === 'PostToolUseFailure') {
         queueTransition(msg.surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
       }
 
