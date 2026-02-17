@@ -199,6 +199,16 @@ function setupIPC(): void {
     await client!.markdownSetMaxWidth(nodeId, maxWidth)
   })
 
+  ipcMain.handle('node:title-add', async (_event, parentId: string) => {
+    const resp = await client!.titleAdd(parentId)
+    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
+    return {}
+  })
+
+  ipcMain.handle('node:title-text', async (_event, nodeId: string, text: string) => {
+    await client!.titleText(nodeId, text)
+  })
+
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
     client!.setTerminalMode(sessionId, mode)
   })

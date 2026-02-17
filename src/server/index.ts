@@ -7,7 +7,7 @@ import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { canFitAt, computePlacement } from './node-placement'
-import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
+import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
@@ -128,6 +128,12 @@ interface QueuedTransition {
 
 const transitionQueue: QueuedTransition[] = []
 let transitionDrainTimer: ReturnType<typeof setInterval> | null = null
+
+// Permission tool_use_id tracking — correlates PreToolUse → PermissionRequest → PostToolUse
+// so that only the PostToolUse matching a permission-gated tool triggers a working transition,
+// ignoring subagent PostToolUse events that would incorrectly clear waiting_permission.
+const lastPreToolUseId = new Map<string, string>()         // surfaceId → tool_use_id
+const pendingPermissionIds = new Map<string, Set<string>>() // surfaceId → Set<tool_use_id>
 
 function queueTransition(
   surfaceId: string,
@@ -324,10 +330,20 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       if (hookType === 'Stop') {
         sessionManager.handleClaudeStop(msg.surfaceId)
         queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:Stop', hookTime)
+        pendingPermissionIds.delete(msg.surfaceId)
+        lastPreToolUseId.delete(msg.surfaceId)
       }
 
       // PermissionRequest: check tool_name to distinguish plan approval from other permissions
       if (hookType === 'PermissionRequest') {
+        // Capture tool_use_id from the preceding PreToolUse so we can match
+        // the eventual PostToolUse to this specific permission-gated tool.
+        const savedToolUseId = lastPreToolUseId.get(msg.surfaceId)
+        if (savedToolUseId) {
+          let ids = pendingPermissionIds.get(msg.surfaceId)
+          if (!ids) { ids = new Set(); pendingPermissionIds.set(msg.surfaceId, ids) }
+          ids.add(savedToolUseId)
+        }
         const toolName = msg.payload && typeof msg.payload === 'object' && 'tool_name' in msg.payload
           ? String(msg.payload.tool_name)
           : ''
@@ -351,13 +367,36 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }
 
       // Claude is actively working
-      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart' || hookType === 'PreCompact' || hookType === 'PostToolUse' || hookType === 'PostToolUseFailure') {
+      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart' || hookType === 'PreCompact') {
+        if (hookType === 'PreToolUse') {
+          const toolUseId = msg.payload?.tool_use_id
+          if (typeof toolUseId === 'string') {
+            lastPreToolUseId.set(msg.surfaceId, toolUseId)
+          }
+        }
+        if (hookType === 'UserPromptSubmit') {
+          pendingPermissionIds.delete(msg.surfaceId)
+          lastPreToolUseId.delete(msg.surfaceId)
+        }
         queueTransition(msg.surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
+      }
+
+      // PostToolUse: only transition to working if this matches a permission-gated tool.
+      // Subagent PostToolUse events (with different tool_use_ids) are correctly ignored,
+      // preventing them from clearing waiting_permission on the main agent's surface.
+      if (hookType === 'PostToolUse' || hookType === 'PostToolUseFailure') {
+        const toolUseId = msg.payload?.tool_use_id
+        const ids = pendingPermissionIds.get(msg.surfaceId)
+        if (typeof toolUseId === 'string' && ids?.delete(toolUseId)) {
+          queueTransition(msg.surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
+        }
       }
 
       // SessionEnd: session is done
       if (hookType === 'SessionEnd') {
         queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:SessionEnd', hookTime)
+        pendingPermissionIds.delete(msg.surfaceId)
+        lastPreToolUseId.delete(msg.surfaceId)
       }
 
       // Process SessionStart hooks for claude session history tracking
@@ -791,6 +830,38 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         if (snap) send(client.socket, snap)
       } else {
         client.snapshotSessions.delete(msg.sessionId)
+      }
+      break
+    }
+
+    case 'title-add': {
+      try {
+        let posX: number
+        let posY: number
+        if (msg.x != null && msg.y != null) {
+          posX = msg.x
+          posY = msg.y
+        } else {
+          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: TITLE_DEFAULT_WIDTH, height: TITLE_HEIGHT })
+          posX = pos.x
+          posY = pos.y
+        }
+        const titleNode = stateManager.createTitle(msg.parentId, posX, posY)
+        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: titleNode.id })
+      } catch (err: any) {
+        console.error(`title-add failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `title-add failed: ${err.message}` })
+      }
+      break
+    }
+
+    case 'title-text': {
+      try {
+        stateManager.updateTitleText(msg.nodeId, msg.text)
+        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      } catch (err: any) {
+        console.error(`title-text failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `title-text failed: ${err.message}` })
       }
       break
     }

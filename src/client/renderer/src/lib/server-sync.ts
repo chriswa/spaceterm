@@ -166,6 +166,14 @@ export async function sendReparent(nodeId: string, newParentId: string): Promise
   await window.api.node.reparent(nodeId, newParentId)
 }
 
+export async function sendTitleAdd(parentId: string): Promise<{ nodeId: string }> {
+  return window.api.node.titleAdd(parentId)
+}
+
+export async function sendTitleText(nodeId: string, text: string): Promise<void> {
+  await window.api.node.titleText(nodeId, text)
+}
+
 export async function sendTerminalReincarnate(
   nodeId: string,
   options?: CreateOptions

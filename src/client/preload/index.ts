@@ -148,6 +148,8 @@ interface NodeApi {
   markdownResize(nodeId: string, width: number, height: number): Promise<void>
   markdownContent(nodeId: string, content: string): Promise<void>
   markdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<void>
+  titleAdd(parentId: string): Promise<{ nodeId: string }>
+  titleText(nodeId: string, text: string): Promise<void>
   onUpdated(callback: (nodeId: string, fields: any) => void): () => void
   onAdded(callback: (node: any) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
@@ -180,6 +182,8 @@ const nodeApi: NodeApi = {
   markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
   markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
   markdownSetMaxWidth: (nodeId, maxWidth) => ipcRenderer.invoke('node:markdown-set-max-width', nodeId, maxWidth),
+  titleAdd: (parentId) => ipcRenderer.invoke('node:title-add', parentId),
+  titleText: (nodeId, text) => ipcRenderer.invoke('node:title-text', nodeId, text),
 
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
   setClaudeStatusUnread: (sessionId: string, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),

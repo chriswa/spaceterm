@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, ArchivedNode } from '../../../../shared/state'
+import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, ArchivedNode } from '../../../../shared/state'
 import { nodePixelSize } from '../../../../shared/node-size'
 
 export { nodePixelSize }
@@ -24,6 +24,7 @@ interface NodeStoreState {
   markdowns: MarkdownNodeData[]
   directories: DirectoryNodeData[]
   files: FileNodeData[]
+  titles: TitleNodeData[]
 
   // All node IDs in array form for iteration
   nodeList: NodeData[]
@@ -59,6 +60,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
   const markdowns: MarkdownNodeData[] = []
   const directories: DirectoryNodeData[] = []
   const files: FileNodeData[] = []
+  const titles: TitleNodeData[] = []
 
   for (const node of nodeList) {
     if (node.type === 'terminal') {
@@ -67,12 +69,14 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
       directories.push(node)
     } else if (node.type === 'file') {
       files.push(node)
+    } else if (node.type === 'title') {
+      titles.push(node)
     } else {
       markdowns.push(node)
     }
   }
 
-  return { nodeList, liveTerminals, markdowns, directories, files }
+  return { nodeList, liveTerminals, markdowns, directories, files, titles }
 }
 
 function mergeNodes(
@@ -104,6 +108,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   markdowns: [],
   directories: [],
   files: [],
+  titles: [],
   nodeList: [],
   fileContents: {},
 

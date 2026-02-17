@@ -60,26 +60,25 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: #181825;
-  border-top: 1px solid #313244;
+  padding: 7px 12px;
+  background: #000;
   z-index: 10;
   flex-shrink: 0;
 }
 
 .toolbar__btn {
-  padding: 6px 14px;
-  border: 1px solid #45475a;
-  border-radius: 6px;
-  background: #1e1e2e;
-  color: #cdd6f4;
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  color: #fff;
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .toolbar__btn:hover {
-  background: #313244;
+  background: rgba(255,255,255,0.12);
 }
 
 /* Force layout controls */
@@ -93,10 +92,10 @@ html, body, #root {
 .toolbar__force-btn {
   width: 28px;
   height: 28px;
-  border: 1px solid #45475a;
-  border-radius: 6px;
-  background: #1e1e2e;
-  color: #cdd6f4;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  color: #fff;
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
@@ -107,14 +106,14 @@ html, body, #root {
 }
 
 .toolbar__force-btn:hover {
-  background: #313244;
+  background: rgba(255,255,255,0.12);
 }
 
 .toolbar__force-speed {
   min-width: 28px;
   text-align: center;
   font-size: 13px;
-  color: #6c7086;
+  color: #fff;
   font-variant-numeric: tabular-nums;
 }
 
@@ -124,26 +123,24 @@ html, body, #root {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: #6c7086;
+  color: #fff;
   font-variant-numeric: tabular-nums;
 }
 
 .toolbar__status-item {
   font-size: 13px;
-  color: #6c7086;
+  color: #fff;
   font-variant-numeric: tabular-nums;
 }
 
 .toolbar__status-sep {
-  width: 1px;
-  height: 16px;
-  background: #313244;
+  display: none;
 }
 
 .toolbar__status-btn {
   background: transparent;
   border: none;
-  color: #6c7086;
+  color: #fff;
   font-size: 13px;
   font-family: inherit;
   font-variant-numeric: tabular-nums;
@@ -158,16 +155,13 @@ html, body, #root {
 }
 
 .toolbar__status-btn:hover {
-  background: #313244;
-  color: #cdd6f4;
+  background: rgba(255,255,255,0.12);
 }
 
 .toolbar__perf {
   display: flex;
   gap: 4px;
   margin-left: 4px;
-  padding-left: 12px;
-  border-left: 1px solid #313244;
 }
 
 /* Crab status indicators */
@@ -176,8 +170,6 @@ html, body, #root {
   align-items: center;
   gap: 6px;
   margin-left: 8px;
-  padding-left: 12px;
-  border-left: 1px solid #313244;
   position: relative;
   clip-path: inset(-8px -100px);
 }
@@ -291,12 +283,17 @@ html, body, #root {
 }
 
 .toolbar__btn--active {
-  border-color: #89b4fa;
-  background: #232336;
+  background: #fff;
+  color: #000;
+  border-color: transparent;
+}
+
+.toolbar__btn--active:hover {
+  background: #ccc;
 }
 
 .toolbar__btn--recording {
-  border-color: #f38ba8;
+  border-color: rgba(243,139,168,0.5);
   color: #f38ba8;
 }
 
@@ -306,7 +303,7 @@ html, body, #root {
 }
 
 .toolbar__btn:disabled:hover {
-  background: #1e1e2e;
+  background: rgba(255,255,255,0.06);
 }
 
 /* Canvas */
@@ -985,6 +982,123 @@ html, body, #root {
   color: #cba6f7;
 }
 
+/* Title card */
+.title-card {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  border: none;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  cursor: grab;
+}
+
+.title-card:active {
+  cursor: grabbing;
+}
+
+.title-card:not(.title-card--focused)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  cursor: grab;
+}
+
+.title-card:not(.title-card--focused):active::after {
+  cursor: grabbing;
+}
+
+.title-card__body {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  box-sizing: border-box;
+  z-index: 1;
+}
+
+.title-card__label {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--title-fg, #cba6f7);
+  text-align: center;
+  padding: 0 12px;
+  cursor: text;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.title-card__input {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--title-fg, #cba6f7);
+  background: transparent;
+  border: none;
+  outline: none;
+  text-align: center;
+  min-width: 60px;
+  max-width: 100%;
+  border-bottom: 1px solid #585b70;
+}
+
+.title-card__input:focus {
+  border-bottom-color: #89b4fa;
+}
+
+.title-card__input::placeholder {
+  color: var(--title-fg, #cba6f7);
+  opacity: 0.4;
+}
+
+.title-card__measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+/* Floating action buttons for title card — positioned above the card to avoid overlapping the single-line text */
+.title-card .node-titlebar__actions {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+
+.title-card:hover .node-titlebar__actions,
+.title-card--focused .node-titlebar__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.title-card .node-titlebar__color-btn,
+.title-card .node-titlebar__close {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.title-card .node-titlebar__color-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
 /* File card */
 .file-card {
   width: 100%;
@@ -1301,13 +1415,15 @@ html, body, #root {
   position: absolute;
 }
 
-/* Markdown card archive button overrides */
-.markdown-card .node-titlebar__archive-btn {
+/* Markdown/title card archive button overrides */
+.markdown-card .node-titlebar__archive-btn,
+.title-card .node-titlebar__archive-btn {
   background: rgba(0, 0, 0, 0.3);
   color: #cdd6f4;
 }
 
-.markdown-card .node-titlebar__archive-btn:hover {
+.markdown-card .node-titlebar__archive-btn:hover,
+.title-card .node-titlebar__archive-btn:hover {
   background: #181825;
   color: #cdd6f4 !important;
 }
@@ -1365,18 +1481,21 @@ html, body, #root {
   background: rgba(203, 166, 247, 0.4);
 }
 
-/* Markdown card reparent button overrides */
-.markdown-card .node-titlebar__reparent-btn {
+/* Markdown/title card reparent button overrides */
+.markdown-card .node-titlebar__reparent-btn,
+.title-card .node-titlebar__reparent-btn {
   background: rgba(0, 0, 0, 0.3);
   color: #cdd6f4;
 }
 
-.markdown-card .node-titlebar__reparent-btn:hover {
+.markdown-card .node-titlebar__reparent-btn:hover,
+.title-card .node-titlebar__reparent-btn:hover {
   background: #181825;
   color: #cdd6f4 !important;
 }
 
-.markdown-card .node-titlebar__reparent-btn--active {
+.markdown-card .node-titlebar__reparent-btn--active,
+.title-card .node-titlebar__reparent-btn--active {
   background: rgba(203, 166, 247, 0.4);
   color: #cba6f7;
 }
@@ -1902,17 +2021,19 @@ html, body, #root {
   color: #cdd6f4 !important;
 }
 
-/* Add-node button overrides for overlay cards (markdown, directory, file) */
+/* Add-node button overrides for overlay cards (markdown, directory, file, title) */
 .markdown-card .node-titlebar__add-btn,
 .directory-card .node-titlebar__add-btn,
-.file-card .node-titlebar__add-btn {
+.file-card .node-titlebar__add-btn,
+.title-card .node-titlebar__add-btn {
   background: rgba(0, 0, 0, 0.3);
   color: #cdd6f4;
 }
 
 .markdown-card .node-titlebar__add-btn:hover,
 .directory-card .node-titlebar__add-btn:hover,
-.file-card .node-titlebar__add-btn:hover {
+.file-card .node-titlebar__add-btn:hover,
+.title-card .node-titlebar__add-btn:hover {
   background: #181825;
   color: #cdd6f4 !important;
 }

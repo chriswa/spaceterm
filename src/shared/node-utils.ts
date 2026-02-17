@@ -21,6 +21,8 @@ export function isDisposable(node: NodeData): boolean {
       return false
     case 'file':
       return false
+    case 'title':
+      return node.text.trim() === ''
     default:
       return false
   }

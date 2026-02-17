@@ -256,6 +256,21 @@ export interface FilePathMessage {
   filePath: string
 }
 
+export interface TitleAddMessage {
+  type: 'title-add'
+  seq: number
+  parentId: string
+  x?: number
+  y?: number
+}
+
+export interface TitleTextMessage {
+  type: 'title-text'
+  seq: number
+  nodeId: string
+  text: string
+}
+
 export interface ValidateFileMessage {
   type: 'validate-file'
   seq: number
@@ -319,6 +334,8 @@ export type ClientMessage =
   | FileAddMessage
   | FilePathMessage
   | ValidateFileMessage
+  | TitleAddMessage
+  | TitleTextMessage
 
 // --- Server → Client messages ---
 

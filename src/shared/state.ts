@@ -65,7 +65,12 @@ export interface FileNodeData extends BaseNodeData {
   filePath: string  // raw user input — may be relative, absolute, or ~-prefixed
 }
 
-export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData
+export interface TitleNodeData extends BaseNodeData {
+  type: 'title'
+  text: string
+}
+
+export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData | TitleNodeData
 
 // --- Archived nodes ---
 

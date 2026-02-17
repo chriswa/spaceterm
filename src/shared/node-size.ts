@@ -42,6 +42,10 @@ export const DIRECTORY_HEIGHT = 144
 export const FILE_WIDTH = 300
 export const FILE_HEIGHT = 144
 
+// Title node dimensions
+export const TITLE_DEFAULT_WIDTH = 200
+export const TITLE_HEIGHT = 40
+
 // Placement
 export const PLACEMENT_MARGIN = 80
 
@@ -56,6 +60,7 @@ export type NodeLike =
   | { type: 'terminal'; cols: number; rows: number }
   | { type: 'directory' }
   | { type: 'file' }
+  | { type: 'title' }
   | { type: 'markdown'; width: number; height: number }
 
 export function nodePixelSize(node: NodeLike): { width: number; height: number } {
@@ -67,6 +72,9 @@ export function nodePixelSize(node: NodeLike): { width: number; height: number }
   }
   if (node.type === 'file') {
     return { width: FILE_WIDTH, height: FILE_HEIGHT }
+  }
+  if (node.type === 'title') {
+    return { width: TITLE_DEFAULT_WIDTH, height: TITLE_HEIGHT }
   }
   return { width: node.width, height: node.height }
 }

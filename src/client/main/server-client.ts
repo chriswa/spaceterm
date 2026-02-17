@@ -323,6 +323,14 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
   }
 
+  async titleAdd(parentId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'title-add', parentId })
+  }
+
+  async titleText(nodeId: string, text: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'title-text', nodeId, text })
+  }
+
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {
     this.sendFireAndForget({ type: 'set-terminal-mode', sessionId, mode })
   }

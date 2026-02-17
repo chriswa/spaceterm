@@ -60,9 +60,7 @@ export function Toolbar({
       <span className="toolbar__zoom">
         <BeatIndicators />
         <BpmIndicator />
-        <span className="toolbar__status-sep" />
         <span className="toolbar__status-item toolbar__metric">{fps} <span className="toolbar__metric-label">fps</span></span>
-        <span className="toolbar__status-sep" />
         <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
       </span>
       {crabs.length > 0 && (

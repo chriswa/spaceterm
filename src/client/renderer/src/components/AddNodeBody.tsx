@@ -1,4 +1,4 @@
-export type AddNodeType = 'claude' | 'markdown' | 'directory' | 'file' | 'terminal'
+export type AddNodeType = 'claude' | 'title' | 'markdown' | 'directory' | 'file' | 'terminal'
 
 interface AddNodeBodyProps {
   onSelect: (type: AddNodeType) => void
@@ -13,6 +13,17 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 10 L7 4 L10 10" />
         <line x1="5" y1="8" x2="9" y2="8" />
+      </svg>
+    ),
+  },
+  {
+    type: 'title',
+    label: 'Title',
+    hint: '',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="3" y1="3" x2="11" y2="3" />
+        <line x1="7" y1="3" x2="7" y2="11" />
       </svg>
     ),
   },

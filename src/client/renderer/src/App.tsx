@@ -7,6 +7,7 @@ import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminal
 import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
+import { TitleCard } from './components/TitleCard'
 import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge, Selection } from './components/CanvasBackground'
@@ -18,14 +19,14 @@ import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
 import { useBeatPulse } from './hooks/useBeatPulse'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetFood, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetFood, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText } from './lib/server-sync'
 
 interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string; title: string }
 
@@ -57,6 +58,7 @@ export function App() {
   const markdowns = useNodeStore(s => s.markdowns)
   const directories = useNodeStore(s => s.directories)
   const files = useNodeStore(s => s.files)
+  const titles = useNodeStore(s => s.titles)
   const fileContents = useNodeStore(s => s.fileContents)
   const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
   const moveNode = useNodeStore(s => s.moveNode)
@@ -73,10 +75,13 @@ export function App() {
   const edgesRef = useRef<TreeLineNode[]>([])
   edgesRef.current = treeLineNodes
 
-  const maskRects = useMemo(() =>
-    markdowns.map((n): MaskRect => ({ x: n.x, y: n.y, width: n.width, height: n.height })),
-    [markdowns]
-  )
+  const maskRects = useMemo(() => {
+    const rects: MaskRect[] = markdowns.map((n): MaskRect => ({ x: n.x, y: n.y, width: n.width, height: n.height }))
+    for (const t of titles) {
+      rects.push({ x: t.x, y: t.y, width: TITLE_DEFAULT_WIDTH, height: TITLE_HEIGHT })
+    }
+    return rects
+  }, [markdowns, titles])
   const maskRectsRef = useRef<MaskRect[]>([])
   maskRectsRef.current = maskRects
 
@@ -827,6 +832,10 @@ export function App() {
     sendFilePath(id, newFilePath)
   }, [])
 
+  const handleTitleTextChange = useCallback((id: string, text: string) => {
+    sendTitleText(id, text)
+  }, [])
+
   const spawnNode = useCallback(async (
     create: (parentId: string, cwd: string | undefined) => Promise<string>,
     parentIdOverride?: string
@@ -848,6 +857,7 @@ export function App() {
       case 'markdown': { const r = await sendMarkdownAdd(parentNodeId); nodeId = r.nodeId; break }
       case 'directory': { const r = await sendDirectoryAdd(parentNodeId, cwd ?? '~'); nodeId = r.nodeId; break }
       case 'file': { const r = await sendFileAdd(parentNodeId, ''); nodeId = r.nodeId; break }
+      case 'title': { const r = await sendTitleAdd(parentNodeId); nodeId = r.nodeId; break }
     }
     if (cwd) cwdMapRef.current.set(nodeId, cwd)
     await navigateToNode(nodeId)
@@ -1396,6 +1406,36 @@ export function App() {
             />
           )
         })}
+        {titles.map((t) => (
+          <TitleCard
+            key={t.id}
+            id={t.id}
+            x={t.x}
+            y={t.y}
+            zIndex={t.zIndex}
+            zoom={camera.z}
+            text={t.text}
+            colorPresetId={t.colorPresetId}
+            resolvedPreset={resolvedPresets[t.id]}
+            archivedChildren={t.archivedChildren}
+            focused={focusedId === t.id}
+            selected={selection?.id === t.id && selection?.type === 'node'}
+            onFocus={handleNodeFocus}
+            onClose={handleRemoveNode}
+            onMove={handleMove}
+            onTextChange={handleTitleTextChange}
+            onColorChange={handleColorChange}
+            onUnarchive={handleUnarchive}
+            onArchiveDelete={handleArchiveDelete}
+            onArchiveToggled={handleArchiveToggled}
+            onNodeReady={handleNodeReady}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onStartReparent={handleStartReparent}
+            onReparentTarget={handleReparentTarget}
+            onAddNode={handleAddNode}
+          />
+        ))}
         {directories.map((d) => (
           <DirectoryCard
             key={d.id}

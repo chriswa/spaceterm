@@ -7,6 +7,7 @@ import type {
   MarkdownNodeData,
   DirectoryNodeData,
   FileNodeData,
+  TitleNodeData,
   TerminalSessionEntry
 } from '../shared/state'
 import type { ClaudeSessionEntry } from '../shared/protocol'
@@ -653,6 +654,38 @@ export class StateManager {
     if (!node || node.type !== 'markdown') return
     node.maxWidth = maxWidth
     this.onNodeUpdate(nodeId, { maxWidth } as Partial<MarkdownNodeData>)
+    this.schedulePersist()
+  }
+
+  // --- Title operations ---
+
+  createTitle(parentId: string, x: number, y: number, text?: string): TitleNodeData {
+    const id = randomUUID()
+    const zIndex = this.state.nextZIndex++
+
+    const node: TitleNodeData = {
+      id,
+      type: 'title',
+      parentId,
+      x,
+      y,
+      zIndex,
+      text: text ?? '',
+      archivedChildren: [],
+      colorPresetId: 'inherit'
+    }
+
+    this.state.nodes[id] = node
+    this.onNodeAdd(node)
+    this.schedulePersist()
+    return node
+  }
+
+  updateTitleText(nodeId: string, text: string): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'title') return
+    node.text = text
+    this.onNodeUpdate(nodeId, { text } as Partial<TitleNodeData>)
     this.schedulePersist()
   }
 
