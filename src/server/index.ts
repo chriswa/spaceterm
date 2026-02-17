@@ -63,7 +63,7 @@ function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, pr
       command: path.join(pluginDir, 'scripts/statusline-handler.sh')
     }
   })
-  const args = ['--plugin-dir', pluginDir, '--settings', statusLineSettings]
+  const args = ['--plugin-dir', pluginDir, '--settings', statusLineSettings, '--allow-dangerously-skip-permissions']
   if (resumeSessionId) {
     args.push('-r', resumeSessionId)
   }

@@ -1883,3 +1883,93 @@ html, body, #root {
   color: #585b70;
 }
 
+/* Add-node button in title bar */
+.node-titlebar__add-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__add-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+/* Add-node button overrides for overlay cards (markdown, directory, file) */
+.markdown-card .node-titlebar__add-btn,
+.directory-card .node-titlebar__add-btn,
+.file-card .node-titlebar__add-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.markdown-card .node-titlebar__add-btn:hover,
+.directory-card .node-titlebar__add-btn:hover,
+.file-card .node-titlebar__add-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+/* Hidden-head add-node button (root node) */
+.card-shell__add-btn {
+  color: #a6adc8;
+}
+
+/* Add-node dropdown positioning */
+.card-shell__add-node-body {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 200px;
+  z-index: 50;
+}
+
+/* AddNodeBody — dropdown menu */
+.add-node-body {
+  background: #1e1e2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  pointer-events: auto;
+}
+
+.add-node-body__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #cdd6f4;
+  font-size: 13px;
+}
+
+.add-node-body__item:hover {
+  background: rgba(88, 91, 112, 0.25);
+}
+
+.add-node-body__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.add-node-body__label {
+  flex: 1;
+}
+
+.add-node-body__hint {
+  color: #585b70;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+

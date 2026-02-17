@@ -7,6 +7,7 @@ import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminal
 import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
+import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge, Selection } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
@@ -838,6 +839,20 @@ export function App() {
     await navigateToNode(nodeId)
   }, [getParentCwd, navigateToNode])
 
+  const handleAddNode = useCallback(async (parentNodeId: string, type: AddNodeType) => {
+    const cwd = getParentCwd(parentNodeId)
+    let nodeId: string
+    switch (type) {
+      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: {} }); nodeId = r.sessionId; break }
+      case 'terminal': { const r = await sendTerminalCreate(parentNodeId, cwd ? { cwd } : undefined); nodeId = r.sessionId; break }
+      case 'markdown': { const r = await sendMarkdownAdd(parentNodeId); nodeId = r.nodeId; break }
+      case 'directory': { const r = await sendDirectoryAdd(parentNodeId, cwd ?? '~'); nodeId = r.nodeId; break }
+      case 'file': { const r = await sendFileAdd(parentNodeId, ''); nodeId = r.nodeId; break }
+    }
+    if (cwd) cwdMapRef.current.set(nodeId, cwd)
+    await navigateToNode(nodeId)
+  }, [getParentCwd, navigateToNode])
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -899,17 +914,10 @@ export function App() {
       if (e.metaKey && e.key === 'e') {
         e.preventDefault()
         e.stopPropagation()
-        let parentOverride: string | undefined
-        if (focusRef.current) {
-          const node = useNodeStore.getState().nodes[focusRef.current]
-          if (node?.type === 'terminal') {
-            parentOverride = node.parentId
-          }
-        }
         spawnNode(async (parentId, cwd) => {
           const r = await sendTerminalCreate(parentId, { cwd, claude: {} })
           return r.sessionId
-        }, parentOverride)
+        })
       }
 
       if (e.metaKey && e.key === 'm') {
@@ -1288,6 +1296,7 @@ export function App() {
           onUnarchive={handleUnarchive}
           onArchiveDelete={handleArchiveDelete}
           onArchiveToggled={handleArchiveToggled}
+          onAddNode={handleAddNode}
         />
         {liveTerminals.map((t) => (
           <TerminalCard
@@ -1335,6 +1344,7 @@ export function App() {
             onReparentTarget={handleReparentTarget}
             terminalSessions={t.terminalSessions}
             onSessionRevive={handleSessionRevive}
+            onAddNode={handleAddNode}
           />
         ))}
         {markdowns.map((m) => {
@@ -1382,6 +1392,7 @@ export function App() {
               onShipIt={handleShipIt}
               fileBacked={isFileBacked}
               fileError={fileError}
+              onAddNode={handleAddNode}
             />
           )
         })}
@@ -1412,6 +1423,7 @@ export function App() {
             onDragEnd={handleDragEnd}
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
+            onAddNode={handleAddNode}
           />
         ))}
         {files.map((f) => (
@@ -1442,6 +1454,7 @@ export function App() {
             onDragEnd={handleDragEnd}
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
+            onAddNode={handleAddNode}
           />
         ))}
         {hoveredEdge && (

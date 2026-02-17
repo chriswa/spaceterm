@@ -54,13 +54,14 @@ interface FileCardProps {
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
+  onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
 }
 
 export function FileCard({
   id, x, y, zIndex, zoom, filePath, inheritedCwd, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onFilePathChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode
 }: FileCardProps) {
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
@@ -231,6 +232,7 @@ export function FileCard({
       onArchiveToggled={onArchiveToggled}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
+      onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       className={`file-card ${focused ? 'file-card--focused' : selected ? 'file-card--selected' : ''}`}
       style={{

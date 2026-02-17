@@ -43,13 +43,14 @@ interface DirectoryCardProps {
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
+  onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
 }
 
 export function DirectoryCard({
   id, x, y, zIndex, zoom, cwd, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode
 }: DirectoryCardProps) {
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
@@ -214,6 +215,7 @@ export function DirectoryCard({
       onArchiveToggled={onArchiveToggled}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
+      onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       className={`directory-card ${focused ? 'directory-card--focused' : selected ? 'directory-card--selected' : ''}`}
       style={{

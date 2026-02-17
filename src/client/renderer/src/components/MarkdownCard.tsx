@@ -53,6 +53,7 @@ interface MarkdownCardProps {
   onFoodToggle?: (id: string, food: boolean) => void
   fileBacked?: boolean
   fileError?: boolean
+  onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -357,7 +358,7 @@ export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, maxWidth, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
   onFocus, onClose, onMove, onResize, onContentChange, onMaxWidthChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
   onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, onShipIt, food, onFoodToggle,
-  fileBacked, fileError
+  fileBacked, fileError, onAddNode
 }: MarkdownCardProps) {
   const preset = resolvedPreset
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -655,6 +656,7 @@ export function MarkdownCard({
       onArchiveToggled={onArchiveToggled}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
+      onAddNode={onAddNode}
       onShipIt={onShipIt}
       isReparenting={reparentingNodeId === id}
       food={food}

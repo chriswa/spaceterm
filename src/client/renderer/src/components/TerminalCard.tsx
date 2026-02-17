@@ -81,6 +81,7 @@ interface TerminalCardProps {
   onReparentTarget?: (id: string) => void
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
+  onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
 }
 
 export function TerminalCard({
@@ -88,7 +89,7 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive
+  terminalSessions, onSessionRevive, onAddNode
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -788,6 +789,7 @@ export function TerminalCard({
       onArchiveToggled={onArchiveToggled}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
+      onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       className={`terminal-card ${focusClass} ${animationClass}`}
       cardRef={cardRef}

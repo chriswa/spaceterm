@@ -6,6 +6,8 @@ import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/stat
 import foodIcon from '../assets/food.svg'
 import { ArchiveBody } from './ArchiveBody'
 import { SessionsBody } from './SessionsBody'
+import { AddNodeBody } from './AddNodeBody'
+import type { AddNodeType } from './AddNodeBody'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 
 interface CardShellProps {
@@ -36,6 +38,7 @@ interface CardShellProps {
   onStartReparent?: (id: string) => void
   onShipIt?: (id: string) => void
   isReparenting?: boolean
+  onAddNode?: (parentNodeId: string, type: AddNodeType) => void
   food?: boolean
   onFoodToggle?: (id: string, food: boolean) => void
   className?: string
@@ -54,7 +57,7 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onShipIt, isReparenting,
-  food, onFoodToggle,
+  onAddNode, food, onFoodToggle,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
   const [archiveOpen, setArchiveOpen] = useState(false)
@@ -65,6 +68,9 @@ export function CardShell({
   const archiveBodyRef = useRef<HTMLDivElement>(null)
   const sessionsBtnRef = useRef<HTMLButtonElement>(null)
   const sessionsBodyRef = useRef<HTMLDivElement>(null)
+  const [addNodeOpen, setAddNodeOpen] = useState(false)
+  const addNodeBtnRef = useRef<HTMLButtonElement>(null)
+  const addNodeBodyRef = useRef<HTMLDivElement>(null)
 
   // Close archive when archives become empty
   useEffect(() => {
@@ -124,6 +130,26 @@ export function CardShell({
     return () => document.removeEventListener('mousedown', handler, { capture: true })
   }, [sessionsOpen, nodeId, onSessionsToggled])
 
+  // Close add-node dropdown when node loses focus
+  useEffect(() => {
+    if (!focused && addNodeOpen) {
+      setAddNodeOpen(false)
+    }
+  }, [focused, addNodeOpen])
+
+  // Dismiss add-node dropdown on outside click
+  useEffect(() => {
+    if (!addNodeOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (addNodeBodyRef.current?.contains(target)) return
+      if (addNodeBtnRef.current?.contains(target)) return
+      setAddNodeOpen(false)
+    }
+    document.addEventListener('mousedown', handler, { capture: true })
+    return () => document.removeEventListener('mousedown', handler, { capture: true })
+  }, [addNodeOpen])
+
   // Close color picker on outside click
   useEffect(() => {
     if (!pickerOpen) return
@@ -138,6 +164,7 @@ export function CardShell({
 
   const toggleArchive = useCallback(() => {
     setSessionsOpen(false)
+    setAddNodeOpen(false)
     setArchiveOpen(prev => {
       const next = !prev
       onArchiveToggled(nodeId, next)
@@ -147,12 +174,24 @@ export function CardShell({
 
   const toggleSessions = useCallback(() => {
     setArchiveOpen(false)
+    setAddNodeOpen(false)
     setSessionsOpen(prev => {
       const next = !prev
       onSessionsToggled?.(nodeId, next)
       return next
     })
   }, [nodeId, onSessionsToggled])
+
+  const toggleAddNode = useCallback(() => {
+    setArchiveOpen(false)
+    setSessionsOpen(false)
+    setAddNodeOpen(prev => !prev)
+  }, [])
+
+  const handleAddNodeSelect = useCallback((type: AddNodeType) => {
+    setAddNodeOpen(false)
+    onAddNode?.(nodeId, type)
+  }, [nodeId, onAddNode])
 
   // Action buttons shared across head variants
   const actionButtons = (
@@ -285,6 +324,21 @@ export function CardShell({
           </svg>
         </button>
       )}
+      {onAddNode && (
+        <button
+          ref={addNodeBtnRef}
+          className="node-titlebar__add-btn"
+          title="Add child node"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); toggleAddNode() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <line x1="7" y1="2" x2="7" y2="12" />
+            <line x1="2" y1="7" x2="12" y2="7" />
+          </svg>
+        </button>
+      )}
       {showClose && (
         <button
           className="node-titlebar__close"
@@ -301,7 +355,7 @@ export function CardShell({
     </div>
   )
 
-  const hiddenHeadArchiveBtn = headVariant === 'hidden' ? (
+  const hiddenHeadActions = headVariant === 'hidden' ? (
     <div className="card-shell__hidden-head-actions">
       <button
         ref={archiveBtnRef}
@@ -316,6 +370,20 @@ export function CardShell({
         </svg>
         <span className="node-titlebar__archive-count" style={archivedChildren.length >= 100 ? { fontSize: 7 } : archivedChildren.length >= 10 ? { fontSize: 8 } : undefined}>{archivedChildren.length}</span>
       </button>
+      {onAddNode && (
+        <button
+          ref={addNodeBtnRef}
+          className="node-titlebar__add-btn card-shell__add-btn"
+          title="Add child node"
+          onClick={(e) => { e.stopPropagation(); toggleAddNode() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <line x1="7" y1="2" x2="7" y2="12" />
+            <line x1="2" y1="7" x2="12" y2="7" />
+          </svg>
+        </button>
+      )}
     </div>
   ) : null
 
@@ -350,7 +418,7 @@ export function CardShell({
           </div>
         )}
         {headVariant === 'overlay' && actionButtons}
-        {hiddenHeadArchiveBtn}
+        {hiddenHeadActions}
         <div className="card-shell__body-wrapper">
           {archiveOpen && archivedChildren.length > 0 && (
             <div className={`card-shell__archive-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={archiveBodyRef}>
@@ -365,6 +433,11 @@ export function CardShell({
           {sessionsOpen && pastSessions && pastSessions.length > 0 && (
             <div className={`card-shell__sessions-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={sessionsBodyRef}>
               <SessionsBody nodeId={nodeId} sessions={pastSessions} currentSessionIndex={currentSessionIndex} onRevive={onSessionRevive!} />
+            </div>
+          )}
+          {addNodeOpen && onAddNode && (
+            <div className={`card-shell__add-node-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={addNodeBodyRef}>
+              <AddNodeBody onSelect={handleAddNodeSelect} />
             </div>
           )}
           {children}

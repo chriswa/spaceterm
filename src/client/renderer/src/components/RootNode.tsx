@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { ROOT_NODE_RADIUS } from '../lib/constants'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
+import type { AddNodeType } from './AddNodeBody'
 const noop = () => {}
 
 interface RootNodeProps {
@@ -12,6 +13,7 @@ interface RootNodeProps {
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
+  onAddNode?: (parentNodeId: string, type: AddNodeType) => void
 }
 
 /** How much bigger the shader canvas is than the node hit-area */
@@ -117,7 +119,7 @@ function compileShader(gl: WebGLRenderingContext, type: number, src: string): We
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function RootNode({ focused, selected, onClick, archivedChildren, onUnarchive, onArchiveDelete, onArchiveToggled }: RootNodeProps) {
+export function RootNode({ focused, selected, onClick, archivedChildren, onUnarchive, onArchiveDelete, onArchiveToggled, onAddNode }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
   const canvasSize = size * CANVAS_SCALE
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -260,6 +262,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       onUnarchive={onUnarchive}
       onArchiveDelete={onArchiveDelete}
       onArchiveToggled={onArchiveToggled}
+      onAddNode={onAddNode}
       onMouseDown={handleMouseDown}
       className={`root-node${focused ? ' root-node--focused' : ''}`}
       style={{ background: 'transparent', border: 'none' }}

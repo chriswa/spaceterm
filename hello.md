@@ -1,3 +1,4 @@
 - Apples
 - Oranges
 - Mangoes
+- Papayas
