@@ -275,8 +275,8 @@ export class StateManager {
   setNodeFood(nodeId: string, food: boolean): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'markdown') return
-    node.food = food || undefined
-    this.onNodeUpdate(nodeId, { food: node.food } as Partial<MarkdownNodeData>)
+    node.food = food
+    this.onNodeUpdate(nodeId, { food } as Partial<MarkdownNodeData>)
     this.schedulePersist()
   }
 

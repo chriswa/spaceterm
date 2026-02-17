@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode, RefObject } from 'react'
 import { COLOR_PRESETS } from '../lib/color-presets'
 import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
+import foodIcon from '../assets/food.svg'
 import { ArchiveBody } from './ArchiveBody'
 import { SessionsBody } from './SessionsBody'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
@@ -164,18 +165,23 @@ export function CardShell({
           onClick={(e) => { e.stopPropagation(); onFoodToggle(nodeId, !food) }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-            <ellipse cx="5" cy="4.5" rx="3.2" ry="2.8" />
-            <path d="M7.2 6.5 L10.5 11" strokeWidth="2.2" />
-            <line x1="10.5" y1="11" x2="11.5" y2="12.5" strokeWidth="1.5" />
-            <line x1="10.5" y1="11" x2="9" y2="12" strokeWidth="1.5" />
+          <span style={{ position: 'relative', display: 'inline-block', width: 14, height: 14 }}>
+            <span
+              style={{
+                display: 'block', width: 14, height: 14,
+                backgroundColor: 'currentColor',
+                WebkitMaskImage: `url(${foodIcon})`, maskImage: `url(${foodIcon})`,
+                WebkitMaskSize: 'contain', maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+                WebkitMaskPosition: 'center', maskPosition: 'center',
+              }}
+            />
             {!food && (
-              <>
-                <circle cx="7" cy="7" r="6" strokeWidth="1.5" />
-                <line x1="2.8" y1="11.2" x2="11.2" y2="2.8" strokeWidth="1.5" />
-              </>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeLinecap="round" style={{ position: 'absolute', top: 0, left: 0 }}>
+                <line x1="1" y1="1" x2="13" y2="13" strokeWidth="1.5" />
+              </svg>
             )}
-          </svg>
+          </span>
         </button>
       )}
       {showColorPicker && (

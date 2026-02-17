@@ -176,7 +176,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
     set(state => {
       const node = state.nodes[id]
       if (!node) return state
-      const fields = { food: food || undefined } as Partial<NodeData>
+      const fields = { food } as Partial<NodeData>
       const newOverrides = {
         ...state.localOverrides,
         [id]: {
