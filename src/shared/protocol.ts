@@ -17,6 +17,7 @@ export interface CreateOptions {
   cwd?: string
   command?: string
   args?: string[]
+  claude?: { prompt?: string; resumeSessionId?: string }
 }
 
 export interface CreateMessage {
@@ -108,6 +109,13 @@ export interface NodeSetColorMessage {
   colorPresetId: string
 }
 
+export interface NodeSetFoodMessage {
+  type: 'node-set-food'
+  seq: number
+  nodeId: string
+  food: boolean
+}
+
 export interface NodeArchiveMessage {
   type: 'node-archive'
   seq: number
@@ -145,8 +153,8 @@ export interface TerminalCreateMessage {
   type: 'terminal-create'
   seq: number
   parentId: string
-  x: number
-  y: number
+  x?: number
+  y?: number
   options?: CreateOptions
   initialTitleHistory?: string[]
 }
@@ -163,8 +171,8 @@ export interface MarkdownAddMessage {
   type: 'markdown-add'
   seq: number
   parentId: string
-  x: number
-  y: number
+  x?: number
+  y?: number
 }
 
 export interface MarkdownResizeMessage {
@@ -182,6 +190,13 @@ export interface MarkdownContentMessage {
   content: string
 }
 
+export interface MarkdownSetMaxWidthMessage {
+  type: 'markdown-set-max-width'
+  seq: number
+  nodeId: string
+  maxWidth: number
+}
+
 export interface TerminalReincarnateMessage {
   type: 'terminal-reincarnate'
   seq: number
@@ -193,8 +208,8 @@ export interface DirectoryAddMessage {
   type: 'directory-add'
   seq: number
   parentId: string
-  x: number
-  y: number
+  x?: number
+  y?: number
   cwd: string
 }
 
@@ -239,6 +254,7 @@ export type ClientMessage =
   | NodeBatchMoveMessage
   | NodeRenameMessage
   | NodeSetColorMessage
+  | NodeSetFoodMessage
   | NodeArchiveMessage
   | NodeUnarchiveMessage
   | NodeArchiveDeleteMessage
@@ -249,6 +265,7 @@ export type ClientMessage =
   | MarkdownAddMessage
   | MarkdownResizeMessage
   | MarkdownContentMessage
+  | MarkdownSetMaxWidthMessage
   | TerminalReincarnateMessage
   | SetTerminalModeMessage
   | DirectoryAddMessage
@@ -287,6 +304,7 @@ export interface AttachedMessage {
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: import('./state').ClaudeState
   claudeContextPercent?: number
+  claudeSessionLineCount?: number
 }
 
 export interface DetachedMessage {
@@ -340,6 +358,12 @@ export interface ClaudeContextMessage {
   type: 'claude-context'
   sessionId: string
   contextRemainingPercent: number
+}
+
+export interface ClaudeSessionLineCountMessage {
+  type: 'claude-session-line-count'
+  sessionId: string
+  lineCount: number
 }
 
 // --- Server → Client node state messages ---
@@ -422,6 +446,7 @@ export type ServerMessage =
   | ClaudeSessionHistoryMessage
   | ClaudeStateMessage
   | ClaudeContextMessage
+  | ClaudeSessionLineCountMessage
   | SyncStateMessage
   | NodeUpdatedMessage
   | NodeAddedMessage

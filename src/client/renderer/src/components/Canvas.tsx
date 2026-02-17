@@ -7,7 +7,7 @@ interface CanvasProps {
   surfaceRef?: React.RefObject<HTMLDivElement | null>
   onWheel: (e: WheelEvent) => void
   onPanStart: (e: MouseEvent) => void
-  onCanvasClick: () => void
+  onCanvasClick: (e: MouseEvent) => void
   onDoubleClick: () => void
   background?: React.ReactNode
   overlay?: React.ReactNode
@@ -42,11 +42,11 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick,
       }
     }
 
-    const onMouseUp = () => {
+    const onMouseUp = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
       if (!didDrag) {
-        onCanvasClick()
+        onCanvasClick(ev)
       }
     }
 

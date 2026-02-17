@@ -77,7 +77,6 @@ export function Toolbar({
       </button>
       <FullscreenToggle />
       <KioskToggle />
-      <PlpToggle />
       <BeatsToggle />
       <span className="toolbar__zoom">
         <BeatIndicators />
@@ -131,20 +130,6 @@ function KioskToggle() {
       title={on ? 'Exit kiosk mode' : 'Enter kiosk mode'}
     >
       Kiosk
-    </button>
-  )
-}
-
-function PlpToggle() {
-  const plpEnabled = useAudioStore(s => s.plpEnabled)
-  const togglePlp = useAudioStore(s => s.togglePlp)
-  return (
-    <button
-      className={'toolbar__btn' + (plpEnabled ? ' toolbar__btn--active' : '')}
-      onClick={togglePlp}
-      title={plpEnabled ? 'Using Predominant Local Pulse beat detection' : 'Using standard beat detection'}
-    >
-      Predominant Local Pulse
     </button>
   )
 }

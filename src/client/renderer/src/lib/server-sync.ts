@@ -84,6 +84,14 @@ export async function sendSetColor(nodeId: string, colorPresetId: string): Promi
   }
 }
 
+export async function sendSetFood(nodeId: string, food: boolean): Promise<void> {
+  try {
+    await window.api.node.setFood(nodeId, food)
+  } finally {
+    useNodeStore.getState().clearOverride(nodeId, ['food'])
+  }
+}
+
 export async function sendBringToFront(nodeId: string): Promise<void> {
   try {
     await window.api.node.bringToFront(nodeId)
@@ -106,23 +114,21 @@ export async function sendArchiveDelete(parentNodeId: string, archivedNodeId: st
 
 export async function sendTerminalCreate(
   parentId: string,
-  x: number,
-  y: number,
   options?: CreateOptions,
   initialTitleHistory?: string[]
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
-  return window.api.node.terminalCreate(parentId, x, y, options, initialTitleHistory)
+  return window.api.node.terminalCreate(parentId, options, initialTitleHistory)
 }
 
-export async function sendDirectoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<{ nodeId: string }> {
-  return window.api.node.directoryAdd(parentId, x, y, cwd)
+export async function sendDirectoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }> {
+  return window.api.node.directoryAdd(parentId, cwd)
 }
 
 export async function sendDirectoryCwd(nodeId: string, cwd: string): Promise<void> {
   await window.api.node.directoryCwd(nodeId, cwd)
 }
 
-export async function sendMarkdownAdd(parentId: string, x: number, y: number): Promise<{ nodeId: string }> {
+export async function sendMarkdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }> {
   return window.api.node.markdownAdd(parentId, x, y)
 }
 
@@ -132,6 +138,10 @@ export async function sendMarkdownResize(nodeId: string, width: number, height: 
 
 export async function sendMarkdownContent(nodeId: string, content: string): Promise<void> {
   await window.api.node.markdownContent(nodeId, content)
+}
+
+export async function sendMarkdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<void> {
+  await window.api.node.markdownSetMaxWidth(nodeId, maxWidth)
 }
 
 export async function sendTerminalResize(nodeId: string, cols: number, rows: number): Promise<void> {

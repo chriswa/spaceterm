@@ -10,6 +10,7 @@ export interface CreateOptions {
   cwd?: string
   command?: string
   args?: string[]
+  claude?: { prompt?: string; resumeSessionId?: string }
 }
 
 export interface CreateResult extends SessionInfo {
@@ -29,6 +30,7 @@ export interface AttachResult {
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: string
   claudeContextPercent?: number
+  claudeSessionLineCount?: number
 }
 
 export interface PtyApi {
@@ -45,6 +47,7 @@ export interface PtyApi {
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
   onClaudeState(sessionId: string, callback: (state: string) => void): () => void
   onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
+  onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
 }
 
 const ptyApi: PtyApi = {
@@ -109,6 +112,13 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
+  onClaudeSessionLineCount: (sessionId, callback) => {
+    const channel = `pty:claude-session-line-count:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, lineCount: number) => callback(lineCount)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
 }
 
 interface NodeApi {
@@ -117,22 +127,24 @@ interface NodeApi {
   batchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void>
   rename(nodeId: string, name: string): Promise<void>
   setColor(nodeId: string, colorPresetId: string): Promise<void>
+  setFood(nodeId: string, food: boolean): Promise<void>
   archive(nodeId: string): Promise<void>
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
-  terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   onSnapshot(sessionId: string, callback: (snapshot: any) => void): () => void
-  directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<{ nodeId: string }>
+  directoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
-  markdownAdd(parentId: string, x: number, y: number): Promise<{ nodeId: string }>
+  markdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
   markdownResize(nodeId: string, width: number, height: number): Promise<void>
   markdownContent(nodeId: string, content: string): Promise<void>
+  markdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<void>
   onUpdated(callback: (nodeId: string, fields: any) => void): () => void
   onAdded(callback: (node: any) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
@@ -145,20 +157,22 @@ const nodeApi: NodeApi = {
   batchMove: (moves) => ipcRenderer.invoke('node:batch-move', moves),
   rename: (nodeId, name) => ipcRenderer.invoke('node:rename', nodeId, name),
   setColor: (nodeId, colorPresetId) => ipcRenderer.invoke('node:set-color', nodeId, colorPresetId),
+  setFood: (nodeId, food) => ipcRenderer.invoke('node:set-food', nodeId, food),
   archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
   unarchive: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:unarchive', parentNodeId, archivedNodeId),
   archiveDelete: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:archive-delete', parentNodeId, archivedNodeId),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
-  terminalCreate: (parentId, x, y, options?, initialTitleHistory?) => ipcRenderer.invoke('node:terminal-create', parentId, x, y, options, initialTitleHistory),
+  terminalCreate: (parentId, options?, initialTitleHistory?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory),
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
-  directoryAdd: (parentId, x, y, cwd) => ipcRenderer.invoke('node:directory-add', parentId, x, y, cwd),
+  directoryAdd: (parentId, cwd) => ipcRenderer.invoke('node:directory-add', parentId, cwd),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
   validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
-  markdownAdd: (parentId, x, y) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
+  markdownAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
   markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
   markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
+  markdownSetMaxWidth: (nodeId, maxWidth) => ipcRenderer.invoke('node:markdown-set-max-width', nodeId, maxWidth),
 
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
   onSnapshot: (sessionId, callback) => {
@@ -209,8 +223,8 @@ contextBridge.exposeInMainWorld('api', {
     stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
   },
   audio: {
-    onBeat: (callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean; plp?: { bpm: number; phase: number; confidence: number } }) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean; plp?: { bpm: number; phase: number; confidence: number } }) => callback(data)
+    onBeat: (callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean }) => callback(data)
       ipcRenderer.on('audio:beat', listener)
       return () => ipcRenderer.removeListener('audio:beat', listener)
     },

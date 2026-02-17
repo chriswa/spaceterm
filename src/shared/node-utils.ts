@@ -13,7 +13,7 @@ export function isDisposable(node: NodeData): boolean {
     case 'terminal': {
       const latest = node.terminalSessions[node.terminalSessions.length - 1]
       if (!latest || !latest.claudeSessionId) return true // bare terminal, can't revive
-      return latest.shellTitleHistory.length < 2 // fast-exit Claude: only default "Claude Code" title
+      return latest.shellTitleHistory.length < 1 // no real titles after filtering
     }
     case 'markdown':
       return node.content.trim() === ''

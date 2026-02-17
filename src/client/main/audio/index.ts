@@ -1,25 +1,20 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
-import { BeatDetector } from './beat-detector'
 import { PLPDetector } from './plp-detector'
 import * as audioTap from './audio-tap'
 import * as logger from '../logger'
 
 export function setupAudio(mainWindow: BrowserWindow): void {
-  logger.log('[audio] setupAudio: creating detectors...')
-  const detector = new BeatDetector()
-  const plpDetector = new PLPDetector()
+  logger.log('[audio] setupAudio: creating detector...')
+  const detector = new PLPDetector()
   let chunkCount = 0
-  logger.log('[audio] setupAudio: detectors created, wiring callbacks...')
+  logger.log('[audio] setupAudio: detector created, wiring callbacks...')
 
   audioTap.onData((chunk) => {
     chunkCount++
     const result = detector.process(chunk.data)
-    const plpResult = plpDetector.process(chunk.data)
-    // Log periodically for diagnostics
     if (chunkCount % 400 === 0) {
       logger.log(`[audio] chunk #${chunkCount} energy=${result.energy.toFixed(4)} bpm=${result.bpm} phase=${result.phase.toFixed(2)} conf=${result.confidence.toFixed(2)} beat=${result.beat}`)
-      logger.log(`[audio-plp] bpm=${plpResult.bpm} phase=${plpResult.phase.toFixed(2)} conf=${plpResult.confidence.toFixed(2)}`)
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('audio:beat', {
@@ -29,12 +24,7 @@ export function setupAudio(mainWindow: BrowserWindow): void {
         bpm: result.bpm,
         phase: result.phase,
         confidence: result.confidence,
-        hasSignal: result.hasSignal,
-        plp: {
-          bpm: plpResult.bpm,
-          phase: plpResult.phase,
-          confidence: plpResult.confidence
-        }
+        hasSignal: result.hasSignal
       })
     }
   })

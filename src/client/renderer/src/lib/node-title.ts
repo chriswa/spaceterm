@@ -18,12 +18,13 @@ export function nodeDisplaySubtitle(data: NodeData): string {
   return ''
 }
 
-/** Full display title: name ↼ subtitle, with fallback to id.slice(0,8) */
+/** Full display title: name ↼ subtitle, with fallback to [Untitled] for terminals */
 export function nodeDisplayTitle(data: NodeData): string {
   const parts: string[] = []
   if (data.name) parts.push(data.name)
   const subtitle = nodeDisplaySubtitle(data)
   if (subtitle) parts.push(subtitle)
   if (parts.length > 0) return parts.join(' \u00A0\u21BC\u00A0 ')
+  if (data.type === 'terminal') return '[Untitled]'
   return data.id.slice(0, 8)
 }

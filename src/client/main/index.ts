@@ -47,8 +47,8 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
-    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent } = await client!.attach(sessionId)
-    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent }
+    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent, claudeSessionLineCount } = await client!.attach(sessionId)
+    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent, claudeSessionLineCount }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -101,6 +101,10 @@ function setupIPC(): void {
     await client!.nodeSetColor(nodeId, colorPresetId)
   })
 
+  ipcMain.handle('node:set-food', async (_event, nodeId: string, food: boolean) => {
+    await client!.nodeSetFood(nodeId, food)
+  })
+
   ipcMain.handle('node:archive', async (_event, nodeId: string) => {
     await client!.nodeArchive(nodeId)
   })
@@ -121,8 +125,8 @@ function setupIPC(): void {
     await client!.nodeReparent(nodeId, newParentId)
   })
 
-  ipcMain.handle('node:terminal-create', async (_event, parentId: string, x: number, y: number, options?: Record<string, unknown>, initialTitleHistory?: string[]) => {
-    const resp = await client!.terminalCreate(parentId, x, y, options as any, initialTitleHistory)
+  ipcMain.handle('node:terminal-create', async (_event, parentId: string, options?: Record<string, unknown>, initialTitleHistory?: string[]) => {
+    const resp = await client!.terminalCreate(parentId, options as any, initialTitleHistory)
     if (resp.type === 'created') {
       // Auto-attach so we receive data events for this session
       await client!.attach(resp.sessionId)
@@ -145,8 +149,8 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:directory-add', async (_event, parentId: string, x: number, y: number, cwd: string) => {
-    const resp = await client!.directoryAdd(parentId, x, y, cwd)
+  ipcMain.handle('node:directory-add', async (_event, parentId: string, cwd: string) => {
+    const resp = await client!.directoryAdd(parentId, cwd)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
@@ -161,7 +165,7 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:markdown-add', async (_event, parentId: string, x: number, y: number) => {
+  ipcMain.handle('node:markdown-add', async (_event, parentId: string, x?: number, y?: number) => {
     const resp = await client!.markdownAdd(parentId, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
@@ -173,6 +177,10 @@ function setupIPC(): void {
 
   ipcMain.handle('node:markdown-content', async (_event, nodeId: string, content: string) => {
     await client!.markdownContent(nodeId, content)
+  })
+
+  ipcMain.handle('node:markdown-set-max-width', async (_event, nodeId: string, maxWidth: number) => {
+    await client!.markdownSetMaxWidth(nodeId, maxWidth)
   })
 
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
@@ -265,6 +273,12 @@ function wireClientEvents(): void {
   client!.on('claude-context', (sessionId: string, contextRemainingPercent: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:claude-context:${sessionId}`, contextRemainingPercent)
+    }
+  })
+
+  client!.on('claude-session-line-count', (sessionId: string, lineCount: number) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`pty:claude-session-line-count:${sessionId}`, lineCount)
     }
   })
 

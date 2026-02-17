@@ -11,10 +11,9 @@ import type {
 import type { ClaudeSessionEntry } from '../shared/protocol'
 import { schedulePersist, persistNow, loadState } from './persistence'
 import { isDisposable } from '../shared/node-utils'
+import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
 
 const STATE_VERSION = 1
-const MARKDOWN_DEFAULT_WIDTH = 400
-const MARKDOWN_DEFAULT_HEIGHT = 300
 
 export type NodeUpdateCallback = (nodeId: string, fields: Partial<NodeData>) => void
 export type NodeAddCallback = (node: NodeData) => void
@@ -273,6 +272,14 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  setNodeFood(nodeId: string, food: boolean): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'markdown') return
+    node.food = food || undefined
+    this.onNodeUpdate(nodeId, { food: node.food } as Partial<MarkdownNodeData>)
+    this.schedulePersist()
+  }
+
   bringToFront(nodeId: string): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
@@ -336,9 +343,25 @@ export class StateManager {
   }
 
   /**
+   * Read archived node data without modifying state.
+   */
+  peekArchivedNode(parentNodeId: string, archivedNodeId: string): NodeData | undefined {
+    let archiveArray: import('../shared/state').ArchivedNode[]
+    if (parentNodeId === 'root') {
+      archiveArray = this.state.rootArchivedChildren
+    } else {
+      const parent = this.state.nodes[parentNodeId]
+      if (!parent) return undefined
+      archiveArray = parent.archivedChildren
+    }
+    const entry = archiveArray.find(e => e.data.id === archivedNodeId)
+    return entry ? entry.data : undefined
+  }
+
+  /**
    * Unarchive a node: restore from parent's archivedChildren back into the node tree.
    */
-  unarchiveNode(parentNodeId: string, archivedNodeId: string): void {
+  unarchiveNode(parentNodeId: string, archivedNodeId: string, positionOverride?: { x: number; y: number }): void {
     // Find the archive array
     let archiveArray: import('../shared/state').ArchivedNode[]
     if (parentNodeId === 'root') {
@@ -360,6 +383,11 @@ export class StateManager {
     restoredNode.zIndex = this.state.nextZIndex++
     restoredNode.parentId = parentNodeId
     restoredNode.archivedChildren = []
+
+    if (positionOverride) {
+      restoredNode.x = positionOverride.x
+      restoredNode.y = positionOverride.y
+    }
 
     // For terminals: mark as dead remnant (PTY is gone)
     if (restoredNode.type === 'terminal') {
@@ -542,6 +570,7 @@ export class StateManager {
       width: MARKDOWN_DEFAULT_WIDTH,
       height: MARKDOWN_DEFAULT_HEIGHT,
       content: '',
+      maxWidth: MARKDOWN_DEFAULT_MAX_WIDTH,
       archivedChildren: [],
       colorPresetId: 'inherit'
     }
@@ -566,6 +595,14 @@ export class StateManager {
     if (!node || node.type !== 'markdown') return
     node.content = content
     this.onNodeUpdate(nodeId, { content } as Partial<MarkdownNodeData>)
+    this.schedulePersist()
+  }
+
+  setMarkdownMaxWidth(nodeId: string, maxWidth: number): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'markdown') return
+    node.maxWidth = maxWidth
+    this.onNodeUpdate(nodeId, { maxWidth } as Partial<MarkdownNodeData>)
     this.schedulePersist()
   }
 

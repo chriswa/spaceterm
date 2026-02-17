@@ -126,6 +126,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'claude-session-line-count') {
+      this.emit('claude-session-line-count', msg.sessionId, msg.lineCount)
+      return
+    }
+
     // Node state events (broadcast, no seq)
     if (msg.type === 'node-updated') {
       this.emit('node-updated', msg.nodeId, msg.fields)
@@ -193,9 +198,9 @@ export class ServerClient extends EventEmitter {
     throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; claudeState?: string; claudeContextPercent?: number }> {
+  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; claudeState?: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, claudeState: resp.claudeState, claudeContextPercent: resp.claudeContextPercent }
+    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, claudeState: resp.claudeState, claudeContextPercent: resp.claudeContextPercent, claudeSessionLineCount: resp.claudeSessionLineCount }
     throw new Error('Unexpected response')
   }
 
@@ -237,6 +242,10 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-set-color', nodeId, colorPresetId })
   }
 
+  async nodeSetFood(nodeId: string, food: boolean): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-set-food', nodeId, food })
+  }
+
   async nodeArchive(nodeId: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-archive', nodeId })
   }
@@ -257,8 +266,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-reparent', nodeId, newParentId })
   }
 
-  async terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'terminal-create', parentId, x, y, options, initialTitleHistory })
+  async terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[]): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-create', parentId, options, initialTitleHistory })
   }
 
   async terminalResize(nodeId: string, cols: number, rows: number): Promise<ServerMessage> {
@@ -269,8 +278,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'terminal-reincarnate', nodeId, options })
   }
 
-  async directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'directory-add', parentId, x, y, cwd })
+  async directoryAdd(parentId: string, cwd: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'directory-add', parentId, cwd })
   }
 
   async directoryCwd(nodeId: string, cwd: string): Promise<ServerMessage> {
@@ -281,7 +290,7 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'validate-directory', path })
   }
 
-  async markdownAdd(parentId: string, x: number, y: number): Promise<ServerMessage> {
+  async markdownAdd(parentId: string, x?: number, y?: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-add', parentId, x, y })
   }
 
@@ -291,6 +300,10 @@ export class ServerClient extends EventEmitter {
 
   async markdownContent(nodeId: string, content: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-content', nodeId, content })
+  }
+
+  async markdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
   }
 
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {

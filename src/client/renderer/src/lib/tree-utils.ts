@@ -88,6 +88,30 @@ export function resolveInheritedPreset(
   return DEFAULT_PRESET
 }
 
+/**
+ * Walk up the ancestor chain from `startNodeId`, collecting content from
+ * markdown nodes with `food: true`. Returns the content joined root-first
+ * with a separator, or undefined if no food ancestors exist.
+ */
+export function gatherFoodPrompt(
+  nodes: Record<string, NodeData>,
+  startNodeId: string
+): string | undefined {
+  const parts: string[] = []
+  let current = startNodeId
+  while (current && current !== 'root') {
+    const node = nodes[current]
+    if (!node) break
+    if (node.type === 'markdown' && node.food && node.content.trim()) {
+      parts.push(node.content)
+    }
+    current = node.parentId
+  }
+  if (parts.length === 0) return undefined
+  parts.reverse()
+  return parts.join('\n\n===\n\n')
+}
+
 export function isDescendantOf(
   nodes: Record<string, NodeData>,
   nodeId: string,

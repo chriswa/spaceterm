@@ -15,7 +15,7 @@ const TOAST_LIFETIME_MS = 5000
 const FADE_DURATION_MS = 1000
 const LINE_HEIGHT = 22
 const FONT_SIZE = 13
-const BOTTOM_MARGIN = 16
+const BOTTOM_MARGIN = 56
 
 export function Toast({ toasts, onExpire }: ToastProps) {
   const [now, setNow] = useState(Date.now())

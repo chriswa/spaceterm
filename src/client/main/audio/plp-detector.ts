@@ -16,7 +16,17 @@
  * 8. Beat fires on phase wrap (1.0 → 0.0)
  */
 
-import type { BeatResult } from './beat-detector'
+export interface BeatResult {
+  beat: boolean
+  onset: boolean
+  energy: number
+  bpm: number
+  /** 0.0 = on beat, 1.0 = just before next beat */
+  phase: number
+  /** 0.0 = no idea, 1.0 = very confident in BPM lock */
+  confidence: number
+  hasSignal: boolean
+}
 
 const MIN_BPM = 80
 const MAX_BPM = 160

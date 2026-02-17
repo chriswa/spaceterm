@@ -49,6 +49,8 @@ export interface MarkdownNodeData extends BaseNodeData {
   width: number
   height: number
   content: string
+  maxWidth?: number
+  food?: boolean
 }
 
 export interface DirectoryNodeData extends BaseNodeData {

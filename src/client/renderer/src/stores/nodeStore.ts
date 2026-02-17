@@ -1,18 +1,8 @@
 import { create } from 'zustand'
 import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, ArchivedNode } from '../../../../shared/state'
-import { terminalPixelSize, DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
+import { nodePixelSize } from '../../../../shared/node-size'
 
-// --- Helper to compute pixel size from node data ---
-
-export function nodePixelSize(node: NodeData): { width: number; height: number } {
-  if (node.type === 'terminal') {
-    return terminalPixelSize(node.cols, node.rows)
-  }
-  if (node.type === 'directory') {
-    return { width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT }
-  }
-  return { width: node.width, height: node.height }
-}
+export { nodePixelSize }
 
 // --- Store types ---
 
@@ -42,6 +32,7 @@ interface NodeStoreState {
   batchMoveNodes(moves: Array<{ id: string; dx: number; dy: number }>): void
   renameNode(id: string, name: string): void
   setNodeColor(id: string, colorPresetId: string): void
+  setNodeFood(id: string, food: boolean): void
   bringToFront(id: string): void
 
   // --- Server sync handlers ---
@@ -173,6 +164,24 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
         [id]: {
           fields: { ...state.localOverrides[id]?.fields, ...fields },
           suppressFields: new Set([...(state.localOverrides[id]?.suppressFields ?? []), 'colorPresetId']),
+          createdAt: Date.now()
+        }
+      }
+      const newNodes = mergeNodes(state.serverNodes, newOverrides)
+      return { localOverrides: newOverrides, nodes: newNodes, ...recomputeDerived(newNodes) }
+    })
+  },
+
+  setNodeFood(id, food) {
+    set(state => {
+      const node = state.nodes[id]
+      if (!node) return state
+      const fields = { food: food || undefined } as Partial<NodeData>
+      const newOverrides = {
+        ...state.localOverrides,
+        [id]: {
+          fields: { ...state.localOverrides[id]?.fields, ...fields },
+          suppressFields: new Set([...(state.localOverrides[id]?.suppressFields ?? []), 'food']),
           createdAt: Date.now()
         }
       }

@@ -16,38 +16,20 @@ import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
 import { useBeatPulse } from './hooks/useBeatPulse'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas } from './lib/camera'
-import { CHILD_PLACEMENT_DISTANCE, ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
-import { computeChildPlacement } from './lib/tree-placement'
-import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
+import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, gatherFoodPrompt } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useShaderStore } from './stores/shaderStore'
 import { useEdgesStore } from './stores/edgesStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetFood, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
 
 interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string }
 
 const archiveDismissFlag = { active: false, timer: 0 }
 const archiveWheelAcc = createWheelAccumulator()
-
-function buildClaudeCodeOptions({ prompt, cwd, resumeSessionId }: { prompt?: string; cwd?: string; resumeSessionId?: string } = {}): CreateOptions {
-  const statusLineSettings = JSON.stringify({
-    statusLine: {
-      type: 'command',
-      command: 'src/claude-code-plugin/scripts/statusline-handler.sh'
-    }
-  })
-  const args = ['--plugin-dir', 'src/claude-code-plugin', '--settings', statusLineSettings]
-  if (resumeSessionId) {
-    args.push('-r', resumeSessionId)
-  }
-  if (prompt) {
-    args.push('--', prompt)
-  }
-  return { cwd, command: 'claude', args }
-}
 
 export function App() {
   const [focusedId, setFocusedId] = useState<string | null>(null)
@@ -83,6 +65,7 @@ export function App() {
   const batchMoveNodes = useNodeStore(s => s.batchMoveNodes)
   const renameNode = useNodeStore(s => s.renameNode)
   const setNodeColor = useNodeStore(s => s.setNodeColor)
+  const setNodeFood = useNodeStore(s => s.setNodeFood)
   const bringToFront = useNodeStore(s => s.bringToFront)
 
   const treeLineNodes = useMemo(() =>
@@ -403,38 +386,10 @@ export function App() {
     // Handled by server → store
   }, [])
 
-  const computeChildPosition = useCallback((parentId: string) => {
+  const getParentCwd = useCallback((parentId: string): string | undefined => {
+    if (parentId === 'root') return undefined
     const allNodes = useNodeStore.getState().nodes
-    const allNodeList = Object.values(allNodes)
-
-    let parentCenter: { x: number; y: number }
-    let grandparentCenter: { x: number; y: number } | null = null
-    let cwd: string | undefined
-
-    if (parentId === 'root') {
-      parentCenter = { x: 0, y: 0 }
-    } else {
-      const parent = allNodes[parentId]
-      if (!parent) return { position: { x: 0, y: 0 }, cwd: undefined }
-
-      parentCenter = { x: parent.x, y: parent.y }
-      cwd = getAncestorCwd(allNodes, parentId, cwdMapRef.current)
-
-      if (parent.parentId === 'root') {
-        grandparentCenter = { x: 0, y: 0 }
-      } else {
-        const gp = allNodes[parent.parentId]
-        if (gp) {
-          grandparentCenter = { x: gp.x, y: gp.y }
-        }
-      }
-    }
-
-    const siblings = allNodeList.filter(n => n.parentId === parentId)
-    const siblingCenters = siblings.map(s => ({ x: s.x, y: s.y }))
-
-    const position = computeChildPlacement(parentCenter, grandparentCenter, siblingCenters, CHILD_PLACEMENT_DISTANCE)
-    return { position, cwd }
+    return getAncestorCwd(allNodes, parentId, cwdMapRef.current)
   }, [])
 
   const flashNode = useCallback((nodeId: string) => {
@@ -518,7 +473,19 @@ export function App() {
       return
     }
 
-    hopFlyTo({ targetCamera, targetBounds })
+    const topLeft = screenToCanvas({ x: 0, y: 0 }, cameraRef.current)
+    const bottomRight = screenToCanvas({ x: viewport.clientWidth, y: viewport.clientHeight }, cameraRef.current)
+    const targetInViewport =
+      targetBounds.x >= topLeft.x &&
+      targetBounds.y >= topLeft.y &&
+      targetBounds.x + targetBounds.width <= bottomRight.x &&
+      targetBounds.y + targetBounds.height <= bottomRight.y
+
+    if (targetInViewport) {
+      flyTo(targetCamera)
+    } else {
+      hopFlyTo({ targetCamera, targetBounds })
+    }
   }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
 
   const handleCrabClick = useCallback((nodeId: string) => {
@@ -576,18 +543,24 @@ export function App() {
       const latestEntry = history[history.length - 1]
       if (latestEntry.reason === 'fork') {
         const resumeSessionId = history[history.length - 2].claudeSessionId
-        const { position, cwd } = computeChildPosition(id)
-        sendTerminalCreate(id, position.x, position.y, buildClaudeCodeOptions({ cwd, resumeSessionId })).then((result) => {
+        const cwd = getParentCwd(id)
+        sendTerminalCreate(id, { cwd, claude: { resumeSessionId } }).then((result) => {
           if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
           navigateToNode(result.sessionId)
         })
       }
     }
-  }, [computeChildPosition, navigateToNode])
+  }, [getParentCwd, navigateToNode])
 
   const handleUnarchive = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
     await sendUnarchive(parentNodeId, archivedNodeId)
   }, [])
+
+  const handleReviveNode = useCallback(async (archiveParentId: string, archivedNodeId: string) => {
+    setSearchVisible(false)
+    await sendUnarchive(archiveParentId, archivedNodeId)
+    await navigateToNode(archivedNodeId)
+  }, [navigateToNode])
 
   const handleArchiveDelete = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
     await sendArchiveDelete(parentNodeId, archivedNodeId)
@@ -612,12 +585,20 @@ export function App() {
     }
     if (open) {
       const popupWidth = Math.max(ARCHIVE_BODY_MIN_WIDTH, bounds.width)
-      const cardRight = bounds.x + bounds.width
-      const popupLeft = cardRight - popupWidth
+      let popupLeft: number
+      if (bounds.width < ARCHIVE_BODY_MIN_WIDTH) {
+        // Narrow card: popup is centered under it
+        const cardCenterX = bounds.x + bounds.width / 2
+        popupLeft = cardCenterX - popupWidth / 2
+      } else {
+        // Wide card: popup is right-aligned
+        popupLeft = bounds.x + bounds.width - popupWidth
+      }
+      const popupRight = popupLeft + popupWidth
       bounds = {
         x: Math.min(bounds.x, popupLeft),
         y: bounds.y,
-        width: Math.max(bounds.width, popupWidth),
+        width: Math.max(popupRight, bounds.x + bounds.width) - Math.min(bounds.x, popupLeft),
         height: Math.max(bounds.height, ARCHIVE_POPUP_MAX_HEIGHT),
       }
     }
@@ -891,6 +872,11 @@ export function App() {
     sendSetColor(id, colorPresetId)
   }, [setNodeColor])
 
+  const handleFoodToggle = useCallback((id: string, food: boolean) => {
+    setNodeFood(id, food)
+    sendSetFood(id, food)
+  }, [setNodeFood])
+
   const handleResizeTerminal = useCallback((id: string, cols: number, rows: number) => {
     sendTerminalResize(id, cols, rows)
   }, [])
@@ -903,22 +889,26 @@ export function App() {
     sendMarkdownContent(id, content)
   }, [])
 
+  const handleMaxWidthChange = useCallback((id: string, maxWidth: number) => {
+    sendMarkdownSetMaxWidth(id, maxWidth)
+  }, [])
+
   const handleDirectoryCwdChange = useCallback((id: string, newCwd: string) => {
     cwdMapRef.current.set(id, newCwd)
     sendDirectoryCwd(id, newCwd)
   }, [])
 
   const spawnNode = useCallback(async (
-    create: (parentId: string, position: { x: number; y: number }, cwd: string | undefined) => Promise<string>,
+    create: (parentId: string, cwd: string | undefined) => Promise<string>,
     parentIdOverride?: string
   ) => {
     if (!focusRef.current) return
     const parentId = parentIdOverride ?? focusRef.current
-    const { position, cwd } = computeChildPosition(parentId)
-    const nodeId = await create(parentId, position, cwd)
+    const cwd = getParentCwd(parentId)
+    const nodeId = await create(parentId, cwd)
     if (cwd) cwdMapRef.current.set(nodeId, cwd)
     await navigateToNode(nodeId)
-  }, [computeChildPosition, navigateToNode])
+  }, [getParentCwd, navigateToNode])
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -972,8 +962,8 @@ export function App() {
       if (e.metaKey && e.key === 't') {
         e.preventDefault()
         e.stopPropagation()
-        spawnNode(async (parentId, pos, cwd) => {
-          const r = await sendTerminalCreate(parentId, pos.x, pos.y, cwd ? { cwd } : undefined)
+        spawnNode(async (parentId, cwd) => {
+          const r = await sendTerminalCreate(parentId, cwd ? { cwd } : undefined)
           return r.sessionId
         })
       }
@@ -988,8 +978,9 @@ export function App() {
             parentOverride = node.parentId
           }
         }
-        spawnNode(async (parentId, pos, cwd) => {
-          const r = await sendTerminalCreate(parentId, pos.x, pos.y, buildClaudeCodeOptions({ cwd }))
+        spawnNode(async (parentId, cwd) => {
+          const prompt = gatherFoodPrompt(useNodeStore.getState().nodes, parentId)
+          const r = await sendTerminalCreate(parentId, { cwd, claude: { prompt } })
           return r.sessionId
         }, parentOverride)
       }
@@ -997,8 +988,8 @@ export function App() {
       if (e.metaKey && e.key === 'm') {
         e.preventDefault()
         e.stopPropagation()
-        spawnNode(async (parentId, pos) => {
-          const r = await sendMarkdownAdd(parentId, pos.x, pos.y)
+        spawnNode(async (parentId) => {
+          const r = await sendMarkdownAdd(parentId)
           return r.nodeId
         })
       }
@@ -1006,8 +997,8 @@ export function App() {
       if (e.metaKey && e.key === 'd') {
         e.preventDefault()
         e.stopPropagation()
-        spawnNode(async (parentId, pos, cwd) => {
-          const r = await sendDirectoryAdd(parentId, pos.x, pos.y, cwd ?? '~')
+        spawnNode(async (parentId, cwd) => {
+          const r = await sendDirectoryAdd(parentId, cwd ?? '~')
           return r.nodeId
         })
       }
@@ -1106,7 +1097,15 @@ export function App() {
 
         // Node selected (or no selection) → select a child edge
         const current = sel?.id ?? focusRef.current ?? lastFocusedRef.current
-        if (!current) return
+        if (!current) {
+          const rootSel: Selection = { id: 'root', type: 'node' }
+          setSelection(rootSel)
+          focusRef.current = null
+          setFocusedId(null)
+          setScrollMode(false)
+          flyToSelection(rootSel)
+          return
+        }
         const allNodes = useNodeStore.getState().nodes
         const children = Object.values(allNodes).filter(n => n.parentId === current)
         if (children.length === 0) return
@@ -1309,7 +1308,7 @@ export function App() {
     }
   }, [navigateToNode])
 
-  const handleCanvasUnfocus = useCallback(() => {
+  const handleCanvasUnfocus = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
     if (archiveDismissFlag.active) {
       archiveDismissFlag.active = false
@@ -1324,8 +1323,12 @@ export function App() {
     // Edge split: click on a hovered edge to insert a markdown node
     const edge = hoveredEdgeRef.current
     if (edge && !focusRef.current) {
-      clearHoveredEdge()
-      handleEdgeSplit(edge.parentId, edge.childId, edge.point)
+      if (e.metaKey) {
+        clearHoveredEdge()
+        handleEdgeSplit(edge.parentId, edge.childId, edge.point)
+      } else {
+        showToast('Hold Command to split.')
+      }
       return
     }
     if (focusRef.current) {
@@ -1340,7 +1343,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null} overlay={<SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} />}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null} overlay={<SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} />}>
         <RootNode
           focused={focusedId === 'root'}
           selected={selection?.id === 'root' && selection?.type === 'node'}
@@ -1411,6 +1414,7 @@ export function App() {
             zIndex={m.zIndex}
             zoom={camera.z}
             content={m.content}
+            maxWidth={m.maxWidth}
             name={m.name}
             colorPresetId={m.colorPresetId}
             resolvedPreset={resolvedPresets[m.id]}
@@ -1423,8 +1427,11 @@ export function App() {
             onMove={handleMove}
             onResize={handleResizeMarkdown}
             onContentChange={handleMarkdownContent}
+            onMaxWidthChange={handleMaxWidthChange}
             onRename={handleRename}
             onColorChange={handleColorChange}
+            food={m.food}
+            onFoodToggle={handleFoodToggle}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
             onArchiveToggled={handleArchiveToggled}

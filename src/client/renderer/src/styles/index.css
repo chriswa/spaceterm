@@ -1,13 +1,20 @@
 @import '@xterm/xterm/css/xterm.css';
 
-/* Cmd+P plan-jump flash highlight */
+/* Cmd+P plan-jump flash highlight — 4× ping-pong */
 @keyframes plan-jump-flash {
-  0%   { opacity: 1; }
-  100% { opacity: 0; }
+  0%      { opacity: 0.3; }
+  12.5%   { opacity: 1; }
+  25%     { opacity: 0.3; }
+  37.5%   { opacity: 1; }
+  50%     { opacity: 0.3; }
+  62.5%   { opacity: 1; }
+  75%     { opacity: 0.3; }
+  87.5%   { opacity: 1; }
+  100%    { opacity: 0; }
 }
 .plan-jump-flash {
-  background-color: rgba(250, 179, 135, 0.5);
-  animation: plan-jump-flash 800ms ease-out forwards;
+  background-color: rgba(250, 179, 135, 0.7);
+  animation: plan-jump-flash 390ms ease-in-out forwards;
   pointer-events: none;
 }
 
@@ -719,6 +726,34 @@ html, body, #root {
   cursor: grabbing;
 }
 
+/* Right-edge resize handle — hidden until focused */
+.markdown-card__resize-handle {
+  position: absolute;
+  top: 0;
+  right: -12px;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
+  z-index: 15;
+  border-radius: 2px;
+  background: transparent;
+  pointer-events: none;
+  transition: background-color 0.15s;
+}
+.markdown-card--focused .markdown-card__resize-handle {
+  pointer-events: auto;
+  background: rgba(203, 166, 247, 0.15);
+}
+.markdown-card--focused .markdown-card__resize-handle:hover {
+  background: rgba(203, 166, 247, 0.5);
+  width: 8px;
+}
+.markdown-card .markdown-card__resize-handle--dragging {
+  pointer-events: auto;
+  background: rgba(203, 166, 247, 0.6);
+  width: 8px;
+}
+
 /* Floating action buttons for markdown card */
 .markdown-card .node-titlebar__actions {
   position: absolute;
@@ -752,13 +787,11 @@ html, body, #root {
 .directory-card {
   width: 100%;
   height: 100%;
-  border-radius: 8px;
   overflow: visible;
-  border: 2px solid #313244;
-  background: #1e1e2e;
+  border: none;
+  background: transparent;
   display: flex;
   flex-direction: column;
-  transition: border-color 0.15s;
   position: relative;
   cursor: grab;
 }
@@ -767,51 +800,67 @@ html, body, #root {
   cursor: grabbing;
 }
 
-.directory-card:hover {
-  border-color: #585b70;
-}
-
 .directory-card:not(.directory-card--focused)::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: 10;
   cursor: grab;
-  border-radius: inherit;
 }
 
 .directory-card:not(.directory-card--focused):active::after {
   cursor: grabbing;
 }
 
-.directory-card.directory-card--selected:not(.directory-card--focused) {
-  border-color: #cdd6f4;
+/* Folder SVG */
+.directory-card__folder-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  color: #313244;
+  transition: color 0.15s;
 }
 
-.directory-card.directory-card--focused {
-  border-color: #cba6f7;
+.directory-card:hover .directory-card__folder-svg {
+  color: #585b70;
+}
+
+.directory-card.directory-card--selected:not(.directory-card--focused) .directory-card__folder-svg {
+  color: #cdd6f4;
+}
+
+.directory-card.directory-card--focused .directory-card__folder-svg {
+  color: #cba6f7;
 }
 
 .directory-card__body {
-  flex: 1;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 0;
-  overflow: hidden;
+  overflow: visible;
+  padding-top: 28px;
+  box-sizing: border-box;
+  z-index: 1;
 }
 
 .directory-card__label {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 20px;
-  color: #cdd6f4;
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--dir-fg, #1e1e2e);
   text-align: center;
-  padding: 0 12px;
+  padding: 0 20px;
   cursor: text;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  overflow: visible;
 }
 
 .directory-card__edit-container {
@@ -820,13 +869,14 @@ html, body, #root {
   align-items: center;
   gap: 4px;
   width: 100%;
-  padding: 0 12px;
+  padding: 0 20px;
 }
 
 .directory-card__input {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 20px;
-  color: #cdd6f4;
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--dir-fg, #1e1e2e);
   background: transparent;
   border: none;
   outline: none;
@@ -845,7 +895,8 @@ html, body, #root {
   visibility: hidden;
   white-space: pre;
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 20px;
+  font-size: 22px;
+  font-weight: bold;
 }
 
 .directory-card__error {
@@ -1115,6 +1166,30 @@ html, body, #root {
   color: #cba6f7;
 }
 
+.node-titlebar__food-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.node-titlebar__food-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+.node-titlebar__food-btn--active {
+  color: #f9e2af;
+}
+.node-titlebar__food-btn--active:hover {
+  color: #f9e2af !important;
+  background: #181825;
+}
+
 /* Card Shell — outer wrapper for all card types */
 .card-shell {
   display: flex;
@@ -1165,6 +1240,16 @@ html, body, #root {
   min-width: 380px;
   max-width: 500px;
   z-index: 50;
+}
+
+.card-shell__popup--centered {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.card-shell__popup--below-actions {
+  top: 32px;
 }
 
 .card-shell__hidden-head-actions {
@@ -1275,7 +1360,7 @@ html, body, #root {
   left: 0;
   right: 0;
   height: 100vh;
-  z-index: 10000;
+  z-index: 9;
   pointer-events: none;
   overflow: hidden;
 }
@@ -1291,6 +1376,30 @@ html, body, #root {
   pointer-events: none;
   transform-origin: center center;
   transition: opacity 0.1s ease;
+}
+
+/* Claude working crab behind terminal cards */
+.terminal-card__working-crab-behind {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, 0%);
+  height: 50px;
+  aspect-ratio: 128 / 85;
+  background-color: #ca7c5e;
+  z-index: -1;
+  pointer-events: none;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.terminal-card__working-crab-behind--active {
+  transform: translate(-50%, -60%);
 }
 
 /* Terminal Search Bar */
@@ -1452,6 +1561,19 @@ html, body, #root {
 
 .search-modal__card--active:hover {
   background: rgba(88, 91, 112, 0.25);
+}
+
+.search-modal__card--archived {
+  cursor: pointer;
+}
+
+.search-modal__card--archived:hover {
+  background: rgba(88, 91, 112, 0.25);
+}
+
+.search-modal__card--session {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .search-modal__card-header {

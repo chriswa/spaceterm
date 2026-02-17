@@ -1,11 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
+import { blendHex } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
+const FOLDER_H_PADDING = 80
+const MIN_FOLDER_WIDTH = 180
+const DEFAULT_BG = '#1e1e2e'
+
+function folderPaths(w: number) {
+  return {
+    back: `M 16 26 L 16 18 Q 16 10 24 10 H 100 Q 108 10 112 18 L 125 26 L ${w - 24} 26 Q ${w - 16} 26 ${w - 16} 34 L ${w - 12} 130 Q ${w - 12} 138 ${w - 20} 138 L 20 138 Q 12 138 12 130 L 8 34 Q 8 26 16 26 Z`,
+    front: `M 24 34 Q 16 34 16 42 L 12 130 Q 12 138 20 138 L ${w - 20} 138 Q ${w - 12} 138 ${w - 12} 130 L ${w - 8} 42 Q ${w - 8} 34 ${w - 16} 34 H 24 Z`,
+  }
+}
 
 interface DirectoryCardProps {
   id: string
@@ -46,15 +57,26 @@ export function DirectoryCard({
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const measureRef = useRef<HTMLSpanElement>(null)
+  const [textWidth, setTextWidth] = useState(0)
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
 
+  // Measure text width via hidden span — works for both label and editing input
+  useLayoutEffect(() => {
+    if (!measureRef.current) return
+    measureRef.current.textContent = (editing ? editValue : cwd) || ' '
+    setTextWidth(measureRef.current.offsetWidth)
+  }, [cwd, editing, editValue])
+
+  const folderWidth = Math.max(MIN_FOLDER_WIDTH, textWidth + FOLDER_H_PADDING)
+  const paths = folderPaths(folderWidth)
+
   // Notify parent when focused node size is known
   useEffect(() => {
     if (!focused) return
-    onNodeReady?.(id, { x: x - DIRECTORY_WIDTH / 2, y: y - DIRECTORY_HEIGHT / 2, width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT })
-  }, [focused, id, x, y, onNodeReady])
+    onNodeReady?.(id, { x: x - folderWidth / 2, y: y - DIRECTORY_HEIGHT / 2, width: folderWidth, height: DIRECTORY_HEIGHT })
+  }, [focused, id, x, y, folderWidth, onNodeReady])
 
   // Auto-focus input when entering edit mode
   useEffect(() => {
@@ -177,9 +199,9 @@ export function DirectoryCard({
   return (
     <CardShell
       nodeId={id}
-      x={x - DIRECTORY_WIDTH / 2}
+      x={x - folderWidth / 2}
       y={y - DIRECTORY_HEIGHT / 2}
-      width={DIRECTORY_WIDTH}
+      width={folderWidth}
       height={DIRECTORY_HEIGHT}
       zIndex={zIndex}
       focused={focused}
@@ -194,14 +216,26 @@ export function DirectoryCard({
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
       className={`directory-card ${focused ? 'directory-card--focused' : selected ? 'directory-card--selected' : ''}`}
-      style={{ backgroundColor: preset?.terminalBg ?? '#1e1e2e' }}
+      style={{
+        backgroundColor: 'transparent',
+        '--dir-fg': preset?.terminalBg ?? DEFAULT_BG,
+      } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
     >
+      <svg
+        className="directory-card__folder-svg"
+        viewBox={`0 0 ${folderWidth} 144`}
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path d={paths.back} fill={blendHex(preset?.titleBarBg ?? '#ffffff', '#000000', 0.6)} stroke="currentColor" strokeWidth="1.5" />
+        <path d={paths.front} fill={blendHex(preset?.titleBarBg ?? '#ffffff', '#000000', 0.8)} stroke="currentColor" strokeWidth="1.5" />
+      </svg>
       <div className="directory-card__body">
+        <span ref={measureRef} className="directory-card__measure" />
         {editing ? (
           <div className="directory-card__edit-container">
-            <span ref={measureRef} className="directory-card__measure" />
             <input
               ref={inputRef}
               className="directory-card__input"

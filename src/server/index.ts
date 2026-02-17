@@ -6,8 +6,11 @@ import type { ClientMessage, ServerMessage, CreateOptions } from '../shared/prot
 import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
+import { computePlacement } from './node-placement'
+import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
+import { SessionFileWatcher } from './session-file-watcher'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -16,19 +19,27 @@ import { LineParser } from './line-parser'
  */
 const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 33_000
 
+/** Spaceterm project root (two levels up from src/server/). */
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
+
 /**
  * Build CreateOptions for spawning a Claude Code PTY with full plugin/settings args.
+ * Paths are absolute so they work regardless of the spawned process's cwd.
  */
-function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string): CreateOptions {
+function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, prompt?: string): CreateOptions {
+  const pluginDir = path.join(PROJECT_ROOT, 'src/claude-code-plugin')
   const statusLineSettings = JSON.stringify({
     statusLine: {
       type: 'command',
-      command: 'src/claude-code-plugin/scripts/statusline-handler.sh'
+      command: path.join(pluginDir, 'scripts/statusline-handler.sh')
     }
   })
-  const args = ['--plugin-dir', 'src/claude-code-plugin', '--settings', statusLineSettings]
+  const args = ['--plugin-dir', pluginDir, '--settings', statusLineSettings]
   if (resumeSessionId) {
     args.push('-r', resumeSessionId)
+  }
+  if (prompt) {
+    args.push('--', prompt)
   }
   return { cwd, command: 'claude', args }
 }
@@ -45,6 +56,7 @@ const clients = new Set<ClientConnection>()
 let sessionManager: SessionManager
 let stateManager: StateManager
 let snapshotManager: SnapshotManager
+let sessionFileWatcher: SessionFileWatcher
 
 function localISOTimestamp(): string {
   const now = new Date()
@@ -114,7 +126,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           cwd: sessionManager.getCwd(msg.sessionId),
           claudeSessionHistory: sessionManager.getClaudeSessionHistory(msg.sessionId),
           claudeState: sessionManager.getClaudeState(msg.sessionId),
-          claudeContextPercent: sessionManager.getClaudeContextPercent(msg.sessionId) ?? undefined
+          claudeContextPercent: sessionManager.getClaudeContextPercent(msg.sessionId) ?? undefined,
+          claudeSessionLineCount: sessionManager.getClaudeSessionLineCount(msg.sessionId) ?? undefined
         })
       } else {
         // Session doesn't exist — send attached with empty scrollback
@@ -216,6 +229,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
         if (claudeSessionId) {
           sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
+          const hookCwd = sessionManager.getCwd(msg.surfaceId)
+          if (hookCwd) {
+            sessionFileWatcher.watch(msg.surfaceId, claudeSessionId, hookCwd)
+          }
         }
         // Compaction finished — Claude is now idle waiting for input
         if (source === 'compact') {
@@ -287,6 +304,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'node-set-food': {
+      stateManager.setNodeFood(msg.nodeId, msg.food)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'node-archive': {
       const node = stateManager.getNode(msg.nodeId)
       if (node && node.type === 'terminal' && node.alive) {
@@ -303,7 +326,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-unarchive': {
-      stateManager.unarchiveNode(msg.parentNodeId, msg.archivedNodeId)
+      // Compute auto-placement for the unarchived node
+      const archivedData = stateManager.peekArchivedNode(msg.parentNodeId, msg.archivedNodeId)
+      let unarchivePosition: { x: number; y: number } | undefined
+      if (archivedData) {
+        const size = nodePixelSize(archivedData)
+        unarchivePosition = computePlacement(stateManager.getState().nodes, msg.parentNodeId, size)
+      }
+
+      stateManager.unarchiveNode(msg.parentNodeId, msg.archivedNodeId, unarchivePosition)
 
       // Auto-reincarnate if the restored node is a terminal
       const restoredNode = stateManager.getNode(msg.archivedNodeId)
@@ -358,10 +389,23 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'terminal-create': {
       try {
-        const { sessionId, cols, rows } = sessionManager.create(msg.options)
+        const options = msg.options?.claude
+          ? buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, msg.options.claude.prompt)
+          : msg.options
+        const { sessionId, cols, rows } = sessionManager.create(options)
         snapshotManager.addSession(sessionId, cols, rows)
         const cwd = sessionManager.getCwd(sessionId)
-        stateManager.createTerminal(sessionId, msg.parentId, msg.x, msg.y, cols, rows, cwd, msg.initialTitleHistory)
+        let posX: number
+        let posY: number
+        if (msg.x != null && msg.y != null) {
+          posX = msg.x
+          posY = msg.y
+        } else {
+          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, terminalPixelSize(cols, rows))
+          posX = pos.x
+          posY = pos.y
+        }
+        stateManager.createTerminal(sessionId, msg.parentId, posX, posY, cols, rows, cwd, msg.initialTitleHistory)
         if (msg.initialTitleHistory?.length) {
           sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
         }
@@ -390,7 +434,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           send(client.socket, { type: 'mutation-ack', seq: msg.seq })
           break
         }
-        const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(msg.options)
+        const rOptions = msg.options?.claude
+          ? buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, msg.options.claude.prompt)
+          : msg.options
+        const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(rOptions)
         snapshotManager.addSession(newPtyId, rCols, rRows)
         // Seed the new PTY session with the remnant's title history before reincarnation
         if (rNode.shellTitleHistory?.length) {
@@ -409,7 +456,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'directory-add': {
       try {
-        const dirNode = stateManager.createDirectory(msg.parentId, msg.x, msg.y, msg.cwd)
+        let posX: number
+        let posY: number
+        if (msg.x != null && msg.y != null) {
+          posX = msg.x
+          posY = msg.y
+        } else {
+          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT })
+          posX = pos.x
+          posY = pos.y
+        }
+        const dirNode = stateManager.createDirectory(msg.parentId, posX, posY, msg.cwd)
         send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: dirNode.id })
       } catch (err: any) {
         console.error(`directory-add failed: ${err.message}`)
@@ -448,7 +505,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'markdown-add': {
-      const mdNode = stateManager.createMarkdown(msg.parentId, msg.x, msg.y)
+      const hint = (msg.x != null && msg.y != null) ? { x: msg.x, y: msg.y } : undefined
+      const mdPos = computePlacement(
+        stateManager.getState().nodes,
+        msg.parentId,
+        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT },
+        hint
+      )
+      const mdNode = stateManager.createMarkdown(msg.parentId, mdPos.x, mdPos.y)
       send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: mdNode.id })
       break
     }
@@ -461,6 +525,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'markdown-content': {
       stateManager.updateMarkdownContent(msg.nodeId, msg.content)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'markdown-set-max-width': {
+      stateManager.setMarkdownMaxWidth(msg.nodeId, msg.maxWidth)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -531,6 +601,7 @@ function startServer(): void {
     },
     // onExit: broadcast to all attached clients + update state
     (sessionId, exitCode) => {
+      sessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
       stateManager.terminalExited(sessionId, exitCode)
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
@@ -563,8 +634,17 @@ function startServer(): void {
     // onClaudeContext: broadcast context remaining % to all attached clients
     (sessionId, contextRemainingPercent) => {
       broadcastToAttached(sessionId, { type: 'claude-context', sessionId, contextRemainingPercent })
+    },
+    // onClaudeSessionLineCount: broadcast JSONL line count to all attached clients
+    (sessionId, lineCount) => {
+      broadcastToAttached(sessionId, { type: 'claude-session-line-count', sessionId, lineCount })
     }
   )
+
+  // Initialize SessionFileWatcher — watches Claude session JSONL files for line count updates
+  sessionFileWatcher = new SessionFileWatcher((surfaceId, _newEntries, totalLineCount) => {
+    sessionManager.setClaudeSessionLineCount(surfaceId, totalLineCount)
+  })
 
   // --- Startup revival: revive terminals with Claude sessions, archive the rest ---
   const deadTerminals = stateManager.processDeadTerminals()
@@ -579,6 +659,10 @@ function startServer(): void {
           sessionManager.seedTitleHistory(sessionId, revivingNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
+        const revivalCwd = sessionManager.getCwd(sessionId)
+        if (revivalCwd) {
+          sessionFileWatcher.watch(sessionId, claudeSessionId, revivalCwd)
+        }
         console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with Claude session ${claudeSessionId.slice(0, 8)}`)
       } catch (err: any) {
         console.error(`[startup] Failed to revive terminal ${nodeId.slice(0, 8)}: ${err.message}`)
@@ -632,6 +716,7 @@ function startServer(): void {
   // Graceful shutdown
   const shutdown = () => {
     console.log('\nShutting down...')
+    sessionFileWatcher.dispose()
     snapshotManager.dispose()
     stateManager.persistImmediate()
     sessionManager.destroyAll()

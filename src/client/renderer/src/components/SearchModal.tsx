@@ -3,13 +3,14 @@ import { useState } from 'react'
 import { useNodeStore } from '../stores/nodeStore'
 import { nodeDisplayTitle } from '../lib/node-title'
 import { buildSearchableEntries, searchEntries, relativeTime, typeLabel } from '../lib/search'
-import type { SearchEntry } from '../lib/search'
+import type { SearchEntry, SearchResult } from '../lib/search'
 import { createWheelAccumulator, classifyWheelEvent } from '../lib/wheel-gesture'
 
 interface SearchModalProps {
   visible: boolean
   onDismiss: () => void
   onNavigateToNode: (nodeId: string) => void
+  onReviveNode: (archiveParentId: string, archivedNodeId: string) => void
 }
 
 function countNestedArchives(data: SearchEntry['data']): number {
@@ -27,7 +28,7 @@ function tooltipJson(data: SearchEntry['data']): string {
 
 const searchWheelAcc = createWheelAccumulator()
 
-export function SearchModal({ visible, onDismiss, onNavigateToNode }: SearchModalProps) {
+export function SearchModal({ visible, onDismiss, onNavigateToNode, onReviveNode }: SearchModalProps) {
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -74,12 +75,16 @@ export function SearchModal({ visible, onDismiss, onNavigateToNode }: SearchModa
     return () => el.removeEventListener('wheel', handleWheel)
   }, [visible, onDismiss])
 
-  const handleCardClick = useCallback((entry: SearchEntry) => {
-    if (entry.isActive) {
-      onNavigateToNode(entry.data.id)
+  const handleCardClick = useCallback((r: SearchResult) => {
+    // Session-label results are dimmed and non-actionable
+    if (r.sessionLabel) return
+
+    if (r.entry.isActive) {
+      onNavigateToNode(r.entry.data.id)
+    } else if (r.entry.archiveParentId) {
+      onReviveNode(r.entry.archiveParentId, r.entry.data.id)
     }
-    // Archived nodes: no action for now
-  }, [onNavigateToNode])
+  }, [onNavigateToNode, onReviveNode])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -115,12 +120,17 @@ export function SearchModal({ visible, onDismiss, onNavigateToNode }: SearchModa
         <div className="search-modal__results" ref={resultsRef}>
           {results.map((r) => {
             const nestedCount = countNestedArchives(r.entry.data)
+            const cardClass = r.sessionLabel
+              ? 'search-modal__card search-modal__card--session'
+              : r.entry.isActive
+                ? 'search-modal__card search-modal__card--active'
+                : 'search-modal__card search-modal__card--archived'
             return (
               <div
-                key={`${r.entry.data.id}-${r.entry.isActive ? 'live' : 'arch'}`}
-                className={`search-modal__card${r.entry.isActive ? ' search-modal__card--active' : ''}`}
+                key={`${r.entry.data.id}-${r.entry.isActive ? 'live' : 'arch'}${r.sessionLabel ? `-s${r.sessionLabel}` : ''}`}
+                className={cardClass}
                 title={tooltipJson(r.entry.data)}
-                onClick={() => handleCardClick(r.entry)}
+                onClick={() => handleCardClick(r)}
               >
                 <div className="search-modal__card-header">
                   <span className="search-modal__card-type">{typeLabel(r.entry.data)}</span>

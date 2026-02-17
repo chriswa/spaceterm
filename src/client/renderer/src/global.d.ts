@@ -8,6 +8,7 @@ interface CreateOptions {
   cwd?: string
   command?: string
   args?: string[]
+  claude?: { prompt?: string; resumeSessionId?: string }
 }
 
 interface CreateResult extends SessionInfo {
@@ -28,6 +29,7 @@ interface AttachResult {
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: string
   claudeContextPercent?: number
+  claudeSessionLineCount?: number
 }
 
 interface PtyApi {
@@ -44,6 +46,7 @@ interface PtyApi {
   onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
   onClaudeState(sessionId: string, callback: (state: string) => void): () => void
   onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
+  onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
 }
 
 interface NodeApi {
@@ -52,6 +55,7 @@ interface NodeApi {
   batchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void>
   rename(nodeId: string, name: string): Promise<void>
   setColor(nodeId: string, colorPresetId: string): Promise<void>
+  setFood(nodeId: string, food: boolean): Promise<void>
   archive(nodeId: string): Promise<void>
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
@@ -85,7 +89,7 @@ interface PerfApi {
 }
 
 interface AudioApi {
-  onBeat(callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean; plp?: { bpm: number; phase: number; confidence: number } }) => void): () => void
+  onBeat(callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean }) => void): () => void
   start(): Promise<void>
   stop(): Promise<void>
 }

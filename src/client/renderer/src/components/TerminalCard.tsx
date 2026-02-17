@@ -15,6 +15,7 @@ import { TerminalSearchBar } from './TerminalSearchBar'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 import { showToast } from '../lib/toast'
+import crabIcon from '../assets/crab.png'
 
 const DRAG_THRESHOLD = 5
 const LOW_ZOOM_THRESHOLD = 0.2
@@ -109,6 +110,7 @@ export function TerminalCard({
   propsRef.current = { x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady }
 
   const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
+  const [claudeSessionLineCount, setClaudeSessionLineCount] = useState<number | undefined>(undefined)
   const [xtermReady, setXtermReady] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const searchOpenRef = useRef(false)
@@ -425,7 +427,7 @@ export function TerminalCard({
                 decoration?.onRender((el) => {
                   el.classList.add('plan-jump-flash')
                 })
-                setTimeout(() => decoration?.dispose(), 900)
+                setTimeout(() => decoration?.dispose(), 490)
               }
             }
           }
@@ -466,8 +468,18 @@ export function TerminalCard({
       if (result.claudeContextPercent !== undefined) {
         setClaudeContextPercent(result.claudeContextPercent)
       }
+      if (result.claudeSessionLineCount !== undefined) {
+        setClaudeSessionLineCount(result.claudeSessionLineCount)
+      }
     }).catch(() => {})
     return cleanup
+  }, [sessionId])
+
+  // Subscribe to claude session line count updates (always, not just when focused)
+  useEffect(() => {
+    return window.api.pty.onClaudeSessionLineCount(sessionId, (lineCount) => {
+      setClaudeSessionLineCount(lineCount)
+    })
   }, [sessionId])
 
   // Tint xterm background to match color preset
@@ -807,6 +819,12 @@ export function TerminalCard({
       cardRef={cardRef}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
+      behindContent={
+        <div
+          className={`terminal-card__working-crab-behind${claudeState === 'working' ? ' terminal-card__working-crab-behind--active' : ''}`}
+          style={{ maskImage: `url(${crabIcon})`, WebkitMaskImage: `url(${crabIcon})` }}
+        />
+      }
     >
       {searchOpen && searchAddonRef.current && (
         <TerminalSearchBar searchAddon={searchAddonRef.current} onClose={closeSearch} />
@@ -814,7 +832,7 @@ export function TerminalCard({
       <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none', flex: 'none', height: rows * CELL_HEIGHT + BODY_PADDING_TOP }} />
       <div style={
         !focused
-          ? { padding: '2px 2px 0 2px', flex: 'none', height: rows * CELL_HEIGHT + BODY_PADDING_TOP }
+          ? { position: 'relative' as const, padding: '2px 2px 0 2px', flex: 'none', height: rows * CELL_HEIGHT + BODY_PADDING_TOP }
           : xtermReady
             ? { display: 'none' }
             : { position: 'absolute' as const, inset: 0, top: BODY_PADDING_TOP, zIndex: 1, pointerEvents: 'none' as const, padding: '2px 2px 0 2px' }
@@ -841,6 +859,7 @@ export function TerminalCard({
               <>
                 <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
                 <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId); showToast('Copied to clipboard') }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+                {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
                 <span>&nbsp;|&nbsp;</span>
                 <span>{claudeStateLabel(claudeState)}</span>
               </>

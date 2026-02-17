@@ -1,10 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, ViewPlugin, ViewUpdate, Decoration, DecorationSet, keymap } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
 import { indentWithTab } from '@codemirror/commands'
 import { syntaxTree } from '@codemirror/language'
-import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT } from '../lib/constants'
+import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH, MARKDOWN_MIN_MAX_WIDTH } from '../lib/constants'
 import { blendHex } from '../lib/color-presets'
 import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
@@ -23,6 +23,7 @@ interface MarkdownCardProps {
   zIndex: number
   zoom: number
   content: string
+  maxWidth?: number
   name?: string
   colorPresetId?: string
   resolvedPreset?: ColorPreset
@@ -34,6 +35,7 @@ interface MarkdownCardProps {
   onMove: (id: string, x: number, y: number) => void
   onResize: (id: string, width: number, height: number) => void
   onContentChange: (id: string, content: string) => void
+  onMaxWidthChange: (id: string, maxWidth: number) => void
   onRename: (id: string, name: string) => void
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
@@ -45,6 +47,8 @@ interface MarkdownCardProps {
   onUnfocus: () => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
+  food?: boolean
+  onFoodToggle?: (id: string, food: boolean) => void
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -346,29 +350,63 @@ const linkClickHandler = EditorView.domEventHandlers({
 })
 
 export function MarkdownCard({
-  id, x, y, width, height, zIndex, zoom, content, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
-  onFocus, onClose, onMove, onResize, onContentChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget
+  id, x, y, width, height, zIndex, zoom, content, maxWidth, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
+  onFocus, onClose, onMove, onResize, onContentChange, onMaxWidthChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
+  onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, food, onFoodToggle
 }: MarkdownCardProps) {
   const preset = resolvedPreset
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  const propsRef = useRef({ x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize, onUnfocus })
-  propsRef.current = { x, y, zoom, id, width, height, onNodeReady, onContentChange, onResize, onUnfocus }
+  const isDraggingRef = useRef(false)
+  const draftMaxWidthRef = useRef<number | null>(null)
+  const [draftDims, setDraftDims] = useState<{ width: number; height: number } | null>(null)
+  const propsRef = useRef({ x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus })
+  propsRef.current = { x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus }
 
-  // Auto-size helper: collapse scroller to 0×0 so scrollWidth/scrollHeight
-  // report intrinsic content size (otherwise they never shrink below container).
-  // Both shrink + restore happen in the same rAF, before paint, so no flicker.
+  // Clear draft state when server-synced maxWidth changes
+  useEffect(() => {
+    if (!isDraggingRef.current) {
+      draftMaxWidthRef.current = null
+      setDraftDims(null)
+    }
+  }, [maxWidth, width, height])
+
+  /** Two-pass measurement: returns { width, height } for the card given a maxWidth constraint. */
+  const measure = (view: EditorView, effectiveMax: number): { width: number; height: number } => {
+    const scroller = view.scrollDOM
+    const contentDOM = view.contentDOM
+
+    // Pass 1: measure intrinsic (unwrapped) width
+    contentDOM.style.whiteSpace = 'nowrap'
+    scroller.style.width = '0px'
+    scroller.style.height = '0px'
+    const intrinsicWidth = scroller.scrollWidth
+
+    // Pass 2: measure height at constrained width
+    contentDOM.style.whiteSpace = ''
+    const constrainedWidth = Math.max(
+      MARKDOWN_MIN_WIDTH - 4,
+      Math.min(intrinsicWidth, effectiveMax - 4)
+    )
+    scroller.style.width = `${constrainedWidth}px`
+    scroller.style.height = '0px'
+    const scrollHeight = scroller.scrollHeight
+
+    // Restore
+    scroller.style.width = ''
+    scroller.style.height = ''
+
+    const finalWidth = Math.min(intrinsicWidth + 4, effectiveMax)
+    const finalHeight = Math.max(MARKDOWN_MIN_HEIGHT, scrollHeight + 4)
+    return { width: Math.max(MARKDOWN_MIN_WIDTH, finalWidth), height: finalHeight }
+  }
+
+  // Auto-size helper using two-pass measurement with maxWidth constraint.
   const autoSize = (view: EditorView) => {
     requestAnimationFrame(() => {
-      const scroller = view.scrollDOM
-      scroller.style.width = '0px'
-      scroller.style.height = '0px'
-      // 4px chrome = 2px border × 2 sides
-      const newWidth = Math.max(MARKDOWN_MIN_WIDTH, scroller.scrollWidth + 4)
-      const newHeight = Math.max(MARKDOWN_MIN_HEIGHT, scroller.scrollHeight + 4)
-      scroller.style.width = ''
-      scroller.style.height = ''
+      if (isDraggingRef.current) return
+      const effectiveMax = draftMaxWidthRef.current ?? (propsRef.current.maxWidth ?? MARKDOWN_DEFAULT_MAX_WIDTH)
+      const { width: newWidth, height: newHeight } = measure(view, effectiveMax)
       const { width: curW, height: curH } = propsRef.current
       if (Math.abs(newWidth - curW) > 1 || Math.abs(newHeight - curH) > 1) {
         propsRef.current.onResize(propsRef.current.id, newWidth, newHeight)
@@ -385,6 +423,7 @@ export function MarkdownCard({
       extensions: [
         markdown(),
         cmTheme,
+        EditorView.lineWrapping,
         markdownDecorations,
         autolinkPlugin,
         linkClickHandler,
@@ -420,6 +459,14 @@ export function MarkdownCard({
     }
   }, [id]) // Only remount if id changes
 
+  // Re-run autoSize when maxWidth changes from server
+  useEffect(() => {
+    const view = viewRef.current
+    if (view && !isDraggingRef.current) {
+      autoSize(view)
+    }
+  }, [maxWidth])
+
   // Focus management
   useEffect(() => {
     const view = viewRef.current
@@ -446,9 +493,59 @@ export function MarkdownCard({
     }
   }, [preset])
 
+  // Resize handle drag handler
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    const view = viewRef.current
+    if (!view) return
+
+    const startClientX = e.clientX
+    const startWidth = propsRef.current.width
+    const currentZoom = propsRef.current.zoom
+    isDraggingRef.current = true
+
+    const handleEl = (e.target as HTMLElement).closest('.markdown-card__resize-handle')
+    handleEl?.classList.add('markdown-card__resize-handle--dragging')
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const dx = (ev.clientX - startClientX) / currentZoom
+      const newMaxWidth = Math.max(MARKDOWN_MIN_MAX_WIDTH, startWidth + dx)
+      draftMaxWidthRef.current = newMaxWidth
+
+      // Synchronous two-pass measurement
+      const { width: measuredWidth, height: newHeight } = measure(view, newMaxWidth)
+      // Show maxWidth during drag so the user sees the constraint they're setting
+      const displayWidth = Math.max(measuredWidth, newMaxWidth)
+      setDraftDims({ width: displayWidth, height: newHeight })
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      handleEl?.classList.remove('markdown-card__resize-handle--dragging')
+
+      isDraggingRef.current = false
+      const finalMaxWidth = draftMaxWidthRef.current ?? startWidth
+
+      // Direct measure — don't read stale draftDims closure (always null from mousedown time)
+      const { width: fw, height: fh } = measure(view, finalMaxWidth)
+      setDraftDims({ width: fw, height: fh })
+      // Don't clear draftMaxWidthRef or draftDims — useEffect clears on server confirm
+
+      onMaxWidthChange(id, finalMaxWidth)
+      onResize(id, fw, fh)
+      autoSize(view)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
   // Drag handler
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-body')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-body, .markdown-card__resize-handle')) return
 
     const bodyClickWhileFocused = focused
     if (!bodyClickWhileFocused) {
@@ -496,13 +593,16 @@ export function MarkdownCard({
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const isEmpty = !content.trim()
 
+  const displayWidth = draftDims?.width ?? width
+  const displayHeight = draftDims?.height ?? height
+
   return (
     <CardShell
       nodeId={id}
-      x={x - width / 2}
-      y={y - height / 2}
-      width={width}
-      height={height}
+      x={x - displayWidth / 2}
+      y={y - displayHeight / 2}
+      width={displayWidth}
+      height={displayHeight}
       zIndex={zIndex}
       focused={focused}
       headVariant="overlay"
@@ -515,6 +615,8 @@ export function MarkdownCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       isReparenting={reparentingNodeId === id}
+      food={food}
+      onFoodToggle={onFoodToggle}
       className={`markdown-card ${focused ? 'markdown-card--focused' : selected ? 'markdown-card--selected' : ''} ${isEmpty ? 'markdown-card--empty' : ''}`}
       style={{
         backgroundColor: 'transparent',
@@ -527,6 +629,7 @@ export function MarkdownCard({
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
     >
       <div className="markdown-card__body" ref={bodyRef} />
+      <div className="markdown-card__resize-handle" onMouseDown={handleResizeMouseDown} />
     </CardShell>
   )
 }

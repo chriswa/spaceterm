@@ -22,4 +22,4 @@ When you're ready to stop working on a feature or task, always end your final me
 
 ## When providing a project plan
 
-At the top of every project plan, before the context section, include a product-centric one-sentence explanation of what the change accomplishes. Preface it with "FEATURE: " so the user knows it came from this instruction. Below the FEATURE line, if there are perceived risks, detrimental side effects, or important caveats to the plan, include a "CAVEATS: " section listing them.
+At the top of every project plan, before the context section, include a product-centric one-sentence explanation of what the change accomplishes. Preface it with "FEATURE: " so the user knows it came from this instruction. Below the FEATURE line, if there are perceived risks, detrimental side effects, or important caveats to the plan, include a "CAVEATS: " section listing them. Caveats should not include implementation-mitigatable issues that are already addressed elsewhere in the plan.

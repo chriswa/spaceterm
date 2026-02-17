@@ -12,6 +12,12 @@ import type { ClaudeState } from '../shared/state'
 const MAX_TITLE_HISTORY = 50
 const MAX_CLAUDE_SESSION_HISTORY = 20
 
+/** Titles that programs set spuriously (e.g. on every session revival) */
+const SPURIOUS_TITLES = ['Claude Code']
+function isSpuriousTitle(title: string): boolean {
+  return SPURIOUS_TITLES.includes(title)
+}
+
 interface Session {
   id: string
   process: pty.IPty
@@ -24,6 +30,7 @@ interface Session {
   pendingStop: boolean
   claudeState: ClaudeState
   claudeContextPercent: number | null
+  claudeSessionLineCount: number | null
   cwd: string
   cols: number
   rows: number
@@ -36,6 +43,7 @@ export type CwdCallback = (sessionId: string, cwd: string) => void
 export type ClaudeSessionHistoryCallback = (sessionId: string, history: ClaudeSessionEntry[]) => void
 export type ClaudeStateCallback = (sessionId: string, state: ClaudeState) => void
 export type ClaudeContextCallback = (sessionId: string, contextRemainingPercent: number) => void
+export type ClaudeSessionLineCountCallback = (sessionId: string, lineCount: number) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -46,8 +54,9 @@ export class SessionManager {
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
   private onClaudeState: ClaudeStateCallback
   private onClaudeContext: ClaudeContextCallback
+  private onClaudeSessionLineCount: ClaudeSessionLineCountCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback) {
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
@@ -55,6 +64,7 @@ export class SessionManager {
     this.onClaudeSessionHistory = onClaudeSessionHistory
     this.onClaudeState = onClaudeState
     this.onClaudeContext = onClaudeContext
+    this.onClaudeSessionLineCount = onClaudeSessionLineCount
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -93,6 +103,7 @@ export class SessionManager {
 
     const titleParser = new TitleParser(
       (title) => {
+        if (isSpuriousTitle(title)) return
         const idx = shellTitleHistory.indexOf(title)
         if (idx !== -1) shellTitleHistory.splice(idx, 1)
         shellTitleHistory.unshift(title)
@@ -142,6 +153,7 @@ export class SessionManager {
       pendingStop: false,
       claudeState: 'stopped' as ClaudeState,
       claudeContextPercent: null,
+      claudeSessionLineCount: null,
       cwd,
       cols,
       rows
@@ -268,6 +280,18 @@ export class SessionManager {
     return this.sessions.get(sessionId)?.claudeContextPercent ?? null
   }
 
+  setClaudeSessionLineCount(surfaceId: string, lineCount: number): void {
+    const session = this.sessions.get(surfaceId)
+    if (!session) return
+    if (session.claudeSessionLineCount === lineCount) return
+    session.claudeSessionLineCount = lineCount
+    this.onClaudeSessionLineCount(surfaceId, lineCount)
+  }
+
+  getClaudeSessionLineCount(sessionId: string): number | null {
+    return this.sessions.get(sessionId)?.claudeSessionLineCount ?? null
+  }
+
   getClaudeSessionHistory(sessionId: string): ClaudeSessionEntry[] {
     const session = this.sessions.get(sessionId)
     return session ? session.claudeSessionHistory : []
@@ -276,7 +300,7 @@ export class SessionManager {
   seedTitleHistory(sessionId: string, history: string[]): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
-    session.shellTitleHistory.push(...history)
+    session.shellTitleHistory.push(...history.filter(t => !isSpuriousTitle(t)))
   }
 
   has(sessionId: string): boolean {

@@ -126,6 +126,41 @@ const YELLOW = '\x1b[33m'
 const MAGENTA = '\x1b[35m'
 const RED = '\x1b[31m'
 
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '')
+}
+
+/** Word-wrap a title chain onto the first line after `prefix`, breaking at ↼ separators. */
+function wrapTitleLine(prefix: string, titles: string[], termWidth: number): string {
+  if (titles.length === 0) return prefix
+
+  const prefixVisLen = stripAnsi(prefix).length
+  const sep = ` ${DIM}↼${RESET} `
+  const sepVisLen = 3 // visible: " ↼ "
+
+  // Continuation indent: a few chars past where titles start
+  const contIndentLen = prefixVisLen + sepVisLen + 2
+  const contIndent = ' '.repeat(contIndentLen)
+
+  const lines: string[] = []
+  let cur = prefix
+  let curVisLen = prefixVisLen
+
+  for (const title of titles) {
+    const needed = sepVisLen + title.length
+    if (curVisLen + needed > termWidth && cur !== prefix) {
+      lines.push(cur)
+      cur = `${contIndent}${DIM}↼${RESET} ${title}`
+      curVisLen = contIndentLen + 2 + title.length
+    } else {
+      cur += `${sep}${title}`
+      curVisLen += needed
+    }
+  }
+  lines.push(cur)
+  return lines.join('\n')
+}
+
 // ── List command ─────────────────────────────────────────────────────
 
 async function listTerminals(): Promise<void> {
@@ -147,29 +182,30 @@ async function listTerminals(): Promise<void> {
   console.log(`${BOLD}${CYAN} Emergency Terminal — ${terminals.length} active session${terminals.length !== 1 ? 's' : ''}${RESET}`)
   console.log()
 
+  const termWidth = process.stdout.columns || 80
+
   for (let i = 0; i < terminals.length; i++) {
     const t = terminals[i]
     const idx = `${DIM}[${i + 1}]${RESET}`
     const name = t.name ? `${BOLD}${t.name}${RESET}` : `${DIM}(unnamed)${RESET}`
-    const sessionId = `${DIM}${t.sessionId}${RESET}`
     const cwd = t.cwd ? `${GREEN}${t.cwd}${RESET}` : `${DIM}—${RESET}`
-    const claude =
-      t.claudeState && t.claudeState !== 'stopped'
-        ? ` ${MAGENTA}[claude: ${t.claudeState}]${RESET}`
-        : ''
     const size = t.cols && t.rows ? `${DIM}${t.cols}x${t.rows}${RESET}` : ''
 
-    console.log(`  ${idx} ${name}${claude}`)
-    console.log(`      ${YELLOW}ID:${RESET}  ${sessionId}`)
-    console.log(`      ${YELLOW}CWD:${RESET} ${cwd}  ${size}`)
+    // Header: name + recent titles joined with ↼ (newest first), word-wrapped
+    const titles = (t.shellTitleHistory ?? []).slice(-5).reverse()
+    console.log(wrapTitleLine(`  ${idx} ${name}`, titles, termWidth))
 
-    const titles = t.shellTitleHistory
-    if (titles && titles.length > 0) {
-      const recent = titles.slice(-5)
-      console.log(`      ${YELLOW}Titles:${RESET}`)
-      for (const title of recent) {
-        console.log(`        ${DIM}· ${title}${RESET}`)
-      }
+    // Detail lines with aligned 9-char label field
+    console.log(`      ${YELLOW}CWD:${RESET}     ${cwd}   ${size}`)
+    console.log(`      ${YELLOW}Surface:${RESET} ${DIM}${t.sessionId}${RESET}`)
+
+    const lastClaudeSession = t.claudeSessionHistory?.at(-1)
+    if (lastClaudeSession) {
+      const stateTag =
+        t.claudeState && t.claudeState !== 'stopped'
+          ? ` ${MAGENTA}[${t.claudeState}]${RESET}`
+          : ''
+      console.log(`      ${YELLOW}Claude:${RESET}  ${DIM}${lastClaudeSession.claudeSessionId}${RESET}${stateTag}`)
     }
     console.log()
   }

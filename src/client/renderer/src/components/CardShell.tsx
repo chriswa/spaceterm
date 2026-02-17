@@ -5,6 +5,7 @@ import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import { ArchiveBody } from './ArchiveBody'
 import { SessionsBody } from './SessionsBody'
+import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 
 interface CardShellProps {
   nodeId: string
@@ -34,11 +35,14 @@ interface CardShellProps {
   isReparenting?: boolean
   onMarkUnread?: (id: string) => void
   isUnviewed?: boolean
+  food?: boolean
+  onFoodToggle?: (id: string, food: boolean) => void
   className?: string
   style?: CSSProperties
   cardRef?: RefObject<HTMLDivElement | null>
   onMouseEnter?: (e: React.MouseEvent) => void
   onMouseLeave?: (e: React.MouseEvent) => void
+  behindContent?: ReactNode
   children: ReactNode
 }
 
@@ -49,7 +53,8 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   pastSessions, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, isReparenting, onMarkUnread, isUnviewed,
-  className, style, cardRef, onMouseEnter, onMouseLeave, children
+  food, onFoodToggle,
+  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [sessionsOpen, setSessionsOpen] = useState(false)
@@ -151,6 +156,28 @@ export function CardShell({
   // Action buttons shared across head variants
   const actionButtons = (
     <div className="node-titlebar__actions">
+      {onFoodToggle && (
+        <button
+          className={`node-titlebar__food-btn${food ? ' node-titlebar__food-btn--active' : ''}`}
+          title={food ? 'Food: ON' : 'Food: OFF'}
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onFoodToggle(nodeId, !food) }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <ellipse cx="5" cy="4.5" rx="3.2" ry="2.8" />
+            <path d="M7.2 6.5 L10.5 11" strokeWidth="2.2" />
+            <line x1="10.5" y1="11" x2="11.5" y2="12.5" strokeWidth="1.5" />
+            <line x1="10.5" y1="11" x2="9" y2="12" strokeWidth="1.5" />
+            {!food && (
+              <>
+                <circle cx="7" cy="7" r="6" strokeWidth="1.5" />
+                <line x1="2.8" y1="11.2" x2="11.2" y2="2.8" strokeWidth="1.5" />
+              </>
+            )}
+          </svg>
+        </button>
+      )}
       {showColorPicker && (
         <div style={{ position: 'relative' }} ref={pickerRef}>
           <button
@@ -300,6 +327,7 @@ export function CardShell({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      {behindContent}
       <div
         ref={cardRef}
         className={className}
@@ -316,7 +344,7 @@ export function CardShell({
         {hiddenHeadArchiveBtn}
         <div className="card-shell__body-wrapper">
           {archiveOpen && archivedChildren.length > 0 && (
-            <div className="card-shell__archive-body" ref={archiveBodyRef}>
+            <div className={`card-shell__archive-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={archiveBodyRef}>
               <ArchiveBody
                 parentId={nodeId}
                 archives={archivedChildren}
@@ -326,7 +354,7 @@ export function CardShell({
             </div>
           )}
           {sessionsOpen && pastSessions && pastSessions.length > 0 && (
-            <div className="card-shell__sessions-body" ref={sessionsBodyRef}>
+            <div className={`card-shell__sessions-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={sessionsBodyRef}>
               <SessionsBody sessions={pastSessions} onRevive={onSessionRevive!} />
             </div>
           )}
