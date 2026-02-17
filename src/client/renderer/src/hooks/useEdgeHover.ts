@@ -102,7 +102,6 @@ function findClosestEdge(
 export function useEdgeHover(
   cameraRef: React.RefObject<Camera>,
   edgesRef: React.RefObject<TreeLineNode[]>,
-  edgesEnabled: boolean,
   reparentActive: boolean
 ) {
   const [hoveredEdge, setHoveredEdge] = useState<HoveredEdge | null>(null)
@@ -137,7 +136,7 @@ export function useEdgeHover(
 
   // rAF loop: recalculate edge hover every frame
   useEffect(() => {
-    if (!edgesEnabled || reparentActive) {
+    if (reparentActive) {
       if (hoveredEdgeRef.current) {
         hoveredEdgeRef.current = null
         setHoveredEdge(null)
@@ -189,7 +188,7 @@ export function useEdgeHover(
 
     rafId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafId)
-  }, [cameraRef, edgesRef, edgesEnabled, reparentActive])
+  }, [cameraRef, edgesRef, reparentActive])
 
   const clearHoveredEdge = useCallback(() => {
     hoveredEdgeRef.current = null

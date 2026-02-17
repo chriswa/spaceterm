@@ -32,8 +32,6 @@ interface CanvasBackgroundProps {
   maskRectsRef: React.RefObject<MaskRect[]>
   selectionRef: React.RefObject<Selection | null>
   reparentEdgeRef: React.RefObject<ReparentEdge | null>
-  edgesEnabled: boolean
-  shadersEnabled: boolean
 }
 
 // --- Background shaders ---
@@ -268,13 +266,9 @@ const FLOATS_PER_EDGE = VERTS_PER_EDGE * FLOATS_PER_VERTEX // 24
 // Zoom exponent: (1/z)^0.7 gives ~5x at z=0.1, 1x at z=1.0
 const ZOOM_WIDTH_EXP = Math.log(5) / Math.log(10) // ≈ 0.699
 
-export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef, edgesEnabled, shadersEnabled }: CanvasBackgroundProps) {
+export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
-  const shadersEnabledRef = useRef(shadersEnabled)
-  shadersEnabledRef.current = shadersEnabled
-  const edgesEnabledRef = useRef(edgesEnabled)
-  edgesEnabledRef.current = edgesEnabled
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -373,7 +367,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       gl.clear(gl.COLOR_BUFFER_BIT)
 
       // 1. Draw background quad
-      if (shadersEnabledRef.current && bgProg && bgBuf) {
+      if (bgProg && bgBuf) {
         gl.useProgram(bgProg)
         gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf)
         gl.enableVertexAttribArray(bgPosLoc)
@@ -386,7 +380,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       }
 
       // 2. Draw edge quads with chevron texture
-      if (edgesEnabledRef.current && edgeProg && edgeBuf && chevronTex) {
+      if (edgeProg && edgeBuf && chevronTex) {
         const edges = edgesRef.current
         if (edges.length > 0) {
           // Build id → position lookup
@@ -573,7 +567,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       // 3. Paint over edges behind transparent cards using the background shader
       //    The bg fragment shader uses gl_FragCoord, so quads at any position
       //    produce seamless background — effectively erasing the edges underneath.
-      if (shadersEnabledRef.current && edgesEnabledRef.current && bgProg && maskBuf) {
+      if (bgProg && maskBuf) {
         const rects = maskRectsRef.current
         if (rects.length > 0) {
           const needed = rects.length * 12 // 6 verts × 2 floats

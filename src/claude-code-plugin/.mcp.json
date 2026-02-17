@@ -1,0 +1,7 @@
+{
+  "spaceterm": {
+    "type": "stdio",
+    "command": "${CLAUDE_PLUGIN_ROOT}/mcp-server/run.sh",
+    "args": []
+  }
+}

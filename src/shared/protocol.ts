@@ -74,6 +74,12 @@ export interface StatusLineMessage {
   payload: Record<string, unknown>
 }
 
+export interface EmitMarkdownMessage {
+  type: 'emit-markdown'
+  surfaceId: string
+  content: string
+}
+
 // --- Client → Server node mutation messages ---
 
 export interface NodeSyncRequestMessage {
@@ -267,6 +273,7 @@ export type ClientMessage =
   | MarkdownContentMessage
   | MarkdownSetMaxWidthMessage
   | TerminalReincarnateMessage
+  | EmitMarkdownMessage
   | SetTerminalModeMessage
   | DirectoryAddMessage
   | DirectoryCwdMessage

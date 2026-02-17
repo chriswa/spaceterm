@@ -556,7 +556,7 @@ export class StateManager {
 
   // --- Markdown operations ---
 
-  createMarkdown(parentId: string, x: number, y: number): MarkdownNodeData {
+  createMarkdown(parentId: string, x: number, y: number, content?: string): MarkdownNodeData {
     const id = randomUUID()
     const zIndex = this.state.nextZIndex++
 
@@ -569,7 +569,7 @@ export class StateManager {
       zIndex,
       width: MARKDOWN_DEFAULT_WIDTH,
       height: MARKDOWN_DEFAULT_HEIGHT,
-      content: '',
+      content: content ?? '',
       maxWidth: MARKDOWN_DEFAULT_MAX_WIDTH,
       archivedChildren: [],
       colorPresetId: 'inherit'

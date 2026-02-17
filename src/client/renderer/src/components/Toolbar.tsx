@@ -2,8 +2,6 @@ import { useRef, useEffect, useLayoutEffect, useState } from 'react'
 import type { InputDevice } from '../hooks/useCamera'
 import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
-import { useShaderStore } from '../stores/shaderStore'
-import { useEdgesStore } from '../stores/edgesStore'
 import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
 
@@ -32,11 +30,6 @@ export function Toolbar({
   const recording = usePerfStore(s => s.recording)
   const startTrace = usePerfStore(s => s.startTrace)
   const tracing = recording === 'trace'
-  const shadersEnabled = useShaderStore(s => s.shadersEnabled)
-  const toggleShaders = useShaderStore(s => s.toggle)
-  const edgesEnabled = useEdgesStore(s => s.edgesEnabled)
-  const toggleEdges = useEdgesStore(s => s.toggle)
-
   return (
     <div className="toolbar">
       <div className="toolbar__force-layout">
@@ -61,20 +54,6 @@ export function Toolbar({
           {tracing ? 'Tracing...' : 'Trace'}
         </button>
       </div>
-      <button
-        className={'toolbar__btn' + (shadersEnabled ? ' toolbar__btn--active' : '')}
-        onClick={toggleShaders}
-        title={shadersEnabled ? 'Disable shaders' : 'Enable shaders'}
-      >
-        Shaders
-      </button>
-      <button
-        className={'toolbar__btn' + (edgesEnabled ? ' toolbar__btn--active' : '')}
-        onClick={toggleEdges}
-        title={edgesEnabled ? 'Disable edges' : 'Enable edges'}
-      >
-        Edges
-      </button>
       <FullscreenToggle />
       <KioskToggle />
       <BeatsToggle />

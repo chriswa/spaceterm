@@ -21,8 +21,6 @@ import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, gatherFoodPrompt } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
-import { useShaderStore } from './stores/shaderStore'
-import { useEdgesStore } from './stores/edgesStore'
 import { useAudioStore } from './stores/audioStore'
 import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetFood, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd } from './lib/server-sync'
 
@@ -93,9 +91,6 @@ export function App() {
     }
     return map
   }, [nodes])
-
-  const shadersEnabled = useShaderStore(s => s.shadersEnabled)
-  const edgesEnabled = useEdgesStore(s => s.edgesEnabled)
 
   // Derive crab indicators for toolbar
   const crabs = useMemo(() => {
@@ -215,7 +210,7 @@ export function App() {
   }, [reparentingNodeId, cameraRef])
 
   // Edge hover detection for edge splitting
-  const { hoveredEdge, hoveredEdgeRef, clearHoveredEdge } = useEdgeHover(cameraRef, edgesRef, edgesEnabled, !!reparentingNodeId)
+  const { hoveredEdge, hoveredEdgeRef, clearHoveredEdge } = useEdgeHover(cameraRef, edgesRef, !!reparentingNodeId)
 
   // Toggle cursor when hovering an edge
   useEffect(() => {
@@ -1343,7 +1338,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={(shadersEnabled || edgesEnabled) ? <CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} edgesEnabled={edgesEnabled} shadersEnabled={shadersEnabled} /> : null} overlay={<SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} />}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} />}>
         <RootNode
           focused={focusedId === 'root'}
           selected={selection?.id === 'root' && selection?.type === 'node'}

@@ -242,6 +242,21 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'emit-markdown': {
+      const parentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!parentNodeId) {
+        console.error(`[emit-markdown] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      const emPos = computePlacement(
+        stateManager.getState().nodes,
+        parentNodeId,
+        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT }
+      )
+      stateManager.createMarkdown(parentNodeId, emPos.x, emPos.y, msg.content)
+      break
+    }
+
     case 'status-line': {
       const logEntry =
         JSON.stringify({

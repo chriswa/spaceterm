@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef } from 'react'
 import { ROOT_NODE_RADIUS } from '../lib/constants'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
-import { useShaderStore } from '../stores/shaderStore'
-
 const noop = () => {}
 
 interface RootNodeProps {
@@ -126,8 +124,6 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
   const rafRef = useRef<number>(0)
   const focusedRef = useRef(focused)
   focusedRef.current = focused
-  const shadersEnabled = useShaderStore(s => s.shadersEnabled)
-
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -137,8 +133,6 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
   )
 
   useEffect(() => {
-    if (!shadersEnabled) return
-
     const canvas = canvasRef.current
     if (!canvas) return
 
@@ -206,7 +200,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       gl.deleteShader(fs)
       gl.deleteBuffer(buf)
     }
-  }, [canvasSize, shadersEnabled])
+  }, [canvasSize])
 
   const rootLabel = focused && (
     <span
@@ -234,7 +228,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
     </span>
   )
 
-  const orbContent = shadersEnabled ? (
+  const orbContent = (
     <canvas
       ref={canvasRef}
       style={{
@@ -246,35 +240,6 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
         pointerEvents: 'none',
       }}
     />
-  ) : (
-    <div
-      style={{
-        position: 'absolute',
-        left: (size - canvasSize) / 2,
-        top: (size - canvasSize) / 2,
-        width: canvasSize,
-        height: canvasSize,
-        borderRadius: '50%',
-        border: `2px solid ${focused ? '#cc4400' : selected ? '#cdd6f4' : '#555'}`,
-        background: '#1a1a1a',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        pointerEvents: 'none',
-      }}
-    >
-      <span
-        style={{
-          color: focused ? '#cc4400' : selected ? '#cdd6f4' : '#888',
-          fontSize: 32,
-          fontWeight: 600,
-          userSelect: 'none',
-          letterSpacing: '0.05em',
-        }}
-      >
-        root
-      </span>
-    </div>
   )
 
   return (
