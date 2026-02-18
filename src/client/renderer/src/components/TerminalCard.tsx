@@ -7,6 +7,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '../lib/constants'
 import { classifyWheelEvent } from '../lib/wheel-gesture'
 import type { ColorPreset } from '../lib/color-presets'
+import type { Camera } from '../lib/camera'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
 import { XTERM_THEME, DEFAULT_BG } from '../../../../shared/theme'
@@ -82,6 +83,7 @@ interface TerminalCardProps {
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  cameraRef: React.RefObject<Camera>
 }
 
 export function TerminalCard({
@@ -89,7 +91,7 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive, onAddNode
+  terminalSessions, onSessionRevive, onAddNode, cameraRef
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -159,9 +161,16 @@ export function TerminalCard({
     }))
     term.options.linkHandler = {
       activate: (event, url) => {
+        window.api.log(`[LinkHandler] activate: url=${url} metaKey=${event.metaKey} button=${event.button}`)
         if (event.metaKey) {
           window.api.openExternal(url)
         }
+      },
+      hover: (_event, url) => {
+        window.api.log(`[LinkHandler] hover: url=${url}`)
+      },
+      leave: (_event, url) => {
+        window.api.log(`[LinkHandler] leave: url=${url}`)
       },
       allowNonHttpProtocols: true
     }
@@ -683,7 +692,7 @@ export function TerminalCard({
     const startScreenY = e.clientY
     const startX = propsRef.current.x
     const startY = propsRef.current.y
-    const currentZoom = propsRef.current.zoom
+    const currentZoom = cameraRef.current.z
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {

@@ -1,7 +1,7 @@
 // Shared size constants and computation used by both client and server.
 
-export const DEFAULT_COLS = 80
-export const DEFAULT_ROWS = 24
+export const DEFAULT_COLS = 160
+export const DEFAULT_ROWS = 45
 
 // xterm.js cell pixel dimensions for Menlo 14px.
 export const CELL_WIDTH = 8.4375

@@ -1013,6 +1013,8 @@ html, body, #root {
   flex-direction: column;
   position: relative;
   cursor: grab;
+  transform: scale(var(--zoom-boost, 1));
+  transform-origin: center center;
 }
 
 .title-card:active {
@@ -1750,7 +1752,7 @@ html, body, #root {
   top: 0;
   left: 50%;
   transform: translate(-50%, 0%);
-  height: calc(50px * max(1, 0.5 + 0.25 / var(--camera-zoom, 1)));
+  height: calc(50px * var(--zoom-boost, 1));
   aspect-ratio: 128 / 85;
   background-color: #ca7c5e;
   z-index: -1;

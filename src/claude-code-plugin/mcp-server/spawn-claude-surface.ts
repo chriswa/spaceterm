@@ -9,14 +9,17 @@ const SOCKET_PATH = process.env.SPACETERM_HOME
   : path.join(os.homedir(), '.spaceterm', 'spaceterm.sock')
 const TIMEOUT_MS = 3000
 
-export const emitMarkdownTool = defineTool({
-  name: 'emit_markdown',
+export const spawnClaudeSurfaceTool = defineTool({
+  name: 'spawn_claude_surface',
   description:
-    'IMPORTANT: Only use this tool when the user explicitly uses the phrase "emit markdown" in their message.',
+    'IMPORTANT: Only use this tool when the user explicitly uses the phrase "spawn claude surface" in their message. ' +
+    'The new surface will start a Claude Code session with the given prompt and title. ' +
+    'This is fire-and-forget — you will not receive the new session\'s ID or be able to interact with it.',
   inputSchema: z.object({
-    content: z.string().describe('Markdown content to display on the card'),
+    prompt: z.string().describe('The prompt to send to the new Claude Code session'),
+    title: z.string().describe('The title for the new terminal node on the canvas'),
   }),
-  async handler({ content }) {
+  async handler({ prompt, title }) {
     const surfaceId = process.env.SPACETERM_SURFACE_ID
     if (!surfaceId) {
       return {
@@ -25,7 +28,7 @@ export const emitMarkdownTool = defineTool({
       }
     }
 
-    const message = JSON.stringify({ type: 'emit-markdown', surfaceId, content }) + '\n'
+    const message = JSON.stringify({ type: 'spawn-claude-surface', surfaceId, prompt, title }) + '\n'
 
     await new Promise<void>((resolve, reject) => {
       const socket = net.createConnection(SOCKET_PATH, () => {
@@ -45,7 +48,7 @@ export const emitMarkdownTool = defineTool({
     })
 
     return {
-      content: [{ type: 'text' as const, text: 'Markdown card created successfully.' }],
+      content: [{ type: 'text' as const, text: `Claude surface "${title}" spawned successfully.` }],
     }
   },
 })

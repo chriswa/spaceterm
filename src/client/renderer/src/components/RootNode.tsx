@@ -19,6 +19,16 @@ interface RootNodeProps {
 /** How much bigger the shader canvas is than the node hit-area */
 const CANVAS_SCALE = 1.0
 
+/**
+ * The card-shell__hidden-head-actions div (archive + add-node buttons) sits in
+ * normal flow above the body-wrapper inside CardShell. The body-wrapper has
+ * position:relative, so our absolutely-positioned canvas is offset downward by
+ * this height. We compensate with a negative top on the canvas and label so the
+ * orb is centred on the world origin.
+ *   height = padding-top (4) + button (20) + padding-bottom (4) = 28
+ */
+const HIDDEN_ACTIONS_HEIGHT = 28
+
 /* ------------------------------------------------------------------ */
 /*  WebGL shaders                                                      */
 /* ------------------------------------------------------------------ */
@@ -209,7 +219,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       style={{
         position: 'absolute',
         left: 0,
-        top: 0,
+        top: -HIDDEN_ACTIONS_HEIGHT,
         width: size,
         height: size,
         display: 'flex',
@@ -236,7 +246,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       style={{
         position: 'absolute',
         left: (size - canvasSize) / 2,
-        top: (size - canvasSize) / 2,
+        top: (size - canvasSize) / 2 - HIDDEN_ACTIONS_HEIGHT,
         width: canvasSize,
         height: canvasSize,
         pointerEvents: 'none',

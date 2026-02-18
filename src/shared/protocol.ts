@@ -81,6 +81,13 @@ export interface EmitMarkdownMessage {
   content: string
 }
 
+export interface SpawnClaudeSurfaceMessage {
+  type: 'spawn-claude-surface'
+  surfaceId: string
+  prompt: string
+  title: string
+}
+
 // --- Client → Server node mutation messages ---
 
 export interface NodeSyncRequestMessage {
@@ -158,6 +165,7 @@ export interface TerminalCreateMessage {
   options?: CreateOptions
   initialTitleHistory?: string[]
   initialName?: string
+  initialInput?: string
 }
 
 export interface TerminalResizeMessage {
@@ -319,6 +327,7 @@ export type ClientMessage =
   | MarkdownSetMaxWidthMessage
   | TerminalReincarnateMessage
   | EmitMarkdownMessage
+  | SpawnClaudeSurfaceMessage
   | SetTerminalModeMessage
   | SetClaudeStatusUnreadMessage
   | DirectoryAddMessage

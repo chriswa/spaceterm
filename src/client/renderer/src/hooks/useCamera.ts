@@ -60,6 +60,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     if (surfaceRef.current) {
       surfaceRef.current.style.transform = getCameraTransform(cam)
       surfaceRef.current.style.setProperty('--camera-zoom', String(cam.z))
+      surfaceRef.current.style.setProperty('--zoom-boost', String(Math.min(Math.max(1, 0.5 + 0.25 / cam.z), 6.75)))
     }
   }, [])
 

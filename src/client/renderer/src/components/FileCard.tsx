@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { FILE_WIDTH, FILE_HEIGHT } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
+import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
@@ -55,13 +56,14 @@ interface FileCardProps {
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  cameraRef: React.RefObject<Camera>
 }
 
 export function FileCard({
   id, x, y, zIndex, zoom, filePath, inheritedCwd, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onFilePathChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: FileCardProps) {
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
@@ -181,7 +183,7 @@ export function FileCard({
     const startScreenY = e.clientY
     const startX = propsRef.current.x
     const startY = propsRef.current.y
-    const currentZoom = propsRef.current.zoom
+    const currentZoom = cameraRef.current.z
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {

@@ -267,8 +267,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-reparent', nodeId, newParentId })
   }
 
-  async terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'terminal-create', parentId, options, initialTitleHistory, initialName })
+  async terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput })
   }
 
   async terminalResize(nodeId: string, cols: number, rows: number): Promise<ServerMessage> {

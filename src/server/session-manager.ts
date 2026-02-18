@@ -8,6 +8,7 @@ import { getShellEnv } from './shell-integration'
 import { TitleParser } from './title-parser'
 import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
 import type { ClaudeState } from '../shared/state'
+import { DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
 
 const MAX_TITLE_HISTORY = 50
 const MAX_CLAUDE_SESSION_HISTORY = 20
@@ -73,8 +74,8 @@ export class SessionManager {
 
   create(options?: CreateOptions): SessionInfo {
     const sessionId = randomUUID()
-    const cols = 160
-    const rows = 45
+    const cols = DEFAULT_COLS
+    const rows = DEFAULT_ROWS
     const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
     const home = process.env.HOME || '/'
 

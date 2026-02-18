@@ -4,8 +4,7 @@ import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
 import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
-
-interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string; title: string }
+import type { CrabEntry } from '../lib/crab-nav'
 
 interface ToolbarProps {
   inputDevice: InputDevice
@@ -18,13 +17,14 @@ interface ToolbarProps {
   crabs: CrabEntry[]
   onCrabClick: (nodeId: string) => void
   selectedNodeId: string | null
+  zoom: number
 }
 
 export function Toolbar({
   inputDevice,
   onToggleInputDevice,
   forceLayoutPlaying, forceLayoutSpeed, onForceLayoutToggle, onForceLayoutIncrease, onForceLayoutDecrease,
-  crabs, onCrabClick, selectedNodeId
+  crabs, onCrabClick, selectedNodeId, zoom
 }: ToolbarProps) {
   const fps = useFps()
   const recording = usePerfStore(s => s.recording)
@@ -61,6 +61,7 @@ export function Toolbar({
         <BeatIndicators />
         <BpmIndicator />
         <span className="toolbar__status-item toolbar__metric">{fps} <span className="toolbar__metric-label">fps</span></span>
+        <span className="toolbar__status-item toolbar__metric">{(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span></span>
         <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
       </span>
       {crabs.length > 0 && (

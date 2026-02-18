@@ -7,6 +7,7 @@ import { syntaxTree } from '@codemirror/language'
 import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH, MARKDOWN_MIN_MAX_WIDTH } from '../lib/constants'
 import { blendHex } from '../lib/color-presets'
 import type { ColorPreset } from '../lib/color-presets'
+import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
@@ -52,6 +53,7 @@ interface MarkdownCardProps {
   fileBacked?: boolean
   fileError?: boolean
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  cameraRef: React.RefObject<Camera>
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them
@@ -356,7 +358,7 @@ export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, maxWidth, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
   onFocus, onClose, onMove, onResize, onContentChange, onMaxWidthChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
   onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, onShipIt,
-  fileBacked, fileError, onAddNode
+  fileBacked, fileError, onAddNode, cameraRef
 }: MarkdownCardProps) {
   const preset = resolvedPreset
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -402,7 +404,7 @@ export function MarkdownCard({
     scroller.style.width = ''
     scroller.style.height = ''
 
-    const finalWidth = Math.min(intrinsicWidth + 4, effectiveMax)
+    const finalWidth = Math.min(intrinsicWidth + 8, effectiveMax)
     const finalHeight = Math.max(MARKDOWN_MIN_HEIGHT, scrollHeight + 4 + CARD_TOP_PADDING)
     return { width: Math.max(MARKDOWN_MIN_WIDTH, finalWidth), height: finalHeight }
   }
@@ -543,7 +545,7 @@ export function MarkdownCard({
 
     const startClientX = e.clientX
     const startWidth = propsRef.current.width
-    const currentZoom = propsRef.current.zoom
+    const currentZoom = cameraRef.current.z
     isDraggingRef.current = true
 
     const handleEl = (e.target as HTMLElement).closest('.markdown-card__resize-handle')
@@ -596,7 +598,7 @@ export function MarkdownCard({
     const startScreenY = e.clientY
     const startX = propsRef.current.x
     const startY = propsRef.current.y
-    const currentZoom = propsRef.current.zoom
+    const currentZoom = cameraRef.current.z
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {

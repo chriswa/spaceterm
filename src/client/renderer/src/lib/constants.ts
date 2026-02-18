@@ -32,7 +32,7 @@ export const MARKDOWN_DEFAULT_HEIGHT = 60
 export const GRID_GAP = 40
 export const GRID_COLS = 3
 
-export const MIN_ZOOM = 0.05
+export const MIN_ZOOM = 0.015
 export const MAX_ZOOM = 1.25
 export const UNFOCUSED_MAX_ZOOM = 1.0
 export const UNFOCUS_SNAP_ZOOM = 0.5

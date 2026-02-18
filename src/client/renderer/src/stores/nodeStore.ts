@@ -254,9 +254,33 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
       const override = state.localOverrides[id]
       if (override) {
         const incomingFields = Object.keys(fields)
-        const stillSuppressed = incomingFields.some(f => override.suppressFields.has(f))
-        if (stillSuppressed) {
-          // Server updated but override still active — keep override, just update server side
+        const suppressedIncoming = incomingFields.filter(f => override.suppressFields.has(f))
+        if (suppressedIncoming.length > 0) {
+          // Check if server echo confirms our optimistic values
+          const allMatch = suppressedIncoming.every(f =>
+            (updatedServer as Record<string, unknown>)[f] === (override.fields as Record<string, unknown>)[f]
+          )
+          if (allMatch) {
+            // Server confirmed — clear override for these fields
+            const newFields = { ...override.fields }
+            const newSuppress = new Set(override.suppressFields)
+            for (const f of suppressedIncoming) {
+              delete (newFields as Record<string, unknown>)[f]
+              newSuppress.delete(f)
+            }
+            let newOverrides: typeof state.localOverrides
+            if (newSuppress.size === 0) {
+              const { [id]: _, ...rest } = state.localOverrides
+              newOverrides = rest
+            } else {
+              newOverrides = { ...state.localOverrides,
+                [id]: { fields: newFields, suppressFields: newSuppress, createdAt: override.createdAt }
+              }
+            }
+            const newNodes = mergeNodes(newServerNodes, newOverrides)
+            return { serverNodes: newServerNodes, localOverrides: newOverrides, nodes: newNodes, ...recomputeDerived(newNodes) }
+          }
+          // Values don't match — override has newer local changes, keep it
           const newNodes = mergeNodes(newServerNodes, state.localOverrides)
           return { serverNodes: newServerNodes, nodes: newNodes, ...recomputeDerived(newNodes) }
         }

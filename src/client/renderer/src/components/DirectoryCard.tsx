@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
+import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
@@ -44,13 +45,14 @@ interface DirectoryCardProps {
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  cameraRef: React.RefObject<Camera>
 }
 
 export function DirectoryCard({
   id, x, y, zIndex, zoom, cwd, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: DirectoryCardProps) {
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
@@ -164,7 +166,7 @@ export function DirectoryCard({
     const startScreenY = e.clientY
     const startX = propsRef.current.x
     const startY = propsRef.current.y
-    const currentZoom = propsRef.current.zoom
+    const currentZoom = cameraRef.current.z
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {

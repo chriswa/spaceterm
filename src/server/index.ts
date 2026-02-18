@@ -7,7 +7,7 @@ import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { canFitAt, computePlacement } from './node-placement'
-import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
+import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
@@ -30,29 +30,21 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
  * Paths are absolute so they work regardless of the spawned process's cwd.
  */
 /**
- * Walk ancestor chain from `startNodeId`, collecting content from markdown
- * nodes and "read this file" instructions from file nodes.
- * Returns joined content root-first, or undefined if no ancestors contribute.
+ * Check the immediate parent node (`startNodeId`) for context to include
+ * in a Claude prompt. Only gathers from the direct parent — not the full
+ * ancestor chain — so Cmd+E scopes context to the immediate parent.
  */
 function gatherAncestorPrompt(nodes: Record<string, import('../shared/state').NodeData>, startNodeId: string): string | undefined {
-  const parts: string[] = []
-  let current = startNodeId
-  while (current && current !== 'root') {
-    const node = nodes[current]
-    if (!node) break
-    // Only non-file-backed markdowns — file-backed ones are included via their parent file node below
-    if (node.type === 'markdown' && !node.fileBacked && node.content.trim()) {
-      parts.push(node.content)
-    } else if (node.type === 'file' && node.filePath) {
-      const cwd = getAncestorCwd(nodes, node.parentId)
-      const absPath = resolveFilePath(node.filePath, cwd)
-      parts.push(absPath)
-    }
-    current = node.parentId
+  const node = nodes[startNodeId]
+  if (!node) return undefined
+  if (node.type === 'markdown' && !node.fileBacked && node.content.trim()) {
+    return node.content
   }
-  if (parts.length === 0) return undefined
-  parts.reverse()
-  return parts.join('\n\n===\n\n')
+  if (node.type === 'file' && node.filePath) {
+    const cwd = getAncestorCwd(nodes, node.parentId)
+    return resolveFilePath(node.filePath, cwd)
+  }
+  return undefined
 }
 
 function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, prompt?: string): CreateOptions {
@@ -433,6 +425,26 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'spawn-claude-surface': {
+      const spawnParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!spawnParentNodeId) {
+        console.error(`[spawn-claude-surface] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      try {
+        const spawnCwd = sessionManager.getCwd(msg.surfaceId)
+        const spawnOptions = buildClaudeCodeCreateOptions(spawnCwd, undefined, msg.prompt)
+        const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
+        snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
+        const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, terminalPixelSize(spawnCols, spawnRows))
+        stateManager.createTerminal(spawnSessionId, spawnParentNodeId, spawnPos.x, spawnPos.y, spawnCols, spawnRows, spawnCwd, undefined, msg.title)
+        console.log(`[spawn-claude-surface] Created terminal "${msg.title}" parented to ${spawnParentNodeId.slice(0, 8)}`)
+      } catch (err: any) {
+        console.error(`[spawn-claude-surface] Failed: ${err.message}`)
+      }
+      break
+    }
+
     case 'status-line': {
       const logEntry =
         JSON.stringify({
@@ -622,11 +634,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           posX = pos.x
           posY = pos.y
         }
+        const parentNode = stateManager.getNode(msg.parentId)
+        console.log(`[terminal-create] parent=${msg.parentId.slice(0, 8)} parentPos=(${parentNode?.x}, ${parentNode?.y}) parentSize=(${parentNode?.type === 'markdown' ? parentNode.width : '?'}x${parentNode?.type === 'markdown' ? parentNode.height : '?'}) termPos=(${posX}, ${posY}) clientPos=(${msg.x}, ${msg.y}) initialInput=${!!msg.initialInput}`)
         stateManager.createTerminal(sessionId, msg.parentId, posX, posY, cols, rows, cwd, msg.initialTitleHistory, msg.initialName)
         if (msg.initialTitleHistory?.length) {
           sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
         }
         send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
+        if (msg.initialInput) {
+          setTimeout(() => {
+            sessionManager.write(sessionId, msg.initialInput! + '\n')
+          }, 100)
+        }
       } catch (err: any) {
         console.error(`terminal-create failed: ${err.message}`)
         send(client.socket, { type: 'server-error', message: `terminal-create failed: ${err.message}` })

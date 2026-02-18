@@ -132,7 +132,7 @@ interface NodeApi {
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
-  terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
@@ -167,7 +167,7 @@ const nodeApi: NodeApi = {
   archiveDelete: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:archive-delete', parentNodeId, archivedNodeId),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
-  terminalCreate: (parentId, options?, initialTitleHistory?, initialName?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName),
+  terminalCreate: (parentId, options?, initialTitleHistory?, initialName?, x?, y?, initialInput?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput),
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
   directoryAdd: (parentId, cwd) => ipcRenderer.invoke('node:directory-add', parentId, cwd),

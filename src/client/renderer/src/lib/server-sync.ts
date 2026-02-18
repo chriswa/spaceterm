@@ -57,45 +57,23 @@ export function destroyServerSync(): void {
 // --- Mutation helpers that send to server + clear overrides on ack ---
 
 export async function sendMove(nodeId: string, x: number, y: number): Promise<void> {
-  try {
-    await window.api.node.move(nodeId, x, y)
-  } finally {
-    useNodeStore.getState().clearOverride(nodeId, ['x', 'y'])
-  }
+  await window.api.node.move(nodeId, x, y)
 }
 
 export async function sendBatchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void> {
-  try {
-    await window.api.node.batchMove(moves)
-  } finally {
-    for (const m of moves) {
-      useNodeStore.getState().clearOverride(m.nodeId, ['x', 'y'])
-    }
-  }
+  await window.api.node.batchMove(moves)
 }
 
 export async function sendRename(nodeId: string, name: string): Promise<void> {
-  try {
-    await window.api.node.rename(nodeId, name)
-  } finally {
-    useNodeStore.getState().clearOverride(nodeId, ['name'])
-  }
+  await window.api.node.rename(nodeId, name)
 }
 
 export async function sendSetColor(nodeId: string, colorPresetId: string): Promise<void> {
-  try {
-    await window.api.node.setColor(nodeId, colorPresetId)
-  } finally {
-    useNodeStore.getState().clearOverride(nodeId, ['colorPresetId'])
-  }
+  await window.api.node.setColor(nodeId, colorPresetId)
 }
 
 export async function sendBringToFront(nodeId: string): Promise<void> {
-  try {
-    await window.api.node.bringToFront(nodeId)
-  } finally {
-    useNodeStore.getState().clearOverride(nodeId, ['zIndex'])
-  }
+  await window.api.node.bringToFront(nodeId)
 }
 
 export async function sendArchive(nodeId: string): Promise<void> {
@@ -114,9 +92,12 @@ export async function sendTerminalCreate(
   parentId: string,
   options?: CreateOptions,
   initialTitleHistory?: string[],
-  initialName?: string
+  initialName?: string,
+  x?: number,
+  y?: number,
+  initialInput?: string
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
-  return window.api.node.terminalCreate(parentId, options, initialTitleHistory, initialName)
+  return window.api.node.terminalCreate(parentId, options, initialTitleHistory, initialName, x, y, initialInput)
 }
 
 export async function sendDirectoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }> {

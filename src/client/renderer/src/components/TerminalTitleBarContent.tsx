@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ColorPreset } from '../lib/color-presets'
 import { blendHex } from '../lib/color-presets'
 import { terminalSubtitle } from '../lib/node-title'
@@ -28,8 +28,8 @@ export function TerminalTitleBarContent({
     }
   }, [editing])
 
-  // Auto-size input to match text width
-  useEffect(() => {
+  // Auto-size input to match text width (layoutEffect to avoid flicker)
+  useLayoutEffect(() => {
     if (editing && sizerRef.current) {
       setInputWidth(sizerRef.current.scrollWidth)
     }

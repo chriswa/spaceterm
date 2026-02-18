@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
+import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
@@ -35,13 +36,14 @@ interface TitleCardProps {
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  cameraRef: React.RefObject<Camera>
 }
 
 export function TitleCard({
   id, x, y, zIndex, zoom, text, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onTextChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: TitleCardProps) {
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
@@ -122,7 +124,7 @@ export function TitleCard({
     const startScreenY = e.clientY
     const startX = propsRef.current.x
     const startY = propsRef.current.y
-    const currentZoom = propsRef.current.zoom
+    const currentZoom = cameraRef.current.z
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {

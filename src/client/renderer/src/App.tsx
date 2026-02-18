@@ -19,7 +19,7 @@ import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
 import { useBeatPulse } from './hooks/useBeatPulse'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
@@ -27,8 +27,27 @@ import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
 import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText } from './lib/server-sync'
+import { adjacentCrab, highestPriorityCrab } from './lib/crab-nav'
+import { isDisposable } from '../../../shared/node-utils'
+import { pushArchiveUndo, popArchiveUndo } from './lib/undo-archive'
+import type { CrabEntry } from './lib/crab-nav'
 
-interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string; title: string }
+function getMarkdownSpawnInfo(parentNode: import('../../../../shared/state').NodeData | undefined): {
+  initialInput?: string; initialName?: string; x?: number; y?: number
+} {
+  if (!parentNode || parentNode.type !== 'markdown' || !parentNode.content.trim()) return {}
+  const content = parentNode.content.trim()
+  const lines = content.split('\n')
+  const headingMatch = lines[0].match(/^#+\s+(.+)/)
+  const initialName = headingMatch ? headingMatch[1].trim() : undefined
+  const commandLines = headingMatch ? lines.slice(1).join('\n').trim() : content
+  const initialInput = commandLines || undefined
+  const termSize = terminalPixelSize(DEFAULT_COLS, DEFAULT_ROWS)
+  const gap = 20
+  const x = parentNode.x
+  const y = parentNode.y + parentNode.height / 2 + gap + termSize.height / 2
+  return { initialInput, initialName, x, y }
+}
 
 const archiveDismissFlag = { active: false, timer: 0 }
 const archiveWheelAcc = createWheelAccumulator()
@@ -127,6 +146,8 @@ export function App() {
     entries.sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)
     return entries
   }, [nodes])
+  const crabsRef = useRef<CrabEntry[]>([])
+  crabsRef.current = crabs
 
   // Reparent mode state
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
@@ -629,6 +650,12 @@ export function App() {
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
+    const { nodes } = useNodeStore.getState()
+    const node = nodes[id]
+    if (node && !isDisposable(node)) {
+      const reparentedChildIds = Object.keys(nodes).filter(k => nodes[k].parentId === id)
+      pushArchiveUndo({ nodeId: id, parentId: node.parentId, reparentedChildIds })
+    }
     await sendArchive(id)
     // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
   }, [])
@@ -850,7 +877,13 @@ export function App() {
     let nodeId: string
     switch (type) {
       case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: {} }); nodeId = r.sessionId; break }
-      case 'terminal': { const r = await sendTerminalCreate(parentNodeId, cwd ? { cwd } : undefined); nodeId = r.sessionId; break }
+      case 'terminal': {
+        const parentNode = useNodeStore.getState().nodes[parentNodeId]
+        const { initialInput, initialName: mdName, x, y } = getMarkdownSpawnInfo(parentNode)
+        const r = await sendTerminalCreate(parentNodeId, cwd ? { cwd } : undefined, undefined, mdName, x, y, initialInput)
+        nodeId = r.sessionId
+        break
+      }
       case 'markdown': { const r = await sendMarkdownAdd(parentNodeId); nodeId = r.nodeId; break }
       case 'directory': { const r = await sendDirectoryAdd(parentNodeId, cwd ?? '~'); nodeId = r.nodeId; break }
       case 'file': { const r = await sendFileAdd(parentNodeId, ''); nodeId = r.nodeId; break }
@@ -904,16 +937,42 @@ export function App() {
           active.isContentEditable
         )
         if (isEditable) {
-          // Allow Cmd+Arrow (word/line navigation) and Escape (exit editing) to reach the control
-          if (e.key === 'Escape' || (e.metaKey && e.key.startsWith('Arrow'))) return
+          // Allow Cmd+Arrow (word/line navigation), Escape (exit editing),
+          // and Cmd+Z (native undo) to reach the control
+          if (e.key === 'Escape' || (e.metaKey && (e.key.startsWith('Arrow') || e.key === 'z'))) return
         }
+      }
+
+      // Cmd+Z: undo archive (only when not in a text field — the isEditable guard above returns early)
+      if (e.metaKey && e.key === 'z') {
+        e.preventDefault()
+        e.stopPropagation()
+        const entry = popArchiveUndo()
+        if (!entry) {
+          shakeCamera()
+          return
+        }
+        ;(async () => {
+          await sendUnarchive(entry.parentId, entry.nodeId)
+          const { nodes } = useNodeStore.getState()
+          for (const childId of entry.reparentedChildIds) {
+            const child = nodes[childId]
+            if (child && child.parentId === entry.parentId) {
+              sendReparent(childId, entry.nodeId)
+            }
+          }
+          navigateToNode(entry.nodeId)
+        })()
+        return
       }
 
       if (e.metaKey && e.key === 't') {
         e.preventDefault()
         e.stopPropagation()
         spawnNode(async (parentId, cwd) => {
-          const r = await sendTerminalCreate(parentId, cwd ? { cwd } : undefined)
+          const parentNode = useNodeStore.getState().nodes[parentId]
+          const { initialInput, initialName, x, y } = getMarkdownSpawnInfo(parentNode)
+          const r = await sendTerminalCreate(parentId, cwd ? { cwd } : undefined, undefined, initialName, x, y, initialInput)
           return r.sessionId
         })
       }
@@ -1024,158 +1083,34 @@ export function App() {
         }
       }
 
-      // Cmd+Down Arrow: edge → child node, node → child edge
+      // Cmd+Down Arrow: jump to highest-priority unattended crab
       if (e.metaKey && e.key === 'ArrowDown') {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
-        const sel = selectionRef.current
-        const stack = navStackRef.current
-
-        if (sel && sel.type === 'edge') {
-          // Edge selected → select child node, fly to it
-          stack.push(sel)
-          const nodeSel: Selection = { id: sel.id, type: 'node' }
-          setSelection(nodeSel)
-          focusRef.current = null
-          setFocusedId(null)
-          setScrollMode(false)
-          lastFocusedRef.current = sel.id
-          flashNode(sel.id)
-          flyToSelection(nodeSel)
-          return
+        const best = highestPriorityCrab(crabsRef.current)
+        if (!best || best.nodeId === focusRef.current) {
+          shakeCamera()
+        } else {
+          navigateToNode(best.nodeId)
         }
-
-        // Node selected (or no selection) → select a child edge
-        const current = sel?.id ?? focusRef.current ?? lastFocusedRef.current
-        if (!current) {
-          const rootSel: Selection = { id: 'root', type: 'node' }
-          setSelection(rootSel)
-          focusRef.current = null
-          setFocusedId(null)
-          setScrollMode(false)
-          flyToSelection(rootSel)
-          return
-        }
-        const allNodes = useNodeStore.getState().nodes
-        const children = Object.values(allNodes).filter(n => n.parentId === current)
-        if (children.length === 0) return
-
-        // Prefer the child we previously navigated up from (stack hint)
-        let preferredChild = children[0]
-        if (stack.length > 0) {
-          const stackTop = stack[stack.length - 1]
-          // If the stack top is an edge whose parent is the current node, prefer that child
-          if (stackTop.type === 'edge') {
-            const hintNode = allNodes[stackTop.id]
-            if (hintNode && hintNode.parentId === current) {
-              preferredChild = hintNode
-              stack.pop() // consume the hint
-            }
-          }
-          // If the stack top is a node that is a child of current, prefer its edge
-          if (stackTop.type === 'node') {
-            const hintNode = allNodes[stackTop.id]
-            if (hintNode && hintNode.parentId === current) {
-              preferredChild = hintNode
-              stack.pop() // consume the hint
-            }
-          }
-        }
-
-        stack.push(sel ?? { id: current, type: 'node' })
-        const edgeSel: Selection = { id: preferredChild.id, type: 'edge' }
-        setSelection(edgeSel)
-        focusRef.current = null
-        setFocusedId(null)
-        setScrollMode(false)
-        lastFocusedRef.current = preferredChild.id
-        flyToSelection(edgeSel)
       }
 
-      // Cmd+Left/Right Arrow: cycle through siblings by angle around parent
+      // Cmd+Left/Right Arrow: cycle through crabs in toolbar order
       if (e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
-        const sel = selectionRef.current
-        const target = sel?.id ?? focusRef.current ?? lastFocusedRef.current
-        if (!target || target === 'root') return
-        const allNodes = useNodeStore.getState().nodes
-        const node = allNodes[target]
-        if (!node) return
-        const parentId = node.parentId
-        const parentCenter = parentId === 'root' ? { x: 0, y: 0 } : allNodes[parentId] ? { x: allNodes[parentId].x, y: allNodes[parentId].y } : null
-        if (!parentCenter) return
-        const siblings = Object.values(allNodes).filter(n => n.parentId === parentId)
-
-        // Determine the selection type to maintain (node stays node, edge stays edge)
-        const selType = sel?.type ?? 'node'
-
-        if (siblings.length <= 1) {
+        if (!focusRef.current) {
           shakeCamera()
           return
         }
-        // Sort siblings by angle from parent (atan2), clockwise in screen coords
-        const withAngles = siblings.map(s => ({
-          id: s.id,
-          angle: Math.atan2(s.y - parentCenter.y, s.x - parentCenter.x)
-        }))
-        withAngles.sort((a, b) => a.angle - b.angle)
-        const idx = withAngles.findIndex(s => s.id === target)
-        const len = withAngles.length
-        const nextIdx = e.key === 'ArrowRight'
-          ? (idx + 1) % len       // clockwise
-          : (idx - 1 + len) % len // counterclockwise
-        const nextId = withAngles[nextIdx].id
-        const nextNode = allNodes[nextId]
-        if (!nextNode) return
-
-        // Compute target camera for the selection
-        const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
-        if (!viewport) return
-
-        const newSel: Selection = { id: nextId, type: selType }
-        const cameraTarget = selType === 'node'
-          ? (() => {
-              const size = nodePixelSize(nextNode)
-              const bounds = { x: nextNode.x - size.width / 2, y: nextNode.y - size.height / 2, ...size }
-              return cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025)
-            })()
-          : (() => {
-              const childSize = nodePixelSize(nextNode)
-              const rects = [{ x: nextNode.x - childSize.width / 2, y: nextNode.y - childSize.height / 2, ...childSize }]
-              if (parentId === 'root') {
-                rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
-              } else {
-                const parent = allNodes[parentId]
-                if (parent) { const ps = nodePixelSize(parent); rects.push({ x: parent.x - ps.width / 2, y: parent.y - ps.height / 2, ...ps }) }
-              }
-              const center = { x: (parentCenter.x + nextNode.x) / 2, y: (parentCenter.y + nextNode.y) / 2 }
-              return cameraToFitBoundsWithCenter(center, rects, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM)
-            })()
-
-        // Does NOT focus — only updates selection
-        setSelection(newSel)
-        focusRef.current = null
-        setFocusedId(null)
-        setScrollMode(false)
-        lastFocusedRef.current = nextId
-        navStackRef.current = []
-        if (selType === 'node') flashNode(nextId)
-
-        if (selType === 'edge') {
-          // Simple fly-to for edges (nodes are too close together for arc animation)
-          flyTo(cameraTarget)
+        const direction = e.key === 'ArrowRight' ? 'right' : 'left'
+        const next = adjacentCrab(crabsRef.current, focusRef.current, direction)
+        if (!next) {
+          shakeCamera()
         } else {
-          // Rotational fly-to: arc around the parent
-          rotationalFlyTo({
-            parentCenter,
-            sourceCenter: { x: node.x, y: node.y },
-            targetCenter: { x: nextNode.x, y: nextNode.y },
-            targetCamera: cameraTarget,
-            direction: e.key === 'ArrowRight' ? 'cw' : 'ccw'
-          })
+          navigateToNode(next.nodeId)
         }
       }
 
@@ -1202,7 +1137,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, rotationalFlyTo, bringToFront, speak, ttsStop, isSpeaking])
+  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, shakeCamera, bringToFront, speak, ttsStop, isSpeaking])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -1352,6 +1287,7 @@ export function App() {
             terminalSessions={t.terminalSessions}
             onSessionRevive={handleSessionRevive}
             onAddNode={handleAddNode}
+            cameraRef={cameraRef}
           />
         ))}
         {markdowns.map((m) => {
@@ -1398,6 +1334,7 @@ export function App() {
               fileBacked={isFileBacked}
               fileError={fileError}
               onAddNode={handleAddNode}
+              cameraRef={cameraRef}
             />
           )
         })}
@@ -1429,6 +1366,7 @@ export function App() {
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
             onAddNode={handleAddNode}
+            cameraRef={cameraRef}
           />
         ))}
         {directories.map((d) => (
@@ -1459,6 +1397,7 @@ export function App() {
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
             onAddNode={handleAddNode}
+            cameraRef={cameraRef}
           />
         ))}
         {files.map((f) => (
@@ -1490,6 +1429,7 @@ export function App() {
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
             onAddNode={handleAddNode}
+            cameraRef={cameraRef}
           />
         ))}
         {hoveredEdge && (
@@ -1514,6 +1454,7 @@ export function App() {
         crabs={crabs}
         onCrabClick={handleCrabClick}
         selectedNodeId={focusedId}
+        zoom={camera.z}
       />
       <Toast toasts={toasts} onExpire={expireToast} />
     </div>
