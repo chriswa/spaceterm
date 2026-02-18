@@ -247,10 +247,6 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-set-color', nodeId, colorPresetId })
   }
 
-  async nodeSetFood(nodeId: string, food: boolean): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'node-set-food', nodeId, food })
-  }
-
   async nodeArchive(nodeId: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-archive', nodeId })
   }
@@ -271,8 +267,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-reparent', nodeId, newParentId })
   }
 
-  async terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[]): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'terminal-create', parentId, options, initialTitleHistory })
+  async terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-create', parentId, options, initialTitleHistory, initialName })
   }
 
   async terminalResize(nodeId: string, cols: number, rows: number): Promise<ServerMessage> {

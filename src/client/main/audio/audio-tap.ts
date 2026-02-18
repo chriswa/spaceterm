@@ -53,7 +53,6 @@ export async function stop(): Promise<void> {
     // ignore stop errors
   }
   tap = null
-  dataCallback = null
   logger.log('[audio-tap] stopped')
 }
 

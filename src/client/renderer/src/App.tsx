@@ -26,7 +26,7 @@ import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPrese
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetFood, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText } from './lib/server-sync'
 
 interface CrabEntry { nodeId: string; color: 'white' | 'red' | 'purple' | 'orange' | 'gray'; unviewed: boolean; createdAt: string; title: string }
 
@@ -65,7 +65,6 @@ export function App() {
   const batchMoveNodes = useNodeStore(s => s.batchMoveNodes)
   const renameNode = useNodeStore(s => s.renameNode)
   const setNodeColor = useNodeStore(s => s.setNodeColor)
-  const setNodeFood = useNodeStore(s => s.setNodeFood)
   const bringToFront = useNodeStore(s => s.bringToFront)
 
   const treeLineNodes = useMemo(() =>
@@ -552,7 +551,10 @@ export function App() {
       if (latestEntry.reason === 'fork') {
         const resumeSessionId = history[history.length - 2].claudeSessionId
         const cwd = getParentCwd(id)
-        sendTerminalCreate(id, { cwd, claude: { resumeSessionId } }).then((result) => {
+        const parentNode = useNodeStore.getState().nodes[id]
+        const titleHistory = parentNode?.type === 'terminal' ? parentNode.shellTitleHistory : undefined
+        const parentName = parentNode?.name
+        sendTerminalCreate(id, { cwd, claude: { resumeSessionId } }, titleHistory, parentName).then((result) => {
           if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
           navigateToNode(result.sessionId)
         })
@@ -801,11 +803,6 @@ export function App() {
     setNodeColor(id, colorPresetId)
     sendSetColor(id, colorPresetId)
   }, [setNodeColor])
-
-  const handleFoodToggle = useCallback((id: string, food: boolean) => {
-    setNodeFood(id, food)
-    sendSetFood(id, food)
-  }, [setNodeFood])
 
   const handleResizeTerminal = useCallback((id: string, cols: number, rows: number) => {
     sendTerminalResize(id, cols, rows)
@@ -1389,8 +1386,6 @@ export function App() {
               onMaxWidthChange={handleMaxWidthChange}
               onRename={handleRename}
               onColorChange={handleColorChange}
-              food={m.food}
-              onFoodToggle={handleFoodToggle}
               onUnarchive={handleUnarchive}
               onArchiveDelete={handleArchiveDelete}
               onArchiveToggled={handleArchiveToggled}

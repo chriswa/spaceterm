@@ -30,18 +30,18 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
  * Paths are absolute so they work regardless of the spawned process's cwd.
  */
 /**
- * Walk ancestor chain from `startNodeId`, collecting food content from markdown
- * nodes (food=true) and "read this file" instructions from file nodes.
- * Returns joined content root-first, or undefined if no food ancestors exist.
+ * Walk ancestor chain from `startNodeId`, collecting content from markdown
+ * nodes and "read this file" instructions from file nodes.
+ * Returns joined content root-first, or undefined if no ancestors contribute.
  */
-function gatherFoodPrompt(nodes: Record<string, import('../shared/state').NodeData>, startNodeId: string): string | undefined {
+function gatherAncestorPrompt(nodes: Record<string, import('../shared/state').NodeData>, startNodeId: string): string | undefined {
   const parts: string[] = []
   let current = startNodeId
   while (current && current !== 'root') {
     const node = nodes[current]
     if (!node) break
     // Only non-file-backed markdowns — file-backed ones are included via their parent file node below
-    if (node.type === 'markdown' && node.food && node.content.trim()) {
+    if (node.type === 'markdown' && !node.fileBacked && node.content.trim()) {
       parts.push(node.content)
     } else if (node.type === 'file' && node.filePath) {
       const cwd = getAncestorCwd(nodes, node.parentId)
@@ -502,12 +502,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'node-set-food': {
-      stateManager.setNodeFood(msg.nodeId, msg.food)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
-      break
-    }
-
     case 'node-archive': {
       const node = stateManager.getNode(msg.nodeId)
       if (node && node.type === 'terminal' && node.alive) {
@@ -610,7 +604,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         let options: CreateOptions | undefined
         if (msg.options?.claude) {
           const prompt = msg.options.claude.prompt
-            ?? gatherFoodPrompt(stateManager.getState().nodes, msg.parentId)
+            ?? gatherAncestorPrompt(stateManager.getState().nodes, msg.parentId)
           options = buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, prompt)
         } else {
           options = msg.options
@@ -628,7 +622,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           posX = pos.x
           posY = pos.y
         }
-        stateManager.createTerminal(sessionId, msg.parentId, posX, posY, cols, rows, cwd, msg.initialTitleHistory)
+        stateManager.createTerminal(sessionId, msg.parentId, posX, posY, cols, rows, cwd, msg.initialTitleHistory, msg.initialName)
         if (msg.initialTitleHistory?.length) {
           sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
         }
@@ -1023,13 +1017,32 @@ function startServer(): void {
 
         // Array content = tool results
         if (Array.isArray(msg.content)) {
-          // Check if user interrupted/aborted
           const toolUseResult = entry.toolUseResult
+
+          // User interrupted/aborted a tool
           if (typeof toolUseResult === 'string' && toolUseResult.includes('interrupted by user')) {
             queueTransition(surfaceId, 'stopped', 'jsonl', 'jsonl:user:interrupt', entryTime)
             continue
           }
-          // Non-interrupt tool results: don't change state (hooks handle it)
+
+          // User rejected a permission prompt — Claude Code doesn't fire PostToolUse
+          // or PostToolUseFailure for rejections, so the JSONL entry is our only signal.
+          // Default to stopped: if Claude continues, jsonl:assistant will correct to working.
+          if (typeof toolUseResult === 'string' && toolUseResult.includes('rejected')) {
+            queueTransition(surfaceId, 'stopped', 'jsonl', 'jsonl:user:rejected', entryTime)
+            continue
+          }
+
+          // Check content for interrupt text (covers cases where toolUseResult is null
+          // but the entry content carries the interrupt signal, e.g. the second entry
+          // Claude Code writes after a permission rejection)
+          const contentArr = msg.content as Array<{ type?: string; text?: string }>
+          if (contentArr.some(item => item.type === 'text' && typeof item.text === 'string' && item.text.includes('interrupted by user'))) {
+            queueTransition(surfaceId, 'stopped', 'jsonl', 'jsonl:user:interrupt:content', entryTime)
+            continue
+          }
+
+          // Non-interrupt, non-rejection tool results: don't change state (hooks handle it)
         }
       }
     }

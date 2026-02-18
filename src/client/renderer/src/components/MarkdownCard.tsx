@@ -49,8 +49,6 @@ interface MarkdownCardProps {
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
   onShipIt?: (id: string) => void
-  food?: boolean
-  onFoodToggle?: (id: string, food: boolean) => void
   fileBacked?: boolean
   fileError?: boolean
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
@@ -357,7 +355,7 @@ const linkClickHandler = EditorView.domEventHandlers({
 export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, maxWidth, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
   onFocus, onClose, onMove, onResize, onContentChange, onMaxWidthChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, onShipIt, food, onFoodToggle,
+  onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, onShipIt,
   fileBacked, fileError, onAddNode
 }: MarkdownCardProps) {
   const preset = resolvedPreset
@@ -659,8 +657,6 @@ export function MarkdownCard({
       onAddNode={onAddNode}
       onShipIt={onShipIt}
       isReparenting={reparentingNodeId === id}
-      food={food}
-      onFoodToggle={onFoodToggle}
       className={`markdown-card ${focused ? 'markdown-card--focused' : selected ? 'markdown-card--selected' : ''} ${isEmpty ? 'markdown-card--empty' : ''}`}
       style={{
         backgroundColor: 'transparent',

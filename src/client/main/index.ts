@@ -6,6 +6,7 @@ import { ServerClient } from './server-client'
 import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
 import { setupAudio } from './audio'
+import * as audioTap from './audio/audio-tap'
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
@@ -32,6 +33,49 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+}
+
+function setupVisibilityTracking(): void {
+  if (!mainWindow) return
+
+  let isHidden = false
+  let isMinimized = false
+  let isOccluded = false
+  let wasVisible = true
+
+  const update = () => {
+    const visible = !isHidden && !isMinimized && !isOccluded
+    if (visible === wasVisible) return
+    wasVisible = visible
+    const ts = new Date().toISOString()
+    const reason = isHidden ? 'hidden' : isMinimized ? 'minimized' : isOccluded ? 'occluded' : 'restored'
+    console.log(`[${ts}] visibility ${visible ? 'ON' : 'OFF'} (${reason})`)
+    logger.log(`[visibility] visible=${visible} (hidden=${isHidden} minimized=${isMinimized} occluded=${isOccluded})`)
+
+    if (visible) {
+      audioTap.start().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        logger.log(`[visibility] audio restart failed: ${msg}`)
+      })
+    } else {
+      audioTap.stop().catch(() => {})
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:visibility-changed', visible)
+    }
+  }
+
+  mainWindow.on('hide', () => { isHidden = true; update() })
+  mainWindow.on('show', () => { isHidden = false; update() })
+  mainWindow.on('minimize', () => { isMinimized = true; update() })
+  mainWindow.on('restore', () => { isMinimized = false; update() })
+
+  // macOS: fires when window is obscured by another window or on a non-visible Space
+  if (process.platform === 'darwin') {
+    mainWindow.on('occluded' as any, () => { isOccluded = true; update() })
+    mainWindow.on('unoccluded' as any, () => { isOccluded = false; update() })
+  }
 }
 
 function setupIPC(): void {
@@ -101,10 +145,6 @@ function setupIPC(): void {
     await client!.nodeSetColor(nodeId, colorPresetId)
   })
 
-  ipcMain.handle('node:set-food', async (_event, nodeId: string, food: boolean) => {
-    await client!.nodeSetFood(nodeId, food)
-  })
-
   ipcMain.handle('node:archive', async (_event, nodeId: string) => {
     await client!.nodeArchive(nodeId)
   })
@@ -125,8 +165,8 @@ function setupIPC(): void {
     await client!.nodeReparent(nodeId, newParentId)
   })
 
-  ipcMain.handle('node:terminal-create', async (_event, parentId: string, options?: Record<string, unknown>, initialTitleHistory?: string[]) => {
-    const resp = await client!.terminalCreate(parentId, options as any, initialTitleHistory)
+  ipcMain.handle('node:terminal-create', async (_event, parentId: string, options?: Record<string, unknown>, initialTitleHistory?: string[], initialName?: string) => {
+    const resp = await client!.terminalCreate(parentId, options as any, initialTitleHistory, initialName)
     if (resp.type === 'created') {
       // Auto-attach so we receive data events for this session
       await client!.attach(resp.sessionId)
@@ -404,6 +444,9 @@ app.whenReady().then(async () => {
     const msg = err instanceof Error ? err.message : String(err)
     logger.log(`[audio] setupAudio threw: ${msg}`)
   }
+
+  setupVisibilityTracking()
+
   logger.log('Window created')
 })
 

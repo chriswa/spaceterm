@@ -241,7 +241,7 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
       const dt = now - prevTime
       prevTime = now
 
-      const { phase, bpm } = useAudioStore.getState()
+      const { phase, bpm, confidence } = useAudioStore.getState()
 
       let glowPulse: number
       let rock = 0
@@ -288,7 +288,7 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
         // Rock: squared cosine for more time spent at extremes
         const maxRock = 12 // degrees
         const c = Math.cos(Math.PI * dancePhase)
-        rock = maxRock * c * Math.abs(c)
+        rock = maxRock * c * Math.abs(c) * confidence
 
         // Bounce: 2 bounces per dance-half (= 1 bounce per real beat)
         const maxBounce = 3 // px

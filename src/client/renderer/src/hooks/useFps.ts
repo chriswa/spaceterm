@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { isWindowVisible } from './useWindowVisible'
 
 export function useFps() {
   const [fps, setFps] = useState(0)
@@ -17,8 +18,17 @@ export function useFps() {
       }
       rafRef.current = requestAnimationFrame(tick)
     }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafRef.current)
+
+    const startLoop = () => { if (!rafRef.current) rafRef.current = requestAnimationFrame(tick) }
+    const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
+
+    const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
+      if (visible) { lastTimeRef.current = performance.now(); framesRef.current = 0; startLoop() } else { stopLoop(); setFps(0) }
+    })
+
+    if (isWindowVisible()) startLoop()
+
+    return () => { stopLoop(); unsubVisibility() }
   }, [])
 
   return fps

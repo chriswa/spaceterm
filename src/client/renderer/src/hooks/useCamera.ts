@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage } from '../lib/camera'
 import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY } from '../lib/constants'
+import { isWindowVisible } from './useWindowVisible'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
 // zoom), we write the CSS transform directly to the DOM via surfaceRef instead
@@ -107,8 +108,16 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     if (animatingRef.current) return
     animatingRef.current = true
     lastTimeRef.current = performance.now()
+    if (!isWindowVisible()) {
+      // Window not visible — snap to target immediately instead of animating
+      cameraRef.current = { ...targetRef.current }
+      applyToDOM(cameraRef.current)
+      setCamera(cameraRef.current)
+      animatingRef.current = false
+      return
+    }
     rafRef.current = requestAnimationFrame(tick)
-  }, [tick])
+  }, [tick, applyToDOM])
 
   const flyTo = useCallback((to: Camera, speed = FOCUS_SPEED, isSnapBack = false) => {
     clearTimeout(snapBackTimerRef.current)
@@ -166,6 +175,43 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     scheduleSync()
   }, [applyToDOM, scheduleSync])
 
+  // Middle mouse button drag → pan from anywhere (capture phase on window
+  // fires before terminal/CodeMirror handlers, so no component changes needed)
+  useEffect(() => {
+    const onMiddleDown = (e: MouseEvent) => {
+      if (e.button !== 1) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      document.documentElement.classList.add('middle-panning')
+      let lastX = e.clientX
+      let lastY = e.clientY
+
+      const onMove = (ev: MouseEvent) => {
+        ev.preventDefault()
+        ev.stopPropagation()
+        userPan(lastX - ev.clientX, lastY - ev.clientY)
+        lastX = ev.clientX
+        lastY = ev.clientY
+      }
+
+      const onUp = (ev: MouseEvent) => {
+        if (ev.button !== 1) return
+        ev.preventDefault()
+        ev.stopPropagation()
+        window.removeEventListener('mousemove', onMove, true)
+        window.removeEventListener('mouseup', onUp, true)
+        document.documentElement.classList.remove('middle-panning')
+      }
+
+      window.addEventListener('mousemove', onMove, true)
+      window.addEventListener('mouseup', onUp, true)
+    }
+
+    window.addEventListener('mousedown', onMiddleDown, true)
+    return () => window.removeEventListener('mousedown', onMiddleDown, true)
+  }, [userPan])
+
   const scheduleSnapBack = useCallback((cam: Camera, maxZoom: number, anchor: { x: number; y: number }) => {
     clearTimeout(snapBackTimerRef.current)
     if (cam.z >= MIN_ZOOM && cam.z <= maxZoom) return
@@ -201,7 +247,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
       }
       const point = { x: e.clientX, y: e.clientY }
       const maxZoom = focusedRef?.current ? MAX_ZOOM : UNFOCUSED_MAX_ZOOM
-      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY, maxZoom)
+      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY * 4, maxZoom)
       cameraRef.current = next
       targetRef.current = { ...next }
       applyToDOM(next)
@@ -281,7 +327,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     }
     // 500ms at 0°, lerp to 1000ms at 360°
     const absAngle = Math.abs(angleDeltaEarly)
-    const duration = params.duration ?? (500 + (absAngle / (2 * Math.PI)) * 500)
+    const duration = params.duration ?? (125 + (absAngle / (2 * Math.PI)) * 125)
 
     // Cancel any existing animation. Keep animatingRef true so that
     // flyTo → ensureAnimating is blocked during the rotational animation.
@@ -391,7 +437,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     targetBounds: { x: number; y: number; width: number; height: number }
     duration?: number
   }) => {
-    const { targetCamera, targetBounds, duration = 1200 } = params
+    const { targetCamera, targetBounds, duration = 300 } = params
 
     cancelAnimationFrame(rafRef.current)
     animatingRef.current = true

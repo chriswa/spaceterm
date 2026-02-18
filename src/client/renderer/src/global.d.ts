@@ -55,13 +55,12 @@ interface NodeApi {
   batchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void>
   rename(nodeId: string, name: string): Promise<void>
   setColor(nodeId: string, colorPresetId: string): Promise<void>
-  setFood(nodeId: string, food: boolean): Promise<void>
   archive(nodeId: string): Promise<void>
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
-  terminalCreate(parentId: string, x: number, y: number, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
@@ -104,6 +103,7 @@ interface WindowApi {
   setFullScreen(enabled: boolean): Promise<void>
   isKiosk(): Promise<boolean>
   setKiosk(enabled: boolean): Promise<void>
+  onVisibilityChanged(callback: (visible: boolean) => void): () => void
 }
 
 interface Api {

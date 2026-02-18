@@ -42,8 +42,8 @@ export const ZOOM_RUBBER_BAND_LOW = 0.02
 export const ZOOM_SNAP_BACK_SPEED = 15
 export const ZOOM_SNAP_BACK_DELAY = 150
 
-export const FOCUS_SPEED = 10
-export const UNFOCUS_SPEED = 6
+export const FOCUS_SPEED = 40
+export const UNFOCUS_SPEED = 24
 
 export const WHEEL_DECAY_MS = 80
 export const HORIZONTAL_SCROLL_THRESHOLD = 15

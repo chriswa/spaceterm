@@ -37,7 +37,6 @@ interface NodeStoreState {
   batchMoveNodes(moves: Array<{ id: string; dx: number; dy: number }>): void
   renameNode(id: string, name: string): void
   setNodeColor(id: string, colorPresetId: string): void
-  setNodeFood(id: string, food: boolean): void
   bringToFront(id: string): void
 
   // --- File content ---
@@ -157,7 +156,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
     set(state => {
       const node = state.nodes[id]
       if (!node) return state
-      const fields = { name: name || undefined } as Partial<NodeData>
+      const fields = { name: name || null } as Partial<NodeData>
       const newOverrides = {
         ...state.localOverrides,
         [id]: {
@@ -181,24 +180,6 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
         [id]: {
           fields: { ...state.localOverrides[id]?.fields, ...fields },
           suppressFields: new Set([...(state.localOverrides[id]?.suppressFields ?? []), 'colorPresetId']),
-          createdAt: Date.now()
-        }
-      }
-      const newNodes = mergeNodes(state.serverNodes, newOverrides)
-      return { localOverrides: newOverrides, nodes: newNodes, ...recomputeDerived(newNodes) }
-    })
-  },
-
-  setNodeFood(id, food) {
-    set(state => {
-      const node = state.nodes[id]
-      if (!node) return state
-      const fields = { food } as Partial<NodeData>
-      const newOverrides = {
-        ...state.localOverrides,
-        [id]: {
-          fields: { ...state.localOverrides[id]?.fields, ...fields },
-          suppressFields: new Set([...(state.localOverrides[id]?.suppressFields ?? []), 'food']),
           createdAt: Date.now()
         }
       }

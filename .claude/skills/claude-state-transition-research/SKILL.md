@@ -11,6 +11,8 @@ Two IDs identify a debugging session:
 - **Surface ID** (UUID) — identifies the spaceterm terminal surface. Used to find hook logs and decision logs.
 - **Claude Session ID** (UUID) — identifies the Claude Code session. Used to find the JSONL transcript.
 
+The *current* session's IDs are available as environment variables: `SPACETERM_SURFACE_ID` and `CLAUDE_SESSION_ID`. If the user is investigating the current session, read these directly instead of asking. If investigating a different session, ask the user for the IDs.
+
 ## Key files
 
 ### 1. Decision Log (start here)
@@ -85,6 +87,32 @@ Supporting files:
 - `src/server/session-manager.ts` — holds per-surface state (claudeState, claudeStatusUnread)
 - `src/server/state-manager.ts` — broadcasts state changes to clients
 - `src/server/session-file-watcher.ts` — watches Claude JSONL files for new entries
+
+## Interleaved timeline tool
+
+`interleave-logs.js` merges decision, hook, transcript, and electron logs into a single chronological timeline. Use it to see the full picture without manually cross-referencing files.
+
+```bash
+# Basic usage — auto-discovers session from hook log
+node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId>
+
+# Zoom into a specific time window
+node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId> \
+  --from 2026-02-17T07:35:36-08:00 --to 2026-02-17T07:35:44-08:00
+
+# Include electron log (requires --from/--to to avoid noise)
+node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId> \
+  --sources decision,hook,transcript,electron --from <start> --to <end>
+
+# Hide status-line entries for cleaner output
+node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId> --skip-status-lines
+
+# Use a specific transcript file directly
+node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId> \
+  --transcript ~/.claude/projects/-Users-me-myproject/session-id.jsonl
+```
+
+Output format: `HH:MM:SS.mmm  [source]  file:line  summary`. Timestamps are local timezone. Source tags: `[decision]`, `[hook]`, `[transcript]`, `[electron]`. Run with `--help` for full options.
 
 ## Investigation methodology
 

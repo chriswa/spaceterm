@@ -3,7 +3,6 @@ import type { CSSProperties, ReactNode, RefObject } from 'react'
 import { COLOR_PRESETS } from '../lib/color-presets'
 import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
-import foodIcon from '../assets/food.svg'
 import { ArchiveBody } from './ArchiveBody'
 import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
@@ -39,8 +38,6 @@ interface CardShellProps {
   onShipIt?: (id: string) => void
   isReparenting?: boolean
   onAddNode?: (parentNodeId: string, type: AddNodeType) => void
-  food?: boolean
-  onFoodToggle?: (id: string, food: boolean) => void
   className?: string
   style?: CSSProperties
   cardRef?: RefObject<HTMLDivElement | null>
@@ -57,7 +54,7 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onShipIt, isReparenting,
-  onAddNode, food, onFoodToggle,
+  onAddNode,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
   const [archiveOpen, setArchiveOpen] = useState(false)
@@ -212,33 +209,6 @@ export function CardShell({
             {/* sail */}
             <path d="M7 3 L11 7 L7 8 Z" fill="currentColor" stroke="none" />
           </svg>
-        </button>
-      )}
-      {onFoodToggle && (
-        <button
-          className={`node-titlebar__food-btn${food ? ' node-titlebar__food-btn--active' : ''}`}
-          title={food ? 'Food: ON' : 'Food: OFF'}
-          style={preset ? { color: preset.titleBarFg } : undefined}
-          onClick={(e) => { e.stopPropagation(); onFoodToggle(nodeId, !food) }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <span style={{ position: 'relative', display: 'inline-block', width: 14, height: 14 }}>
-            <span
-              style={{
-                display: 'block', width: 14, height: 14,
-                backgroundColor: 'currentColor',
-                WebkitMaskImage: `url(${foodIcon})`, maskImage: `url(${foodIcon})`,
-                WebkitMaskSize: 'contain', maskSize: 'contain',
-                WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
-                WebkitMaskPosition: 'center', maskPosition: 'center',
-              }}
-            />
-            {!food && (
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeLinecap="round" style={{ position: 'absolute', top: 0, left: 0 }}>
-                <line x1="1" y1="1" x2="13" y2="13" strokeWidth="1.5" />
-              </svg>
-            )}
-          </span>
         </button>
       )}
       {showColorPicker && (

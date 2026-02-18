@@ -116,13 +116,6 @@ export interface NodeSetColorMessage {
   colorPresetId: string
 }
 
-export interface NodeSetFoodMessage {
-  type: 'node-set-food'
-  seq: number
-  nodeId: string
-  food: boolean
-}
-
 export interface NodeArchiveMessage {
   type: 'node-archive'
   seq: number
@@ -164,6 +157,7 @@ export interface TerminalCreateMessage {
   y?: number
   options?: CreateOptions
   initialTitleHistory?: string[]
+  initialName?: string
 }
 
 export interface TerminalResizeMessage {
@@ -312,7 +306,6 @@ export type ClientMessage =
   | NodeBatchMoveMessage
   | NodeRenameMessage
   | NodeSetColorMessage
-  | NodeSetFoodMessage
   | NodeArchiveMessage
   | NodeUnarchiveMessage
   | NodeArchiveDeleteMessage

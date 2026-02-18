@@ -17,7 +17,9 @@ export function TerminalTitleBarContent({
 }: TerminalTitleBarContentProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
+  const [inputWidth, setInputWidth] = useState<number | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
+  const sizerRef = useRef<HTMLSpanElement>(null)
 
   // Select-all on edit start
   useEffect(() => {
@@ -25,6 +27,13 @@ export function TerminalTitleBarContent({
       inputRef.current.select()
     }
   }, [editing])
+
+  // Auto-size input to match text width
+  useEffect(() => {
+    if (editing && sizerRef.current) {
+      setInputWidth(sizerRef.current.scrollWidth)
+    }
+  }, [editing, editValue])
 
   const history = terminalSubtitle(shellTitleHistory ?? [])
 
@@ -41,11 +50,12 @@ export function TerminalTitleBarContent({
       >
         {editing ? (
           <>
+            <span ref={sizerRef} className="terminal-card__title-sizer">{editValue || ' '}</span>
             <input
               ref={inputRef}
               className="terminal-card__title-input"
               value={editValue}
-              style={preset ? { color: preset.titleBarFg } : undefined}
+              style={preset ? { width: inputWidth, color: preset.titleBarFg } : { width: inputWidth }}
               onChange={(e) => setEditValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -62,6 +72,7 @@ export function TerminalTitleBarContent({
               }}
               autoFocus
             />
+            {history && <span className="terminal-card__separator" style={preset ? { color: blendHex(preset.titleBarFg, preset.titleBarBg, 0.7) } : undefined}>{'\u00A0\u21BC\u00A0'}</span>}
             {history && <span className="terminal-card__history" style={preset ? { color: blendHex(preset.titleBarFg, preset.titleBarBg, 0.75) } : undefined}>{history}</span>}
           </>
         ) : (
@@ -69,6 +80,7 @@ export function TerminalTitleBarContent({
             {name && <span className="terminal-card__custom-name" style={preset ? { color: preset.titleBarFg } : undefined}>{name}</span>}
             {name && history && <span className="terminal-card__separator" style={preset ? { color: blendHex(preset.titleBarFg, preset.titleBarBg, 0.7) } : undefined}>{'\u00A0\u21BC\u00A0'}</span>}
             {history && <span className="terminal-card__history" style={preset ? { color: blendHex(preset.titleBarFg, preset.titleBarBg, 0.75) } : undefined}>{history}</span>}
+            {!name && !history && <span className="terminal-card__placeholder" style={preset ? { color: preset.titleBarFg } : undefined}>Untitled Terminal</span>}
           </>
         )}
       </div>

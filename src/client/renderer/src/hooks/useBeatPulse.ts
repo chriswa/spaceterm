@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useAudioStore } from '../stores/audioStore'
+import { isWindowVisible } from './useWindowVisible'
 
 /**
  * Drives --pulse-spread and --pulse-alpha CSS custom properties on #root
@@ -58,10 +59,18 @@ export function useBeatPulse(): void {
       root.style.setProperty('--pulse-alpha', String(alpha))
     }
 
-    rafId = requestAnimationFrame(tick)
+    const startLoop = () => { if (!rafId) rafId = requestAnimationFrame(tick) }
+    const stopLoop = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0 } }
+
+    const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
+      if (visible) { prevTime = performance.now(); startLoop() } else stopLoop()
+    })
+
+    if (isWindowVisible()) startLoop()
 
     return () => {
-      cancelAnimationFrame(rafId)
+      stopLoop()
+      unsubVisibility()
     }
   }, [])
 }

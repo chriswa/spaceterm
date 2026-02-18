@@ -125,7 +125,8 @@ export class StateManager {
     cols: number,
     rows: number,
     cwd?: string,
-    initialTitleHistory?: string[]
+    initialTitleHistory?: string[],
+    name?: string
   ): TerminalNodeData {
     const zIndex = this.state.nextZIndex++
     const now = new Date().toISOString()
@@ -155,7 +156,8 @@ export class StateManager {
       claudeSessionHistory: [],
       shellTitleHistory: [...seedHistory],
       archivedChildren: [],
-      colorPresetId: 'inherit'
+      colorPresetId: 'inherit',
+      ...(name ? { name } : {})
     }
 
     this.state.nodes[sessionId] = node
@@ -269,7 +271,7 @@ export class StateManager {
   renameNode(nodeId: string, name: string): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
-    node.name = name || undefined
+    node.name = name || null
     this.onNodeUpdate(nodeId, { name: node.name })
     this.schedulePersist()
   }
@@ -282,13 +284,6 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  setNodeFood(nodeId: string, food: boolean): void {
-    const node = this.state.nodes[nodeId]
-    if (!node || node.type !== 'markdown') return
-    node.food = food
-    this.onNodeUpdate(nodeId, { food } as Partial<MarkdownNodeData>)
-    this.schedulePersist()
-  }
 
   bringToFront(nodeId: string): void {
     const node = this.state.nodes[nodeId]

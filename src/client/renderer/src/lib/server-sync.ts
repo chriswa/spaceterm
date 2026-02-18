@@ -90,14 +90,6 @@ export async function sendSetColor(nodeId: string, colorPresetId: string): Promi
   }
 }
 
-export async function sendSetFood(nodeId: string, food: boolean): Promise<void> {
-  try {
-    await window.api.node.setFood(nodeId, food)
-  } finally {
-    useNodeStore.getState().clearOverride(nodeId, ['food'])
-  }
-}
-
 export async function sendBringToFront(nodeId: string): Promise<void> {
   try {
     await window.api.node.bringToFront(nodeId)
@@ -121,9 +113,10 @@ export async function sendArchiveDelete(parentNodeId: string, archivedNodeId: st
 export async function sendTerminalCreate(
   parentId: string,
   options?: CreateOptions,
-  initialTitleHistory?: string[]
+  initialTitleHistory?: string[],
+  initialName?: string
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
-  return window.api.node.terminalCreate(parentId, options, initialTitleHistory)
+  return window.api.node.terminalCreate(parentId, options, initialTitleHistory, initialName)
 }
 
 export async function sendDirectoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }> {

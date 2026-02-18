@@ -23,7 +23,7 @@ export interface BaseNodeData {
   x: number
   y: number
   zIndex: number
-  name?: string
+  name?: string | null
   colorPresetId?: string
   archivedChildren: ArchivedNode[]
 }
@@ -51,7 +51,6 @@ export interface MarkdownNodeData extends BaseNodeData {
   height: number
   content: string
   maxWidth?: number
-  food?: boolean
   fileBacked?: boolean  // true = content lives on disk, set permanently at creation
 }
 

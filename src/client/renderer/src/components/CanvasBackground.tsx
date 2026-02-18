@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Camera } from '../lib/camera'
+import { isWindowVisible } from '../hooks/useWindowVisible'
 
 export interface TreeLineNode {
   id: string
@@ -616,10 +617,20 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
 
       rafRef.current = requestAnimationFrame(tick)
     }
-    rafRef.current = requestAnimationFrame(tick)
+
+    const startLoop = () => { if (!rafRef.current) rafRef.current = requestAnimationFrame(tick) }
+    const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
+
+    // Subscribe to visibility changes
+    const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
+      if (visible) startLoop(); else stopLoop()
+    })
+
+    if (isWindowVisible()) startLoop()
 
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      stopLoop()
+      unsubVisibility()
       observer.disconnect()
       if (bgProg) gl.deleteProgram(bgProg)
       if (bgBuf) gl.deleteBuffer(bgBuf)

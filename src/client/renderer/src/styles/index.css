@@ -31,6 +31,12 @@
   inherits: true;
 }
 
+/* Middle mouse pan — force grabbing cursor over everything */
+html.middle-panning,
+html.middle-panning * {
+  cursor: grabbing !important;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -419,6 +425,11 @@ html, body, #root {
   align-items: center;
 }
 
+.terminal-card__placeholder {
+  opacity: 0.35;
+  font-style: italic;
+}
+
 .terminal-card__custom-name {
   font-weight: 700;
   color: #5d616f;
@@ -457,14 +468,23 @@ html, body, #root {
   font-weight: 700;
   font-family: inherit;
   padding: 0;
-  min-width: 60px;
-  max-width: 200px;
   flex-shrink: 0;
   border-bottom: 1px solid #585b70;
 }
 
 .terminal-card__title-input:focus {
   border-bottom-color: #89b4fa;
+}
+
+.terminal-card__title-sizer {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 0;
+  pointer-events: none;
 }
 
 .node-titlebar__actions {
@@ -1528,30 +1548,6 @@ html, body, #root {
 .markdown-card .node-titlebar__shipit-btn:hover {
   background: #181825;
   color: #cdd6f4 !important;
-}
-
-.node-titlebar__food-btn {
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: #cdd6f4;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.node-titlebar__food-btn:hover {
-  background: #181825;
-  color: #cdd6f4 !important;
-}
-.node-titlebar__food-btn--active {
-  color: #cdd6f4;
-}
-.node-titlebar__food-btn--active:hover {
-  color: #cdd6f4 !important;
-  background: #181825;
 }
 
 /* Card Shell — outer wrapper for all card types */

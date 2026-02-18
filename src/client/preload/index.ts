@@ -127,13 +127,12 @@ interface NodeApi {
   batchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void>
   rename(nodeId: string, name: string): Promise<void>
   setColor(nodeId: string, colorPresetId: string): Promise<void>
-  setFood(nodeId: string, food: boolean): Promise<void>
   archive(nodeId: string): Promise<void>
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
-  terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[]): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
@@ -163,13 +162,12 @@ const nodeApi: NodeApi = {
   batchMove: (moves) => ipcRenderer.invoke('node:batch-move', moves),
   rename: (nodeId, name) => ipcRenderer.invoke('node:rename', nodeId, name),
   setColor: (nodeId, colorPresetId) => ipcRenderer.invoke('node:set-color', nodeId, colorPresetId),
-  setFood: (nodeId, food) => ipcRenderer.invoke('node:set-food', nodeId, food),
   archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
   unarchive: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:unarchive', parentNodeId, archivedNodeId),
   archiveDelete: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:archive-delete', parentNodeId, archivedNodeId),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
-  terminalCreate: (parentId, options?, initialTitleHistory?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory),
+  terminalCreate: (parentId, options?, initialTitleHistory?, initialName?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName),
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
   directoryAdd: (parentId, cwd) => ipcRenderer.invoke('node:directory-add', parentId, cwd),
@@ -229,7 +227,12 @@ contextBridge.exposeInMainWorld('api', {
     isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:is-fullscreen'),
     setFullScreen: (enabled: boolean) => ipcRenderer.invoke('window:set-fullscreen', enabled),
     isKiosk: (): Promise<boolean> => ipcRenderer.invoke('window:is-kiosk'),
-    setKiosk: (enabled: boolean) => ipcRenderer.invoke('window:set-kiosk', enabled)
+    setKiosk: (enabled: boolean) => ipcRenderer.invoke('window:set-kiosk', enabled),
+    onVisibilityChanged: (callback: (visible: boolean) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible)
+      ipcRenderer.on('window:visibility-changed', listener)
+      return () => ipcRenderer.removeListener('window:visibility-changed', listener)
+    }
   },
   tts: {
     speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
