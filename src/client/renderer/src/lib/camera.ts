@@ -1,4 +1,4 @@
-import { MIN_ZOOM, MAX_ZOOM, ZOOM_SENSITIVITY, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW } from './constants'
+import { MIN_ZOOM, MAX_ZOOM, ZOOM_SENSITIVITY, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW, FOCUS_SPEED, FLY_TO_BASE_DURATION, FLY_TO_HALF_RANGE, FLY_TO_MAX_DURATION } from './constants'
 
 export interface Camera {
   x: number
@@ -172,4 +172,13 @@ export function saveCameraToStorage(cam: Camera): void {
   try {
     localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify({ x: cam.x, y: cam.y, z: cam.z }))
   } catch { /* ignore quota errors */ }
+}
+
+export function computeFlyToDuration(distance: number): number {
+  return Math.min(FLY_TO_MAX_DURATION, FLY_TO_BASE_DURATION * (1 + distance / FLY_TO_HALF_RANGE))
+}
+
+export function computeFlyToSpeed(distance: number): number {
+  const durationRatio = Math.min(FLY_TO_MAX_DURATION / FLY_TO_BASE_DURATION, 1 + distance / FLY_TO_HALF_RANGE)
+  return FOCUS_SPEED / durationRatio
 }

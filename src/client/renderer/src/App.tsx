@@ -19,8 +19,8 @@ import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
 import { useBeatPulse } from './hooks/useBeatPulse'
-import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, CAMERA_SETTLE_DELAY, terminalPixelSize } from './lib/constants'
+import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed } from './lib/camera'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
@@ -460,7 +460,14 @@ export function App() {
       shakeCamera()
       return
     }
-    navBlockUntilRef.current = Date.now() + CAMERA_SETTLE_DELAY + 20
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    const vw = viewport?.clientWidth ?? window.innerWidth
+    const vh = viewport?.clientHeight ?? window.innerHeight
+    const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, cameraRef.current)
+    const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, entry.camera)
+    const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+
+    navBlockUntilRef.current = Date.now() + computeFlyToDuration(dist) + 20
 
     // Restore focus state directly
     const nodeId = entry.focusedId
@@ -485,8 +492,8 @@ export function App() {
       setScrollMode(false)
     }
 
-    flyTo(entry.camera)
-  }, [shakeCamera, flyTo, bringToFront, flashNode])
+    flyTo(entry.camera, computeFlyToSpeed(dist))
+  }, [shakeCamera, flyTo, bringToFront, flashNode, cameraRef])
 
   const handleNodeFocus = useCallback((nodeId: string) => {
     flashNode(nodeId)
@@ -525,8 +532,12 @@ export function App() {
       bringToFront(nodeId)
     }
 
-    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding))
-  }, [bringToFront, flyTo])
+    const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding)
+    const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
+    const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
+    const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+    flyTo(targetCamera, computeFlyToSpeed(dist))
+  }, [bringToFront, flyTo, cameraRef])
 
   const navigateToNode = useCallback(async (nodeId: string) => {
     // Wait for node to appear in store if not yet present
@@ -563,7 +574,7 @@ export function App() {
     const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
 
     if (dist < 50) {
-      flyTo(targetCamera)
+      flyTo(targetCamera, computeFlyToSpeed(dist))
       return
     }
 
@@ -576,9 +587,9 @@ export function App() {
       targetBounds.y + targetBounds.height <= bottomRight.y
 
     if (targetInViewport) {
-      flyTo(targetCamera)
+      flyTo(targetCamera, computeFlyToSpeed(dist))
     } else {
-      hopFlyTo({ targetCamera, targetBounds })
+      hopFlyTo({ targetCamera, targetBounds, duration: computeFlyToDuration(dist) })
     }
   }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
 
@@ -959,7 +970,7 @@ export function App() {
     const cwd = getParentCwd(parentNodeId)
     let nodeId: string
     switch (type) {
-      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: true } }); nodeId = r.sessionId; break }
+      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: false } }); nodeId = r.sessionId; break }
       case 'terminal': {
         const parentNode = useNodeStore.getState().nodes[parentNodeId]
         const { initialInput, initialName: mdName, x, y } = getMarkdownSpawnInfo(parentNode)
@@ -1072,7 +1083,7 @@ export function App() {
         e.preventDefault()
         e.stopPropagation()
         spawnNode(async (parentId, cwd) => {
-          const r = await sendTerminalCreate(parentId, { cwd, claude: { appendSystemPrompt: true } })
+          const r = await sendTerminalCreate(parentId, { cwd, claude: { appendSystemPrompt: false } })
           return r.sessionId
         })
       }
@@ -1086,6 +1097,23 @@ export function App() {
         })
       }
 
+
+      // Cmd+D: fork the focused Claude session, or shake if not a Claude surface
+      if (e.metaKey && e.key === 'd') {
+        e.preventDefault()
+        e.stopPropagation()
+        const focusedId = focusRef.current
+        if (focusedId) {
+          const node = useNodeStore.getState().nodes[focusedId]
+          if (node?.claudeSessionHistory && node.claudeSessionHistory.length > 0) {
+            handleForkSession(focusedId)
+          } else {
+            shakeCamera()
+          }
+        } else {
+          shakeCamera()
+        }
+      }
 
       // Cmd+Shift+S: speak selected text or stop speaking
       if (e.metaKey && e.shiftKey && e.key === 's') {
@@ -1211,7 +1239,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking])
+  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.

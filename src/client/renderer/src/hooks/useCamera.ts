@@ -491,7 +491,7 @@ export function useCamera(
       const cx = sourceCenter.x + (targetCenter.x - sourceCenter.x) * tPos
       const cy = sourceCenter.y + (targetCenter.y - sourceCenter.y) * tPos
 
-      const zoom = startCamera.z + (targetCamera.z - startCamera.z) * rawT + zoomArc * Math.sin(Math.PI * rawT)
+      const zoom = Math.max(MIN_ZOOM, startCamera.z + (targetCamera.z - startCamera.z) * rawT + zoomArc * Math.sin(Math.PI * rawT))
 
       const cam: Camera = { x: vw / 2 - cx * zoom, y: vh / 2 - cy * zoom, z: zoom }
       cameraRef.current = cam

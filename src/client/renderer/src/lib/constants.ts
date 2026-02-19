@@ -72,3 +72,8 @@ export const EDGE_SPLIT_NODE_MARGIN_PX = 30
 
 // Camera history: ms after last user input before recording a "settle" position
 export const CAMERA_SETTLE_DELAY = 150
+
+// Fly-to animation scaling: duration grows linearly with canvas-space distance
+export const FLY_TO_BASE_DURATION = 300
+export const FLY_TO_HALF_RANGE = 9000
+export const FLY_TO_MAX_DURATION = 2000
