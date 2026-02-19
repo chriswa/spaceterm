@@ -8,7 +8,7 @@ interface CreateOptions {
   cwd?: string
   command?: string
   args?: string[]
-  claude?: { prompt?: string; resumeSessionId?: string }
+  claude?: { prompt?: string; resumeSessionId?: string; appendSystemPrompt?: boolean }
 }
 
 interface CreateResult extends SessionInfo {
@@ -47,6 +47,7 @@ interface PtyApi {
   onClaudeState(sessionId: string, callback: (state: string) => void): () => void
   onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
   onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
+  onPlanCacheUpdate(sessionId: string, callback: (count: number, files: string[]) => void): () => void
 }
 
 interface NodeApi {
@@ -63,11 +64,13 @@ interface NodeApi {
   terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
+  forkSession(nodeId: string): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   setClaudeStatusUnread(sessionId: string, unread: boolean): void
   onSnapshot(sessionId: string, callback: (snapshot: import('../../../shared/protocol').SnapshotMessage) => void): () => void
   directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>
+  directoryGitFetch(nodeId: string): Promise<void>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
   fileAdd(parentId: string, filePath: string): Promise<{ nodeId: string }>
   filePath(nodeId: string, filePath: string): Promise<void>
@@ -111,6 +114,7 @@ interface Api {
   node: NodeApi
   log(message: string): void
   openExternal(url: string): Promise<void>
+  diffFiles(fileA: string, fileB: string): Promise<void>
   tts: TtsApi
   perf: PerfApi
   audio: AudioApi

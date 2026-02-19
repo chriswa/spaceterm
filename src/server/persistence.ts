@@ -10,11 +10,22 @@ const DEBOUNCE_MS = 1000
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
+ * Strip ephemeral fields (e.g. gitStatus) from state before persisting.
+ * Returns a JSON string ready to write. Uses a replacer to avoid deep-cloning.
+ */
+function serializeState(state: ServerState): string {
+  return JSON.stringify(state, (key, value) => {
+    if (key === 'gitStatus') return undefined
+    return value
+  }, 2)
+}
+
+/**
  * Atomically write state to disk: write to .tmp → fsync → rename
  */
 function writeAtomic(state: ServerState): void {
   mkdirSync(dirname(STATE_FILE), { recursive: true })
-  const data = JSON.stringify(state, null, 2)
+  const data = serializeState(state)
   writeFileSync(STATE_TMP, data, 'utf-8')
   const fd = openSync(STATE_TMP, 'r')
   try {

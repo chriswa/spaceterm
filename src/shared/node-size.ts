@@ -30,7 +30,7 @@ export const ROOT_NODE_RADIUS = 150
 export const MARKDOWN_DEFAULT_WIDTH = 400
 export const MARKDOWN_DEFAULT_HEIGHT = 300
 export const MARKDOWN_MIN_WIDTH = 200
-export const MARKDOWN_MIN_HEIGHT = 60
+export const MARKDOWN_MIN_HEIGHT = 88
 export const MARKDOWN_DEFAULT_MAX_WIDTH = 600
 export const MARKDOWN_MIN_MAX_WIDTH = 100
 
@@ -45,6 +45,10 @@ export const FILE_HEIGHT = 144
 // Title node dimensions
 export const TITLE_DEFAULT_WIDTH = 200
 export const TITLE_HEIGHT = 40
+
+// Image node dimensions
+export const IMAGE_DEFAULT_WIDTH = 300
+export const IMAGE_DEFAULT_HEIGHT = 200
 
 // Placement
 export const PLACEMENT_MARGIN = 80
@@ -62,6 +66,7 @@ export type NodeLike =
   | { type: 'file' }
   | { type: 'title' }
   | { type: 'markdown'; width: number; height: number }
+  | { type: 'image'; width?: number; height?: number }
 
 export function nodePixelSize(node: NodeLike): { width: number; height: number } {
   if (node.type === 'terminal') {
@@ -75,6 +80,9 @@ export function nodePixelSize(node: NodeLike): { width: number; height: number }
   }
   if (node.type === 'title') {
     return { width: TITLE_DEFAULT_WIDTH, height: TITLE_HEIGHT }
+  }
+  if (node.type === 'image') {
+    return { width: node.width ?? IMAGE_DEFAULT_WIDTH, height: node.height ?? IMAGE_DEFAULT_HEIGHT }
   }
   return { width: node.width, height: node.height }
 }

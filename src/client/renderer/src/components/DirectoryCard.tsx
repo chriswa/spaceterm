@@ -3,7 +3,7 @@ import { DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
-import type { ArchivedNode } from '../../../../shared/state'
+import type { ArchivedNode, GitStatus } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 
@@ -11,6 +11,48 @@ const DRAG_THRESHOLD = 5
 const FOLDER_H_PADDING = 80
 const MIN_FOLDER_WIDTH = 180
 const DEFAULT_BG = '#1e1e2e'
+
+function formatFetchAge(ts: number | null): string {
+  if (ts === null) return '(never fetched)'
+  const totalMinutes = Math.floor((Date.now() - ts) / 60_000)
+  if (totalMinutes < 60) return `(${totalMinutes}m old)`
+  const totalHours = Math.floor(totalMinutes / 60)
+  if (totalHours < 24) return `(${totalHours}h old)`
+  const days = Math.floor(totalHours / 24)
+  return `(${days}d old)`
+}
+
+function formatGitStatus(gs: GitStatus): string {
+  const parts: string[] = []
+  parts.push(gs.branch ?? 'detached')
+  if (gs.ahead > 0) parts.push(`⇡${gs.ahead}`)
+  if (gs.behind > 0) parts.push(`⇣${gs.behind}`)
+  if (gs.staged > 0) parts.push(`+${gs.staged}`)
+  if (gs.unstaged > 0) parts.push(`!${gs.unstaged}`)
+  if (gs.untracked > 0) parts.push(`?${gs.untracked}`)
+  if (gs.conflicts > 0) parts.push(`=${gs.conflicts}`)
+  return parts.join(' ')
+}
+
+function formatGitStatusTooltip(gs: GitStatus): string {
+  const parts: string[] = []
+  parts.push(`branch: ${gs.branch ?? 'detached'}`)
+  if (gs.ahead > 0) parts.push(`${gs.ahead} ahead`)
+  if (gs.behind > 0) parts.push(`${gs.behind} behind`)
+  if (gs.staged > 0) parts.push(`${gs.staged} staged`)
+  if (gs.unstaged > 0) parts.push(`${gs.unstaged} modified`)
+  if (gs.untracked > 0) parts.push(`${gs.untracked} untracked`)
+  if (gs.conflicts > 0) parts.push(`${gs.conflicts} conflicts`)
+  if (gs.lastFetchTimestamp !== null) {
+    const totalMinutes = Math.floor((Date.now() - gs.lastFetchTimestamp) / 60_000)
+    if (totalMinutes < 60) parts.push(`fetched ${totalMinutes}m ago`)
+    else if (totalMinutes < 1440) parts.push(`fetched ${Math.floor(totalMinutes / 60)}h ago`)
+    else parts.push(`fetched ${Math.floor(totalMinutes / 1440)}d ago`)
+  } else {
+    parts.push('never fetched')
+  }
+  return parts.join(' | ')
+}
 
 function folderPaths(w: number) {
   return {
@@ -26,6 +68,7 @@ interface DirectoryCardProps {
   zIndex: number
   zoom: number
   cwd: string
+  gitStatus?: GitStatus | null
   focused: boolean
   selected: boolean
   colorPresetId?: string
@@ -49,7 +92,7 @@ interface DirectoryCardProps {
 }
 
 export function DirectoryCard({
-  id, x, y, zIndex, zoom, cwd, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
+  id, x, y, zIndex, zoom, cwd, gitStatus, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
@@ -58,12 +101,30 @@ export function DirectoryCard({
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(cwd)
   const [error, setError] = useState<string | null>(null)
+  const [fetching, setFetching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const measureRef = useRef<HTMLSpanElement>(null)
+  const gitMeasureRef = useRef<HTMLSpanElement>(null)
   const [textWidth, setTextWidth] = useState(0)
+  const [gitTextWidth, setGitTextWidth] = useState(0)
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+
+  // Clear fetching indicator when the server sends updated git status
+  const lastFetchTs = gitStatus?.lastFetchTimestamp ?? null
+  useEffect(() => {
+    setFetching(false)
+  }, [lastFetchTs])
+
+  // Compute the git status display text for measurement (includes fetch-age for width)
+  const gitStatusCore = gitStatus ? formatGitStatus(gitStatus) : ''
+  const fetchAgeText = gitStatus ? (fetching ? '(fetching…)' : formatFetchAge(gitStatus.lastFetchTimestamp)) : ''
+  const gitStatusText = gitStatus === null
+    ? 'not git controlled'
+    : gitStatus
+      ? `${gitStatusCore} ${fetchAgeText}`
+      : ''
 
   // Measure text width via hidden span — works for both label and editing input
   useLayoutEffect(() => {
@@ -72,7 +133,14 @@ export function DirectoryCard({
     setTextWidth(measureRef.current.offsetWidth)
   }, [cwd, editing, editValue])
 
-  const folderWidth = Math.max(MIN_FOLDER_WIDTH, textWidth + FOLDER_H_PADDING)
+  // Measure git status text width via its own hidden span (different font size)
+  useLayoutEffect(() => {
+    if (!gitMeasureRef.current) return
+    gitMeasureRef.current.textContent = gitStatusText || ' '
+    setGitTextWidth(gitStatusText ? gitMeasureRef.current.offsetWidth : 0)
+  }, [gitStatusText])
+
+  const folderWidth = Math.max(MIN_FOLDER_WIDTH, Math.max(textWidth, gitTextWidth) + FOLDER_H_PADDING)
   const paths = folderPaths(folderWidth)
 
   // Notify parent when focused node size is known
@@ -238,24 +306,51 @@ export function DirectoryCard({
       </svg>
       <div className="directory-card__body">
         <span ref={measureRef} className="directory-card__measure" />
-        {editing ? (
-          <div className="directory-card__edit-container">
-            <input
-              ref={inputRef}
-              className="directory-card__input"
-              type="text"
-              value={editValue}
-              onChange={(e) => handleInputChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onBlur={validateAndSave}
-            />
-            {error && <div className="directory-card__error">{error}</div>}
-          </div>
-        ) : (
-          <div className="directory-card__label" onClick={focused ? startEditing : undefined}>
-            {cwd}
-          </div>
-        )}
+        <span ref={gitMeasureRef} className="directory-card__git-measure" />
+        <div className="directory-card__content">
+          {editing ? (
+            <div className="directory-card__edit-container">
+              <input
+                ref={inputRef}
+                className="directory-card__input"
+                type="text"
+                value={editValue}
+                onChange={(e) => handleInputChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onBlur={validateAndSave}
+              />
+              {error && <div className="directory-card__error">{error}</div>}
+            </div>
+          ) : (
+            <div className="directory-card__label" onClick={focused ? startEditing : undefined}>
+              {cwd}
+            </div>
+          )}
+          {gitStatus === null ? (
+            <div className="directory-card__git-status directory-card__git-status--no-git">
+              not git controlled
+            </div>
+          ) : gitStatus ? (
+            <div
+              className={`directory-card__git-status${gitStatus.conflicts > 0 ? ' directory-card__git-status--conflict' : ''}`}
+              title={formatGitStatusTooltip(gitStatus)}
+            >
+              {gitStatusCore}{' '}
+              <span
+                className="directory-card__fetch-age"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!fetching) {
+                    setFetching(true)
+                    window.api.node.directoryGitFetch(id)
+                  }
+                }}
+              >
+                {fetchAgeText}
+              </span>
+            </div>
+          ) : null}
+        </div>
       </div>
     </CardShell>
   )

@@ -3,3 +3,5 @@
 - Mangoes
 - Papayas
 - Dragonfruit
+- Lychee
+- Guava

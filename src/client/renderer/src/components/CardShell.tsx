@@ -8,6 +8,7 @@ import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
+import foodIcon from '../assets/food.svg'
 
 interface CardShellProps {
   nodeId: string
@@ -36,6 +37,8 @@ interface CardShellProps {
   onMouseDown?: (e: React.MouseEvent) => void
   onStartReparent?: (id: string) => void
   onShipIt?: (id: string) => void
+  onFork?: (id: string) => void
+  onDiffPlans?: () => void
   isReparenting?: boolean
   onAddNode?: (parentNodeId: string, type: AddNodeType) => void
   className?: string
@@ -53,7 +56,7 @@ export function CardShell({
   showClose = true, showColorPicker = true,
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
-  onMouseDown, onStartReparent, onShipIt, isReparenting,
+  onMouseDown, onStartReparent, onShipIt, onFork, onDiffPlans, isReparenting,
   onAddNode,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
@@ -201,13 +204,37 @@ export function CardShell({
           onClick={(e) => { e.stopPropagation(); onShipIt(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-            {/* hull */}
-            <path d="M1 10 L3 12 L11 12 L13 10 Z" fill="currentColor" stroke="none" />
-            {/* mast */}
-            <line x1="7" y1="3" x2="7" y2="11" />
-            {/* sail */}
-            <path d="M7 3 L11 7 L7 8 Z" fill="currentColor" stroke="none" />
+          <img src={foodIcon} alt="Ship it" width={14} height={14} style={{ filter: 'invert(1)' }} />
+        </button>
+      )}
+      {onFork && (
+        <button
+          className="node-titlebar__fork-btn"
+          title="Fork session"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onFork(nodeId) }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 13 L7 6" />
+            <path d="M3 1 L3 5 Q3 6 7 6 Q11 6 11 5 L11 1" />
+            <path d="M7 1 L7 6" />
+          </svg>
+        </button>
+      )}
+      {onDiffPlans && (
+        <button
+          className="node-titlebar__diff-plans-btn"
+          title="Diff plan versions"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onDiffPlans() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="4" y1="2" x2="4" y2="12" />
+            <line x1="10" y1="2" x2="10" y2="12" />
+            <line x1="2" y1="5" x2="6" y2="5" />
+            <line x1="8" y1="9" x2="12" y2="9" />
           </svg>
         </button>
       )}

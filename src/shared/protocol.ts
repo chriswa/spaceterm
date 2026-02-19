@@ -18,7 +18,7 @@ export interface CreateOptions {
   cwd?: string
   command?: string
   args?: string[]
-  claude?: { prompt?: string; resumeSessionId?: string }
+  claude?: { prompt?: string; resumeSessionId?: string; appendSystemPrompt?: boolean }
 }
 
 export interface CreateMessage {
@@ -86,6 +86,14 @@ export interface SpawnClaudeSurfaceMessage {
   surfaceId: string
   prompt: string
   title: string
+}
+
+export interface GenerateImageMessage {
+  type: 'generate-image'
+  surfaceId: string
+  filePath: string
+  width: number
+  height: number
 }
 
 // --- Client → Server node mutation messages ---
@@ -229,6 +237,12 @@ export interface DirectoryCwdMessage {
   cwd: string
 }
 
+export interface DirectoryGitFetchMessage {
+  type: 'directory-git-fetch'
+  seq: number
+  nodeId: string
+}
+
 export interface ValidateDirectoryMessage {
   type: 'validate-directory'
   seq: number
@@ -273,6 +287,17 @@ export interface TitleTextMessage {
   text: string
 }
 
+export interface ImageAddMessage {
+  type: 'image-add'
+  seq: number
+  parentId: string
+  x?: number
+  y?: number
+  filePath: string
+  width?: number
+  height?: number
+}
+
 export interface ValidateFileMessage {
   type: 'validate-file'
   seq: number
@@ -297,6 +322,12 @@ export interface SetClaudeStatusUnreadMessage {
   type: 'set-claude-status-unread'
   sessionId: string
   unread: boolean
+}
+
+export interface ForkSessionMessage {
+  type: 'fork-session'
+  seq: number
+  nodeId: string
 }
 
 export type ClientMessage =
@@ -328,16 +359,20 @@ export type ClientMessage =
   | TerminalReincarnateMessage
   | EmitMarkdownMessage
   | SpawnClaudeSurfaceMessage
+  | GenerateImageMessage
   | SetTerminalModeMessage
   | SetClaudeStatusUnreadMessage
   | DirectoryAddMessage
   | DirectoryCwdMessage
+  | DirectoryGitFetchMessage
   | ValidateDirectoryMessage
   | FileAddMessage
   | FilePathMessage
   | ValidateFileMessage
   | TitleAddMessage
   | TitleTextMessage
+  | ImageAddMessage
+  | ForkSessionMessage
 
 // --- Server → Client messages ---
 
@@ -502,6 +537,13 @@ export interface FileContentMessage {
   content: string  // full file contents
 }
 
+export interface PlanCacheUpdateMessage {
+  type: 'plan-cache-update'
+  sessionId: string
+  count: number
+  files: string[]
+}
+
 export interface ServerErrorMessage {
   type: 'server-error'
   message: string
@@ -531,4 +573,5 @@ export type ServerMessage =
   | ValidateDirectoryResult
   | ValidateFileResult
   | FileContentMessage
+  | PlanCacheUpdateMessage
   | ServerErrorMessage

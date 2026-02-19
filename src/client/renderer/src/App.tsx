@@ -8,6 +8,7 @@ import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
 import { TitleCard } from './components/TitleCard'
+import { ImageCard } from './components/ImageCard'
 import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge, Selection } from './components/CanvasBackground'
@@ -19,17 +20,18 @@ import { useEdgeHover } from './hooks/useEdgeHover'
 import { useForceLayout } from './hooks/useForceLayout'
 import { useBeatPulse } from './hooks/useBeatPulse'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, CAMERA_SETTLE_DELAY, terminalPixelSize } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession } from './lib/server-sync'
 import { adjacentCrab, highestPriorityCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
 import { pushArchiveUndo, popArchiveUndo } from './lib/undo-archive'
+import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
 
 function getMarkdownSpawnInfo(parentNode: import('../../../../shared/state').NodeData | undefined): {
@@ -62,13 +64,19 @@ export function App() {
   const toastIdRef = useRef(0)
   const focusRef = useRef<string | null>(focusedId)
   focusRef.current = focusedId
+  const navBlockUntilRef = useRef(0)
+  const onCameraEvent = useCallback((cam: import('./lib/camera').Camera, type: 'flyTo' | 'settle' | 'snapback') => {
+    if (type === 'snapback') return
+    if (Date.now() < navBlockUntilRef.current) return
+    pushCameraHistory({ camera: cam, focusedId: focusRef.current })
+  }, [])
   const [selection, setSelection] = useState<Selection | null>(null)
   const selectionRef = useRef<Selection | null>(null)
   selectionRef.current = selection
   const lastFocusedRef = useRef<string | null>(null)
   const navStackRef = useRef<Selection[]>([])
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef, onCameraEvent)
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
@@ -78,6 +86,7 @@ export function App() {
   const directories = useNodeStore(s => s.directories)
   const files = useNodeStore(s => s.files)
   const titles = useNodeStore(s => s.titles)
+  const images = useNodeStore(s => s.images)
   const fileContents = useNodeStore(s => s.fileContents)
   const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
   const moveNode = useNodeStore(s => s.moveNode)
@@ -93,13 +102,38 @@ export function App() {
   const edgesRef = useRef<TreeLineNode[]>([])
   edgesRef.current = treeLineNodes
 
+  // Track resolved image sizes (updated when <img> loads)
+  const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({})
+
+  const handleImageLoaded = useCallback((id: string, width: number, height: number) => {
+    setImageSizes(prev => ({ ...prev, [id]: { width, height } }))
+  }, [])
+
+  // Clean up stale entries from imageSizes when image nodes are removed
+  const imageIdSet = useMemo(() => new Set(images.map(img => img.id)), [images])
+  useEffect(() => {
+    setImageSizes(prev => {
+      const stale = Object.keys(prev).filter(id => !imageIdSet.has(id))
+      if (stale.length === 0) return prev
+      const next = { ...prev }
+      for (const id of stale) delete next[id]
+      return next
+    })
+  }, [imageIdSet])
+
   const maskRects = useMemo(() => {
     const rects: MaskRect[] = markdowns.map((n): MaskRect => ({ x: n.x, y: n.y, width: n.width, height: n.height }))
     for (const t of titles) {
       rects.push({ x: t.x, y: t.y, width: TITLE_DEFAULT_WIDTH, height: TITLE_HEIGHT })
     }
+    for (const img of images) {
+      const resolved = imageSizes[img.id]
+      if (resolved) {
+        rects.push({ x: img.x, y: img.y, width: resolved.width, height: resolved.height })
+      }
+    }
     return rects
-  }, [markdowns, titles])
+  }, [markdowns, titles, images, imageSizes])
   const maskRectsRef = useRef<MaskRect[]>([])
   maskRectsRef.current = maskRects
 
@@ -420,11 +454,51 @@ export function App() {
     el.classList.add('card-shell--selection-flash')
   }, [])
 
+  const navigateHistory = useCallback((direction: 'back' | 'forward') => {
+    const entry = direction === 'back' ? goBack() : goForward()
+    if (!entry) {
+      shakeCamera()
+      return
+    }
+    navBlockUntilRef.current = Date.now() + CAMERA_SETTLE_DELAY + 20
+
+    // Restore focus state directly
+    const nodeId = entry.focusedId
+    focusRef.current = nodeId
+    setFocusedId(nodeId)
+
+    if (nodeId) {
+      const node = useNodeStore.getState().nodes[nodeId]
+      if (node) {
+        setSelection({ id: nodeId, type: 'node' })
+        setScrollMode(node.type === 'terminal' && node.alive)
+        bringToFront(nodeId)
+        sendBringToFront(nodeId)
+        flashNode(nodeId)
+      } else {
+        // Node was archived/deleted — clear focus state
+        setSelection(null)
+        setScrollMode(false)
+      }
+    } else {
+      setSelection(null)
+      setScrollMode(false)
+    }
+
+    flyTo(entry.camera)
+  }, [shakeCamera, flyTo, bringToFront, flashNode])
+
   const handleNodeFocus = useCallback((nodeId: string) => {
     flashNode(nodeId)
     setFocusedId(nodeId)
     setSelection({ id: nodeId, type: 'node' })
     lastFocusedRef.current = nodeId
+
+    // Clear unread flag on every click, even if already focused
+    const node = useNodeStore.getState().nodes[nodeId]
+    if (node?.type === 'terminal' && node.claudeStatusUnread) {
+      window.api.node.setClaudeStatusUnread(node.sessionId, false)
+    }
     navStackRef.current = []
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
@@ -647,6 +721,15 @@ export function App() {
     if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
     navigateToNode(result.sessionId)
   }, [getParentCwd, navigateToNode])
+
+  const handleForkSession = useCallback(async (nodeId: string) => {
+    try {
+      const result = await sendForkSession(nodeId)
+      navigateToNode(result.sessionId)
+    } catch (err: any) {
+      console.error(`Fork session failed: ${err.message}`)
+    }
+  }, [navigateToNode])
 
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
@@ -876,7 +959,7 @@ export function App() {
     const cwd = getParentCwd(parentNodeId)
     let nodeId: string
     switch (type) {
-      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: {} }); nodeId = r.sessionId; break }
+      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: true } }); nodeId = r.sessionId; break }
       case 'terminal': {
         const parentNode = useNodeStore.getState().nodes[parentNodeId]
         const { initialInput, initialName: mdName, x, y } = getMarkdownSpawnInfo(parentNode)
@@ -966,6 +1049,14 @@ export function App() {
         return
       }
 
+      // Cmd+[/]: camera history back/forward
+      if (e.metaKey && !e.shiftKey && (e.key === '[' || e.key === ']')) {
+        e.preventDefault()
+        e.stopPropagation()
+        navigateHistory(e.key === '[' ? 'back' : 'forward')
+        return
+      }
+
       if (e.metaKey && e.key === 't') {
         e.preventDefault()
         e.stopPropagation()
@@ -981,7 +1072,7 @@ export function App() {
         e.preventDefault()
         e.stopPropagation()
         spawnNode(async (parentId, cwd) => {
-          const r = await sendTerminalCreate(parentId, { cwd, claude: {} })
+          const r = await sendTerminalCreate(parentId, { cwd, claude: { appendSystemPrompt: true } })
           return r.sessionId
         })
       }
@@ -995,23 +1086,6 @@ export function App() {
         })
       }
 
-      if (e.metaKey && e.key === 'd') {
-        e.preventDefault()
-        e.stopPropagation()
-        spawnNode(async (parentId, cwd) => {
-          const r = await sendDirectoryAdd(parentId, cwd ?? '~')
-          return r.nodeId
-        })
-      }
-
-      if (e.metaKey && e.key === 'o') {
-        e.preventDefault()
-        e.stopPropagation()
-        spawnNode(async (parentId) => {
-          const r = await sendFileAdd(parentId, '')
-          return r.nodeId
-        })
-      }
 
       // Cmd+Shift+S: speak selected text or stop speaking
       if (e.metaKey && e.shiftKey && e.key === 's') {
@@ -1137,7 +1211,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, shakeCamera, bringToFront, speak, ttsStop, isSpeaking])
+  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -1259,7 +1333,7 @@ export function App() {
             focused={focusedId === t.id}
             selected={selection?.id === t.id && selection?.type === 'node'}
             anyNodeFocused={focusedId !== null}
-            stoppedUnviewed={t.claudeStatusUnread && t.claudeState === 'stopped'}
+            claudeStatusUnread={t.claudeStatusUnread}
             scrollMode={scrollMode}
             onFocus={handleNodeFocus}
             onUnfocus={handleUnfocus}
@@ -1286,6 +1360,7 @@ export function App() {
             onReparentTarget={handleReparentTarget}
             terminalSessions={t.terminalSessions}
             onSessionRevive={handleSessionRevive}
+            onFork={handleForkSession}
             onAddNode={handleAddNode}
             cameraRef={cameraRef}
           />
@@ -1379,6 +1454,7 @@ export function App() {
             zoom={camera.z}
             cwd={d.cwd}
             colorPresetId={d.colorPresetId}
+            gitStatus={d.gitStatus}
             resolvedPreset={resolvedPresets[d.id]}
             archivedChildren={d.archivedChildren}
             focused={focusedId === d.id}
@@ -1429,6 +1505,39 @@ export function App() {
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
             onAddNode={handleAddNode}
+            cameraRef={cameraRef}
+          />
+        ))}
+        {images.map((img) => (
+          <ImageCard
+            key={img.id}
+            id={img.id}
+            x={img.x}
+            y={img.y}
+            zIndex={img.zIndex}
+            zoom={camera.z}
+            filePath={img.filePath}
+            width={img.width}
+            height={img.height}
+            focused={focusedId === img.id}
+            selected={selection?.id === img.id && selection?.type === 'node'}
+            colorPresetId={img.colorPresetId}
+            resolvedPreset={resolvedPresets[img.id]}
+            archivedChildren={img.archivedChildren}
+            onFocus={handleNodeFocus}
+            onClose={handleRemoveNode}
+            onMove={handleMove}
+            onColorChange={handleColorChange}
+            onUnarchive={handleUnarchive}
+            onArchiveDelete={handleArchiveDelete}
+            onArchiveToggled={handleArchiveToggled}
+            onNodeReady={handleNodeReady}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onStartReparent={handleStartReparent}
+            onReparentTarget={handleReparentTarget}
+            onAddNode={handleAddNode}
+            onImageLoaded={handleImageLoaded}
             cameraRef={cameraRef}
           />
         ))}

@@ -323,6 +323,10 @@ export class SessionManager {
     session.shellTitleHistory.push(...history.filter(t => !isSpuriousTitle(t)))
   }
 
+  getLastClaudeSessionId(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.lastClaudeSessionId ?? null
+  }
+
   has(sessionId: string): boolean {
     return this.sessions.has(sessionId)
   }

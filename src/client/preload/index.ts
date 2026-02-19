@@ -10,7 +10,7 @@ export interface CreateOptions {
   cwd?: string
   command?: string
   args?: string[]
-  claude?: { prompt?: string; resumeSessionId?: string }
+  claude?: { prompt?: string; resumeSessionId?: string; appendSystemPrompt?: boolean }
 }
 
 export interface CreateResult extends SessionInfo {
@@ -48,6 +48,7 @@ export interface PtyApi {
   onClaudeState(sessionId: string, callback: (state: string) => void): () => void
   onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
   onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
+  onPlanCacheUpdate(sessionId: string, callback: (count: number, files: string[]) => void): () => void
 }
 
 const ptyApi: PtyApi = {
@@ -119,6 +120,13 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
+  onPlanCacheUpdate: (sessionId, callback) => {
+    const channel = `pty:plan-cache-update:${sessionId}`
+    const listener = (_event: Electron.IpcRendererEvent, count: number, files: string[]) => callback(count, files)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
 }
 
 interface NodeApi {
@@ -139,6 +147,7 @@ interface NodeApi {
   onSnapshot(sessionId: string, callback: (snapshot: any) => void): () => void
   directoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>
+  directoryGitFetch(nodeId: string): Promise<void>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
   fileAdd(parentId: string, filePath: string): Promise<{ nodeId: string }>
   filePath(nodeId: string, filePath: string): Promise<void>
@@ -170,8 +179,10 @@ const nodeApi: NodeApi = {
   terminalCreate: (parentId, options?, initialTitleHistory?, initialName?, x?, y?, initialInput?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput),
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
+  forkSession: (nodeId) => ipcRenderer.invoke('node:fork-session', nodeId),
   directoryAdd: (parentId, cwd) => ipcRenderer.invoke('node:directory-add', parentId, cwd),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
+  directoryGitFetch: (nodeId) => ipcRenderer.invoke('node:directory-git-fetch', nodeId),
   validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
   fileAdd: (parentId, filePath) => ipcRenderer.invoke('node:file-add', parentId, filePath),
   filePath: (nodeId, filePath) => ipcRenderer.invoke('node:file-path', nodeId, filePath),
@@ -223,6 +234,7 @@ contextBridge.exposeInMainWorld('api', {
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  diffFiles: (fileA: string, fileB: string) => ipcRenderer.invoke('shell:diffFiles', fileA, fileB),
   window: {
     isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:is-fullscreen'),
     setFullScreen: (enabled: boolean) => ipcRenderer.invoke('window:set-fullscreen', enabled),

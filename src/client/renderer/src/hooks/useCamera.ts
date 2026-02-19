@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage } from '../lib/camera'
-import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY } from '../lib/constants'
+import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
@@ -8,17 +8,17 @@ import { isWindowVisible } from './useWindowVisible'
 // of calling setCamera(). This avoids React re-rendering the entire component
 // tree on every frame. React state is synced when:
 //   1. A flyTo animation completes (camerasClose)
-//   2. User input stops for SETTLE_DELAY ms (debounced sync)
+//   2. User input stops for CAMERA_SETTLE_DELAY ms (debounced sync)
 //   3. resetCamera() is called (immediate sync)
 //
 // cameraRef is the source of truth. React state `camera` may lag behind by up
-// to SETTLE_DELAY ms during continuous input, which only affects Toolbar display.
+// to CAMERA_SETTLE_DELAY ms during continuous input, which only affects Toolbar display.
 
 // Start zoomed in tight on the root node (canvas origin) at screen center.
 // The initial fitAll flyTo will smoothly zoom out from here.
 const DEFAULT_CAMERA: Camera = { x: window.innerWidth / 2, y: window.innerHeight / 2, z: 10 }
 
-const SETTLE_DELAY = 150
+// Settle delay is imported as CAMERA_SETTLE_DELAY from constants.ts
 
 function lerpCamera(from: Camera, to: Camera, t: number): Camera {
   return {
@@ -32,9 +32,14 @@ function camerasClose(a: Camera, b: Camera): boolean {
   return Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.z - b.z) < 0.001
 }
 
+export type CameraEventType = 'flyTo' | 'settle' | 'snapback'
 export type InputDevice = 'mouse' | 'trackpad'
 
-export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<string | null>) {
+export function useCamera(
+  initialCamera?: Camera,
+  focusedRef?: React.RefObject<string | null>,
+  onCameraEvent?: (cam: Camera, type: CameraEventType) => void
+) {
   const storedCamera = loadCameraFromStorage()
   const initial = initialCamera ?? storedCamera ?? DEFAULT_CAMERA
   const restoredFromStorageRef = useRef(storedCamera !== null && !initialCamera)
@@ -56,6 +61,9 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
   const isSnapBackRef = useRef(false)
   const lastZoomPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
+  const onCameraEventRef = useRef(onCameraEvent)
+  onCameraEventRef.current = onCameraEvent
+
   const applyToDOM = useCallback((cam: Camera) => {
     if (surfaceRef.current) {
       surfaceRef.current.style.transform = getCameraTransform(cam)
@@ -68,7 +76,10 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     clearTimeout(syncTimerRef.current)
     syncTimerRef.current = window.setTimeout(() => {
       setCamera(cameraRef.current)
-    }, SETTLE_DELAY)
+      if (!animatingRef.current) {
+        onCameraEventRef.current?.(cameraRef.current, 'settle')
+      }
+    }, CAMERA_SETTLE_DELAY)
   }, [])
 
   // Persist camera to localStorage on every change
@@ -126,6 +137,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     targetRef.current = to
     speedRef.current = speed
     ensureAnimating()
+    onCameraEventRef.current?.(to, isSnapBack ? 'snapback' : 'flyTo')
   }, [ensureAnimating])
 
   const snapToTarget = useCallback(() => {
@@ -338,6 +350,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
 
     // Store the final target so snapToTarget() can complete this instantly
     targetRef.current = targetCamera
+    onCameraEventRef.current?.(targetCamera, 'flyTo')
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
@@ -444,6 +457,7 @@ export function useCamera(initialCamera?: Camera, focusedRef?: React.RefObject<s
     animatingRef.current = true
     clearTimeout(snapBackTimerRef.current)
     targetRef.current = targetCamera
+    onCameraEventRef.current?.(targetCamera, 'flyTo')
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return

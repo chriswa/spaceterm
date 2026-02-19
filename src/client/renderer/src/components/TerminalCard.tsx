@@ -53,7 +53,7 @@ interface TerminalCardProps {
   focused: boolean
   selected: boolean
   anyNodeFocused: boolean
-  stoppedUnviewed: boolean
+  claudeStatusUnread?: boolean
   scrollMode: boolean
   onFocus: (id: string) => void
   onUnfocus: () => void
@@ -82,16 +82,17 @@ interface TerminalCardProps {
   onReparentTarget?: (id: string) => void
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
+  onFork?: (id: string) => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.RefObject<Camera>
 }
 
 export function TerminalCard({
-  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, stoppedUnviewed, scrollMode,
+  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive, onAddNode, cameraRef
+  terminalSessions, onSessionRevive, onFork, onAddNode, cameraRef
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -113,6 +114,7 @@ export function TerminalCard({
   const [claudeSessionLineCount, setClaudeSessionLineCount] = useState<number | undefined>(undefined)
   const [xtermReady, setXtermReady] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [planCacheFiles, setPlanCacheFiles] = useState<string[]>([])
   const searchOpenRef = useRef(false)
 
   // Reset when unfocusing so it's always false on next focus
@@ -489,6 +491,13 @@ export function TerminalCard({
     })
   }, [sessionId])
 
+  // Subscribe to plan cache updates (always, not just when focused)
+  useEffect(() => {
+    return window.api.pty.onPlanCacheUpdate(sessionId, (_count, files) => {
+      setPlanCacheFiles(files)
+    })
+  }, [sessionId])
+
   // Tint xterm background to match color preset
   useEffect(() => {
     const term = terminalRef.current
@@ -741,7 +750,7 @@ export function TerminalCard({
   const animationClass = (anyNodeFocused || selected) ? '' :
     claudeState === 'waiting_plan' ? 'terminal-card--waiting-plan' :
     claudeState === 'waiting_permission' ? 'terminal-card--waiting-permission' :
-    stoppedUnviewed ? 'terminal-card--stopped-unviewed' : ''
+    (claudeStatusUnread && claudeState === 'stopped') ? 'terminal-card--stopped-unviewed' : ''
 
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
@@ -758,6 +767,11 @@ export function TerminalCard({
   const lastClaudeSession = claudeSessionHistory && claudeSessionHistory.length > 0
     ? claudeSessionHistory[claudeSessionHistory.length - 1]
     : null
+
+  const handleDiffPlans = planCacheFiles.length >= 2 ? () => {
+    const [prev, curr] = planCacheFiles.slice(-2)
+    window.api.diffFiles(prev, curr)
+  } : undefined
 
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
 
@@ -798,6 +812,8 @@ export function TerminalCard({
       onArchiveToggled={onArchiveToggled}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
+      onFork={claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
+      onDiffPlans={handleDiffPlans}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       className={`terminal-card ${focusClass} ${animationClass}`}
@@ -839,11 +855,23 @@ export function TerminalCard({
         const footerContent = (
           <>
             {abbrevCwd && <><span>{abbrevCwd}</span><span>&nbsp;|&nbsp;</span></>}
-            <span>Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(id); showToast('Copied to clipboard') }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
+            <span>Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => {
+              e.stopPropagation()
+              let text = `${new Date().toISOString()} Surface ID: ${id}`
+              if (lastClaudeSession) text += ` Claude session ID: ${lastClaudeSession.claudeSessionId}`
+              text += ` Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+              navigator.clipboard.writeText(text)
+              showToast(`Copied to clipboard: ${text}`)
+            }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
             {lastClaudeSession && (
               <>
                 <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
-                <span className="terminal-card__footer-id" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lastClaudeSession.claudeSessionId); showToast('Copied to clipboard') }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+                <span className="terminal-card__footer-id" onClick={(e) => {
+                  e.stopPropagation()
+                  const text = `${new Date().toISOString()} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+                  navigator.clipboard.writeText(text)
+                  showToast(`Copied to clipboard: ${text}`)
+                }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
                 {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
                 <span>&nbsp;|&nbsp;</span>
                 <span>{claudeStateLabel(claudeState)}</span>

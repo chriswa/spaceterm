@@ -157,6 +157,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'plan-cache-update') {
+      this.emit('plan-cache-update', msg.sessionId, msg.count, msg.files)
+      return
+    }
+
     if (msg.type === 'server-error') {
       this.emit('server-error', msg.message)
       return
@@ -287,6 +292,10 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'directory-cwd', nodeId, cwd })
   }
 
+  async directoryGitFetch(nodeId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'directory-git-fetch', nodeId })
+  }
+
   async validateDirectory(path: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'validate-directory', path })
   }
@@ -325,6 +334,10 @@ export class ServerClient extends EventEmitter {
 
   async titleText(nodeId: string, text: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'title-text', nodeId, text })
+  }
+
+  async forkSession(nodeId: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'fork-session', nodeId })
   }
 
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {

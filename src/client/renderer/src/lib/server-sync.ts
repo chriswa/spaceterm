@@ -154,3 +154,9 @@ export async function sendTerminalReincarnate(
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
   return window.api.node.terminalReincarnate(nodeId, options)
 }
+
+export async function sendForkSession(
+  nodeId: string
+): Promise<{ sessionId: string; cols: number; rows: number }> {
+  return window.api.node.forkSession(nodeId)
+}

@@ -941,6 +941,14 @@ html, body, #root {
   font-weight: bold;
 }
 
+.directory-card__git-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 11px;
+}
+
 .directory-card__error {
   font-size: 11px;
   color: #f38ba8;
@@ -1000,6 +1008,47 @@ html, body, #root {
 .directory-card .node-titlebar__reparent-btn--active {
   background: rgba(203, 166, 247, 0.4);
   color: #cba6f7;
+}
+
+.directory-card__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.directory-card__git-status {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--dir-fg, #1e1e2e);
+  opacity: 0.55;
+  white-space: nowrap;
+  pointer-events: none;
+  margin-top: 2px;
+}
+
+.directory-card__git-status--conflict {
+  color: #f38ba8;
+  opacity: 1;
+}
+
+.directory-card__git-status--no-git {
+  font-style: italic;
+  opacity: 0.35;
+}
+
+.directory-card__fetch-age {
+  cursor: default;
+  pointer-events: none;
+}
+
+.directory-card--focused .directory-card__fetch-age {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.directory-card--focused .directory-card__fetch-age:hover {
+  opacity: 0.85;
+  text-decoration: underline;
 }
 
 /* Title card */
@@ -1433,6 +1482,25 @@ html, body, #root {
   pointer-events: none;
 }
 
+/* Fork button in title bar */
+.node-titlebar__fork-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__fork-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
 .node-titlebar__sessions-btn svg {
   position: absolute;
 }
@@ -1548,6 +1616,25 @@ html, body, #root {
 }
 
 .markdown-card .node-titlebar__shipit-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+/* Diff Plans button in title bar */
+.node-titlebar__diff-plans-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__diff-plans-btn:hover {
   background: #181825;
   color: #cdd6f4 !important;
 }

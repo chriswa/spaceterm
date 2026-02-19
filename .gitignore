@@ -3,3 +3,5 @@ out/
 dist/
 *.tsbuildinfo
 .tmp-image-tools/
+.claude-code-src/
+generated-images/

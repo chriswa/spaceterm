@@ -1,5 +1,8 @@
-import { app, BrowserWindow, clipboard, contentTracing, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, contentTracing, ipcMain, net, protocol, screen, shell } from 'electron'
+import * as path from 'path'
+import { pathToFileURL } from 'url'
 import { mkdirSync } from 'fs'
+import { execFile } from 'child_process'
 import { join } from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
 import { ServerClient } from './server-client'
@@ -7,14 +10,23 @@ import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
 import { setupAudio } from './audio'
 import * as audioTap from './audio/audio-tap'
+import { loadWindowState, saveWindowState, findTargetDisplay } from './window-state'
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
 
 function createWindow(): void {
+  // Determine which display to open on based on saved state
+  const saved = loadWindowState()
+  const targetDisplay = saved ? findTargetDisplay(saved.displayBounds) : screen.getPrimaryDisplay()
+  const { x, y, width, height } = targetDisplay.bounds
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    x,
+    y,
+    width,
+    height,
+    show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -30,7 +42,25 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
+  mainWindow.setFullScreen(true)
+  mainWindow.show()
+
+  // Save display on move (debounced) — handles user dragging to a different monitor
+  let moveTimer: ReturnType<typeof setTimeout> | null = null
+  mainWindow.on('move', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (moveTimer !== null) clearTimeout(moveTimer)
+    moveTimer = setTimeout(() => {
+      moveTimer = null
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      const bounds = mainWindow.getBounds()
+      const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y })
+      saveWindowState(display.bounds)
+    }, 1000)
+  })
+
   mainWindow.on('closed', () => {
+    if (moveTimer !== null) clearTimeout(moveTimer)
     mainWindow = null
   })
 }
@@ -115,6 +145,13 @@ function setupIPC(): void {
     } else {
       logger.log(`[openExternal] blocked url=${url} (unsupported protocol)`)
     }
+  })
+
+  ipcMain.handle('shell:diffFiles', (_event, fileA: string, fileB: string) => {
+    logger.log(`[diffFiles] cursor --diff '${fileA}' '${fileB}'`)
+    execFile('cursor', ['--diff', fileA, fileB], (err) => {
+      if (err) logger.log(`[diffFiles] error: ${err.message}`)
+    })
   })
 
   ipcMain.handle('pty:destroy', async (_event, sessionId: string) => {
@@ -203,6 +240,10 @@ function setupIPC(): void {
     await client!.directoryCwd(nodeId, cwd)
   })
 
+  ipcMain.handle('node:directory-git-fetch', async (_event, nodeId: string) => {
+    await client!.directoryGitFetch(nodeId)
+  })
+
   ipcMain.handle('node:validate-directory', async (_event, path: string) => {
     const resp = await client!.validateDirectory(path)
     if (resp.type === 'validate-directory-result') return { valid: resp.valid, error: resp.error }
@@ -251,6 +292,15 @@ function setupIPC(): void {
 
   ipcMain.handle('node:title-text', async (_event, nodeId: string, text: string) => {
     await client!.titleText(nodeId, text)
+  })
+
+  ipcMain.handle('node:fork-session', async (_event, nodeId: string) => {
+    const resp = await client!.forkSession(nodeId)
+    if (resp.type === 'created') {
+      await client!.attach(resp.sessionId)
+      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
+    }
+    throw new Error('Unexpected response')
   })
 
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
@@ -386,6 +436,12 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('plan-cache-update', (sessionId: string, count: number, files: string[]) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`pty:plan-cache-update:${sessionId}`, count, files)
+    }
+  })
+
   client!.on('server-error', (message: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('server:error', message)
@@ -417,6 +473,16 @@ app.whenReady().then(async () => {
   logger.init()
   logger.log('Electron app starting')
 
+  // Register custom protocol for loading local files in the renderer
+  protocol.handle('spaceterm-file', (request) => {
+    const url = new URL(request.url)
+    let filePath = decodeURIComponent(url.pathname)
+    if (!path.isAbsolute(filePath)) {
+      filePath = path.resolve(process.cwd(), filePath)
+    }
+    return net.fetch(pathToFileURL(filePath).href)
+  })
+
   client = new ServerClient()
   setupIPC()
   setupTTSHandlers()
@@ -432,7 +498,6 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
-  mainWindow!.setFullScreen(true)
 
   // Bypass Cmd+P menu accelerator (Print) so it reaches the renderer for plan-jump.
   // setIgnoreMenuShortcuts in before-input-event selectively disables menu shortcuts
@@ -458,6 +523,18 @@ app.on('window-all-closed', () => {
   // Don't destroy sessions — they persist on the server
   client?.disconnect()
   app.quit()
+})
+
+// Save which display the window is on before quitting
+app.on('before-quit', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try {
+    const bounds = mainWindow.getBounds()
+    const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y })
+    saveWindowState(display.bounds)
+  } catch {
+    // Best-effort — don't block quit
+  }
 })
 
 app.on('activate', () => {

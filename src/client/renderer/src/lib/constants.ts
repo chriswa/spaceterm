@@ -19,6 +19,8 @@ export {
   FILE_HEIGHT,
   TITLE_DEFAULT_WIDTH,
   TITLE_HEIGHT,
+  IMAGE_DEFAULT_WIDTH,
+  IMAGE_DEFAULT_HEIGHT,
   MARKDOWN_MIN_WIDTH,
   MARKDOWN_MIN_HEIGHT,
   MARKDOWN_DEFAULT_MAX_WIDTH,
@@ -67,3 +69,6 @@ export const FORCE_MAX_SPEED = 640
 // Edge hover detection
 export const EDGE_HOVER_THRESHOLD_PX = 12
 export const EDGE_SPLIT_NODE_MARGIN_PX = 30
+
+// Camera history: ms after last user input before recording a "settle" position
+export const CAMERA_SETTLE_DELAY = 150

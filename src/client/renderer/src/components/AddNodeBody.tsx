@@ -42,7 +42,7 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
   {
     type: 'directory',
     label: 'Directory',
-    hint: '\u2318D',
+    hint: '',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M1 4 V11 Q1 12 2 12 H12 Q13 12 13 11 V5 Q13 4 12 4 H7 L5.5 2 H2 Q1 2 1 3 Z" />
@@ -52,7 +52,7 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
   {
     type: 'file',
     label: 'File',
-    hint: '\u2318O',
+    hint: '',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 1 H9 L11 3 V13 H3 Z" />

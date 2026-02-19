@@ -14,6 +14,7 @@ import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
 const CARD_TOP_PADDING = 28
+const TYPING_BUFFER = 24
 const URL_RE = /https?:\/\/[^\s\])<>]+/g
 
 interface MarkdownCardProps {
@@ -404,7 +405,7 @@ export function MarkdownCard({
     scroller.style.width = ''
     scroller.style.height = ''
 
-    const finalWidth = Math.min(intrinsicWidth + 8, effectiveMax)
+    const finalWidth = Math.min(intrinsicWidth + 8 + TYPING_BUFFER, effectiveMax)
     const finalHeight = Math.max(MARKDOWN_MIN_HEIGHT, scrollHeight + 4 + CARD_TOP_PADDING)
     return { width: Math.max(MARKDOWN_MIN_WIDTH, finalWidth), height: finalHeight }
   }

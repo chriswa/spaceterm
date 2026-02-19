@@ -8,7 +8,9 @@ import type {
   DirectoryNodeData,
   FileNodeData,
   TitleNodeData,
-  TerminalSessionEntry
+  ImageNodeData,
+  TerminalSessionEntry,
+  GitStatus
 } from '../shared/state'
 import type { ClaudeSessionEntry } from '../shared/protocol'
 import { schedulePersist, persistNow, loadState } from './persistence'
@@ -567,6 +569,20 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  updateDirectoryGitStatus(nodeId: string, gitStatus: GitStatus | null): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'directory') return
+    node.gitStatus = gitStatus
+    this.onNodeUpdate(nodeId, { gitStatus } as Partial<DirectoryNodeData>)
+    // Don't persist — ephemeral data, same pattern as updateClaudeState
+  }
+
+  getDirectoryNodes(): DirectoryNodeData[] {
+    return Object.values(this.state.nodes).filter(
+      (n): n is DirectoryNodeData => n.type === 'directory'
+    )
+  }
+
   // --- File operations ---
 
   createFile(parentId: string, x: number, y: number, filePath: string): FileNodeData {
@@ -682,6 +698,32 @@ export class StateManager {
     node.text = text
     this.onNodeUpdate(nodeId, { text } as Partial<TitleNodeData>)
     this.schedulePersist()
+  }
+
+  // --- Image operations ---
+
+  createImage(parentId: string, x: number, y: number, filePath: string, width?: number, height?: number): ImageNodeData {
+    const id = randomUUID()
+    const zIndex = this.state.nextZIndex++
+
+    const node: ImageNodeData = {
+      id,
+      type: 'image',
+      parentId,
+      x,
+      y,
+      zIndex,
+      filePath,
+      archivedChildren: [],
+      colorPresetId: 'inherit',
+      ...(width != null ? { width } : {}),
+      ...(height != null ? { height } : {})
+    }
+
+    this.state.nodes[id] = node
+    this.onNodeAdd(node)
+    this.schedulePersist()
+    return node
   }
 
   // --- Persistence ---

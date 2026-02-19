@@ -1,19 +1,23 @@
 import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
+import { execFile } from 'child_process'
 import { SOCKET_DIR, SOCKET_PATH, HOOK_LOG_DIR, DECISION_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, ServerMessage, CreateOptions } from '../shared/protocol'
 import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { canFitAt, computePlacement } from './node-placement'
-import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
+import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
 import { DecisionLogger } from './decision-logger'
 import { FileContentManager } from './file-content-manager'
+import { GitStatusPoller } from './git-status-poller'
+import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
+import { forkSession } from './session-fork'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -25,29 +29,55 @@ const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 33_000
 /** Spaceterm project root (two levels up from src/server/). */
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 
+const GENERATED_IMAGES_DIR = path.join(SOCKET_DIR, 'generated-images') + path.sep
+
+/** Delete the backing file for an image node if it lives inside generated-images/. */
+function deleteGeneratedImageFile(node: import('../shared/state').NodeData | undefined): void {
+  if (!node || node.type !== 'image') return
+  const resolved = path.resolve(node.filePath)
+  if (resolved.startsWith(GENERATED_IMAGES_DIR)) {
+    fs.unlink(resolved, () => {})
+  }
+}
+
 /**
  * Build CreateOptions for spawning a Claude Code PTY with full plugin/settings args.
  * Paths are absolute so they work regardless of the spawned process's cwd.
  */
 /**
- * Check the immediate parent node (`startNodeId`) for context to include
- * in a Claude prompt. Only gathers from the direct parent — not the full
- * ancestor chain — so Cmd+E scopes context to the immediate parent.
+ * Walk the ancestor chain from `startNodeId` upward, collecting context from
+ * markdown nodes (non-file-backed content) and file nodes (resolved paths).
+ * Returns the accumulated pieces joined with newlines, or undefined if none found.
  */
 function gatherAncestorPrompt(nodes: Record<string, import('../shared/state').NodeData>, startNodeId: string): string | undefined {
-  const node = nodes[startNodeId]
-  if (!node) return undefined
-  if (node.type === 'markdown' && !node.fileBacked && node.content.trim()) {
-    return node.content
+  const parts: string[] = []
+  let currentId = startNodeId
+  const visited = new Set<string>()
+  while (currentId && currentId !== 'root') {
+    if (visited.has(currentId)) break
+    visited.add(currentId)
+    const node = nodes[currentId]
+    if (!node) break
+    if (node.type === 'markdown' && !node.fileBacked && node.content.trim()) {
+      parts.push(node.content)
+    }
+    if (node.type === 'file' && node.filePath) {
+      const cwd = getAncestorCwd(nodes, node.parentId)
+      parts.push(resolveFilePath(node.filePath, cwd))
+    }
+    currentId = node.parentId
   }
-  if (node.type === 'file' && node.filePath) {
-    const cwd = getAncestorCwd(nodes, node.parentId)
-    return resolveFilePath(node.filePath, cwd)
-  }
-  return undefined
+  // Reverse so outermost ancestors come first
+  parts.reverse()
+  return parts.length > 0 ? parts.join('\n') : undefined
 }
 
-function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, prompt?: string): CreateOptions {
+/** Escape a string for embedding inside a shell single-quoted string. */
+function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'"
+}
+
+function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, prompt?: string, appendSystemPrompt?: boolean): CreateOptions {
   const pluginDir = path.join(PROJECT_ROOT, 'src/claude-code-plugin')
   const statusLineSettings = JSON.stringify({
     statusLine: {
@@ -59,7 +89,30 @@ function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, pr
   if (resumeSessionId) {
     args.push('-r', resumeSessionId)
   }
-  if (prompt) {
+  if (prompt && appendSystemPrompt) {
+    args.push('--append-system-prompt', prompt)
+
+    // Print a banner showing the appended system prompt, then exec claude.
+    // We use stty -echo before the printf to suppress PTY line discipline echo,
+    // which otherwise causes the banner to appear twice — a known node-pty issue:
+    //   https://github.com/microsoft/node-pty/issues/269 (duplicate writes on initial write)
+    //   https://github.com/microsoft/node-pty/issues/78  (PTY echo duplication)
+    //   https://github.com/microsoft/node-pty/issues/354 (duplicated output)
+    const header = ' The following was appended to the system prompt '
+    const footer = ' The preceding was appended to the system prompt '
+    // Normalize newlines to \r\n for terminal display (CRLF)
+    const termPrompt = prompt.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+    const claudeCmd = ['claude', ...args].map(a => shellQuote(a)).join(' ')
+    const script = [
+      'stty -echo',
+      `printf '\\x1b[30;47m${header}\\x1b[0m\\r\\n'`,
+      `printf '%s\\r\\n' ${shellQuote(termPrompt)}`,
+      `printf '\\x1b[30;47m${footer}\\x1b[0m\\r\\n\\r\\n'`,
+      'stty echo',
+      `exec ${claudeCmd}`
+    ].join('; ')
+    return { cwd, command: '/bin/sh', args: ['-c', script] }
+  } else if (prompt) {
     args.push('--', prompt)
   }
   return { cwd, command: 'claude', args }
@@ -79,6 +132,8 @@ let stateManager: StateManager
 let snapshotManager: SnapshotManager
 let sessionFileWatcher: SessionFileWatcher
 let fileContentManager: FileContentManager
+let gitStatusPoller: GitStatusPoller
+let planCacheManager: PlanCacheManager
 let decisionLogger: DecisionLogger
 
 function localISOTimestamp(): string {
@@ -269,6 +324,20 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           scrollback: ''
         })
       }
+      // Send cached plan files if available — the plan-cache-update event
+      // may have been broadcast during backfill before this client attached.
+      const claudeSessionId = sessionManager.getLastClaudeSessionId(msg.sessionId)
+      if (claudeSessionId) {
+        const planFiles = planCacheManager.getVersions(claudeSessionId)
+        if (planFiles.length >= 2) {
+          send(client.socket, {
+            type: 'plan-cache-update',
+            sessionId: msg.sessionId,
+            count: planFiles.length,
+            files: planFiles
+          })
+        }
+      }
       break
     }
 
@@ -290,6 +359,32 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'write': {
       sessionManager.write(msg.sessionId, msg.data)
+
+      const isPromptSubmit = msg.data === '\r'
+      const wasUnread = sessionManager.getClaudeStatusUnread(msg.sessionId)
+      const prevState = sessionManager.getClaudeState(msg.sessionId) ?? 'stopped'
+
+      // Fast path: nothing to change
+      if (!wasUnread && (!isPromptSubmit || prevState === 'stopped')) break
+
+      if (wasUnread) {
+        sessionManager.setClaudeStatusUnread(msg.sessionId, false)
+      }
+
+      let newState = prevState
+      if (isPromptSubmit && prevState !== 'stopped') {
+        newState = 'stopped'
+        sessionManager.setClaudeState(msg.sessionId, 'stopped')
+      }
+
+      decisionLogger.log(msg.sessionId, {
+        timestamp: localISOTimestamp(),
+        source: 'client',
+        event: isPromptSubmit ? 'client:promptSubmit' : 'client:interact',
+        prevState,
+        newState,
+        unread: false
+      })
       break
     }
 
@@ -425,6 +520,21 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'generate-image': {
+      const giParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!giParentNodeId) {
+        console.error(`[generate-image] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      const giPos = computePlacement(
+        stateManager.getState().nodes,
+        giParentNodeId,
+        { width: msg.width, height: msg.height }
+      )
+      stateManager.createImage(giParentNodeId, giPos.x, giPos.y, msg.filePath, msg.width, msg.height)
+      break
+    }
+
     case 'spawn-claude-surface': {
       const spawnParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
       if (!spawnParentNodeId) {
@@ -433,7 +543,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }
       try {
         const spawnCwd = sessionManager.getCwd(msg.surfaceId)
-        const spawnOptions = buildClaudeCodeCreateOptions(spawnCwd, undefined, msg.prompt)
+        const ancestorContext = gatherAncestorPrompt(stateManager.getState().nodes, spawnParentNodeId)
+        const fullPrompt = ancestorContext ? `${ancestorContext}\n${msg.prompt}` : msg.prompt
+        const spawnOptions = buildClaudeCodeCreateOptions(spawnCwd, undefined, fullPrompt)
         const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
         snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
         const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, terminalPixelSize(spawnCols, spawnRows))
@@ -524,8 +636,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           c.snapshotSessions.delete(node.sessionId)
         })
       }
+      deleteGeneratedImageFile(node)
       // Stop file watching if this is a file-backed markdown
       fileContentManager.stopWatching(msg.nodeId)
+      gitStatusPoller.removeNode(msg.nodeId)
       stateManager.archiveNode(msg.nodeId)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
@@ -554,8 +668,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const latestClaudeId = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
         if (latestClaudeId) {
           try {
-            const options = buildClaudeCodeCreateOptions(restoredNode.cwd, latestClaudeId)
-            const { sessionId: newPtyId, cols, rows } = sessionManager.create(options)
+            const restoreOptions = buildClaudeCodeCreateOptions(restoredNode.cwd, latestClaudeId)
+            const { sessionId: newPtyId, cols, rows } = sessionManager.create(restoreOptions)
             snapshotManager.addSession(newPtyId, cols, rows)
             if (restoredNode.shellTitleHistory?.length) {
               sessionManager.seedTitleHistory(newPtyId, restoredNode.shellTitleHistory)
@@ -581,6 +695,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-archive-delete': {
+      const archived = stateManager.peekArchivedNode(msg.parentNodeId, msg.archivedNodeId)
+      deleteGeneratedImageFile(archived)
       stateManager.deleteArchivedNode(msg.parentNodeId, msg.archivedNodeId)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
@@ -617,7 +733,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         if (msg.options?.claude) {
           const prompt = msg.options.claude.prompt
             ?? gatherAncestorPrompt(stateManager.getState().nodes, msg.parentId)
-          options = buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, prompt)
+          options = buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, prompt, msg.options.claude.appendSystemPrompt)
         } else {
           options = msg.options
         }
@@ -670,9 +786,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           send(client.socket, { type: 'mutation-ack', seq: msg.seq })
           break
         }
-        const rOptions = msg.options?.claude
-          ? buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, msg.options.claude.prompt)
-          : msg.options
+        let rOptions: CreateOptions | undefined
+        if (msg.options?.claude) {
+          rOptions = buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, msg.options.claude.prompt, msg.options.claude.appendSystemPrompt)
+        } else {
+          rOptions = msg.options
+        }
         const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(rOptions)
         snapshotManager.addSession(newPtyId, rCols, rRows)
         // Seed the new PTY session with the remnant's title history before reincarnation
@@ -703,6 +822,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           posY = pos.y
         }
         const dirNode = stateManager.createDirectory(msg.parentId, posX, posY, msg.cwd)
+        gitStatusPoller.pollNode(dirNode.id)
         send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: dirNode.id })
       } catch (err: any) {
         console.error(`directory-add failed: ${err.message}`)
@@ -714,11 +834,29 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'directory-cwd': {
       try {
         stateManager.updateDirectoryCwd(msg.nodeId, msg.cwd)
+        gitStatusPoller.pollNode(msg.nodeId)
         send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
         console.error(`directory-cwd failed: ${err.message}`)
         send(client.socket, { type: 'server-error', message: `directory-cwd failed: ${err.message}` })
       }
+      break
+    }
+
+    case 'directory-git-fetch': {
+      const dirNode = stateManager.getNode(msg.nodeId)
+      if (!dirNode || dirNode.type !== 'directory') {
+        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        break
+      }
+      const fetchCwd = resolveFilePath(dirNode.cwd)
+      execFile('git', ['rev-parse', '--show-toplevel'], { cwd: fetchCwd, timeout: 5000 }, (topErr, topOut) => {
+        const repoRoot = topErr ? fetchCwd : topOut.trim()
+        execFile('git', ['fetch'], { cwd: repoRoot, timeout: 15000 }, () => {
+          gitStatusPoller.pollNode(msg.nodeId)
+        })
+      })
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -879,6 +1017,29 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'image-add': {
+      try {
+        const imgWidth = msg.width ?? IMAGE_DEFAULT_WIDTH
+        const imgHeight = msg.height ?? IMAGE_DEFAULT_HEIGHT
+        let posX: number
+        let posY: number
+        if (msg.x != null && msg.y != null) {
+          posX = msg.x
+          posY = msg.y
+        } else {
+          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: imgWidth, height: imgHeight })
+          posX = pos.x
+          posY = pos.y
+        }
+        const imgNode = stateManager.createImage(msg.parentId, posX, posY, msg.filePath, msg.width, msg.height)
+        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: imgNode.id })
+      } catch (err: any) {
+        console.error(`image-add failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `image-add failed: ${err.message}` })
+      }
+      break
+    }
+
     case 'set-claude-status-unread': {
       sessionManager.setClaudeStatusUnread(msg.sessionId, msg.unread)
       decisionLogger.log(msg.sessionId, {
@@ -889,6 +1050,45 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         newState: sessionManager.getClaudeState(msg.sessionId),
         unread: msg.unread
       })
+      break
+    }
+
+    case 'fork-session': {
+      try {
+        const forkNode = stateManager.getNode(msg.nodeId)
+        if (!forkNode || forkNode.type !== 'terminal') {
+          send(client.socket, { type: 'server-error', message: `fork-session: node ${msg.nodeId} is not a terminal` })
+          break
+        }
+        const history = forkNode.claudeSessionHistory ?? []
+        if (history.length === 0) {
+          send(client.socket, { type: 'server-error', message: `fork-session: no Claude session history` })
+          break
+        }
+        const sourceClaudeSessionId = history[history.length - 1].claudeSessionId
+        const forkCwd = forkNode.cwd ?? sessionManager.getCwd(forkNode.sessionId)
+        if (!forkCwd) {
+          send(client.socket, { type: 'server-error', message: `fork-session: cannot determine cwd` })
+          break
+        }
+
+        const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId, forkNode.name)
+        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId)
+        const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
+        snapshotManager.addSession(forkPtyId, forkCols, forkRows)
+
+        const forkParentId = msg.nodeId
+        const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, terminalPixelSize(forkCols, forkRows))
+        const forkName = forkNode.name ? `${forkNode.name} (Fork)` : undefined
+        stateManager.createTerminal(forkPtyId, forkParentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, undefined, forkName)
+
+        client.attachedSessions.add(forkPtyId)
+        send(client.socket, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
+        console.log(`[fork-session] Forked terminal ${msg.nodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (claude session ${newClaudeSessionId.slice(0, 8)})`)
+      } catch (err: any) {
+        console.error(`fork-session failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `fork-session failed: ${err.message}` })
+      }
       break
     }
 
@@ -998,6 +1198,9 @@ function startServer(): void {
   // Initialize DecisionLogger — per-surface JSONL log of state transition decisions
   decisionLogger = new DecisionLogger()
 
+  // Initialize PlanCacheManager — caches plan file revisions for diffing
+  planCacheManager = new PlanCacheManager()
+
   // Start the transition queue drain — processes queued state transitions every 50ms
   transitionDrainTimer = setInterval(drainTransitionQueue, TRANSITION_DRAIN_INTERVAL_MS)
 
@@ -1005,9 +1208,25 @@ function startServer(): void {
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
     sessionManager.setClaudeSessionLineCount(surfaceId, totalLineCount)
 
-    // Skip state routing during backfill — historical entries can't be replayed
-    // without also replaying hooks, and the persisted claudeState is already correct.
-    if (isBackfill) return
+    // During backfill, only track plan file paths (so the path is ready for
+    // future live snapshots). Don't snapshot — the file on disk only has its
+    // latest content, so backfill snapshots would be misleading.
+    if (isBackfill) {
+      for (const entry of newEntries) {
+        if (entry.type !== 'assistant') continue
+        const assistantContent = (entry.message as any)?.content
+        if (!Array.isArray(assistantContent)) continue
+        for (const block of assistantContent) {
+          if (block.type === 'tool_use' &&
+              (block.name === 'Write' || block.name === 'Edit') &&
+              typeof block.input?.file_path === 'string' &&
+              block.input.file_path.includes('/.claude/plans/')) {
+            planCacheManager.trackPlanFile(surfaceId, block.input.file_path)
+          }
+        }
+      }
+      return
+    }
 
     for (const entry of newEntries) {
       // Parse source timestamp from the JSONL entry (falls back to now if missing/invalid)
@@ -1017,6 +1236,32 @@ function startServer(): void {
 
       // Assistant message → Claude is actively producing output
       if (entry.type === 'assistant') {
+        // Scan tool_use blocks for plan file writes and ExitPlanMode
+        const assistantContent = (entry.message as any)?.content
+        if (Array.isArray(assistantContent)) {
+          for (const block of assistantContent) {
+            if (block.type !== 'tool_use') continue
+            if ((block.name === 'Write' || block.name === 'Edit') &&
+                typeof block.input?.file_path === 'string' &&
+                block.input.file_path.includes('/.claude/plans/')) {
+              planCacheManager.trackPlanFile(surfaceId, block.input.file_path)
+            }
+            if (block.name === 'ExitPlanMode') {
+              const claudeSessionId = sessionManager.getLastClaudeSessionId(surfaceId)
+              if (claudeSessionId) {
+                const files = planCacheManager.snapshot(surfaceId, claudeSessionId)
+                if (files.length >= 2) {
+                  broadcastToAttached(surfaceId, {
+                    type: 'plan-cache-update',
+                    sessionId: surfaceId,
+                    count: files.length,
+                    files
+                  })
+                }
+              }
+            }
+          }
+        }
         queueTransition(surfaceId, 'working', 'jsonl', 'jsonl:assistant', entryTime)
         continue
       }
@@ -1072,8 +1317,8 @@ function startServer(): void {
   for (const { nodeId, claudeSessionId, cwd } of deadTerminals) {
     if (claudeSessionId) {
       try {
-        const options = buildClaudeCodeCreateOptions(cwd, claudeSessionId)
-        const { sessionId, cols, rows } = sessionManager.create(options)
+        const reviveOptions = buildClaudeCodeCreateOptions(cwd, claudeSessionId)
+        const { sessionId, cols, rows } = sessionManager.create(reviveOptions)
         snapshotManager.addSession(sessionId, cols, rows)
         const revivingNode = stateManager.getNode(nodeId)
         if (revivingNode?.type === 'terminal' && revivingNode.shellTitleHistory?.length) {
@@ -1094,6 +1339,12 @@ function startServer(): void {
       console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (no Claude session)`)
     }
   }
+
+  // --- Git status polling for directory nodes ---
+  gitStatusPoller = new GitStatusPoller(
+    () => stateManager.getDirectoryNodes(),
+    (nodeId, gitStatus) => stateManager.updateDirectoryGitStatus(nodeId, gitStatus)
+  )
 
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes
@@ -1154,6 +1405,7 @@ function startServer(): void {
     if (transitionDrainTimer) clearInterval(transitionDrainTimer)
     // Flush any remaining queued transitions before persisting state
     drainTransitionQueue(true)
+    gitStatusPoller.dispose()
     fileContentManager.dispose()
     sessionFileWatcher.dispose()
     snapshotManager.dispose()

@@ -54,9 +54,22 @@ export interface MarkdownNodeData extends BaseNodeData {
   fileBacked?: boolean  // true = content lives on disk, set permanently at creation
 }
 
+export interface GitStatus {
+  branch: string | null        // null = detached HEAD
+  upstream: string | null      // e.g. "origin/main"
+  ahead: number
+  behind: number
+  conflicts: number
+  staged: number               // total staged changes
+  unstaged: number             // total unstaged modifications + deletions
+  untracked: number
+  lastFetchTimestamp: number | null  // epoch ms from FETCH_HEAD mtime
+}
+
 export interface DirectoryNodeData extends BaseNodeData {
   type: 'directory'
   cwd: string
+  gitStatus?: GitStatus | null  // undefined=not polled yet, null=not a git repo
 }
 
 export interface FileNodeData extends BaseNodeData {
@@ -69,7 +82,14 @@ export interface TitleNodeData extends BaseNodeData {
   text: string
 }
 
-export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData | TitleNodeData
+export interface ImageNodeData extends BaseNodeData {
+  type: 'image'
+  filePath: string   // absolute path on the client filesystem
+  width?: number     // display width in pixels (optional)
+  height?: number    // display height in pixels (optional)
+}
+
+export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData | TitleNodeData | ImageNodeData
 
 // --- Archived nodes ---
 
