@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { DIRECTORY_WIDTH, DIRECTORY_HEIGHT } from '../lib/constants'
+import { DIRECTORY_HEIGHT } from '../lib/constants'
+import { DIR_FOLDER_H_PADDING, DIR_MIN_FOLDER_WIDTH } from '../../../../shared/node-size'
 import type { ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
@@ -9,8 +10,6 @@ import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
-const FOLDER_H_PADDING = 80
-const MIN_FOLDER_WIDTH = 180
 const DEFAULT_BG = '#1e1e2e'
 
 function formatFetchAge(ts: number | null): string {
@@ -152,7 +151,7 @@ export function DirectoryCard({
     setGitTextWidth(gitStatusText ? gitMeasureRef.current.offsetWidth : 0)
   }, [gitStatusText])
 
-  const folderWidth = Math.max(MIN_FOLDER_WIDTH, Math.max(textWidth, gitTextWidth) + FOLDER_H_PADDING)
+  const folderWidth = Math.max(DIR_MIN_FOLDER_WIDTH, Math.max(textWidth, gitTextWidth) + DIR_FOLDER_H_PADDING)
   const paths = folderPaths(folderWidth)
 
   // Notify parent when focused node size is known

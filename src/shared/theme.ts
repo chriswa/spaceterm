@@ -1,7 +1,7 @@
 /** Catppuccin Mocha ANSI palette — indices 0-7 normal, 8-15 bright */
 export const ANSI_COLORS: readonly string[] = [
-  '#45475a', '#f38ba8', '#a6e3a1', '#f9e2af', '#89b4fa', '#f5c2e7', '#94e2d5', '#bac2de',
-  '#585b70', '#f38ba8', '#a6e3a1', '#f9e2af', '#89b4fa', '#f5c2e7', '#94e2d5', '#a6adc8'
+  '#45475a', '#ff5c8a', '#60e85a', '#ffc94d', '#4d9eff', '#f56cd4', '#2ee8d2', '#bac2de',
+  '#585b70', '#ff5c8a', '#60e85a', '#ffc94d', '#4d9eff', '#f56cd4', '#2ee8d2', '#a6adc8'
 ]
 
 export const DEFAULT_FG = '#cdd6f4'
@@ -13,7 +13,7 @@ export const CUBE_STEPS: readonly number[] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff
 /** xterm.js theme object for the live Terminal instance */
 export const XTERM_THEME = {
   foreground: DEFAULT_FG,
-  cursor: '#f5e0dc',
+  cursor: '#ffb8b0',
   selectionBackground: '#585b70',
   black: ANSI_COLORS[0],
   red: ANSI_COLORS[1],

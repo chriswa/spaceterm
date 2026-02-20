@@ -17,7 +17,7 @@ export interface ColorPreset {
 // markdownAccent: mid-lightness vivid (~L0.74, C0.11) per hue
 // markdownHighlight: warm contrasting tone per hue
 export const COLOR_PRESETS: ColorPreset[] = [
-  { id: 'default', label: 'Default', titleBarBg: '#ffffff', titleBarFg: '#1a1a1a', terminalBg: '#1e1e2e', markdownFg: '#cdd6f4', markdownAccent: '#89b4fa', markdownHighlight: '#f9e2af' },
+  { id: 'default', label: 'Default', titleBarBg: '#ffffff', titleBarFg: '#1a1a1a', terminalBg: '#1e1e2e', markdownFg: '#cdd6f4', markdownAccent: '#4d9eff', markdownHighlight: '#ffc94d' },
   { id: 'red',     label: 'Red',     titleBarBg: '#FF8181', titleBarFg: '#1a1a1a', terminalBg: '#22100f', markdownFg: '#f0c8c4', markdownAccent: '#e88878', markdownHighlight: '#f0d0a8' },
   { id: 'orange',  label: 'Orange',  titleBarBg: '#F7B954', titleBarFg: '#1a1a1a', terminalBg: '#1e1406', markdownFg: '#ecd8c0', markdownAccent: '#d8a050', markdownHighlight: '#f0e8a0' },
   { id: 'green',   label: 'Green',   titleBarBg: '#A5D550', titleBarFg: '#1a1a1a', terminalBg: '#121909', markdownFg: '#c4dcb0', markdownAccent: '#88c058', markdownHighlight: '#e8e0a8' },

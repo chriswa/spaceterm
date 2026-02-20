@@ -23,6 +23,28 @@ export interface ReparentEdge {
   toY: number
 }
 
+export interface BgSettings {
+  chroma: number
+  lightness: number
+  dimming: number
+  radialSpread: number
+  baseFloor: number
+  animSpeed: number
+  edgeWidth: number
+  edgeSpeed: number
+}
+
+export const BG_DEFAULTS: BgSettings = {
+  chroma: 0.12,
+  lightness: 0.65,
+  dimming: 0.5,
+  radialSpread: 0.108,
+  baseFloor: 0.15,
+  animSpeed: 1.0,
+  edgeWidth: 10,
+  edgeSpeed: 1.0,
+}
+
 interface CanvasBackgroundProps {
   camera: Camera
   cameraRef: React.RefObject<Camera>
@@ -30,6 +52,7 @@ interface CanvasBackgroundProps {
   maskRectsRef: React.RefObject<MaskRect[]>
   selectionRef: React.RefObject<string | null>
   reparentEdgeRef: React.RefObject<ReparentEdge | null>
+  bgSettingsRef: React.RefObject<BgSettings>
 }
 
 // --- Background shaders ---
@@ -41,17 +64,10 @@ void main() {
 }
 `
 
-const BG_FRAG_SRC = `
-// Based on shader by Trisomie21 — https://www.shadertoy.com/view/lsf3RH
-
-precision highp float;
-uniform float iTime;
-uniform vec2 uOrigin;
-uniform float uZoom;
-
+// Shared background GLSL — reused by edge shader for soft-light blending
+const BG_HELPERS = `
 const float PI = 3.14159265358979;
 
-// OKLab → linear sRGB
 vec3 oklab2rgb(vec3 lab) {
     float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
     float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
@@ -66,73 +82,60 @@ vec3 oklab2rgb(vec3 lab) {
     );
 }
 
-// OKLCH → linear sRGB (hue in radians)
 vec3 oklch2rgb(float L, float C, float h) {
     return oklab2rgb(vec3(L, C * cos(h), C * sin(h)));
 }
 
-float snoise(vec3 uv, float res)
-{
+float snoise(vec3 uv, float res) {
     const vec3 s = vec3(1e0, 1e2, 1e3);
-
     uv *= res;
-
     vec3 uv0 = floor(mod(uv, res))*s;
     vec3 uv1 = floor(mod(uv+vec3(1.), res))*s;
-
     vec3 f = fract(uv); f = f*f*(3.0-2.0*f);
-
     vec4 v = vec4(uv0.x+uv0.y+uv0.z, uv1.x+uv0.y+uv0.z,
                     uv0.x+uv1.y+uv0.z, uv1.x+uv1.y+uv0.z);
-
     vec4 r = fract(sin(v*1e-1)*1e3);
     float r0 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
-
     r = fract(sin((v + uv1.z - uv0.z)*1e-1)*1e3);
     float r1 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
-
     return mix(r0, r1, f.z)*2.-1.;
 }
 
-void mainImage( out vec4 fragColor, in vec2 fragCoord )
-{
-    vec2 canvasOffset = (fragCoord.xy - uOrigin) / uZoom;
+vec4 computeBackground(vec2 fragCoord, float bgTime, vec2 bgOrigin, float bgZoom, float bgChroma) {
+    vec2 canvasOffset = (fragCoord - bgOrigin) / bgZoom;
     float r = length(canvasOffset);
     float theta = atan(canvasOffset.y, canvasOffset.x);
-
-    // Log compression: ~4000 canvas-pixels maps to ~0.4 in shader-space
     float logR = log(1.0 + r / 100.0) * 0.108;
     vec2 p = vec2(cos(theta), sin(theta)) * logR;
-
-    // Expand radial reach by 3x — divide distance so falloff is gentler
     float d = length(p) / 3.0;
     float color = 3.0 - (3. * d * 2.4);
-
     vec3 coord = vec3(atan(p.x,p.y)/6.2832+.5, d*.4, .5);
-
-    for(int i = 1; i <= 7; i++)
-    {
+    for(int i = 1; i <= 7; i++) {
         float power = pow(2.0, float(i));
-        color += (1.5 / power) * snoise(coord + vec3(0.,iTime*.05/9., -iTime*.01/9.), power*16.);
+        color += (1.5 / power) * snoise(coord + vec3(0.,bgTime*.05/9., -bgTime*.01/9.), power*16.);
     }
     float c = max(color, 0.0);
-
-    // Luminance curve — raised floor so edge colors (purple) survive
     float lum = smoothstep(0.0, 0.5, c) * 0.4
               + smoothstep(0.5, 1.5, c) * 0.3
               + smoothstep(1.5, 2.5, c) * 0.3;
     float base = 0.15 + lum * 0.85;
-
-    // Radial rainbow — hue from angle, OKLCH for perceptual uniformity
-    // Remap: 0° at north (top), increasing clockwise
     float hue = PI*8.0/12.0 - theta;
-    vec3 tint = max(oklch2rgb(0.65, 0.15, hue), 0.0);
+    vec3 tint = max(oklch2rgb(0.65, bgChroma, hue), 0.0);
     vec3 rgb = tint * base;
-    fragColor = vec4(rgb * 0.5, 1.0);
+    return vec4(rgb * 0.5, 1.0);
 }
+`
 
+const BG_FRAG_SRC = `
+// Based on shader by Trisomie21 — https://www.shadertoy.com/view/lsf3RH
+precision highp float;
+uniform float iTime;
+uniform vec2 uOrigin;
+uniform float uZoom;
+uniform float uChroma;
+${BG_HELPERS}
 void main() {
-    mainImage(gl_FragColor, gl_FragCoord.xy);
+    gl_FragColor = computeBackground(gl_FragCoord.xy, iTime, uOrigin, uZoom, uChroma);
 }
 `
 
@@ -157,11 +160,62 @@ void main() {
 `
 
 const EDGE_FRAG_SRC = `
-precision mediump float;
+#extension GL_OES_standard_derivatives : enable
+precision highp float;
 varying vec2 vUV;
-uniform sampler2D uTexture;
+uniform float uBgTime;
+uniform vec2 uBgOrigin;
+uniform float uIntensity;
+uniform float uZoom;
+uniform float uChroma;
+
+${BG_HELPERS}
+
+// W3C soft-light compositing (Figma-compatible)
+float softLightChannel(float backdrop, float source) {
+  if (source <= 0.5) {
+    return backdrop - (1.0 - 2.0 * source) * backdrop * (1.0 - backdrop);
+  } else {
+    float d = (backdrop <= 0.25)
+      ? ((16.0 * backdrop - 12.0) * backdrop + 4.0) * backdrop
+      : sqrt(backdrop);
+    return backdrop + (2.0 * source - 1.0) * (d - backdrop);
+  }
+}
+
+vec3 softLight(vec3 backdrop, vec3 source) {
+  return vec3(
+    softLightChannel(backdrop.r, source.r),
+    softLightChannel(backdrop.g, source.g),
+    softLightChannel(backdrop.b, source.b)
+  );
+}
+
+// Distance to line segment a→b
+float sdSegment(vec2 p, vec2 a, vec2 b) {
+  vec2 pa = p - a, ba = b - a;
+  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba * h);
+}
+
+const vec2  APEX   = vec2(0.5, 0.125);
+const vec2  BASE_L = vec2(0.15, 0.82);
+const vec2  BASE_R = vec2(0.85, 0.82);
+const float HALF_W = 0.06;
+
 void main() {
-  gl_FragColor = texture2D(uTexture, vec2(vUV.x, fract(vUV.y)));
+  vec2 uv = vec2(vUV.x, fract(vUV.y));
+
+  float d = min(sdSegment(uv, APEX, BASE_L), sdSegment(uv, APEX, BASE_R));
+  float aa = fwidth(d) * 0.75;
+  float alpha = 1.0 - smoothstep(HALF_W - aa, HALF_W + aa, d);
+  if (alpha < 0.004) discard;
+
+  vec4 bg = computeBackground(gl_FragCoord.xy, uBgTime, uBgOrigin, uZoom, uChroma);
+  vec3 blended = softLight(bg.rgb, vec3(1.0));
+  // uIntensity > 1 overshoots past soft-light toward brighter
+  vec3 result = mix(bg.rgb, blended, alpha * uIntensity);
+  gl_FragColor = vec4(result, bg.a);
 }
 `
 
@@ -195,76 +249,14 @@ function createProgram(gl: WebGLRenderingContext, vertSrc: string, fragSrc: stri
   return prog
 }
 
-function createChevronTexture(gl: WebGLRenderingContext): WebGLTexture | null {
-  const size = 20
-  const offscreen = document.createElement('canvas')
-  offscreen.width = size
-  offscreen.height = size
-  const ctx = offscreen.getContext('2d')
-  if (!ctx) return null
-
-  // Chevron pointing up — apex near top, arms extending down-left and down-right
-  ctx.strokeStyle = '#000000'
-  ctx.lineWidth = 3
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.beginPath()
-  ctx.moveTo(3, 16)
-  ctx.lineTo(10, 4)
-  ctx.lineTo(17, 16)
-  ctx.stroke()
-
-  const tex = gl.createTexture()
-  if (!tex) return null
-  gl.bindTexture(gl.TEXTURE_2D, tex)
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offscreen)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-  return tex
-}
-
-function createChevronTextureWithColor(gl: WebGLRenderingContext, color: string): WebGLTexture | null {
-  const size = 20
-  const offscreen = document.createElement('canvas')
-  offscreen.width = size
-  offscreen.height = size
-  const ctx = offscreen.getContext('2d')
-  if (!ctx) return null
-
-  ctx.strokeStyle = color
-  ctx.lineWidth = 3
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.beginPath()
-  ctx.moveTo(3, 16)
-  ctx.lineTo(10, 4)
-  ctx.lineTo(17, 16)
-  ctx.stroke()
-
-  const tex = gl.createTexture()
-  if (!tex) return null
-  gl.bindTexture(gl.TEXTURE_2D, tex)
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offscreen)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-  return tex
-}
-
 const BASE_HALF_WIDTH = 10
-const BASE_TILE_SIZE = 40 // world units per texture repeat
 const FLOATS_PER_VERTEX = 4 // x, y, u, v
 const VERTS_PER_EDGE = 6
 const FLOATS_PER_EDGE = VERTS_PER_EDGE * FLOATS_PER_VERTEX // 24
 // Zoom exponent: (1/z)^0.7 gives ~5x at z=0.1, 1x at z=1.0
 const ZOOM_WIDTH_EXP = Math.log(5) / Math.log(10) // ≈ 0.699
 
-export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef }: CanvasBackgroundProps) {
+export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef, chromaRef }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
 
@@ -272,7 +264,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const dpr = 1 // Cap at 1 — effect is very dim, no need for retina
+    const dpr = window.devicePixelRatio
 
     const gl = canvas.getContext('webgl', {
       alpha: true,
@@ -280,6 +272,8 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       antialias: false,
     })
     if (!gl) return
+
+    gl.getExtension('OES_standard_derivatives') // required for fwidth() in edge SDF
 
     // --- Background program ---
     const bgProg = createProgram(gl, BG_VERT_SRC, BG_FRAG_SRC)
@@ -289,6 +283,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     let bgTimeLoc: WebGLUniformLocation | null = null
     let bgOriginLoc: WebGLUniformLocation | null = null
     let bgZoomLoc: WebGLUniformLocation | null = null
+    let bgChromaLoc: WebGLUniformLocation | null = null
 
     if (bgProg) {
       bgBuf = gl.createBuffer()
@@ -298,6 +293,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       bgTimeLoc = gl.getUniformLocation(bgProg, 'iTime')
       bgOriginLoc = gl.getUniformLocation(bgProg, 'uOrigin')
       bgZoomLoc = gl.getUniformLocation(bgProg, 'uZoom')
+      bgChromaLoc = gl.getUniformLocation(bgProg, 'uChroma')
     }
 
     // --- Edge program ---
@@ -310,10 +306,10 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     let edgeZoomLoc: WebGLUniformLocation | null = null
     let edgeResLoc: WebGLUniformLocation | null = null
     let edgeTimeLoc: WebGLUniformLocation | null = null
-    let edgeTexLoc: WebGLUniformLocation | null = null
-    let chevronTex: WebGLTexture | null = null
-    let whiteChevronTex: WebGLTexture | null = null
-    let greyChevronTex: WebGLTexture | null = null
+    let edgeBgTimeLoc: WebGLUniformLocation | null = null
+    let edgeBgOriginLoc: WebGLUniformLocation | null = null
+    let edgeIntensityLoc: WebGLUniformLocation | null = null
+    let edgeChromaLoc: WebGLUniformLocation | null = null
 
     if (edgeProg) {
       edgeBuf = gl.createBuffer()
@@ -323,10 +319,10 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       edgeZoomLoc = gl.getUniformLocation(edgeProg, 'uZoom')
       edgeResLoc = gl.getUniformLocation(edgeProg, 'uResolution')
       edgeTimeLoc = gl.getUniformLocation(edgeProg, 'uTime')
-      edgeTexLoc = gl.getUniformLocation(edgeProg, 'uTexture')
-      chevronTex = createChevronTexture(gl)
-      whiteChevronTex = createChevronTextureWithColor(gl, '#ffffff')
-      greyChevronTex = createChevronTextureWithColor(gl, '#888888')
+      edgeBgTimeLoc = gl.getUniformLocation(edgeProg, 'uBgTime')
+      edgeBgOriginLoc = gl.getUniformLocation(edgeProg, 'uBgOrigin')
+      edgeIntensityLoc = gl.getUniformLocation(edgeProg, 'uIntensity')
+      edgeChromaLoc = gl.getUniformLocation(edgeProg, 'uChroma')
     }
 
     // --- Mask buffer (reuses background program to paint over edges behind transparent cards) ---
@@ -364,6 +360,8 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
 
+      const chroma = chromaRef.current
+
       // 1. Draw background quad
       if (bgProg && bgBuf) {
         gl.useProgram(bgProg)
@@ -373,12 +371,13 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
         gl.uniform1f(bgTimeLoc, (now - bgT0) / 1666)
         gl.uniform2f(bgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
         gl.uniform1f(bgZoomLoc, cam.z)
+        gl.uniform1f(bgChromaLoc, chroma)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
         gl.disableVertexAttribArray(bgPosLoc)
       }
 
-      // 2. Draw edge quads with chevron texture
-      if (edgeProg && edgeBuf && chevronTex) {
+      // 2. Draw edge quads with SDF chevrons
+      if (edgeProg && edgeBuf) {
         const edges = edgesRef.current
         if (edges.length > 0) {
           // Build id → position lookup
@@ -395,8 +394,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
 
           // Scale width only — UVs stay constant so pattern doesn't shift during zoom
           const hw = BASE_HALF_WIDTH * Math.pow(1 / cam.z, ZOOM_WIDTH_EXP)
-          // Below 20% zoom, start stretching tiles to avoid moiré
-          const tileSize = cam.z >= 0.2 ? BASE_TILE_SIZE : BASE_TILE_SIZE * (0.2 / cam.z)
+          const tileSize = 2 * hw // keep tiles square so the 1:1 texture isn't stretched
 
           let vertexCount = 0
           let offset = 0
@@ -460,25 +458,24 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
             gl.enableVertexAttribArray(edgeUVLoc)
             gl.vertexAttribPointer(edgeUVLoc, 2, gl.FLOAT, false, stride, 8)
 
-            gl.activeTexture(gl.TEXTURE0)
-            gl.bindTexture(gl.TEXTURE_2D, chevronTex)
-            gl.uniform1i(edgeTexLoc, 0)
-
             gl.uniform2f(edgePanLoc, cam.x, cam.y)
             gl.uniform1f(edgeZoomLoc, cam.z)
-            gl.uniform2f(edgeResLoc, canvas.width, canvas.height)
+            gl.uniform2f(edgeResLoc, canvas.clientWidth, canvas.clientHeight)
             gl.uniform1f(edgeTimeLoc, (now - edgeT0) / 2000)
+            gl.uniform1f(edgeBgTimeLoc, (now - bgT0) / 1666)
+            gl.uniform2f(edgeBgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
+            gl.uniform1f(edgeIntensityLoc, 1.0)
+            gl.uniform1f(edgeChromaLoc, chroma)
 
             gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
             gl.disableVertexAttribArray(edgePosLoc)
             gl.disableVertexAttribArray(edgeUVLoc)
           }
 
-          // 2b. Draw highlight edges with appropriate texture:
-          //     - Edge selected → white chevrons
+          // 2b. Draw highlight edges:
           //     - Node selected → grey chevrons on parent edge
           //     - Reparent preview → white chevrons
-          if (whiteChevronTex && greyChevronTex) {
+          {
             // Helper to emit one quad into edgeVerts at a given offset
             const emitQuad = (offset: number, px: number, py: number, cx: number, cy: number): number => {
               const dx = cx - px
@@ -507,7 +504,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
               return offset
             }
 
-            const drawHighlightBatch = (tex: WebGLTexture, vertexCount: number) => {
+            const drawHighlightBatch = (intensity: number, vertexCount: number) => {
               gl.useProgram(edgeProg)
               gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf)
               gl.bufferData(gl.ARRAY_BUFFER, edgeVerts.subarray(0, vertexCount * FLOATS_PER_VERTEX), gl.DYNAMIC_DRAW)
@@ -518,21 +515,21 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
               gl.enableVertexAttribArray(edgeUVLoc)
               gl.vertexAttribPointer(edgeUVLoc, 2, gl.FLOAT, false, stride, 8)
 
-              gl.activeTexture(gl.TEXTURE0)
-              gl.bindTexture(gl.TEXTURE_2D, tex)
-              gl.uniform1i(edgeTexLoc, 0)
-
               gl.uniform2f(edgePanLoc, cam.x, cam.y)
               gl.uniform1f(edgeZoomLoc, cam.z)
-              gl.uniform2f(edgeResLoc, canvas.width, canvas.height)
+              gl.uniform2f(edgeResLoc, canvas.clientWidth, canvas.clientHeight)
               gl.uniform1f(edgeTimeLoc, (now - edgeT0) / 2000)
+              gl.uniform1f(edgeBgTimeLoc, (now - bgT0) / 1666)
+              gl.uniform2f(edgeBgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
+              gl.uniform1f(edgeIntensityLoc, intensity)
+              gl.uniform1f(edgeChromaLoc, chroma)
 
               gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
               gl.disableVertexAttribArray(edgePosLoc)
               gl.disableVertexAttribArray(edgeUVLoc)
             }
 
-            // Selection → highlight parent edge with grey chevrons
+            // Selection → highlight parent edge with boosted soft-light
             const sel = selectionRef.current
             if (sel) {
               const childNode = edges.find(e => e.id === sel)
@@ -546,17 +543,17 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
                 if (parentPos) {
                   const offset = emitQuad(0, parentPos.x, parentPos.y, childNode.x, childNode.y)
                   const vertCount = offset / FLOATS_PER_VERTEX
-                  drawHighlightBatch(greyChevronTex, vertCount)
+                  drawHighlightBatch(3.0, vertCount)
                 }
               }
             }
 
-            // Reparent preview edge (always white)
+            // Reparent preview edge
             const rEdge = reparentEdgeRef.current
             if (rEdge) {
               const offset = emitQuad(0, rEdge.fromX, rEdge.fromY, rEdge.toX, rEdge.toY)
               const vertCount = offset / FLOATS_PER_VERTEX
-              drawHighlightBatch(whiteChevronTex, vertCount)
+              drawHighlightBatch(3.0, vertCount)
             }
           }
         }
@@ -574,8 +571,8 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           }
 
           let mOffset = 0
-          const w = canvas.width
-          const h = canvas.height
+          const w = canvas.clientWidth
+          const h = canvas.clientHeight
 
           for (const rect of rects) {
             // World → screen → NDC  (same transform as edge vertex shader)
@@ -607,6 +604,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           gl.uniform1f(bgTimeLoc, (now - bgT0) / 1666)
           gl.uniform2f(bgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
           gl.uniform1f(bgZoomLoc, cam.z)
+          gl.uniform1f(bgChromaLoc, chroma)
           gl.drawArrays(gl.TRIANGLES, 0, mOffset / 2)
           gl.disableVertexAttribArray(bgPosLoc)
         }
@@ -633,9 +631,6 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       if (bgBuf) gl.deleteBuffer(bgBuf)
       if (edgeProg) gl.deleteProgram(edgeProg)
       if (edgeBuf) gl.deleteBuffer(edgeBuf)
-      if (chevronTex) gl.deleteTexture(chevronTex)
-      if (whiteChevronTex) gl.deleteTexture(whiteChevronTex)
-      if (greyChevronTex) gl.deleteTexture(greyChevronTex)
       if (maskBuf) gl.deleteBuffer(maskBuf)
     }
   }, [])

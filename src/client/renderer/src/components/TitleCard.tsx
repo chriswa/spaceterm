@@ -189,7 +189,7 @@ export function TitleCard({
       className={`title-card ${focused ? 'title-card--focused' : selected ? 'title-card--selected' : ''}`}
       style={{
         backgroundColor: 'transparent',
-        '--title-fg': preset?.titleBarBg ?? '#cba6f7',
+        '--title-fg': preset?.titleBarBg ?? '#a66cff',
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}

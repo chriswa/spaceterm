@@ -8,7 +8,7 @@ import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { canFitAt, computePlacement } from './node-placement'
-import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_WIDTH, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT } from '../shared/node-size'
+import { nodePixelSize, terminalPixelSize, directoryFolderWidth, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
@@ -617,7 +617,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           posX = msg.x
           posY = msg.y
         } else {
-          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT })
+          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: directoryFolderWidth(msg.cwd), height: DIRECTORY_HEIGHT })
           posX = pos.x
           posY = pos.y
         }
@@ -966,7 +966,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   }
 }
 
-function startServer(): void {
+async function startServer(): Promise<void> {
   // Write shell integration scripts (OSC 7 hooks for CWD reporting)
   setupShellIntegration()
 
@@ -974,11 +974,23 @@ function startServer(): void {
   fs.mkdirSync(SOCKET_DIR, { recursive: true })
   fs.mkdirSync(HOOK_LOG_DIR, { recursive: true })
 
-  // Remove stale socket file
-  try {
-    fs.unlinkSync(SOCKET_PATH)
-  } catch {
-    // File doesn't exist, that's fine
+  // Remove stale socket file — but first check if another server is alive on it.
+  // If we blindly unlink, we'd steal the socket from a running server: the running
+  // server's FD stays open (existing connections work) but new connections (hooks
+  // from freshly spawned Claude terminals) can't reach it, silently breaking
+  // Claude surface detection.
+  if (fs.existsSync(SOCKET_PATH)) {
+    const isAlive = await new Promise<boolean>((resolve) => {
+      const probe = net.createConnection(SOCKET_PATH)
+      const timer = setTimeout(() => { probe.destroy(); resolve(false) }, 1000)
+      probe.on('connect', () => { clearTimeout(timer); probe.destroy(); resolve(true) })
+      probe.on('error', () => { clearTimeout(timer); resolve(false) })
+    })
+    if (isAlive) {
+      console.error(`Another spaceterm server is already listening on ${SOCKET_PATH}. Exiting.`)
+      process.exit(1)
+    }
+    try { fs.unlinkSync(SOCKET_PATH) } catch { /* stale file already gone */ }
   }
 
   // Initialize StateManager — broadcasts node changes to all clients
@@ -1283,8 +1295,10 @@ function startServer(): void {
   })
 
   // Graceful shutdown
+  let socketWatchdog: ReturnType<typeof setInterval> | null = null
   const shutdown = () => {
     console.log('\nShutting down...')
+    if (socketWatchdog) clearInterval(socketWatchdog)
     // Flush queued transitions and stop timers before persisting state
     claudeStateMachine.dispose()
     gitStatusPoller.dispose()
@@ -1304,6 +1318,18 @@ function startServer(): void {
 
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
+
+  // Socket watchdog — detect if our socket file disappears (e.g. another server
+  // stole it, accidental rm). Without the file on disk, hook-handler.sh can't
+  // deliver hooks via `nc -U`, silently breaking Claude surface detection.
+  // Die immediately so the user (or concurrently) can restart cleanly.
+  const SOCKET_WATCHDOG_INTERVAL_MS = 5_000
+  socketWatchdog = setInterval(() => {
+    if (!fs.existsSync(SOCKET_PATH)) {
+      console.error(`Socket file ${SOCKET_PATH} disappeared — another server may have taken over. Shutting down.`)
+      shutdown()
+    }
+  }, SOCKET_WATCHDOG_INTERVAL_MS)
 }
 
 startServer()

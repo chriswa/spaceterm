@@ -5,9 +5,9 @@ const DECORATIONS = {
   matchBackground: '#585b7066',
   matchBorder: '#585b7000',
   matchOverviewRuler: '#585b70',
-  activeMatchBackground: '#fab387',
-  activeMatchBorder: '#fab38700',
-  activeMatchColorOverviewRuler: '#fab387',
+  activeMatchBackground: '#ff8a42',
+  activeMatchBorder: '#ff8a4200',
+  activeMatchColorOverviewRuler: '#ff8a42',
 }
 
 interface TerminalSearchBarProps {

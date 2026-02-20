@@ -37,6 +37,10 @@ export const MARKDOWN_MIN_MAX_WIDTH = 100
 // Directory node dimensions
 export const DIRECTORY_WIDTH = 300
 export const DIRECTORY_HEIGHT = 144
+export const DIR_CWD_CHAR_WIDTH = CELL_WIDTH * (44 / 14)   // Menlo 44px bold
+export const DIR_GIT_CHAR_WIDTH = CELL_WIDTH * (11 / 14)   // Menlo 11px
+export const DIR_FOLDER_H_PADDING = 80
+export const DIR_MIN_FOLDER_WIDTH = 180
 
 // File node dimensions
 export const FILE_WIDTH = 300
@@ -66,18 +70,42 @@ export function terminalPixelSize(cols: number, rows: number, hasFooter = true):
 
 export type NodeLike =
   | { type: 'terminal'; cols: number; rows: number }
-  | { type: 'directory' }
+  | { type: 'directory'; cwd: string; gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null }
   | { type: 'file' }
   | { type: 'title'; text: string }
   | { type: 'markdown'; width: number; height: number }
   | { type: 'image'; width?: number; height?: number }
+
+/** Compute the auto-scaled folder width for a directory node from its text content. */
+export function directoryFolderWidth(cwd: string, gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null): number {
+  const cwdWidth = cwd.length * DIR_CWD_CHAR_WIDTH
+
+  let gitWidth = 0
+  if (gitStatus === null) {
+    gitWidth = 'not git controlled'.length * DIR_GIT_CHAR_WIDTH
+  } else if (gitStatus) {
+    // Mirror formatGitStatus: "branch ⇡N ⇣N +N !N ?N =N (XXm old)"
+    const parts: string[] = [gitStatus.branch ?? 'detached']
+    if (gitStatus.ahead > 0) parts.push(`x${gitStatus.ahead}`)    // ⇡ = 1 char in monospace
+    if (gitStatus.behind > 0) parts.push(`x${gitStatus.behind}`)
+    if (gitStatus.staged > 0) parts.push(`+${gitStatus.staged}`)
+    if (gitStatus.unstaged > 0) parts.push(`!${gitStatus.unstaged}`)
+    if (gitStatus.untracked > 0) parts.push(`?${gitStatus.untracked}`)
+    if (gitStatus.conflicts > 0) parts.push(`=${gitStatus.conflicts}`)
+    // Fetch age: worst case is "(never fetched)" = 15 chars
+    const totalLen = parts.join(' ').length + 1 + 15
+    gitWidth = totalLen * DIR_GIT_CHAR_WIDTH
+  }
+
+  return Math.max(DIR_MIN_FOLDER_WIDTH, Math.max(cwdWidth, gitWidth) + DIR_FOLDER_H_PADDING)
+}
 
 export function nodePixelSize(node: NodeLike): { width: number; height: number } {
   if (node.type === 'terminal') {
     return terminalPixelSize(node.cols, node.rows)
   }
   if (node.type === 'directory') {
-    return { width: DIRECTORY_WIDTH, height: DIRECTORY_HEIGHT }
+    return { width: directoryFolderWidth(node.cwd, node.gitStatus), height: DIRECTORY_HEIGHT }
   }
   if (node.type === 'file') {
     return { width: FILE_WIDTH, height: FILE_HEIGHT }

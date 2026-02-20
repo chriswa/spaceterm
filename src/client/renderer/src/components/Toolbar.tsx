@@ -16,12 +16,17 @@ interface ToolbarProps {
   onCrabReorder: (order: string[]) => void
   selectedNodeId: string | null
   zoom: number
+  onHelpClick: () => void
+  chroma: number
+  onChromaChange: (value: number) => void
 }
 
 export function Toolbar({
   inputDevice,
   onToggleInputDevice,
-  crabs, onCrabClick, onCrabReorder, selectedNodeId, zoom
+  crabs, onCrabClick, onCrabReorder, selectedNodeId, zoom,
+  onHelpClick,
+  chroma, onChromaChange
 }: ToolbarProps) {
   const fpsRef = useRef<HTMLSpanElement>(null)
   useFps(fpsRef)
@@ -30,6 +35,14 @@ export function Toolbar({
   const tracing = recording === 'trace'
   return (
     <div className="toolbar">
+      <button
+        className="toolbar__btn"
+        onClick={onHelpClick}
+        data-tooltip="Help (⌘?)"
+        data-tooltip-no-flip
+      >
+        Help
+      </button>
       <div className="toolbar__perf">
         <button
           className={'toolbar__btn' + (tracing ? ' toolbar__btn--recording' : '')}
@@ -45,6 +58,7 @@ export function Toolbar({
       <AudioTapToggle />
       <BeatsToggle />
       <BeatIndicators />
+      <ChromaSlider value={chroma} onChange={onChromaChange} />
       <span className="toolbar__zoom">
         <BpmIndicator />
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
@@ -387,6 +401,29 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId }: { crab
           </div>
       ))}
     </div>
+  )
+}
+
+const CHROMA_MIN = 0
+const CHROMA_MAX = 0.45
+const CHROMA_STEP = 0.005
+
+function ChromaSlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <span className="toolbar__chroma">
+      <input
+        type="range"
+        className="toolbar__chroma-slider"
+        min={CHROMA_MIN}
+        max={CHROMA_MAX}
+        step={CHROMA_STEP}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        data-tooltip="Background chroma (OKLCh saturation)"
+        data-tooltip-no-flip
+      />
+      <span className="toolbar__chroma-value">{value.toFixed(2)}</span>
+    </span>
   )
 }
 

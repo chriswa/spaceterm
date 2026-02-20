@@ -91,21 +91,21 @@ const cmTheme = EditorView.theme({
   '.cm-header-1': {
     fontSize: '1.6em',
     fontWeight: '700',
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
   },
   '.cm-header-2': {
     fontSize: '1.3em',
     fontWeight: '700',
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
   },
   '.cm-header-3': {
     fontSize: '1.1em',
     fontWeight: '600',
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
   },
   '.cm-header-4, .cm-header-5, .cm-header-6': {
     fontWeight: '600',
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
   },
   // Inline code
   '.cm-inline-code': {
@@ -120,22 +120,22 @@ const cmTheme = EditorView.theme({
   // Bold
   '.cm-strong': {
     fontWeight: '700',
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
   },
   // Italic
   '.cm-emphasis': {
     fontStyle: 'italic',
-    color: 'var(--markdown-highlight, #f9e2af)',
+    color: 'var(--markdown-highlight, #ffc94d)',
   },
   // Markdown link [text](url)
   '.cm-md-link': {
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
     textDecoration: 'underline',
     cursor: 'pointer',
   },
   // Auto-detected bare URLs
   '.cm-autolink': {
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
     textDecoration: 'underline',
     cursor: 'pointer',
   },
@@ -147,7 +147,7 @@ const cmTheme = EditorView.theme({
   },
   // List marker
   '.cm-list-marker': {
-    color: 'var(--markdown-accent, #89b4fa)',
+    color: 'var(--markdown-accent, #4d9eff)',
   },
   // Horizontal rule
   '.cm-hr-line': {
@@ -675,8 +675,8 @@ export function MarkdownCard({
       style={{
         backgroundColor: 'transparent',
         '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',
-        '--markdown-accent': preset?.markdownAccent ?? '#89b4fa',
-        '--markdown-highlight': preset?.markdownHighlight ?? '#f9e2af',
+        '--markdown-accent': preset?.markdownAccent ?? '#4d9eff',
+        '--markdown-highlight': preset?.markdownHighlight ?? '#ffc94d',
         '--markdown-blockquote-fg': blendHex(preset?.markdownFg ?? '#cdd6f4', preset?.terminalBg ?? '#1e1e2e', 0.7),
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}

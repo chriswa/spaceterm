@@ -16,6 +16,7 @@ import { Toolbar } from './components/Toolbar'
 import { FloatingToolbar } from './components/FloatingToolbar'
 import { EdgeSplitMenu } from './components/EdgeSplitMenu'
 import { SearchModal } from './components/SearchModal'
+import { HelpModal } from './components/HelpModal'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
@@ -36,6 +37,12 @@ import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
 import { deriveCrabAppearance } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
+
+function tieredZIndex(type: import('../../../../shared/state').NodeData['type'], z: number): number {
+  if (type === 'title') return z + 2_000_000
+  if (type === 'directory') return z + 1_000_000
+  return z
+}
 
 function getMarkdownSpawnInfo(parentNode: import('../../../../shared/state').NodeData | undefined): {
   initialInput?: string; initialName?: string; x?: number; y?: number
@@ -63,6 +70,12 @@ export function App() {
   const [searchVisible, setSearchVisible] = useState(false)
   const searchVisibleRef = useRef(false)
   searchVisibleRef.current = searchVisible
+  const [helpVisible, setHelpVisible] = useState(false)
+  const helpVisibleRef = useRef(false)
+  helpVisibleRef.current = helpVisible
+  const [chroma, setChroma] = useState(0.12)
+  const chromaRef = useRef(0.12)
+  const handleChromaChange = useCallback((v: number) => { chromaRef.current = v; setChroma(v) }, [])
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
   const focusRef = useRef<string | null>(focusedId)
@@ -645,6 +658,7 @@ export function App() {
 
   const handleCrabClick = useCallback((nodeId: string) => {
     setSearchVisible(false)
+    setHelpVisible(false)
     if (nodeId === 'root') {
       handleNodeFocus(nodeId)
       return
@@ -1073,6 +1087,14 @@ export function App() {
         return
       }
 
+      // Cmd+? (Cmd+Shift+/ or Cmd+/): toggle help modal
+      if (e.metaKey && (e.key === '?' || e.key === '/')) {
+        e.preventDefault()
+        e.stopPropagation()
+        setHelpVisible(v => !v)
+        return
+      }
+
       // Cmd+F: open terminal search (before isEditable guard so it works from search input)
       if (e.metaKey && e.key === 'f') {
         const opener = terminalSearchOpeners.get(focusRef.current!)
@@ -1293,10 +1315,14 @@ export function App() {
         }
       }
 
-      // Escape: close search modal, close terminal search, cancel reparent mode, or stop TTS
+      // Escape: close search/help modal, close terminal search, cancel reparent mode, or stop TTS
       if (e.key === 'Escape') {
         if (searchVisibleRef.current) {
           setSearchVisible(false)
+          return
+        }
+        if (helpVisibleRef.current) {
+          setHelpVisible(false)
           return
         }
         if (focusRef.current) {
@@ -1336,9 +1362,10 @@ export function App() {
   }, [flyTo])
 
   const handleCanvasWheel = useCallback((e: WheelEvent) => {
-    // Search modal handles its own wheel events
-    if ((e.target as HTMLElement).closest('.search-modal')) return
+    // Search/help modals handle their own wheel events
+    if ((e.target as HTMLElement).closest('.search-modal') || (e.target as HTMLElement).closest('.help-modal')) return
     setSearchVisible(false)
+    setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
     if ((e.target as HTMLElement).closest('.archive-body')) {
@@ -1356,6 +1383,7 @@ export function App() {
 
   const handleCanvasPanStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
+    setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
     if (archiveDismissFlag.active) {
@@ -1371,6 +1399,7 @@ export function App() {
 
   const handleCanvasUnfocus = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
+    setHelpVisible(false)
     if (archiveDismissFlag.active) {
       archiveDismissFlag.active = false
       return
@@ -1404,7 +1433,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} />}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} chromaRef={chromaRef} />} overlay={<><SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <RootNode
           focused={focusedId === 'root'}
           selected={selection === 'root'}
@@ -1522,7 +1551,7 @@ export function App() {
             id={t.id}
             x={t.x}
             y={t.y}
-            zIndex={t.zIndex}
+            zIndex={tieredZIndex('title', t.zIndex)}
             zoom={camera.z}
             text={t.text}
             colorPresetId={t.colorPresetId}
@@ -1553,7 +1582,7 @@ export function App() {
             id={d.id}
             x={d.x}
             y={d.y}
-            zIndex={d.zIndex}
+            zIndex={tieredZIndex('directory', d.zIndex)}
             zoom={camera.z}
             cwd={d.cwd}
             colorPresetId={d.colorPresetId}
@@ -1662,6 +1691,9 @@ export function App() {
         onCrabReorder={handleCrabReorder}
         selectedNodeId={focusedId}
         zoom={camera.z}
+        onHelpClick={() => setHelpVisible(v => !v)}
+        chroma={chroma}
+        onChromaChange={handleChromaChange}
       />
       {quickActions && resolvedPresets[quickActions.nodeId] && (
         <FloatingToolbar
