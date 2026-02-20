@@ -230,8 +230,8 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:directory-add', async (_event, parentId: string, cwd: string) => {
-    const resp = await client!.directoryAdd(parentId, cwd)
+  ipcMain.handle('node:directory-add', async (_event, parentId: string, cwd: string, x?: number, y?: number) => {
+    const resp = await client!.directoryAdd(parentId, cwd, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
@@ -250,8 +250,8 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:file-add', async (_event, parentId: string, filePath: string) => {
-    const resp = await client!.fileAdd(parentId, filePath)
+  ipcMain.handle('node:file-add', async (_event, parentId: string, filePath: string, x?: number, y?: number) => {
+    const resp = await client!.fileAdd(parentId, filePath, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
@@ -284,8 +284,8 @@ function setupIPC(): void {
     await client!.markdownSetMaxWidth(nodeId, maxWidth)
   })
 
-  ipcMain.handle('node:title-add', async (_event, parentId: string) => {
-    const resp = await client!.titleAdd(parentId)
+  ipcMain.handle('node:title-add', async (_event, parentId: string, x?: number, y?: number) => {
+    const resp = await client!.titleAdd(parentId, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
@@ -304,12 +304,24 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('node:terminal-restart', async (_event, nodeId: string, extraCliArgs: string) => {
-    const resp = await client!.terminalRestart(nodeId, extraCliArgs)
-    if (resp.type === 'created') {
-      await client!.attach(resp.sessionId)
-      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
+    logger.log(`[terminal-restart] Restart requested for node=${nodeId.slice(0, 8)} extraCliArgs=${JSON.stringify(extraCliArgs)}`)
+    try {
+      const resp = await client!.terminalRestart(nodeId, extraCliArgs)
+      if (resp.type === 'created') {
+        await client!.attach(resp.sessionId)
+        logger.log(`[terminal-restart] Success node=${nodeId.slice(0, 8)} → session=${resp.sessionId.slice(0, 8)}`)
+        return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
+      }
+      throw new Error('Unexpected response')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.log(`[terminal-restart] Failed node=${nodeId.slice(0, 8)}: ${msg}`)
+      throw err
     }
-    throw new Error('Unexpected response')
+  })
+
+  ipcMain.handle('node:crab-reorder', async (_event, order: string[]) => {
+    await client!.crabReorder(order)
   })
 
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
@@ -329,15 +341,6 @@ function setupIPC(): void {
   ipcMain.handle('window:set-fullscreen', (_event, enabled: boolean) => {
     if (!mainWindow) return
     mainWindow.setFullScreen(enabled)
-  })
-
-  ipcMain.handle('window:is-kiosk', () => {
-    return mainWindow?.isKiosk() ?? false
-  })
-
-  ipcMain.handle('window:set-kiosk', (_event, enabled: boolean) => {
-    if (!mainWindow) return
-    mainWindow.setKiosk(enabled)
   })
 
   // --- Perf capture ---
@@ -497,22 +500,38 @@ app.whenReady().then(async () => {
   setupTTSHandlers()
   wireClientEvents()
 
-  try {
-    await client.connect()
-    logger.log('Server connection established')
-  } catch {
-    console.error('Failed to connect to terminal server. Is it running? (npm run server)')
-    app.quit()
-    return
+  {
+    const maxRetries = 3
+    let connected = false
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await client.connect()
+        connected = true
+        logger.log('Server connection established')
+        break
+      } catch {
+        if (attempt < maxRetries) {
+          logger.log(`Server connection attempt ${attempt}/${maxRetries} failed, retrying in 1s...`)
+          await new Promise((r) => setTimeout(r, 1000))
+        }
+      }
+    }
+    if (!connected) {
+      logger.log('Failed to connect to terminal server after 3 attempts. Is it running? (npm run server)')
+      app.quit()
+      return
+    }
   }
 
   createWindow()
 
-  // Bypass Cmd+P menu accelerator (Print) so it reaches the renderer for plan-jump.
+  // Bypass Cmd+P (Print) and Cmd+W (Close Window) menu accelerators so they reach the renderer.
   // setIgnoreMenuShortcuts in before-input-event selectively disables menu shortcuts
   // for individual keystrokes without modifying the menu itself.
   mainWindow!.webContents.on('before-input-event', (_event, input) => {
-    mainWindow!.webContents.setIgnoreMenuShortcuts(input.meta && input.key.toLowerCase() === 'p')
+    mainWindow!.webContents.setIgnoreMenuShortcuts(
+      input.meta && (input.key.toLowerCase() === 'p' || input.key.toLowerCase() === 'w')
+    )
   })
 
   try {

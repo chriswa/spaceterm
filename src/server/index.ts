@@ -17,7 +17,7 @@ import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
-import { forkSession } from './session-fork'
+import { forkSession, computeForkName } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
 
 /**
@@ -136,6 +136,14 @@ interface ClientConnection {
   parser: LineParser
 }
 
+/** Tracks manual restarts for auto-recovery when the new PTY exits quickly. */
+const restartRecovery = new Map<string, {
+  restartedAt: number
+  newSessionId: string
+  previousExtraCliArgs: string
+  isRetry: boolean
+}>()
+
 const clients = new Set<ClientConnection>()
 let sessionManager: SessionManager
 let stateManager: StateManager
@@ -203,7 +211,7 @@ const pendingPermissionIds = new Map<string, Set<string>>() // surfaceId → Set
 function queueTransition(
   surfaceId: string,
   newState: import('../shared/state').ClaudeState,
-  source: 'hook' | 'jsonl',
+  source: 'hook' | 'jsonl' | 'status-line',
   event: string,
   sourceTime: number,
   detail?: string
@@ -236,7 +244,7 @@ function drainTransitionQueue(flush = false): void {
 function applyTransition(
   surfaceId: string,
   newState: import('../shared/state').ClaudeState,
-  source: 'hook' | 'jsonl',
+  source: 'hook' | 'jsonl' | 'status-line',
   event: string,
   detail?: string
 ): void {
@@ -457,8 +465,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
       })
 
-      // Track Stop hooks so we can distinguish real forks from claude -r startups
       const hookTime = typeof msg.ts === 'number' ? msg.ts : Date.now()
+
+      // Any hook event proves the Claude process is alive — reset the stale timer
+      lastActivityBySurface.set(msg.surfaceId, Date.now())
+
+      // If the session was marked stuck, any hook event means it's actually working
+      if (sessionManager.getClaudeState(msg.surfaceId) === 'stuck') {
+        queueTransition(msg.surfaceId, 'working', 'hook', `hook:unstuck:${hookType}`, hookTime)
+      }
+
+      // Track Stop hooks so we can distinguish real forks from claude -r startups
       if (hookType === 'Stop') {
         sessionManager.handleClaudeStop(msg.surfaceId)
         queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:Stop', hookTime)
@@ -605,6 +622,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'status-line': {
+      // Status-line events prove the session is alive — reset the stale timer
+      lastActivityBySurface.set(msg.surfaceId, Date.now())
+
+      // If the session was marked stuck, a status-line event means it's actually working
+      if (sessionManager.getClaudeState(msg.surfaceId) === 'stuck') {
+        queueTransition(msg.surfaceId, 'working', 'status-line', 'status-line:unstuck', Date.now())
+      }
+
       const logEntry =
         JSON.stringify({
           timestamp: localISOTimestamp(),
@@ -979,16 +1004,19 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'markdown-add': {
-      const hint = (msg.x != null && msg.y != null) ? { x: msg.x, y: msg.y } : undefined
-      const mdPos = computePlacement(
-        stateManager.getState().nodes,
-        msg.parentId,
-        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT },
-        hint
-      )
+      let posX: number
+      let posY: number
+      if (msg.x != null && msg.y != null) {
+        posX = msg.x
+        posY = msg.y
+      } else {
+        const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT })
+        posX = pos.x
+        posY = pos.y
+      }
       const mdParent = stateManager.getNode(msg.parentId)
       const mdFileBacked = mdParent?.type === 'file'
-      const mdNode = stateManager.createMarkdown(msg.parentId, mdPos.x, mdPos.y, undefined, mdFileBacked || undefined)
+      const mdNode = stateManager.createMarkdown(msg.parentId, posX, posY, undefined, mdFileBacked || undefined)
       if (mdFileBacked && mdParent.type === 'file') {
         const mdCwd = getAncestorCwd(stateManager.getState().nodes, mdParent.id)
         const mdResolvedPath = resolveFilePath(mdParent.filePath, mdCwd)
@@ -1119,15 +1147,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           break
         }
 
-        const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId, forkNode.name)
+        const forkName = computeForkName(forkNode.name)
+        const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
         const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId, undefined, undefined, parseExtraCliArgs(forkNode.extraCliArgs))
         const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
         const forkParentId = msg.nodeId
         const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, terminalPixelSize(forkCols, forkRows))
-        const forkName = forkNode.name ? `${forkNode.name} (Fork)` : undefined
-        stateManager.createTerminal(forkPtyId, forkParentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, undefined, forkName)
+        stateManager.createTerminal(forkPtyId, forkParentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName)
+        if (forkNode.shellTitleHistory?.length) {
+          sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
+        }
 
         client.attachedSessions.add(forkPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
@@ -1139,6 +1170,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'crab-reorder': {
+      stateManager.reorderCrabs(msg.order)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'terminal-restart': {
       try {
         const restartNode = stateManager.getNode(msg.nodeId)
@@ -1147,6 +1184,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           break
         }
         const restartCwd = restartNode.cwd ?? sessionManager.getCwd(restartNode.sessionId)
+
+        // Capture previous extraCliArgs for recovery before updating
+        const previousExtraCliArgs = restartNode.extraCliArgs ?? ''
 
         // Update extraCliArgs on the node
         stateManager.updateExtraCliArgs(msg.nodeId, msg.extraCliArgs)
@@ -1177,6 +1217,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.seedTitleHistory(newPtyId, restartNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(msg.nodeId, newPtyId, restartCols, restartRows)
+
+        // Track for auto-recovery if the new PTY exits quickly
+        restartRecovery.set(msg.nodeId, {
+          restartedAt: Date.now(),
+          newSessionId: newPtyId,
+          previousExtraCliArgs,
+          isRetry: false
+        })
 
         // Auto-attach client
         client.attachedSessions.add(newPtyId)
@@ -1251,6 +1299,70 @@ function startServer(): void {
       sessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
       lastActivityBySurface.delete(sessionId)
+
+      // Check restart recovery — if this PTY was spawned by a manual restart
+      // and exited within 10 seconds, auto-recover with the previous CLI args
+      const nodeId = stateManager.getNodeIdForSession(sessionId)
+      const recovery = nodeId ? restartRecovery.get(nodeId) : undefined
+      if (nodeId && recovery && recovery.newSessionId === sessionId) {
+        const elapsed = Date.now() - recovery.restartedAt
+        if (elapsed < 10_000 && !recovery.isRetry) {
+          console.log(`[restart-recovery] PTY exited after ${elapsed}ms (exitCode=${exitCode}), recovering node ${nodeId.slice(0, 8)} with previous args`)
+
+          // Prevent terminalExited from archiving
+          stateManager.markRestarting(nodeId)
+          stateManager.terminalExited(sessionId, exitCode)
+
+          // Revert extraCliArgs and spawn new PTY
+          stateManager.updateExtraCliArgs(nodeId, recovery.previousExtraCliArgs)
+          const recoveryNode = stateManager.getNode(nodeId)
+          if (recoveryNode && recoveryNode.type === 'terminal') {
+            try {
+              const recoveryCwd = recoveryNode.cwd
+              const recoveryHistory = recoveryNode.claudeSessionHistory ?? []
+              const recoveryClaudeId = recoveryHistory.length > 0 ? recoveryHistory[recoveryHistory.length - 1].claudeSessionId : undefined
+              const recoveryArgs = parseExtraCliArgs(recovery.previousExtraCliArgs)
+              const recoveryOptions = buildClaudeCodeCreateOptions(recoveryCwd, recoveryClaudeId, undefined, undefined, recoveryArgs)
+              const { sessionId: recoveryPtyId, cols: recoveryCols, rows: recoveryRows } = sessionManager.create(recoveryOptions)
+              snapshotManager.addSession(recoveryPtyId, recoveryCols, recoveryRows)
+              if (recoveryNode.shellTitleHistory?.length) {
+                sessionManager.seedTitleHistory(recoveryPtyId, recoveryNode.shellTitleHistory)
+              }
+              stateManager.reincarnateTerminal(nodeId, recoveryPtyId, recoveryCols, recoveryRows)
+
+              // Update recovery entry to mark as retry with the new session
+              restartRecovery.set(nodeId, {
+                restartedAt: Date.now(),
+                newSessionId: recoveryPtyId,
+                previousExtraCliArgs: recovery.previousExtraCliArgs,
+                isRetry: true
+              })
+
+              // Notify clients
+              broadcastToAll({
+                type: 'server-error',
+                message: `Terminal restarted with new CLI args exited after ${(elapsed / 1000).toFixed(1)}s (exit code ${exitCode}). Reverted to previous args and restarted.`
+              })
+              console.log(`[restart-recovery] Recovered node ${nodeId.slice(0, 8)} → session ${recoveryPtyId.slice(0, 8)}`)
+            } catch (err: any) {
+              console.error(`[restart-recovery] Failed to recover node ${nodeId.slice(0, 8)}: ${err.message}`)
+              restartRecovery.delete(nodeId)
+            }
+          } else {
+            restartRecovery.delete(nodeId)
+          }
+
+          broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
+          clients.forEach((client) => {
+            client.attachedSessions.delete(sessionId)
+            client.snapshotSessions.delete(sessionId)
+          })
+          return
+        }
+        // Retry already happened or elapsed >= 10s — clean up and proceed with normal exit
+        restartRecovery.delete(nodeId)
+      }
+
       stateManager.terminalExited(sessionId, exitCode)
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
       // Remove from all clients' attached/snapshot sets

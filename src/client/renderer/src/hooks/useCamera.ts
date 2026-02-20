@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage, clampZoomArc } from '../lib/camera'
-import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY } from '../lib/constants'
+import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampZoomArc } from '../lib/camera'
+import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
@@ -66,9 +66,11 @@ export function useCamera(
 
   const applyToDOM = useCallback((cam: Camera) => {
     if (surfaceRef.current) {
-      surfaceRef.current.style.transform = getCameraTransform(cam)
-      surfaceRef.current.style.setProperty('--camera-zoom', String(cam.z))
-      surfaceRef.current.style.setProperty('--zoom-boost', String(Math.min(Math.max(1, 0.5 + 0.25 / cam.z), 6.75)))
+      const z = clampZoom(cam.z)
+      const safeCam = z === cam.z ? cam : { ...cam, z }
+      surfaceRef.current.style.transform = getCameraTransform(safeCam)
+      surfaceRef.current.style.setProperty('--camera-zoom', String(z))
+      surfaceRef.current.style.setProperty('--zoom-boost', String(Math.min(Math.max(1, 0.5 + 0.25 / z), 6.75)))
     }
   }, [])
 
@@ -134,7 +136,7 @@ export function useCamera(
   const flyTo = useCallback((to: Camera, speed = FOCUS_SPEED, isSnapBack = false) => {
     clearTimeout(snapBackTimerRef.current)
     isSnapBackRef.current = isSnapBack
-    targetRef.current = to
+    targetRef.current = { ...to, z: clampZoom(to.z) }
     speedRef.current = speed
     ensureAnimating()
     onCameraEventRef.current?.(to, isSnapBack ? 'snapback' : 'flyTo')
@@ -225,11 +227,11 @@ export function useCamera(
     return () => window.removeEventListener('mousedown', onMiddleDown, true)
   }, [userPan])
 
-  const scheduleSnapBack = useCallback((cam: Camera, maxZoom: number, anchor: { x: number; y: number }) => {
+  const scheduleSnapBack = useCallback((cam: Camera, snapMax: number, anchor: { x: number; y: number }) => {
     clearTimeout(snapBackTimerRef.current)
-    if (cam.z >= MIN_ZOOM && cam.z <= maxZoom) return
+    if (cam.z >= ZOOM_SNAP_LOW && cam.z <= snapMax) return
     snapBackTimerRef.current = window.setTimeout(() => {
-      const clampedZ = Math.min(maxZoom, Math.max(MIN_ZOOM, cameraRef.current.z))
+      const clampedZ = Math.min(snapMax, Math.max(ZOOM_SNAP_LOW, cameraRef.current.z))
       const canvasPoint = screenToCanvas(anchor, cameraRef.current)
       flyTo({
         x: anchor.x - canvasPoint.x * clampedZ,
@@ -259,14 +261,14 @@ export function useCamera(
         isSnapBackRef.current = false
       }
       const point = { x: e.clientX, y: e.clientY }
-      const maxZoom = focusedRef?.current ? MAX_ZOOM : UNFOCUSED_MAX_ZOOM
-      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY * 4, maxZoom)
+      const snapMax = focusedRef?.current ? ZOOM_SNAP_HIGH : ZOOM_SNAP_HIGH_UNFOCUSED
+      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY * 4, snapMax)
       cameraRef.current = next
       targetRef.current = { ...next }
       applyToDOM(next)
       scheduleSync()
       lastZoomPointRef.current = point
-      scheduleSnapBack(next, maxZoom, point)
+      scheduleSnapBack(next, snapMax, point)
     } else if (inputDeviceRef.current === 'trackpad') {
       // Trackpad pan — always allowed, scaled for target zoom feel
       userPan(e.deltaX, e.deltaY)
@@ -278,14 +280,14 @@ export function useCamera(
         isSnapBackRef.current = false
       }
       const point = { x: e.clientX, y: e.clientY }
-      const maxZoom = focusedRef?.current ? MAX_ZOOM : UNFOCUSED_MAX_ZOOM
-      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY, maxZoom)
+      const snapMax = focusedRef?.current ? ZOOM_SNAP_HIGH : ZOOM_SNAP_HIGH_UNFOCUSED
+      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY, snapMax)
       cameraRef.current = next
       targetRef.current = { ...next }
       applyToDOM(next)
       scheduleSync()
       lastZoomPointRef.current = point
-      scheduleSnapBack(next, maxZoom, point)
+      scheduleSnapBack(next, snapMax, point)
     }
   }, [focusedRef, userPan, applyToDOM, scheduleSync, scheduleSnapBack])
 
@@ -421,7 +423,7 @@ export function useCamera(
       const cx = parentCenter.x + effectiveRadius * Math.cos(angle)
       const cy = parentCenter.y + effectiveRadius * Math.sin(angle)
 
-      const zoom = startCamera.z + (targetCamera.z - startCamera.z) * t + zoomArc * Math.sin(Math.PI * t)
+      const zoom = clampZoom(startCamera.z + (targetCamera.z - startCamera.z) * t + zoomArc * Math.sin(Math.PI * t))
 
       // Blend endpoint corrections: full startCorr at t=0, full endCorr at t=1
       const corrX = startCorr.x * (1 - t) + endCorr.x * t
@@ -492,7 +494,7 @@ export function useCamera(
       const cx = sourceCenter.x + (targetCenter.x - sourceCenter.x) * tPos
       const cy = sourceCenter.y + (targetCenter.y - sourceCenter.y) * tPos
 
-      const zoom = Math.max(MIN_ZOOM, startCamera.z + (targetCamera.z - startCamera.z) * rawT + zoomArc * Math.sin(Math.PI * rawT))
+      const zoom = clampZoom(startCamera.z + (targetCamera.z - startCamera.z) * rawT + zoomArc * Math.sin(Math.PI * rawT))
 
       const cam: Camera = { x: vw / 2 - cx * zoom, y: vh / 2 - cy * zoom, z: zoom }
       cameraRef.current = cam

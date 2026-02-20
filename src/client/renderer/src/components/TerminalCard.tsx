@@ -17,7 +17,10 @@ import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { showToast } from '../lib/toast'
+import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScrollRestore } from '../lib/focus-storage'
 import crabIcon from '../assets/crab.png'
+import { deriveCrabAppearance, CRAB_COLORS } from '../lib/crab-nav'
+import { useCrabDance } from '../lib/crab-dance'
 
 function cleanTerminalCopy(raw: string): string {
   // Strip box-drawing border characters (│, ─, ╭, etc.) from line edges, then trailing whitespace
@@ -61,6 +64,7 @@ export const terminalSelectionGetters = new Map<string, () => string>()
 export const terminalSearchOpeners = new Map<string, () => void>()
 export const terminalSearchClosers = new Map<string, () => boolean>()
 export const terminalPlanJumpers = new Map<string, () => boolean>()
+
 
 interface TerminalCardProps {
   id: string
@@ -134,6 +138,7 @@ export function TerminalCard({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const snapshotRef = useRef<SnapshotMessage | null>(null)
   const autoJumpedRef = useRef(false)
+  const behindCrabRef = useRef<HTMLDivElement>(null)
 
   // Keep current props in refs for event handlers
   const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady })
@@ -165,8 +170,9 @@ export function TerminalCard({
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
 
-  // Derive pixel size from cols/rows
-  const { width, height } = terminalPixelSize(cols, rows)
+  // Derive pixel size from cols/rows (non-Claude terminals have no footer)
+  const hasFooter = !!(claudeSessionHistory && claudeSessionHistory.length > 0)
+  const { width, height } = terminalPixelSize(cols, rows, hasFooter)
 
   // Mount terminal (only when focused)
   useEffect(() => {
@@ -246,6 +252,16 @@ export function TerminalCard({
       propsRef.current.onShellTitleChange?.(propsRef.current.id, title)
     })
 
+    // Debounced scroll position save for reload persistence
+    let scrollSaveTimer: ReturnType<typeof setTimeout> | undefined
+    const saveScrollDebounced = () => {
+      if (scrollSaveTimer !== undefined) clearTimeout(scrollSaveTimer)
+      scrollSaveTimer = setTimeout(() => {
+        const pixels = term.buffer.active.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+        saveTerminalScroll(sessionId, pixels)
+      }, 300)
+    }
+
     // Custom wheel handler: controls both xterm scroll processing AND
     // canvas propagation. Attached once at mount — no race condition
     // since propsRef is updated synchronously during render.
@@ -274,6 +290,7 @@ export function TerminalCard({
 
         const currentPixels = term.buffer.active.viewportY * CELL_HEIGHT + pixelOffsetRef.current
         applyPixelScroll(currentPixels + deltaPixels)
+        saveScrollDebounced()
 
         return false
       }
@@ -328,6 +345,21 @@ export function TerminalCard({
       setXtermReady(true)
     }
 
+    // Restore saved scroll position after scrollback is loaded — only when App marked this session during reload restore
+    const restoreScroll = () => {
+      if (!consumeScrollRestore(sessionId)) {
+        clearTerminalScroll(sessionId)
+        return
+      }
+      const savedScroll = loadTerminalScroll(sessionId)
+      if (savedScroll !== null) {
+        const maxPixels = (term.buffer.active.length - term.rows) * CELL_HEIGHT
+        if (savedScroll <= maxPixels) {
+          applyPixelScroll(savedScroll)
+        }
+      }
+    }
+
     // Safety timeout: if onRender never fires, unblock after 500ms
     readyTimeout = setTimeout(markReady, 500)
 
@@ -336,7 +368,10 @@ export function TerminalCard({
       if (result.scrollback.length > 0) {
         term.write(result.scrollback, () => {
           // Parsing complete — wait for the next render frame to mark ready
-          onRenderDisposable = term.onRender(() => markReady())
+          onRenderDisposable = term.onRender(() => {
+            markReady()
+            restoreScroll()
+          })
         })
       } else {
         markReady()
@@ -489,6 +524,10 @@ export function TerminalCard({
 
     return () => {
       cancelled = true
+      // Flush scroll position before teardown
+      const finalPixels = term.buffer.active.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+      saveTerminalScroll(sessionId, finalPixels)
+      if (scrollSaveTimer !== undefined) clearTimeout(scrollSaveTimer)
       pixelOffsetRef.current = 0
       container.removeEventListener('copy', handleCopy)
       if (readyTimeout !== undefined) clearTimeout(readyTimeout)
@@ -788,10 +827,8 @@ export function TerminalCard({
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
     : selected ? 'terminal-card--selected' : ''
-  const animationClass = (anyNodeFocused || selected) ? '' :
-    claudeState === 'waiting_plan' ? 'terminal-card--waiting-plan' :
-    claudeState === 'waiting_permission' ? 'terminal-card--waiting-permission' :
-    (claudeStatusUnread && claudeState === 'stopped') ? 'terminal-card--stopped-unviewed' : ''
+  const crabAppearance = deriveCrabAppearance(claudeState, claudeStatusUnread ?? false, (claudeSessionHistory?.length ?? 0) > 0)
+  useCrabDance(behindCrabRef, crabAppearance?.unviewed ?? false, 2.5)
 
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
@@ -833,6 +870,7 @@ export function TerminalCard({
           shellTitleHistory={shellTitleHistory}
           preset={preset}
           id={id}
+          isClaudeSurface={hasFooter}
           onRename={onRename}
           canStartEdit={() => !dragOccurredRef.current}
         />
@@ -860,7 +898,7 @@ export function TerminalCard({
       onDiffPlans={handleDiffPlans}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
-      className={`terminal-card ${focusClass} ${animationClass}`}
+      className={`terminal-card ${focusClass}`}
       cardRef={cardRef}
       onMouseEnter={() => {
         if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id)
@@ -871,10 +909,17 @@ export function TerminalCard({
         useHoveredCardStore.getState().setHoveredNode(null)
       }}
       behindContent={
-        <div
-          className={`terminal-card__working-crab-behind${claudeState === 'working' ? ' terminal-card__working-crab-behind--active' : ''}`}
-          style={{ maskImage: `url(${crabIcon})`, WebkitMaskImage: `url(${crabIcon})` }}
-        />
+        crabAppearance ? (
+          <div
+            ref={behindCrabRef}
+            className="terminal-card__crab-behind"
+            style={{
+              maskImage: `url(${crabIcon})`,
+              WebkitMaskImage: `url(${crabIcon})`,
+              backgroundColor: CRAB_COLORS[crabAppearance.color],
+            }}
+          />
+        ) : undefined
       }
     >
       {searchOpen && searchAddonRef.current && (

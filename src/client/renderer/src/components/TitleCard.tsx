@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../lib/constants'
+import { TITLE_HEIGHT, TITLE_LINE_HEIGHT, TITLE_H_PADDING, TITLE_MIN_WIDTH } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
+import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
-const H_PADDING = 24
-const MIN_WIDTH = 120
 
 interface TitleCardProps {
   id: string
@@ -48,12 +47,22 @@ export function TitleCard({
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(text)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const measureRef = useRef<HTMLSpanElement>(null)
   const [textWidth, setTextWidth] = useState(0)
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const freshlyCreated = useNodeStore(s => s.freshlyCreatedIds.has(id))
+
+  // Auto-enter edit mode when freshly created and focused
+  useEffect(() => {
+    if (focused && freshlyCreated) {
+      useNodeStore.getState().clearFreshlyCreated(id)
+      setEditValue(text)
+      setEditing(true)
+    }
+  }, [focused, freshlyCreated, id, text])
 
   // Measure text width via hidden span
   useLayoutEffect(() => {
@@ -62,13 +71,17 @@ export function TitleCard({
     setTextWidth(measureRef.current.offsetWidth)
   }, [text, editing, editValue])
 
-  const cardWidth = Math.max(MIN_WIDTH, textWidth + H_PADDING)
+  const displayText = editing ? editValue : text
+  const lines = displayText ? displayText.split('\n') : ['']
+  const lineCount = lines.length
+  const cardWidth = Math.max(TITLE_MIN_WIDTH, textWidth + TITLE_H_PADDING)
+  const cardHeight = TITLE_HEIGHT + (lineCount - 1) * TITLE_LINE_HEIGHT
 
   // Notify parent when focused node size is known
   useEffect(() => {
     if (!focused) return
-    onNodeReady?.(id, { x: x - cardWidth / 2, y: y - TITLE_HEIGHT / 2, width: cardWidth, height: TITLE_HEIGHT })
-  }, [focused, id, x, y, cardWidth, onNodeReady])
+    onNodeReady?.(id, { x: x - cardWidth / 2, y: y - cardHeight / 2, width: cardWidth, height: cardHeight })
+  }, [focused, id, x, y, cardWidth, cardHeight, onNodeReady])
 
   // Auto-focus input when entering edit mode
   useEffect(() => {
@@ -77,14 +90,6 @@ export function TitleCard({
       inputRef.current.select()
     }
   }, [editing])
-
-  // Auto-size input based on content
-  useEffect(() => {
-    if (editing && measureRef.current && inputRef.current) {
-      measureRef.current.textContent = editValue || 'Title'
-      inputRef.current.style.width = `${measureRef.current.offsetWidth + 4}px`
-    }
-  }, [editing, editValue])
 
   const startEditing = useCallback(() => {
     setEditValue(text)
@@ -104,6 +109,10 @@ export function TitleCard({
   }, [editValue, text, id, onTextChange])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && e.shiftKey) {
+      // Allow default textarea behavior (insert newline)
+      return
+    }
     if (e.key === 'Enter') {
       e.preventDefault()
       saveAndClose()
@@ -161,9 +170,9 @@ export function TitleCard({
     <CardShell
       nodeId={id}
       x={x - cardWidth / 2}
-      y={y - TITLE_HEIGHT / 2}
+      y={y - cardHeight / 2}
       width={cardWidth}
-      height={TITLE_HEIGHT}
+      height={cardHeight}
       zIndex={zIndex}
       focused={focused}
       headVariant="overlay"
@@ -188,11 +197,11 @@ export function TitleCard({
       <div className="title-card__body">
         <span ref={measureRef} className="title-card__measure" />
         {editing ? (
-          <input
+          <textarea
             ref={inputRef}
             className="title-card__input"
-            type="text"
             value={editValue}
+            rows={lineCount}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={handleKeyDown}
             onBlur={saveAndClose}

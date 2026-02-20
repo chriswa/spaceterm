@@ -21,6 +21,12 @@ function findClosestEdge(
   const canvasY = (screenY - viewportRect.top - cam.y) / cam.z
   const threshold = EDGE_HOVER_THRESHOLD_PX / cam.z
 
+  // Prebuild position lookup map to avoid O(n) find per edge
+  const posMap = new Map<string, { x: number; y: number }>()
+  for (const edge of edges) {
+    posMap.set(edge.id, { x: edge.x, y: edge.y })
+  }
+
   let bestEdge: TreeLineNode | null = null
   let bestDist = Infinity
   let bestPoint = { x: 0, y: 0 }
@@ -32,7 +38,7 @@ function findClosestEdge(
       ax = 0
       ay = 0
     } else {
-      const parent = edges.find(n => n.id === edge.parentId)
+      const parent = posMap.get(edge.parentId)
       if (!parent) continue
       ax = parent.x
       ay = parent.y
@@ -135,12 +141,15 @@ export function useEdgeHover(
   }, [])
 
   // rAF loop: recalculate edge hover every frame
+  const lastInputRef = useRef<{ mx: number; my: number; cx: number; cy: number; cz: number } | null>(null)
+
   useEffect(() => {
     if (reparentActive) {
       if (hoveredEdgeRef.current) {
         hoveredEdgeRef.current = null
         setHoveredEdge(null)
       }
+      lastInputRef.current = null
       return
     }
 
@@ -155,6 +164,7 @@ export function useEdgeHover(
           hoveredEdgeRef.current = null
           setHoveredEdge(null)
         }
+        lastInputRef.current = null
         return
       }
 
@@ -165,8 +175,16 @@ export function useEdgeHover(
           hoveredEdgeRef.current = null
           setHoveredEdge(null)
         }
+        lastInputRef.current = null
         return
       }
+
+      // Skip computation if mouse and camera haven't changed
+      const last = lastInputRef.current
+      if (last && last.mx === mouse.x && last.my === mouse.y && last.cx === cam.x && last.cy === cam.y && last.cz === cam.z) {
+        return
+      }
+      lastInputRef.current = { mx: mouse.x, my: mouse.y, cx: cam.x, cy: cam.y, cz: cam.z }
 
       const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
       if (!viewport) return

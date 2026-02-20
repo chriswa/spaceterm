@@ -51,6 +51,10 @@ export class StateManager {
         this.state.rootArchivedChildren = []
       }
       // Dead terminal processing is done by the caller via processDeadTerminals()
+
+      // MIGRATION: Backfill sortOrder for terminals that predate this field.
+      // Can be removed once all users have launched at least once after this change.
+      this.migrateSortOrder()
     } else {
       this.state = {
         version: STATE_VERSION,
@@ -58,6 +62,40 @@ export class StateManager {
         nodes: {},
         rootArchivedChildren: []
       }
+    }
+  }
+
+  /** Compute the next available sortOrder by scanning all terminal nodes. */
+  private nextSortOrder(): number {
+    let max = -1
+    for (const node of Object.values(this.state.nodes)) {
+      if (node.type === 'terminal' && node.sortOrder != null && node.sortOrder > max) {
+        max = node.sortOrder
+      }
+    }
+    return max + 1
+  }
+
+  /** Backfill sortOrder for terminals that predate this field. */
+  private migrateSortOrder(): void {
+    const needsMigration: import('../shared/state').TerminalNodeData[] = []
+    for (const node of Object.values(this.state.nodes)) {
+      if (node.type === 'terminal' && node.sortOrder == null) {
+        needsMigration.push(node)
+      }
+    }
+    if (needsMigration.length === 0) return
+
+    // Sort by first session startedAt so existing order matches createdAt
+    needsMigration.sort((a, b) => {
+      const aTime = a.terminalSessions[0]?.startedAt ?? ''
+      const bTime = b.terminalSessions[0]?.startedAt ?? ''
+      return aTime < bTime ? -1 : aTime > bTime ? 1 : 0
+    })
+
+    let next = this.nextSortOrder()
+    for (const node of needsMigration) {
+      node.sortOrder = next++
     }
   }
 
@@ -116,13 +154,14 @@ export class StateManager {
   /** Mark a node as mid-restart so terminalExited skips archival. */
   markRestarting(nodeId: string): void {
     this.restartingNodes.add(nodeId)
+    console.log(`[restart] Marking node ${nodeId.slice(0, 8)} as restarting`)
   }
 
   /** Update extra CLI args on a terminal node, broadcast, and persist. */
   updateExtraCliArgs(nodeId: string, extraCliArgs: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
-    node.extraCliArgs = extraCliArgs || undefined
+    node.extraCliArgs = extraCliArgs
     this.onNodeUpdate(nodeId, { extraCliArgs: node.extraCliArgs } as Partial<TerminalNodeData>)
     this.schedulePersist()
   }
@@ -161,6 +200,8 @@ export class StateManager {
       shellTitleHistory: [...seedHistory]
     }
 
+    const sortOrder = this.nextSortOrder()
+
     const node: TerminalNodeData = {
       id: sessionId,
       type: 'terminal',
@@ -175,6 +216,7 @@ export class StateManager {
       cwd,
       claudeState: 'stopped',
       claudeStatusUnread: false,
+      sortOrder,
       terminalSessions: [initialSession],
       claudeSessionHistory: [],
       shellTitleHistory: [...seedHistory],
@@ -213,10 +255,13 @@ export class StateManager {
 
     // If the node is mid-restart, skip archival — the new PTY is already running
     if (this.restartingNodes.has(node.id)) {
+      console.log(`[restart] terminalExited session=${ptySessionId.slice(0, 8)} node=${node.id.slice(0, 8)} exitCode=${exitCode} — skipping archival (mid-restart)`)
       this.sessionToNodeId.delete(ptySessionId)
       this.restartingNodes.delete(node.id)
       return
     }
+
+    console.log(`[exit] terminalExited session=${ptySessionId.slice(0, 8)} node=${node.id.slice(0, 8)} exitCode=${exitCode} — archiving`)
 
     node.alive = false
     node.exitCode = exitCode
@@ -243,6 +288,7 @@ export class StateManager {
   reincarnateTerminal(nodeId: string, newPtySessionId: string, cols: number, rows: number): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
+    console.log(`[restart] Reincarnated node ${nodeId.slice(0, 8)} → session ${newPtySessionId.slice(0, 8)}`)
 
     node.alive = true
     node.sessionId = newPtySessionId
@@ -314,6 +360,17 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  reorderCrabs(orderedIds: string[]): void {
+    for (let i = 0; i < orderedIds.length; i++) {
+      const node = this.state.nodes[orderedIds[i]]
+      if (!node || node.type !== 'terminal') continue
+      if (node.sortOrder !== i) {
+        node.sortOrder = i
+        this.onNodeUpdate(orderedIds[i], { sortOrder: i } as Partial<TerminalNodeData>)
+      }
+    }
+    this.schedulePersist()
+  }
 
   bringToFront(nodeId: string): void {
     const node = this.state.nodes[nodeId]
@@ -337,6 +394,7 @@ export class StateManager {
   archiveNode(nodeId: string): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
+    console.log(`[archive] Archiving node ${nodeId.slice(0, 8)}`)
 
     const parentId = node.parentId
 

@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { isWindowVisible } from './useWindowVisible'
 
-export function useFps() {
-  const [fps, setFps] = useState(0)
+/**
+ * Drives an FPS counter by writing directly to a DOM element's textContent,
+ * avoiding React state updates that would re-render the Toolbar every second.
+ */
+export function useFps(elRef: React.RefObject<HTMLSpanElement | null>) {
   const framesRef = useRef(0)
   const lastTimeRef = useRef(performance.now())
   const rafRef = useRef(0)
@@ -12,9 +15,10 @@ export function useFps() {
       framesRef.current++
       const elapsed = now - lastTimeRef.current
       if (elapsed >= 1000) {
-        setFps(Math.round((framesRef.current * 1000) / elapsed))
+        const fps = Math.round((framesRef.current * 1000) / elapsed)
         framesRef.current = 0
         lastTimeRef.current = now
+        if (elRef.current) elRef.current.textContent = String(fps)
       }
       rafRef.current = requestAnimationFrame(tick)
     }
@@ -23,13 +27,11 @@ export function useFps() {
     const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
 
     const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
-      if (visible) { lastTimeRef.current = performance.now(); framesRef.current = 0; startLoop() } else { stopLoop(); setFps(0) }
+      if (visible) { lastTimeRef.current = performance.now(); framesRef.current = 0; startLoop() } else { stopLoop(); if (elRef.current) elRef.current.textContent = '0' }
     })
 
     if (isWindowVisible()) startLoop()
 
     return () => { stopLoop(); unsubVisibility() }
-  }, [])
-
-  return fps
+  }, [elRef])
 }

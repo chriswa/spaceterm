@@ -284,8 +284,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'terminal-reincarnate', nodeId, options })
   }
 
-  async directoryAdd(parentId: string, cwd: string): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'directory-add', parentId, cwd })
+  async directoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'directory-add', parentId, cwd, x, y })
   }
 
   async directoryCwd(nodeId: string, cwd: string): Promise<ServerMessage> {
@@ -300,8 +300,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'validate-directory', path })
   }
 
-  async fileAdd(parentId: string, filePath: string): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'file-add', parentId, filePath })
+  async fileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'file-add', parentId, filePath, x, y })
   }
 
   async filePath(nodeId: string, filePath: string): Promise<ServerMessage> {
@@ -328,8 +328,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
   }
 
-  async titleAdd(parentId: string): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'title-add', parentId })
+  async titleAdd(parentId: string, x?: number, y?: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'title-add', parentId, x, y })
   }
 
   async titleText(nodeId: string, text: string): Promise<ServerMessage> {
@@ -342,6 +342,10 @@ export class ServerClient extends EventEmitter {
 
   async terminalRestart(nodeId: string, extraCliArgs: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'terminal-restart', nodeId, extraCliArgs })
+  }
+
+  async crabReorder(order: string[]): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'crab-reorder', order })
   }
 
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {

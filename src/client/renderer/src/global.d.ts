@@ -87,7 +87,7 @@ interface NodeApi {
 }
 
 interface TtsApi {
-  speak(text: string): Promise<{ chunks: Array<{ samples: ArrayBuffer; sampleRate: number; pauseAfterMs: number }> }>
+  speak(text: string): Promise<{ chunks: Array<{ samples: ArrayBuffer; sampleRate: number; pauseAfterMs: number }>; available: boolean }>
   stop(): void
 }
 
@@ -105,8 +105,6 @@ interface AudioApi {
 interface WindowApi {
   isFullScreen(): Promise<boolean>
   setFullScreen(enabled: boolean): Promise<void>
-  isKiosk(): Promise<boolean>
-  setKiosk(enabled: boolean): Promise<void>
   onVisibilityChanged(callback: (visible: boolean) => void): () => void
 }
 

@@ -1,10 +1,41 @@
+export type CrabColor = 'white' | 'red' | 'purple' | 'orange' | 'dim-orange' | 'gray'
+
+/** Hex colors for each crab color variant. Matches the toolbar CSS classes. */
+export const CRAB_COLORS: Record<CrabColor, string> = {
+  white: '#ffffff',
+  red: '#ff3366',
+  purple: '#bb55ff',
+  orange: '#ca7c5e',
+  'dim-orange': '#653e2f',
+  gray: '#888888',
+}
+
 export interface CrabEntry {
   nodeId: string
-  color: 'white' | 'red' | 'purple' | 'orange' | 'dim-orange' | 'gray'
+  color: CrabColor
   unviewed: boolean
   createdAt: string
+  sortOrder: number
   title: string
   claudeStateDecidedAt?: number
+}
+
+/**
+ * Derive the crab indicator color and unviewed status from a terminal node's
+ * claude state. Returns null when the node has no crab indicator.
+ */
+export function deriveCrabAppearance(
+  claudeState: string | undefined,
+  claudeStatusUnread: boolean,
+  hasClaudeHistory: boolean
+): { color: CrabColor; unviewed: boolean } | null {
+  if (claudeState === 'waiting_permission') return { color: 'red', unviewed: claudeStatusUnread }
+  if (claudeState === 'waiting_plan') return { color: 'purple', unviewed: claudeStatusUnread }
+  if (claudeState === 'working') return { color: 'orange', unviewed: false }
+  if (claudeState === 'stuck') return { color: 'dim-orange', unviewed: claudeStatusUnread }
+  if (claudeState === 'stopped' && claudeStatusUnread) return { color: 'white', unviewed: true }
+  if (hasClaudeHistory) return { color: 'gray', unviewed: false }
+  return null
 }
 
 /**

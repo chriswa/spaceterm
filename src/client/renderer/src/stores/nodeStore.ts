@@ -33,6 +33,13 @@ interface NodeStoreState {
   // File-backed markdown content (nodeId → file content, overlayed at render time)
   fileContents: Record<string, string>
 
+  // Ephemeral set of node IDs that were just created (cleared by components after auto-edit)
+  freshlyCreatedIds: Set<string>
+
+  // --- Freshly-created lifecycle ---
+  markFreshlyCreated(id: string): void
+  clearFreshlyCreated(id: string): void
+
   // --- Local mutations (optimistic, instant) ---
   moveNode(id: string, x: number, y: number): void
   batchMoveNodes(moves: Array<{ id: string; dx: number; dy: number }>): void
@@ -115,6 +122,19 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   images: [],
   nodeList: [],
   fileContents: {},
+  freshlyCreatedIds: new Set(),
+
+  markFreshlyCreated(id) {
+    set(state => ({ freshlyCreatedIds: new Set([...state.freshlyCreatedIds, id]) }))
+  },
+
+  clearFreshlyCreated(id) {
+    set(state => {
+      const next = new Set(state.freshlyCreatedIds)
+      next.delete(id)
+      return { freshlyCreatedIds: next }
+    })
+  },
 
   // --- Local mutations ---
 

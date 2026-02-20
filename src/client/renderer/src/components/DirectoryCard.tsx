@@ -5,6 +5,7 @@ import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
 import type { ArchivedNode, GitStatus } from '../../../../shared/state'
 import { CardShell } from './CardShell'
+import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
@@ -110,6 +111,17 @@ export function DirectoryCard({
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const freshlyCreated = useNodeStore(s => s.freshlyCreatedIds.has(id))
+
+  // Auto-enter edit mode when freshly created and focused
+  useEffect(() => {
+    if (focused && freshlyCreated) {
+      useNodeStore.getState().clearFreshlyCreated(id)
+      setEditValue(cwd)
+      setError(null)
+      setEditing(true)
+    }
+  }, [focused, freshlyCreated, id, cwd])
 
   // Clear fetching indicator when the server sends updated git status
   const lastFetchTs = gitStatus?.lastFetchTimestamp ?? null

@@ -35,10 +35,11 @@ export function useTTS() {
     }
   }, [])
 
-  const speak = useCallback(async (text: string) => {
+  /** Returns false if TTS is unavailable (module not installed). */
+  const speak = useCallback(async (text: string): Promise<boolean> => {
     if (speakingRef.current) {
       stop()
-      return
+      return true
     }
 
     speakingRef.current = true
@@ -46,6 +47,11 @@ export function useTTS() {
 
     try {
       const result = await window.api.tts.speak(text)
+
+      if (!result.available) {
+        return false
+      }
+
       const ctx = getAudioContext()
 
       for (const chunk of result.chunks) {
@@ -87,6 +93,7 @@ export function useTTS() {
       speakingRef.current = false
       currentSourceRef.current = null
     }
+    return true
   }, [stop])
 
   const isSpeaking = useCallback(() => speakingRef.current, [])

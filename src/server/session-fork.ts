@@ -5,6 +5,17 @@ import { homedir } from 'os'
 
 const CLAUDE_PROJECTS_DIR = path.join(homedir(), '.claude', 'projects')
 
+/**
+ * Compute the display name for a forked session.
+ * Falls back to "Untitled (fork)" when the source has no name,
+ * and avoids double-suffixing when forking a fork.
+ */
+export function computeForkName(sourceName: string | undefined | null): string {
+  if (!sourceName) return 'Untitled (fork)'
+  if (sourceName.endsWith('(fork)') || sourceName.endsWith('(Fork)')) return sourceName
+  return `${sourceName} (fork)`
+}
+
 function cwdToSlug(cwd: string): string {
   return cwd.replaceAll('/', '-')
 }
@@ -20,7 +31,7 @@ const KEEP_TYPES = new Set(['user', 'assistant', 'attachment', 'system', 'progre
  * Clone a Claude Code JSONL session transcript, rewriting it with a new session
  * ID and forkedFrom metadata. Returns the new session UUID.
  */
-export function forkSession(cwd: string, sourceClaudeSessionId: string, forkName?: string): string {
+export function forkSession(cwd: string, sourceClaudeSessionId: string): string {
   const sourcePath = sessionFilePath(cwd, sourceClaudeSessionId)
 
   if (!fs.existsSync(sourcePath)) {
@@ -88,14 +99,6 @@ export function forkSession(cwd: string, sourceClaudeSessionId: string, forkName
 
     rewritten.push(JSON.stringify(newEntry))
   }
-
-  // Append a custom-title entry
-  const titleEntry = {
-    type: 'custom-title',
-    customTitle: forkName ? `${forkName} (Fork)` : 'Fork',
-    sessionId: newSessionId,
-  }
-  rewritten.push(JSON.stringify(titleEntry))
 
   // Write to new file
   const targetDir = path.join(CLAUDE_PROJECTS_DIR, cwdToSlug(cwd))

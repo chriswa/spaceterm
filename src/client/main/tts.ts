@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { log } from './logger'
 
 const loadTTS = () => import('@echogarden/macos-native-tts')
 
@@ -10,6 +11,7 @@ interface TTSChunk {
 
 let selectedVoice: string = 'en-US'
 let abortFlag = false
+let ttsAvailable = false
 
 function ensureTrailingPunctuation(line: string): string {
   const trimmed = line.trimEnd()
@@ -65,7 +67,8 @@ async function pickVoice(): Promise<void> {
     )
     if (premium) {
       selectedVoice = premium.identifier
-      console.log('[TTS] Selected premium voice:', selectedVoice)
+      log(`[TTS] Selected premium voice: ${selectedVoice}`)
+      ttsAvailable = true
       return
     }
 
@@ -76,7 +79,8 @@ async function pickVoice(): Promise<void> {
     )
     if (enhanced) {
       selectedVoice = enhanced.identifier
-      console.log('[TTS] Selected enhanced voice:', selectedVoice)
+      log(`[TTS] Selected enhanced voice: ${selectedVoice}`)
+      ttsAvailable = true
       return
     }
 
@@ -86,7 +90,8 @@ async function pickVoice(): Promise<void> {
     )
     if (samantha) {
       selectedVoice = samantha.identifier
-      console.log('[TTS] Selected Samantha voice:', selectedVoice)
+      log(`[TTS] Selected Samantha voice: ${selectedVoice}`)
+      ttsAvailable = true
       return
     }
 
@@ -97,7 +102,8 @@ async function pickVoice(): Promise<void> {
     )
     if (nonEloquence) {
       selectedVoice = nonEloquence.identifier
-      console.log('[TTS] Selected non-eloquence voice:', selectedVoice)
+      log(`[TTS] Selected non-eloquence voice: ${selectedVoice}`)
+      ttsAvailable = true
       return
     }
 
@@ -107,21 +113,28 @@ async function pickVoice(): Promise<void> {
     )
     if (enUS) {
       selectedVoice = enUS.identifier
-      console.log('[TTS] Selected en-US fallback voice:', selectedVoice)
+      log(`[TTS] Selected en-US fallback voice: ${selectedVoice}`)
+      ttsAvailable = true
       return
     }
     selectedVoice = 'en-US'
-    console.log('[TTS] Using default en-US')
+    log('[TTS] No voices found, using default en-US')
+    ttsAvailable = true
   } catch (err) {
-    console.log('[TTS] Voice selection failed:', err)
+    log(`[TTS] Speech synthesis unavailable — could not load TTS module: ${err}`)
     selectedVoice = 'en-US'
+    ttsAvailable = false
   }
 }
 
 export function setupTTSHandlers(): void {
   pickVoice()
 
-  ipcMain.handle('tts:speak', async (_event, text: string): Promise<{ chunks: TTSChunk[] }> => {
+  ipcMain.handle('tts:speak', async (_event, text: string): Promise<{ chunks: TTSChunk[]; available: boolean }> => {
+    if (!ttsAvailable) {
+      return { chunks: [], available: false }
+    }
+
     abortFlag = false
     const stripped = stripMarkdown(text)
     const segments = splitIntoChunks(stripped)
@@ -149,7 +162,7 @@ export function setupTTSHandlers(): void {
       }
     }
 
-    return { chunks }
+    return { chunks, available: true }
   })
 
   ipcMain.on('tts:stop', () => {

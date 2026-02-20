@@ -41,6 +41,7 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean
+  sortOrder: number
   terminalSessions: TerminalSessionEntry[]
   /** Legacy field — kept for backward compat with existing client code during migration */
   claudeSessionHistory: ClaudeSessionEntry[]

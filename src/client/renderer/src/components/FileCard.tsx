@@ -5,6 +5,7 @@ import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
+import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
 
 const DRAG_THRESHOLD = 5
@@ -75,15 +76,17 @@ export function FileCard({
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const freshlyCreated = useNodeStore(s => s.freshlyCreatedIds.has(id))
 
-  // Auto-enter edit mode when focused with empty filePath
+  // Auto-enter edit mode when freshly created and focused
   useEffect(() => {
-    if (focused && !filePath) {
+    if (focused && freshlyCreated) {
+      useNodeStore.getState().clearFreshlyCreated(id)
       setEditValue('')
       setError(null)
       setEditing(true)
     }
-  }, [focused, filePath])
+  }, [focused, freshlyCreated, id])
 
   // Measure text width via hidden span
   useLayoutEffect(() => {

@@ -2,18 +2,18 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ColorPreset } from '../lib/color-presets'
 import { blendHex } from '../lib/color-presets'
 import { terminalSubtitle } from '../lib/node-title'
-
 interface TerminalTitleBarContentProps {
   name: string | undefined
   shellTitleHistory: string[] | undefined
   preset: ColorPreset | undefined
   id: string
+  isClaudeSurface: boolean
   onRename: (id: string, name: string) => void
   canStartEdit?: () => boolean
 }
 
 export function TerminalTitleBarContent({
-  name, shellTitleHistory, preset, id, onRename, canStartEdit
+  name, shellTitleHistory, preset, id, isClaudeSurface, onRename, canStartEdit
 }: TerminalTitleBarContentProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
@@ -37,8 +37,13 @@ export function TerminalTitleBarContent({
 
   const history = terminalSubtitle(shellTitleHistory ?? [])
 
+  const typeIconColor = preset ? preset.terminalBg : '#6c7086'
+
   return (
     <>
+      {!isClaudeSurface && (
+        <span className="terminal-card__type-icon terminal-card__type-icon--terminal" style={{ color: typeIconColor }}>&gt;_</span>
+      )}
       <div
         className="terminal-card__left-area"
         onClick={(e) => {
@@ -80,7 +85,7 @@ export function TerminalTitleBarContent({
             {name && <span className="terminal-card__custom-name" style={preset ? { color: preset.titleBarFg } : undefined}>{name}</span>}
             {name && history && <span className="terminal-card__separator" style={preset ? { color: blendHex(preset.titleBarFg, preset.titleBarBg, 0.7) } : undefined}>{'\u00A0\u21BC\u00A0'}</span>}
             {history && <span className="terminal-card__history" style={preset ? { color: blendHex(preset.titleBarFg, preset.titleBarBg, 0.75) } : undefined}>{history}</span>}
-            {!name && !history && <span className="terminal-card__placeholder" style={preset ? { color: preset.titleBarFg } : undefined}>Untitled Terminal</span>}
+            {!name && !history && <span className="terminal-card__placeholder" style={preset ? { color: preset.titleBarFg } : undefined}>Untitled</span>}
           </>
         )}
       </div>

@@ -144,20 +144,21 @@ interface NodeApi {
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalRestart(nodeId: string, extraCliArgs: string): Promise<{ sessionId: string; cols: number; rows: number }>
+  crabReorder(order: string[]): Promise<void>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   onSnapshot(sessionId: string, callback: (snapshot: any) => void): () => void
-  directoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }>
+  directoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>
   directoryGitFetch(nodeId: string): Promise<void>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
-  fileAdd(parentId: string, filePath: string): Promise<{ nodeId: string }>
+  fileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<{ nodeId: string }>
   filePath(nodeId: string, filePath: string): Promise<void>
   validateFile(path: string, cwd?: string): Promise<{ valid: boolean; error?: string }>
   markdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
   markdownResize(nodeId: string, width: number, height: number): Promise<void>
   markdownContent(nodeId: string, content: string): Promise<void>
   markdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<void>
-  titleAdd(parentId: string): Promise<{ nodeId: string }>
+  titleAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
   titleText(nodeId: string, text: string): Promise<void>
   onUpdated(callback: (nodeId: string, fields: any) => void): () => void
   onAdded(callback: (node: any) => void): () => void
@@ -182,18 +183,19 @@ const nodeApi: NodeApi = {
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
   forkSession: (nodeId) => ipcRenderer.invoke('node:fork-session', nodeId),
   terminalRestart: (nodeId: string, extraCliArgs: string) => ipcRenderer.invoke('node:terminal-restart', nodeId, extraCliArgs),
-  directoryAdd: (parentId, cwd) => ipcRenderer.invoke('node:directory-add', parentId, cwd),
+  crabReorder: (order: string[]) => ipcRenderer.invoke('node:crab-reorder', order),
+  directoryAdd: (parentId, cwd, x?, y?) => ipcRenderer.invoke('node:directory-add', parentId, cwd, x, y),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
   directoryGitFetch: (nodeId) => ipcRenderer.invoke('node:directory-git-fetch', nodeId),
   validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
-  fileAdd: (parentId, filePath) => ipcRenderer.invoke('node:file-add', parentId, filePath),
+  fileAdd: (parentId, filePath, x?, y?) => ipcRenderer.invoke('node:file-add', parentId, filePath, x, y),
   filePath: (nodeId, filePath) => ipcRenderer.invoke('node:file-path', nodeId, filePath),
   validateFile: (path, cwd) => ipcRenderer.invoke('node:validate-file', path, cwd),
   markdownAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
   markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
   markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
   markdownSetMaxWidth: (nodeId, maxWidth) => ipcRenderer.invoke('node:markdown-set-max-width', nodeId, maxWidth),
-  titleAdd: (parentId) => ipcRenderer.invoke('node:title-add', parentId),
+  titleAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:title-add', parentId, x, y),
   titleText: (nodeId, text) => ipcRenderer.invoke('node:title-text', nodeId, text),
 
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
@@ -240,8 +242,6 @@ contextBridge.exposeInMainWorld('api', {
   window: {
     isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:is-fullscreen'),
     setFullScreen: (enabled: boolean) => ipcRenderer.invoke('window:set-fullscreen', enabled),
-    isKiosk: (): Promise<boolean> => ipcRenderer.invoke('window:is-kiosk'),
-    setKiosk: (enabled: boolean) => ipcRenderer.invoke('window:set-kiosk', enabled),
     onVisibilityChanged: (callback: (visible: boolean) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible)
       ipcRenderer.on('window:visibility-changed', listener)

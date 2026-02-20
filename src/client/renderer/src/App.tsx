@@ -13,27 +13,29 @@ import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
+import { FloatingToolbar } from './components/FloatingToolbar'
+import { EdgeSplitMenu } from './components/EdgeSplitMenu'
 import { SearchModal } from './components/SearchModal'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
-import { useForceLayout } from './hooks/useForceLayout'
-import { useBeatPulse } from './hooks/useBeatPulse'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
 import { pushArchiveUndo, popArchiveUndo } from './lib/undo-archive'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
+import { deriveCrabAppearance } from './lib/crab-nav'
+import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 
 function getMarkdownSpawnInfo(parentNode: import('../../../../shared/state').NodeData | undefined): {
   initialInput?: string; initialName?: string; x?: number; y?: number
@@ -76,6 +78,10 @@ export function App() {
   selectionRef.current = selection
   const lastFocusedRef = useRef<string | null>(null)
   const lastCrabRef = useRef<{ nodeId: string; createdAt: string } | null>(null)
+  const focusRestoredRef = useRef(false)
+  const [quickActions, setQuickActions] = useState<{ nodeId: string; screenX: number; screenY: number } | null>(null)
+  const [edgeSplit, setEdgeSplit] = useState<{ parentId: string; childId: string; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
+  const cmdClickPendingRef = useRef<{ nodeId: string; screenX: number; screenY: number } | null>(null)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
   const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef, onCameraEvent)
 
@@ -125,7 +131,8 @@ export function App() {
   const maskRects = useMemo(() => {
     const rects: MaskRect[] = markdowns.map((n): MaskRect => ({ x: n.x, y: n.y, width: n.width, height: n.height }))
     for (const t of titles) {
-      rects.push({ x: t.x, y: t.y, width: TITLE_DEFAULT_WIDTH, height: TITLE_HEIGHT })
+      const size = nodePixelSize(t)
+      rects.push({ x: t.x, y: t.y, width: size.width, height: size.height })
     }
     for (const img of images) {
       const resolved = imageSizes[img.id]
@@ -156,32 +163,14 @@ export function App() {
 
     for (const node of Object.values(nodes)) {
       if (node.type !== 'terminal') continue
-      let color: CrabEntry['color'] | null = null
-      let unviewed = false
-      if (node.claudeState === 'waiting_permission') {
-        color = 'red'
-        unviewed = node.claudeStatusUnread
-      } else if (node.claudeState === 'waiting_plan') {
-        color = 'purple'
-        unviewed = node.claudeStatusUnread
-      } else if (node.claudeState === 'working') {
-        color = 'orange'
-      } else if (node.claudeState === 'stuck') {
-        color = 'dim-orange'
-        unviewed = node.claudeStatusUnread
-      } else if (node.claudeState === 'stopped' && node.claudeStatusUnread) {
-        color = 'white'
-        unviewed = true
-      } else if (node.claudeSessionHistory.length > 0) {
-        color = 'gray'
-      }
-      if (color) {
+      const appearance = deriveCrabAppearance(node.claudeState, node.claudeStatusUnread, node.claudeSessionHistory.length > 0)
+      if (appearance) {
         const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-        entries.push({ nodeId: node.id, color, unviewed, createdAt, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
+        entries.push({ nodeId: node.id, color: appearance.color, unviewed: appearance.unviewed, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
       }
     }
 
-    entries.sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)
+    entries.sort((a, b) => a.sortOrder - b.sortOrder)
     return entries
   }, [nodes])
   const crabsRef = useRef<CrabEntry[]>([])
@@ -291,14 +280,32 @@ export function App() {
     initTooltips()
   }, [])
 
+  // Detect cmd+click on canvas nodes — record pending so handleNodeFocus can intercept
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!e.metaKey) return
+      const canvasNode = (e.target as HTMLElement).closest('.canvas-node') as HTMLElement | null
+      if (!canvasNode) return
+      const nodeId = canvasNode.dataset.nodeId
+      if (!nodeId) return
+      if (nodeId === focusRef.current) return
+      cmdClickPendingRef.current = { nodeId, screenX: e.clientX, screenY: e.clientY }
+    }
+    window.addEventListener('mousedown', handler, { capture: true })
+    return () => window.removeEventListener('mousedown', handler, { capture: true })
+  }, [])
+
   // Initialize audio beat detection
   useEffect(() => {
     const cleanup = useAudioStore.getState().init()
     return cleanup
   }, [])
 
-  // Drive pulse CSS vars from beat detection
-  useBeatPulse()
+  // Persist focus state to localStorage (skip until initial restore is done)
+  useEffect(() => {
+    if (!focusRestoredRef.current) return
+    saveFocusState(focusedId, scrollMode)
+  }, [focusedId, scrollMode])
 
   // Track the focused node's parent so we can fly to it if the focused node disappears
   const focusedParentRef = useRef<string | null>(null)
@@ -347,7 +354,7 @@ export function App() {
     initialFitDone.current = true
     requestAnimationFrame(() => {
       const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
-      if (!viewport) return
+      if (!viewport) { focusRestoredRef.current = true; return }
       const vw = viewport.clientWidth
       const vh = viewport.clientHeight
 
@@ -368,11 +375,41 @@ export function App() {
         if (hasVisibleNode ||
             (ROOT_NODE_RADIUS > topLeft.x && -ROOT_NODE_RADIUS < bottomRight.x &&
              ROOT_NODE_RADIUS > topLeft.y && -ROOT_NODE_RADIUS < bottomRight.y)) {
-          return  // User can see something — keep restored camera
+          // User can see something — keep restored camera. Restore focus state.
+          const savedFocus = loadFocusState()
+          if (savedFocus?.focusedId) {
+            const allNodesMap = useNodeStore.getState().nodes
+            const node = allNodesMap[savedFocus.focusedId]
+            if (node) {
+              setFocusedId(savedFocus.focusedId)
+              setSelection(savedFocus.focusedId)
+              lastFocusedRef.current = savedFocus.focusedId
+              sendBringToFront(savedFocus.focusedId)
+              bringToFront(savedFocus.focusedId)
+              if (node.type === 'terminal' && node.alive) {
+                markSessionForScrollRestore(node.sessionId)
+                if (savedFocus.scrollMode) {
+                  setScrollMode(true)
+                }
+              }
+            }
+          }
+
+          // Clean up stale scroll entries for sessions that no longer exist
+          const validSessionIds = new Set(
+            allNodes
+              .filter((n): n is import('../../../../shared/state').TerminalNodeData => n.type === 'terminal')
+              .map(n => n.sessionId)
+          )
+          cleanupStaleScrollEntries(validSessionIds)
+
+          focusRestoredRef.current = true
+          return
         }
       }
 
       // Nothing visible (or no stored camera) → teleport to origin zoomed in, fly out
+      focusRestoredRef.current = true
       const allNodes = useNodeStore.getState().nodeList
       const rects = allNodes.map(n => {
         const size = nodePixelSize(n)
@@ -387,13 +424,8 @@ export function App() {
     })
   }, [initialSyncDone, flyTo, resetCamera])
 
-  // Force-directed layout
   const draggingRef = useRef(new Set<string>())
   const dragDescendantsRef = useRef<string[]>([])
-  const { playing: forceLayoutPlaying, speed: forceLayoutSpeed, togglePlaying: forceLayoutToggle, increaseSpeed: forceLayoutIncrease, decreaseSpeed: forceLayoutDecrease } = useForceLayout({
-    draggingRef,
-    batchMoveNodes
-  })
 
   const handleDragStart = useCallback((id: string, solo?: boolean) => {
     draggingRef.current.add(id)
@@ -508,6 +540,14 @@ export function App() {
   }, [shakeCamera, flyTo, bringToFront, flashNode, cameraRef])
 
   const handleNodeFocus = useCallback((nodeId: string) => {
+    // Cmd+click without drag → show floating quick-actions toolbar instead of focusing
+    const pending = cmdClickPendingRef.current
+    cmdClickPendingRef.current = null
+    if (pending && pending.nodeId === nodeId) {
+      setQuickActions({ nodeId, screenX: pending.screenX, screenY: pending.screenY })
+      return
+    }
+
     flashNode(nodeId)
     setFocusedId(nodeId)
     setSelection(nodeId)
@@ -548,7 +588,7 @@ export function App() {
     const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
     const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
     flyTo(targetCamera, computeFlyToSpeed(dist))
-  }, [bringToFront, flyTo, cameraRef])
+  }, [bringToFront, flyTo, cameraRef, flashNode])
 
   const navigateToNode = useCallback(async (nodeId: string) => {
     // Wait for node to appear in store if not yet present
@@ -619,6 +659,18 @@ export function App() {
     }
     navigateToNode(nodeId)
   }, [focusedId, handleNodeFocus, navigateToNode])
+
+  const handleCrabReorder = useCallback((order: string[]) => {
+    // Optimistically update sortOrder on affected nodes in the store
+    const store = useNodeStore.getState()
+    for (let i = 0; i < order.length; i++) {
+      const node = store.nodes[order[i]]
+      if (node && node.type === 'terminal' && node.sortOrder !== i) {
+        store.applyServerNodeUpdate(order[i], { sortOrder: i })
+      }
+    }
+    sendCrabReorder(order)
+  }, [])
 
   const handleReparentTarget = useCallback((targetId: string) => {
     const srcId = useReparentStore.getState().reparentingNodeId
@@ -958,26 +1010,57 @@ export function App() {
     await navigateToNode(nodeId)
   }, [getParentCwd, navigateToNode])
 
-  const handleAddNode = useCallback(async (parentNodeId: string, type: AddNodeType) => {
+  const createChildNode = useCallback(async (parentNodeId: string, type: AddNodeType, hint?: { x: number; y: number }): Promise<string> => {
     const cwd = getParentCwd(parentNodeId)
     let nodeId: string
     switch (type) {
-      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: false } }); nodeId = r.sessionId; break }
+      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: false } }, undefined, undefined, hint?.x, hint?.y); nodeId = r.sessionId; break }
       case 'terminal': {
         const parentNode = useNodeStore.getState().nodes[parentNodeId]
         const { initialInput, initialName: mdName, x, y } = getMarkdownSpawnInfo(parentNode)
-        const r = await sendTerminalCreate(parentNodeId, cwd ? { cwd } : undefined, undefined, mdName, x, y, initialInput)
+        const r = await sendTerminalCreate(parentNodeId, cwd ? { cwd } : undefined, undefined, mdName, hint?.x ?? x, hint?.y ?? y, initialInput)
         nodeId = r.sessionId
         break
       }
-      case 'markdown': { const r = await sendMarkdownAdd(parentNodeId); nodeId = r.nodeId; break }
-      case 'directory': { const r = await sendDirectoryAdd(parentNodeId, cwd ?? '~'); nodeId = r.nodeId; break }
-      case 'file': { const r = await sendFileAdd(parentNodeId, ''); nodeId = r.nodeId; break }
-      case 'title': { const r = await sendTitleAdd(parentNodeId); nodeId = r.nodeId; break }
+      case 'markdown': { const r = await sendMarkdownAdd(parentNodeId, hint?.x, hint?.y); nodeId = r.nodeId; break }
+      case 'directory': { const r = await sendDirectoryAdd(parentNodeId, cwd ?? '~', hint?.x, hint?.y); nodeId = r.nodeId; break }
+      case 'file': { const r = await sendFileAdd(parentNodeId, '', hint?.x, hint?.y); nodeId = r.nodeId; break }
+      case 'title': { const r = await sendTitleAdd(parentNodeId, hint?.x, hint?.y); nodeId = r.nodeId; break }
     }
     if (cwd) cwdMapRef.current.set(nodeId, cwd)
+    if (type === 'file' || type === 'title' || type === 'directory') {
+      useNodeStore.getState().markFreshlyCreated(nodeId)
+    }
+    return nodeId
+  }, [getParentCwd])
+
+  const handleAddNode = useCallback(async (parentNodeId: string, type: AddNodeType) => {
+    const nodeId = await createChildNode(parentNodeId, type)
     await navigateToNode(nodeId)
-  }, [getParentCwd, navigateToNode])
+  }, [createChildNode, navigateToNode])
+
+  const handleEdgeSplitSelect = useCallback(async (type: AddNodeType) => {
+    const split = edgeSplit
+    if (!split) return
+    setEdgeSplit(null)
+
+    // Sanity check: verify worldPoint lies on (or near) the edge line
+    const allNodes = useNodeStore.getState().nodes
+    const pn = allNodes[split.parentId]
+    const cn = allNodes[split.childId]
+    const ax = pn?.x ?? 0, ay = pn?.y ?? 0
+    const bx = cn?.x ?? 0, by = cn?.y ?? 0
+    const dx = bx - ax, dy = by - ay, lenSq = dx * dx + dy * dy
+    if (lenSq > 0) {
+      const t = Math.max(0, Math.min(1, ((split.worldPoint.x - ax) * dx + (split.worldPoint.y - ay) * dy) / lenSq))
+      const dist = Math.hypot(split.worldPoint.x - (ax + t * dx), split.worldPoint.y - (ay + t * dy))
+      if (dist > 2) window.api.log(`[edge-split] worldPoint is ${dist.toFixed(1)}px from edge line`)
+    }
+
+    const nodeId = await createChildNode(split.parentId, type, split.worldPoint)
+    await sendReparent(split.childId, nodeId)
+    await navigateToNode(nodeId)
+  }, [edgeSplit, createChildNode, navigateToNode])
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -1052,6 +1135,19 @@ export function App() {
         return
       }
 
+      // Cmd+W: archive the focused node
+      if (e.metaKey && e.key === 'w') {
+        e.preventDefault()
+        e.stopPropagation()
+        const id = focusRef.current
+        if (id) {
+          handleRemoveNode(id)
+        } else {
+          shakeCamera()
+        }
+        return
+      }
+
       // Cmd+[/]: camera history back/forward
       if (e.metaKey && !e.shiftKey && (e.key === '[' || e.key === ']')) {
         e.preventDefault()
@@ -1117,7 +1213,9 @@ export function App() {
           const getter = terminalSelectionGetters.get(focusRef.current)
           const selection = getter?.()
           if (selection && selection.length > 0) {
-            speak(selection)
+            speak(selection).then((ok) => {
+              if (!ok) showToast('Speech synthesis unavailable — see TTS-SETUP.md')
+            })
           }
         }
       }
@@ -1241,6 +1339,8 @@ export function App() {
     // Search modal handles its own wheel events
     if ((e.target as HTMLElement).closest('.search-modal')) return
     setSearchVisible(false)
+    setQuickActions(null)
+    setEdgeSplit(null)
     if ((e.target as HTMLElement).closest('.archive-body')) {
       const gesture = classifyWheelEvent(archiveWheelAcc, e)
       if (gesture === 'vertical') return  // let native CSS scroll handle it
@@ -1256,6 +1356,8 @@ export function App() {
 
   const handleCanvasPanStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
+    setQuickActions(null)
+    setEdgeSplit(null)
     if (archiveDismissFlag.active) {
       handlePanStart(e)
       return
@@ -1266,14 +1368,6 @@ export function App() {
     }
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
-
-  const handleEdgeSplit = useCallback(async (parentId: string, childId: string, point: { x: number; y: number }) => {
-    const result = await sendMarkdownAdd(parentId, point.x, point.y)
-    if (result?.nodeId) {
-      await sendReparent(childId, result.nodeId)
-      await navigateToNode(result.nodeId)
-    }
-  }, [navigateToNode])
 
   const handleCanvasUnfocus = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
@@ -1287,12 +1381,12 @@ export function App() {
       handleNodeFocus(srcId)
       return
     }
-    // Edge split: click on a hovered edge to insert a markdown node
+    // Edge split: cmd+click on a hovered edge to show node type picker
     const edge = hoveredEdgeRef.current
     if (edge && !focusRef.current) {
       if (e.metaKey) {
         clearHoveredEdge()
-        handleEdgeSplit(edge.parentId, edge.childId, edge.point)
+        setEdgeSplit({ parentId: edge.parentId, childId: edge.childId, worldPoint: edge.point, screenX: e.clientX, screenY: e.clientY })
       } else {
         showToast('Hold Command to split.')
       }
@@ -1306,7 +1400,7 @@ export function App() {
       handleUnfocus()
       flyToUnfocusZoom()
     }
-  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, handleEdgeSplit, hoveredEdgeRef, clearHoveredEdge])
+  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, hoveredEdgeRef, clearHoveredEdge])
 
   return (
     <div className="app">
@@ -1414,7 +1508,7 @@ export function App() {
               onDragEnd={handleDragEnd}
               onStartReparent={handleStartReparent}
               onReparentTarget={handleReparentTarget}
-              onShipIt={handleShipIt}
+              onShipIt={parentNode?.type === 'terminal' ? handleShipIt : undefined}
               fileBacked={isFileBacked}
               fileError={fileError}
               onAddNode={handleAddNode}
@@ -1556,7 +1650,6 @@ export function App() {
             style={{
               left: hoveredEdge.point.x,
               top: hoveredEdge.point.y,
-              transform: `translate(-50%, -50%) scale(${1 / camera.z})`,
             }}
           />
         )}
@@ -1564,16 +1657,29 @@ export function App() {
       <Toolbar
         inputDevice={inputDevice}
         onToggleInputDevice={toggleInputDevice}
-        forceLayoutPlaying={forceLayoutPlaying}
-        forceLayoutSpeed={forceLayoutSpeed}
-        onForceLayoutToggle={forceLayoutToggle}
-        onForceLayoutIncrease={forceLayoutIncrease}
-        onForceLayoutDecrease={forceLayoutDecrease}
         crabs={crabs}
         onCrabClick={handleCrabClick}
+        onCrabReorder={handleCrabReorder}
         selectedNodeId={focusedId}
         zoom={camera.z}
       />
+      {quickActions && resolvedPresets[quickActions.nodeId] && (
+        <FloatingToolbar
+          nodeId={quickActions.nodeId}
+          screenX={quickActions.screenX}
+          screenY={quickActions.screenY}
+          preset={resolvedPresets[quickActions.nodeId]}
+          onDismiss={() => setQuickActions(null)}
+        />
+      )}
+      {edgeSplit && (
+        <EdgeSplitMenu
+          screenX={edgeSplit.screenX}
+          screenY={edgeSplit.screenY}
+          onSelect={handleEdgeSplitSelect}
+          onDismiss={() => setEdgeSplit(null)}
+        />
+      )}
       <Toast toasts={toasts} onExpire={expireToast} />
     </div>
   )

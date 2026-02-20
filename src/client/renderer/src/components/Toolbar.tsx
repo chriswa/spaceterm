@@ -5,18 +5,15 @@ import { usePerfStore } from '../stores/perfStore'
 import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
 import type { CrabEntry } from '../lib/crab-nav'
+import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 
 interface ToolbarProps {
   inputDevice: InputDevice
   onToggleInputDevice: () => void
-  forceLayoutPlaying: boolean
-  forceLayoutSpeed: number
-  onForceLayoutToggle: () => void
-  onForceLayoutIncrease: () => void
-  onForceLayoutDecrease: () => void
   crabs: CrabEntry[]
   onCrabClick: (nodeId: string) => void
+  onCrabReorder: (order: string[]) => void
   selectedNodeId: string | null
   zoom: number
 }
@@ -24,49 +21,38 @@ interface ToolbarProps {
 export function Toolbar({
   inputDevice,
   onToggleInputDevice,
-  forceLayoutPlaying, forceLayoutSpeed, onForceLayoutToggle, onForceLayoutIncrease, onForceLayoutDecrease,
-  crabs, onCrabClick, selectedNodeId, zoom
+  crabs, onCrabClick, onCrabReorder, selectedNodeId, zoom
 }: ToolbarProps) {
-  const fps = useFps()
+  const fpsRef = useRef<HTMLSpanElement>(null)
+  useFps(fpsRef)
   const recording = usePerfStore(s => s.recording)
   const startTrace = usePerfStore(s => s.startTrace)
   const tracing = recording === 'trace'
   return (
     <div className="toolbar">
-      <div className="toolbar__force-layout">
-        <button className="toolbar__force-btn" onClick={onForceLayoutToggle} title={forceLayoutPlaying ? 'Pause force layout' : 'Play force layout'}>
-          {forceLayoutPlaying ? '\u23F8' : '\u25B6'}
-        </button>
-        <button className="toolbar__force-btn" onClick={onForceLayoutDecrease} title="Decrease speed">
-          &minus;
-        </button>
-        <span className="toolbar__force-speed">{forceLayoutSpeed}</span>
-        <button className="toolbar__force-btn" onClick={onForceLayoutIncrease} title="Increase speed">
-          +
-        </button>
-      </div>
       <div className="toolbar__perf">
         <button
           className={'toolbar__btn' + (tracing ? ' toolbar__btn--recording' : '')}
           onClick={startTrace}
           disabled={tracing}
-          title="Record 5s Chrome content trace"
+          data-tooltip="Record 5s Chrome content trace"
+          data-tooltip-no-flip
         >
-          {tracing ? 'Tracing...' : 'Trace'}
+          {tracing ? 'Tracing...' : 'Perf Trace'}
         </button>
       </div>
       <FullscreenToggle />
-      <KioskToggle />
+      <AudioTapToggle />
       <BeatsToggle />
+      <BeatIndicators />
       <span className="toolbar__zoom">
-        <BeatIndicators />
         <BpmIndicator />
-        <span className="toolbar__status-item toolbar__metric">{fps} <span className="toolbar__metric-label">fps</span></span>
+        <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
         <span className="toolbar__status-item toolbar__metric">{(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span></span>
         <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
       </span>
       {crabs.length > 0 && (
-        <CrabGroup crabs={crabs} onCrabClick={onCrabClick} selectedNodeId={selectedNodeId} />
+        <CrabGroup crabs={crabs} onCrabClick={onCrabClick} onCrabReorder={onCrabReorder} selectedNodeId={selectedNodeId} />
       )}
     </div>
   )
@@ -86,40 +72,45 @@ function FullscreenToggle() {
     <button
       className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
       onClick={toggle}
-      title={on ? 'Exit fullscreen' : 'Enter fullscreen'}
+      data-tooltip={on ? 'Exit fullscreen' : 'Enter fullscreen'}
+      data-tooltip-no-flip
     >
       Fullscreen
     </button>
   )
 }
 
-function KioskToggle() {
-  const [on, setOn] = useState(false)
+function AudioTapToggle() {
+  const [on, setOn] = useState(true)
 
-  useEffect(() => { window.api.window.isKiosk().then(setOn) }, [])
+  useEffect(() => {
+    window.api.audio.start().catch(() => {})
+  }, [])
 
   const toggle = () => {
     const next = !on
-    window.api.window.setKiosk(next).then(() => setOn(next))
+    ;(next ? window.api.audio.start() : window.api.audio.stop()).then(() => setOn(next))
   }
 
   return (
     <button
       className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
       onClick={toggle}
-      title={on ? 'Exit kiosk mode' : 'Enter kiosk mode'}
+      data-tooltip={on ? 'Stop audio tap' : 'Start audio tap'}
+      data-tooltip-no-flip
     >
-      Kiosk
+      Audio Tap
     </button>
   )
 }
 
-function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void; selectedNodeId: string | null }) {
+function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null }) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
   const positionsRef = useRef<Map<string, number>>(new Map())
   const isFirstRenderRef = useRef(true)
+  const isDraggingRef = useRef(false)
 
   // Capture positions before paint, animate enter/exit/reorder.
   // Positions are stored as distance from the slot's left edge to the
@@ -198,23 +189,27 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
     }
 
     // FLIP reorder — crabs present in both.
-    // delta = newRightOffset - oldRightOffset: positive means the crab moved
-    // further from the right edge (leftward), so we start shifted right.
-    for (const slot of slots) {
-      const nodeId = slot.dataset.nodeId
-      if (nodeId && prevIds.has(nodeId) && currIds.has(nodeId)) {
-        const oldRightOffset = oldPositions.get(nodeId)
-        const newRightOffset = newPositions.get(nodeId)
-        if (oldRightOffset != null && newRightOffset != null) {
-          const delta = newRightOffset - oldRightOffset
-          if (Math.abs(delta) > 1) {
-            slot.animate(
-              [
-                { transform: `translateX(${delta}px)` },
-                { transform: 'translateX(0)' },
-              ],
-              { duration: 300, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }
-            )
+    // Skip when a drag just caused the reorder — siblings were already visually
+    // shifted during drag, so the FLIP animation would fight with those transforms.
+    if (!isDraggingRef.current) {
+      // delta = newRightOffset - oldRightOffset: positive means the crab moved
+      // further from the right edge (leftward), so we start shifted right.
+      for (const slot of slots) {
+        const nodeId = slot.dataset.nodeId
+        if (nodeId && prevIds.has(nodeId) && currIds.has(nodeId)) {
+          const oldRightOffset = oldPositions.get(nodeId)
+          const newRightOffset = newPositions.get(nodeId)
+          if (oldRightOffset != null && newRightOffset != null) {
+            const delta = newRightOffset - oldRightOffset
+            if (Math.abs(delta) > 1) {
+              slot.animate(
+                [
+                  { transform: `translateX(${delta}px)` },
+                  { transform: 'translateX(0)' },
+                ],
+                { duration: 300, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }
+              )
+            }
           }
         }
       }
@@ -227,12 +222,7 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
   // Beat-synced glow/bounce/rock animation loop
   useEffect(() => {
     let rafId = 0
-    // Continuous dance phase: 0→2 over FOUR beats (half-speed), single clock
-    // Each real beat = 0.5 of dancePhase. 4 slots of 0.5 each.
-    let dancePhase = 0
-    let lastBpm = 0
-    let lastStorePhase = -1
-    let prevTime = performance.now()
+    const dance = new CrabDance()
     let logCounter = 0
 
     const tick = () => {
@@ -240,72 +230,7 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
       const el = containerRef.current
       if (!el) return
 
-      const now = performance.now()
-      const dt = now - prevTime
-      prevTime = now
-
-      const { phase, bpm, confidence } = useAudioStore.getState()
-
-      let glowPulse: number
-      let rock = 0
-      let bounce = 0
-
-      if (bpm > 0) {
-        const beatPeriodMs = 60000 / bpm
-
-        if (phase !== lastStorePhase || bpm !== lastBpm) {
-          // Each real beat maps to 0.5 of dancePhase
-          // Current slot (0-3): which quarter of the dance cycle
-          const slot = Math.floor(dancePhase / 0.5)
-          // Our local phase within this slot (0→1 = one real beat)
-          const slotPhase = (dancePhase / 0.5) % 1
-
-          if (slotPhase > 0.7 && phase < 0.3) {
-            // Beat wrapped — advance to next slot
-            const nextSlot = (slot + 1) % 4
-            dancePhase = nextSlot * 0.5 + phase * 0.5
-          } else if (slotPhase < 0.3 && phase > 0.7) {
-            // Rare backward jump
-            const prevSlot = (slot + 3) % 4
-            dancePhase = prevSlot * 0.5 + phase * 0.5
-          } else {
-            // Normal correction within current slot
-            dancePhase = slot * 0.5 + phase * 0.5
-          }
-
-          if (dancePhase >= 2) dancePhase -= 2
-          if (dancePhase < 0) dancePhase += 2
-
-          lastStorePhase = phase
-          lastBpm = bpm
-        } else {
-          // Interpolate at half beat rate
-          dancePhase += dt / (beatPeriodMs * 2)
-          if (dancePhase >= 2) dancePhase -= 2
-        }
-
-        // Glow: raised cosine per real beat (2 pulses per dancePhase unit)
-        const beatPhase = (dancePhase * 2) % 1
-        glowPulse = 0.5 + 0.5 * Math.cos(2 * Math.PI * beatPhase)
-
-        // Rock: squared cosine for more time spent at extremes
-        const maxRock = 12 // degrees
-        const c = Math.cos(Math.PI * dancePhase)
-        rock = maxRock * c * Math.abs(c) * confidence
-
-        // Bounce: 2 bounces per dance-half (= 1 bounce per real beat)
-        const maxBounce = 3 // px
-        bounce = maxBounce * Math.abs(Math.sin(2 * Math.PI * dancePhase))
-
-        // Periodic logging
-        logCounter++
-        if (logCounter % 120 === 0) {
-          window.api.log(`[crab-dance] dancePhase=${dancePhase.toFixed(3)} slot=${Math.floor(dancePhase / 0.5)} storePhase=${phase.toFixed(3)} bpm=${bpm} rock=${rock.toFixed(1)} bounce=${bounce.toFixed(1)}`)
-        }
-      } else {
-        glowPulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * now / 2000)
-      }
-
+      const { glowPulse, rock, bounce } = dance.tick()
       const glowRadius = 2 + 4 * glowPulse
 
       // Target inner crab buttons, skipping exit phantoms
@@ -320,21 +245,144 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
           child.style.rotate = ''
         }
       }
+
+      logCounter++
+      if (logCounter % 120 === 0) {
+        window.api.log(`[crab-dance] rock=${rock.toFixed(1)} bounce=${bounce.toFixed(1)}`)
+      }
     }
 
     rafId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafId)
   }, [])
 
+  const handleCrabMouseDown = (e: React.MouseEvent, crabIndex: number) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+
+    const container = containerRef.current
+    if (!container) return
+
+    const startX = e.clientX
+    const nodeId = crabs[crabIndex].nodeId
+    let dragging = false
+
+    // Measure slot positions using layout (not getBoundingClientRect, which includes transforms)
+    const slots = container.querySelectorAll<HTMLElement>('.toolbar__crab-slot')
+    const slotCenters: number[] = []
+    const containerRect = container.getBoundingClientRect()
+    for (const slot of slots) {
+      slotCenters.push(containerRect.left + slot.offsetLeft + slot.offsetWidth / 2)
+    }
+
+    const draggedSlot = slots[crabIndex]
+
+    // Measure slot stride for sibling shifting
+    const slotStride = slotCenters.length > 1
+      ? slotCenters[1] - slotCenters[0]
+      : 26
+
+    let prevTargetIndex = crabIndex
+
+    const computeTargetIndex = (dx: number) => {
+      const draggedCenter = slotCenters[crabIndex] + dx
+      let idx = 0
+      for (let i = 0; i < slotCenters.length; i++) {
+        if (slotCenters[i] < draggedCenter) idx = i + 1
+      }
+      if (idx > crabIndex) idx--
+      return Math.max(0, Math.min(idx, crabs.length - 1))
+    }
+
+    const shiftSiblings = (targetIndex: number) => {
+      for (let i = 0; i < slots.length; i++) {
+        if (i === crabIndex) continue
+        let shift = 0
+        if (targetIndex < crabIndex && i >= targetIndex && i < crabIndex) {
+          shift = slotStride
+        } else if (targetIndex > crabIndex && i > crabIndex && i <= targetIndex) {
+          shift = -slotStride
+        }
+        slots[i].style.transform = shift ? `translateX(${shift}px)` : ''
+      }
+    }
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX
+      if (!dragging && Math.abs(dx) < 5) return
+
+      if (!dragging) {
+        dragging = true
+        isDraggingRef.current = true
+        draggedSlot.classList.add('toolbar__crab-slot--dragging')
+        for (let i = 0; i < slots.length; i++) {
+          if (i !== crabIndex) slots[i].classList.add('toolbar__crab-slot--shifting')
+        }
+      }
+
+      draggedSlot.style.transform = `translateX(${dx}px)`
+
+      const targetIndex = computeTargetIndex(dx)
+      if (targetIndex !== prevTargetIndex) {
+        prevTargetIndex = targetIndex
+        shiftSiblings(targetIndex)
+      }
+    }
+
+    const onMouseUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+
+      // Clean up all inline transforms and classes from siblings
+      for (let i = 0; i < slots.length; i++) {
+        if (i !== crabIndex) {
+          slots[i].style.transform = ''
+          slots[i].classList.remove('toolbar__crab-slot--shifting')
+        }
+      }
+      draggedSlot.style.transform = ''
+      draggedSlot.classList.remove('toolbar__crab-slot--dragging')
+
+      if (!dragging) {
+        isDraggingRef.current = false
+        onCrabClick(nodeId)
+        return
+      }
+
+      // Compute target index from final position
+      const dx = ev.clientX - startX
+      const targetIndex = computeTargetIndex(dx)
+
+      // Use requestAnimationFrame so the FLIP animation sees the old positions
+      // before React re-renders with the new order
+      requestAnimationFrame(() => {
+        isDraggingRef.current = false
+      })
+
+      if (targetIndex !== crabIndex) {
+        const order = crabs.map(c => c.nodeId)
+        const [removed] = order.splice(crabIndex, 1)
+        order.splice(targetIndex, 0, removed)
+        onCrabReorder(order)
+      } else {
+        isDraggingRef.current = false
+      }
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
   return (
     <div className="toolbar__crabs" ref={containerRef}>
-      {crabs.map(crab => (
+      {crabs.map((crab, i) => (
           <div key={crab.nodeId} className="toolbar__crab-slot" data-node-id={crab.nodeId}>
             <button
               className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}`}
               style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
-              onClick={() => onCrabClick(crab.nodeId)}
-              title={crab.title}
+              onMouseDown={(e) => handleCrabMouseDown(e, i)}
+              data-tooltip={crab.title}
+              data-tooltip-no-flip
             />
           </div>
       ))}
@@ -349,9 +397,10 @@ function BeatsToggle() {
     <button
       className={'toolbar__btn' + (beatsVisible ? ' toolbar__btn--active' : '')}
       onClick={toggleBeats}
-      title={beatsVisible ? 'Hide beat indicator (raw energy → onset detection → phase-locked pulse)' : 'Show beat indicator (raw energy → onset detection → phase-locked pulse)'}
+      data-tooltip={beatsVisible ? 'Hide beat indicator (raw energy → onset detection → phase-locked pulse)' : 'Show beat indicator (raw energy → onset detection → phase-locked pulse)'}
+      data-tooltip-no-flip
     >
-      Beats
+      Audio Vis
     </button>
   )
 }
@@ -426,7 +475,7 @@ function BeatIndicators() {
       eEl.style.opacity = String(eOpacity)
       eEl.style.background = `hsl(190, 80%, ${eLightness}%)`
       eEl.style.boxShadow = eGlow > 0.5 ? `0 0 ${eGlow}px hsl(190, 80%, ${eLightness}%)` : 'none'
-      eEl.title = `Raw energy (RMS): ${energy.toFixed(4)}`
+      // tooltip removed — beat indicators don't need tooltips
 
       // --- Onset indicator (intermediate) ---
       if (onset && !lastOnset) {
@@ -442,7 +491,7 @@ function BeatIndicators() {
       oEl.style.opacity = String(oOpacity)
       oEl.style.background = `hsl(30, 90%, ${oLightness}%)`
       oEl.style.boxShadow = oGlow > 0.5 ? `0 0 ${oGlow}px hsl(30, 90%, ${oLightness}%)` : 'none'
-      oEl.title = onset ? 'Onset detection: fired!' : `Onset detection: ${onsetLevel.toFixed(2)}`
+      // tooltip removed — beat indicators don't need tooltips
 
       // --- Phase indicator ---
       let pulse: number
@@ -458,7 +507,7 @@ function BeatIndicators() {
         }
         pulse = 0.5 + 0.5 * Math.cos(2 * Math.PI * localPhase)
       } else {
-        // No BPM estimate: gentle sine oscillation at ~0.67Hz (matches useBeatPulse fallback)
+        // No BPM estimate: gentle sine oscillation at ~0.67Hz
         pulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * now / 1500)
       }
 

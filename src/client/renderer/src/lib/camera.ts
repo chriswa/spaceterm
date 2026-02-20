@@ -1,4 +1,4 @@
-import { MIN_ZOOM, MAX_ZOOM, ZOOM_SENSITIVITY, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW, FOCUS_SPEED, FLY_TO_BASE_DURATION, FLY_TO_HALF_RANGE, FLY_TO_MAX_DURATION } from './constants'
+import { MIN_ZOOM, MAX_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SENSITIVITY, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW, FOCUS_SPEED, FLY_TO_BASE_DURATION, FLY_TO_HALF_RANGE, FLY_TO_MAX_DURATION } from './constants'
 
 export interface Camera {
   x: number
@@ -25,6 +25,10 @@ export function canvasToScreen(point: Point, camera: Camera): Point {
   }
 }
 
+export function clampZoom(z: number): number {
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z))
+}
+
 export function panCamera(camera: Camera, dx: number, dy: number): Camera {
   return {
     ...camera,
@@ -33,8 +37,8 @@ export function panCamera(camera: Camera, dx: number, dy: number): Camera {
   }
 }
 
-export function zoomCamera(camera: Camera, screenPoint: Point, delta: number, maxZoom = MAX_ZOOM): Camera {
-  const newZ = Math.min(maxZoom, Math.max(MIN_ZOOM, camera.z - delta * ZOOM_SENSITIVITY * camera.z))
+export function zoomCamera(camera: Camera, screenPoint: Point, delta: number, snapMax = ZOOM_SNAP_HIGH): Camera {
+  const newZ = clampZoom(camera.z - delta * ZOOM_SENSITIVITY * camera.z)
 
   // Keep the point under the cursor fixed
   const canvasPoint = screenToCanvas(screenPoint, camera)
@@ -45,20 +49,19 @@ export function zoomCamera(camera: Camera, screenPoint: Point, delta: number, ma
   }
 }
 
-function elasticClamp(z: number, min: number, max: number): number {
-  if (z >= min && z <= max) return z
-  if (z > max) {
-    const excess = z - max
-    return max + ZOOM_RUBBER_BAND_HIGH * Math.tanh(excess / ZOOM_RUBBER_BAND_HIGH)
+function elasticClamp(z: number, snapMin: number, snapMax: number): number {
+  if (z >= snapMin && z <= snapMax) return z
+  if (z > snapMax) {
+    const excess = z - snapMax
+    return Math.min(MAX_ZOOM, snapMax + ZOOM_RUBBER_BAND_HIGH * Math.tanh(excess / ZOOM_RUBBER_BAND_HIGH))
   }
-  // z < min
-  const excess = min - z
-  return Math.max(0.01, min - ZOOM_RUBBER_BAND_LOW * Math.tanh(excess / ZOOM_RUBBER_BAND_LOW))
+  const excess = snapMin - z
+  return Math.max(MIN_ZOOM, snapMin - ZOOM_RUBBER_BAND_LOW * Math.tanh(excess / ZOOM_RUBBER_BAND_LOW))
 }
 
-export function zoomCameraElastic(camera: Camera, screenPoint: Point, delta: number, maxZoom = MAX_ZOOM): Camera {
+export function zoomCameraElastic(camera: Camera, screenPoint: Point, delta: number, snapMax = ZOOM_SNAP_HIGH): Camera {
   const rawZ = camera.z - delta * ZOOM_SENSITIVITY * camera.z
-  const newZ = elasticClamp(rawZ, MIN_ZOOM, maxZoom)
+  const newZ = elasticClamp(rawZ, ZOOM_SNAP_LOW, snapMax)
 
   // Keep the point under the cursor fixed
   const canvasPoint = screenToCanvas(screenPoint, camera)

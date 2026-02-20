@@ -338,6 +338,12 @@ export interface TerminalRestartMessage {
   extraCliArgs: string
 }
 
+export interface CrabReorderMessage {
+  type: 'crab-reorder'
+  seq: number
+  order: string[]  // Node IDs in desired visual order
+}
+
 export type ClientMessage =
   | CreateMessage
   | ListMessage
@@ -382,6 +388,7 @@ export type ClientMessage =
   | ImageAddMessage
   | ForkSessionMessage
   | TerminalRestartMessage
+  | CrabReorderMessage
 
 // --- Server → Client messages ---
 

@@ -369,8 +369,8 @@ export function MarkdownCard({
   const [draftDims, setDraftDims] = useState<{ width: number; height: number } | null>(null)
   const suppressNextChangeRef = useRef(false)
   const fileWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const propsRef = useRef({ x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus, fileBacked })
-  propsRef.current = { x, y, zoom, id, width, height, maxWidth, onNodeReady, onContentChange, onResize, onMove, onUnfocus, fileBacked }
+  const propsRef = useRef({ x, y, zoom, id, width, height, maxWidth, focused, onNodeReady, onContentChange, onResize, onMove, onUnfocus, fileBacked })
+  propsRef.current = { x, y, zoom, id, width, height, maxWidth, focused, onNodeReady, onContentChange, onResize, onMove, onUnfocus, fileBacked }
 
   // Clear draft state when server-synced maxWidth changes
   useEffect(() => {
@@ -419,6 +419,16 @@ export function MarkdownCard({
       const { width: curW, height: curH } = propsRef.current
       if (Math.abs(newWidth - curW) > 1 || Math.abs(newHeight - curH) > 1) {
         propsRef.current.onResize(propsRef.current.id, newWidth, newHeight)
+        // Re-zoom camera to fit the new dimensions while focused
+        if (propsRef.current.focused) {
+          const { x: px, y: py, id: nid } = propsRef.current
+          propsRef.current.onNodeReady?.(nid, {
+            x: px - newWidth / 2,
+            y: py - newHeight / 2,
+            width: newWidth,
+            height: newHeight
+          })
+        }
       }
     })
   }
@@ -521,7 +531,8 @@ export function MarkdownCard({
     }
   }, [focused])
 
-  // Notify parent when focused node size is known (no width/height deps to avoid jitter)
+  // Notify parent when node first becomes focused (initial zoom).
+  // Subsequent dimension changes while focused are handled by autoSize.
   useEffect(() => {
     if (!focused) return
     const { x: px, y: py, width: pw, height: ph } = propsRef.current

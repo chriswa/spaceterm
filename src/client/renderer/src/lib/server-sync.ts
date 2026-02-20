@@ -100,16 +100,16 @@ export async function sendTerminalCreate(
   return window.api.node.terminalCreate(parentId, options, initialTitleHistory, initialName, x, y, initialInput)
 }
 
-export async function sendDirectoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }> {
-  return window.api.node.directoryAdd(parentId, cwd)
+export async function sendDirectoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<{ nodeId: string }> {
+  return window.api.node.directoryAdd(parentId, cwd, x, y)
 }
 
 export async function sendDirectoryCwd(nodeId: string, cwd: string): Promise<void> {
   await window.api.node.directoryCwd(nodeId, cwd)
 }
 
-export async function sendFileAdd(parentId: string, filePath: string): Promise<{ nodeId: string }> {
-  return window.api.node.fileAdd(parentId, filePath)
+export async function sendFileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<{ nodeId: string }> {
+  return window.api.node.fileAdd(parentId, filePath, x, y)
 }
 
 export async function sendFilePath(nodeId: string, filePath: string): Promise<void> {
@@ -140,8 +140,8 @@ export async function sendReparent(nodeId: string, newParentId: string): Promise
   await window.api.node.reparent(nodeId, newParentId)
 }
 
-export async function sendTitleAdd(parentId: string): Promise<{ nodeId: string }> {
-  return window.api.node.titleAdd(parentId)
+export async function sendTitleAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }> {
+  return window.api.node.titleAdd(parentId, x, y)
 }
 
 export async function sendTitleText(nodeId: string, text: string): Promise<void> {
@@ -166,4 +166,8 @@ export async function sendTerminalRestart(
   extraCliArgs: string
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
   return window.api.node.terminalRestart(nodeId, extraCliArgs)
+}
+
+export async function sendCrabReorder(order: string[]): Promise<void> {
+  await window.api.node.crabReorder(order)
 }

@@ -4,7 +4,7 @@ import { DECISION_LOG_DIR } from '../shared/protocol'
 
 export interface DecisionLogEntry {
   timestamp: string
-  source: 'hook' | 'jsonl' | 'client' | 'stale'
+  source: 'hook' | 'jsonl' | 'client' | 'stale' | 'status-line'
   event: string
   prevState: string
   newState: string

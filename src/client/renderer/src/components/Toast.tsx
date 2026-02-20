@@ -16,22 +16,24 @@ const FADE_DURATION_MS = 1000
 const LINE_HEIGHT = 22
 const FONT_SIZE = 13
 const BOTTOM_MARGIN = 56
+const TICK_INTERVAL_MS = 200
 
 export function Toast({ toasts, onExpire }: ToastProps) {
   const [now, setNow] = useState(Date.now())
-  const rafRef = useRef(0)
   const svgRef = useRef<SVGSVGElement>(null)
   const [svgHeight, setSvgHeight] = useState(window.innerHeight)
 
+  // Measure SVG height once when toast count changes
   useEffect(() => {
     if (toasts.length === 0) return
-    const tick = () => {
-      setNow(Date.now())
-      if (svgRef.current) setSvgHeight(svgRef.current.clientHeight)
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafRef.current)
+    if (svgRef.current) setSvgHeight(svgRef.current.clientHeight)
+  }, [toasts.length])
+
+  // Low-frequency timer to drive expiry checks and fade updates
+  useEffect(() => {
+    if (toasts.length === 0) return
+    const id = setInterval(() => setNow(Date.now()), TICK_INTERVAL_MS)
+    return () => clearInterval(id)
   }, [toasts.length])
 
   // Expire toasts that have fully faded
