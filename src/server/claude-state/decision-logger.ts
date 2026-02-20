@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { DECISION_LOG_DIR } from '../shared/protocol'
+import { DECISION_LOG_DIR } from '../../shared/protocol'
 
 export interface DecisionLogEntry {
   timestamp: string

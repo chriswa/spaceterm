@@ -2,7 +2,7 @@ import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import { execFile } from 'child_process'
-import { SOCKET_DIR, SOCKET_PATH, HOOK_LOG_DIR, DECISION_LOG_DIR } from '../shared/protocol'
+import { SOCKET_DIR, SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, ServerMessage, CreateOptions } from '../shared/protocol'
 import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
@@ -12,7 +12,8 @@ import { nodePixelSize, terminalPixelSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFA
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
-import { DecisionLogger } from './decision-logger'
+import { ClaudeStateMachine } from './claude-state'
+import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
@@ -152,163 +153,7 @@ let sessionFileWatcher: SessionFileWatcher
 let fileContentManager: FileContentManager
 let gitStatusPoller: GitStatusPoller
 let planCacheManager: PlanCacheManager
-let decisionLogger: DecisionLogger
-
-function localISOTimestamp(): string {
-  const now = new Date()
-  const offset = -now.getTimezoneOffset()
-  const sign = offset >= 0 ? '+' : '-'
-  const abs = Math.abs(offset)
-  const hh = String(Math.floor(abs / 60)).padStart(2, '0')
-  const mm = String(abs % 60).padStart(2, '0')
-  return (
-    now.getFullYear() +
-    '-' + String(now.getMonth() + 1).padStart(2, '0') +
-    '-' + String(now.getDate()).padStart(2, '0') +
-    'T' + String(now.getHours()).padStart(2, '0') +
-    ':' + String(now.getMinutes()).padStart(2, '0') +
-    ':' + String(now.getSeconds()).padStart(2, '0') +
-    '.' + String(now.getMilliseconds()).padStart(3, '0') +
-    sign + hh + ':' + mm
-  )
-}
-
-/**
- * State transition queue — events from hooks and JSONL are held for 500ms then
- * processed in source-timestamp order.  This prevents race conditions where a
- * late-arriving event from one source clobbers an authoritative state set by
- * the other (e.g. a JSONL assistant message overriding a Stop hook).
- */
-const TRANSITION_DELAY_MS = 500
-const TRANSITION_DRAIN_INTERVAL_MS = 50
-
-/** How long a surface can stay in 'working' with no events before it's considered stuck */
-const STALE_WORKING_TIMEOUT_MS = 2 * 60 * 1000
-/** How often to check for stale working surfaces */
-const STALE_SWEEP_INTERVAL_MS = 15_000
-/** Last event timestamp per surface — updated by applyTransition and queueTransition */
-const lastActivityBySurface = new Map<string, number>()
-let staleSweepTimer: ReturnType<typeof setInterval> | null = null
-
-interface QueuedTransition {
-  sourceTime: number  // epoch ms — when the event actually happened
-  surfaceId: string
-  newState: import('../shared/state').ClaudeState
-  source: 'hook' | 'jsonl'
-  event: string
-  detail?: string
-}
-
-const transitionQueue: QueuedTransition[] = []
-let transitionDrainTimer: ReturnType<typeof setInterval> | null = null
-
-// Permission tool_use_id tracking — correlates PreToolUse → PermissionRequest → PostToolUse
-// so that only the PostToolUse matching a permission-gated tool triggers a working transition,
-// ignoring subagent PostToolUse events that would incorrectly clear waiting_permission.
-const lastPreToolUseId = new Map<string, string>()         // surfaceId → tool_use_id
-const pendingPermissionIds = new Map<string, Set<string>>() // surfaceId → Set<tool_use_id>
-
-function queueTransition(
-  surfaceId: string,
-  newState: import('../shared/state').ClaudeState,
-  source: 'hook' | 'jsonl' | 'status-line',
-  event: string,
-  sourceTime: number,
-  detail?: string
-): void {
-  transitionQueue.push({ sourceTime, surfaceId, newState, source, event, detail })
-}
-
-function drainTransitionQueue(flush = false): void {
-  const cutoff = flush ? Infinity : Date.now() - TRANSITION_DELAY_MS
-  const ready: QueuedTransition[] = []
-  const remaining: QueuedTransition[] = []
-  for (const t of transitionQueue) {
-    if (t.sourceTime <= cutoff) {
-      ready.push(t)
-    } else {
-      remaining.push(t)
-    }
-  }
-  if (ready.length === 0) return
-  transitionQueue.length = 0
-  transitionQueue.push(...remaining)
-
-  // Process in source-timestamp order so causally-later events win
-  ready.sort((a, b) => a.sourceTime - b.sourceTime)
-  for (const t of ready) {
-    applyTransition(t.surfaceId, t.newState, t.source, t.event, t.detail)
-  }
-}
-
-function applyTransition(
-  surfaceId: string,
-  newState: import('../shared/state').ClaudeState,
-  source: 'hook' | 'jsonl' | 'status-line',
-  event: string,
-  detail?: string
-): void {
-  lastActivityBySurface.set(surfaceId, Date.now())
-  const prevState = sessionManager.getClaudeState(surfaceId) ?? 'stopped'
-
-  // Don't downgrade waiting_plan to waiting_permission — the PermissionRequest
-  // hook already set the more specific state and Notification shouldn't override it.
-  if (prevState === 'waiting_plan' && newState === 'waiting_permission') {
-    stateManager.updateClaudeStateDecisionTime(surfaceId, Date.now())
-    decisionLogger.log(surfaceId, {
-      timestamp: localISOTimestamp(),
-      source,
-      event,
-      prevState,
-      newState: prevState,
-      detail,
-      suppressed: true
-    })
-    return
-  }
-
-  sessionManager.setClaudeState(surfaceId, newState)
-
-  // Compute unread: flip to true when entering an attention-needed state
-  let unread: boolean | undefined
-  if (prevState !== newState) {
-    if (newState === 'stopped' || newState === 'waiting_permission' || newState === 'waiting_plan') {
-      unread = true
-      sessionManager.setClaudeStatusUnread(surfaceId, true)
-    }
-  }
-
-  stateManager.updateClaudeStateDecisionTime(surfaceId, Date.now())
-
-  decisionLogger.log(surfaceId, {
-    timestamp: localISOTimestamp(),
-    source,
-    event,
-    prevState,
-    newState,
-    detail,
-    unread
-  })
-}
-
-function sweepStaleSurfaces(): void {
-  const now = Date.now()
-  for (const [surfaceId, lastActivity] of lastActivityBySurface) {
-    if (now - lastActivity > STALE_WORKING_TIMEOUT_MS && sessionManager.getClaudeState(surfaceId) === 'working') {
-      sessionManager.setClaudeState(surfaceId, 'stuck')
-      stateManager.updateClaudeStateDecisionTime(surfaceId, now)
-      sessionManager.setClaudeStatusUnread(surfaceId, true)
-      decisionLogger.log(surfaceId, {
-        timestamp: localISOTimestamp(),
-        source: 'stale',
-        event: 'stale:timeout',
-        prevState: 'working',
-        newState: 'stuck',
-        unread: true
-      })
-    }
-  }
-}
+let claudeStateMachine: ClaudeStateMachine
 
 function send(socket: net.Socket, msg: ServerMessage): void {
   try {
@@ -408,36 +253,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'write': {
       sessionManager.write(msg.sessionId, msg.data)
-
-      const isPromptSubmit = msg.data === '\r'
-      const wasUnread = sessionManager.getClaudeStatusUnread(msg.sessionId)
-      const prevState = sessionManager.getClaudeState(msg.sessionId) ?? 'stopped'
-
-      // Fast path: nothing to change
-      if (!wasUnread && (!isPromptSubmit || prevState === 'stopped' || prevState === 'stuck')) break
-
-      if (wasUnread) {
-        sessionManager.setClaudeStatusUnread(msg.sessionId, false)
-      }
-
-      let newState = prevState
-      if (isPromptSubmit && prevState !== 'stopped' && prevState !== 'stuck') {
-        // Enter from waiting_plan/waiting_permission: user is responding, Claude will process it.
-        // Enter from working: stray keypress, Claude ignores it (Escape is the interrupt key).
-        // In all cases, Claude is or will be working. The Stop hook handles actual stops.
-        newState = 'working'
-        sessionManager.setClaudeState(msg.sessionId, 'working')
-        stateManager.updateClaudeStateDecisionTime(msg.sessionId, Date.now())
-      }
-
-      decisionLogger.log(msg.sessionId, {
-        timestamp: localISOTimestamp(),
-        source: 'client',
-        event: isPromptSubmit ? 'client:promptSubmit' : 'client:interact',
-        prevState,
-        newState,
-        unread: false
-      })
+      claudeStateMachine.handleClientWrite(msg.sessionId, msg.data === '\r')
       break
     }
 
@@ -467,90 +283,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
       const hookTime = typeof msg.ts === 'number' ? msg.ts : Date.now()
 
-      // Any hook event proves the Claude process is alive — reset the stale timer
-      lastActivityBySurface.set(msg.surfaceId, Date.now())
-
-      // If the session was marked stuck, any hook event means it's actually working
-      if (sessionManager.getClaudeState(msg.surfaceId) === 'stuck') {
-        queueTransition(msg.surfaceId, 'working', 'hook', `hook:unstuck:${hookType}`, hookTime)
-      }
-
-      // Track Stop hooks so we can distinguish real forks from claude -r startups
-      if (hookType === 'Stop') {
-        sessionManager.handleClaudeStop(msg.surfaceId)
-        queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:Stop', hookTime)
-        pendingPermissionIds.delete(msg.surfaceId)
-        lastPreToolUseId.delete(msg.surfaceId)
-        lastActivityBySurface.delete(msg.surfaceId)
-      }
-
-      // PermissionRequest: check tool_name to distinguish plan approval from other permissions
-      if (hookType === 'PermissionRequest') {
-        // Capture tool_use_id from the preceding PreToolUse so we can match
-        // the eventual PostToolUse to this specific permission-gated tool.
-        const savedToolUseId = lastPreToolUseId.get(msg.surfaceId)
-        if (savedToolUseId) {
-          let ids = pendingPermissionIds.get(msg.surfaceId)
-          if (!ids) { ids = new Set(); pendingPermissionIds.set(msg.surfaceId, ids) }
-          ids.add(savedToolUseId)
-        }
-        const toolName = msg.payload && typeof msg.payload === 'object' && 'tool_name' in msg.payload
-          ? String(msg.payload.tool_name)
-          : ''
-        queueTransition(
-          msg.surfaceId,
-          toolName === 'ExitPlanMode' ? 'waiting_plan' : 'waiting_permission',
-          'hook',
-          'hook:PermissionRequest',
-          hookTime,
-          toolName
-        )
-      }
-
-      // Notification hooks: permission_prompt and elicitation_dialog mean user needs to act
-      // (waiting_plan guard is in applyTransition so it works correctly with the queue)
-      if (hookType === 'Notification' && msg.payload && typeof msg.payload === 'object') {
-        const notificationType = 'notification_type' in msg.payload ? String(msg.payload.notification_type) : ''
-        if (notificationType === 'permission_prompt' || notificationType === 'elicitation_dialog') {
-          queueTransition(msg.surfaceId, 'waiting_permission', 'hook', 'hook:Notification', hookTime, notificationType)
-        }
-      }
-
-      // Claude is actively working
-      if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart' || hookType === 'PreCompact') {
-        if (hookType === 'PreToolUse') {
-          const toolUseId = msg.payload?.tool_use_id
-          if (typeof toolUseId === 'string') {
-            lastPreToolUseId.set(msg.surfaceId, toolUseId)
-          }
-        }
-        if (hookType === 'UserPromptSubmit') {
-          pendingPermissionIds.delete(msg.surfaceId)
-          lastPreToolUseId.delete(msg.surfaceId)
-        }
-        queueTransition(msg.surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
-      }
-
-      // PostToolUse: only transition to working if this matches a permission-gated tool.
-      // Subagent PostToolUse events (with different tool_use_ids) are correctly ignored,
-      // preventing them from clearing waiting_permission on the main agent's surface.
-      if (hookType === 'PostToolUse' || hookType === 'PostToolUseFailure') {
-        const toolUseId = msg.payload?.tool_use_id
-        const ids = pendingPermissionIds.get(msg.surfaceId)
-        if (typeof toolUseId === 'string' && ids?.delete(toolUseId)) {
-          queueTransition(msg.surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
-        }
-      }
-
-      // SessionEnd: session is done
-      if (hookType === 'SessionEnd') {
-        queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:SessionEnd', hookTime)
-        pendingPermissionIds.delete(msg.surfaceId)
-        lastPreToolUseId.delete(msg.surfaceId)
-        lastActivityBySurface.delete(msg.surfaceId)
-      }
+      // Delegate state transition logic to the state machine
+      claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
 
       // Process SessionStart hooks for claude session history tracking
+      // (session lifecycle management stays here — not state machine concern)
       if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
         const claudeSessionId = 'session_id' in msg.payload ? String(msg.payload.session_id) : ''
         const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
@@ -560,10 +297,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           if (hookCwd) {
             sessionFileWatcher.watch(msg.surfaceId, claudeSessionId, hookCwd)
           }
-        }
-        // Compaction finished — Claude is now idle waiting for input
-        if (source === 'compact') {
-          queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:SessionStart:compact', hookTime)
         }
       }
       break
@@ -622,13 +355,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'status-line': {
-      // Status-line events prove the session is alive — reset the stale timer
-      lastActivityBySurface.set(msg.surfaceId, Date.now())
-
-      // If the session was marked stuck, a status-line event means it's actually working
-      if (sessionManager.getClaudeState(msg.surfaceId) === 'stuck') {
-        queueTransition(msg.surfaceId, 'working', 'status-line', 'status-line:unstuck', Date.now())
-      }
+      // Delegate state logic (stale timer reset, stuck recovery) to state machine
+      claudeStateMachine.handleStatusLine(msg.surfaceId)
 
       const logEntry =
         JSON.stringify({
@@ -1116,15 +844,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'set-claude-status-unread': {
-      sessionManager.setClaudeStatusUnread(msg.sessionId, msg.unread)
-      decisionLogger.log(msg.sessionId, {
-        timestamp: localISOTimestamp(),
-        source: 'client',
-        event: msg.unread ? 'client:markUnread' : 'client:markRead',
-        prevState: sessionManager.getClaudeState(msg.sessionId),
-        newState: sessionManager.getClaudeState(msg.sessionId),
-        unread: msg.unread
-      })
+      claudeStateMachine.handleClientMarkUnread(msg.sessionId, msg.unread)
       break
     }
 
@@ -1298,7 +1018,6 @@ function startServer(): void {
     (sessionId, exitCode) => {
       sessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
-      lastActivityBySurface.delete(sessionId)
 
       // Check restart recovery — if this PTY was spawned by a manual restart
       // and exited within 10 seconds, auto-recover with the previous CLI args
@@ -1405,131 +1124,70 @@ function startServer(): void {
     }
   )
 
-  // Initialize DecisionLogger — per-surface JSONL log of state transition decisions
-  decisionLogger = new DecisionLogger()
-
   // Initialize PlanCacheManager — caches plan file revisions for diffing
   planCacheManager = new PlanCacheManager()
 
-  // Start the transition queue drain — processes queued state transitions every 50ms
-  transitionDrainTimer = setInterval(drainTransitionQueue, TRANSITION_DRAIN_INTERVAL_MS)
+  // Initialize ClaudeStateMachine — manages state indicator transitions, queue, stale sweep
+  claudeStateMachine = new ClaudeStateMachine({
+    getClaudeState: (id) => sessionManager.getClaudeState(id),
+    setClaudeState: (id, state) => sessionManager.setClaudeState(id, state),
+    getClaudeStatusUnread: (id) => sessionManager.getClaudeStatusUnread(id),
+    setClaudeStatusUnread: (id, unread) => sessionManager.setClaudeStatusUnread(id, unread),
+    handleClaudeStop: (id) => sessionManager.handleClaudeStop(id),
+    broadcastClaudeState: (id, state) => stateManager.updateClaudeState(id, state),
+    broadcastClaudeStateDecisionTime: (id, ts) => stateManager.updateClaudeStateDecisionTime(id, ts),
+    broadcastClaudeStatusUnread: (id, unread) => stateManager.updateClaudeStatusUnread(id, unread),
+  })
 
-  // Start the stale surface sweep — detects stuck sessions every 15s
-  staleSweepTimer = setInterval(sweepStaleSurfaces, STALE_SWEEP_INTERVAL_MS)
-
-  // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + state routing
+  // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + plan cache + state routing
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
     sessionManager.setClaudeSessionLineCount(surfaceId, totalLineCount)
 
-    // During backfill, only track plan file paths (so the path is ready for
-    // future live snapshots). Don't snapshot — the file on disk only has its
-    // latest content, so backfill snapshots would be misleading.
-    if (isBackfill) {
-      for (const entry of newEntries) {
-        if (entry.type !== 'assistant') continue
-        const assistantContent = (entry.message as any)?.content
-        if (!Array.isArray(assistantContent)) continue
-        for (const block of assistantContent) {
-          if (block.type === 'tool_use' &&
-              (block.name === 'Write' || block.name === 'Edit') &&
-              typeof block.input?.file_path === 'string' &&
-              block.input.file_path.includes('/.claude/plans/')) {
-            planCacheManager.trackPlanFile(surfaceId, block.input.file_path)
-          }
-        }
-      }
-      return
-    }
-
+    // Plan-cache tracking: scan assistant entries for plan file writes and ExitPlanMode.
+    // This runs for both backfill and live entries (plan file paths need to be ready
+    // for future snapshots), but ExitPlanMode snapshotting only runs live.
     for (const entry of newEntries) {
-      // Parse source timestamp from the JSONL entry (falls back to now if missing/invalid)
-      const entryTime = typeof entry.timestamp === 'string'
-        ? new Date(entry.timestamp as string).getTime() || Date.now()
-        : Date.now()
-
-      // Assistant message → Claude is actively producing output
-      if (entry.type === 'assistant') {
-        // Scan tool_use blocks for plan file writes and ExitPlanMode
-        const assistantContent = (entry.message as any)?.content
-        if (Array.isArray(assistantContent)) {
-          for (const block of assistantContent) {
-            if (block.type !== 'tool_use') continue
-            if ((block.name === 'Write' || block.name === 'Edit') &&
-                typeof block.input?.file_path === 'string' &&
-                block.input.file_path.includes('/.claude/plans/')) {
-              planCacheManager.trackPlanFile(surfaceId, block.input.file_path)
-            }
-            if (block.name === 'ExitPlanMode') {
-              const claudeSessionId = sessionManager.getLastClaudeSessionId(surfaceId)
-              if (claudeSessionId) {
-                const files = planCacheManager.snapshot(surfaceId, claudeSessionId)
-                if (files.length >= 2) {
-                  broadcastToAttached(surfaceId, {
-                    type: 'plan-cache-update',
-                    sessionId: surfaceId,
-                    count: files.length,
-                    files
-                  })
-                }
-              }
+      if (entry.type !== 'assistant') continue
+      const assistantContent = (entry.message as any)?.content
+      if (!Array.isArray(assistantContent)) continue
+      for (const block of assistantContent) {
+        if (block.type !== 'tool_use') continue
+        if ((block.name === 'Write' || block.name === 'Edit') &&
+            typeof block.input?.file_path === 'string' &&
+            block.input.file_path.includes('/.claude/plans/')) {
+          planCacheManager.trackPlanFile(surfaceId, block.input.file_path)
+        }
+        // Only snapshot on live ExitPlanMode — during backfill the file on disk
+        // only has its latest content, so snapshots would be misleading.
+        if (!isBackfill && block.name === 'ExitPlanMode') {
+          const claudeSessionId = sessionManager.getLastClaudeSessionId(surfaceId)
+          if (claudeSessionId) {
+            const files = planCacheManager.snapshot(surfaceId, claudeSessionId)
+            if (files.length >= 2) {
+              broadcastToAttached(surfaceId, {
+                type: 'plan-cache-update',
+                sessionId: surfaceId,
+                count: files.length,
+                files
+              })
             }
           }
-        }
-        queueTransition(surfaceId, 'working', 'jsonl', 'jsonl:assistant', entryTime)
-        continue
-      }
-
-      if (entry.type === 'user') {
-        // Skip injected meta context (skills, system reminders)
-        if (entry.isMeta) continue
-
-        const msg = entry.message as { content: unknown } | undefined
-        if (!msg) continue
-
-        // Human-typed message (string content) → working
-        if (typeof msg.content === 'string') {
-          queueTransition(surfaceId, 'working', 'jsonl', 'jsonl:user:string', entryTime)
-          continue
-        }
-
-        // Array content = tool results
-        if (Array.isArray(msg.content)) {
-          const toolUseResult = entry.toolUseResult
-
-          // User interrupted/aborted a tool
-          if (typeof toolUseResult === 'string' && toolUseResult.includes('interrupted by user')) {
-            queueTransition(surfaceId, 'stopped', 'jsonl', 'jsonl:user:interrupt', entryTime)
-            continue
-          }
-
-          // User rejected a permission prompt — Claude Code doesn't fire PostToolUse
-          // or PostToolUseFailure for rejections, so the JSONL entry is our only signal.
-          // Default to stopped: if Claude continues, jsonl:assistant will correct to working.
-          if (typeof toolUseResult === 'string' && toolUseResult.includes('rejected')) {
-            queueTransition(surfaceId, 'stopped', 'jsonl', 'jsonl:user:rejected', entryTime)
-            continue
-          }
-
-          // Check content for interrupt text (covers cases where toolUseResult is null
-          // but the entry content carries the interrupt signal, e.g. the second entry
-          // Claude Code writes after a permission rejection)
-          const contentArr = msg.content as Array<{ type?: string; text?: string }>
-          if (contentArr.some(item => item.type === 'text' && typeof item.text === 'string' && item.text.includes('interrupted by user'))) {
-            queueTransition(surfaceId, 'stopped', 'jsonl', 'jsonl:user:interrupt:content', entryTime)
-            continue
-          }
-
-          // Non-interrupt, non-rejection tool results: don't change state (hooks handle it)
         }
       }
     }
+
+    // Delegate state routing to the state machine
+    claudeStateMachine.handleJsonlEntries(surfaceId, newEntries, isBackfill)
   })
 
   // --- Startup revival: revive terminals with Claude sessions, archive the rest ---
   const deadTerminals = stateManager.processDeadTerminals()
+  console.log(`[startup] ${deadTerminals.length} terminal(s) to process`)
+  const revivedNodeIds: string[] = []
   for (const { nodeId, claudeSessionId, cwd, extraCliArgs } of deadTerminals) {
     if (claudeSessionId) {
       try {
+        stateManager.markReviving(nodeId)
         const reviveOptions = buildClaudeCodeCreateOptions(cwd, claudeSessionId, undefined, undefined, parseExtraCliArgs(extraCliArgs))
         const { sessionId, cols, rows } = sessionManager.create(reviveOptions)
         snapshotManager.addSession(sessionId, cols, rows)
@@ -1542,8 +1200,10 @@ function startServer(): void {
         if (revivalCwd) {
           sessionFileWatcher.watch(sessionId, claudeSessionId, revivalCwd)
         }
+        revivedNodeIds.push(nodeId)
         console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with Claude session ${claudeSessionId.slice(0, 8)}`)
       } catch (err: any) {
+        stateManager.clearReviving(nodeId)
         console.error(`[startup] Failed to revive terminal ${nodeId.slice(0, 8)}: ${err.message}`)
         stateManager.archiveTerminal(nodeId)
       }
@@ -1551,6 +1211,16 @@ function startServer(): void {
       stateManager.archiveTerminal(nodeId)
       console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (no Claude session)`)
     }
+  }
+
+  // After 30s, clear reviving flags — PTYs that survived this long are stable
+  if (revivedNodeIds.length > 0) {
+    setTimeout(() => {
+      for (const nodeId of revivedNodeIds) {
+        stateManager.clearReviving(nodeId)
+      }
+      console.log(`[startup] Cleared revival protection for ${revivedNodeIds.length} terminal(s)`)
+    }, 30_000)
   }
 
   // --- Git status polling for directory nodes ---
@@ -1615,10 +1285,8 @@ function startServer(): void {
   // Graceful shutdown
   const shutdown = () => {
     console.log('\nShutting down...')
-    if (staleSweepTimer) clearInterval(staleSweepTimer)
-    if (transitionDrainTimer) clearInterval(transitionDrainTimer)
-    // Flush any remaining queued transitions before persisting state
-    drainTransitionQueue(true)
+    // Flush queued transitions and stop timers before persisting state
+    claudeStateMachine.dispose()
     gitStatusPoller.dispose()
     fileContentManager.dispose()
     sessionFileWatcher.dispose()

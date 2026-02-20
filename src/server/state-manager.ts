@@ -32,6 +32,9 @@ export class StateManager {
   private sessionToNodeId = new Map<string, string>()
   /** Tracks node IDs mid-restart — prevents terminalExited from archiving the node */
   private restartingNodes = new Set<string>()
+  /** Tracks node IDs spawned by startup revival — terminalExited skips archival so the
+   *  surface stays visible as a dead remnant the user can manually retry. */
+  private revivingNodes = new Set<string>()
 
   constructor(
     onNodeUpdate: NodeUpdateCallback,
@@ -100,44 +103,45 @@ export class StateManager {
   }
 
   /**
-   * On startup, mark all terminals dead and return info for the caller to decide
-   * whether to revive (spawn new PTY) or archive each one.
+   * On startup, collect all terminal nodes for revival.  Terminals still in
+   * `nodes` always need a new PTY — either the previous server owned the PTY
+   * (alive === true) or a prior startup marked them dead but crashed before
+   * the revival loop could re-spawn them (alive === false).
    */
   processDeadTerminals(): Array<{ nodeId: string; claudeSessionId?: string; cwd?: string; extraCliArgs?: string }> {
     const deadList: Array<{ nodeId: string; claudeSessionId?: string; cwd?: string; extraCliArgs?: string }> = []
 
     for (const node of Object.values(this.state.nodes)) {
+      if (node.type !== 'terminal') continue
+
       // Backward compat: remove old waitingForUser key if present in persisted state
-      if (node.type === 'terminal' && 'waitingForUser' in node) {
+      if ('waitingForUser' in node) {
         delete (node as any).waitingForUser
       }
 
-      if (node.type === 'terminal' && node.claudeStatusUnread === undefined) {
+      if (node.claudeStatusUnread === undefined) {
         (node as any).claudeStatusUnread = false
       }
 
-      if (node.type === 'terminal' && node.alive) {
-        node.alive = false
-        node.claudeState = 'stopped'
-        node.claudeStatusUnread = false
-
-        // End current terminal session
+      // End current terminal session if still open
+      if (node.alive) {
         const currentSession = node.terminalSessions[node.terminalSessions.length - 1]
         if (currentSession && !currentSession.endedAt) {
           currentSession.endedAt = new Date().toISOString()
         }
-
-        // Get most recent Claude session ID if any
-        const history = node.claudeSessionHistory ?? []
-        const latestClaude = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
-
-        deadList.push({ nodeId: node.id, claudeSessionId: latestClaude, cwd: node.cwd, extraCliArgs: node.extraCliArgs })
       }
 
-      // Reset stuck state on dead terminals from persistence
-      if (node.type === 'terminal' && !node.alive && node.claudeState === 'stuck') {
-        node.claudeState = 'stopped'
-      }
+      const wasAlive = node.alive
+      node.alive = false
+      node.claudeState = node.claudeState === 'stuck' ? 'stopped' : node.claudeState
+      node.claudeStatusUnread = false
+
+      const history = node.claudeSessionHistory ?? []
+      const latestClaude = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
+
+      console.log(`[startup] Terminal ${node.id.slice(0, 8)} wasAlive=${wasAlive} claudeSession=${latestClaude?.slice(0, 8) ?? 'none'}`)
+
+      deadList.push({ nodeId: node.id, claudeSessionId: latestClaude, cwd: node.cwd, extraCliArgs: node.extraCliArgs })
     }
 
     persistNow(this.state)
@@ -155,6 +159,17 @@ export class StateManager {
   markRestarting(nodeId: string): void {
     this.restartingNodes.add(nodeId)
     console.log(`[restart] Marking node ${nodeId.slice(0, 8)} as restarting`)
+  }
+
+  /** Mark a node as spawned by startup revival.  If the PTY exits,
+   *  terminalExited will leave it as a dead remnant instead of archiving. */
+  markReviving(nodeId: string): void {
+    this.revivingNodes.add(nodeId)
+  }
+
+  /** Clear the reviving flag (called once the PTY is confirmed stable). */
+  clearReviving(nodeId: string): void {
+    this.revivingNodes.delete(nodeId)
   }
 
   /** Update extra CLI args on a terminal node, broadcast, and persist. */
@@ -261,7 +276,11 @@ export class StateManager {
       return
     }
 
-    console.log(`[exit] terminalExited session=${ptySessionId.slice(0, 8)} node=${node.id.slice(0, 8)} exitCode=${exitCode} — archiving`)
+    // If spawned by startup revival, leave as dead remnant so the user can retry
+    const isReviving = this.revivingNodes.has(node.id)
+    if (isReviving) this.revivingNodes.delete(node.id)
+
+    console.log(`[exit] terminalExited session=${ptySessionId.slice(0, 8)} node=${node.id.slice(0, 8)} exitCode=${exitCode} — ${isReviving ? 'keeping as remnant (revival)' : 'archiving'}`)
 
     node.alive = false
     node.exitCode = exitCode
@@ -275,8 +294,13 @@ export class StateManager {
 
     this.sessionToNodeId.delete(ptySessionId)
 
-    // Immediately archive instead of leaving as remnant
-    this.archiveNode(node.id)
+    if (isReviving) {
+      // Keep as dead remnant — the surface stays visible and can be manually restarted
+      this.onNodeUpdate(node.id, { alive: false, exitCode, claudeState: 'stopped' } as Partial<TerminalNodeData>)
+      this.schedulePersist()
+    } else {
+      this.archiveNode(node.id)
+    }
   }
 
   /**
