@@ -2,7 +2,7 @@ import type { ClaudeSessionEntry } from './protocol'
 
 // --- Claude state enum ---
 
-export type ClaudeState = 'stopped' | 'working' | 'waiting_permission' | 'waiting_plan'
+export type ClaudeState = 'stopped' | 'working' | 'waiting_permission' | 'waiting_plan' | 'stuck'
 
 // --- Terminal session tracking ---
 
@@ -37,7 +37,9 @@ export interface TerminalNodeData extends BaseNodeData {
   rows: number
   exitCode?: number // set when alive → false
   cwd?: string
+  extraCliArgs?: string
   claudeState: ClaudeState
+  claudeStateDecidedAt?: number
   claudeStatusUnread: boolean
   terminalSessions: TerminalSessionEntry[]
   /** Legacy field — kept for backward compat with existing client code during migration */

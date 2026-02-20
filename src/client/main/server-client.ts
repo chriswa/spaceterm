@@ -340,6 +340,10 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'fork-session', nodeId })
   }
 
+  async terminalRestart(nodeId: string, extraCliArgs: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'terminal-restart', nodeId, extraCliArgs })
+  }
+
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {
     this.sendFireAndForget({ type: 'set-terminal-mode', sessionId, mode })
   }

@@ -160,3 +160,10 @@ export async function sendForkSession(
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
   return window.api.node.forkSession(nodeId)
 }
+
+export async function sendTerminalRestart(
+  nodeId: string,
+  extraCliArgs: string
+): Promise<{ sessionId: string; cols: number; rows: number }> {
+  return window.api.node.terminalRestart(nodeId, extraCliArgs)
+}

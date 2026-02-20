@@ -7,6 +7,7 @@ import { ArchiveBody } from './ArchiveBody'
 import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
+import { ExtraCliArgsBody } from './ExtraCliArgsBody'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import foodIcon from '../assets/food.svg'
 
@@ -41,6 +42,8 @@ interface CardShellProps {
   onDiffPlans?: () => void
   isReparenting?: boolean
   onAddNode?: (parentNodeId: string, type: AddNodeType) => void
+  onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
+  extraCliArgs?: string
   className?: string
   style?: CSSProperties
   cardRef?: RefObject<HTMLDivElement | null>
@@ -57,7 +60,7 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onShipIt, onFork, onDiffPlans, isReparenting,
-  onAddNode,
+  onAddNode, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
   const [archiveOpen, setArchiveOpen] = useState(false)
@@ -71,6 +74,9 @@ export function CardShell({
   const [addNodeOpen, setAddNodeOpen] = useState(false)
   const addNodeBtnRef = useRef<HTMLButtonElement>(null)
   const addNodeBodyRef = useRef<HTMLDivElement>(null)
+  const [cliArgsOpen, setCliArgsOpen] = useState(false)
+  const cliArgsBtnRef = useRef<HTMLButtonElement>(null)
+  const cliArgsBodyRef = useRef<HTMLDivElement>(null)
 
   // Close archive when archives become empty
   useEffect(() => {
@@ -150,6 +156,26 @@ export function CardShell({
     return () => document.removeEventListener('mousedown', handler, { capture: true })
   }, [addNodeOpen])
 
+  // Close CLI args popup when node loses focus
+  useEffect(() => {
+    if (!focused && cliArgsOpen) {
+      setCliArgsOpen(false)
+    }
+  }, [focused, cliArgsOpen])
+
+  // Dismiss CLI args popup on outside click
+  useEffect(() => {
+    if (!cliArgsOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (cliArgsBodyRef.current?.contains(target)) return
+      if (cliArgsBtnRef.current?.contains(target)) return
+      setCliArgsOpen(false)
+    }
+    document.addEventListener('mousedown', handler, { capture: true })
+    return () => document.removeEventListener('mousedown', handler, { capture: true })
+  }, [cliArgsOpen])
+
   // Close color picker on outside click
   useEffect(() => {
     if (!pickerOpen) return
@@ -165,6 +191,7 @@ export function CardShell({
   const toggleArchive = useCallback(() => {
     setSessionsOpen(false)
     setAddNodeOpen(false)
+    setCliArgsOpen(false)
     setArchiveOpen(prev => {
       const next = !prev
       onArchiveToggled(nodeId, next)
@@ -175,6 +202,7 @@ export function CardShell({
   const toggleSessions = useCallback(() => {
     setArchiveOpen(false)
     setAddNodeOpen(false)
+    setCliArgsOpen(false)
     setSessionsOpen(prev => {
       const next = !prev
       onSessionsToggled?.(nodeId, next)
@@ -185,7 +213,15 @@ export function CardShell({
   const toggleAddNode = useCallback(() => {
     setArchiveOpen(false)
     setSessionsOpen(false)
+    setCliArgsOpen(false)
     setAddNodeOpen(prev => !prev)
+  }, [])
+
+  const toggleCliArgs = useCallback(() => {
+    setArchiveOpen(false)
+    setSessionsOpen(false)
+    setAddNodeOpen(false)
+    setCliArgsOpen(prev => !prev)
   }, [])
 
   const handleAddNodeSelect = useCallback((type: AddNodeType) => {
@@ -193,13 +229,18 @@ export function CardShell({
     onAddNode?.(nodeId, type)
   }, [nodeId, onAddNode])
 
+  const handleCliArgsRestart = useCallback((args: string) => {
+    setCliArgsOpen(false)
+    onExtraCliArgs?.(nodeId, args)
+  }, [nodeId, onExtraCliArgs])
+
   // Action buttons shared across head variants
   const actionButtons = (
     <div className="node-titlebar__actions">
       {onShipIt && (
         <button
           className="node-titlebar__shipit-btn"
-          title="Ship it — paste into parent terminal"
+          data-tooltip="Ship it — paste into parent terminal"
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); onShipIt(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -210,7 +251,7 @@ export function CardShell({
       {onFork && (
         <button
           className="node-titlebar__fork-btn"
-          title="Fork session"
+          data-tooltip="Fork session"
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); onFork(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -222,10 +263,26 @@ export function CardShell({
           </svg>
         </button>
       )}
+      {onExtraCliArgs && (
+        <button
+          ref={cliArgsBtnRef}
+          className="node-titlebar__cli-args-btn"
+          data-tooltip="Extra CLI arguments"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); toggleCliArgs() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8.5 1.5 L5.5 12.5" />
+            <path d="M11 4 L13 7 L11 10" />
+            <path d="M3 4 L1 7 L3 10" />
+          </svg>
+        </button>
+      )}
       {onDiffPlans && (
         <button
           className="node-titlebar__diff-plans-btn"
-          title="Diff plan versions"
+          data-tooltip="Diff plan versions"
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); onDiffPlans() }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -242,7 +299,7 @@ export function CardShell({
         <div style={{ position: 'relative' }} ref={pickerRef}>
           <button
             className="node-titlebar__color-btn"
-            title="Node color"
+            data-tooltip="Node color"
             style={preset ? { color: preset.titleBarFg } : undefined}
             onClick={(e) => { e.stopPropagation(); setPickerOpen(prev => !prev) }}
             onMouseDown={(e) => e.stopPropagation()}
@@ -261,7 +318,7 @@ export function CardShell({
             <div className="node-titlebar__color-picker" onMouseDown={(e) => e.stopPropagation()}>
               <button
                 className="node-titlebar__color-swatch node-titlebar__color-swatch--inherit"
-                title="Inherit from parent"
+                data-tooltip="Inherit from parent"
                 onClick={(e) => { e.stopPropagation(); onColorChange(nodeId, 'inherit'); setPickerOpen(false) }}
               />
               {COLOR_PRESETS.map((p) => (
@@ -280,22 +337,25 @@ export function CardShell({
         <button
           ref={sessionsBtnRef}
           className="node-titlebar__sessions-btn"
-          title="Terminal sessions"
+          data-tooltip="Context history"
           disabled={pastSessions.length === 0}
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); toggleSessions() }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <svg width="18" height="18" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute' }}>
-            <path d="M2 1 L3 12 Q3 13 5 13 L9 13 Q11 13 11 12 L12 1" transform="rotate(-90 7 7)" />
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round">
+            <circle cx="7" cy="2" r="2" stroke="none" />
+            <line x1="7" y1="4" x2="7" y2="5" />
+            <circle cx="7" cy="7" r="2" stroke="none" />
+            <line x1="7" y1="9" x2="7" y2="10.3" />
+            <circle cx="7" cy="12" r="1.5" fill="none" strokeWidth="1.4" />
           </svg>
-          <span className="node-titlebar__archive-count" style={pastSessions.length >= 100 ? { fontSize: 7 } : pastSessions.length >= 10 ? { fontSize: 8 } : undefined}>{pastSessions.length}</span>
         </button>
       )}
       <button
         ref={archiveBtnRef}
         className="node-titlebar__archive-btn"
-        title="Archived children"
+        data-tooltip="Archived children"
         disabled={archivedChildren.length === 0}
         style={preset ? { color: preset.titleBarFg } : undefined}
         onClick={(e) => { e.stopPropagation(); toggleArchive() }}
@@ -309,7 +369,7 @@ export function CardShell({
       {onStartReparent && (
         <button
           className={`node-titlebar__reparent-btn${isReparenting ? ' node-titlebar__reparent-btn--active' : ''}`}
-          title="Reparent node"
+          data-tooltip="Reparent node"
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); onStartReparent(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -325,7 +385,7 @@ export function CardShell({
         <button
           ref={addNodeBtnRef}
           className="node-titlebar__add-btn"
-          title="Add child node"
+          data-tooltip="Add child node"
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); toggleAddNode() }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -339,6 +399,7 @@ export function CardShell({
       {showClose && (
         <button
           className="node-titlebar__close"
+          data-tooltip="Archive"
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); onClose(nodeId) }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -357,7 +418,7 @@ export function CardShell({
       <button
         ref={archiveBtnRef}
         className="node-titlebar__archive-btn card-shell__archive-btn"
-        title="Archived children"
+        data-tooltip="Archived children"
         disabled={archivedChildren.length === 0}
         onClick={(e) => { e.stopPropagation(); toggleArchive() }}
         onMouseDown={(e) => e.stopPropagation()}
@@ -371,7 +432,7 @@ export function CardShell({
         <button
           ref={addNodeBtnRef}
           className="node-titlebar__add-btn card-shell__add-btn"
-          title="Add child node"
+          data-tooltip="Add child node"
           onClick={(e) => { e.stopPropagation(); toggleAddNode() }}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -435,6 +496,11 @@ export function CardShell({
           {addNodeOpen && onAddNode && (
             <div className={`card-shell__add-node-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={addNodeBodyRef}>
               <AddNodeBody onSelect={handleAddNodeSelect} />
+            </div>
+          )}
+          {cliArgsOpen && onExtraCliArgs && (
+            <div className={`card-shell__cli-args-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}${headVariant === 'overlay' ? ' card-shell__popup--below-actions' : ''}`} ref={cliArgsBodyRef}>
+              <ExtraCliArgsBody initialValue={extraCliArgs ?? ''} onRestart={handleCliArgsRestart} />
             </div>
           )}
           {children}

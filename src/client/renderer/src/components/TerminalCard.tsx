@@ -15,8 +15,35 @@ import { TerminalTitleBarContent } from './TerminalTitleBarContent'
 import { TerminalSearchBar } from './TerminalSearchBar'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
+import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { showToast } from '../lib/toast'
 import crabIcon from '../assets/crab.png'
+
+function cleanTerminalCopy(raw: string): string {
+  // Strip box-drawing border characters (│, ─, ╭, etc.) from line edges, then trailing whitespace
+  let lines = raw.split('\n').map(l =>
+    l.replace(/^[\u2500-\u257F]+ ?/, '').replace(/ *[\u2500-\u257F]+$/, '').trimEnd()
+  )
+
+  // Detect Claude Code output pattern: "⏺ " prefix, subsequent lines blank or 2+ space indented
+  if (lines.length > 0 && lines[0].startsWith('⏺ ')) {
+    const rest = lines.slice(1)
+    const isClaude = rest.every(l => l === '' || l.startsWith('  '))
+    if (isClaude) {
+      lines[0] = lines[0].slice('⏺ '.length)
+      lines = [lines[0], ...rest.map(l => l === '' ? '' : l.slice(2))]
+    }
+  }
+
+  // Dedent: strip common leading whitespace
+  const indents = lines.filter(l => l.length > 0).map(l => l.match(/^ */)![0].length)
+  const minIndent = indents.length > 0 ? Math.min(...indents) : 0
+  if (minIndent > 0) {
+    lines = lines.map(l => l.length > 0 ? l.slice(minIndent) : l)
+  }
+
+  return lines.join('\n')
+}
 
 const DRAG_THRESHOLD = 5
 const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
@@ -83,6 +110,8 @@ interface TerminalCardProps {
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
   onFork?: (id: string) => void
+  onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
+  extraCliArgs?: string
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.RefObject<Camera>
 }
@@ -92,7 +121,7 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onAddNode, cameraRef
+  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, onAddNode, cameraRef
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -182,6 +211,17 @@ export function TerminalCard({
     searchAddonRef.current = searchAddon
     term.open(containerRef.current)
     term.unicode.activeVersion = '11'
+
+    // Clean clipboard text on copy: strip trailing whitespace, Claude Code prefixes, and common indent
+    const container = containerRef.current
+    const handleCopy = (e: ClipboardEvent) => {
+      const sel = term.getSelection()
+      if (sel) {
+        e.clipboardData?.setData('text/plain', cleanTerminalCopy(sel))
+        e.preventDefault()
+      }
+    }
+    container.addEventListener('copy', handleCopy)
 
     // Pixel-smooth scroll: grab screen element for CSS transforms
     const screenEl = containerRef.current!.querySelector('.xterm-screen') as HTMLElement
@@ -450,6 +490,7 @@ export function TerminalCard({
     return () => {
       cancelled = true
       pixelOffsetRef.current = 0
+      container.removeEventListener('copy', handleCopy)
       if (readyTimeout !== undefined) clearTimeout(readyTimeout)
       if (onRenderDisposable) onRenderDisposable.dispose()
       terminalSelectionGetters.delete(id)
@@ -755,6 +796,7 @@ export function TerminalCard({
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
       case 'working': return 'Claude is working'
+      case 'stuck': return 'Claude appears stuck'
       case 'waiting_permission': return 'Claude is awaiting permission'
       case 'waiting_plan': return 'Claude is awaiting plan approval'
       default: return 'Claude is stopped'
@@ -813,13 +855,21 @@ export function TerminalCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       onFork={claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
+      onExtraCliArgs={claudeSessionHistory && claudeSessionHistory.length > 0 ? onExtraCliArgs : undefined}
+      extraCliArgs={extraCliArgs}
       onDiffPlans={handleDiffPlans}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       className={`terminal-card ${focusClass} ${animationClass}`}
       cardRef={cardRef}
-      onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
-      onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
+      onMouseEnter={() => {
+        if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id)
+        useHoveredCardStore.getState().setHoveredNode(id)
+      }}
+      onMouseLeave={() => {
+        if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null)
+        useHoveredCardStore.getState().setHoveredNode(null)
+      }}
       behindContent={
         <div
           className={`terminal-card__working-crab-behind${claudeState === 'working' ? ' terminal-card__working-crab-behind--active' : ''}`}
@@ -847,7 +897,7 @@ export function TerminalCard({
           }}
         />
       </div>
-      {(() => {
+      {lastClaudeSession && (() => {
         const pct = Math.max(0, Math.min(100, claudeContextPercent ?? 100))
         const bright = preset ? preset.titleBarBg : '#181825'
         const dark = preset ? preset.terminalBg : '#181825'
@@ -863,20 +913,16 @@ export function TerminalCard({
               navigator.clipboard.writeText(text)
               showToast(`Copied to clipboard: ${text}`)
             }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
-            {lastClaudeSession && (
-              <>
-                <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
-                <span className="terminal-card__footer-id" onClick={(e) => {
-                  e.stopPropagation()
-                  const text = `${new Date().toISOString()} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
-                  navigator.clipboard.writeText(text)
-                  showToast(`Copied to clipboard: ${text}`)
-                }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
-                {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
-                <span>&nbsp;|&nbsp;</span>
-                <span>{claudeStateLabel(claudeState)}</span>
-              </>
-            )}
+            <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
+            <span className="terminal-card__footer-id" onClick={(e) => {
+              e.stopPropagation()
+              const text = `${new Date().toISOString()} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+              navigator.clipboard.writeText(text)
+              showToast(`Copied to clipboard: ${text}`)
+            }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+            {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
+            <span>&nbsp;|&nbsp;</span>
+            <span>{claudeStateLabel(claudeState)}</span>
             {claudeContextPercent != null && (
               <span className="terminal-card__footer-context">Remaining context: {claudeContextPercent.toFixed(2)}%</span>
             )}

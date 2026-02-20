@@ -178,6 +178,31 @@ export function computeFlyToDuration(distance: number): number {
   return Math.min(FLY_TO_MAX_DURATION, FLY_TO_BASE_DURATION * (1 + distance / FLY_TO_HALF_RANGE))
 }
 
+/**
+ * Scale a zoom arc so z(t) = startZ + (endZ-startZ)*t + arc*sin(πt)
+ * never dips below `floor`. Returns the (possibly reduced) arc.
+ */
+export function clampZoomArc(startZ: number, endZ: number, rawArc: number, floor: number): number {
+  function curveMin(arc: number): number {
+    const dz = endZ - startZ
+    if (Math.abs(arc * Math.PI) < 1e-6) return Math.min(startZ, endZ)
+    const cosArg = -dz / (arc * Math.PI)
+    if (Math.abs(cosArg) > 1) return Math.min(startZ, endZ)
+    const tMin = Math.acos(cosArg) / Math.PI
+    return startZ + dz * tMin + arc * Math.sin(Math.PI * tMin)
+  }
+
+  if (curveMin(rawArc) >= floor) return rawArc
+
+  // Binary search for scale s ∈ [0,1] so curveMin(s * rawArc) ≈ floor
+  let lo = 0, hi = 1
+  for (let i = 0; i < 20; i++) {
+    const s = (lo + hi) / 2
+    if (curveMin(rawArc * s) < floor) hi = s; else lo = s
+  }
+  return rawArc * lo
+}
+
 export function computeFlyToSpeed(distance: number): number {
   const durationRatio = Math.min(FLY_TO_MAX_DURATION / FLY_TO_BASE_DURATION, 1 + distance / FLY_TO_HALF_RANGE)
   return FOCUS_SPEED / durationRatio

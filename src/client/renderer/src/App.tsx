@@ -11,7 +11,7 @@ import { TitleCard } from './components/TitleCard'
 import { ImageCard } from './components/ImageCard'
 import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
-import type { TreeLineNode, MaskRect, ReparentEdge, Selection } from './components/CanvasBackground'
+import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
 import { SearchModal } from './components/SearchModal'
 import { useCamera } from './hooks/useCamera'
@@ -27,7 +27,8 @@ import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPrese
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart } from './lib/server-sync'
+import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
 import { pushArchiveUndo, popArchiveUndo } from './lib/undo-archive'
@@ -70,11 +71,11 @@ export function App() {
     if (Date.now() < navBlockUntilRef.current) return
     pushCameraHistory({ camera: cam, focusedId: focusRef.current })
   }, [])
-  const [selection, setSelection] = useState<Selection | null>(null)
-  const selectionRef = useRef<Selection | null>(null)
+  const [selection, setSelection] = useState<string | null>(null)
+  const selectionRef = useRef<string | null>(null)
   selectionRef.current = selection
   const lastFocusedRef = useRef<string | null>(null)
-  const navStackRef = useRef<Selection[]>([])
+  const lastCrabRef = useRef<{ nodeId: string; createdAt: string } | null>(null)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
   const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef, onCameraEvent)
 
@@ -165,6 +166,9 @@ export function App() {
         unviewed = node.claudeStatusUnread
       } else if (node.claudeState === 'working') {
         color = 'orange'
+      } else if (node.claudeState === 'stuck') {
+        color = 'dim-orange'
+        unviewed = node.claudeStatusUnread
       } else if (node.claudeState === 'stopped' && node.claudeStatusUnread) {
         color = 'white'
         unviewed = true
@@ -173,7 +177,7 @@ export function App() {
       }
       if (color) {
         const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-        entries.push({ nodeId: node.id, color, unviewed, createdAt, title: nodeDisplayTitle(node) })
+        entries.push({ nodeId: node.id, color, unviewed, createdAt, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
       }
     }
 
@@ -281,9 +285,10 @@ export function App() {
     }
   }, [hoveredEdge])
 
-  // Initialize server sync on mount
+  // Initialize server sync and tooltips on mount
   useEffect(() => {
     initServerSync()
+    initTooltips()
   }, [])
 
   // Initialize audio beat detection
@@ -305,6 +310,13 @@ export function App() {
     const node = useNodeStore.getState().nodes[focusedId]
     focusedParentRef.current = node ? node.parentId : null
   }, [focusedId])
+
+  // Track last-visited crab for Cmd+Left/Right navigation when unfocused
+  useEffect(() => {
+    if (!focusedId) return
+    const crab = crabs.find(c => c.nodeId === focusedId)
+    if (crab) lastCrabRef.current = { nodeId: crab.nodeId, createdAt: crab.createdAt }
+  }, [focusedId, crabs])
 
   const expireToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
@@ -477,7 +489,7 @@ export function App() {
     if (nodeId) {
       const node = useNodeStore.getState().nodes[nodeId]
       if (node) {
-        setSelection({ id: nodeId, type: 'node' })
+        setSelection(nodeId)
         setScrollMode(node.type === 'terminal' && node.alive)
         bringToFront(nodeId)
         sendBringToFront(nodeId)
@@ -498,7 +510,7 @@ export function App() {
   const handleNodeFocus = useCallback((nodeId: string) => {
     flashNode(nodeId)
     setFocusedId(nodeId)
-    setSelection({ id: nodeId, type: 'node' })
+    setSelection(nodeId)
     lastFocusedRef.current = nodeId
 
     // Clear unread flag on every click, even if already focused
@@ -506,7 +518,6 @@ export function App() {
     if (node?.type === 'terminal' && node.claudeStatusUnread) {
       window.api.node.setClaudeStatusUnread(node.sessionId, false)
     }
-    navStackRef.current = []
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
@@ -551,9 +562,8 @@ export function App() {
 
     flashNode(nodeId)
     setFocusedId(nodeId)
-    setSelection({ id: nodeId, type: 'node' })
+    setSelection(nodeId)
     lastFocusedRef.current = nodeId
-    navStackRef.current = []
 
     const node = useNodeStore.getState().nodes[nodeId]
     if (!node) return
@@ -742,6 +752,14 @@ export function App() {
     }
   }, [navigateToNode])
 
+  const handleExtraCliArgs = useCallback(async (nodeId: string, extraCliArgs: string) => {
+    try {
+      await sendTerminalRestart(nodeId, extraCliArgs)
+    } catch (err: any) {
+      console.error(`Terminal restart failed: ${err.message}`)
+    }
+  }, [])
+
   const handleRemoveNode = useCallback(async (id: string) => {
     cwdMapRef.current.delete(id)
     const { nodes } = useNodeStore.getState()
@@ -795,63 +813,37 @@ export function App() {
     setScrollMode(false)
   }, [])
 
-  const flyToSelection = useCallback((sel: Selection) => {
+  const flyToSelection = useCallback((nodeId: string) => {
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
     const vw = viewport.clientWidth
     const vh = viewport.clientHeight
     const allNodes = useNodeStore.getState().nodes
 
-    if (sel.type === 'node') {
-      // Center = node center, rects = node + all immediate children
-      let center: { x: number; y: number }
-      const rects: Array<{ x: number; y: number; width: number; height: number }> = []
+    // Center = node center, rects = node + all immediate children
+    let center: { x: number; y: number }
+    const rects: Array<{ x: number; y: number; width: number; height: number }> = []
 
-      if (sel.id === 'root') {
-        center = { x: 0, y: 0 }
-        rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
-      } else {
-        const node = allNodes[sel.id]
-        if (!node) return
-        center = { x: node.x, y: node.y }
+    if (nodeId === 'root') {
+      center = { x: 0, y: 0 }
+      rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+    } else {
+      const node = allNodes[nodeId]
+      if (!node) return
+      center = { x: node.x, y: node.y }
+      const size = nodePixelSize(node)
+      rects.push({ x: node.x - size.width / 2, y: node.y - size.height / 2, ...size })
+    }
+
+    // Add immediate children
+    for (const node of Object.values(allNodes)) {
+      if (node.parentId === nodeId) {
         const size = nodePixelSize(node)
         rects.push({ x: node.x - size.width / 2, y: node.y - size.height / 2, ...size })
       }
-
-      // Add immediate children
-      for (const node of Object.values(allNodes)) {
-        if (node.parentId === sel.id) {
-          const size = nodePixelSize(node)
-          rects.push({ x: node.x - size.width / 2, y: node.y - size.height / 2, ...size })
-        }
-      }
-
-      flyTo(cameraToFitBoundsWithCenter(center, rects, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
-    } else {
-      // Edge: center = midpoint of parent and child, rects = parent + child bboxes
-      const childNode = allNodes[sel.id]
-      if (!childNode) return
-
-      let parentCenter: { x: number; y: number }
-      const rects: Array<{ x: number; y: number; width: number; height: number }> = []
-
-      if (childNode.parentId === 'root') {
-        parentCenter = { x: 0, y: 0 }
-        rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
-      } else {
-        const parent = allNodes[childNode.parentId]
-        if (!parent) return
-        parentCenter = { x: parent.x, y: parent.y }
-        const parentSize = nodePixelSize(parent)
-        rects.push({ x: parent.x - parentSize.width / 2, y: parent.y - parentSize.height / 2, ...parentSize })
-      }
-
-      const childSize = nodePixelSize(childNode)
-      rects.push({ x: childNode.x - childSize.width / 2, y: childNode.y - childSize.height / 2, ...childSize })
-
-      const center = { x: (parentCenter.x + childNode.x) / 2, y: (parentCenter.y + childNode.y) / 2 }
-      flyTo(cameraToFitBoundsWithCenter(center, rects, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
     }
+
+    flyTo(cameraToFitBoundsWithCenter(center, rects, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
   }, [flyTo])
 
   // Detect when focused node disappears (e.g. archived by server on terminal exit)
@@ -859,7 +851,7 @@ export function App() {
     const unsub = useNodeStore.subscribe((state, prevState) => {
       // Clear selection when selected node is removed
       const sel = selectionRef.current
-      if (sel && sel.id !== 'root' && !state.nodes[sel.id] && prevState.nodes[sel.id]) {
+      if (sel && sel !== 'root' && !state.nodes[sel] && prevState.nodes[sel]) {
         setSelection(null)
       }
 
@@ -872,10 +864,9 @@ export function App() {
         setFocusedId(null)
         setScrollMode(false)
         lastFocusedRef.current = parentId
-        const parentSel: Selection = { id: parentId, type: 'node' }
-        setSelection(parentSel)
+        setSelection(parentId)
         flashNode(parentId)
-        flyToSelection(parentSel)
+        flyToSelection(parentId)
       }
     })
     return unsub
@@ -958,8 +949,9 @@ export function App() {
     create: (parentId: string, cwd: string | undefined) => Promise<string>,
     parentIdOverride?: string
   ) => {
-    if (!focusRef.current) return
-    const parentId = parentIdOverride ?? focusRef.current
+    const anchor = focusRef.current ?? selectionRef.current
+    if (!anchor) return
+    const parentId = parentIdOverride ?? anchor
     const cwd = getParentCwd(parentId)
     const nodeId = await create(parentId, cwd)
     if (cwd) cwdMapRef.current.set(nodeId, cwd)
@@ -1135,54 +1127,39 @@ export function App() {
         e.preventDefault()
         e.stopPropagation()
         const sel = selectionRef.current
-        if (sel && sel.type === 'node') {
-          handleNodeFocus(sel.id)
+        if (sel) {
+          handleNodeFocus(sel)
         }
         return
       }
 
-      // Cmd+Up Arrow: navigate upward through edge → parent node → fitAll
+      // Cmd+Up Arrow: select parent node (one press), or fitAll from root
       if (e.metaKey && e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
-        const sel = selectionRef.current
-        const target = sel?.id ?? focusRef.current ?? lastFocusedRef.current
+        const target = focusRef.current ?? selectionRef.current ?? lastFocusedRef.current
         if (!target) return
 
+        // Unfocus
         focusRef.current = null
         setFocusedId(null)
         setScrollMode(false)
 
-        if (target === 'root') {
-          // Root node → fit all nodes
-          navStackRef.current.push({ id: 'root', type: 'node' })
+        const node = useNodeStore.getState().nodes[target]
+        if (target === 'root' || !node || node.parentId === 'root') {
+          // At root level → remember for fallback, clear selection, fit all
+          lastFocusedRef.current = target
           setSelection(null)
           fitAllNodes()
-          lastFocusedRef.current = null
           return
         }
 
-        const currentSel = sel ?? { id: target, type: 'node' as const }
-
-        if (currentSel.type === 'node') {
-          // Node selected → push, select edge (same id), fly to edge
-          navStackRef.current.push(currentSel)
-          const edgeSel: Selection = { id: currentSel.id, type: 'edge' }
-          setSelection(edgeSel)
-          lastFocusedRef.current = currentSel.id
-          flyToSelection(edgeSel)
-        } else {
-          // Edge selected (child=id) → push, select parent node, fly to parent
-          navStackRef.current.push(currentSel)
-          const node = useNodeStore.getState().nodes[currentSel.id]
-          if (!node) return
-          const parentSel: Selection = { id: node.parentId, type: 'node' }
-          setSelection(parentSel)
-          lastFocusedRef.current = node.parentId
-          flashNode(node.parentId)
-          flyToSelection(parentSel)
-        }
+        // Select parent
+        setSelection(node.parentId)
+        lastFocusedRef.current = node.parentId
+        flashNode(node.parentId)
+        flyToSelection(node.parentId)
       }
 
       // Cmd+Down Arrow: jump to highest-priority unattended crab
@@ -1203,15 +1180,17 @@ export function App() {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
-        if (!focusRef.current) {
+        const anchor = focusRef.current ?? lastCrabRef.current?.nodeId ?? null
+        if (!anchor) {
           shakeCamera()
           return
         }
         const direction = e.key === 'ArrowRight' ? 'right' : 'left'
-        const next = adjacentCrab(crabsRef.current, focusRef.current, direction)
+        const next = adjacentCrab(crabsRef.current, anchor, direction, lastCrabRef.current?.createdAt)
         if (!next) {
           shakeCamera()
         } else {
+          lastCrabRef.current = { nodeId: next.nodeId, createdAt: next.createdAt }
           navigateToNode(next.nodeId)
         }
       }
@@ -1334,7 +1313,7 @@ export function App() {
       <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} />}>
         <RootNode
           focused={focusedId === 'root'}
-          selected={selection?.id === 'root' && selection?.type === 'node'}
+          selected={selection === 'root'}
           onClick={() => handleNodeFocus('root')}
           archivedChildren={rootArchivedChildren}
           onUnarchive={handleUnarchive}
@@ -1359,7 +1338,7 @@ export function App() {
             shellTitleHistory={t.shellTitleHistory}
             cwd={t.cwd}
             focused={focusedId === t.id}
-            selected={selection?.id === t.id && selection?.type === 'node'}
+            selected={selection === t.id}
             anyNodeFocused={focusedId !== null}
             claudeStatusUnread={t.claudeStatusUnread}
             scrollMode={scrollMode}
@@ -1389,6 +1368,8 @@ export function App() {
             terminalSessions={t.terminalSessions}
             onSessionRevive={handleSessionRevive}
             onFork={handleForkSession}
+            onExtraCliArgs={handleExtraCliArgs}
+            extraCliArgs={t.extraCliArgs}
             onAddNode={handleAddNode}
             cameraRef={cameraRef}
           />
@@ -1415,7 +1396,7 @@ export function App() {
               resolvedPreset={resolvedPresets[m.id]}
               archivedChildren={m.archivedChildren}
               focused={focusedId === m.id}
-              selected={selection?.id === m.id && selection?.type === 'node'}
+              selected={selection === m.id}
               onFocus={handleNodeFocus}
               onUnfocus={() => { handleUnfocus(); flyToUnfocusZoom() }}
               onClose={handleRemoveNode}
@@ -1454,7 +1435,7 @@ export function App() {
             resolvedPreset={resolvedPresets[t.id]}
             archivedChildren={t.archivedChildren}
             focused={focusedId === t.id}
-            selected={selection?.id === t.id && selection?.type === 'node'}
+            selected={selection === t.id}
             onFocus={handleNodeFocus}
             onClose={handleRemoveNode}
             onMove={handleMove}
@@ -1486,7 +1467,7 @@ export function App() {
             resolvedPreset={resolvedPresets[d.id]}
             archivedChildren={d.archivedChildren}
             focused={focusedId === d.id}
-            selected={selection?.id === d.id && selection?.type === 'node'}
+            selected={selection === d.id}
             onFocus={handleNodeFocus}
             onClose={handleRemoveNode}
             onMove={handleMove}
@@ -1518,7 +1499,7 @@ export function App() {
             resolvedPreset={resolvedPresets[f.id]}
             archivedChildren={f.archivedChildren}
             focused={focusedId === f.id}
-            selected={selection?.id === f.id && selection?.type === 'node'}
+            selected={selection === f.id}
             onFocus={handleNodeFocus}
             onClose={handleRemoveNode}
             onMove={handleMove}
@@ -1548,7 +1529,7 @@ export function App() {
             width={img.width}
             height={img.height}
             focused={focusedId === img.id}
-            selected={selection?.id === img.id && selection?.type === 'node'}
+            selected={selection === img.id}
             colorPresetId={img.colorPresetId}
             resolvedPreset={resolvedPresets[img.id]}
             archivedChildren={img.archivedChildren}

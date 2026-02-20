@@ -5,6 +5,7 @@ import { usePerfStore } from '../stores/perfStore'
 import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
 import type { CrabEntry } from '../lib/crab-nav'
+import { useHoveredCardStore } from '../stores/hoveredCardStore'
 
 interface ToolbarProps {
   inputDevice: InputDevice
@@ -114,6 +115,7 @@ function KioskToggle() {
 }
 
 function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void; selectedNodeId: string | null }) {
+  const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
   const positionsRef = useRef<Map<string, number>>(new Map())
@@ -327,14 +329,14 @@ function CrabGroup({ crabs, onCrabClick, selectedNodeId }: { crabs: CrabEntry[];
   return (
     <div className="toolbar__crabs" ref={containerRef}>
       {crabs.map(crab => (
-        <div key={crab.nodeId} className="toolbar__crab-slot" data-node-id={crab.nodeId}>
-          <button
-            className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}`}
-            style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
-            onClick={() => onCrabClick(crab.nodeId)}
-            title={crab.title}
-          />
-        </div>
+          <div key={crab.nodeId} className="toolbar__crab-slot" data-node-id={crab.nodeId}>
+            <button
+              className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}`}
+              style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
+              onClick={() => onCrabClick(crab.nodeId)}
+              title={crab.title}
+            />
+          </div>
       ))}
     </div>
   )

@@ -66,6 +66,7 @@ export interface ResizeMessage {
 export interface HookMessage {
   type: 'hook'
   surfaceId: string
+  ts?: number          // epoch ms — when hook event fired (added by hook-handler.sh)
   payload: Record<string, unknown>
 }
 
@@ -330,6 +331,13 @@ export interface ForkSessionMessage {
   nodeId: string
 }
 
+export interface TerminalRestartMessage {
+  type: 'terminal-restart'
+  seq: number
+  nodeId: string
+  extraCliArgs: string
+}
+
 export type ClientMessage =
   | CreateMessage
   | ListMessage
@@ -373,6 +381,7 @@ export type ClientMessage =
   | TitleTextMessage
   | ImageAddMessage
   | ForkSessionMessage
+  | TerminalRestartMessage
 
 // --- Server → Client messages ---
 

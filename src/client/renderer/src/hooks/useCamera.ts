@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage } from '../lib/camera'
+import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, loadCameraFromStorage, saveCameraToStorage, clampZoomArc } from '../lib/camera'
 import { MIN_ZOOM, MAX_ZOOM, UNFOCUSED_MAX_ZOOM, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 
@@ -476,7 +476,8 @@ export function useCamera(
     if (!midBounds) return
 
     const midZoom = cameraToFitBounds(midBounds, vw, vh, 0.15, UNFOCUS_SNAP_ZOOM).z
-    const zoomArc = midZoom - (startCamera.z + targetCamera.z) / 2
+    const rawZoomArc = midZoom - (startCamera.z + targetCamera.z) / 2
+    const zoomArc = clampZoomArc(startCamera.z, targetCamera.z, rawZoomArc, MIN_ZOOM)
 
     const quarticEase = (t: number) =>
       t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2

@@ -30,6 +30,8 @@ export class StateManager {
   private onNodeRemove: NodeRemoveCallback
   /** Maps active PTY session ID → node ID (they diverge after reincarnation) */
   private sessionToNodeId = new Map<string, string>()
+  /** Tracks node IDs mid-restart — prevents terminalExited from archiving the node */
+  private restartingNodes = new Set<string>()
 
   constructor(
     onNodeUpdate: NodeUpdateCallback,
@@ -63,8 +65,8 @@ export class StateManager {
    * On startup, mark all terminals dead and return info for the caller to decide
    * whether to revive (spawn new PTY) or archive each one.
    */
-  processDeadTerminals(): Array<{ nodeId: string; claudeSessionId?: string; cwd?: string }> {
-    const deadList: Array<{ nodeId: string; claudeSessionId?: string; cwd?: string }> = []
+  processDeadTerminals(): Array<{ nodeId: string; claudeSessionId?: string; cwd?: string; extraCliArgs?: string }> {
+    const deadList: Array<{ nodeId: string; claudeSessionId?: string; cwd?: string; extraCliArgs?: string }> = []
 
     for (const node of Object.values(this.state.nodes)) {
       // Backward compat: remove old waitingForUser key if present in persisted state
@@ -91,7 +93,12 @@ export class StateManager {
         const history = node.claudeSessionHistory ?? []
         const latestClaude = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
 
-        deadList.push({ nodeId: node.id, claudeSessionId: latestClaude, cwd: node.cwd })
+        deadList.push({ nodeId: node.id, claudeSessionId: latestClaude, cwd: node.cwd, extraCliArgs: node.extraCliArgs })
+      }
+
+      // Reset stuck state on dead terminals from persistence
+      if (node.type === 'terminal' && !node.alive && node.claudeState === 'stuck') {
+        node.claudeState = 'stopped'
       }
     }
 
@@ -104,6 +111,20 @@ export class StateManager {
    */
   archiveTerminal(nodeId: string): void {
     this.archiveNode(nodeId)
+  }
+
+  /** Mark a node as mid-restart so terminalExited skips archival. */
+  markRestarting(nodeId: string): void {
+    this.restartingNodes.add(nodeId)
+  }
+
+  /** Update extra CLI args on a terminal node, broadcast, and persist. */
+  updateExtraCliArgs(nodeId: string, extraCliArgs: string): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'terminal') return
+    node.extraCliArgs = extraCliArgs || undefined
+    this.onNodeUpdate(nodeId, { extraCliArgs: node.extraCliArgs } as Partial<TerminalNodeData>)
+    this.schedulePersist()
   }
 
   getState(): ServerState {
@@ -189,6 +210,13 @@ export class StateManager {
   terminalExited(ptySessionId: string, exitCode: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
+
+    // If the node is mid-restart, skip archival — the new PTY is already running
+    if (this.restartingNodes.has(node.id)) {
+      this.sessionToNodeId.delete(ptySessionId)
+      this.restartingNodes.delete(node.id)
+      return
+    }
 
     node.alive = false
     node.exitCode = exitCode
@@ -519,7 +547,15 @@ export class StateManager {
     if (!node) return
     node.claudeState = state
     this.onNodeUpdate(node.id, { claudeState: state } as Partial<TerminalNodeData>)
-    // Don't persist for transient state changes
+    this.schedulePersist()
+  }
+
+  updateClaudeStateDecisionTime(ptySessionId: string, timestamp: number): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node) return
+    node.claudeStateDecidedAt = timestamp
+    this.onNodeUpdate(node.id, { claudeStateDecidedAt: timestamp } as Partial<TerminalNodeData>)
+    this.schedulePersist()
   }
 
   updateClaudeStatusUnread(ptySessionId: string, unread: boolean): void {

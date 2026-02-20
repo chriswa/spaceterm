@@ -143,6 +143,7 @@ interface NodeApi {
   terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
+  terminalRestart(nodeId: string, extraCliArgs: string): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   onSnapshot(sessionId: string, callback: (snapshot: any) => void): () => void
   directoryAdd(parentId: string, cwd: string): Promise<{ nodeId: string }>
@@ -180,6 +181,7 @@ const nodeApi: NodeApi = {
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
   forkSession: (nodeId) => ipcRenderer.invoke('node:fork-session', nodeId),
+  terminalRestart: (nodeId: string, extraCliArgs: string) => ipcRenderer.invoke('node:terminal-restart', nodeId, extraCliArgs),
   directoryAdd: (parentId, cwd) => ipcRenderer.invoke('node:directory-add', parentId, cwd),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
   directoryGitFetch: (nodeId) => ipcRenderer.invoke('node:directory-git-fetch', nodeId),

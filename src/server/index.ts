@@ -18,6 +18,7 @@ import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { forkSession } from './session-fork'
+import { parse as shellParse } from 'shell-quote'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -72,12 +73,18 @@ function gatherAncestorPrompt(nodes: Record<string, import('../shared/state').No
   return parts.length > 0 ? parts.join('\n') : undefined
 }
 
+/** Parse an extraCliArgs string into an array of string arguments, ignoring shell operators/globs. */
+function parseExtraCliArgs(s?: string): string[] {
+  if (!s || !s.trim()) return []
+  return shellParse(s).filter((entry): entry is string => typeof entry === 'string')
+}
+
 /** Escape a string for embedding inside a shell single-quoted string. */
 function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'"
 }
 
-function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, prompt?: string, appendSystemPrompt?: boolean): CreateOptions {
+function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, prompt?: string, appendSystemPrompt?: boolean, extraArgs?: string[]): CreateOptions {
   const pluginDir = path.join(PROJECT_ROOT, 'src/claude-code-plugin')
   const statusLineSettings = JSON.stringify({
     statusLine: {
@@ -86,6 +93,9 @@ function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, pr
     }
   })
   const args = ['--plugin-dir', pluginDir, '--settings', statusLineSettings, '--allow-dangerously-skip-permissions']
+  if (extraArgs && extraArgs.length > 0) {
+    args.push(...extraArgs)
+  }
   if (resumeSessionId) {
     args.push('-r', resumeSessionId)
   }
@@ -164,6 +174,14 @@ function localISOTimestamp(): string {
 const TRANSITION_DELAY_MS = 500
 const TRANSITION_DRAIN_INTERVAL_MS = 50
 
+/** How long a surface can stay in 'working' with no events before it's considered stuck */
+const STALE_WORKING_TIMEOUT_MS = 2 * 60 * 1000
+/** How often to check for stale working surfaces */
+const STALE_SWEEP_INTERVAL_MS = 15_000
+/** Last event timestamp per surface — updated by applyTransition and queueTransition */
+const lastActivityBySurface = new Map<string, number>()
+let staleSweepTimer: ReturnType<typeof setInterval> | null = null
+
 interface QueuedTransition {
   sourceTime: number  // epoch ms — when the event actually happened
   surfaceId: string
@@ -222,11 +240,13 @@ function applyTransition(
   event: string,
   detail?: string
 ): void {
+  lastActivityBySurface.set(surfaceId, Date.now())
   const prevState = sessionManager.getClaudeState(surfaceId) ?? 'stopped'
 
   // Don't downgrade waiting_plan to waiting_permission — the PermissionRequest
   // hook already set the more specific state and Notification shouldn't override it.
   if (prevState === 'waiting_plan' && newState === 'waiting_permission') {
+    stateManager.updateClaudeStateDecisionTime(surfaceId, Date.now())
     decisionLogger.log(surfaceId, {
       timestamp: localISOTimestamp(),
       source,
@@ -250,6 +270,8 @@ function applyTransition(
     }
   }
 
+  stateManager.updateClaudeStateDecisionTime(surfaceId, Date.now())
+
   decisionLogger.log(surfaceId, {
     timestamp: localISOTimestamp(),
     source,
@@ -259,6 +281,25 @@ function applyTransition(
     detail,
     unread
   })
+}
+
+function sweepStaleSurfaces(): void {
+  const now = Date.now()
+  for (const [surfaceId, lastActivity] of lastActivityBySurface) {
+    if (now - lastActivity > STALE_WORKING_TIMEOUT_MS && sessionManager.getClaudeState(surfaceId) === 'working') {
+      sessionManager.setClaudeState(surfaceId, 'stuck')
+      stateManager.updateClaudeStateDecisionTime(surfaceId, now)
+      sessionManager.setClaudeStatusUnread(surfaceId, true)
+      decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(),
+        source: 'stale',
+        event: 'stale:timeout',
+        prevState: 'working',
+        newState: 'stuck',
+        unread: true
+      })
+    }
+  }
 }
 
 function send(socket: net.Socket, msg: ServerMessage): void {
@@ -365,16 +406,20 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const prevState = sessionManager.getClaudeState(msg.sessionId) ?? 'stopped'
 
       // Fast path: nothing to change
-      if (!wasUnread && (!isPromptSubmit || prevState === 'stopped')) break
+      if (!wasUnread && (!isPromptSubmit || prevState === 'stopped' || prevState === 'stuck')) break
 
       if (wasUnread) {
         sessionManager.setClaudeStatusUnread(msg.sessionId, false)
       }
 
       let newState = prevState
-      if (isPromptSubmit && prevState !== 'stopped') {
-        newState = 'stopped'
-        sessionManager.setClaudeState(msg.sessionId, 'stopped')
+      if (isPromptSubmit && prevState !== 'stopped' && prevState !== 'stuck') {
+        // Enter from waiting_plan/waiting_permission: user is responding, Claude will process it.
+        // Enter from working: stray keypress, Claude ignores it (Escape is the interrupt key).
+        // In all cases, Claude is or will be working. The Stop hook handles actual stops.
+        newState = 'working'
+        sessionManager.setClaudeState(msg.sessionId, 'working')
+        stateManager.updateClaudeStateDecisionTime(msg.sessionId, Date.now())
       }
 
       decisionLogger.log(msg.sessionId, {
@@ -413,12 +458,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       })
 
       // Track Stop hooks so we can distinguish real forks from claude -r startups
-      const hookTime = Date.now()
+      const hookTime = typeof msg.ts === 'number' ? msg.ts : Date.now()
       if (hookType === 'Stop') {
         sessionManager.handleClaudeStop(msg.surfaceId)
         queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:Stop', hookTime)
         pendingPermissionIds.delete(msg.surfaceId)
         lastPreToolUseId.delete(msg.surfaceId)
+        lastActivityBySurface.delete(msg.surfaceId)
       }
 
       // PermissionRequest: check tool_name to distinguish plan approval from other permissions
@@ -484,6 +530,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         queueTransition(msg.surfaceId, 'stopped', 'hook', 'hook:SessionEnd', hookTime)
         pendingPermissionIds.delete(msg.surfaceId)
         lastPreToolUseId.delete(msg.surfaceId)
+        lastActivityBySurface.delete(msg.surfaceId)
       }
 
       // Process SessionStart hooks for claude session history tracking
@@ -668,7 +715,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const latestClaudeId = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
         if (latestClaudeId) {
           try {
-            const restoreOptions = buildClaudeCodeCreateOptions(restoredNode.cwd, latestClaudeId)
+            const restoreOptions = buildClaudeCodeCreateOptions(restoredNode.cwd, latestClaudeId, undefined, undefined, parseExtraCliArgs(restoredNode.extraCliArgs))
             const { sessionId: newPtyId, cols, rows } = sessionManager.create(restoreOptions)
             snapshotManager.addSession(newPtyId, cols, rows)
             if (restoredNode.shellTitleHistory?.length) {
@@ -1073,7 +1120,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
 
         const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId, forkNode.name)
-        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId)
+        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId, undefined, undefined, parseExtraCliArgs(forkNode.extraCliArgs))
         const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
@@ -1088,6 +1135,56 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       } catch (err: any) {
         console.error(`fork-session failed: ${err.message}`)
         send(client.socket, { type: 'server-error', message: `fork-session failed: ${err.message}` })
+      }
+      break
+    }
+
+    case 'terminal-restart': {
+      try {
+        const restartNode = stateManager.getNode(msg.nodeId)
+        if (!restartNode || restartNode.type !== 'terminal' || !restartNode.alive) {
+          send(client.socket, { type: 'server-error', message: `terminal-restart: node ${msg.nodeId} is not an alive terminal` })
+          break
+        }
+        const restartCwd = restartNode.cwd ?? sessionManager.getCwd(restartNode.sessionId)
+
+        // Update extraCliArgs on the node
+        stateManager.updateExtraCliArgs(msg.nodeId, msg.extraCliArgs)
+
+        // Mark as restarting so terminalExited skips archival
+        stateManager.markRestarting(msg.nodeId)
+
+        // Destroy old PTY and clean up
+        const oldSessionId = restartNode.sessionId
+        snapshotManager.removeSession(oldSessionId)
+        sessionFileWatcher.unwatch(oldSessionId)
+        sessionManager.destroy(oldSessionId)
+        clients.forEach((c) => {
+          c.attachedSessions.delete(oldSessionId)
+          c.snapshotSessions.delete(oldSessionId)
+        })
+
+        // Get latest Claude session ID for resume
+        const restartHistory = restartNode.claudeSessionHistory ?? []
+        const restartClaudeId = restartHistory.length > 0 ? restartHistory[restartHistory.length - 1].claudeSessionId : undefined
+
+        // Build new PTY with (potentially new) extra args
+        const extraArgs = parseExtraCliArgs(msg.extraCliArgs)
+        const restartOptions = buildClaudeCodeCreateOptions(restartCwd, restartClaudeId, undefined, undefined, extraArgs)
+        const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = sessionManager.create(restartOptions)
+        snapshotManager.addSession(newPtyId, restartCols, restartRows)
+        if (restartNode.shellTitleHistory?.length) {
+          sessionManager.seedTitleHistory(newPtyId, restartNode.shellTitleHistory)
+        }
+        stateManager.reincarnateTerminal(msg.nodeId, newPtyId, restartCols, restartRows)
+
+        // Auto-attach client
+        client.attachedSessions.add(newPtyId)
+        send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: restartCols, rows: restartRows })
+        console.log(`[terminal-restart] Restarted terminal ${msg.nodeId.slice(0, 8)} with new session ${newPtyId.slice(0, 8)} extraCliArgs=${msg.extraCliArgs || '(none)'}`)
+      } catch (err: any) {
+        console.error(`terminal-restart failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `terminal-restart failed: ${err.message}` })
       }
       break
     }
@@ -1153,6 +1250,7 @@ function startServer(): void {
     (sessionId, exitCode) => {
       sessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
+      lastActivityBySurface.delete(sessionId)
       stateManager.terminalExited(sessionId, exitCode)
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
       // Remove from all clients' attached/snapshot sets
@@ -1203,6 +1301,9 @@ function startServer(): void {
 
   // Start the transition queue drain — processes queued state transitions every 50ms
   transitionDrainTimer = setInterval(drainTransitionQueue, TRANSITION_DRAIN_INTERVAL_MS)
+
+  // Start the stale surface sweep — detects stuck sessions every 15s
+  staleSweepTimer = setInterval(sweepStaleSurfaces, STALE_SWEEP_INTERVAL_MS)
 
   // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + state routing
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
@@ -1314,10 +1415,10 @@ function startServer(): void {
 
   // --- Startup revival: revive terminals with Claude sessions, archive the rest ---
   const deadTerminals = stateManager.processDeadTerminals()
-  for (const { nodeId, claudeSessionId, cwd } of deadTerminals) {
+  for (const { nodeId, claudeSessionId, cwd, extraCliArgs } of deadTerminals) {
     if (claudeSessionId) {
       try {
-        const reviveOptions = buildClaudeCodeCreateOptions(cwd, claudeSessionId)
+        const reviveOptions = buildClaudeCodeCreateOptions(cwd, claudeSessionId, undefined, undefined, parseExtraCliArgs(extraCliArgs))
         const { sessionId, cols, rows } = sessionManager.create(reviveOptions)
         snapshotManager.addSession(sessionId, cols, rows)
         const revivingNode = stateManager.getNode(nodeId)
@@ -1402,6 +1503,7 @@ function startServer(): void {
   // Graceful shutdown
   const shutdown = () => {
     console.log('\nShutting down...')
+    if (staleSweepTimer) clearInterval(staleSweepTimer)
     if (transitionDrainTimer) clearInterval(transitionDrainTimer)
     // Flush any remaining queued transitions before persisting state
     drainTransitionQueue(true)

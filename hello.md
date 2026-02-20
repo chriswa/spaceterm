@@ -5,3 +5,4 @@
 - Dragonfruit
 - Lychee
 - Guava
+- Persimmon

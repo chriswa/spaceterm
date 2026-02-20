@@ -23,15 +23,12 @@ export interface ReparentEdge {
   toY: number
 }
 
-export type SelectionType = 'node' | 'edge'
-export interface Selection { id: string; type: SelectionType }
-
 interface CanvasBackgroundProps {
   camera: Camera
   cameraRef: React.RefObject<Camera>
   edgesRef: React.RefObject<TreeLineNode[]>
   maskRectsRef: React.RefObject<MaskRect[]>
-  selectionRef: React.RefObject<Selection | null>
+  selectionRef: React.RefObject<string | null>
   reparentEdgeRef: React.RefObject<ReparentEdge | null>
 }
 
@@ -535,10 +532,10 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
               gl.disableVertexAttribArray(edgeUVLoc)
             }
 
-            // Selection → highlight parent edge (grey for node, white for edge)
+            // Selection → highlight parent edge with grey chevrons
             const sel = selectionRef.current
             if (sel) {
-              const childNode = edges.find(e => e.id === sel.id)
+              const childNode = edges.find(e => e.id === sel)
               if (childNode) {
                 let parentPos: { x: number; y: number } | null = null
                 if (childNode.parentId === 'root') {
@@ -549,7 +546,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
                 if (parentPos) {
                   const offset = emitQuad(0, parentPos.x, parentPos.y, childNode.x, childNode.y)
                   const vertCount = offset / FLOATS_PER_VERTEX
-                  drawHighlightBatch(sel.type === 'edge' ? whiteChevronTex : greyChevronTex, vertCount)
+                  drawHighlightBatch(greyChevronTex, vertCount)
                 }
               }
             }

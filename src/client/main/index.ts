@@ -303,6 +303,15 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
+  ipcMain.handle('node:terminal-restart', async (_event, nodeId: string, extraCliArgs: string) => {
+    const resp = await client!.terminalRestart(nodeId, extraCliArgs)
+    if (resp.type === 'created') {
+      await client!.attach(resp.sessionId)
+      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
+    }
+    throw new Error('Unexpected response')
+  })
+
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
     client!.setTerminalMode(sessionId, mode)
   })
