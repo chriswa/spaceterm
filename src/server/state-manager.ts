@@ -8,7 +8,6 @@ import type {
   DirectoryNodeData,
   FileNodeData,
   TitleNodeData,
-  ImageNodeData,
   TerminalSessionEntry,
   GitStatus
 } from '../shared/state'
@@ -172,12 +171,26 @@ export class StateManager {
     this.revivingNodes.delete(nodeId)
   }
 
+  /** Check if a node was spawned by startup revival and is still in the protection window. */
+  isReviving(nodeId: string): boolean {
+    return this.revivingNodes.has(nodeId)
+  }
+
   /** Update extra CLI args on a terminal node, broadcast, and persist. */
   updateExtraCliArgs(nodeId: string, extraCliArgs: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
     node.extraCliArgs = extraCliArgs
     this.onNodeUpdate(nodeId, { extraCliArgs: node.extraCliArgs } as Partial<TerminalNodeData>)
+    this.schedulePersist()
+  }
+
+  /** Update claude-swap profile on a terminal node, broadcast, and persist. */
+  updateClaudeSwapProfile(nodeId: string, profile: string | null): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'terminal') return
+    node.claudeSwapProfile = profile ?? undefined
+    this.onNodeUpdate(nodeId, { claudeSwapProfile: node.claudeSwapProfile } as Partial<TerminalNodeData>)
     this.schedulePersist()
   }
 
@@ -632,6 +645,14 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  updateClaudeModel(ptySessionId: string, model: string): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node || node.claudeModel === model) return
+    node.claudeModel = model
+    this.onNodeUpdate(node.id, { claudeModel: model } as Partial<TerminalNodeData>)
+    this.schedulePersist()
+  }
+
   updateClaudeStateDecisionTime(ptySessionId: string, timestamp: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
@@ -816,32 +837,6 @@ export class StateManager {
     node.text = text
     this.onNodeUpdate(nodeId, { text } as Partial<TitleNodeData>)
     this.schedulePersist()
-  }
-
-  // --- Image operations ---
-
-  createImage(parentId: string, x: number, y: number, filePath: string, width?: number, height?: number): ImageNodeData {
-    const id = randomUUID()
-    const zIndex = this.state.nextZIndex++
-
-    const node: ImageNodeData = {
-      id,
-      type: 'image',
-      parentId,
-      x,
-      y,
-      zIndex,
-      filePath,
-      archivedChildren: [],
-      colorPresetId: 'inherit',
-      ...(width != null ? { width } : {}),
-      ...(height != null ? { height } : {})
-    }
-
-    this.state.nodes[id] = node
-    this.onNodeAdd(node)
-    this.schedulePersist()
-    return node
   }
 
   // --- Persistence ---

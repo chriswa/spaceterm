@@ -15,9 +15,6 @@ export function nodeDisplaySubtitle(data: NodeData): string {
     if (firstLine) return firstLine.replace(/^#+\s*/, '').trim()
     return ''
   }
-  if (data.type === 'image') {
-    return ''
-  }
   return ''
 }
 

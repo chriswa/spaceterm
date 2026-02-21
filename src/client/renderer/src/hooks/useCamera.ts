@@ -522,6 +522,47 @@ export function useCamera(
     setInputDevice(next)
   }, [])
 
+  const captureDebugState = useCallback(() => {
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    const canvas = document.querySelector('.canvas-viewport canvas') as HTMLCanvasElement | null
+    const surface = surfaceRef.current
+
+    return {
+      timestamp: new Date().toISOString(),
+      camera: {
+        ref: { ...cameraRef.current },
+        reactState: { ...camera },
+        target: { ...targetRef.current },
+        animating: animatingRef.current,
+        isSnapBack: isSnapBackRef.current,
+        lastZoomPoint: { ...lastZoomPointRef.current },
+      },
+      viewport: viewport ? {
+        clientWidth: viewport.clientWidth,
+        clientHeight: viewport.clientHeight,
+        boundingRect: viewport.getBoundingClientRect().toJSON(),
+      } : null,
+      canvas: canvas ? {
+        cssWidth: canvas.clientWidth,
+        cssHeight: canvas.clientHeight,
+        backingWidth: canvas.width,
+        backingHeight: canvas.height,
+        boundingRect: canvas.getBoundingClientRect().toJSON(),
+      } : null,
+      surface: surface ? {
+        transform: surface.style.transform,
+        cameraZoom: surface.style.getPropertyValue('--camera-zoom'),
+        boundingRect: surface.getBoundingClientRect().toJSON(),
+      } : null,
+      window: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        visible: isWindowVisible(),
+      },
+    }
+  }, [camera])
+
   const shakeCamera = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
     clearTimeout(snapBackTimerRef.current)
@@ -560,5 +601,5 @@ export function useCamera(
     rafRef.current = requestAnimationFrame(shakeTick)
   }, [applyToDOM])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef, captureDebugState }
 }

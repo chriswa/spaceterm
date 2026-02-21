@@ -11,6 +11,7 @@ import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
+import { angleBorderColor } from '../lib/angle-color'
 
 const DRAG_THRESHOLD = 5
 const CARD_TOP_PADDING = 28
@@ -35,7 +36,7 @@ interface MarkdownCardProps {
   selected: boolean
   onFocus: (id: string) => void
   onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number) => void
+  onMove: (id: string, x: number, y: number, metaKey?: boolean) => void
   onResize: (id: string, width: number, height: number) => void
   onContentChange: (id: string, content: string) => void
   onMaxWidthChange: (id: string, maxWidth: number) => void
@@ -45,7 +46,7 @@ interface MarkdownCardProps {
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string, solo?: boolean) => void
+  onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: string) => void
   onUnfocus: () => void
   onStartReparent?: (id: string) => void
@@ -611,6 +612,7 @@ export function MarkdownCard({
     const startX = propsRef.current.x
     const startY = propsRef.current.y
     const currentZoom = cameraRef.current.z
+    const ctrlAtStart = e.ctrlKey
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {
@@ -619,11 +621,11 @@ export function MarkdownCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
-        onDragStart?.(id, ev.metaKey)
+        onDragStart?.(id, ev.metaKey, ctrlAtStart, ev.shiftKey)
       }
 
       if (dragging && !bodyClickWhileFocused) {
-        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey)
       }
     }
 
@@ -678,6 +680,7 @@ export function MarkdownCard({
         '--markdown-accent': preset?.markdownAccent ?? '#4d9eff',
         '--markdown-highlight': preset?.markdownHighlight ?? '#ffc94d',
         '--markdown-blockquote-fg': blendHex(preset?.markdownFg ?? '#cdd6f4', preset?.terminalBg ?? '#1e1e2e', 0.7),
+        ...(focused ? { borderColor: angleBorderColor(x, y), boxShadow: `0 0 4px ${angleBorderColor(x, y)}` } : undefined),
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}

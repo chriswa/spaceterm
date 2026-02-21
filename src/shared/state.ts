@@ -2,7 +2,7 @@ import type { ClaudeSessionEntry } from './protocol'
 
 // --- Claude state enum ---
 
-export type ClaudeState = 'stopped' | 'working' | 'waiting_permission' | 'waiting_plan' | 'stuck'
+export type ClaudeState = 'stopped' | 'working' | 'waiting_permission' | 'waiting_question' | 'waiting_plan' | 'stuck'
 
 // --- Terminal session tracking ---
 
@@ -38,9 +38,11 @@ export interface TerminalNodeData extends BaseNodeData {
   exitCode?: number // set when alive → false
   cwd?: string
   extraCliArgs?: string
+  claudeSwapProfile?: string
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean
+  claudeModel?: string
   sortOrder: number
   terminalSessions: TerminalSessionEntry[]
   /** Legacy field — kept for backward compat with existing client code during migration */
@@ -85,14 +87,7 @@ export interface TitleNodeData extends BaseNodeData {
   text: string
 }
 
-export interface ImageNodeData extends BaseNodeData {
-  type: 'image'
-  filePath: string   // absolute path on the client filesystem
-  width?: number     // display width in pixels (optional)
-  height?: number    // display height in pixels (optional)
-}
-
-export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData | TitleNodeData | ImageNodeData
+export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData | TitleNodeData
 
 // --- Archived nodes ---
 

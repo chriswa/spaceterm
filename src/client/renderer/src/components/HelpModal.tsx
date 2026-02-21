@@ -66,7 +66,7 @@ export function HelpModal({ visible, onDismiss }: HelpModalProps) {
               {group.entries.map((entry, i) => (
                 <div key={i} className="help-modal__row">
                   <kbd className="help-modal__keys">{entry.keys}</kbd>
-                  <span className="help-modal__desc">{entry.description}</span>
+                  <span className="help-modal__desc">{entry.name}{entry.notes && <span className="help-modal__notes"> — {entry.notes}</span>}</span>
                 </div>
               ))}
             </div>

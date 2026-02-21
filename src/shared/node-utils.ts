@@ -23,8 +23,6 @@ export function isDisposable(node: NodeData): boolean {
       return false
     case 'title':
       return node.text.trim() === ''
-    case 'image':
-      return false
     default:
       return false
   }

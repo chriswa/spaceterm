@@ -21,6 +21,7 @@ import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScr
 import crabIcon from '../assets/crab.png'
 import { deriveCrabAppearance, CRAB_COLORS } from '../lib/crab-nav'
 import { useCrabDance } from '../lib/crab-dance'
+import { angleBorderColor } from '../lib/angle-color'
 
 function cleanTerminalCopy(raw: string): string {
   // Strip box-drawing border characters (│, ─, ╭, etc.) from line edges, then trailing whitespace
@@ -90,7 +91,7 @@ interface TerminalCardProps {
   onUnfocus: () => void
   onDisableScrollMode: () => void
   onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number) => void
+  onMove: (id: string, x: number, y: number, metaKey?: boolean) => void
   onResize: (id: string, cols: number, rows: number) => void
   onRename: (id: string, name: string) => void
   archivedChildren: ArchivedNode[]
@@ -104,10 +105,11 @@ interface TerminalCardProps {
   claudeSessionHistory?: ClaudeSessionEntry[]
   onClaudeSessionHistoryChange?: (id: string, history: ClaudeSessionEntry[]) => void
   claudeState?: string
+  claudeModel?: string
   onClaudeStateChange?: (id: string, state: string) => void
   onExit?: (id: string, exitCode: number) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string, solo?: boolean) => void
+  onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
@@ -116,6 +118,7 @@ interface TerminalCardProps {
   onFork?: (id: string) => void
   onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
   extraCliArgs?: string
+  claudeSwapProfile?: string
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.RefObject<Camera>
 }
@@ -123,9 +126,9 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
-  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, onClaudeStateChange, onExit, onNodeReady,
+  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, claudeModel, onClaudeStateChange, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, onAddNode, cameraRef
+  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, claudeSwapProfile, onAddNode, cameraRef
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -782,6 +785,7 @@ export function TerminalCard({
     const startX = propsRef.current.x
     const startY = propsRef.current.y
     const currentZoom = cameraRef.current.z
+    const ctrlAtStart = e.ctrlKey
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {
@@ -790,14 +794,14 @@ export function TerminalCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
-        onDragStart?.(id, ev.metaKey)
+        onDragStart?.(id, ev.metaKey, ctrlAtStart, ev.shiftKey)
         if (isInteractiveTitle && document.activeElement instanceof HTMLElement) {
           document.activeElement.blur()
         }
       }
 
       if (dragging && !bodyClickWhileFocused) {
-        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey)
       }
     }
 
@@ -827,6 +831,7 @@ export function TerminalCard({
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
     : selected ? 'terminal-card--selected' : ''
+  const focusGlowColor = focused ? angleBorderColor(x, y, scrollMode ? 1.3 : 1) : undefined
   const crabAppearance = deriveCrabAppearance(claudeState, claudeStatusUnread ?? false, (claudeSessionHistory?.length ?? 0) > 0)
   useCrabDance(behindCrabRef, crabAppearance?.unviewed ?? false, 2.5)
 
@@ -835,6 +840,7 @@ export function TerminalCard({
       case 'working': return 'Claude is working'
       case 'stuck': return 'Claude appears stuck'
       case 'waiting_permission': return 'Claude is awaiting permission'
+      case 'waiting_question': return 'Claude is asking a question'
       case 'waiting_plan': return 'Claude is awaiting plan approval'
       default: return 'Claude is stopped'
     }
@@ -899,6 +905,7 @@ export function TerminalCard({
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       className={`terminal-card ${focusClass}`}
+      style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 4px ${focusGlowColor}` } : undefined}
       cardRef={cardRef}
       onMouseEnter={() => {
         if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id)
@@ -949,6 +956,7 @@ export function TerminalCard({
         const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
         const footerContent = (
           <>
+            {claudeSwapProfile && <><span>profile: {claudeSwapProfile}</span><span>&nbsp;|&nbsp;</span></>}
             {abbrevCwd && <><span>{abbrevCwd}</span><span>&nbsp;|&nbsp;</span></>}
             <span>Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => {
               e.stopPropagation()
@@ -968,6 +976,7 @@ export function TerminalCard({
             {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
             <span>&nbsp;|&nbsp;</span>
             <span>{claudeStateLabel(claudeState)}</span>
+            {claudeModel && <><span>&nbsp;|&nbsp;</span><span>{claudeModel}</span></>}
             {claudeContextPercent != null && (
               <span className="terminal-card__footer-context">Remaining context: {claudeContextPercent.toFixed(2)}%</span>
             )}

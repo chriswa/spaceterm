@@ -256,6 +256,10 @@ contextBridge.exposeInMainWorld('api', {
     startTrace: () => ipcRenderer.invoke('perf:trace-start'),
     stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
   },
+  claudeSwap: {
+    list: (): Promise<{ profiles: string[]; active: string } | null> => ipcRenderer.invoke('claude-swap:list'),
+    load: (profile: string): Promise<{ profiles: string[]; active: string } | null> => ipcRenderer.invoke('claude-swap:load', profile),
+  },
   audio: {
     onBeat: (callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean }) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean }) => callback(data)

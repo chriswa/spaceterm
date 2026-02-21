@@ -8,7 +8,7 @@ import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { canFitAt, computePlacement } from './node-placement'
-import { nodePixelSize, terminalPixelSize, directoryFolderWidth, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT } from '../shared/node-size'
+import { nodePixelSize, terminalPixelSize, directoryFolderWidth, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
@@ -18,7 +18,7 @@ import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
-import { forkSession, computeForkName } from './session-fork'
+import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
 
 /**
@@ -30,17 +30,6 @@ const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 33_000
 
 /** Spaceterm project root (two levels up from src/server/). */
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
-
-const GENERATED_IMAGES_DIR = path.join(SOCKET_DIR, 'generated-images') + path.sep
-
-/** Delete the backing file for an image node if it lives inside generated-images/. */
-function deleteGeneratedImageFile(node: import('../shared/state').NodeData | undefined): void {
-  if (!node || node.type !== 'image') return
-  const resolved = path.resolve(node.filePath)
-  if (resolved.startsWith(GENERATED_IMAGES_DIR)) {
-    fs.unlink(resolved, () => {})
-  }
-}
 
 /**
  * Build CreateOptions for spawning a Claude Code PTY with full plugin/settings args.
@@ -78,6 +67,20 @@ function gatherAncestorPrompt(nodes: Record<string, import('../shared/state').No
 function parseExtraCliArgs(s?: string): string[] {
   if (!s || !s.trim()) return []
   return shellParse(s).filter((entry): entry is string => typeof entry === 'string')
+}
+
+/** Detect the currently active claude-swap profile. Returns null if claude-swap is not installed. */
+function detectClaudeSwapProfile(): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile('claude-swap', ['list'], { timeout: 5000 }, (err, stdout) => {
+      if (err) { resolve(null); return }
+      for (const line of stdout.split('\n')) {
+        const m = line.match(/^\*\s+(.+)/)
+        if (m) { resolve(m[1].trim()); return }
+      }
+      resolve(null)
+    })
+  })
 }
 
 /** Escape a string for embedding inside a shell single-quoted string. */
@@ -317,21 +320,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'generate-image': {
-      const giParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
-      if (!giParentNodeId) {
-        console.error(`[generate-image] Unknown surfaceId: ${msg.surfaceId}`)
-        break
-      }
-      const giPos = computePlacement(
-        stateManager.getState().nodes,
-        giParentNodeId,
-        { width: msg.width, height: msg.height }
-      )
-      stateManager.createImage(giParentNodeId, giPos.x, giPos.y, msg.filePath, msg.width, msg.height)
-      break
-    }
-
     case 'spawn-claude-surface': {
       const spawnParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
       if (!spawnParentNodeId) {
@@ -385,6 +373,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.setClaudeContextPercent(msg.surfaceId, remainingPercent)
         }
       }
+
+      // Extract model display name
+      const model = msg.payload?.model as { display_name?: string } | undefined
+      if (model?.display_name) {
+        stateManager.updateClaudeModel(msg.surfaceId, model.display_name)
+      }
       break
     }
 
@@ -436,7 +430,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           c.snapshotSessions.delete(node.sessionId)
         })
       }
-      deleteGeneratedImageFile(node)
       // Stop file watching if this is a file-backed markdown
       fileContentManager.stopWatching(msg.nodeId)
       gitStatusPoller.removeNode(msg.nodeId)
@@ -495,8 +488,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-archive-delete': {
-      const archived = stateManager.peekArchivedNode(msg.parentNodeId, msg.archivedNodeId)
-      deleteGeneratedImageFile(archived)
       stateManager.deleteArchivedNode(msg.parentNodeId, msg.archivedNodeId)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
@@ -553,6 +544,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const parentNode = stateManager.getNode(msg.parentId)
         console.log(`[terminal-create] parent=${msg.parentId.slice(0, 8)} parentPos=(${parentNode?.x}, ${parentNode?.y}) parentSize=(${parentNode?.type === 'markdown' ? parentNode.width : '?'}x${parentNode?.type === 'markdown' ? parentNode.height : '?'}) termPos=(${posX}, ${posY}) clientPos=(${msg.x}, ${msg.y}) initialInput=${!!msg.initialInput}`)
         stateManager.createTerminal(sessionId, msg.parentId, posX, posY, cols, rows, cwd, msg.initialTitleHistory, msg.initialName)
+        detectClaudeSwapProfile().then(profile => {
+          if (profile) stateManager.updateClaudeSwapProfile(sessionId, profile)
+        })
         if (msg.initialTitleHistory?.length) {
           sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
         }
@@ -599,6 +593,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.seedTitleHistory(newPtyId, rNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(msg.nodeId, newPtyId, rCols, rRows)
+        detectClaudeSwapProfile().then(profile => {
+          if (profile) stateManager.updateClaudeSwapProfile(msg.nodeId, profile)
+        })
         // Auto-attach client to the new PTY session
         client.attachedSessions.add(newPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
@@ -820,29 +817,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'image-add': {
-      try {
-        const imgWidth = msg.width ?? IMAGE_DEFAULT_WIDTH
-        const imgHeight = msg.height ?? IMAGE_DEFAULT_HEIGHT
-        let posX: number
-        let posY: number
-        if (msg.x != null && msg.y != null) {
-          posX = msg.x
-          posY = msg.y
-        } else {
-          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: imgWidth, height: imgHeight })
-          posX = pos.x
-          posY = pos.y
-        }
-        const imgNode = stateManager.createImage(msg.parentId, posX, posY, msg.filePath, msg.width, msg.height)
-        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: imgNode.id })
-      } catch (err: any) {
-        console.error(`image-add failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `image-add failed: ${err.message}` })
-      }
-      break
-    }
-
     case 'set-claude-status-unread': {
       claudeStateMachine.handleClientMarkUnread(msg.sessionId, msg.unread)
       break
@@ -860,10 +834,23 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           send(client.socket, { type: 'server-error', message: `fork-session: no Claude session history` })
           break
         }
-        const sourceClaudeSessionId = history[history.length - 1].claudeSessionId
         const forkCwd = forkNode.cwd ?? sessionManager.getCwd(forkNode.sessionId)
         if (!forkCwd) {
           send(client.socket, { type: 'server-error', message: `fork-session: cannot determine cwd` })
+          break
+        }
+        // Walk backwards through history to find the most recent session with an
+        // existing transcript file. Claude Code fires a "startup" SessionStart hook
+        // with a new session ID that may never get a .jsonl file on disk.
+        let sourceClaudeSessionId: string | undefined
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
+            sourceClaudeSessionId = history[i].claudeSessionId
+            break
+          }
+        }
+        if (!sourceClaudeSessionId) {
+          send(client.socket, { type: 'server-error', message: `fork-session: no session transcript file found on disk` })
           break
         }
 
@@ -937,6 +924,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.seedTitleHistory(newPtyId, restartNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(msg.nodeId, newPtyId, restartCols, restartRows)
+        detectClaudeSwapProfile().then(profile => {
+          if (profile) stateManager.updateClaudeSwapProfile(msg.nodeId, profile)
+        })
 
         // Track for auto-recovery if the new PTY exits quickly
         restartRecovery.set(msg.nodeId, {
@@ -1094,6 +1084,20 @@ async function startServer(): Promise<void> {
         restartRecovery.delete(nodeId)
       }
 
+      // Log diagnostic info when a startup-revived PTY fails
+      if (nodeId && stateManager.isReviving(nodeId)) {
+        const node = stateManager.getNode(nodeId)
+        const claudeHistory = (node?.type === 'terminal' && node.claudeSessionHistory) || []
+        const claudeSessionId = claudeHistory.length > 0 ? claudeHistory[claudeHistory.length - 1].claudeSessionId : 'unknown'
+        const output = sessionManager.getScrollback(sessionId)
+        console.error(`[startup] Revival failed for Claude session ${claudeSessionId} (pty=${sessionId.slice(0, 8)}, exitCode=${exitCode})`)
+        if (output) {
+          console.error(`[startup] Revival output:\n${output}`)
+        } else {
+          console.error(`[startup] Revival output: (none)`)
+        }
+      }
+
       stateManager.terminalExited(sessionId, exitCode)
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
       // Remove from all clients' attached/snapshot sets
@@ -1208,6 +1212,9 @@ async function startServer(): Promise<void> {
           sessionManager.seedTitleHistory(sessionId, revivingNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
+        detectClaudeSwapProfile().then(profile => {
+          if (profile) stateManager.updateClaudeSwapProfile(nodeId, profile)
+        })
         const revivalCwd = sessionManager.getCwd(sessionId)
         if (revivalCwd) {
           sessionFileWatcher.watch(sessionId, claudeSessionId, revivalCwd)

@@ -154,6 +154,48 @@ function setupIPC(): void {
     })
   })
 
+  ipcMain.handle('claude-swap:list', () => {
+    return new Promise((resolve) => {
+      execFile('claude-swap', ['list'], { timeout: 5000 }, (err, stdout) => {
+        if (err) { resolve(null); return }
+        const profiles: string[] = []
+        let active: string | null = null
+        for (const line of stdout.split('\n')) {
+          const m = line.match(/^([*-])\s+(.+)/)
+          if (m) {
+            const name = m[2].trim()
+            profiles.push(name)
+            if (m[1] === '*') active = name
+          }
+        }
+        resolve(profiles.length > 0 && active ? { profiles, active } : null)
+      })
+    })
+  })
+
+  ipcMain.handle('claude-swap:load', (_event, profile: string) => {
+    return new Promise((resolve) => {
+      execFile('claude-swap', ['load', profile], { timeout: 5000 }, (err) => {
+        if (err) { logger.log(`[claude-swap] load failed: ${err.message}`); resolve(null); return }
+        // Re-read list to confirm the switch
+        execFile('claude-swap', ['list'], { timeout: 5000 }, (err2, stdout) => {
+          if (err2) { resolve(null); return }
+          const profiles: string[] = []
+          let active: string | null = null
+          for (const line of stdout.split('\n')) {
+            const m = line.match(/^([*-])\s+(.+)/)
+            if (m) {
+              const name = m[2].trim()
+              profiles.push(name)
+              if (m[1] === '*') active = name
+            }
+          }
+          resolve(profiles.length > 0 && active ? { profiles, active } : null)
+        })
+      })
+    })
+  })
+
   ipcMain.handle('pty:destroy', async (_event, sessionId: string) => {
     await client!.destroy(sessionId)
   })

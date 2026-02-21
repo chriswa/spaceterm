@@ -20,7 +20,7 @@ function cwdToSlug(cwd: string): string {
   return cwd.replaceAll('/', '-')
 }
 
-function sessionFilePath(cwd: string, claudeSessionId: string): string {
+export function sessionFilePath(cwd: string, claudeSessionId: string): string {
   return path.join(CLAUDE_PROJECTS_DIR, cwdToSlug(cwd), `${claudeSessionId}.jsonl`)
 }
 

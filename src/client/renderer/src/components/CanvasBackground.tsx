@@ -78,7 +78,7 @@ float snoise(vec3 uv, float res) {
     return mix(r0, r1, f.z)*2.-1.;
 }
 
-vec4 computeBackground(vec2 fragCoord, float bgTime, vec2 bgOrigin, float bgZoom) {
+vec4 computeBackground(vec2 fragCoord, float bgTime, vec2 bgOrigin, float bgZoom, float lumFloor) {
     vec2 canvasOffset = (fragCoord - bgOrigin) / bgZoom;
     float r = length(canvasOffset);
     float theta = atan(canvasOffset.y, canvasOffset.x);
@@ -95,7 +95,7 @@ vec4 computeBackground(vec2 fragCoord, float bgTime, vec2 bgOrigin, float bgZoom
     float lum = smoothstep(0.0, 0.5, c) * 0.4
               + smoothstep(0.5, 1.5, c) * 0.3
               + smoothstep(1.5, 2.5, c) * 0.3;
-    float base = lum;
+    float base = max(lum, lumFloor);
     float hue = PI*8.0/12.0 - theta;
     vec3 tint = max(oklch2rgb(0.51, 0.06, hue), 0.0);
     vec3 rgb = tint * base;
@@ -111,7 +111,7 @@ uniform vec2 uOrigin;
 uniform float uZoom;
 ${BG_HELPERS}
 void main() {
-    gl_FragColor = computeBackground(gl_FragCoord.xy, iTime, uOrigin, uZoom);
+    gl_FragColor = computeBackground(gl_FragCoord.xy, iTime, uOrigin, uZoom, 0.0);
 }
 `
 
@@ -186,7 +186,7 @@ void main() {
   float alpha = 1.0 - smoothstep(HALF_W - aa, HALF_W + aa, d);
   if (alpha < 0.004) discard;
 
-  vec4 bg = computeBackground(gl_FragCoord.xy, uBgTime, uBgOrigin, uZoom);
+  vec4 bg = computeBackground(gl_FragCoord.xy, uBgTime, uBgOrigin, uZoom, 0.15);
   vec3 blended = softLight(bg.rgb, vec3(1.0));
   // uIntensity > 1 overshoots past soft-light toward brighter
   vec3 result = mix(bg.rgb, blended, alpha * uIntensity);

@@ -8,7 +8,6 @@ import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
 import { TitleCard } from './components/TitleCard'
-import { ImageCard } from './components/ImageCard'
 import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
@@ -17,14 +16,16 @@ import { FloatingToolbar } from './components/FloatingToolbar'
 import { EdgeSplitMenu } from './components/EdgeSplitMenu'
 import { SearchModal } from './components/SearchModal'
 import { HelpModal } from './components/HelpModal'
+import { KeycastOverlay } from './components/KeycastOverlay'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, IMAGE_DEFAULT_WIDTH, IMAGE_DEFAULT_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
+import { DEFAULT_PRESET } from './lib/color-presets'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
@@ -73,6 +74,7 @@ export function App() {
   const [helpVisible, setHelpVisible] = useState(false)
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
+  const [keycastEnabled, setKeycastEnabled] = useState(false)
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
   const focusRef = useRef<string | null>(focusedId)
@@ -93,7 +95,7 @@ export function App() {
   const [edgeSplit, setEdgeSplit] = useState<{ parentId: string; childId: string; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
   const cmdClickPendingRef = useRef<{ nodeId: string; screenX: number; screenY: number } | null>(null)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef } = useCamera(undefined, focusRef, onCameraEvent)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
@@ -103,7 +105,6 @@ export function App() {
   const directories = useNodeStore(s => s.directories)
   const files = useNodeStore(s => s.files)
   const titles = useNodeStore(s => s.titles)
-  const images = useNodeStore(s => s.images)
   const fileContents = useNodeStore(s => s.fileContents)
   const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
   const moveNode = useNodeStore(s => s.moveNode)
@@ -119,48 +120,24 @@ export function App() {
   const edgesRef = useRef<TreeLineNode[]>([])
   edgesRef.current = treeLineNodes
 
-  // Track resolved image sizes (updated when <img> loads)
-  const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({})
-
-  const handleImageLoaded = useCallback((id: string, width: number, height: number) => {
-    setImageSizes(prev => ({ ...prev, [id]: { width, height } }))
-  }, [])
-
-  // Clean up stale entries from imageSizes when image nodes are removed
-  const imageIdSet = useMemo(() => new Set(images.map(img => img.id)), [images])
-  useEffect(() => {
-    setImageSizes(prev => {
-      const stale = Object.keys(prev).filter(id => !imageIdSet.has(id))
-      if (stale.length === 0) return prev
-      const next = { ...prev }
-      for (const id of stale) delete next[id]
-      return next
-    })
-  }, [imageIdSet])
-
   const maskRects = useMemo(() => {
     const rects: MaskRect[] = markdowns.map((n): MaskRect => ({ x: n.x, y: n.y, width: n.width, height: n.height }))
     for (const t of titles) {
       const size = nodePixelSize(t)
       rects.push({ x: t.x, y: t.y, width: size.width, height: size.height })
     }
-    for (const img of images) {
-      const resolved = imageSizes[img.id]
-      if (resolved) {
-        rects.push({ x: img.x, y: img.y, width: resolved.width, height: resolved.height })
-      }
-    }
     return rects
-  }, [markdowns, titles, images, imageSizes])
+  }, [markdowns, titles])
   const maskRectsRef = useRef<MaskRect[]>([])
   maskRectsRef.current = maskRects
 
   // Reparent preview edge for WebGL rendering
   const reparentEdgeRef = useRef<ReparentEdge | null>(null)
 
-  // Resolve inherited color presets for all nodes
+  // Resolve inherited color presets for all nodes (+ root which isn't in the store)
   const resolvedPresets = useMemo(() => {
     const map: Record<string, import('./lib/color-presets').ColorPreset> = {}
+    map['root'] = DEFAULT_PRESET
     for (const id in nodes) {
       map[id] = resolveInheritedPreset(nodes, id)
     }
@@ -199,7 +176,10 @@ export function App() {
     if (!reparentHoveredNodeId) return  // cursor-follow effect handles this case
     const allNodes = useNodeStore.getState().nodes
     const srcNode = allNodes[reparentingNodeId]
-    const tgtNode = allNodes[reparentHoveredNodeId]
+    // Root node lives at (0,0) and isn't in the node store
+    const tgtNode = reparentHoveredNodeId === 'root'
+      ? { x: 0, y: 0 }
+      : allNodes[reparentHoveredNodeId]
     const isInvalid = reparentHoveredNodeId === reparentingNodeId ||
       isDescendantOf(allNodes, reparentHoveredNodeId, reparentingNodeId) ||
       (srcNode && srcNode.parentId === reparentHoveredNodeId)
@@ -437,15 +417,54 @@ export function App() {
   const draggingRef = useRef(new Set<string>())
   const dragDescendantsRef = useRef<string[]>([])
 
-  const handleDragStart = useCallback((id: string, solo?: boolean) => {
+  // Snap-to-align state
+  const ctrlAtStartRef = useRef(false)
+  const metaKeyWasReleasedRef = useRef(false)
+  const snapStateRef = useRef<{ nodeId: string; axis: 'x' | 'y' } | null>(null)
+  const snapGuideRef = useRef<HTMLDivElement>(null)
+
+  // Rotational drag state (Shift+drag)
+  const rotationalDragRef = useRef<{
+    pivotX: number
+    pivotY: number
+    initialAngle: number
+    initialOffsets: Map<string, { dx: number; dy: number }>
+  } | null>(null)
+
+  const handleDragStart = useCallback((id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => {
+    ctrlAtStartRef.current = !!ctrlAtStart
+    metaKeyWasReleasedRef.current = false
+    snapStateRef.current = null
+    rotationalDragRef.current = null
+
     draggingRef.current.add(id)
     if (solo) {
       dragDescendantsRef.current = []
     } else {
-      const descendants = getDescendantIds(useNodeStore.getState().nodes, id)
+      const allNodes = useNodeStore.getState().nodes
+      const descendants = getDescendantIds(allNodes, id)
       dragDescendantsRef.current = descendants
       for (const d of descendants) {
         draggingRef.current.add(d)
+      }
+
+      // Set up rotational drag if Shift was held
+      if (shiftAtStart && descendants.length > 0) {
+        const node = allNodes[id]
+        if (node) {
+          const parent = node.parentId === 'root' ? null : allNodes[node.parentId]
+          const pivotX = parent ? parent.x : 0
+          const pivotY = parent ? parent.y : 0
+          const initialAngle = Math.atan2(node.y - pivotY, node.x - pivotX)
+          const initialOffsets = new Map<string, { dx: number; dy: number }>()
+          for (const d of descendants) {
+            const dn = allNodes[d]
+            if (dn) {
+              initialOffsets.set(d, { dx: dn.x - node.x, dy: dn.y - node.y })
+            }
+          }
+          rotationalDragRef.current = { pivotX, pivotY, initialAngle, initialOffsets }
+        }
       }
     }
   }, [])
@@ -457,6 +476,14 @@ export function App() {
       draggingRef.current.delete(d)
     }
     dragDescendantsRef.current = []
+
+    // Clear snap-to-align and rotational drag state
+    ctrlAtStartRef.current = false
+    metaKeyWasReleasedRef.current = false
+    snapStateRef.current = null
+    rotationalDragRef.current = null
+    const guide = snapGuideRef.current
+    if (guide) guide.style.display = 'none'
 
     // Send final positions to server for dragged node + descendants
     const allNodes = useNodeStore.getState().nodes
@@ -682,6 +709,15 @@ export function App() {
     }
     sendCrabReorder(order)
   }, [])
+
+  const handleDebugCapture = useCallback(() => {
+    const state = captureDebugState()
+    const json = JSON.stringify(state, null, 2)
+    navigator.clipboard.writeText(json).then(
+      () => showToast('Debug state copied to clipboard'),
+      () => showToast('Failed to copy debug state')
+    )
+  }, [captureDebugState])
 
   const handleReparentTarget = useCallback((targetId: string) => {
     const srcId = useReparentStore.getState().reparentingNodeId
@@ -956,16 +992,136 @@ export function App() {
   }, [])
 
   // Handlers that send mutations to server
-  const handleMove = useCallback((id: string, x: number, y: number) => {
-    const currentNode = useNodeStore.getState().nodes[id]
+  const handleMove = useCallback((id: string, x: number, y: number, metaKey?: boolean) => {
+    // Track Command key releases for fresh-press detection
+    if (!metaKey) {
+      metaKeyWasReleasedRef.current = true
+    }
+
+    let finalX = x
+    let finalY = y
+    const shouldSnap = !!metaKey && metaKeyWasReleasedRef.current && !ctrlAtStartRef.current
+
+    if (shouldSnap) {
+      const allNodes = useNodeStore.getState().nodes
+      const draggedNode = allNodes[id]
+      if (draggedNode) {
+        const draggedSize = nodePixelSize(draggedNode)
+        const draggedHalfW = draggedSize.width / 2
+        const draggedHalfH = draggedSize.height / 2
+
+        const SNAP_THRESHOLD = 80
+        const SNAP_BREAK_MULTIPLIER = 1.5
+        const currentSnap = snapStateRef.current
+
+        let bestDist = Infinity
+        let bestNodeId: string | null = null
+        let bestAxis: 'x' | 'y' = 'x'
+        let bestSnapValue = 0
+
+        for (const [otherId, otherNode] of Object.entries(allNodes)) {
+          if (draggingRef.current.has(otherId)) continue
+
+          const otherSize = nodePixelSize(otherNode)
+          const otherHalfW = otherSize.width / 2
+          const otherHalfH = otherSize.height / 2
+
+          const edgeDistX = Math.max(0, Math.abs(x - otherNode.x) - draggedHalfW - otherHalfW)
+          const edgeDistY = Math.max(0, Math.abs(y - otherNode.y) - draggedHalfH - otherHalfH)
+          const dist = Math.sqrt(edgeDistX * edgeDistX + edgeDistY * edgeDistY)
+
+          // Use higher threshold if this is the current snap target (hysteresis)
+          const threshold = (currentSnap && currentSnap.nodeId === otherId)
+            ? SNAP_THRESHOLD * SNAP_BREAK_MULTIPLIER
+            : SNAP_THRESHOLD
+
+          if (dist < threshold && dist < bestDist) {
+            bestDist = dist
+            bestNodeId = otherId
+
+            // Snap to the axis where centers are already closer
+            const centerDiffX = Math.abs(x - otherNode.x)
+            const centerDiffY = Math.abs(y - otherNode.y)
+            if (centerDiffX <= centerDiffY) {
+              bestAxis = 'x'
+              bestSnapValue = otherNode.x
+            } else {
+              bestAxis = 'y'
+              bestSnapValue = otherNode.y
+            }
+          }
+        }
+
+        if (bestNodeId) {
+          snapStateRef.current = { nodeId: bestNodeId, axis: bestAxis }
+          if (bestAxis === 'x') {
+            finalX = bestSnapValue
+          } else {
+            finalY = bestSnapValue
+          }
+
+          // Update guide line directly via DOM
+          const guide = snapGuideRef.current
+          if (guide) {
+            const zoom = cameraRef.current.z
+            guide.style.display = 'block'
+            if (bestAxis === 'x') {
+              guide.style.left = `${bestSnapValue}px`
+              guide.style.top = '-99999px'
+              guide.style.width = `${1 / zoom}px`
+              guide.style.height = '199998px'
+            } else {
+              guide.style.left = '-99999px'
+              guide.style.top = `${bestSnapValue}px`
+              guide.style.width = '199998px'
+              guide.style.height = `${1 / zoom}px`
+            }
+          }
+        } else {
+          snapStateRef.current = null
+          const guide = snapGuideRef.current
+          if (guide) guide.style.display = 'none'
+        }
+      }
+    } else {
+      if (snapStateRef.current) {
+        snapStateRef.current = null
+        const guide = snapGuideRef.current
+        if (guide) guide.style.display = 'none'
+      }
+    }
+
+    const allNodes = useNodeStore.getState().nodes
+    const currentNode = allNodes[id]
     const descendants = dragDescendantsRef.current
-    if (currentNode && descendants.length > 0) {
-      const dx = x - currentNode.x
-      const dy = y - currentNode.y
-      moveNode(id, x, y)
+    const rotational = rotationalDragRef.current
+
+    if (currentNode && descendants.length > 0 && rotational) {
+      // Rotational drag: rotate descendant offsets by the angle delta
+      const newAngle = Math.atan2(finalY - rotational.pivotY, finalX - rotational.pivotX)
+      const deltaAngle = newAngle - rotational.initialAngle
+      const cosA = Math.cos(deltaAngle)
+      const sinA = Math.sin(deltaAngle)
+
+      moveNode(id, finalX, finalY)
+      batchMoveNodes(descendants.map(d => {
+        const offset = rotational.initialOffsets.get(d)
+        if (!offset) return { id: d, dx: 0, dy: 0 }
+        const rotatedDx = offset.dx * cosA - offset.dy * sinA
+        const rotatedDy = offset.dx * sinA + offset.dy * cosA
+        const desiredX = finalX + rotatedDx
+        const desiredY = finalY + rotatedDy
+        const dn = allNodes[d]
+        return { id: d, dx: desiredX - (dn?.x ?? 0), dy: desiredY - (dn?.y ?? 0) }
+      }))
+    } else if (currentNode && descendants.length > 0) {
+      // Normal drag: translate all descendants by the same delta
+      const dx = finalX - currentNode.x
+      const dy = finalY - currentNode.y
+      moveNode(id, finalX, finalY)
       batchMoveNodes(descendants.map(d => ({ id: d, dx, dy })))
     } else {
-      moveNode(id, x, y)
+      moveNode(id, finalX, finalY)
     }
   }, [moveNode, batchMoveNodes])
 
@@ -1414,7 +1570,30 @@ export function App() {
         clearHoveredEdge()
         setEdgeSplit({ parentId: edge.parentId, childId: edge.childId, worldPoint: edge.point, screenX: e.clientX, screenY: e.clientY })
       } else {
-        showToast('Hold Command to split.')
+        // Fly camera to frame both parent and child nodes
+        const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+        if (viewport) {
+          const allNodes = useNodeStore.getState().nodes
+          const rects: Array<{ x: number; y: number; width: number; height: number }> = []
+          if (edge.parentId === 'root') {
+            rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+          } else {
+            const parent = allNodes[edge.parentId]
+            if (parent) {
+              const size = nodePixelSize(parent)
+              rects.push({ x: parent.x - size.width / 2, y: parent.y - size.height / 2, ...size })
+            }
+          }
+          const child = allNodes[edge.childId]
+          if (child) {
+            const size = nodePixelSize(child)
+            rects.push({ x: child.x - size.width / 2, y: child.y - size.height / 2, ...size })
+          }
+          const bounds = unionBounds(rects)
+          if (bounds) {
+            flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.1, UNFOCUS_SNAP_ZOOM))
+          }
+        }
       }
       return
     }
@@ -1440,6 +1619,7 @@ export function App() {
           onArchiveDelete={handleArchiveDelete}
           onArchiveToggled={handleArchiveToggled}
           onAddNode={handleAddNode}
+          onReparentTarget={handleReparentTarget}
         />
         {liveTerminals.map((t) => (
           <TerminalCard
@@ -1480,6 +1660,7 @@ export function App() {
             claudeSessionHistory={t.claudeSessionHistory}
             onClaudeSessionHistoryChange={handleClaudeSessionHistoryChange}
             claudeState={t.claudeState}
+            claudeModel={t.claudeModel}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
@@ -1490,6 +1671,7 @@ export function App() {
             onFork={handleForkSession}
             onExtraCliArgs={handleExtraCliArgs}
             extraCliArgs={t.extraCliArgs}
+            claudeSwapProfile={t.claudeSwapProfile}
             onAddNode={handleAddNode}
             cameraRef={cameraRef}
           />
@@ -1637,39 +1819,6 @@ export function App() {
             cameraRef={cameraRef}
           />
         ))}
-        {images.map((img) => (
-          <ImageCard
-            key={img.id}
-            id={img.id}
-            x={img.x}
-            y={img.y}
-            zIndex={img.zIndex}
-            zoom={camera.z}
-            filePath={img.filePath}
-            width={img.width}
-            height={img.height}
-            focused={focusedId === img.id}
-            selected={selection === img.id}
-            colorPresetId={img.colorPresetId}
-            resolvedPreset={resolvedPresets[img.id]}
-            archivedChildren={img.archivedChildren}
-            onFocus={handleNodeFocus}
-            onClose={handleRemoveNode}
-            onMove={handleMove}
-            onColorChange={handleColorChange}
-            onUnarchive={handleUnarchive}
-            onArchiveDelete={handleArchiveDelete}
-            onArchiveToggled={handleArchiveToggled}
-            onNodeReady={handleNodeReady}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onStartReparent={handleStartReparent}
-            onReparentTarget={handleReparentTarget}
-            onAddNode={handleAddNode}
-            onImageLoaded={handleImageLoaded}
-            cameraRef={cameraRef}
-          />
-        ))}
         {hoveredEdge && (
           <div
             className="edge-split-indicator"
@@ -1679,6 +1828,11 @@ export function App() {
             }}
           />
         )}
+        <div
+          ref={snapGuideRef}
+          className="snap-guide"
+          style={{ display: 'none', position: 'absolute', pointerEvents: 'none', zIndex: 999999 }}
+        />
       </Canvas>
       <Toolbar
         inputDevice={inputDevice}
@@ -1689,6 +1843,9 @@ export function App() {
         selectedNodeId={focusedId}
         zoom={camera.z}
         onHelpClick={() => setHelpVisible(v => !v)}
+        keycastEnabled={keycastEnabled}
+        onKeycastToggle={() => setKeycastEnabled(v => !v)}
+        onDebugCapture={handleDebugCapture}
       />
       {quickActions && resolvedPresets[quickActions.nodeId] && (
         <FloatingToolbar
@@ -1708,6 +1865,7 @@ export function App() {
         />
       )}
       <Toast toasts={toasts} onExpire={expireToast} />
+      {keycastEnabled && <KeycastOverlay />}
     </div>
   )
 }

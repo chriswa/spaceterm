@@ -66,6 +66,7 @@ export function FloatingToolbar({ nodeId, screenX, screenY, preset, onDismiss }:
     >
       <NodeActionBar
         {...registeredProps}
+        preset={preset}
         variant="floating"
         onActionInvoked={onDismiss}
       />

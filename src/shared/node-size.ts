@@ -24,7 +24,7 @@ export const CHROME_H_NO_FOOTER =
   BODY_PADDING_TOP
 export const CHROME_H = CHROME_H_NO_FOOTER + FOOTER_HEIGHT
 
-export const ROOT_NODE_RADIUS = 150
+export const ROOT_NODE_RADIUS = 90
 
 // Markdown node dimensions
 export const MARKDOWN_DEFAULT_WIDTH = 400
@@ -54,10 +54,6 @@ export const TITLE_CHAR_WIDTH = 39.75  // Menlo 66px bold (CELL_WIDTH * 66/14)
 export const TITLE_H_PADDING = 72      // 36px padding on each side
 export const TITLE_MIN_WIDTH = 360
 
-// Image node dimensions
-export const IMAGE_DEFAULT_WIDTH = 300
-export const IMAGE_DEFAULT_HEIGHT = 200
-
 // Placement
 export const PLACEMENT_MARGIN = 80
 
@@ -74,7 +70,6 @@ export type NodeLike =
   | { type: 'file' }
   | { type: 'title'; text: string }
   | { type: 'markdown'; width: number; height: number }
-  | { type: 'image'; width?: number; height?: number }
 
 /** Compute the auto-scaled folder width for a directory node from its text content. */
 export function directoryFolderWidth(cwd: string, gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null): number {
@@ -117,9 +112,6 @@ export function nodePixelSize(node: NodeLike): { width: number; height: number }
     const width = Math.max(TITLE_MIN_WIDTH, longestLen * TITLE_CHAR_WIDTH + TITLE_H_PADDING)
     const height = TITLE_HEIGHT + (lineCount - 1) * TITLE_LINE_HEIGHT
     return { width, height }
-  }
-  if (node.type === 'image') {
-    return { width: node.width ?? IMAGE_DEFAULT_WIDTH, height: node.height ?? IMAGE_DEFAULT_HEIGHT }
   }
   return { width: node.width, height: node.height }
 }

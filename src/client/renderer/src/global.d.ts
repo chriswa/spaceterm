@@ -108,6 +108,11 @@ interface WindowApi {
   onVisibilityChanged(callback: (visible: boolean) => void): () => void
 }
 
+interface ClaudeSwapApi {
+  list(): Promise<{ profiles: string[]; active: string } | null>
+  load(profile: string): Promise<{ profiles: string[]; active: string } | null>
+}
+
 interface Api {
   pty: PtyApi
   node: NodeApi
@@ -118,6 +123,7 @@ interface Api {
   perf: PerfApi
   audio: AudioApi
   window: WindowApi
+  claudeSwap: ClaudeSwapApi
 }
 
 declare interface Window {

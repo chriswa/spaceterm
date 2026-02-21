@@ -7,6 +7,7 @@ import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
+import { angleBorderColor } from '../lib/angle-color'
 
 const DRAG_THRESHOLD = 5
 const FILE_H_PADDING = 80
@@ -45,14 +46,14 @@ interface FileCardProps {
   archivedChildren: ArchivedNode[]
   onFocus: (id: string) => void
   onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number) => void
+  onMove: (id: string, x: number, y: number, metaKey?: boolean) => void
   onFilePathChange: (id: string, filePath: string) => void
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string, solo?: boolean) => void
+  onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
@@ -187,6 +188,7 @@ export function FileCard({
     const startX = propsRef.current.x
     const startY = propsRef.current.y
     const currentZoom = cameraRef.current.z
+    const ctrlAtStart = e.ctrlKey
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {
@@ -195,11 +197,11 @@ export function FileCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
-        onDragStart?.(id, ev.metaKey)
+        onDragStart?.(id, ev.metaKey, ctrlAtStart, ev.shiftKey)
       }
 
       if (dragging) {
-        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey)
       }
     }
 
@@ -252,6 +254,7 @@ export function FileCard({
         viewBox={`0 0 ${fileWidth} 144`}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
+        style={focused ? { color: angleBorderColor(x, y), filter: `drop-shadow(0 0 4px ${angleBorderColor(x, y)})` } : undefined}
       >
         <path d={paths.outline} fill={blendHex(preset?.titleBarBg ?? '#ffffff', '#000000', 0.8)} stroke="currentColor" strokeWidth="1.5" />
         <path d={paths.fold} fill="none" stroke="currentColor" strokeWidth="1.5" />

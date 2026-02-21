@@ -89,14 +89,6 @@ export interface SpawnClaudeSurfaceMessage {
   title: string
 }
 
-export interface GenerateImageMessage {
-  type: 'generate-image'
-  surfaceId: string
-  filePath: string
-  width: number
-  height: number
-}
-
 // --- Client → Server node mutation messages ---
 
 export interface NodeSyncRequestMessage {
@@ -288,17 +280,6 @@ export interface TitleTextMessage {
   text: string
 }
 
-export interface ImageAddMessage {
-  type: 'image-add'
-  seq: number
-  parentId: string
-  x?: number
-  y?: number
-  filePath: string
-  width?: number
-  height?: number
-}
-
 export interface ValidateFileMessage {
   type: 'validate-file'
   seq: number
@@ -373,7 +354,6 @@ export type ClientMessage =
   | TerminalReincarnateMessage
   | EmitMarkdownMessage
   | SpawnClaudeSurfaceMessage
-  | GenerateImageMessage
   | SetTerminalModeMessage
   | SetClaudeStatusUnreadMessage
   | DirectoryAddMessage
@@ -385,7 +365,6 @@ export type ClientMessage =
   | ValidateFileMessage
   | TitleAddMessage
   | TitleTextMessage
-  | ImageAddMessage
   | ForkSessionMessage
   | TerminalRestartMessage
   | CrabReorderMessage

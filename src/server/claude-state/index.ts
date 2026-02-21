@@ -2,7 +2,7 @@
  * Claude State Machine
  *
  * Manages the state indicator for each Claude Code surface (terminal session).
- * States: stopped → working → waiting_permission / waiting_plan → stopped
+ * States: stopped → working → waiting_permission / waiting_question / waiting_plan → stopped
  *         working → stuck (after 2min timeout, recovered by any live event)
  *
  * This module is the single source of truth for state transition logic.
@@ -143,11 +143,11 @@ export class ClaudeStateMachine {
       this.lastActivityBySurface.delete(surfaceId)
     }
 
-    // ── PermissionRequest: Claude needs user approval for a tool ──
-    // Check tool_name to distinguish ExitPlanMode (waiting_plan) from other
-    // permissions (waiting_permission). ExitPlanMode is special because it
-    // means Claude has finished a plan and is waiting for the user to approve
-    // the plan itself, not just a tool execution.
+    // ── PermissionRequest: Claude needs user approval or attention ──
+    // Check tool_name to route to the correct waiting state:
+    // - ExitPlanMode → waiting_plan (user reviews the plan)
+    // - AskUserQuestion → waiting_question (Claude is asking a question)
+    // - Everything else → waiting_permission (user approves/denies a tool)
     if (hookType === 'PermissionRequest') {
       // Capture tool_use_id from the preceding PreToolUse so we can match
       // the eventual PostToolUse to this specific permission-gated tool.
@@ -163,8 +163,11 @@ export class ClaudeStateMachine {
       this.transitionQueue.enqueue(
         surfaceId,
         // ExitPlanMode → waiting_plan (user reviews the plan)
+        // AskUserQuestion → waiting_question (Claude is asking a question, not requesting tool approval)
         // Everything else → waiting_permission (user approves/denies a tool)
-        toolName === 'ExitPlanMode' ? 'waiting_plan' : 'waiting_permission',
+        toolName === 'ExitPlanMode' ? 'waiting_plan'
+          : toolName === 'AskUserQuestion' ? 'waiting_question'
+          : 'waiting_permission',
         'hook',
         'hook:PermissionRequest',
         hookTime,
@@ -172,18 +175,13 @@ export class ClaudeStateMachine {
       )
     }
 
-    // ── Notification: Claude is showing a permission prompt or elicitation dialog ──
-    // These are separate from PermissionRequest because they come from Claude
-    // Code's notification system rather than the tool pipeline. They still mean
-    // the user needs to act, so we transition to waiting_permission.
-    // Note: the waiting_plan guard is in applyTransition, so if we're already in
-    // waiting_plan, this won't downgrade us (which is correct behavior).
-    if (hookType === 'Notification' && payload && typeof payload === 'object') {
-      const notificationType = 'notification_type' in payload ? String(payload.notification_type) : ''
-      if (notificationType === 'permission_prompt' || notificationType === 'elicitation_dialog') {
-        this.transitionQueue.enqueue(surfaceId, 'waiting_permission', 'hook', 'hook:Notification', hookTime, notificationType)
-      }
-    }
+    // ── Notification hooks are intentionally NOT handled here ──
+    // permission_prompt notifications are always redundant with PermissionRequest
+    // (~6s delayed follow-up, 0/1109 cases of being sole signal in historical data).
+    // elicitation_dialog notifications have never been emitted by Claude Code.
+    // Removing this handler also eliminates the need for the waiting_plan →
+    // waiting_permission downgrade guard that existed solely to block the
+    // late-arriving notification from clobbering waiting_plan state.
 
     // ── Working signals: Claude is actively processing ──
     // UserPromptSubmit: user just sent a message, Claude will start working
@@ -440,38 +438,17 @@ export class ClaudeStateMachine {
     this.lastActivityBySurface.set(surfaceId, Date.now())
     const prevState = this.deps.getClaudeState(surfaceId) ?? 'stopped'
 
-    // ── Guard: don't downgrade waiting_plan to waiting_permission ──
-    // When ExitPlanMode fires, we set waiting_plan. A subsequent Notification
-    // hook (permission_prompt) may try to set waiting_permission, but
-    // waiting_plan is the more specific and correct state — the user is
-    // reviewing a plan, not just a generic permission. Downgrading would
-    // cause the UI to show the wrong indicator. We still log the suppressed
-    // transition for debugging and update the decision timestamp so the UI
-    // knows a decision was made.
-    if (prevState === 'waiting_plan' && newState === 'waiting_permission') {
-      this.deps.broadcastClaudeStateDecisionTime(surfaceId, Date.now())
-      this.decisionLogger.log(surfaceId, {
-        timestamp: localISOTimestamp(),
-        source,
-        event,
-        prevState,
-        newState: prevState,
-        detail,
-        suppressed: true
-      })
-      return
-    }
-
     this.deps.setClaudeState(surfaceId, newState)
 
     // ── Unread flag: set true when entering an attention-needed state ──
     // The user needs to see and act on stopped (Claude finished), waiting_permission
-    // (Claude needs tool approval), and waiting_plan (Claude needs plan approval).
+    // (Claude needs tool approval), waiting_question (Claude is asking a question),
+    // and waiting_plan (Claude needs plan approval).
     // We only set unread on state *changes* to avoid re-flagging when the state
     // is set to the same value (e.g. multiple 'working' transitions in a row).
     let unread: boolean | undefined
     if (prevState !== newState) {
-      if (newState === 'stopped' || newState === 'waiting_permission' || newState === 'waiting_plan') {
+      if (newState === 'stopped' || newState === 'waiting_permission' || newState === 'waiting_question' || newState === 'waiting_plan') {
         unread = true
         this.deps.setClaudeStatusUnread(surfaceId, true)
       }
@@ -497,8 +474,8 @@ export class ClaudeStateMachine {
    *
    * Only transitions working → stuck (not other states like stopped or
    * waiting_permission). The reasoning:
-   * - stopped/waiting_permission/waiting_plan: these are terminal states
-   *   that require user action, not Claude activity — no events expected
+   * - stopped/waiting_permission/waiting_question/waiting_plan: these are
+   *   terminal states that require user action, not Claude activity — no events expected
    * - working: Claude should be producing events (hooks, JSONL entries,
    *   status-line heartbeats). If none arrive for 2 minutes, something
    *   is wrong — the process may have crashed, hung, or lost connectivity.

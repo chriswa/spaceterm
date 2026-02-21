@@ -1,9 +1,10 @@
-export type CrabColor = 'white' | 'red' | 'purple' | 'orange' | 'dim-orange' | 'gray'
+export type CrabColor = 'white' | 'red' | 'green' | 'purple' | 'orange' | 'dim-orange' | 'gray'
 
 /** Hex colors for each crab color variant. Matches the toolbar CSS classes. */
 export const CRAB_COLORS: Record<CrabColor, string> = {
   white: '#ffffff',
   red: '#ff3366',
+  green: '#44cc77',
   purple: '#bb55ff',
   orange: '#ca7c5e',
   'dim-orange': '#653e2f',
@@ -30,6 +31,7 @@ export function deriveCrabAppearance(
   hasClaudeHistory: boolean
 ): { color: CrabColor; unviewed: boolean } | null {
   if (claudeState === 'waiting_permission') return { color: 'red', unviewed: claudeStatusUnread }
+  if (claudeState === 'waiting_question') return { color: 'green', unviewed: claudeStatusUnread }
   if (claudeState === 'waiting_plan') return { color: 'purple', unviewed: claudeStatusUnread }
   if (claudeState === 'working') return { color: 'orange', unviewed: false }
   if (claudeState === 'stuck') return { color: 'dim-orange', unviewed: claudeStatusUnread }
@@ -91,10 +93,12 @@ export function adjacentCrab(
 /**
  * Priority tiers (lower = higher priority):
  *   0:   red + unviewed        (waiting_permission, unread)
+ *   0.5: green + unviewed      (waiting_question, unread)
  *   1:   purple + unviewed     (waiting_plan, unread)
  *   2:   white + unviewed      (stopped, unread)
  *   2.5: dim-orange + unviewed (stuck, unread)
  *   3:   red + !unviewed       (waiting_permission, viewed)
+ *   3.5: green + !unviewed     (waiting_question, viewed)
  *   4:   purple + !unviewed    (waiting_plan, viewed)
  *   5:   gray                  (dormant)
  *   5.5: dim-orange + !unviewed (stuck, viewed)
@@ -123,6 +127,7 @@ export function highestPriorityCrab(crabs: CrabEntry[]): CrabEntry | null {
 function crabTier(crab: CrabEntry): number {
   switch (crab.color) {
     case 'red':    return crab.unviewed ? 0 : 3
+    case 'green':  return crab.unviewed ? 0.5 : 3.5
     case 'purple': return crab.unviewed ? 1 : 4
     case 'white':      return 2 // white is always unviewed
     case 'dim-orange': return crab.unviewed ? 2.5 : 5.5

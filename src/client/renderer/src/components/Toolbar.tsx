@@ -17,13 +17,18 @@ interface ToolbarProps {
   selectedNodeId: string | null
   zoom: number
   onHelpClick: () => void
+  keycastEnabled: boolean
+  onKeycastToggle: () => void
+  onDebugCapture: () => void
 }
 
 export function Toolbar({
   inputDevice,
   onToggleInputDevice,
   crabs, onCrabClick, onCrabReorder, selectedNodeId, zoom,
-  onHelpClick
+  onHelpClick,
+  keycastEnabled, onKeycastToggle,
+  onDebugCapture
 }: ToolbarProps) {
   const fpsRef = useRef<HTMLSpanElement>(null)
   useFps(fpsRef)
@@ -40,6 +45,15 @@ export function Toolbar({
       >
         Help
       </button>
+      <ClaudeSwapButton />
+      <button
+        className={'toolbar__btn' + (keycastEnabled ? ' toolbar__btn--active' : '')}
+        onClick={onKeycastToggle}
+        data-tooltip="Show key presses on screen"
+        data-tooltip-no-flip
+      >
+        Keycast
+      </button>
       <div className="toolbar__perf">
         <button
           className={'toolbar__btn' + (tracing ? ' toolbar__btn--recording' : '')}
@@ -51,6 +65,14 @@ export function Toolbar({
           {tracing ? 'Tracing...' : 'Perf Trace'}
         </button>
       </div>
+      <button
+        className="toolbar__btn"
+        onClick={onDebugCapture}
+        data-tooltip="Copy camera/viewport state to clipboard"
+        data-tooltip-no-flip
+      >
+        Camera Debug
+      </button>
       <FullscreenToggle />
       <AudioTapToggle />
       <BeatsToggle />
@@ -546,5 +568,25 @@ function BeatIndicators() {
       <span ref={onsetRef} className="toolbar__beat toolbar__beat--onset" />
       <span ref={phaseRef} className="toolbar__beat" />
     </span>
+  )
+}
+
+function ClaudeSwapButton() {
+  const [state, setState] = useState<{ profiles: string[]; active: string } | null>(null)
+
+  useEffect(() => { window.api.claudeSwap.list().then(setState) }, [])
+
+  if (!state) return null
+
+  const cycle = () => {
+    const idx = state.profiles.indexOf(state.active)
+    const next = state.profiles[(idx + 1) % state.profiles.length]
+    window.api.claudeSwap.load(next).then(setState)
+  }
+
+  return (
+    <button className="toolbar__btn" onClick={cycle} data-tooltip="Click to switch Claude profile" data-tooltip-no-flip>
+      profile: {state.active}
+    </button>
   )
 }

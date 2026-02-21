@@ -23,14 +23,14 @@ interface TitleCardProps {
   archivedChildren: ArchivedNode[]
   onFocus: (id: string) => void
   onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number) => void
+  onMove: (id: string, x: number, y: number, metaKey?: boolean) => void
   onTextChange: (id: string, text: string) => void
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string, solo?: boolean) => void
+  onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
@@ -134,6 +134,7 @@ export function TitleCard({
     const startX = propsRef.current.x
     const startY = propsRef.current.y
     const currentZoom = cameraRef.current.z
+    const ctrlAtStart = e.ctrlKey
     let dragging = false
 
     const onMouseMove = (ev: MouseEvent) => {
@@ -142,11 +143,11 @@ export function TitleCard({
 
       if (!dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
         dragging = true
-        onDragStart?.(id, ev.metaKey)
+        onDragStart?.(id, ev.metaKey, ctrlAtStart, ev.shiftKey)
       }
 
       if (dragging) {
-        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey)
       }
     }
 
