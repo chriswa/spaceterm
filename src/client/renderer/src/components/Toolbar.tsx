@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useLayoutEffect, useState } from 'react'
 import type { InputDevice } from '../hooks/useCamera'
 import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
@@ -7,7 +7,6 @@ import crabIcon from '../assets/crab.png'
 import type { CrabEntry } from '../lib/crab-nav'
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
-import type { BgSettings } from './CanvasBackground'
 
 interface ToolbarProps {
   inputDevice: InputDevice
@@ -18,16 +17,13 @@ interface ToolbarProps {
   selectedNodeId: string | null
   zoom: number
   onHelpClick: () => void
-  bgSettings: BgSettings
-  onBgSettingsChange: (settings: BgSettings) => void
 }
 
 export function Toolbar({
   inputDevice,
   onToggleInputDevice,
   crabs, onCrabClick, onCrabReorder, selectedNodeId, zoom,
-  onHelpClick,
-  bgSettings, onBgSettingsChange
+  onHelpClick
 }: ToolbarProps) {
   const fpsRef = useRef<HTMLSpanElement>(null)
   useFps(fpsRef)
@@ -59,7 +55,6 @@ export function Toolbar({
       <AudioTapToggle />
       <BeatsToggle />
       <BeatIndicators />
-      <BgSettingsPanel settings={bgSettings} onChange={onBgSettingsChange} />
       <span className="toolbar__zoom">
         <BpmIndicator />
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
@@ -402,65 +397,6 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId }: { crab
           </div>
       ))}
     </div>
-  )
-}
-
-interface SliderDef {
-  key: keyof BgSettings
-  label: string
-  min: number
-  max: number
-  step: number
-  decimals: number
-}
-
-const BG_SLIDERS: SliderDef[] = [
-  { key: 'chroma',       label: 'Chroma',  min: 0,   max: 0.45, step: 0.005, decimals: 3 },
-  { key: 'lightness',    label: 'Light',   min: 0.2, max: 1.0,  step: 0.01,  decimals: 2 },
-  { key: 'dimming',      label: 'Dim',     min: 0.05,max: 1.2,  step: 0.01,  decimals: 2 },
-  { key: 'radialSpread', label: 'Spread',  min: 0.01,max: 0.5,  step: 0.002, decimals: 3 },
-  { key: 'baseFloor',    label: 'Floor',   min: 0.0, max: 0.7,  step: 0.01,  decimals: 2 },
-  { key: 'animSpeed',    label: 'BgSpd',   min: 0.0, max: 5.0,  step: 0.05,  decimals: 2 },
-  { key: 'edgeWidth',    label: 'EdgeW',   min: 1,   max: 40,   step: 1,     decimals: 0 },
-  { key: 'edgeSpeed',    label: 'EdgeSpd', min: 0.0, max: 5.0,  step: 0.05,  decimals: 2 },
-]
-
-function BgSettingsPanel({ settings, onChange }: { settings: BgSettings; onChange: (s: BgSettings) => void }) {
-  const handleSlider = useCallback((key: keyof BgSettings, value: number) => {
-    onChange({ ...settings, [key]: value })
-  }, [settings, onChange])
-
-  const handleCopy = useCallback(() => {
-    const json = JSON.stringify(settings, null, 2)
-    navigator.clipboard.writeText(json)
-  }, [settings])
-
-  return (
-    <span className="toolbar__bg-settings">
-      {BG_SLIDERS.map(({ key, label, min, max, step, decimals }) => (
-        <span key={key} className="toolbar__bg-slider">
-          <span className="toolbar__bg-slider-label">{label}</span>
-          <input
-            type="range"
-            className="toolbar__chroma-slider"
-            min={min}
-            max={max}
-            step={step}
-            value={settings[key]}
-            onChange={(e) => handleSlider(key, Number(e.target.value))}
-          />
-          <span className="toolbar__chroma-value">{settings[key].toFixed(decimals)}</span>
-        </span>
-      ))}
-      <button
-        className="toolbar__btn"
-        onClick={handleCopy}
-        data-tooltip="Copy settings JSON to clipboard"
-        data-tooltip-no-flip
-      >
-        Copy
-      </button>
-    </span>
   )
 }
 

@@ -10,8 +10,8 @@ import { FileCard } from './components/FileCard'
 import { TitleCard } from './components/TitleCard'
 import { ImageCard } from './components/ImageCard'
 import type { AddNodeType } from './components/AddNodeBody'
-import { CanvasBackground, BG_DEFAULTS } from './components/CanvasBackground'
-import type { TreeLineNode, MaskRect, ReparentEdge, BgSettings } from './components/CanvasBackground'
+import { CanvasBackground } from './components/CanvasBackground'
+import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
 import { FloatingToolbar } from './components/FloatingToolbar'
 import { EdgeSplitMenu } from './components/EdgeSplitMenu'
@@ -73,9 +73,6 @@ export function App() {
   const [helpVisible, setHelpVisible] = useState(false)
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
-  const [bgSettings, setBgSettings] = useState<BgSettings>({ ...BG_DEFAULTS })
-  const bgSettingsRef = useRef<BgSettings>({ ...BG_DEFAULTS })
-  const handleBgSettingsChange = useCallback((next: BgSettings) => { bgSettingsRef.current = next; setBgSettings(next) }, [])
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
   const focusRef = useRef<string | null>(focusedId)
@@ -1433,7 +1430,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} bgSettingsRef={bgSettingsRef} />} overlay={<><SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<><SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <RootNode
           focused={focusedId === 'root'}
           selected={selection === 'root'}
@@ -1692,8 +1689,6 @@ export function App() {
         selectedNodeId={focusedId}
         zoom={camera.z}
         onHelpClick={() => setHelpVisible(v => !v)}
-        bgSettings={bgSettings}
-        onBgSettingsChange={handleBgSettingsChange}
       />
       {quickActions && resolvedPresets[quickActions.nodeId] && (
         <FloatingToolbar

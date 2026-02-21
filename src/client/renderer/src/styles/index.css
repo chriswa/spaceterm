@@ -277,54 +277,6 @@ html, body, #root {
   background: rgba(255,255,255,0.06);
 }
 
-.toolbar__bg-settings {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: 4px;
-}
-
-.toolbar__bg-slider {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.toolbar__bg-slider-label {
-  font-size: 10px;
-  color: rgba(255,255,255,0.4);
-  min-width: 28px;
-  text-align: right;
-}
-
-.toolbar__chroma-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 60px;
-  height: 3px;
-  background: rgba(255,255,255,0.15);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-}
-
-.toolbar__chroma-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #fff;
-  cursor: pointer;
-}
-
-.toolbar__chroma-value {
-  font-size: 10px;
-  color: rgba(255,255,255,0.4);
-  font-variant-numeric: tabular-nums;
-  min-width: 30px;
-}
-
 /* Canvas */
 .canvas-viewport {
   flex: 1;
