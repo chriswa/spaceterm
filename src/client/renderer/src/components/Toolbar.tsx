@@ -7,6 +7,7 @@ import crabIcon from '../assets/crab.png'
 import type { CrabEntry } from '../lib/crab-nav'
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
+import { useUsageStore } from '../stores/usageStore'
 
 interface ToolbarProps {
   inputDevice: InputDevice
@@ -81,6 +82,7 @@ export function Toolbar({
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
         <span className="toolbar__status-item toolbar__metric">{(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span></span>
         <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
+        <UsageIndicators />
       </span>
       {crabs.length > 0 && (
         <CrabGroup crabs={crabs} onCrabClick={onCrabClick} onCrabReorder={onCrabReorder} selectedNodeId={selectedNodeId} />
@@ -566,6 +568,93 @@ function BeatIndicators() {
       <span ref={energyRef} className="toolbar__beat toolbar__beat--energy" />
       <span ref={onsetRef} className="toolbar__beat toolbar__beat--onset" />
       <span ref={phaseRef} className="toolbar__beat" />
+    </span>
+  )
+}
+
+function formatResetTime(isoString: string): string | null {
+  try {
+    const d = new Date(isoString)
+    if (isNaN(d.getTime())) return null
+    // Round to nearest hour
+    if (d.getMinutes() >= 30) d.setHours(d.getHours() + 1)
+    d.setMinutes(0, 0, 0)
+    const hour = d.toLocaleTimeString(undefined, { hour: 'numeric' })
+    const now = new Date()
+    const diffDays = Math.round((d.getTime() - now.getTime()) / 86_400_000)
+    if (diffDays <= 0) return `Resets at ${hour}`
+    const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    return `Resets ${dateStr} at ${hour}`
+  } catch {
+    return null
+  }
+}
+
+function formatCredits(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`
+}
+
+/** Color for the 5-hour utilization indicator.
+ *  0–50%: white, 50–75%: white→yellow, 75–99%: yellow→orange, 100%: red */
+function fiveHourColor(pct: number): string {
+  if (pct >= 100) return '#ff3b30'
+  if (pct <= 50) return '#ffffff'
+  if (pct <= 75) {
+    // white → yellow
+    const t = (pct - 50) / 25
+    const r = 255
+    const g = 255
+    const b = Math.round(255 * (1 - t))
+    return `rgb(${r},${g},${b})`
+  }
+  // 75–99: yellow → orange
+  const t = (pct - 75) / 24
+  const r = 255
+  const g = Math.round(255 - 90 * t) // 255 → 165
+  return `rgb(${r},${g},0)`
+}
+
+function UsageIndicators() {
+  const usage = useUsageStore(s => s.usage)
+  const subscriptionType = useUsageStore(s => s.subscriptionType)
+
+  if (!usage || !subscriptionType) return null
+
+  const fiveHour = usage.five_hour
+  const sevenDay = usage.seven_day
+  const extra = usage.extra_usage
+
+  return (
+    <span className="toolbar__usage">
+      <span className="toolbar__usage-tag">{subscriptionType}</span>
+      {fiveHour != null && typeof fiveHour.utilization === 'number' && (
+        <span
+          className="toolbar__status-item toolbar__metric"
+          style={{ color: fiveHourColor(fiveHour.utilization) }}
+          data-tooltip={formatResetTime(fiveHour.resets_at) ?? undefined}
+          data-tooltip-no-flip
+        >
+          {Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span>
+        </span>
+      )}
+      {sevenDay != null && typeof sevenDay.utilization === 'number' && (
+        <span
+          className="toolbar__status-item toolbar__metric"
+          data-tooltip={formatResetTime(sevenDay.resets_at) ?? undefined}
+          data-tooltip-no-flip
+        >
+          {Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span>
+        </span>
+      )}
+      {extra != null && typeof extra.used_credits === 'number' && (
+        <span
+          className="toolbar__status-item toolbar__metric"
+          data-tooltip={extra.monthly_limit != null ? `Limit: ${formatCredits(extra.monthly_limit)}` : 'Limit: unlimited'}
+          data-tooltip-no-flip
+        >
+          {formatCredits(extra.used_credits)}
+        </span>
+      )}
     </span>
   )
 }

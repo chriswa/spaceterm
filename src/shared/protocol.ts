@@ -2,7 +2,10 @@ import { join } from 'path'
 import { homedir } from 'os'
 
 export const SOCKET_DIR = process.env.SPACETERM_HOME ?? join(homedir(), '.spaceterm')
-export const SOCKET_PATH = join(SOCKET_DIR, 'spaceterm.sock')
+/** Bidirectional socket for Electron client ↔ server communication. */
+export const SOCKET_PATH = join(SOCKET_DIR, 'bidirectional.sock')
+/** Ingest-only socket for fire-and-forget messages (hooks, status-line, MCP tools). */
+export const HOOKS_SOCKET_PATH = join(SOCKET_DIR, 'hooks.sock')
 export const HOOK_LOG_DIR = join(SOCKET_DIR, 'hook-logs')
 export const DECISION_LOG_DIR = join(SOCKET_DIR, 'decision-logs')
 
@@ -325,6 +328,14 @@ export interface CrabReorderMessage {
   order: string[]  // Node IDs in desired visual order
 }
 
+/** Fire-and-forget messages received on the hooks socket (no response sent). */
+export type IngestMessage =
+  | HookMessage
+  | StatusLineMessage
+  | EmitMarkdownMessage
+  | SpawnClaudeSurfaceMessage
+
+/** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
 export type ClientMessage =
   | CreateMessage
   | ListMessage
@@ -333,8 +344,6 @@ export type ClientMessage =
   | DestroyMessage
   | WriteMessage
   | ResizeMessage
-  | HookMessage
-  | StatusLineMessage
   | NodeSyncRequestMessage
   | NodeMoveMessage
   | NodeBatchMoveMessage
@@ -352,8 +361,6 @@ export type ClientMessage =
   | MarkdownContentMessage
   | MarkdownSetMaxWidthMessage
   | TerminalReincarnateMessage
-  | EmitMarkdownMessage
-  | SpawnClaudeSurfaceMessage
   | SetTerminalModeMessage
   | SetClaudeStatusUnreadMessage
   | DirectoryAddMessage
@@ -515,6 +522,13 @@ export interface ServerErrorMessage {
   message: string
 }
 
+export interface ClaudeUsageMessage {
+  type: 'claude-usage'
+  usage: import('../server/claude-usage').ClaudeUsageData
+  subscriptionType: string
+  rateLimitTier: string
+}
+
 export type ServerMessage =
   | CreatedMessage
   | ListedMessage
@@ -537,3 +551,4 @@ export type ServerMessage =
   | FileContentMessage
   | PlanCacheUpdateMessage
   | ServerErrorMessage
+  | ClaudeUsageMessage

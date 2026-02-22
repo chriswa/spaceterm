@@ -147,6 +147,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'claude-usage') {
+      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)

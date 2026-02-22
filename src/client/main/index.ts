@@ -436,6 +436,12 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('claude-usage', (usage: Record<string, unknown>, subscriptionType: string, rateLimitTier: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier)
+    }
+  })
+
   client!.on('connect', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('server:status', true)

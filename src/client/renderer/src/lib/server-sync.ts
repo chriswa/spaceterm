@@ -1,4 +1,5 @@
 import { useNodeStore } from '../stores/nodeStore'
+import { useUsageStore } from '../stores/usageStore'
 import type { NodeData } from '../../../../shared/state'
 
 /** Called before a node-updated patch is applied to the store. */
@@ -46,6 +47,12 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onFileContent((nodeId: string, content: string) => {
       useNodeStore.getState().applyFileContent(nodeId, content)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier) => {
+      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier)
     })
   )
 

@@ -5,7 +5,7 @@
 
 [ -z "$SPACETERM_SURFACE_ID" ] && exit 0
 
-SOCKET="${SPACETERM_HOME:-$HOME/.spaceterm}/spaceterm.sock"
+SOCKET="${SPACETERM_HOME:-$HOME/.spaceterm}/hooks.sock"
 FAILURE_LOG="${SPACETERM_HOME:-$HOME/.spaceterm}/hook-failures.log"
 
 INPUT=$(cat)

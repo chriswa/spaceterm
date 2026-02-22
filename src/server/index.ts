@@ -2,8 +2,8 @@ import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import { execFile } from 'child_process'
-import { SOCKET_DIR, SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
-import type { ClientMessage, ServerMessage, CreateOptions } from '../shared/protocol'
+import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ServerMessage, CreateOptions } from '../shared/protocol'
 import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
@@ -19,6 +19,7 @@ import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
+import { fetchClaudeUsage } from './claude-usage'
 import { parse as shellParse } from 'shell-quote'
 
 /**
@@ -134,6 +135,27 @@ function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, pr
   return { cwd, command: 'claude', args }
 }
 
+/**
+ * Walk backwards through a terminal's claude session history to find the most
+ * recent session whose JSONL file still exists on disk.  Returns `undefined`
+ * if no valid session can be found (or if cwd is missing so we can't check).
+ *
+ * Ghost session IDs accumulate when a previous revival starts Claude Code,
+ * Claude fires a SessionStart hook (registering a new session), but then
+ * crashes before writing the JSONL.  Without this check the revival enters a
+ * cascading failure: every restart picks the ghost and fails again.
+ */
+function findValidClaudeSession(history: Array<{ claudeSessionId: string }>, cwd: string | undefined): string | undefined {
+  if (!cwd || history.length === 0) {
+    return history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
+  }
+  for (let i = history.length - 1; i >= 0; i--) {
+    const id = history[i].claudeSessionId
+    if (fs.existsSync(sessionFilePath(cwd, id))) return id
+  }
+  return undefined
+}
+
 interface ClientConnection {
   socket: net.Socket
   attachedSessions: Set<string>
@@ -151,6 +173,15 @@ const restartRecovery = new Map<string, {
 }>()
 
 const clients = new Set<ClientConnection>()
+
+// --- Claude usage polling state ---
+const USAGE_POLL_TICK_MS = 15_000     // check conditions every 15s
+const USAGE_FETCH_COOLDOWN_MS = 5 * 60_000 // never fetch more than once per 5 minutes
+const USAGE_IDLE_TIMEOUT_MS = 5 * 60_000 // stop fetching after 5 min of no client commands
+let lastClientCommandAt = 0
+let lastUsageFetchAt = 0
+const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
+
 let sessionManager: SessionManager
 let stateManager: StateManager
 let snapshotManager: SnapshotManager
@@ -182,7 +213,124 @@ function broadcastToAll(msg: ServerMessage): void {
   })
 }
 
+/** Handle fire-and-forget messages from the hooks socket. No response is sent. */
+function handleIngestMessage(msg: IngestMessage): void {
+  switch (msg.type) {
+    case 'hook': {
+      const hookType =
+        msg.payload && typeof msg.payload === 'object' && 'hook_event_name' in msg.payload
+          ? String(msg.payload.hook_event_name)
+          : 'unknown'
+      const logEntry =
+        JSON.stringify({
+          timestamp: localISOTimestamp(),
+          hookType,
+          payload: msg.payload
+        }) + '\n'
+      const logPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
+      fs.appendFile(logPath, logEntry, (err) => {
+        if (err) console.error(`Failed to write hook log: ${err.message}`)
+      })
+
+      const hookTime = typeof msg.ts === 'number' ? msg.ts : Date.now()
+
+      // Delegate state transition logic to the state machine
+      claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
+
+      // Process SessionStart hooks for claude session history tracking
+      // (session lifecycle management stays here — not state machine concern)
+      if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
+        const claudeSessionId = 'session_id' in msg.payload ? String(msg.payload.session_id) : ''
+        const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
+        if (claudeSessionId) {
+          sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
+          const hookCwd = sessionManager.getCwd(msg.surfaceId)
+          if (hookCwd) {
+            sessionFileWatcher.watch(msg.surfaceId, claudeSessionId, hookCwd)
+          }
+        }
+      }
+      break
+    }
+
+    case 'emit-markdown': {
+      const parentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!parentNodeId) {
+        console.error(`[emit-markdown] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      const emPos = computePlacement(
+        stateManager.getState().nodes,
+        parentNodeId,
+        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT }
+      )
+      stateManager.createMarkdown(parentNodeId, emPos.x, emPos.y, msg.content)
+      break
+    }
+
+    case 'spawn-claude-surface': {
+      const spawnParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!spawnParentNodeId) {
+        console.error(`[spawn-claude-surface] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      try {
+        const spawnCwd = sessionManager.getCwd(msg.surfaceId)
+        const ancestorContext = gatherAncestorPrompt(stateManager.getState().nodes, spawnParentNodeId)
+        const fullPrompt = ancestorContext ? `${ancestorContext}\n${msg.prompt}` : msg.prompt
+        const spawnOptions = buildClaudeCodeCreateOptions(spawnCwd, undefined, fullPrompt)
+        const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
+        snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
+        const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, terminalPixelSize(spawnCols, spawnRows))
+        stateManager.createTerminal(spawnSessionId, spawnParentNodeId, spawnPos.x, spawnPos.y, spawnCols, spawnRows, spawnCwd, undefined, msg.title)
+        console.log(`[spawn-claude-surface] Created terminal "${msg.title}" parented to ${spawnParentNodeId.slice(0, 8)}`)
+      } catch (err: any) {
+        console.error(`[spawn-claude-surface] Failed: ${err.message}`)
+      }
+      break
+    }
+
+    case 'status-line': {
+      // Delegate state logic (stale timer reset, stuck recovery) to state machine
+      claudeStateMachine.handleStatusLine(msg.surfaceId)
+
+      const logEntry =
+        JSON.stringify({
+          timestamp: localISOTimestamp(),
+          type: 'status-line',
+          payload: msg.payload
+        }) + '\n'
+      const slLogPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
+      fs.appendFile(slLogPath, logEntry, (err) => {
+        if (err) console.error(`Failed to write status-line log: ${err.message}`)
+      })
+
+      // Extract context window usage and calculate remaining %
+      const cw = msg.payload?.context_window as Record<string, unknown> | undefined
+      if (cw) {
+        const usage = cw.current_usage as Record<string, number> | undefined
+        const contextWindowSize = cw.context_window_size as number | undefined
+        if (usage && contextWindowSize) {
+          const totalTokens = (usage.input_tokens || 0) + (usage.output_tokens || 0)
+            + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0)
+          const effectiveSize = contextWindowSize - CLAUDE_AUTOCOMPACT_BUFFER_TOKENS
+          const remainingPercent = (1 - totalTokens / effectiveSize) * 100
+          sessionManager.setClaudeContextPercent(msg.surfaceId, remainingPercent)
+        }
+      }
+
+      // Extract model display name
+      const model = msg.payload?.model as { display_name?: string } | undefined
+      if (model?.display_name) {
+        stateManager.updateClaudeModel(msg.surfaceId, model.display_name)
+      }
+      break
+    }
+  }
+}
+
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
+  lastClientCommandAt = Date.now()
   switch (msg.type) {
     case 'create': {
       const { sessionId, cols, rows } = sessionManager.create(msg.options)
@@ -262,123 +410,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'hook': {
-      const hookType =
-        msg.payload && typeof msg.payload === 'object' && 'hook_event_name' in msg.payload
-          ? String(msg.payload.hook_event_name)
-          : 'unknown'
-      const logEntry =
-        JSON.stringify({
-          timestamp: localISOTimestamp(),
-          hookType,
-          payload: msg.payload
-        }) + '\n'
-      const logPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
-      fs.appendFile(logPath, logEntry, (err) => {
-        if (err) {
-          console.error(`Failed to write hook log: ${err.message}`)
-          send(client.socket, { type: 'server-error', message: `Failed to write hook log: ${err.message}` })
-        }
-      })
-
-      const hookTime = typeof msg.ts === 'number' ? msg.ts : Date.now()
-
-      // Delegate state transition logic to the state machine
-      claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
-
-      // Process SessionStart hooks for claude session history tracking
-      // (session lifecycle management stays here — not state machine concern)
-      if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
-        const claudeSessionId = 'session_id' in msg.payload ? String(msg.payload.session_id) : ''
-        const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
-        if (claudeSessionId) {
-          sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
-          const hookCwd = sessionManager.getCwd(msg.surfaceId)
-          if (hookCwd) {
-            sessionFileWatcher.watch(msg.surfaceId, claudeSessionId, hookCwd)
-          }
-        }
-      }
-      break
-    }
-
-    case 'emit-markdown': {
-      const parentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
-      if (!parentNodeId) {
-        console.error(`[emit-markdown] Unknown surfaceId: ${msg.surfaceId}`)
-        break
-      }
-      const emPos = computePlacement(
-        stateManager.getState().nodes,
-        parentNodeId,
-        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT }
-      )
-      stateManager.createMarkdown(parentNodeId, emPos.x, emPos.y, msg.content)
-      break
-    }
-
-    case 'spawn-claude-surface': {
-      const spawnParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
-      if (!spawnParentNodeId) {
-        console.error(`[spawn-claude-surface] Unknown surfaceId: ${msg.surfaceId}`)
-        break
-      }
-      try {
-        const spawnCwd = sessionManager.getCwd(msg.surfaceId)
-        const ancestorContext = gatherAncestorPrompt(stateManager.getState().nodes, spawnParentNodeId)
-        const fullPrompt = ancestorContext ? `${ancestorContext}\n${msg.prompt}` : msg.prompt
-        const spawnOptions = buildClaudeCodeCreateOptions(spawnCwd, undefined, fullPrompt)
-        const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
-        snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
-        const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, terminalPixelSize(spawnCols, spawnRows))
-        stateManager.createTerminal(spawnSessionId, spawnParentNodeId, spawnPos.x, spawnPos.y, spawnCols, spawnRows, spawnCwd, undefined, msg.title)
-        console.log(`[spawn-claude-surface] Created terminal "${msg.title}" parented to ${spawnParentNodeId.slice(0, 8)}`)
-      } catch (err: any) {
-        console.error(`[spawn-claude-surface] Failed: ${err.message}`)
-      }
-      break
-    }
-
-    case 'status-line': {
-      // Delegate state logic (stale timer reset, stuck recovery) to state machine
-      claudeStateMachine.handleStatusLine(msg.surfaceId)
-
-      const logEntry =
-        JSON.stringify({
-          timestamp: localISOTimestamp(),
-          type: 'status-line',
-          payload: msg.payload
-        }) + '\n'
-      const slLogPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
-      fs.appendFile(slLogPath, logEntry, (err) => {
-        if (err) {
-          console.error(`Failed to write status-line log: ${err.message}`)
-          send(client.socket, { type: 'server-error', message: `Failed to write status-line log: ${err.message}` })
-        }
-      })
-
-      // Extract context window usage and calculate remaining %
-      const cw = msg.payload?.context_window as Record<string, unknown> | undefined
-      if (cw) {
-        const usage = cw.current_usage as Record<string, number> | undefined
-        const contextWindowSize = cw.context_window_size as number | undefined
-        if (usage && contextWindowSize) {
-          const totalTokens = (usage.input_tokens || 0) + (usage.output_tokens || 0)
-            + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0)
-          const effectiveSize = contextWindowSize - CLAUDE_AUTOCOMPACT_BUFFER_TOKENS
-          const remainingPercent = (1 - totalTokens / effectiveSize) * 100
-          sessionManager.setClaudeContextPercent(msg.surfaceId, remainingPercent)
-        }
-      }
-
-      // Extract model display name
-      const model = msg.payload?.model as { display_name?: string } | undefined
-      if (model?.display_name) {
-        stateManager.updateClaudeModel(msg.surfaceId, model.display_name)
-      }
-      break
-    }
-
     // --- Node state mutation messages ---
 
     case 'node-sync-request': {
@@ -455,10 +486,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const restoredNode = stateManager.getNode(msg.archivedNodeId)
       if (restoredNode && restoredNode.type === 'terminal') {
         const history = restoredNode.claudeSessionHistory ?? []
-        const latestClaudeId = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
-        if (latestClaudeId) {
+        const validClaudeId = findValidClaudeSession(history, restoredNode.cwd)
+        if (validClaudeId) {
           try {
-            const restoreOptions = buildClaudeCodeCreateOptions(restoredNode.cwd, latestClaudeId, undefined, undefined, parseExtraCliArgs(restoredNode.extraCliArgs))
+            const restoreOptions = buildClaudeCodeCreateOptions(restoredNode.cwd, validClaudeId, undefined, undefined, parseExtraCliArgs(restoredNode.extraCliArgs))
             const { sessionId: newPtyId, cols, rows } = sessionManager.create(restoreOptions)
             snapshotManager.addSession(newPtyId, cols, rows)
             if (restoredNode.shellTitleHistory?.length) {
@@ -467,14 +498,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
             stateManager.reincarnateTerminal(msg.archivedNodeId, newPtyId, cols, rows)
             client.attachedSessions.add(newPtyId)
             send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols, rows })
-            console.log(`[unarchive] Reincarnated terminal ${msg.archivedNodeId.slice(0, 8)} with Claude session ${latestClaudeId.slice(0, 8)}`)
+            console.log(`[unarchive] Reincarnated terminal ${msg.archivedNodeId.slice(0, 8)} with Claude session ${validClaudeId.slice(0, 8)}`)
           } catch (err: any) {
             console.error(`[unarchive] Failed to reincarnate terminal ${msg.archivedNodeId.slice(0, 8)}: ${err.message}`)
             stateManager.archiveTerminal(msg.archivedNodeId)
             send(client.socket, { type: 'mutation-ack', seq: msg.seq })
           }
         } else {
-          // No Claude session — archive it back
+          // No valid Claude session — archive it back
           stateManager.archiveTerminal(msg.archivedNodeId)
           send(client.socket, { type: 'mutation-ack', seq: msg.seq })
         }
@@ -902,9 +933,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           c.snapshotSessions.delete(oldSessionId)
         })
 
-        // Get latest Claude session ID for resume
+        // Get latest valid Claude session ID for resume
         const restartHistory = restartNode.claudeSessionHistory ?? []
-        const restartClaudeId = restartHistory.length > 0 ? restartHistory[restartHistory.length - 1].claudeSessionId : undefined
+        const restartClaudeId = findValidClaudeSession(restartHistory, restartCwd)
 
         // Build new PTY with (potentially new) extra args
         const extraArgs = parseExtraCliArgs(msg.extraCliArgs)
@@ -944,6 +975,27 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   }
 }
 
+/**
+ * Probe a Unix socket file and remove it if stale. If the socket is alive and
+ * `exitIfAlive` is set, another server is running — exit immediately.
+ * For secondary sockets (hooks.sock) we just unlink stale files without the
+ * alive-check exit since the bidirectional socket probe is the authority.
+ */
+async function cleanStaleSocket(socketPath: string, exitIfAlive: boolean): Promise<void> {
+  if (!fs.existsSync(socketPath)) return
+  const isAlive = await new Promise<boolean>((resolve) => {
+    const probe = net.createConnection(socketPath)
+    const timer = setTimeout(() => { probe.destroy(); resolve(false) }, 1000)
+    probe.on('connect', () => { clearTimeout(timer); probe.destroy(); resolve(true) })
+    probe.on('error', () => { clearTimeout(timer); resolve(false) })
+  })
+  if (isAlive && exitIfAlive) {
+    console.error(`Another spaceterm server is already listening on ${socketPath}. Exiting.`)
+    process.exit(1)
+  }
+  try { fs.unlinkSync(socketPath) } catch { /* stale file already gone */ }
+}
+
 async function startServer(): Promise<void> {
   // Write shell integration scripts (OSC 7 hooks for CWD reporting)
   setupShellIntegration()
@@ -952,24 +1004,13 @@ async function startServer(): Promise<void> {
   fs.mkdirSync(SOCKET_DIR, { recursive: true })
   fs.mkdirSync(HOOK_LOG_DIR, { recursive: true })
 
-  // Remove stale socket file — but first check if another server is alive on it.
+  // Remove stale socket files — but first check if another server is alive.
   // If we blindly unlink, we'd steal the socket from a running server: the running
   // server's FD stays open (existing connections work) but new connections (hooks
   // from freshly spawned Claude terminals) can't reach it, silently breaking
   // Claude surface detection.
-  if (fs.existsSync(SOCKET_PATH)) {
-    const isAlive = await new Promise<boolean>((resolve) => {
-      const probe = net.createConnection(SOCKET_PATH)
-      const timer = setTimeout(() => { probe.destroy(); resolve(false) }, 1000)
-      probe.on('connect', () => { clearTimeout(timer); probe.destroy(); resolve(true) })
-      probe.on('error', () => { clearTimeout(timer); resolve(false) })
-    })
-    if (isAlive) {
-      console.error(`Another spaceterm server is already listening on ${SOCKET_PATH}. Exiting.`)
-      process.exit(1)
-    }
-    try { fs.unlinkSync(SOCKET_PATH) } catch { /* stale file already gone */ }
-  }
+  await cleanStaleSocket(SOCKET_PATH, true)
+  await cleanStaleSocket(HOOKS_SOCKET_PATH, false)
 
   // Initialize StateManager — broadcasts node changes to all clients
   stateManager = new StateManager(
@@ -1029,7 +1070,7 @@ async function startServer(): Promise<void> {
             try {
               const recoveryCwd = recoveryNode.cwd
               const recoveryHistory = recoveryNode.claudeSessionHistory ?? []
-              const recoveryClaudeId = recoveryHistory.length > 0 ? recoveryHistory[recoveryHistory.length - 1].claudeSessionId : undefined
+              const recoveryClaudeId = findValidClaudeSession(recoveryHistory, recoveryCwd)
               const recoveryArgs = parseExtraCliArgs(recovery.previousExtraCliArgs)
               const recoveryOptions = buildClaudeCodeCreateOptions(recoveryCwd, recoveryClaudeId, undefined, undefined, recoveryArgs)
               const { sessionId: recoveryPtyId, cols: recoveryCols, rows: recoveryRows } = sessionManager.create(recoveryOptions)
@@ -1186,9 +1227,22 @@ async function startServer(): Promise<void> {
   const revivedNodeIds: string[] = []
   for (const { nodeId, claudeSessionId, cwd, extraCliArgs } of deadTerminals) {
     if (claudeSessionId) {
+      const node = stateManager.getNode(nodeId)
+      const history = (node?.type === 'terminal' && node.claudeSessionHistory) || []
+      const validSessionId = findValidClaudeSession(history, cwd)
+
+      if (!validSessionId) {
+        console.log(`[startup] No valid Claude session JSONL found for terminal ${nodeId.slice(0, 8)}, archiving`)
+        stateManager.archiveTerminal(nodeId)
+        continue
+      }
+      if (validSessionId !== claudeSessionId) {
+        console.log(`[startup] Session ${claudeSessionId.slice(0, 8)} has no JSONL, falling back to ${validSessionId.slice(0, 8)}`)
+      }
+
       try {
         stateManager.markReviving(nodeId)
-        const reviveOptions = buildClaudeCodeCreateOptions(cwd, claudeSessionId, undefined, undefined, parseExtraCliArgs(extraCliArgs))
+        const reviveOptions = buildClaudeCodeCreateOptions(cwd, validSessionId, undefined, undefined, parseExtraCliArgs(extraCliArgs))
         const { sessionId, cols, rows } = sessionManager.create(reviveOptions)
         snapshotManager.addSession(sessionId, cols, rows)
         const revivingNode = stateManager.getNode(nodeId)
@@ -1198,10 +1252,10 @@ async function startServer(): Promise<void> {
         stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
         const revivalCwd = sessionManager.getCwd(sessionId)
         if (revivalCwd) {
-          sessionFileWatcher.watch(sessionId, claudeSessionId, revivalCwd)
+          sessionFileWatcher.watch(sessionId, validSessionId, revivalCwd)
         }
         revivedNodeIds.push(nodeId)
-        console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with Claude session ${claudeSessionId.slice(0, 8)}`)
+        console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with Claude session ${validSessionId.slice(0, 8)}`)
       } catch (err: any) {
         stateManager.clearReviving(nodeId)
         console.error(`[startup] Failed to revive terminal ${nodeId.slice(0, 8)}: ${err.message}`)
@@ -1229,6 +1283,37 @@ async function startServer(): Promise<void> {
     (nodeId, gitStatus) => stateManager.updateDirectoryGitStatus(nodeId, gitStatus)
   )
 
+  // --- Claude usage polling ---
+  let usageLogDirReady = false
+  setInterval(async () => {
+    const now = Date.now()
+    if (now - lastClientCommandAt > USAGE_IDLE_TIMEOUT_MS) return
+    if (now - lastUsageFetchAt < USAGE_FETCH_COOLDOWN_MS) return
+    lastUsageFetchAt = now
+    try {
+      const { usage, subscriptionType, rateLimitTier } = await fetchClaudeUsage()
+      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier })
+
+      // Log usage data with flat dot-notation keys
+      if (!usageLogDirReady) {
+        fs.mkdirSync(USAGE_LOG_DIR, { recursive: true })
+        usageLogDirReady = true
+      }
+      const logEntry: Record<string, string | number | boolean | null> = {
+        timestamp: new Date(now).toISOString(),
+      }
+      if (usage.five_hour) logEntry['five_hour.utilization'] = usage.five_hour.utilization
+      if (usage.seven_day) logEntry['seven_day.utilization'] = usage.seven_day.utilization
+      if (usage.extra_usage) logEntry['extra_usage.used_credits'] = usage.extra_usage.used_credits
+      const logFile = path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`)
+      fs.appendFile(logFile, JSON.stringify(logEntry) + '\n', (err) => {
+        if (err) console.error(`Failed to write usage log: ${err.message}`)
+      })
+    } catch (err: any) {
+      console.error(`[claude-usage] Fetch failed: ${err.message}`)
+    }
+  }, USAGE_POLL_TICK_MS)
+
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes
   for (const node of Object.values(allStartupNodes)) {
@@ -1243,6 +1328,7 @@ async function startServer(): Promise<void> {
     }
   }
 
+  // --- Bidirectional socket (Electron client ↔ server) ---
   const server = net.createServer((socket) => {
     socket.setEncoding('utf8')
 
@@ -1274,11 +1360,34 @@ async function startServer(): Promise<void> {
   })
 
   server.listen(SOCKET_PATH, () => {
-    console.log(`Terminal server listening on ${SOCKET_PATH}`)
+    console.log(`Bidirectional server listening on ${SOCKET_PATH}`)
   })
 
   server.on('error', (err) => {
     console.error('Server error:', err)
+    process.exit(1)
+  })
+
+  // --- Hooks socket (fire-and-forget ingest from hooks, status-line, MCP tools) ---
+  const hooksServer = net.createServer((socket) => {
+    socket.setEncoding('utf8')
+
+    const parser = new LineParser((msg) => {
+      handleIngestMessage(msg as IngestMessage)
+    })
+
+    socket.on('data', (data) => parser.feed(data as string))
+    socket.on('error', (err) => {
+      console.error('Hooks socket error:', err.message)
+    })
+  })
+
+  hooksServer.listen(HOOKS_SOCKET_PATH, () => {
+    console.log(`Hooks server listening on ${HOOKS_SOCKET_PATH}`)
+  })
+
+  hooksServer.on('error', (err) => {
+    console.error('Hooks server error:', err)
     process.exit(1)
   })
 
@@ -1296,25 +1405,23 @@ async function startServer(): Promise<void> {
     stateManager.persistImmediate()
     sessionManager.destroyAll()
     server.close()
-    try {
-      fs.unlinkSync(SOCKET_PATH)
-    } catch {
-      // ignore
-    }
+    hooksServer.close()
+    try { fs.unlinkSync(SOCKET_PATH) } catch { /* ignore */ }
+    try { fs.unlinkSync(HOOKS_SOCKET_PATH) } catch { /* ignore */ }
     process.exit(0)
   }
 
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
 
-  // Socket watchdog — detect if our socket file disappears (e.g. another server
-  // stole it, accidental rm). Without the file on disk, hook-handler.sh can't
+  // Socket watchdog — detect if our socket files disappear (e.g. another server
+  // stole them, accidental rm). Without the files on disk, hook-handler.sh can't
   // deliver hooks via `nc -U`, silently breaking Claude surface detection.
-  // Die immediately so the user (or concurrently) can restart cleanly.
+  // Die immediately so the user (or a process manager) can restart cleanly.
   const SOCKET_WATCHDOG_INTERVAL_MS = 5_000
   socketWatchdog = setInterval(() => {
-    if (!fs.existsSync(SOCKET_PATH)) {
-      console.error(`Socket file ${SOCKET_PATH} disappeared — another server may have taken over. Shutting down.`)
+    if (!fs.existsSync(SOCKET_PATH) || !fs.existsSync(HOOKS_SOCKET_PATH)) {
+      console.error('Socket file disappeared — another server may have taken over. Shutting down.')
       shutdown()
     }
   }, SOCKET_WATCHDOG_INTERVAL_MS)

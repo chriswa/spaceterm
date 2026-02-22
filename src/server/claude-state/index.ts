@@ -308,6 +308,15 @@ export class ClaudeStateMachine {
         // ── Human-typed message (string content) → working ──
         // The user typed something, Claude will process it.
         if (typeof msg.content === 'string') {
+          // Skip local command entries — these are slash commands (/login,
+          // /plugin) and inline bash that run without invoking the LLM.
+          // Claude Code writes them as type:"user" (inconsistently — /mcp and
+          // /usage use type:"system"), but they're identifiable by XML tags.
+          // They must be invisible to the state machine: if Claude was stopped
+          // it stays stopped, if working it stays working.
+          if (/^<(?:command-name|bash-input|local-command-(?:stdout|stderr|caveat)|bash-std(?:out|err))>/.test(msg.content)) {
+            continue
+          }
           this.transitionQueue.enqueue(surfaceId, 'working', 'jsonl', 'jsonl:user:string', entryTime)
           continue
         }

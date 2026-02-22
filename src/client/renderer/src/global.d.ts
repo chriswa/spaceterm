@@ -76,6 +76,7 @@ interface NodeApi {
   onAdded(callback: (node: import('../../../shared/state').NodeData) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
+  onClaudeUsage(callback: (usage: import('../../../server/claude-usage').ClaudeUsageData, subscriptionType: string, rateLimitTier: string) => void): () => void
 }
 
 interface TtsApi {
