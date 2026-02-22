@@ -86,6 +86,8 @@ interface DirectoryCardProps {
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: string) => void
+  onPostSync?: (id: string) => void
+  onWtSpawn?: (id: string, branchName: string) => void
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
@@ -96,7 +98,7 @@ export function DirectoryCard({
   id, x, y, zIndex, zoom, cwd, gitStatus, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
+  onDragStart, onDragEnd, onPostSync, onWtSpawn, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: DirectoryCardProps) {
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
@@ -297,6 +299,8 @@ export function DirectoryCard({
       onArchiveDelete={onArchiveDelete}
       onArchiveToggled={onArchiveToggled}
       onMouseDown={handleMouseDown}
+      onPostSync={onPostSync}
+      onWtSpawn={onWtSpawn}
       onStartReparent={onStartReparent}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}

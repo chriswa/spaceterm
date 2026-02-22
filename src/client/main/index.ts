@@ -244,6 +244,12 @@ function setupIPC(): void {
     await client!.directoryGitFetch(nodeId)
   })
 
+  ipcMain.handle('node:directory-wt-spawn', async (_event, nodeId: string, branchName: string) => {
+    const resp = await client!.directoryWtSpawn(nodeId, branchName)
+    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
+    throw new Error('wt-spawn failed')
+  })
+
   ipcMain.handle('node:validate-directory', async (_event, path: string) => {
     const resp = await client!.validateDirectory(path)
     if (resp.type === 'validate-directory-result') return { valid: resp.valid, error: resp.error }

@@ -77,4 +77,9 @@ export const CAMERA_SETTLE_DELAY = 150
 // Fly-to animation scaling: duration grows linearly with canvas-space distance
 export const FLY_TO_BASE_DURATION = 300
 export const FLY_TO_HALF_RANGE = 9000
-export const FLY_TO_MAX_DURATION = 2000
+export const FLY_TO_MAX_DURATION = 800
+
+// Parabolic zoom arc: controls how much the camera zooms out during hopFlyTo.
+// The arc operates in log-height space (h = -ln(z)) so zoom changes are multiplicative.
+export const FLY_TO_ZOOM_HALF_RANGE = 25000  // canvas px where arc reaches half of max
+export const FLY_TO_ZOOM_MAX_ARC = 4.605     // -ln(0.01), asymptotic zoom floor ~1%

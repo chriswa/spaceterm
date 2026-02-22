@@ -572,7 +572,7 @@ function BeatIndicators() {
   )
 }
 
-function formatResetTime(isoString: string): string | null {
+function formatResetTime(label: string, isoString: string): string | null {
   try {
     const d = new Date(isoString)
     if (isNaN(d.getTime())) return null
@@ -582,9 +582,9 @@ function formatResetTime(isoString: string): string | null {
     const hour = d.toLocaleTimeString(undefined, { hour: 'numeric' })
     const now = new Date()
     const diffDays = Math.round((d.getTime() - now.getTime()) / 86_400_000)
-    if (diffDays <= 0) return `Resets at ${hour}`
+    if (diffDays <= 0) return `${label} resets at ${hour}`
     const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    return `Resets ${dateStr} at ${hour}`
+    return `${label} resets ${dateStr} at ${hour}`
   } catch {
     return null
   }
@@ -592,6 +592,28 @@ function formatResetTime(isoString: string): string | null {
 
 function formatCredits(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
+}
+
+const FIVE_HOUR_MS = 5 * 60 * 60 * 1000
+/** Minimum elapsed time before showing a projection (avoids wild swings early). */
+const PROJECTION_MIN_ELAPSED_MS = 10 * 60 * 1000
+
+/** Project current 5-hour utilization to end-of-window, or null if not enough
+ *  data (too early in the window, zero usage, or window already expired). */
+function projectFiveHourUsage(utilization: number, resetsAt: string): number | null {
+  try {
+    const resetMs = new Date(resetsAt).getTime()
+    if (isNaN(resetMs)) return null
+    const now = Date.now()
+    const remainingMs = resetMs - now
+    if (remainingMs <= 0) return null                   // window expired
+    const elapsedMs = FIVE_HOUR_MS - remainingMs
+    if (elapsedMs < PROJECTION_MIN_ELAPSED_MS) return null // too early
+    if (utilization <= 0) return null                    // nothing to project
+    return utilization * (FIVE_HOUR_MS / elapsedMs)
+  } catch {
+    return null
+  }
 }
 
 /** Color for the 5-hour utilization indicator.
@@ -623,6 +645,9 @@ function UsageIndicators() {
   const fiveHour = usage.five_hour
   const sevenDay = usage.seven_day
   const extra = usage.extra_usage
+  const projected = fiveHour != null && typeof fiveHour.utilization === 'number'
+    ? projectFiveHourUsage(fiveHour.utilization, fiveHour.resets_at)
+    : null
 
   return (
     <span className="toolbar__usage">
@@ -631,16 +656,21 @@ function UsageIndicators() {
         <span
           className="toolbar__status-item toolbar__metric"
           style={{ color: fiveHourColor(fiveHour.utilization) }}
-          data-tooltip={formatResetTime(fiveHour.resets_at) ?? undefined}
+          data-tooltip={formatResetTime('5-hour usage', fiveHour.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
           {Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span>
+          {projected != null && (
+            <span style={{ color: '#888' }} data-tooltip="5-hour usage linear extrapolation">
+              {' '}({Math.round(projected)}<span className="toolbar__metric-label">%</span>)
+            </span>
+          )}
         </span>
       )}
       {sevenDay != null && typeof sevenDay.utilization === 'number' && (
         <span
           className="toolbar__status-item toolbar__metric"
-          data-tooltip={formatResetTime(sevenDay.resets_at) ?? undefined}
+          data-tooltip={formatResetTime('7-day usage', sevenDay.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
           {Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span>

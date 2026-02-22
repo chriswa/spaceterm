@@ -118,6 +118,7 @@ interface NodeApi {
   directoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>
   directoryGitFetch(nodeId: string): Promise<void>
+  directoryWtSpawn(nodeId: string, branchName: string): Promise<{ nodeId: string }>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
   fileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<{ nodeId: string }>
   filePath(nodeId: string, filePath: string): Promise<void>
@@ -155,6 +156,7 @@ const nodeApi: NodeApi = {
   directoryAdd: (parentId, cwd, x?, y?) => ipcRenderer.invoke('node:directory-add', parentId, cwd, x, y),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
   directoryGitFetch: (nodeId) => ipcRenderer.invoke('node:directory-git-fetch', nodeId),
+  directoryWtSpawn: (nodeId, branchName) => ipcRenderer.invoke('node:directory-wt-spawn', nodeId, branchName),
   validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
   fileAdd: (parentId, filePath, x?, y?) => ipcRenderer.invoke('node:file-add', parentId, filePath, x, y),
   filePath: (nodeId, filePath) => ipcRenderer.invoke('node:file-path', nodeId, filePath),

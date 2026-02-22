@@ -1,8 +1,0 @@
-- Apples
-- Oranges
-- Mangoes
-- Papayas
-- Dragonfruit
-- Lychee
-- Guava
-- Persimmon

@@ -7,8 +7,10 @@ import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
 import { ExtraCliArgsBody } from './ExtraCliArgsBody'
+import { WtSpawnBody } from './WtSpawnBody'
 import { AlertsBody } from './AlertsBody'
 import { useNodeAlerts } from '../lib/node-alerts'
+import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import foodIcon from '../assets/food.svg'
 
 export interface NodeActionBarProps {
@@ -31,6 +33,8 @@ export interface NodeActionBarProps {
   onArchiveToggled: (nodeId: string, open: boolean) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
+  onPostSync?: (id: string) => void
+  onWtSpawn?: (id: string, branchName: string) => void
   onStartReparent?: (id: string) => void
   isReparenting?: boolean
   onAddNode?: (parentNodeId: string, type: AddNodeType) => void
@@ -52,6 +56,7 @@ export function NodeActionBar({
   onDiffPlans, showColorPicker, onColorChange,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   archivedChildren, onArchiveToggled, onUnarchive, onArchiveDelete,
+  onPostSync, onWtSpawn,
   onStartReparent, isReparenting,
   onAddNode, showClose, onClose,
   variant = 'card',
@@ -74,6 +79,9 @@ export function NodeActionBar({
   const [cliArgsOpen, setCliArgsOpen] = useState(false)
   const cliArgsBtnRef = useRef<HTMLButtonElement>(null)
   const cliArgsBodyRef = useRef<HTMLDivElement>(null)
+  const [wtSpawnOpen, setWtSpawnOpen] = useState(false)
+  const wtSpawnBtnRef = useRef<HTMLButtonElement>(null)
+  const wtSpawnBodyRef = useRef<HTMLDivElement>(null)
   const [alertsOpen, setAlertsOpen] = useState(false)
   const alertsBtnRef = useRef<HTMLButtonElement>(null)
   const alertsBodyRef = useRef<HTMLDivElement>(null)
@@ -108,9 +116,10 @@ export function NodeActionBar({
       if (sessionsOpen) setSessionsOpen(false)
       if (addNodeOpen) setAddNodeOpen(false)
       if (cliArgsOpen) setCliArgsOpen(false)
+      if (wtSpawnOpen) setWtSpawnOpen(false)
       if (alertsOpen) setAlertsOpen(false)
     }
-  }, [focused, archiveOpen, sessionsOpen, addNodeOpen, cliArgsOpen, alertsOpen, variant])
+  }, [focused, archiveOpen, sessionsOpen, addNodeOpen, cliArgsOpen, wtSpawnOpen, alertsOpen, variant])
 
   // Dismiss archive on outside click
   useEffect(() => {
@@ -179,6 +188,19 @@ export function NodeActionBar({
     return () => document.removeEventListener('mousedown', handler, { capture: true })
   }, [alertsOpen])
 
+  // Dismiss wt-spawn popup on outside click
+  useEffect(() => {
+    if (!wtSpawnOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (wtSpawnBodyRef.current?.contains(target)) return
+      if (wtSpawnBtnRef.current?.contains(target)) return
+      setWtSpawnOpen(false)
+    }
+    document.addEventListener('mousedown', handler, { capture: true })
+    return () => document.removeEventListener('mousedown', handler, { capture: true })
+  }, [wtSpawnOpen])
+
   // Close color picker on outside click
   useEffect(() => {
     if (!pickerOpen) return
@@ -196,6 +218,7 @@ export function NodeActionBar({
     setSessionsOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
+    setWtSpawnOpen(false)
     setAlertsOpen(prev => !prev)
   }, [])
 
@@ -203,6 +226,7 @@ export function NodeActionBar({
     setSessionsOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
+    setWtSpawnOpen(false)
     setAlertsOpen(false)
     setArchiveOpen(prev => {
       const next = !prev
@@ -215,6 +239,7 @@ export function NodeActionBar({
     setArchiveOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
+    setWtSpawnOpen(false)
     setAlertsOpen(false)
     setSessionsOpen(prev => {
       const next = !prev
@@ -227,6 +252,7 @@ export function NodeActionBar({
     setArchiveOpen(false)
     setSessionsOpen(false)
     setCliArgsOpen(false)
+    setWtSpawnOpen(false)
     setAlertsOpen(false)
     setAddNodeOpen(prev => !prev)
   }, [])
@@ -235,8 +261,18 @@ export function NodeActionBar({
     setArchiveOpen(false)
     setSessionsOpen(false)
     setAddNodeOpen(false)
+    setWtSpawnOpen(false)
     setAlertsOpen(false)
     setCliArgsOpen(prev => !prev)
+  }, [])
+
+  const toggleWtSpawn = useCallback(() => {
+    setArchiveOpen(false)
+    setSessionsOpen(false)
+    setAddNodeOpen(false)
+    setCliArgsOpen(false)
+    setAlertsOpen(false)
+    setWtSpawnOpen(prev => !prev)
   }, [])
 
   const handleAddNodeSelect = useCallback((type: AddNodeType) => {
@@ -250,6 +286,12 @@ export function NodeActionBar({
     onExtraCliArgs?.(nodeId, args)
     onActionInvoked?.()
   }, [nodeId, onExtraCliArgs, onActionInvoked])
+
+  const handleWtSpawnSubmit = useCallback((branchName: string) => {
+    setWtSpawnOpen(false)
+    onWtSpawn?.(nodeId, branchName)
+    onActionInvoked?.()
+  }, [nodeId, onWtSpawn, onActionInvoked])
 
   // Popups position absolute relative to .node-titlebar__actions (which has position: relative via CSS).
   // top: 100% drops them below the buttons row.
@@ -270,6 +312,36 @@ export function NodeActionBar({
             <path d="M8 1.5 L14.5 13 L1.5 13 Z" />
             <line x1="8" y1="6" x2="8" y2="9.5" />
             <circle cx="8" cy="11.5" r="0.5" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      )}
+      {onPostSync && (
+        <button
+          className="node-titlebar__postsync-btn"
+          data-tooltip="Post-sync"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onPostSync(nodeId); onActionInvoked?.() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="7" cy="7" r="5.5" />
+            <line x1="7" y1="7" x2="7" y2="4" />
+            <line x1="7" y1="7" x2="9.5" y2="8.5" />
+          </svg>
+        </button>
+      )}
+      {onWtSpawn && (
+        <button
+          ref={wtSpawnBtnRef}
+          className="node-titlebar__wtspawn-btn"
+          data-tooltip="Create Worktree"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); toggleWtSpawn() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="7,1 11,6 9.5,6 12,11 2,11 4.5,6 3,6" fill="currentColor" stroke="none" />
+            <line x1="7" y1="11" x2="7" y2="13.5" />
           </svg>
         </button>
       )}
@@ -470,6 +542,11 @@ export function NodeActionBar({
       {alertsOpen && alerts.length > 0 && (
         <div className="card-shell__alerts-body" style={popupStyle} ref={alertsBodyRef}>
           <AlertsBody alerts={alerts} />
+        </div>
+      )}
+      {wtSpawnOpen && onWtSpawn && (
+        <div className={`card-shell__wt-spawn-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}`} style={popupStyle} ref={wtSpawnBodyRef}>
+          <WtSpawnBody onSubmit={handleWtSpawnSubmit} />
         </div>
       )}
     </div>

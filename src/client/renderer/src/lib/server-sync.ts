@@ -128,6 +128,10 @@ export async function sendDirectoryCwd(nodeId: string, cwd: string): Promise<voi
   await window.api.node.directoryCwd(nodeId, cwd)
 }
 
+export async function sendDirectoryWtSpawn(nodeId: string, branchName: string): Promise<{ nodeId: string }> {
+  return window.api.node.directoryWtSpawn(nodeId, branchName)
+}
+
 export async function sendFileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<{ nodeId: string }> {
   return window.api.node.fileAdd(parentId, filePath, x, y)
 }

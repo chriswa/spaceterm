@@ -41,6 +41,8 @@ interface CardShellProps {
   onFork?: (id: string) => void
   onDiffPlans?: () => void
   isReparenting?: boolean
+  onPostSync?: (id: string) => void
+  onWtSpawn?: (id: string, branchName: string) => void
   onAddNode?: (parentNodeId: string, type: AddNodeType) => void
   onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
   extraCliArgs?: string
@@ -60,7 +62,7 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onShipIt, onFork, onDiffPlans, isReparenting,
-  onAddNode, onExtraCliArgs, extraCliArgs,
+  onPostSync, onWtSpawn, onAddNode, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
 
@@ -71,6 +73,7 @@ export function CardShell({
     onDiffPlans, showColorPicker, onColorChange,
     pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
     archivedChildren, onArchiveToggled, onUnarchive, onArchiveDelete,
+    onPostSync, onWtSpawn,
     onStartReparent, isReparenting,
     onAddNode, showClose, onClose,
   }

@@ -206,6 +206,32 @@ export function clampZoomArc(startZ: number, endZ: number, rawArc: number, floor
   return rawArc * lo
 }
 
+/**
+ * Clamp a parabolic arc in log-height space so that z(t) = exp(-h(t))
+ * never dips below `minZoom`. The height curve is:
+ *   h(t) = hSrc + (hTgt-hSrc)*t + arc*4*t*(1-t)
+ * Returns the (possibly reduced) arc.
+ */
+export function clampHeightArc(hSrc: number, hTgt: number, rawArc: number, minZoom: number): number {
+  if (rawArc <= 0) return rawArc
+  const hCeiling = -Math.log(minZoom)
+
+  function peakH(arc: number): number {
+    const dh = hTgt - hSrc
+    const tPeak = Math.max(0, Math.min(1, 0.5 + dh / (8 * arc)))
+    return hSrc + dh * tPeak + arc * 4 * tPeak * (1 - tPeak)
+  }
+
+  if (peakH(rawArc) <= hCeiling) return rawArc
+
+  let lo = 0, hi = rawArc
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2
+    if (peakH(mid) > hCeiling) hi = mid; else lo = mid
+  }
+  return lo
+}
+
 export function computeFlyToSpeed(distance: number): number {
   const durationRatio = Math.min(FLY_TO_MAX_DURATION / FLY_TO_BASE_DURATION, 1 + distance / FLY_TO_HALF_RANGE)
   return FOCUS_SPEED / durationRatio

@@ -1,7 +1,8 @@
 import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, IngestMessage, ServerMessage, CreateOptions } from '../shared/protocol'
 import { SessionManager } from './session-manager'
@@ -21,6 +22,7 @@ import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { fetchClaudeUsage } from './claude-usage'
 import { parse as shellParse } from 'shell-quote'
+import { AutoContinueManager } from './auto-continue'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -190,6 +192,7 @@ let fileContentManager: FileContentManager
 let gitStatusPoller: GitStatusPoller
 let planCacheManager: PlanCacheManager
 let claudeStateMachine: ClaudeStateMachine
+let autoContinueManager: AutoContinueManager
 
 function send(socket: net.Socket, msg: ServerMessage): void {
   try {
@@ -390,6 +393,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'destroy': {
+      autoContinueManager.cancelForSurface(msg.sessionId)
       sessionManager.destroy(msg.sessionId)
       // Remove from all clients' attached sets
       clients.forEach((c) => {
@@ -402,6 +406,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'write': {
       sessionManager.write(msg.sessionId, msg.data)
       claudeStateMachine.handleClientWrite(msg.sessionId, msg.data === '\r')
+      autoContinueManager.cancelForSurface(msg.sessionId)
       break
     }
 
@@ -679,6 +684,58 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'directory-wt-spawn': {
+      const wtDirNode = stateManager.getNode(msg.nodeId)
+      if (!wtDirNode || wtDirNode.type !== 'directory') {
+        send(client.socket, { type: 'server-error', message: 'Not a directory node' })
+        break
+      }
+      const wtCwd = resolveFilePath(wtDirNode.cwd)
+      const wtProc = spawn('wt-spawn', [msg.branchName], { cwd: wtCwd })
+      let wtBuffer = ''
+      let wtResponded = false
+
+      wtProc.stdout.on('data', (chunk: Buffer) => {
+        if (wtResponded) return
+        wtBuffer += chunk.toString()
+        const nlIdx = wtBuffer.indexOf('\n')
+        if (nlIdx !== -1) {
+          wtResponded = true
+          const wtPath = wtBuffer.slice(0, nlIdx).trim()
+          const home = homedir()
+          let normalizedCwd = wtPath
+          if (wtPath === home) normalizedCwd = '~'
+          else if (wtPath.startsWith(home + '/')) normalizedCwd = '~' + wtPath.slice(home.length)
+
+          const pos = computePlacement(stateManager.getState().nodes, msg.nodeId,
+            { width: directoryFolderWidth(normalizedCwd), height: DIRECTORY_HEIGHT })
+          const newDir = stateManager.createDirectory(msg.nodeId, pos.x, pos.y, normalizedCwd)
+          gitStatusPoller.pollNode(newDir.id)
+          send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: newDir.id })
+
+          wtProc.on('close', () => {
+            gitStatusPoller.pollNode(newDir.id)
+          })
+        }
+      })
+
+      wtProc.on('error', (err: Error) => {
+        if (!wtResponded) {
+          wtResponded = true
+          send(client.socket, { type: 'server-error', message: `wt-spawn failed: ${err.message}` })
+        }
+      })
+
+      wtProc.on('close', (code: number | null) => {
+        if (!wtResponded) {
+          wtResponded = true
+          send(client.socket, { type: 'server-error', message: `wt-spawn exited (code ${code}) without output` })
+        }
+      })
+
+      break
+    }
+
     case 'validate-directory': {
       try {
         const dirPath = resolveFilePath(msg.path)
@@ -841,6 +898,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'set-claude-status-unread': {
       claudeStateMachine.handleClientMarkUnread(msg.sessionId, msg.unread)
+      // User acknowledged the surface — cancel any pending auto-continue
+      if (!msg.unread) {
+        autoContinueManager.cancelForSurface(msg.sessionId)
+      }
       break
     }
 
@@ -1048,6 +1109,7 @@ async function startServer(): Promise<void> {
     // onExit: broadcast to all attached clients + update state
     (sessionId, exitCode) => {
       sessionFileWatcher.unwatch(sessionId)
+      autoContinueManager.cancelForSurface(sessionId)
       snapshotManager.removeSession(sessionId)
 
       // Check restart recovery — if this PTY was spawned by a manual restart
@@ -1147,9 +1209,16 @@ async function startServer(): Promise<void> {
     (sessionId, history) => {
       stateManager.updateClaudeSessionHistory(sessionId, history)
     },
-    // onClaudeState: update state (node-updated broadcast handles client sync)
+    // onClaudeState: update state + trigger auto-continue on API error stops
     (sessionId, state) => {
       stateManager.updateClaudeState(sessionId, state)
+      if (state === 'stopped') {
+        autoContinueManager.onStopped(sessionId)
+      } else {
+        // Any non-stopped state (e.g. working after user manually typed continue)
+        // should cancel a pending auto-continue to avoid double-sending.
+        autoContinueManager.cancelForSurface(sessionId)
+      }
     },
     // onClaudeContext: broadcast context remaining % to all attached clients
     (sessionId, contextRemainingPercent) => {
@@ -1167,6 +1236,21 @@ async function startServer(): Promise<void> {
 
   // Initialize PlanCacheManager — caches plan file revisions for diffing
   planCacheManager = new PlanCacheManager()
+
+  // Initialize AutoContinueManager — auto-sends "continue" after API error stops
+  autoContinueManager = new AutoContinueManager({
+    getScrollback: (id) => sessionManager.getScrollback(id),
+    writeToPty: (id, data) => sessionManager.write(id, data),
+    getNodeTitle: (id) => {
+      const nodeId = stateManager.getNodeIdForSession(id)
+      if (!nodeId) return null
+      const node = stateManager.getNode(nodeId)
+      if (!node || node.type !== 'terminal') return null
+      // Prefer user-set name, fall back to first shell title
+      return node.name || node.shellTitleHistory?.[0] || null
+    },
+    broadcastToast: (message) => broadcastToAll({ type: 'server-error', message }),
+  })
 
   // Initialize ClaudeStateMachine — manages state indicator transitions, queue, stale sweep
   claudeStateMachine = new ClaudeStateMachine({
@@ -1397,6 +1481,7 @@ async function startServer(): Promise<void> {
     console.log('\nShutting down...')
     if (socketWatchdog) clearInterval(socketWatchdog)
     // Flush queued transitions and stop timers before persisting state
+    autoContinueManager.dispose()
     claudeStateMachine.dispose()
     gitStatusPoller.dispose()
     fileContentManager.dispose()

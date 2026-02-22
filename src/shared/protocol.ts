@@ -239,6 +239,13 @@ export interface DirectoryGitFetchMessage {
   nodeId: string
 }
 
+export interface DirectoryWtSpawnMessage {
+  type: 'directory-wt-spawn'
+  seq: number
+  nodeId: string
+  branchName: string
+}
+
 export interface ValidateDirectoryMessage {
   type: 'validate-directory'
   seq: number
@@ -366,6 +373,7 @@ export type ClientMessage =
   | DirectoryAddMessage
   | DirectoryCwdMessage
   | DirectoryGitFetchMessage
+  | DirectoryWtSpawnMessage
   | ValidateDirectoryMessage
   | FileAddMessage
   | FilePathMessage

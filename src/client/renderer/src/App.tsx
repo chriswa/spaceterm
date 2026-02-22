@@ -21,7 +21,7 @@ import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, terminalPixelSize } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
 import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
@@ -29,7 +29,7 @@ import { DEFAULT_PRESET } from './lib/color-presets'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder } from './lib/server-sync'
+import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -1191,6 +1191,25 @@ export function App() {
     await navigateToNode(nodeId)
   }, [createChildNode, navigateToNode])
 
+  const handlePostSync = useCallback(async (dirNodeId: string) => {
+    const node = useNodeStore.getState().nodes[dirNodeId]
+    if (!node || node.type !== 'directory') return
+    const cwd = node.cwd
+    const termSize = terminalPixelSize(DEFAULT_COLS, DEFAULT_ROWS)
+    const gap = 20
+    const spawnX = node.x
+    const spawnY = node.y + DIRECTORY_HEIGHT / 2 + gap + termSize.height / 2
+    const result = await sendTerminalCreate(dirNodeId, cwd ? { cwd } : undefined, undefined, 'post-sync', spawnX, spawnY, 'pnpm post-sync')
+    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
+    await navigateToNode(result.sessionId)
+  }, [navigateToNode])
+
+  const handleWtSpawn = useCallback(async (dirNodeId: string, branchName: string) => {
+    const result = await sendDirectoryWtSpawn(dirNodeId, branchName)
+    useNodeStore.getState().markFreshlyCreated(result.nodeId)
+    await navigateToNode(result.nodeId)
+  }, [navigateToNode])
+
   const handleEdgeSplitSelect = useCallback(async (type: AddNodeType) => {
     const split = edgeSplit
     if (!split) return
@@ -1761,6 +1780,8 @@ export function App() {
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onPostSync={handlePostSync}
+            onWtSpawn={handleWtSpawn}
             onStartReparent={handleStartReparent}
             onReparentTarget={handleReparentTarget}
             onAddNode={handleAddNode}

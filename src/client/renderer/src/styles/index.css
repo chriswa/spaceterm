@@ -1033,6 +1033,26 @@ html, body, #root {
   color: #a66cff;
 }
 
+.directory-card .node-titlebar__postsync-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.directory-card .node-titlebar__postsync-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+.directory-card .node-titlebar__wtspawn-btn {
+  background: rgba(0, 0, 0, 0.3);
+  color: #cdd6f4;
+}
+
+.directory-card .node-titlebar__wtspawn-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
 .directory-card__content {
   display: flex;
   flex-direction: column;
@@ -1690,6 +1710,44 @@ html, body, #root {
   color: #cdd6f4 !important;
 }
 
+/* Post-sync button in title bar */
+.node-titlebar__postsync-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.node-titlebar__postsync-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+/* Worktree button in title bar */
+.node-titlebar__wtspawn-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.node-titlebar__wtspawn-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
 /* Card Shell — outer wrapper for all card types */
 .card-shell {
   display: flex;
@@ -2212,6 +2270,15 @@ html, body, #root {
   z-index: 50;
 }
 
+/* Worktree spawn popup positioning */
+.card-shell__wt-spawn-body {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 280px;
+  z-index: 50;
+}
+
 /* Alerts popup positioning */
 .card-shell__alerts-body {
   position: absolute;
@@ -2296,6 +2363,58 @@ html, body, #root {
   background: rgba(77, 158, 255, 0.3);
 }
 
+/* WtSpawnBody */
+.wt-spawn-body {
+  background: #1e1e2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 8px;
+  pointer-events: auto;
+}
+
+.wt-spawn-body__row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.wt-spawn-body__input {
+  flex: 1;
+  background: #181825;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 5px 8px;
+  color: #cdd6f4;
+  font-size: 13px;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  outline: none;
+}
+
+.wt-spawn-body__input:focus {
+  border-color: rgba(77, 158, 255, 0.5);
+}
+
+.wt-spawn-body__btn {
+  background: rgba(77, 158, 255, 0.2);
+  color: #4d9eff;
+  border: 1px solid rgba(77, 158, 255, 0.3);
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wt-spawn-body__btn:hover {
+  background: rgba(77, 158, 255, 0.3);
+}
+
+.wt-spawn-body__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* AddNodeBody — dropdown menu */
 .add-node-body {
   background: #1e1e2e;
@@ -2364,7 +2483,9 @@ html, body, #root {
 .floating-toolbar .node-titlebar__reparent-btn:hover,
 .floating-toolbar .node-titlebar__add-btn:hover,
 .floating-toolbar .node-titlebar__shipit-btn:hover,
-.floating-toolbar .node-titlebar__diff-plans-btn:hover {
+.floating-toolbar .node-titlebar__diff-plans-btn:hover,
+.floating-toolbar .node-titlebar__postsync-btn:hover,
+.floating-toolbar .node-titlebar__wtspawn-btn:hover {
   background: rgba(0, 0, 0, 0.7);
   color: #fff !important;
 }

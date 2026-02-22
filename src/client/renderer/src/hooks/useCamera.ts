@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, unionBounds, zoomCamera, zoomCameraElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampZoomArc } from '../lib/camera'
-import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY } from '../lib/constants'
+import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
+import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
@@ -454,7 +454,7 @@ export function useCamera(
     targetBounds: { x: number; y: number; width: number; height: number }
     duration?: number
   }) => {
-    const { targetCamera, targetBounds, duration = 300 } = params
+    const { targetCamera, duration = 300 } = params
 
     cancelAnimationFrame(rafRef.current)
     animatingRef.current = true
@@ -472,15 +472,13 @@ export function useCamera(
     const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, startCamera)
     const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, targetCamera)
 
-    const midBounds = unionBounds([
-      { x: sourceCenter.x, y: sourceCenter.y, width: 0, height: 0 },
-      targetBounds
-    ])
-    if (!midBounds) return
-
-    const midZoom = cameraToFitBounds(midBounds, vw, vh, 0.15, UNFOCUS_SNAP_ZOOM).z
-    const rawZoomArc = midZoom - (startCamera.z + targetCamera.z) / 2
-    const zoomArc = clampZoomArc(startCamera.z, targetCamera.z, rawZoomArc, MIN_ZOOM)
+    // Parabolic zoom arc in log-height space: h = -ln(z), z = exp(-h)
+    // The arc shape is purely distance-dependent, same for any start/end zoom.
+    const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+    const hSrc = -Math.log(startCamera.z)
+    const hTgt = -Math.log(targetCamera.z)
+    const rawArc = FLY_TO_ZOOM_MAX_ARC * dist / (dist + FLY_TO_ZOOM_HALF_RANGE)
+    const arc = clampHeightArc(hSrc, hTgt, rawArc, MIN_ZOOM)
 
     const quarticEase = (t: number) =>
       t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2
@@ -495,7 +493,8 @@ export function useCamera(
       const cx = sourceCenter.x + (targetCenter.x - sourceCenter.x) * tPos
       const cy = sourceCenter.y + (targetCenter.y - sourceCenter.y) * tPos
 
-      const zoom = clampZoom(startCamera.z + (targetCamera.z - startCamera.z) * rawT + zoomArc * Math.sin(Math.PI * rawT))
+      const h = hSrc + (hTgt - hSrc) * rawT + arc * 4 * rawT * (1 - rawT)
+      const zoom = clampZoom(Math.exp(-h))
 
       const cam: Camera = { x: vw / 2 - cx * zoom, y: vh / 2 - cy * zoom, z: zoom }
       cameraRef.current = cam
