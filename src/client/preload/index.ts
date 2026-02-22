@@ -42,10 +42,6 @@ export interface PtyApi {
   destroy(sessionId: string): Promise<void>
   onData(sessionId: string, callback: (data: string) => void): () => void
   onExit(sessionId: string, callback: (exitCode: number) => void): () => void
-  onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
-  onCwd(sessionId: string, callback: (cwd: string) => void): () => void
-  onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
-  onClaudeState(sessionId: string, callback: (state: string) => void): () => void
   onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
   onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
   onPlanCacheUpdate(sessionId: string, callback: (count: number, files: string[]) => void): () => void
@@ -74,34 +70,6 @@ const ptyApi: PtyApi = {
   onExit: (sessionId, callback) => {
     const channel = `pty:exit:${sessionId}`
     const listener = (_event: Electron.IpcRendererEvent, exitCode: number) => callback(exitCode)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-  onShellTitleHistory: (sessionId, callback) => {
-    const channel = `pty:shell-title-history:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, history: string[]) => callback(history)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-  onCwd: (sessionId, callback) => {
-    const channel = `pty:cwd:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, cwd: string) => callback(cwd)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-  onClaudeSessionHistory: (sessionId, callback) => {
-    const channel = `pty:claude-session-history:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, history: ClaudeSessionEntry[]) => callback(history)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-  onClaudeState: (sessionId, callback) => {
-    const channel = `pty:claude-state:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, state: string) => callback(state)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
   },
@@ -255,10 +223,6 @@ contextBridge.exposeInMainWorld('api', {
   perf: {
     startTrace: () => ipcRenderer.invoke('perf:trace-start'),
     stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
-  },
-  claudeSwap: {
-    list: (): Promise<{ profiles: string[]; active: string } | null> => ipcRenderer.invoke('claude-swap:list'),
-    load: (profile: string): Promise<{ profiles: string[]; active: string } | null> => ipcRenderer.invoke('claude-swap:load', profile),
   },
   audio: {
     onBeat: (callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean }) => void): (() => void) => {

@@ -396,11 +396,6 @@ export interface AttachedMessage {
   seq: number
   sessionId: string
   scrollback: string
-  shellTitleHistory?: string[]
-  cwd?: string
-  claudeSessionHistory?: ClaudeSessionEntry[]
-  claudeState?: import('./state').ClaudeState
-  claudeStatusUnread?: boolean
   claudeContextPercent?: number
   claudeSessionLineCount?: number
 }
@@ -426,30 +421,6 @@ export interface ExitMessage {
   type: 'exit'
   sessionId: string
   exitCode: number
-}
-
-export interface ShellTitleHistoryMessage {
-  type: 'shell-title-history'
-  sessionId: string
-  history: string[]
-}
-
-export interface CwdMessage {
-  type: 'cwd'
-  sessionId: string
-  cwd: string
-}
-
-export interface ClaudeSessionHistoryMessage {
-  type: 'claude-session-history'
-  sessionId: string
-  history: ClaudeSessionEntry[]
-}
-
-export interface ClaudeStateMessage {
-  type: 'claude-state'
-  sessionId: string
-  state: import('./state').ClaudeState
 }
 
 export interface ClaudeContextMessage {
@@ -552,10 +523,6 @@ export type ServerMessage =
   | DestroyedMessage
   | DataMessage
   | ExitMessage
-  | ShellTitleHistoryMessage
-  | CwdMessage
-  | ClaudeSessionHistoryMessage
-  | ClaudeStateMessage
   | ClaudeContextMessage
   | ClaudeSessionLineCountMessage
   | SyncStateMessage

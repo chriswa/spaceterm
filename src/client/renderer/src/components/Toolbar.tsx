@@ -45,7 +45,6 @@ export function Toolbar({
       >
         Help
       </button>
-      <ClaudeSwapButton />
       <button
         className={'toolbar__btn' + (keycastEnabled ? ' toolbar__btn--active' : '')}
         onClick={onKeycastToggle}
@@ -571,22 +570,3 @@ function BeatIndicators() {
   )
 }
 
-function ClaudeSwapButton() {
-  const [state, setState] = useState<{ profiles: string[]; active: string } | null>(null)
-
-  useEffect(() => { window.api.claudeSwap.list().then(setState) }, [])
-
-  if (!state) return null
-
-  const cycle = () => {
-    const idx = state.profiles.indexOf(state.active)
-    const next = state.profiles[(idx + 1) % state.profiles.length]
-    window.api.claudeSwap.load(next).then(setState)
-  }
-
-  return (
-    <button className="toolbar__btn" onClick={cycle} data-tooltip="Click to switch Claude profile" data-tooltip-no-flip>
-      profile: {state.active}
-    </button>
-  )
-}

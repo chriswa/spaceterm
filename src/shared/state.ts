@@ -38,7 +38,6 @@ export interface TerminalNodeData extends BaseNodeData {
   exitCode?: number // set when alive → false
   cwd?: string
   extraCliArgs?: string
-  claudeSwapProfile?: string
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean

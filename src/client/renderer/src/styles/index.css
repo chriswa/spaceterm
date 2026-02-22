@@ -2196,6 +2196,43 @@ html, body, #root {
   z-index: 50;
 }
 
+/* Alerts popup positioning */
+.card-shell__alerts-body {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 320px;
+  max-width: 420px;
+  z-index: 50;
+}
+
+/* Alerts button */
+.node-titlebar__alerts-btn {
+  color: #e5a00d;
+}
+
+/* AlertsBody items */
+.alerts-body__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.alerts-body__item:last-child {
+  border-bottom: none;
+}
+.alerts-body__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #e5a00d;
+}
+.alerts-body__message {
+  line-height: 1.4;
+}
+
 /* ExtraCliArgsBody */
 .extra-cli-args-body {
   background: #1e1e2e;

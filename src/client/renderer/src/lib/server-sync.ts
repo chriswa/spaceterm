@@ -1,19 +1,32 @@
 import { useNodeStore } from '../stores/nodeStore'
 import type { NodeData } from '../../../../shared/state'
 
+/** Called before a node-updated patch is applied to the store. */
+export type NodeUpdateInterceptor = (
+  nodeId: string,
+  fields: Partial<NodeData>,
+  prevNode: NodeData | undefined
+) => void
+
 let cleanupFns: Array<() => void> = []
 
 /**
  * Initialize the server sync layer.
  * Subscribes to IPC events and bridges them to the Zustand store.
  * Call once on app startup.
+ *
+ * @param onBeforeNodeUpdate — optional interceptor fired before each node-updated
+ *   patch is applied. Receives the previous node state so callers can detect
+ *   field-level changes (e.g. fork detection on claudeSessionHistory growth).
  */
-export async function initServerSync(): Promise<void> {
+export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor): Promise<void> {
   const store = useNodeStore.getState()
 
   // Subscribe to server node state events
   cleanupFns.push(
     window.api.node.onUpdated((nodeId: string, fields: Partial<NodeData>) => {
+      const prev = useNodeStore.getState().nodes[nodeId]
+      onBeforeNodeUpdate?.(nodeId, fields, prev)
       useNodeStore.getState().applyServerNodeUpdate(nodeId, fields)
     })
   )

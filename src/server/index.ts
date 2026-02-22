@@ -69,18 +69,20 @@ function parseExtraCliArgs(s?: string): string[] {
   return shellParse(s).filter((entry): entry is string => typeof entry === 'string')
 }
 
-/** Detect the currently active claude-swap profile. Returns null if claude-swap is not installed. */
-function detectClaudeSwapProfile(): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile('claude-swap', ['list'], { timeout: 5000 }, (err, stdout) => {
-      if (err) { resolve(null); return }
-      for (const line of stdout.split('\n')) {
-        const m = line.match(/^\*\s+(.+)/)
-        if (m) { resolve(m[1].trim()); return }
-      }
-      resolve(null)
+/**
+ * Sanitize a string that may contain terminal escape/control sequences so it
+ * can be safely logged to stdout/stderr without the host terminal interpreting
+ * those sequences (which could change keyboard mode, cursor visibility, etc.).
+ * Replaces non-printable characters with visible representations while
+ * preserving \n, \r, and \t for readability.
+ */
+function sanitizeForLog(s: string): string {
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, (ch) => {
+      const code = ch.charCodeAt(0)
+      return `\\x${code.toString(16).padStart(2, '0')}`
     })
-  })
 }
 
 /** Escape a string for embedding inside a shell single-quoted string. */
@@ -203,11 +205,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           seq: msg.seq,
           sessionId: msg.sessionId,
           scrollback,
-          shellTitleHistory: sessionManager.getShellTitleHistory(msg.sessionId),
-          cwd: sessionManager.getCwd(msg.sessionId),
-          claudeSessionHistory: sessionManager.getClaudeSessionHistory(msg.sessionId),
-          claudeState: sessionManager.getClaudeState(msg.sessionId),
-          claudeStatusUnread: sessionManager.getClaudeStatusUnread(msg.sessionId),
           claudeContextPercent: sessionManager.getClaudeContextPercent(msg.sessionId) ?? undefined,
           claudeSessionLineCount: sessionManager.getClaudeSessionLineCount(msg.sessionId) ?? undefined
         })
@@ -544,9 +541,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const parentNode = stateManager.getNode(msg.parentId)
         console.log(`[terminal-create] parent=${msg.parentId.slice(0, 8)} parentPos=(${parentNode?.x}, ${parentNode?.y}) parentSize=(${parentNode?.type === 'markdown' ? parentNode.width : '?'}x${parentNode?.type === 'markdown' ? parentNode.height : '?'}) termPos=(${posX}, ${posY}) clientPos=(${msg.x}, ${msg.y}) initialInput=${!!msg.initialInput}`)
         stateManager.createTerminal(sessionId, msg.parentId, posX, posY, cols, rows, cwd, msg.initialTitleHistory, msg.initialName)
-        detectClaudeSwapProfile().then(profile => {
-          if (profile) stateManager.updateClaudeSwapProfile(sessionId, profile)
-        })
         if (msg.initialTitleHistory?.length) {
           sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
         }
@@ -593,9 +587,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.seedTitleHistory(newPtyId, rNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(msg.nodeId, newPtyId, rCols, rRows)
-        detectClaudeSwapProfile().then(profile => {
-          if (profile) stateManager.updateClaudeSwapProfile(msg.nodeId, profile)
-        })
         // Auto-attach client to the new PTY session
         client.attachedSessions.add(newPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
@@ -924,9 +915,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.seedTitleHistory(newPtyId, restartNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(msg.nodeId, newPtyId, restartCols, restartRows)
-        detectClaudeSwapProfile().then(profile => {
-          if (profile) stateManager.updateClaudeSwapProfile(msg.nodeId, profile)
-        })
 
         // Track for auto-recovery if the new PTY exits quickly
         restartRecovery.set(msg.nodeId, {
@@ -1092,7 +1080,7 @@ async function startServer(): Promise<void> {
         const output = sessionManager.getScrollback(sessionId)
         console.error(`[startup] Revival failed for Claude session ${claudeSessionId} (pty=${sessionId.slice(0, 8)}, exitCode=${exitCode})`)
         if (output) {
-          console.error(`[startup] Revival output:\n${output}`)
+          console.error(`[startup] Revival output:\n${sanitizeForLog(output)}`)
         } else {
           console.error(`[startup] Revival output: (none)`)
         }
@@ -1106,25 +1094,21 @@ async function startServer(): Promise<void> {
         client.snapshotSessions.delete(sessionId)
       })
     },
-    // onTitleHistory: broadcast to all attached clients + update state
+    // onTitleHistory: update state (node-updated broadcast handles client sync)
     (sessionId, history) => {
       stateManager.updateShellTitleHistory(sessionId, history)
-      broadcastToAttached(sessionId, { type: 'shell-title-history', sessionId, history })
     },
-    // onCwd: broadcast to all attached clients + update state
+    // onCwd: update state (node-updated broadcast handles client sync)
     (sessionId, cwd) => {
       stateManager.updateCwd(sessionId, cwd)
-      broadcastToAttached(sessionId, { type: 'cwd', sessionId, cwd })
     },
-    // onClaudeSessionHistory: broadcast to all attached clients + update state
+    // onClaudeSessionHistory: update state (node-updated broadcast handles client sync)
     (sessionId, history) => {
       stateManager.updateClaudeSessionHistory(sessionId, history)
-      broadcastToAttached(sessionId, { type: 'claude-session-history', sessionId, history })
     },
-    // onClaudeState: broadcast to all attached clients + update state
+    // onClaudeState: update state (node-updated broadcast handles client sync)
     (sessionId, state) => {
       stateManager.updateClaudeState(sessionId, state)
-      broadcastToAttached(sessionId, { type: 'claude-state', sessionId, state })
     },
     // onClaudeContext: broadcast context remaining % to all attached clients
     (sessionId, contextRemainingPercent) => {
@@ -1212,9 +1196,6 @@ async function startServer(): Promise<void> {
           sessionManager.seedTitleHistory(sessionId, revivingNode.shellTitleHistory)
         }
         stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
-        detectClaudeSwapProfile().then(profile => {
-          if (profile) stateManager.updateClaudeSwapProfile(nodeId, profile)
-        })
         const revivalCwd = sessionManager.getCwd(sessionId)
         if (revivalCwd) {
           sessionFileWatcher.watch(sessionId, claudeSessionId, revivalCwd)

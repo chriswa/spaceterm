@@ -8,6 +8,7 @@ import type { AddNodeType } from './AddNodeBody'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import { NodeActionBar } from './NodeActionBar'
 import type { NodeActionBarProps } from './NodeActionBar'
+import { NodeAlertsProvider } from '../lib/node-alerts'
 import { nodeActionRegistry } from '../lib/action-registry'
 
 interface CardShellProps {
@@ -204,6 +205,7 @@ export function CardShell({
         style={{ ...style, position: 'relative', width, height, overflow: 'visible' }}
         onMouseDown={onMouseDown}
       >
+        <NodeAlertsProvider>
         {headVariant === 'visible' && (
           <div className="card-shell__head" style={headStyle}>
             {titleContent}
@@ -230,6 +232,7 @@ export function CardShell({
           )}
           {children}
         </div>
+        </NodeAlertsProvider>
       </div>
     </div>
   )

@@ -185,15 +185,6 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  /** Update claude-swap profile on a terminal node, broadcast, and persist. */
-  updateClaudeSwapProfile(nodeId: string, profile: string | null): void {
-    const node = this.state.nodes[nodeId]
-    if (!node || node.type !== 'terminal') return
-    node.claudeSwapProfile = profile ?? undefined
-    this.onNodeUpdate(nodeId, { claudeSwapProfile: node.claudeSwapProfile } as Partial<TerminalNodeData>)
-    this.schedulePersist()
-  }
-
   getState(): ServerState {
     return this.state
   }

@@ -7,6 +7,8 @@ import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
 import { ExtraCliArgsBody } from './ExtraCliArgsBody'
+import { AlertsBody } from './AlertsBody'
+import { useNodeAlerts } from '../lib/node-alerts'
 import foodIcon from '../assets/food.svg'
 
 export interface NodeActionBarProps {
@@ -72,6 +74,10 @@ export function NodeActionBar({
   const [cliArgsOpen, setCliArgsOpen] = useState(false)
   const cliArgsBtnRef = useRef<HTMLButtonElement>(null)
   const cliArgsBodyRef = useRef<HTMLDivElement>(null)
+  const [alertsOpen, setAlertsOpen] = useState(false)
+  const alertsBtnRef = useRef<HTMLButtonElement>(null)
+  const alertsBodyRef = useRef<HTMLDivElement>(null)
+  const alerts = useNodeAlerts()
 
   // Close archive when archives become empty
   useEffect(() => {
@@ -80,6 +86,11 @@ export function NodeActionBar({
       onArchiveToggled(nodeId, false)
     }
   }, [archivedChildren.length, archiveOpen, nodeId, onArchiveToggled])
+
+  // Close alerts panel when alerts become empty
+  useEffect(() => {
+    if (alerts.length === 0 && alertsOpen) setAlertsOpen(false)
+  }, [alerts.length, alertsOpen])
 
   // Close sessions panel when past sessions become empty
   useEffect(() => {
@@ -97,8 +108,9 @@ export function NodeActionBar({
       if (sessionsOpen) setSessionsOpen(false)
       if (addNodeOpen) setAddNodeOpen(false)
       if (cliArgsOpen) setCliArgsOpen(false)
+      if (alertsOpen) setAlertsOpen(false)
     }
-  }, [focused, archiveOpen, sessionsOpen, addNodeOpen, cliArgsOpen, variant])
+  }, [focused, archiveOpen, sessionsOpen, addNodeOpen, cliArgsOpen, alertsOpen, variant])
 
   // Dismiss archive on outside click
   useEffect(() => {
@@ -154,6 +166,19 @@ export function NodeActionBar({
     return () => document.removeEventListener('mousedown', handler, { capture: true })
   }, [cliArgsOpen])
 
+  // Dismiss alerts popup on outside click
+  useEffect(() => {
+    if (!alertsOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (alertsBodyRef.current?.contains(target)) return
+      if (alertsBtnRef.current?.contains(target)) return
+      setAlertsOpen(false)
+    }
+    document.addEventListener('mousedown', handler, { capture: true })
+    return () => document.removeEventListener('mousedown', handler, { capture: true })
+  }, [alertsOpen])
+
   // Close color picker on outside click
   useEffect(() => {
     if (!pickerOpen) return
@@ -166,10 +191,19 @@ export function NodeActionBar({
     return () => document.removeEventListener('mousedown', handler)
   }, [pickerOpen])
 
+  const toggleAlerts = useCallback(() => {
+    setArchiveOpen(false)
+    setSessionsOpen(false)
+    setAddNodeOpen(false)
+    setCliArgsOpen(false)
+    setAlertsOpen(prev => !prev)
+  }, [])
+
   const toggleArchive = useCallback(() => {
     setSessionsOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
+    setAlertsOpen(false)
     setArchiveOpen(prev => {
       const next = !prev
       onArchiveToggled(nodeId, next)
@@ -181,6 +215,7 @@ export function NodeActionBar({
     setArchiveOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
+    setAlertsOpen(false)
     setSessionsOpen(prev => {
       const next = !prev
       onSessionsToggled?.(nodeId, next)
@@ -192,6 +227,7 @@ export function NodeActionBar({
     setArchiveOpen(false)
     setSessionsOpen(false)
     setCliArgsOpen(false)
+    setAlertsOpen(false)
     setAddNodeOpen(prev => !prev)
   }, [])
 
@@ -199,6 +235,7 @@ export function NodeActionBar({
     setArchiveOpen(false)
     setSessionsOpen(false)
     setAddNodeOpen(false)
+    setAlertsOpen(false)
     setCliArgsOpen(prev => !prev)
   }, [])
 
@@ -220,6 +257,22 @@ export function NodeActionBar({
 
   return (
     <div className="node-titlebar__actions">
+      {alerts.length > 0 && (
+        <button
+          ref={alertsBtnRef}
+          className="node-titlebar__alerts-btn"
+          data-tooltip="Alerts"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); toggleAlerts() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 1.5 L14.5 13 L1.5 13 Z" />
+            <line x1="8" y1="6" x2="8" y2="9.5" />
+            <circle cx="8" cy="11.5" r="0.5" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      )}
       {onShipIt && (
         <button
           className="node-titlebar__shipit-btn"
@@ -412,6 +465,11 @@ export function NodeActionBar({
       {cliArgsOpen && onExtraCliArgs && (
         <div className="card-shell__cli-args-body" style={popupStyle} ref={cliArgsBodyRef}>
           <ExtraCliArgsBody initialValue={extraCliArgs ?? ''} onRestart={handleCliArgsRestart} />
+        </div>
+      )}
+      {alertsOpen && alerts.length > 0 && (
+        <div className="card-shell__alerts-body" style={popupStyle} ref={alertsBodyRef}>
+          <AlertsBody alerts={alerts} />
         </div>
       )}
     </div>

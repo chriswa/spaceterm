@@ -264,9 +264,8 @@ export function App() {
     }
   }, [hoveredEdge])
 
-  // Initialize server sync and tooltips on mount
+  // Initialize tooltips on mount
   useEffect(() => {
-    initServerSync()
     initTooltips()
   }, [])
 
@@ -503,23 +502,9 @@ export function App() {
     }
   }, [])
 
-  // CWD tracking — ref so updates don't trigger re-renders
+  // CWD tracking — ref so optimistic writes (spawnNode, createChildNode) don't trigger re-renders.
+  // getAncestorCwd falls back to node.cwd from the store when cwdMapRef has no entry.
   const cwdMapRef = useRef(new Map<string, string>())
-  const forkHistoryLengthRef = useRef(new Map<string, number>())
-
-  const handleCwdChange = useCallback((id: string, cwd: string) => {
-    cwdMapRef.current.set(id, cwd)
-  }, [])
-
-  const handleShellTitleChange = useCallback((id: string, title: string) => {
-    const stripped = title.replace(/^[^\x20-\x7E]+\s*/, '').trim()
-    if (!stripped) return
-    // Title is handled by the server now, no client state update needed
-  }, [])
-
-  const handleShellTitleHistoryChange = useCallback((_id: string, _history: string[]) => {
-    // Handled by server → store
-  }, [])
 
   const getParentCwd = useCallback((parentId: string): string | undefined => {
     if (parentId === 'root') return undefined
@@ -680,6 +665,29 @@ export function App() {
     }
   }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
 
+  // Initialize server sync on mount — placed after getParentCwd/navigateToNode/cwdMapRef
+  // so the fork-detection interceptor closure can reference them.
+  useEffect(() => {
+    initServerSync((nodeId, fields, prevNode) => {
+      // Fork detection: when claudeSessionHistory grows with a 'fork' entry,
+      // spawn a new terminal that resumes the previous Claude session.
+      if (!('claudeSessionHistory' in fields) || !prevNode || prevNode.type !== 'terminal') return
+      const history = (fields as { claudeSessionHistory: ClaudeSessionEntry[] }).claudeSessionHistory
+      if (history.length <= prevNode.claudeSessionHistory.length || history.length < 2) return
+      const latestEntry = history[history.length - 1]
+      if (latestEntry.reason !== 'fork') return
+      const resumeSessionId = history[history.length - 2].claudeSessionId
+      const cwd = getParentCwd(nodeId)
+      const parentNode = useNodeStore.getState().nodes[nodeId]
+      const titleHistory = parentNode?.type === 'terminal' ? parentNode.shellTitleHistory : undefined
+      const parentName = parentNode?.name
+      sendTerminalCreate(nodeId, { cwd, claude: { resumeSessionId } }, titleHistory, parentName).then((result) => {
+        if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
+        navigateToNode(result.sessionId)
+      })
+    })
+  }, [])
+
   const handleCrabClick = useCallback((nodeId: string) => {
     setSearchVisible(false)
     setHelpVisible(false)
@@ -753,29 +761,6 @@ export function App() {
     }
   }, [flyTo, handleNodeFocus])
 
-  const handleClaudeSessionHistoryChange = useCallback((id: string, history: ClaudeSessionEntry[]) => {
-    const lastSeen = forkHistoryLengthRef.current.get(id)
-    forkHistoryLengthRef.current.set(id, history.length)
-
-    // First call for this session (initial attach): just record length
-    if (lastSeen === undefined) return
-
-    // New fork entry detected
-    if (history.length > lastSeen && history.length >= 2) {
-      const latestEntry = history[history.length - 1]
-      if (latestEntry.reason === 'fork') {
-        const resumeSessionId = history[history.length - 2].claudeSessionId
-        const cwd = getParentCwd(id)
-        const parentNode = useNodeStore.getState().nodes[id]
-        const titleHistory = parentNode?.type === 'terminal' ? parentNode.shellTitleHistory : undefined
-        const parentName = parentNode?.name
-        sendTerminalCreate(id, { cwd, claude: { resumeSessionId } }, titleHistory, parentName).then((result) => {
-          if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-          navigateToNode(result.sessionId)
-        })
-      }
-    }
-  }, [getParentCwd, navigateToNode])
 
   const handleUnarchive = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
     await sendUnarchive(parentNodeId, archivedNodeId)
@@ -1654,11 +1639,7 @@ export function App() {
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
             onArchiveToggled={handleArchiveToggled}
-            onCwdChange={handleCwdChange}
-            onShellTitleChange={handleShellTitleChange}
-            onShellTitleHistoryChange={handleShellTitleHistoryChange}
             claudeSessionHistory={t.claudeSessionHistory}
-            onClaudeSessionHistoryChange={handleClaudeSessionHistoryChange}
             claudeState={t.claudeState}
             claudeModel={t.claudeModel}
             onNodeReady={handleNodeReady}
@@ -1671,7 +1652,6 @@ export function App() {
             onFork={handleForkSession}
             onExtraCliArgs={handleExtraCliArgs}
             extraCliArgs={t.extraCliArgs}
-            claudeSwapProfile={t.claudeSwapProfile}
             onAddNode={handleAddNode}
             cameraRef={cameraRef}
           />

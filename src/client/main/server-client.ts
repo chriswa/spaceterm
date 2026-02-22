@@ -101,26 +101,6 @@ export class ServerClient extends EventEmitter {
       return
     }
 
-    if (msg.type === 'shell-title-history') {
-      this.emit('shell-title-history', msg.sessionId, msg.history)
-      return
-    }
-
-    if (msg.type === 'cwd') {
-      this.emit('cwd', msg.sessionId, msg.cwd)
-      return
-    }
-
-    if (msg.type === 'claude-session-history') {
-      this.emit('claude-session-history', msg.sessionId, msg.history)
-      return
-    }
-
-    if (msg.type === 'claude-state') {
-      this.emit('claude-state', msg.sessionId, msg.state)
-      return
-    }
-
     if (msg.type === 'claude-context') {
       this.emit('claude-context', msg.sessionId, msg.contextRemainingPercent)
       return
@@ -208,9 +188,9 @@ export class ServerClient extends EventEmitter {
     throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<{ scrollback: string; shellTitleHistory?: string[]; cwd?: string; claudeSessionHistory?: Array<{ claudeSessionId: string; reason: string; timestamp: string }>; claudeState?: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
+  async attach(sessionId: string): Promise<{ scrollback: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return { scrollback: resp.scrollback, shellTitleHistory: resp.shellTitleHistory, cwd: resp.cwd, claudeSessionHistory: resp.claudeSessionHistory, claudeState: resp.claudeState, claudeContextPercent: resp.claudeContextPercent, claudeSessionLineCount: resp.claudeSessionLineCount }
+    if (resp.type === 'attached') return { scrollback: resp.scrollback, claudeContextPercent: resp.claudeContextPercent, claudeSessionLineCount: resp.claudeSessionLineCount }
     throw new Error('Unexpected response')
   }
 

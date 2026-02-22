@@ -99,14 +99,9 @@ interface TerminalCardProps {
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveToggled: (nodeId: string, open: boolean) => void
-  onCwdChange?: (id: string, cwd: string) => void
-  onShellTitleChange?: (id: string, title: string) => void
-  onShellTitleHistoryChange?: (id: string, history: string[]) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
-  onClaudeSessionHistoryChange?: (id: string, history: ClaudeSessionEntry[]) => void
   claudeState?: string
   claudeModel?: string
-  onClaudeStateChange?: (id: string, state: string) => void
   onExit?: (id: string, exitCode: number) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
@@ -118,7 +113,6 @@ interface TerminalCardProps {
   onFork?: (id: string) => void
   onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
   extraCliArgs?: string
-  claudeSwapProfile?: string
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.RefObject<Camera>
 }
@@ -126,9 +120,9 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
-  onCwdChange, onShellTitleChange, onShellTitleHistoryChange, claudeSessionHistory, onClaudeSessionHistoryChange, claudeState, claudeModel, onClaudeStateChange, onExit, onNodeReady,
+  claudeSessionHistory, claudeState, claudeModel, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, claudeSwapProfile, onAddNode, cameraRef
+  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, onAddNode, cameraRef
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -144,8 +138,8 @@ export function TerminalCard({
   const behindCrabRef = useRef<HTMLDivElement>(null)
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady })
-  propsRef.current = { x, y, zoom, focused, id, sessionId, onCwdChange, onShellTitleChange, onShellTitleHistoryChange, onClaudeSessionHistoryChange, onClaudeStateChange, onDisableScrollMode, onExit, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onDisableScrollMode, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, focused, id, sessionId, onDisableScrollMode, onExit, onNodeReady }
 
   const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
   const [claudeSessionLineCount, setClaudeSessionLineCount] = useState<number | undefined>(undefined)
@@ -249,11 +243,6 @@ export function TerminalCard({
         ? `translateY(${-remainder}px)`
         : ''
     }
-
-    // Register shell title change handler (OSC 0 / OSC 2)
-    term.onTitleChange((title) => {
-      propsRef.current.onShellTitleChange?.(propsRef.current.id, title)
-    })
 
     // Debounced scroll position save for reload persistence
     let scrollSaveTimer: ReturnType<typeof setTimeout> | undefined
@@ -379,18 +368,6 @@ export function TerminalCard({
       } else {
         markReady()
       }
-      if (result.shellTitleHistory && result.shellTitleHistory.length > 0) {
-        propsRef.current.onShellTitleHistoryChange?.(propsRef.current.id, result.shellTitleHistory)
-      }
-      if (result.cwd) {
-        propsRef.current.onCwdChange?.(propsRef.current.id, result.cwd)
-      }
-      if (result.claudeSessionHistory && result.claudeSessionHistory.length > 0) {
-        propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.id, result.claudeSessionHistory)
-      }
-      if (result.claudeState !== undefined) {
-        propsRef.current.onClaudeStateChange?.(propsRef.current.id, result.claudeState)
-      }
       if (result.claudeContextPercent !== undefined) {
         setClaudeContextPercent(result.claudeContextPercent)
       }
@@ -406,22 +383,6 @@ export function TerminalCard({
 
     const cleanupExit = window.api.pty.onExit(sessionId, (exitCode) => {
       propsRef.current.onExit?.(propsRef.current.id, exitCode)
-    })
-
-    const cleanupTitleHistory = window.api.pty.onShellTitleHistory(sessionId, (history) => {
-      propsRef.current.onShellTitleHistoryChange?.(propsRef.current.id, history)
-    })
-
-    const cleanupCwd = window.api.pty.onCwd(sessionId, (cwd) => {
-      propsRef.current.onCwdChange?.(propsRef.current.id, cwd)
-    })
-
-    const cleanupClaudeSessionHistory = window.api.pty.onClaudeSessionHistory(sessionId, (history) => {
-      propsRef.current.onClaudeSessionHistoryChange?.(propsRef.current.id, history)
-    })
-
-    const cleanupClaudeState = window.api.pty.onClaudeState(sessionId, (state) => {
-      propsRef.current.onClaudeStateChange?.(propsRef.current.id, state)
     })
 
     term.onData((data) => {
@@ -542,10 +503,6 @@ export function TerminalCard({
       searchAddonRef.current = null
       cleanupData()
       cleanupExit()
-      cleanupTitleHistory()
-      cleanupCwd()
-      cleanupClaudeSessionHistory()
-      cleanupClaudeState()
       term.dispose()
     }
   }, [focused, sessionId])
@@ -956,7 +913,6 @@ export function TerminalCard({
         const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
         const footerContent = (
           <>
-            {claudeSwapProfile && <><span>profile: {claudeSwapProfile}</span><span>&nbsp;|&nbsp;</span></>}
             {abbrevCwd && <><span>{abbrevCwd}</span><span>&nbsp;|&nbsp;</span></>}
             <span>Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => {
               e.stopPropagation()

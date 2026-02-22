@@ -121,8 +121,8 @@ function setupIPC(): void {
   })
 
   ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
-    const { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent, claudeSessionLineCount } = await client!.attach(sessionId)
-    return { scrollback, shellTitleHistory, cwd, claudeSessionHistory, claudeState, claudeContextPercent, claudeSessionLineCount }
+    const { scrollback, claudeContextPercent, claudeSessionLineCount } = await client!.attach(sessionId)
+    return { scrollback, claudeContextPercent, claudeSessionLineCount }
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
@@ -151,48 +151,6 @@ function setupIPC(): void {
     logger.log(`[diffFiles] cursor --diff '${fileA}' '${fileB}'`)
     execFile('cursor', ['--diff', fileA, fileB], (err) => {
       if (err) logger.log(`[diffFiles] error: ${err.message}`)
-    })
-  })
-
-  ipcMain.handle('claude-swap:list', () => {
-    return new Promise((resolve) => {
-      execFile('claude-swap', ['list'], { timeout: 5000 }, (err, stdout) => {
-        if (err) { resolve(null); return }
-        const profiles: string[] = []
-        let active: string | null = null
-        for (const line of stdout.split('\n')) {
-          const m = line.match(/^([*-])\s+(.+)/)
-          if (m) {
-            const name = m[2].trim()
-            profiles.push(name)
-            if (m[1] === '*') active = name
-          }
-        }
-        resolve(profiles.length > 0 && active ? { profiles, active } : null)
-      })
-    })
-  })
-
-  ipcMain.handle('claude-swap:load', (_event, profile: string) => {
-    return new Promise((resolve) => {
-      execFile('claude-swap', ['load', profile], { timeout: 5000 }, (err) => {
-        if (err) { logger.log(`[claude-swap] load failed: ${err.message}`); resolve(null); return }
-        // Re-read list to confirm the switch
-        execFile('claude-swap', ['list'], { timeout: 5000 }, (err2, stdout) => {
-          if (err2) { resolve(null); return }
-          const profiles: string[] = []
-          let active: string | null = null
-          for (const line of stdout.split('\n')) {
-            const m = line.match(/^([*-])\s+(.+)/)
-            if (m) {
-              const name = m[2].trim()
-              profiles.push(name)
-              if (m[1] === '*') active = name
-            }
-          }
-          resolve(profiles.length > 0 && active ? { profiles, active } : null)
-        })
-      })
     })
   })
 
@@ -421,30 +379,6 @@ function wireClientEvents(): void {
   client!.on('exit', (sessionId: string, exitCode: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:exit:${sessionId}`, exitCode)
-    }
-  })
-
-  client!.on('shell-title-history', (sessionId: string, history: string[]) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:shell-title-history:${sessionId}`, history)
-    }
-  })
-
-  client!.on('cwd', (sessionId: string, cwd: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:cwd:${sessionId}`, cwd)
-    }
-  })
-
-  client!.on('claude-session-history', (sessionId: string, history: unknown[]) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:claude-session-history:${sessionId}`, history)
-    }
-  })
-
-  client!.on('claude-state', (sessionId: string, state: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:claude-state:${sessionId}`, state)
     }
   })
 

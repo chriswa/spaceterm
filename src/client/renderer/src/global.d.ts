@@ -24,10 +24,6 @@ interface ClaudeSessionEntry {
 
 interface AttachResult {
   scrollback: string
-  shellTitleHistory?: string[]
-  cwd?: string
-  claudeSessionHistory?: ClaudeSessionEntry[]
-  claudeState?: string
   claudeContextPercent?: number
   claudeSessionLineCount?: number
 }
@@ -41,10 +37,6 @@ interface PtyApi {
   destroy(sessionId: string): Promise<void>
   onData(sessionId: string, callback: (data: string) => void): () => void
   onExit(sessionId: string, callback: (exitCode: number) => void): () => void
-  onShellTitleHistory(sessionId: string, callback: (history: string[]) => void): () => void
-  onCwd(sessionId: string, callback: (cwd: string) => void): () => void
-  onClaudeSessionHistory(sessionId: string, callback: (history: ClaudeSessionEntry[]) => void): () => void
-  onClaudeState(sessionId: string, callback: (state: string) => void): () => void
   onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
   onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
   onPlanCacheUpdate(sessionId: string, callback: (count: number, files: string[]) => void): () => void
@@ -108,11 +100,6 @@ interface WindowApi {
   onVisibilityChanged(callback: (visible: boolean) => void): () => void
 }
 
-interface ClaudeSwapApi {
-  list(): Promise<{ profiles: string[]; active: string } | null>
-  load(profile: string): Promise<{ profiles: string[]; active: string } | null>
-}
-
 interface Api {
   pty: PtyApi
   node: NodeApi
@@ -123,7 +110,6 @@ interface Api {
   perf: PerfApi
   audio: AudioApi
   window: WindowApi
-  claudeSwap: ClaudeSwapApi
 }
 
 declare interface Window {
