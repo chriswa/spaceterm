@@ -23,6 +23,7 @@ export interface BaseNodeData {
   x: number
   y: number
   zIndex: number
+  lastFocusedAt?: string // ISO 8601, set by server on bringToFront
   name?: string | null
   colorPresetId?: string
   archivedChildren: ArchivedNode[]

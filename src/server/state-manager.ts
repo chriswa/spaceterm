@@ -404,7 +404,8 @@ export class StateManager {
     const node = this.state.nodes[nodeId]
     if (!node) return
     node.zIndex = this.state.nextZIndex++
-    this.onNodeUpdate(nodeId, { zIndex: node.zIndex })
+    node.lastFocusedAt = new Date().toISOString()
+    this.onNodeUpdate(nodeId, { zIndex: node.zIndex, lastFocusedAt: node.lastFocusedAt })
     this.schedulePersist()
   }
 

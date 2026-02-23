@@ -44,7 +44,7 @@ interface MarkdownCardProps {
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveToggled: (nodeId: string, open: boolean) => void
+  onOpenArchiveSearch: (nodeId: string) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: string) => void
@@ -358,7 +358,7 @@ const linkClickHandler = EditorView.domEventHandlers({
 
 export function MarkdownCard({
   id, x, y, width, height, zIndex, zoom, content, maxWidth, colorPresetId, resolvedPreset, archivedChildren, focused, selected,
-  onFocus, onClose, onMove, onResize, onContentChange, onMaxWidthChange, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
+  onFocus, onClose, onMove, onResize, onContentChange, onMaxWidthChange, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, onShipIt,
   fileBacked, fileError, onAddNode, cameraRef
 }: MarkdownCardProps) {
@@ -667,7 +667,7 @@ export function MarkdownCard({
       onColorChange={onColorChange}
       onUnarchive={onUnarchive}
       onArchiveDelete={onArchiveDelete}
-      onArchiveToggled={onArchiveToggled}
+      onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       onAddNode={onAddNode}

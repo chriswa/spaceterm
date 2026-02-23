@@ -82,7 +82,7 @@ interface DirectoryCardProps {
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveToggled: (nodeId: string, open: boolean) => void
+  onOpenArchiveSearch: (nodeId: string) => void
   onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: string) => void
@@ -97,7 +97,7 @@ interface DirectoryCardProps {
 export function DirectoryCard({
   id, x, y, zIndex, zoom, cwd, gitStatus, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
-  onUnarchive, onArchiveDelete, onArchiveToggled, onNodeReady,
+  onUnarchive, onArchiveDelete, onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onPostSync, onWtSpawn, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: DirectoryCardProps) {
   const preset = resolvedPreset
@@ -297,7 +297,7 @@ export function DirectoryCard({
       onColorChange={onColorChange}
       onUnarchive={onUnarchive}
       onArchiveDelete={onArchiveDelete}
-      onArchiveToggled={onArchiveToggled}
+      onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onPostSync={onPostSync}
       onWtSpawn={onWtSpawn}

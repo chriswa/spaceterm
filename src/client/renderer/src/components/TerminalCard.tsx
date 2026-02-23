@@ -98,7 +98,7 @@ interface TerminalCardProps {
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveToggled: (nodeId: string, open: boolean) => void
+  onOpenArchiveSearch: (nodeId: string) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
   claudeState?: string
   claudeModel?: string
@@ -119,7 +119,7 @@ interface TerminalCardProps {
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, scrollMode,
-  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onArchiveToggled,
+  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   claudeSessionHistory, claudeState, claudeModel, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, onAddNode, cameraRef
@@ -852,7 +852,7 @@ export function TerminalCard({
       onColorChange={onColorChange}
       onUnarchive={onUnarchive}
       onArchiveDelete={onArchiveDelete}
-      onArchiveToggled={onArchiveToggled}
+      onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       onFork={claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}

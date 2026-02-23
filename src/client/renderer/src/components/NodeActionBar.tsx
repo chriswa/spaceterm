@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ColorPreset } from '../lib/color-presets'
 import { COLOR_PRESETS } from '../lib/color-presets'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
-import { ArchiveBody } from './ArchiveBody'
 import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
@@ -30,7 +29,7 @@ export interface NodeActionBarProps {
   onSessionsToggled?: (nodeId: string, open: boolean) => void
   onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
   archivedChildren: ArchivedNode[]
-  onArchiveToggled: (nodeId: string, open: boolean) => void
+  onOpenArchiveSearch?: (nodeId: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onPostSync?: (id: string) => void
@@ -55,7 +54,7 @@ export function NodeActionBar({
   onShipIt, onFork, onExtraCliArgs, extraCliArgs,
   onDiffPlans, showColorPicker, onColorChange,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
-  archivedChildren, onArchiveToggled, onUnarchive, onArchiveDelete,
+  archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
   onPostSync, onWtSpawn,
   onStartReparent, isReparenting,
   onAddNode, showClose, onClose,
@@ -65,12 +64,9 @@ export function NodeActionBar({
   variant?: 'card' | 'floating'
   onActionInvoked?: () => void
 }) {
-  const [archiveOpen, setArchiveOpen] = useState(false)
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
-  const archiveBtnRef = useRef<HTMLButtonElement>(null)
-  const archiveBodyRef = useRef<HTMLDivElement>(null)
   const sessionsBtnRef = useRef<HTMLButtonElement>(null)
   const sessionsBodyRef = useRef<HTMLDivElement>(null)
   const [addNodeOpen, setAddNodeOpen] = useState(false)
@@ -86,14 +82,6 @@ export function NodeActionBar({
   const alertsBtnRef = useRef<HTMLButtonElement>(null)
   const alertsBodyRef = useRef<HTMLDivElement>(null)
   const alerts = useNodeAlerts()
-
-  // Close archive when archives become empty
-  useEffect(() => {
-    if (archivedChildren.length === 0 && archiveOpen) {
-      setArchiveOpen(false)
-      onArchiveToggled(nodeId, false)
-    }
-  }, [archivedChildren.length, archiveOpen, nodeId, onArchiveToggled])
 
   // Close alerts panel when alerts become empty
   useEffect(() => {
@@ -112,28 +100,13 @@ export function NodeActionBar({
   useEffect(() => {
     if (variant === 'floating') return
     if (!focused) {
-      if (archiveOpen) setArchiveOpen(false)
       if (sessionsOpen) setSessionsOpen(false)
       if (addNodeOpen) setAddNodeOpen(false)
       if (cliArgsOpen) setCliArgsOpen(false)
       if (wtSpawnOpen) setWtSpawnOpen(false)
       if (alertsOpen) setAlertsOpen(false)
     }
-  }, [focused, archiveOpen, sessionsOpen, addNodeOpen, cliArgsOpen, wtSpawnOpen, alertsOpen, variant])
-
-  // Dismiss archive on outside click
-  useEffect(() => {
-    if (!archiveOpen) return
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (archiveBodyRef.current?.contains(target)) return
-      if (archiveBtnRef.current?.contains(target)) return
-      setArchiveOpen(false)
-      onArchiveToggled(nodeId, false)
-    }
-    document.addEventListener('mousedown', handler, { capture: true })
-    return () => document.removeEventListener('mousedown', handler, { capture: true })
-  }, [archiveOpen, nodeId, onArchiveToggled])
+  }, [focused, sessionsOpen, addNodeOpen, cliArgsOpen, wtSpawnOpen, alertsOpen, variant])
 
   // Dismiss sessions panel on outside click
   useEffect(() => {
@@ -214,7 +187,6 @@ export function NodeActionBar({
   }, [pickerOpen])
 
   const toggleAlerts = useCallback(() => {
-    setArchiveOpen(false)
     setSessionsOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
@@ -222,21 +194,11 @@ export function NodeActionBar({
     setAlertsOpen(prev => !prev)
   }, [])
 
-  const toggleArchive = useCallback(() => {
-    setSessionsOpen(false)
-    setAddNodeOpen(false)
-    setCliArgsOpen(false)
-    setWtSpawnOpen(false)
-    setAlertsOpen(false)
-    setArchiveOpen(prev => {
-      const next = !prev
-      onArchiveToggled(nodeId, next)
-      return next
-    })
-  }, [nodeId, onArchiveToggled])
+  const handleArchiveClick = useCallback(() => {
+    onOpenArchiveSearch?.(nodeId)
+  }, [nodeId, onOpenArchiveSearch])
 
   const toggleSessions = useCallback(() => {
-    setArchiveOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
     setWtSpawnOpen(false)
@@ -249,7 +211,6 @@ export function NodeActionBar({
   }, [nodeId, onSessionsToggled])
 
   const toggleAddNode = useCallback(() => {
-    setArchiveOpen(false)
     setSessionsOpen(false)
     setCliArgsOpen(false)
     setWtSpawnOpen(false)
@@ -258,7 +219,6 @@ export function NodeActionBar({
   }, [])
 
   const toggleCliArgs = useCallback(() => {
-    setArchiveOpen(false)
     setSessionsOpen(false)
     setAddNodeOpen(false)
     setWtSpawnOpen(false)
@@ -267,7 +227,6 @@ export function NodeActionBar({
   }, [])
 
   const toggleWtSpawn = useCallback(() => {
-    setArchiveOpen(false)
     setSessionsOpen(false)
     setAddNodeOpen(false)
     setCliArgsOpen(false)
@@ -457,12 +416,11 @@ export function NodeActionBar({
         </button>
       )}
       <button
-        ref={archiveBtnRef}
         className="node-titlebar__archive-btn"
         data-tooltip="Archived children"
         disabled={archivedChildren.length === 0}
         style={preset ? { color: preset.titleBarFg } : undefined}
-        onClick={(e) => { e.stopPropagation(); toggleArchive() }}
+        onClick={(e) => { e.stopPropagation(); handleArchiveClick() }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <svg width="18" height="18" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute' }}>
@@ -513,16 +471,6 @@ export function NodeActionBar({
             <line x1="11" y1="3" x2="3" y2="11" />
           </svg>
         </button>
-      )}
-      {archiveOpen && archivedChildren.length > 0 && (
-        <div className="card-shell__archive-body" style={popupStyle} ref={archiveBodyRef}>
-          <ArchiveBody
-            parentId={nodeId}
-            archives={archivedChildren}
-            onUnarchive={onUnarchive}
-            onArchiveDelete={onArchiveDelete}
-          />
-        </div>
       )}
       {sessionsOpen && pastSessions && pastSessions.length > 0 && (
         <div className="card-shell__sessions-body" style={popupStyle} ref={sessionsBodyRef}>

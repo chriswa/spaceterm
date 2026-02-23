@@ -26,5 +26,8 @@ export function nodeDisplayTitle(data: NodeData): string {
   if (subtitle) parts.push(subtitle)
   if (parts.length > 0) return parts.join(' \u00A0\u21BC\u00A0 ')
   if (data.type === 'terminal') return '[Untitled]'
+  if (data.type === 'directory') return data.cwd
+  if (data.type === 'title') return data.text || '[Untitled]'
+  if (data.type === 'file') return data.filePath
   return data.id.slice(0, 8)
 }

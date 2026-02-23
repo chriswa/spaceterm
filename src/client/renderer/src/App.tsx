@@ -21,8 +21,7 @@ import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, ARCHIVE_BODY_MIN_WIDTH, ARCHIVE_POPUP_MAX_HEIGHT, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
-import { createWheelAccumulator, classifyWheelEvent } from './lib/wheel-gesture'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
@@ -62,13 +61,13 @@ function getMarkdownSpawnInfo(parentNode: import('../../../../shared/state').Nod
   return { initialInput, initialName, x, y }
 }
 
-const archiveDismissFlag = { active: false, timer: 0 }
-const archiveWheelAcc = createWheelAccumulator()
+import type { SearchMode } from './lib/search'
 
 export function App() {
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [scrollMode, setScrollMode] = useState(false)
   const [searchVisible, setSearchVisible] = useState(false)
+  const [searchMode, setSearchMode] = useState<SearchMode>({ kind: 'global' })
   const searchVisibleRef = useRef(false)
   searchVisibleRef.current = searchVisible
   const [helpVisible, setHelpVisible] = useState(false)
@@ -776,44 +775,10 @@ export function App() {
     await sendArchiveDelete(parentNodeId, archivedNodeId)
   }, [])
 
-  const handleArchiveToggled = useCallback((nodeId: string, open: boolean) => {
-    if (!open) {
-      archiveDismissFlag.active = true
-      clearTimeout(archiveDismissFlag.timer)
-      archiveDismissFlag.timer = window.setTimeout(() => { archiveDismissFlag.active = false }, 500)
-    }
-    const viewport = document.querySelector('.canvas-viewport') as HTMLElement
-    if (!viewport) return
-    let bounds: { x: number; y: number; width: number; height: number }
-    if (nodeId === 'root') {
-      bounds = { x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 }
-    } else {
-      const node = useNodeStore.getState().nodes[nodeId]
-      if (!node) return
-      const size = nodePixelSize(node)
-      bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
-    }
-    if (open) {
-      const popupWidth = Math.max(ARCHIVE_BODY_MIN_WIDTH, bounds.width)
-      let popupLeft: number
-      if (bounds.width < ARCHIVE_BODY_MIN_WIDTH) {
-        // Narrow card: popup is centered under it
-        const cardCenterX = bounds.x + bounds.width / 2
-        popupLeft = cardCenterX - popupWidth / 2
-      } else {
-        // Wide card: popup is right-aligned
-        popupLeft = bounds.x + bounds.width - popupWidth
-      }
-      const popupRight = popupLeft + popupWidth
-      bounds = {
-        x: Math.min(bounds.x, popupLeft),
-        y: bounds.y,
-        width: Math.max(popupRight, bounds.x + bounds.width) - Math.min(bounds.x, popupLeft),
-        height: Math.max(bounds.height, ARCHIVE_POPUP_MAX_HEIGHT),
-      }
-    }
-    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025))
-  }, [flyTo])
+  const handleOpenArchiveSearch = useCallback((nodeId: string) => {
+    setSearchMode({ kind: 'archived-children', parentId: nodeId })
+    setSearchVisible(true)
+  }, [])
 
   const handleSessionRevive = useCallback(async (nodeId: string, session: import('../../../shared/state').TerminalSessionEntry) => {
     if (!session.claudeSessionId) return
@@ -1240,6 +1205,7 @@ export function App() {
       if (e.metaKey && !e.shiftKey && (e.key === 's' || e.key === 'k')) {
         e.preventDefault()
         e.stopPropagation()
+        setSearchMode({ kind: 'global' })
         setSearchVisible(v => !v)
         return
       }
@@ -1525,11 +1491,6 @@ export function App() {
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
-    if ((e.target as HTMLElement).closest('.archive-body')) {
-      const gesture = classifyWheelEvent(archiveWheelAcc, e)
-      if (gesture === 'vertical') return  // let native CSS scroll handle it
-      // horizontal or pinch: fall through to unfocus/pan below
-    }
     if (focusRef.current) {
       e.preventDefault()
       handleUnfocus()
@@ -1543,10 +1504,6 @@ export function App() {
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
-    if (archiveDismissFlag.active) {
-      handlePanStart(e)
-      return
-    }
     if (focusRef.current) {
       handleUnfocus()
       flyToUnfocusZoom()
@@ -1557,10 +1514,6 @@ export function App() {
   const handleCanvasUnfocus = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
     setHelpVisible(false)
-    if (archiveDismissFlag.active) {
-      archiveDismissFlag.active = false
-      return
-    }
     const srcId = useReparentStore.getState().reparentingNodeId
     if (srcId) {
       useReparentStore.getState().reset()
@@ -1613,7 +1566,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<><SearchModal visible={searchVisible} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<><SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <RootNode
           focused={focusedId === 'root'}
           selected={selection === 'root'}
@@ -1621,7 +1574,7 @@ export function App() {
           archivedChildren={rootArchivedChildren}
           onUnarchive={handleUnarchive}
           onArchiveDelete={handleArchiveDelete}
-          onArchiveToggled={handleArchiveToggled}
+          onOpenArchiveSearch={handleOpenArchiveSearch}
           onAddNode={handleAddNode}
           onReparentTarget={handleReparentTarget}
         />
@@ -1657,7 +1610,7 @@ export function App() {
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
-            onArchiveToggled={handleArchiveToggled}
+            onOpenArchiveSearch={handleOpenArchiveSearch}
             claudeSessionHistory={t.claudeSessionHistory}
             claudeState={t.claudeState}
             claudeModel={t.claudeModel}
@@ -1709,7 +1662,7 @@ export function App() {
               onColorChange={handleColorChange}
               onUnarchive={handleUnarchive}
               onArchiveDelete={handleArchiveDelete}
-              onArchiveToggled={handleArchiveToggled}
+              onOpenArchiveSearch={handleOpenArchiveSearch}
               onNodeReady={handleNodeReady}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
@@ -1744,7 +1697,7 @@ export function App() {
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
-            onArchiveToggled={handleArchiveToggled}
+            onOpenArchiveSearch={handleOpenArchiveSearch}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
@@ -1776,7 +1729,7 @@ export function App() {
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
-            onArchiveToggled={handleArchiveToggled}
+            onOpenArchiveSearch={handleOpenArchiveSearch}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
@@ -1810,7 +1763,7 @@ export function App() {
             onColorChange={handleColorChange}
             onUnarchive={handleUnarchive}
             onArchiveDelete={handleArchiveDelete}
-            onArchiveToggled={handleArchiveToggled}
+            onOpenArchiveSearch={handleOpenArchiveSearch}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
