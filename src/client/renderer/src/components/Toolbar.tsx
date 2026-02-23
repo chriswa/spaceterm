@@ -595,22 +595,23 @@ function formatCredits(cents: number): string {
 }
 
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000
+const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000
 /** Minimum elapsed time before showing a projection (avoids wild swings early). */
 const PROJECTION_MIN_ELAPSED_MS = 10 * 60 * 1000
 
-/** Project current 5-hour utilization to end-of-window, or null if not enough
+/** Project current utilization to end-of-window, or null if not enough
  *  data (too early in the window, zero usage, or window already expired). */
-function projectFiveHourUsage(utilization: number, resetsAt: string): number | null {
+function projectUsage(utilization: number, resetsAt: string, windowMs: number): number | null {
   try {
     const resetMs = new Date(resetsAt).getTime()
     if (isNaN(resetMs)) return null
     const now = Date.now()
     const remainingMs = resetMs - now
     if (remainingMs <= 0) return null                   // window expired
-    const elapsedMs = FIVE_HOUR_MS - remainingMs
+    const elapsedMs = windowMs - remainingMs
     if (elapsedMs < PROJECTION_MIN_ELAPSED_MS) return null // too early
     if (utilization <= 0) return null                    // nothing to project
-    return utilization * (FIVE_HOUR_MS / elapsedMs)
+    return utilization * (windowMs / elapsedMs)
   } catch {
     return null
   }
@@ -645,8 +646,11 @@ function UsageIndicators() {
   const fiveHour = usage.five_hour
   const sevenDay = usage.seven_day
   const extra = usage.extra_usage
-  const projected = fiveHour != null && typeof fiveHour.utilization === 'number'
-    ? projectFiveHourUsage(fiveHour.utilization, fiveHour.resets_at)
+  const projected5h = fiveHour != null && typeof fiveHour.utilization === 'number'
+    ? projectUsage(fiveHour.utilization, fiveHour.resets_at, FIVE_HOUR_MS)
+    : null
+  const projected7d = sevenDay != null && typeof sevenDay.utilization === 'number'
+    ? projectUsage(sevenDay.utilization, sevenDay.resets_at, SEVEN_DAY_MS)
     : null
 
   return (
@@ -659,10 +663,11 @@ function UsageIndicators() {
           data-tooltip={formatResetTime('5-hour usage', fiveHour.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
+          <span className="toolbar__metric-label">5h </span>
           {Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span>
-          {projected != null && (
+          {projected5h != null && (
             <span style={{ color: '#888' }} data-tooltip="5-hour usage linear extrapolation">
-              {' '}({Math.round(projected)}<span className="toolbar__metric-label">%</span>)
+              {' '}({Math.round(projected5h)}<span className="toolbar__metric-label">%</span>)
             </span>
           )}
         </span>
@@ -673,7 +678,13 @@ function UsageIndicators() {
           data-tooltip={formatResetTime('7-day usage', sevenDay.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
+          <span className="toolbar__metric-label">7d </span>
           {Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span>
+          {projected7d != null && (
+            <span style={{ color: '#888' }} data-tooltip="7-day usage linear extrapolation">
+              {' '}({Math.round(projected7d)}<span className="toolbar__metric-label">%</span>)
+            </span>
+          )}
         </span>
       )}
       {extra != null && typeof extra.used_credits === 'number' && (
