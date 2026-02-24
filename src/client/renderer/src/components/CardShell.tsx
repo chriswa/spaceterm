@@ -7,8 +7,11 @@ import type { AddNodeType } from './AddNodeBody'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import { NodeActionBar } from './NodeActionBar'
 import type { NodeActionBarProps } from './NodeActionBar'
-import { NodeAlertsProvider } from '../lib/node-alerts'
 import { nodeActionRegistry } from '../lib/action-registry'
+import { useNodeStore } from '../stores/nodeStore'
+import type { NodeAlert } from '../../../../shared/state'
+
+const EMPTY_ALERTS: NodeAlert[] = []
 
 interface CardShellProps {
   nodeId: string
@@ -64,6 +67,12 @@ export function CardShell({
   onPostSync, onWtSpawn, onAddNode, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
+
+  // Alert badge (visible when unfocused)
+  const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
+  const alertsReadTimestamp = useNodeStore(s => s.nodes[nodeId]?.alertsReadTimestamp)
+  const hasAlerts = alerts.length > 0
+  const hasUnread = hasAlerts && alerts.some(a => a.timestamp > (alertsReadTimestamp ?? 0))
 
   // Build NodeActionBar props and register in the action registry
   const actionBarProps: NodeActionBarProps = {
@@ -168,13 +177,26 @@ export function CardShell({
       onMouseLeave={onMouseLeave}
     >
       {behindContent}
+      {hasAlerts && !focused && (
+        <div className={`card-shell__alert-badge${hasUnread ? ' card-shell__alert-badge--unread' : ''}`}>
+          <svg width="60" height="60" viewBox="0 0 16 16" fill="none" strokeLinecap="round" strokeLinejoin="round">
+            {/* Black outline layer (thick) */}
+            <path d="M8 1.5 L14.5 13 L1.5 13 Z" stroke="black" strokeWidth="2.5" />
+            <line x1="8" y1="6" x2="8" y2="9.5" stroke="black" strokeWidth="2.5" />
+            <circle cx="8" cy="11.5" r="0.5" stroke="black" strokeWidth="2.5" />
+            {/* Animated color layer */}
+            <path d="M8 1.5 L14.5 13 L1.5 13 Z" stroke="currentColor" strokeWidth="1.3" />
+            <line x1="8" y1="6" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.3" />
+            <circle cx="8" cy="11.5" r="0.5" stroke="currentColor" strokeWidth="1.3" />
+          </svg>
+        </div>
+      )}
       <div
         ref={cardRef}
         className={className}
         style={{ ...style, position: 'relative', width, height, overflow: 'visible' }}
         onMouseDown={onMouseDown}
       >
-        <NodeAlertsProvider>
         {headVariant === 'visible' && (
           <div className="card-shell__head" style={headStyle}>
             {titleContent}
@@ -191,7 +213,6 @@ export function CardShell({
           )}
           {children}
         </div>
-        </NodeAlertsProvider>
       </div>
     </div>
   )

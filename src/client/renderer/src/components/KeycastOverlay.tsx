@@ -795,23 +795,23 @@ export function KeycastOverlay() {
         <text
           ref={textRef}
           x="100%"
-          y={80}
+          y={56}
           dx={-8}
           textAnchor="end"
           dominantBaseline="central"
-          fontSize={112}
+          fontSize={72}
           fontFamily="system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
           fontWeight={700}
           fill="white"
           stroke="black"
-          strokeWidth={10}
+          strokeWidth={6}
           strokeLinejoin="round"
           paintOrder="stroke"
         />
         <text
           ref={descRef}
           x="100%"
-          y={148}
+          y={94}
           dx={-8}
           textAnchor="end"
           dominantBaseline="central"

@@ -73,7 +73,8 @@ export function App() {
   const [helpVisible, setHelpVisible] = useState(false)
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
-  const [keycastEnabled, setKeycastEnabled] = useState(false)
+  const [keycastEnabled, setKeycastEnabled] = useState(() => localStorage.getItem('toolbar.keycast') === 'true')
+  const [goodGfx, setGoodGfx] = useState(() => localStorage.getItem('toolbar.goodGfx') === 'true')
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
   const focusRef = useRef<string | null>(focusedId)
@@ -89,6 +90,7 @@ export function App() {
   selectionRef.current = selection
   const lastFocusedRef = useRef<string | null>(null)
   const lastCrabRef = useRef<{ nodeId: string; createdAt: string } | null>(null)
+  const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: string | null; toNodeId: string; ts: number } | null>(null)
   const focusRestoredRef = useRef(false)
   const [quickActions, setQuickActions] = useState<{ nodeId: string; screenX: number; screenY: number } | null>(null)
   const [edgeSplit, setEdgeSplit] = useState<{ parentId: string; childId: string; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
@@ -482,7 +484,6 @@ export function App() {
     rotationalDragRef.current = null
     const guide = snapGuideRef.current
     if (guide) guide.style.display = 'none'
-
     // Send final positions to server for dragged node + descendants
     const allNodes = useNodeStore.getState().nodes
     const moves: Array<{ nodeId: string; x: number; y: number }> = []
@@ -942,7 +943,7 @@ export function App() {
   }, [])
 
   // Handlers that send mutations to server
-  const handleMove = useCallback((id: string, x: number, y: number, metaKey?: boolean) => {
+  const handleMove = useCallback((id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => {
     // Track Command key releases for fresh-press detection
     if (!metaKey) {
       metaKeyWasReleasedRef.current = true
@@ -1038,6 +1039,30 @@ export function App() {
         snapStateRef.current = null
         const guide = snapGuideRef.current
         if (guide) guide.style.display = 'none'
+      }
+    }
+
+    // Angle snap: when Shift is held mid-drag (not rotational drag), snap to 22.5° increments from parent
+    if (shiftKey && !rotationalDragRef.current) {
+      const allNodesSnap = useNodeStore.getState().nodes
+      const node = allNodesSnap[id]
+      if (node) {
+        const parent = node.parentId === 'root' ? null : allNodesSnap[node.parentId]
+        const pivotX = parent ? parent.x : 0
+        const pivotY = parent ? parent.y : 0
+
+        const adx = finalX - pivotX
+        const ady = finalY - pivotY
+        const distance = Math.sqrt(adx * adx + ady * ady)
+        const angle = Math.atan2(ady, adx)
+
+        const SNAP_DIVISIONS = 60
+        const snapIncrement = (2 * Math.PI) / SNAP_DIVISIONS
+        const snapAngle = Math.round(angle / snapIncrement) * snapIncrement
+
+        finalX = pivotX + distance * Math.cos(snapAngle)
+        finalY = pivotY + distance * Math.sin(snapAngle)
+
       }
     }
 
@@ -1433,7 +1458,9 @@ export function App() {
         if (!next) {
           shakeCamera()
         } else {
+          const fromId = anchor
           lastCrabRef.current = { nodeId: next.nodeId, createdAt: next.createdAt }
+          setCrabNavEvent({ fromNodeId: fromId, toNodeId: next.nodeId, ts: Date.now() })
           navigateToNode(next.nodeId)
         }
       }
@@ -1566,7 +1593,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<><SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} goodGfx={goodGfx} />} overlay={<><SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <RootNode
           focused={focusedId === 'root'}
           selected={selection === 'root'}
@@ -1795,11 +1822,14 @@ export function App() {
         onCrabClick={handleCrabClick}
         onCrabReorder={handleCrabReorder}
         selectedNodeId={focusedId}
+        crabNavEvent={crabNavEvent}
         zoom={camera.z}
         onHelpClick={() => setHelpVisible(v => !v)}
         keycastEnabled={keycastEnabled}
-        onKeycastToggle={() => setKeycastEnabled(v => !v)}
+        onKeycastToggle={() => setKeycastEnabled(v => { const next = !v; localStorage.setItem('toolbar.keycast', String(next)); return next })}
         onDebugCapture={handleDebugCapture}
+        goodGfx={goodGfx}
+        onGoodGfxToggle={() => setGoodGfx(v => { const next = !v; localStorage.setItem('toolbar.goodGfx', String(next)); return next })}
       />
       {quickActions && resolvedPresets[quickActions.nodeId] && (
         <FloatingToolbar

@@ -8,9 +8,13 @@ import type { AddNodeType } from './AddNodeBody'
 import { ExtraCliArgsBody } from './ExtraCliArgsBody'
 import { WtSpawnBody } from './WtSpawnBody'
 import { AlertsBody } from './AlertsBody'
-import { useNodeAlerts } from '../lib/node-alerts'
+import { useNodeStore } from '../stores/nodeStore'
+import { sendSetAlertsReadTimestamp } from '../lib/server-sync'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import foodIcon from '../assets/food.svg'
+import type { NodeAlert } from '../../../../shared/state'
+
+const EMPTY_ALERTS: NodeAlert[] = []
 
 export interface NodeActionBarProps {
   nodeId: string
@@ -81,7 +85,10 @@ export function NodeActionBar({
   const [alertsOpen, setAlertsOpen] = useState(false)
   const alertsBtnRef = useRef<HTMLButtonElement>(null)
   const alertsBodyRef = useRef<HTMLDivElement>(null)
-  const alerts = useNodeAlerts()
+  const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
+  const alertsReadTimestamp = useNodeStore(s => s.nodes[nodeId]?.alertsReadTimestamp)
+  const unreadCount = alerts.filter(a => a.timestamp > (alertsReadTimestamp ?? 0)).length
+  const hasUnread = unreadCount > 0
 
   // Close alerts panel when alerts become empty
   useEffect(() => {
@@ -191,8 +198,12 @@ export function NodeActionBar({
     setAddNodeOpen(false)
     setCliArgsOpen(false)
     setWtSpawnOpen(false)
-    setAlertsOpen(prev => !prev)
-  }, [])
+    setAlertsOpen(prev => {
+      const next = !prev
+      if (next) sendSetAlertsReadTimestamp(nodeId, Date.now())
+      return next
+    })
+  }, [nodeId])
 
   const handleArchiveClick = useCallback(() => {
     onOpenArchiveSearch?.(nodeId)
@@ -261,8 +272,8 @@ export function NodeActionBar({
       {alerts.length > 0 && (
         <button
           ref={alertsBtnRef}
-          className="node-titlebar__alerts-btn"
-          data-tooltip="Alerts"
+          className={`node-titlebar__alerts-btn${hasUnread ? ' node-titlebar__alerts-btn--unread' : ''}`}
+          data-tooltip={`Show alerts (${unreadCount} new / ${alerts.length} total)`}
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); toggleAlerts() }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -489,7 +500,7 @@ export function NodeActionBar({
       )}
       {alertsOpen && alerts.length > 0 && (
         <div className="card-shell__alerts-body" style={popupStyle} ref={alertsBodyRef}>
-          <AlertsBody alerts={alerts} />
+          <AlertsBody alerts={alerts} alertsReadTimestamp={alertsReadTimestamp} />
         </div>
       )}
       {wtSpawnOpen && onWtSpawn && (

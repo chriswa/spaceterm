@@ -60,6 +60,7 @@ interface NodeApi {
   forkSession(nodeId: string): Promise<{ sessionId: string; cols: number; rows: number }>
   setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
   setClaudeStatusUnread(sessionId: string, unread: boolean): void
+  setAlertsReadTimestamp(nodeId: string, timestamp: number): void
   onSnapshot(sessionId: string, callback: (snapshot: import('../../../shared/protocol').SnapshotMessage) => void): () => void
   directoryAdd(parentId: string, x: number, y: number, cwd: string): Promise<{ nodeId: string }>
   directoryCwd(nodeId: string, cwd: string): Promise<void>

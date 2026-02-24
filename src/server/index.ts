@@ -966,6 +966,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'set-alerts-read-timestamp': {
+      stateManager.setAlertsReadTimestamp(msg.nodeId, msg.timestamp)
+      break
+    }
+
     case 'terminal-restart': {
       try {
         const restartNode = stateManager.getNode(msg.nodeId)

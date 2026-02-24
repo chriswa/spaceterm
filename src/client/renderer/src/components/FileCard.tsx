@@ -46,7 +46,7 @@ interface FileCardProps {
   archivedChildren: ArchivedNode[]
   onFocus: (id: string) => void
   onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number, metaKey?: boolean) => void
+  onMove: (id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onFilePathChange: (id: string, filePath: string) => void
   onColorChange: (id: string, color: string) => void
   onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
@@ -108,7 +108,7 @@ export function FileCard({
   // Auto-focus input when entering edit mode
   useEffect(() => {
     if (editing && inputRef.current) {
-      inputRef.current.focus()
+      inputRef.current.focus({ preventScroll: true })
       inputRef.current.select()
     }
   }, [editing])
@@ -201,7 +201,7 @@ export function FileCard({
       }
 
       if (dragging) {
-        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey, ev.shiftKey)
       }
     }
 

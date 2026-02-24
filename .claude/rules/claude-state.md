@@ -35,3 +35,4 @@ When modifying transition logic, these invariants must be preserved:
 7. Stale sweep only transitions working→stuck (not other states) after 2min of no activity
 8. Stop and SessionEnd clear lastActivityBySurface (prevents false stuck transitions after restart)
 9. Status-line events reset lastActivityBySurface and recover from stuck→working (proves session is alive)
+10. jsonl:assistant must not override waiting states (waiting_permission, waiting_question, waiting_plan) — parallel tool_use blocks in a single response produce JSONL entries after the PermissionRequest hook, which would clobber the waiting state back to working

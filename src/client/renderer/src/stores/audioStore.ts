@@ -25,7 +25,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   confidence: 0,
   hasSignal: false,
   listening: false,
-  beatsVisible: false,
+  beatsVisible: localStorage.getItem('toolbar.audioVis') === 'true',
   init: () => {
     const cleanup = window.api.audio.onBeat((data) => {
       set({
@@ -41,5 +41,5 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     })
     return cleanup
   },
-  toggleBeats: () => set({ beatsVisible: !get().beatsVisible })
+  toggleBeats: () => { const next = !get().beatsVisible; localStorage.setItem('toolbar.audioVis', String(next)); set({ beatsVisible: next }) }
 }))

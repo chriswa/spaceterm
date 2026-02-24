@@ -211,6 +211,19 @@ html, body, #root {
   color: #653e2f;
 }
 
+.toolbar__crab-nav-triangle {
+  position: absolute;
+  bottom: -7px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 5px solid white;
+  transform: translateX(-4px);
+  pointer-events: none;
+  opacity: 0;
+}
+
 @keyframes crab-glow {
   0% { filter: drop-shadow(0 0 2px transparent); }
   100% { filter: drop-shadow(0 0 6px currentColor); }
@@ -1905,7 +1918,7 @@ html, body, #root {
   bottom: 28px;
   right: 16px;
   width: 800px;
-  height: 200px;
+  height: 140px;
   z-index: 10001;
   pointer-events: none;
 }
@@ -2334,7 +2347,46 @@ html, body, #root {
 
 /* Alerts button */
 .node-titlebar__alerts-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
   color: #e5a00d;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__alerts-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+@keyframes alert-pulse {
+  0%, 100% { color: #000; }
+  50% { color: #fff; }
+}
+.node-titlebar__alerts-btn--unread {
+  animation: alert-pulse 2s ease-in-out infinite;
+}
+
+/* Floating alert badge (visible when unfocused) */
+.card-shell__alert-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  transform: scale(var(--dir-zoom-boost, 1));
+  transform-origin: center center;
+  z-index: 10;
+  pointer-events: none;
+  color: #fff;
+}
+
+.card-shell__alert-badge--unread {
+  animation: alert-pulse 2s ease-in-out infinite;
 }
 
 /* AlertsBody items */
@@ -2357,6 +2409,12 @@ html, body, #root {
 }
 .alerts-body__message {
   line-height: 1.4;
+}
+.alerts-body__item--unread {
+  color: #fff;
+}
+.alerts-body__item--unread .alerts-body__icon {
+  color: #ffcc00;
 }
 
 /* ExtraCliArgsBody */
@@ -2528,7 +2586,8 @@ html, body, #root {
 .floating-toolbar .node-titlebar__shipit-btn:hover,
 .floating-toolbar .node-titlebar__diff-plans-btn:hover,
 .floating-toolbar .node-titlebar__postsync-btn:hover,
-.floating-toolbar .node-titlebar__wtspawn-btn:hover {
+.floating-toolbar .node-titlebar__wtspawn-btn:hover,
+.floating-toolbar .node-titlebar__alerts-btn:hover {
   background: rgba(0, 0, 0, 0.7);
   color: #fff !important;
 }

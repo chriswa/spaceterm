@@ -33,6 +33,28 @@ export const COLOR_PRESET_MAP: Record<string, ColorPreset> = Object.fromEntries(
 
 export const DEFAULT_PRESET = COLOR_PRESETS[0]
 
+const dimCache = new Map<string, string>()
+
+/**
+ * Dim a '#rrggbb' hex color by pulling each channel toward black (0).
+ * `amount` is the fraction to dim by (0–1).
+ * E.g. amount = 0.10 moves each channel 10% closer to 0.
+ */
+export function dimHex(hex: string, amount: number): string {
+  const key = hex + amount
+  const cached = dimCache.get(key)
+  if (cached) return cached
+
+  const scale = 1 - amount
+  const r = Math.round(parseInt(hex.slice(1, 3), 16) * scale)
+  const g = Math.round(parseInt(hex.slice(3, 5), 16) * scale)
+  const b = Math.round(parseInt(hex.slice(5, 7), 16) * scale)
+
+  const result = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+  dimCache.set(key, result)
+  return result
+}
+
 /** Blend `fg` over `bg` at the given alpha (0–1). All values are '#rrggbb' hex strings. */
 export function blendHex(fg: string, bg: string, alpha: number): string {
   const fr = parseInt(fg.slice(1, 3), 16)

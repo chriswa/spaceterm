@@ -15,6 +15,14 @@ export interface TerminalSessionEntry {
   shellTitleHistory: string[]
 }
 
+// --- Node alerts ---
+
+export interface NodeAlert {
+  type: string
+  message: string
+  timestamp: number  // epoch ms, set once when first detected
+}
+
 // --- Node types (unified terminal/remnant) ---
 
 export interface BaseNodeData {
@@ -27,6 +35,8 @@ export interface BaseNodeData {
   name?: string | null
   colorPresetId?: string
   archivedChildren: ArchivedNode[]
+  alerts?: NodeAlert[]
+  alertsReadTimestamp?: number  // epoch ms, set by client
 }
 
 export interface TerminalNodeData extends BaseNodeData {

@@ -6,7 +6,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
 import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '../lib/constants'
 import { classifyWheelEvent } from '../lib/wheel-gesture'
-import type { ColorPreset } from '../lib/color-presets'
+import { type ColorPreset, blendHex } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
@@ -52,6 +52,8 @@ function cleanTerminalCopy(raw: string): string {
 const DRAG_THRESHOLD = 5
 const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
 const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
+/** Fraction by which snapshot colors are faded toward the terminal background. */
+const SNAPSHOT_FADE = 0.50
 
 const darkenHex = (hex: string, amount: number): string => {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -91,7 +93,7 @@ interface TerminalCardProps {
   onUnfocus: () => void
   onDisableScrollMode: () => void
   onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number, metaKey?: boolean) => void
+  onMove: (id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onResize: (id: string, cols: number, rows: number) => void
   onRename: (id: string, name: string) => void
   archivedChildren: ArchivedNode[]
@@ -324,16 +326,29 @@ export function TerminalCard({
     // Switch to live mode (stop receiving snapshots, start receiving raw data)
     window.api.node.setTerminalMode(sessionId, 'live')
 
-    // Attach to server session and replay scrollback before subscribing to live data
+    // Attach to server session and replay scrollback before subscribing to live data.
+    // Live data from the main process (already attached to this session) starts flowing
+    // as soon as the onData listener is registered. We buffer it until the scrollback
+    // replay completes so the xterm processes data in the correct order:
+    //   [scrollback, buffered live data, subsequent live data]
     let cancelled = false
+    let scrollbackDone = false
+    let pendingData: string[] = []
     let readyTimeout: ReturnType<typeof setTimeout> | undefined
     let onRenderDisposable: { dispose(): void } | undefined
+
+    const flushPendingData = () => {
+      scrollbackDone = true
+      for (const d of pendingData) term.write(d)
+      pendingData = []
+    }
 
     const markReady = () => {
       if (readyTimeout !== undefined) clearTimeout(readyTimeout)
       if (onRenderDisposable) onRenderDisposable.dispose()
       readyTimeout = undefined
       onRenderDisposable = undefined
+      if (!scrollbackDone) flushPendingData()
       setXtermReady(true)
     }
 
@@ -359,6 +374,7 @@ export function TerminalCard({
       if (cancelled) return
       if (result.scrollback.length > 0) {
         term.write(result.scrollback, () => {
+          flushPendingData()
           // Parsing complete — wait for the next render frame to mark ready
           onRenderDisposable = term.onRender(() => {
             markReady()
@@ -366,6 +382,7 @@ export function TerminalCard({
           })
         })
       } else {
+        flushPendingData()
         markReady()
       }
       if (result.claudeContextPercent !== undefined) {
@@ -373,12 +390,18 @@ export function TerminalCard({
       }
     }).catch(() => {
       // Session may not exist on server — still unblock so we don't get stuck on snapshot
+      flushPendingData()
       markReady()
     })
 
-    // Wire up IPC — use sessionId for all PTY operations
+    // Wire up IPC — use sessionId for all PTY operations.
+    // Data is buffered until scrollback replay completes (see above).
     const cleanupData = window.api.pty.onData(sessionId, (data) => {
-      term.write(data)
+      if (scrollbackDone) {
+        term.write(data)
+      } else {
+        pendingData.push(data)
+      }
     })
 
     const cleanupExit = window.api.pty.onExit(sessionId, (exitCode) => {
@@ -593,8 +616,9 @@ export function TerminalCard({
       canvas.height = ch
     }
 
-    const bgColor = preset?.terminalBg ?? DEFAULT_BG
-    ctx.fillStyle = bgColor
+    const termBg = preset?.terminalBg ?? DEFAULT_BG
+    const fade = 1 - SNAPSHOT_FADE
+    ctx.fillStyle = termBg
     ctx.fillRect(0, 0, cw, ch)
 
     for (let y = 0; y < snapshot.lines.length; y++) {
@@ -604,13 +628,16 @@ export function TerminalCard({
       for (const span of row) {
         const spanWidth = span.text.length * CELL_WIDTH
 
-        if (span.bg !== bgColor && span.bg !== DEFAULT_BG) {
-          ctx.fillStyle = span.bg
-          ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
+        if (span.bg !== DEFAULT_BG) {
+          const spanBg = blendHex(span.bg, termBg, fade)
+          if (spanBg !== termBg) {
+            ctx.fillStyle = spanBg
+            ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
+          }
         }
 
         if (span.text.trim().length > 0) {
-          ctx.fillStyle = span.fg
+          ctx.fillStyle = blendHex(span.fg, termBg, fade)
           ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
           ctx.textBaseline = 'top'
           for (let i = 0; i < span.text.length; i++) {
@@ -758,7 +785,7 @@ export function TerminalCard({
       }
 
       if (dragging && !bodyClickWhileFocused) {
-        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey, ev.shiftKey)
       }
     }
 

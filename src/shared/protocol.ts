@@ -335,6 +335,12 @@ export interface CrabReorderMessage {
   order: string[]  // Node IDs in desired visual order
 }
 
+export interface SetAlertsReadTimestampMessage {
+  type: 'set-alerts-read-timestamp'
+  nodeId: string
+  timestamp: number
+}
+
 /** Fire-and-forget messages received on the hooks socket (no response sent). */
 export type IngestMessage =
   | HookMessage
@@ -383,6 +389,7 @@ export type ClientMessage =
   | ForkSessionMessage
   | TerminalRestartMessage
   | CrabReorderMessage
+  | SetAlertsReadTimestampMessage
 
 // --- Server → Client messages ---
 

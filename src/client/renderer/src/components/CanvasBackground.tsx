@@ -30,6 +30,7 @@ interface CanvasBackgroundProps {
   maskRectsRef: React.RefObject<MaskRect[]>
   selectionRef: React.RefObject<string | null>
   reparentEdgeRef: React.RefObject<ReparentEdge | null>
+  goodGfx: boolean
 }
 
 // --- Background shaders ---
@@ -80,7 +81,7 @@ float snoise(vec3 uv, float res) {
 
 vec4 computeBackground(vec2 fragCoord, float bgTime, vec2 bgOrigin, float bgZoom, float lumFloor) {
     vec2 canvasOffset = (fragCoord - bgOrigin) / bgZoom;
-    float r = length(canvasOffset);
+    float r = length(canvasOffset) * 0.5;
     float theta = atan(canvasOffset.y, canvasOffset.x);
     float logR = log(1.0 + r / 100.0) * 0.16;
     vec2 p = vec2(cos(theta), sin(theta)) * logR;
@@ -112,6 +113,84 @@ uniform float uZoom;
 ${BG_HELPERS}
 void main() {
     gl_FragColor = computeBackground(gl_FragCoord.xy, iTime, uOrigin, uZoom, 0.0);
+}
+`
+
+// Simple 2D polar-coordinate noise shader — cheap alternative to the full 3D octave shader
+const SIMPLE_BG_FRAG_SRC = `
+precision highp float;
+uniform float iTime;
+uniform vec2 uOrigin;
+uniform float uZoom;
+
+const float PI = 3.14159265358979;
+
+vec3 oklab2rgb(vec3 lab) {
+    float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+    float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+    float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+    float l = l_*l_*l_;
+    float m = m_*m_*m_;
+    float s = s_*s_*s_;
+    return vec3(
+        +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    );
+}
+
+vec3 oklch2rgb(float L, float C, float h) {
+    return oklab2rgb(vec3(L, C * cos(h), C * sin(h)));
+}
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float noise2d(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+void main() {
+    vec2 canvasOffset = (gl_FragCoord.xy - uOrigin) / uZoom;
+    float r = length(canvasOffset) * 0.5;
+    float theta = atan(canvasOffset.y, canvasOffset.x);
+    float d = log(1.0 + r / 100.0);
+
+    // Map angle onto a circle (cos/sin) to eliminate the seam at ±π.
+    // Map distance onto a circle so the pattern tiles seamlessly in log-space.
+    // High angular freq + low radial freq = radial streaks.
+    float aF = 24.0;
+    float dPhase = d * 2.094;
+    float tPhase = iTime * 0.4;
+
+    float n = 0.5 * (
+        noise2d(vec2(cos(theta) * aF + cos(tPhase) * 0.8, cos(dPhase) * 0.6 + sin(tPhase) * 0.8)) +
+        noise2d(vec2(sin(theta) * aF + sin(tPhase * 0.7) * 0.8, sin(dPhase) * 0.6 + cos(tPhase * 0.7) * 0.8))
+    );
+
+    // Proximity: 1 at origin, 0 past ~100k world-space pixels
+    float proximity = 1.0 - smoothstep(0.0, 100000.0, r);
+
+    // Lift noise floor aggressively near centre (min ~0.7), let it fall to 0 far out
+    float floor = proximity * 0.7;
+    float lifted = floor + n * (1.0 - floor);
+    float lum = smoothstep(0.05, 0.95, lifted) * 0.6;
+
+    // Near centre: higher lightness + lower chroma = washed-out pastels
+    // Far out: deeper, more saturated tint
+    float hue = PI * 8.0 / 12.0 - theta;
+    float L = 0.51;
+    float C = 0.06;
+    vec3 tint = max(oklch2rgb(L, C, hue), 0.0);
+    gl_FragColor = vec4(tint * lum * 1.2, 1.0);
 }
 `
 
@@ -194,6 +273,64 @@ void main() {
 }
 `
 
+// Simple edge shader — uses radial hue with a flat washed-out tint instead of computeBackground
+const SIMPLE_EDGE_FRAG_SRC = `
+#extension GL_OES_standard_derivatives : enable
+precision highp float;
+varying vec2 vUV;
+uniform vec2 uBgOrigin;
+uniform float uIntensity;
+uniform float uZoom;
+
+const float PI = 3.14159265358979;
+
+vec3 oklab2rgb(vec3 lab) {
+    float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+    float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+    float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+    float l = l_*l_*l_;
+    float m = m_*m_*m_;
+    float s = s_*s_*s_;
+    return vec3(
+        +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    );
+}
+
+vec3 oklch2rgb(float L, float C, float h) {
+    return oklab2rgb(vec3(L, C * cos(h), C * sin(h)));
+}
+
+float sdSegment(vec2 p, vec2 a, vec2 b) {
+  vec2 pa = p - a, ba = b - a;
+  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba * h);
+}
+
+const vec2  APEX   = vec2(0.5, 0.125);
+const vec2  BASE_L = vec2(0.15, 0.82);
+const vec2  BASE_R = vec2(0.85, 0.82);
+const float HALF_W = 0.06;
+
+void main() {
+  vec2 uv = vec2(vUV.x, fract(vUV.y));
+
+  float d = min(sdSegment(uv, APEX, BASE_L), sdSegment(uv, APEX, BASE_R));
+  float aa = fwidth(d) * 0.75;
+  float alpha = 1.0 - smoothstep(HALF_W - aa, HALF_W + aa, d);
+  if (alpha < 0.004) discard;
+
+  // Flat washed-out radial hue — no expensive noise
+  vec2 canvasOffset = (gl_FragCoord.xy - uBgOrigin) / uZoom;
+  float theta = atan(canvasOffset.y, canvasOffset.x);
+  float hue = PI * 8.0 / 12.0 - theta;
+  vec3 tint = max(oklch2rgb(0.65, 0.06, hue), 0.0);
+  vec3 result = tint * (0.35 + 0.45 * alpha * uIntensity);
+  gl_FragColor = vec4(result, 1.0);
+}
+`
+
 function compileShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {
   const s = gl.createShader(type)
   if (!s) return null
@@ -230,9 +367,11 @@ const FLOATS_PER_EDGE = VERTS_PER_EDGE * FLOATS_PER_VERTEX // 24
 // Zoom exponent: (1/z)^0.7 gives ~5x at z=0.1, 1x at z=1.0
 const ZOOM_WIDTH_EXP = Math.log(5) / Math.log(10) // ≈ 0.699
 
-export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef }: CanvasBackgroundProps) {
+export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef, goodGfx }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
+  const goodGfxRef = useRef(goodGfx)
+  goodGfxRef.current = goodGfx
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -249,50 +388,67 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
 
     gl.getExtension('OES_standard_derivatives') // required for fwidth() in edge SDF
 
-    // --- Background program ---
-    const bgProg = createProgram(gl, BG_VERT_SRC, BG_FRAG_SRC)
+    // --- Background programs (full + simple) ---
+    const bgProgFull = createProgram(gl, BG_VERT_SRC, BG_FRAG_SRC)
+    const bgProgSimple = createProgram(gl, BG_VERT_SRC, SIMPLE_BG_FRAG_SRC)
 
     let bgBuf: WebGLBuffer | null = null
-    let bgPosLoc = -1
-    let bgTimeLoc: WebGLUniformLocation | null = null
-    let bgOriginLoc: WebGLUniformLocation | null = null
-    let bgZoomLoc: WebGLUniformLocation | null = null
 
-    if (bgProg) {
+    // Uniform/attrib locations for each bg program
+    const bgLocs = {
+      full: { pos: -1, time: null as WebGLUniformLocation | null, origin: null as WebGLUniformLocation | null, zoom: null as WebGLUniformLocation | null },
+      simple: { pos: -1, time: null as WebGLUniformLocation | null, origin: null as WebGLUniformLocation | null, zoom: null as WebGLUniformLocation | null },
+    }
+
+    if (bgProgFull || bgProgSimple) {
       bgBuf = gl.createBuffer()
       gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf)
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
-      bgPosLoc = gl.getAttribLocation(bgProg, 'a_position')
-      bgTimeLoc = gl.getUniformLocation(bgProg, 'iTime')
-      bgOriginLoc = gl.getUniformLocation(bgProg, 'uOrigin')
-      bgZoomLoc = gl.getUniformLocation(bgProg, 'uZoom')
+    }
+    if (bgProgFull) {
+      bgLocs.full.pos = gl.getAttribLocation(bgProgFull, 'a_position')
+      bgLocs.full.time = gl.getUniformLocation(bgProgFull, 'iTime')
+      bgLocs.full.origin = gl.getUniformLocation(bgProgFull, 'uOrigin')
+      bgLocs.full.zoom = gl.getUniformLocation(bgProgFull, 'uZoom')
+    }
+    if (bgProgSimple) {
+      bgLocs.simple.pos = gl.getAttribLocation(bgProgSimple, 'a_position')
+      bgLocs.simple.time = gl.getUniformLocation(bgProgSimple, 'iTime')
+      bgLocs.simple.origin = gl.getUniformLocation(bgProgSimple, 'uOrigin')
+      bgLocs.simple.zoom = gl.getUniformLocation(bgProgSimple, 'uZoom')
     }
 
-    // --- Edge program ---
-    const edgeProg = createProgram(gl, EDGE_VERT_SRC, EDGE_FRAG_SRC)
+    // --- Edge programs (full + simple) ---
+    const edgeProgFull = createProgram(gl, EDGE_VERT_SRC, EDGE_FRAG_SRC)
+    const edgeProgSimple = createProgram(gl, EDGE_VERT_SRC, SIMPLE_EDGE_FRAG_SRC)
 
     let edgeBuf: WebGLBuffer | null = null
-    let edgePosLoc = -1
-    let edgeUVLoc = -1
-    let edgePanLoc: WebGLUniformLocation | null = null
-    let edgeZoomLoc: WebGLUniformLocation | null = null
-    let edgeResLoc: WebGLUniformLocation | null = null
-    let edgeTimeLoc: WebGLUniformLocation | null = null
-    let edgeBgTimeLoc: WebGLUniformLocation | null = null
-    let edgeBgOriginLoc: WebGLUniformLocation | null = null
-    let edgeIntensityLoc: WebGLUniformLocation | null = null
 
-    if (edgeProg) {
+    type EdgeLocs = {
+      pos: number; uv: number
+      pan: WebGLUniformLocation | null; zoom: WebGLUniformLocation | null
+      res: WebGLUniformLocation | null; time: WebGLUniformLocation | null
+      bgTime: WebGLUniformLocation | null; bgOrigin: WebGLUniformLocation | null
+      intensity: WebGLUniformLocation | null
+    }
+    const initEdgeLocs = (prog: WebGLProgram): EdgeLocs => ({
+      pos: gl.getAttribLocation(prog, 'a_position'),
+      uv: gl.getAttribLocation(prog, 'a_uv'),
+      pan: gl.getUniformLocation(prog, 'uPan'),
+      zoom: gl.getUniformLocation(prog, 'uZoom'),
+      res: gl.getUniformLocation(prog, 'uResolution'),
+      time: gl.getUniformLocation(prog, 'uTime'),
+      bgTime: gl.getUniformLocation(prog, 'uBgTime'),
+      bgOrigin: gl.getUniformLocation(prog, 'uBgOrigin'),
+      intensity: gl.getUniformLocation(prog, 'uIntensity'),
+    })
+
+    const nullEdgeLocs: EdgeLocs = { pos: -1, uv: -1, pan: null, zoom: null, res: null, time: null, bgTime: null, bgOrigin: null, intensity: null }
+    const edgeLocsFull = edgeProgFull ? initEdgeLocs(edgeProgFull) : nullEdgeLocs
+    const edgeLocsSimple = edgeProgSimple ? initEdgeLocs(edgeProgSimple) : nullEdgeLocs
+
+    if (edgeProgFull || edgeProgSimple) {
       edgeBuf = gl.createBuffer()
-      edgePosLoc = gl.getAttribLocation(edgeProg, 'a_position')
-      edgeUVLoc = gl.getAttribLocation(edgeProg, 'a_uv')
-      edgePanLoc = gl.getUniformLocation(edgeProg, 'uPan')
-      edgeZoomLoc = gl.getUniformLocation(edgeProg, 'uZoom')
-      edgeResLoc = gl.getUniformLocation(edgeProg, 'uResolution')
-      edgeTimeLoc = gl.getUniformLocation(edgeProg, 'uTime')
-      edgeBgTimeLoc = gl.getUniformLocation(edgeProg, 'uBgTime')
-      edgeBgOriginLoc = gl.getUniformLocation(edgeProg, 'uBgOrigin')
-      edgeIntensityLoc = gl.getUniformLocation(edgeProg, 'uIntensity')
     }
 
     // --- Mask buffer (reuses background program to paint over edges behind transparent cards) ---
@@ -332,21 +488,25 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
 
       const bgTime = (now - bgT0) / 1666
 
-      // 1. Draw background quad
-      if (bgProg && bgBuf) {
-        gl.useProgram(bgProg)
+      // 1. Draw background quad — pick full or simple shader
+      const activeBgProg = goodGfxRef.current ? bgProgFull : bgProgSimple
+      const activeBgLoc = goodGfxRef.current ? bgLocs.full : bgLocs.simple
+      if (activeBgProg && bgBuf) {
+        gl.useProgram(activeBgProg)
         gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf)
-        gl.enableVertexAttribArray(bgPosLoc)
-        gl.vertexAttribPointer(bgPosLoc, 2, gl.FLOAT, false, 0, 0)
-        gl.uniform1f(bgTimeLoc, bgTime)
-        gl.uniform2f(bgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
-        gl.uniform1f(bgZoomLoc, cam.z)
+        gl.enableVertexAttribArray(activeBgLoc.pos)
+        gl.vertexAttribPointer(activeBgLoc.pos, 2, gl.FLOAT, false, 0, 0)
+        gl.uniform1f(activeBgLoc.time, bgTime)
+        gl.uniform2f(activeBgLoc.origin, cam.x * dpr, canvas.height - cam.y * dpr)
+        gl.uniform1f(activeBgLoc.zoom, cam.z)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
-        gl.disableVertexAttribArray(bgPosLoc)
+        gl.disableVertexAttribArray(activeBgLoc.pos)
       }
 
       // 2. Draw edge quads with SDF chevrons
-      if (edgeProg && edgeBuf) {
+      const activeEdgeProg = goodGfxRef.current ? edgeProgFull : edgeProgSimple
+      const eL = goodGfxRef.current ? edgeLocsFull : edgeLocsSimple
+      if (activeEdgeProg && edgeBuf) {
         const edges = edgesRef.current
         if (edges.length > 0) {
           // Build id → position lookup
@@ -417,27 +577,27 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           }
 
           if (vertexCount > 0) {
-            gl.useProgram(edgeProg)
+            gl.useProgram(activeEdgeProg)
             gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf)
             gl.bufferData(gl.ARRAY_BUFFER, edgeVerts.subarray(0, vertexCount * FLOATS_PER_VERTEX), gl.DYNAMIC_DRAW)
 
             const stride = FLOATS_PER_VERTEX * 4 // 16 bytes
-            gl.enableVertexAttribArray(edgePosLoc)
-            gl.vertexAttribPointer(edgePosLoc, 2, gl.FLOAT, false, stride, 0)
-            gl.enableVertexAttribArray(edgeUVLoc)
-            gl.vertexAttribPointer(edgeUVLoc, 2, gl.FLOAT, false, stride, 8)
+            gl.enableVertexAttribArray(eL.pos)
+            gl.vertexAttribPointer(eL.pos, 2, gl.FLOAT, false, stride, 0)
+            gl.enableVertexAttribArray(eL.uv)
+            gl.vertexAttribPointer(eL.uv, 2, gl.FLOAT, false, stride, 8)
 
-            gl.uniform2f(edgePanLoc, cam.x, cam.y)
-            gl.uniform1f(edgeZoomLoc, cam.z)
-            gl.uniform2f(edgeResLoc, canvas.clientWidth, canvas.clientHeight)
-            gl.uniform1f(edgeTimeLoc, (now - edgeT0) / 2000)
-            gl.uniform1f(edgeBgTimeLoc, bgTime)
-            gl.uniform2f(edgeBgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
-            gl.uniform1f(edgeIntensityLoc, 1.0)
+            gl.uniform2f(eL.pan, cam.x, cam.y)
+            gl.uniform1f(eL.zoom, cam.z)
+            gl.uniform2f(eL.res, canvas.clientWidth, canvas.clientHeight)
+            gl.uniform1f(eL.time, (now - edgeT0) / 2000)
+            gl.uniform1f(eL.bgTime, bgTime)
+            gl.uniform2f(eL.bgOrigin, cam.x * dpr, canvas.height - cam.y * dpr)
+            gl.uniform1f(eL.intensity, 1.0)
 
             gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
-            gl.disableVertexAttribArray(edgePosLoc)
-            gl.disableVertexAttribArray(edgeUVLoc)
+            gl.disableVertexAttribArray(eL.pos)
+            gl.disableVertexAttribArray(eL.uv)
           }
 
           // 2b. Draw highlight edges:
@@ -473,27 +633,27 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
             }
 
             const drawHighlightBatch = (intensity: number, vertexCount: number) => {
-              gl.useProgram(edgeProg)
+              gl.useProgram(activeEdgeProg)
               gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf)
               gl.bufferData(gl.ARRAY_BUFFER, edgeVerts.subarray(0, vertexCount * FLOATS_PER_VERTEX), gl.DYNAMIC_DRAW)
 
               const stride = FLOATS_PER_VERTEX * 4
-              gl.enableVertexAttribArray(edgePosLoc)
-              gl.vertexAttribPointer(edgePosLoc, 2, gl.FLOAT, false, stride, 0)
-              gl.enableVertexAttribArray(edgeUVLoc)
-              gl.vertexAttribPointer(edgeUVLoc, 2, gl.FLOAT, false, stride, 8)
+              gl.enableVertexAttribArray(eL.pos)
+              gl.vertexAttribPointer(eL.pos, 2, gl.FLOAT, false, stride, 0)
+              gl.enableVertexAttribArray(eL.uv)
+              gl.vertexAttribPointer(eL.uv, 2, gl.FLOAT, false, stride, 8)
 
-              gl.uniform2f(edgePanLoc, cam.x, cam.y)
-              gl.uniform1f(edgeZoomLoc, cam.z)
-              gl.uniform2f(edgeResLoc, canvas.clientWidth, canvas.clientHeight)
-              gl.uniform1f(edgeTimeLoc, (now - edgeT0) / 2000)
-              gl.uniform1f(edgeBgTimeLoc, bgTime)
-              gl.uniform2f(edgeBgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
-              gl.uniform1f(edgeIntensityLoc, intensity)
+              gl.uniform2f(eL.pan, cam.x, cam.y)
+              gl.uniform1f(eL.zoom, cam.z)
+              gl.uniform2f(eL.res, canvas.clientWidth, canvas.clientHeight)
+              gl.uniform1f(eL.time, (now - edgeT0) / 2000)
+              gl.uniform1f(eL.bgTime, bgTime)
+              gl.uniform2f(eL.bgOrigin, cam.x * dpr, canvas.height - cam.y * dpr)
+              gl.uniform1f(eL.intensity, intensity)
 
               gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
-              gl.disableVertexAttribArray(edgePosLoc)
-              gl.disableVertexAttribArray(edgeUVLoc)
+              gl.disableVertexAttribArray(eL.pos)
+              gl.disableVertexAttribArray(eL.uv)
             }
 
             // Selection → highlight parent edge with boosted soft-light
@@ -529,7 +689,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       // 3. Paint over edges behind transparent cards using the background shader
       //    The bg fragment shader uses gl_FragCoord, so quads at any position
       //    produce seamless background — effectively erasing the edges underneath.
-      if (bgProg && maskBuf) {
+      if (activeBgProg && maskBuf) {
         const rects = maskRectsRef.current
         if (rects.length > 0) {
           const needed = rects.length * 12 // 6 verts × 2 floats
@@ -563,16 +723,16 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
             maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nt
           }
 
-          gl.useProgram(bgProg)
+          gl.useProgram(activeBgProg)
           gl.bindBuffer(gl.ARRAY_BUFFER, maskBuf)
           gl.bufferData(gl.ARRAY_BUFFER, maskVerts.subarray(0, mOffset), gl.DYNAMIC_DRAW)
-          gl.enableVertexAttribArray(bgPosLoc)
-          gl.vertexAttribPointer(bgPosLoc, 2, gl.FLOAT, false, 0, 0)
-          gl.uniform1f(bgTimeLoc, bgTime)
-          gl.uniform2f(bgOriginLoc, cam.x * dpr, canvas.height - cam.y * dpr)
-          gl.uniform1f(bgZoomLoc, cam.z)
+          gl.enableVertexAttribArray(activeBgLoc.pos)
+          gl.vertexAttribPointer(activeBgLoc.pos, 2, gl.FLOAT, false, 0, 0)
+          gl.uniform1f(activeBgLoc.time, bgTime)
+          gl.uniform2f(activeBgLoc.origin, cam.x * dpr, canvas.height - cam.y * dpr)
+          gl.uniform1f(activeBgLoc.zoom, cam.z)
           gl.drawArrays(gl.TRIANGLES, 0, mOffset / 2)
-          gl.disableVertexAttribArray(bgPosLoc)
+          gl.disableVertexAttribArray(activeBgLoc.pos)
         }
       }
 
@@ -593,9 +753,11 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       stopLoop()
       unsubVisibility()
       observer.disconnect()
-      if (bgProg) gl.deleteProgram(bgProg)
+      if (bgProgFull) gl.deleteProgram(bgProgFull)
+      if (bgProgSimple) gl.deleteProgram(bgProgSimple)
       if (bgBuf) gl.deleteBuffer(bgBuf)
-      if (edgeProg) gl.deleteProgram(edgeProg)
+      if (edgeProgFull) gl.deleteProgram(edgeProgFull)
+      if (edgeProgSimple) gl.deleteProgram(edgeProgSimple)
       if (edgeBuf) gl.deleteBuffer(edgeBuf)
       if (maskBuf) gl.deleteBuffer(maskBuf)
     }

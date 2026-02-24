@@ -195,3 +195,7 @@ export async function sendTerminalRestart(
 export async function sendCrabReorder(order: string[]): Promise<void> {
   await window.api.node.crabReorder(order)
 }
+
+export function sendSetAlertsReadTimestamp(nodeId: string, timestamp: number): void {
+  window.api.node.setAlertsReadTimestamp(nodeId, timestamp)
+}

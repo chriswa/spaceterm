@@ -9,6 +9,8 @@ import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useUsageStore } from '../stores/usageStore'
 
+export type CrabNavEvent = { fromNodeId: string | null; toNodeId: string; ts: number } | null
+
 interface ToolbarProps {
   inputDevice: InputDevice
   onToggleInputDevice: () => void
@@ -16,20 +18,24 @@ interface ToolbarProps {
   onCrabClick: (nodeId: string) => void
   onCrabReorder: (order: string[]) => void
   selectedNodeId: string | null
+  crabNavEvent: CrabNavEvent
   zoom: number
   onHelpClick: () => void
   keycastEnabled: boolean
   onKeycastToggle: () => void
   onDebugCapture: () => void
+  goodGfx: boolean
+  onGoodGfxToggle: () => void
 }
 
 export function Toolbar({
   inputDevice,
   onToggleInputDevice,
-  crabs, onCrabClick, onCrabReorder, selectedNodeId, zoom,
+  crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent, zoom,
   onHelpClick,
   keycastEnabled, onKeycastToggle,
-  onDebugCapture
+  onDebugCapture,
+  goodGfx, onGoodGfxToggle
 }: ToolbarProps) {
   const fpsRef = useRef<HTMLSpanElement>(null)
   useFps(fpsRef)
@@ -73,6 +79,14 @@ export function Toolbar({
       >
         Camera Debug
       </button>
+      <button
+        className={'toolbar__btn' + (goodGfx ? ' toolbar__btn--active' : '')}
+        onClick={onGoodGfxToggle}
+        data-tooltip={goodGfx ? 'Switch to simple background shader' : 'Switch to full background shader'}
+        data-tooltip-no-flip
+      >
+        Good Gfx
+      </button>
       <FullscreenToggle />
       <AudioTapToggle />
       <BeatsToggle />
@@ -85,7 +99,7 @@ export function Toolbar({
         <UsageIndicators />
       </span>
       {crabs.length > 0 && (
-        <CrabGroup crabs={crabs} onCrabClick={onCrabClick} onCrabReorder={onCrabReorder} selectedNodeId={selectedNodeId} />
+        <CrabGroup crabs={crabs} onCrabClick={onCrabClick} onCrabReorder={onCrabReorder} selectedNodeId={selectedNodeId} crabNavEvent={crabNavEvent} />
       )}
     </div>
   )
@@ -94,10 +108,19 @@ export function Toolbar({
 function FullscreenToggle() {
   const [on, setOn] = useState(true)
 
-  useEffect(() => { window.api.window.isFullScreen().then(setOn) }, [])
+  useEffect(() => {
+    const saved = localStorage.getItem('toolbar.fullscreen')
+    if (saved !== null) {
+      const desired = saved === 'true'
+      window.api.window.setFullScreen(desired).then(() => setOn(desired))
+    } else {
+      window.api.window.isFullScreen().then(setOn)
+    }
+  }, [])
 
   const toggle = () => {
     const next = !on
+    localStorage.setItem('toolbar.fullscreen', String(next))
     window.api.window.setFullScreen(next).then(() => setOn(next))
   }
 
@@ -114,14 +137,15 @@ function FullscreenToggle() {
 }
 
 function AudioTapToggle() {
-  const [on, setOn] = useState(true)
+  const [on, setOn] = useState(() => localStorage.getItem('toolbar.audioTap') !== 'false')
 
   useEffect(() => {
-    window.api.audio.start().catch(() => {})
+    if (on) window.api.audio.start().catch(() => {})
   }, [])
 
   const toggle = () => {
     const next = !on
+    localStorage.setItem('toolbar.audioTap', String(next))
     ;(next ? window.api.audio.start() : window.api.audio.stop()).then(() => setOn(next))
   }
 
@@ -137,13 +161,15 @@ function AudioTapToggle() {
   )
 }
 
-function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null }) {
+function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null; crabNavEvent: CrabNavEvent }) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
   const positionsRef = useRef<Map<string, number>>(new Map())
   const isFirstRenderRef = useRef(true)
   const isDraggingRef = useRef(false)
+  const triangleRef = useRef<HTMLDivElement>(null)
+  const navAnimRef = useRef<{ cancel: () => void } | null>(null)
 
   // Capture positions before paint, animate enter/exit/reorder.
   // Positions are stored as distance from the slot's left edge to the
@@ -406,6 +432,81 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId }: { crab
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  // Triangle navigation indicator animation
+  useEffect(() => {
+    if (!crabNavEvent || !containerRef.current || !triangleRef.current) return
+
+    const container = containerRef.current
+    const triangle = triangleRef.current
+    const { fromNodeId, toNodeId } = crabNavEvent
+
+    // Cancel any in-progress animation
+    if (navAnimRef.current) {
+      navAnimRef.current.cancel()
+      navAnimRef.current = null
+    }
+
+    // Measure destination position
+    const toSlot = container.querySelector<HTMLElement>(`.toolbar__crab-slot[data-node-id="${toNodeId}"]`)
+    if (!toSlot) return
+    const toX = toSlot.offsetLeft + toSlot.offsetWidth / 2
+
+    // Measure start position
+    let fromX: number
+    if (fromNodeId) {
+      const fromSlot = container.querySelector<HTMLElement>(`.toolbar__crab-slot[data-node-id="${fromNodeId}"]`)
+      fromX = fromSlot ? fromSlot.offsetLeft + fromSlot.offsetWidth / 2 : toX
+    } else {
+      fromX = toX
+    }
+
+    // Show triangle at starting position
+    triangle.style.opacity = '1'
+    triangle.style.left = `${fromX}px`
+    // Clear any residual fill from previous animations
+    triangle.getAnimations().forEach(a => a.cancel())
+
+    const slideDuration = 250
+    const fadeDelay = 100
+    const fadeDuration = 300
+    let cancelled = false
+    let fadeTimeout: ReturnType<typeof setTimeout>
+    let fadeAnim: Animation | null = null
+
+    const slideAnim = triangle.animate(
+      [{ left: `${fromX}px` }, { left: `${toX}px` }],
+      { duration: slideDuration, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }
+    )
+
+    slideAnim.onfinish = () => {
+      if (cancelled) return
+      triangle.style.left = `${toX}px`
+      slideAnim.cancel()
+      fadeTimeout = setTimeout(() => {
+        if (cancelled) return
+        fadeAnim = triangle.animate(
+          [{ opacity: '1' }, { opacity: '0' }],
+          { duration: fadeDuration, fill: 'forwards' }
+        )
+        fadeAnim.onfinish = () => {
+          if (!cancelled) {
+            triangle.style.opacity = '0'
+            fadeAnim!.cancel()
+          }
+        }
+      }, fadeDelay)
+    }
+
+    navAnimRef.current = {
+      cancel: () => {
+        cancelled = true
+        slideAnim.cancel()
+        if (fadeAnim) fadeAnim.cancel()
+        clearTimeout(fadeTimeout)
+      }
+    }
+  }, [crabNavEvent])
+
   return (
     <div className="toolbar__crabs" ref={containerRef}>
       {crabs.map((crab, i) => (
@@ -419,6 +520,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId }: { crab
             />
           </div>
       ))}
+      <div ref={triangleRef} className="toolbar__crab-nav-triangle" />
     </div>
   )
 }

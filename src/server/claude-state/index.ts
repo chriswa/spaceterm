@@ -447,6 +447,35 @@ export class ClaudeStateMachine {
     this.lastActivityBySurface.set(surfaceId, Date.now())
     const prevState = this.deps.getClaudeState(surfaceId) ?? 'stopped'
 
+    // ── Guard: jsonl:assistant must not override waiting states ──
+    // When Claude produces multiple tool_use blocks in a single response (parallel
+    // tool calls), the JSONL entries for the 2nd/3rd/etc blocks arrive AFTER the
+    // PermissionRequest hook for the first block. Without this guard, those later
+    // jsonl:assistant entries clobber waiting_permission back to working, causing
+    // the indicator to show "working" (and eventually "stuck" after 2min) while
+    // the user is actually being asked for permission.
+    //
+    // This is safe because:
+    // - After user approves: PostToolUse (matching ID) transitions to working
+    // - After user rejects: jsonl:user:rejected transitions to stopped
+    // - If Claude resumes after approval, PreToolUse hook fires → working
+    // - A new user prompt fires UserPromptSubmit hook → working
+    // So there is always a hook-based path out of waiting states; we never
+    // rely on jsonl:assistant to escape them.
+    const isWaitingState = prevState === 'waiting_permission' || prevState === 'waiting_question' || prevState === 'waiting_plan'
+    if (source === 'jsonl' && newState === 'working' && isWaitingState) {
+      this.decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(),
+        source,
+        event,
+        prevState,
+        newState: prevState,
+        detail,
+        suppressed: true
+      })
+      return
+    }
+
     this.deps.setClaudeState(surfaceId, newState)
 
     // ── Unread flag: set true when entering an attention-needed state ──

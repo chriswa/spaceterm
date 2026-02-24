@@ -539,6 +539,8 @@ export function useCamera(
       viewport: viewport ? {
         clientWidth: viewport.clientWidth,
         clientHeight: viewport.clientHeight,
+        scrollLeft: viewport.scrollLeft,
+        scrollTop: viewport.scrollTop,
         boundingRect: viewport.getBoundingClientRect().toJSON(),
       } : null,
       canvas: canvas ? {

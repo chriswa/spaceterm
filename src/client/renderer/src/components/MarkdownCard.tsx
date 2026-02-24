@@ -36,7 +36,7 @@ interface MarkdownCardProps {
   selected: boolean
   onFocus: (id: string) => void
   onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number, metaKey?: boolean) => void
+  onMove: (id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onResize: (id: string, width: number, height: number) => void
   onContentChange: (id: string, content: string) => void
   onMaxWidthChange: (id: string, maxWidth: number) => void
@@ -625,7 +625,7 @@ export function MarkdownCard({
       }
 
       if (dragging && !bodyClickWhileFocused) {
-        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey)
+        onMove(id, startX + dx / currentZoom, startY + dy / currentZoom, ev.metaKey, ev.shiftKey)
       }
     }
 

@@ -3,6 +3,7 @@ import { homedir } from 'os'
 import type {
   ServerState,
   NodeData,
+  NodeAlert,
   TerminalNodeData,
   MarkdownNodeData,
   DirectoryNodeData,
@@ -13,6 +14,7 @@ import type {
 } from '../shared/state'
 import type { ClaudeSessionEntry } from '../shared/protocol'
 import { schedulePersist, persistNow, loadState } from './persistence'
+import { getAncestorCwd } from './path-utils'
 import { isDisposable } from '../shared/node-utils'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
 
@@ -57,6 +59,20 @@ export class StateManager {
       // MIGRATION: Backfill sortOrder for terminals that predate this field.
       // Can be removed once all users have launched at least once after this change.
       this.migrateSortOrder()
+
+      // TEMPORARY: Wipe all alerts to clear bad state from before ~ expansion fix.
+      // Remove this block once state is clean.
+      for (const node of Object.values(this.state.nodes)) {
+        if (node.alerts) {
+          node.alerts = undefined
+          node.alertsReadTimestamp = undefined
+        }
+      }
+
+      // Scan all existing Claude terminals for cwd-mismatch alerts.
+      // This catches mismatches that existed before the alert system was deployed
+      // or that occurred while the server was offline.
+      this.initialAlertScan()
     } else {
       this.state = {
         version: STATE_VERSION,
@@ -415,6 +431,8 @@ export class StateManager {
     node.parentId = newParentId
     this.onNodeUpdate(nodeId, { parentId: newParentId })
     this.schedulePersist()
+    // Recheck cwd-mismatch alerts for the reparented subtree
+    this.recheckDescendantCwdAlerts(nodeId)
   }
 
   /**
@@ -455,6 +473,8 @@ export class StateManager {
       if (child.parentId === nodeId) {
         child.parentId = parentId
         this.onNodeUpdate(child.id, { parentId })
+        // Recheck cwd-mismatch alerts for each reparented child subtree
+        this.recheckDescendantCwdAlerts(child.id)
       }
     }
 
@@ -580,6 +600,9 @@ export class StateManager {
     node.cwd = cwd
     this.onNodeUpdate(node.id, { cwd } as Partial<TerminalNodeData>)
     this.schedulePersist()
+    // Check self + descendants for cwd-mismatch alerts
+    this.checkCwdMismatchAlert(node)
+    this.recheckDescendantCwdAlerts(node.id)
   }
 
   updateShellTitleHistory(ptySessionId: string, history: string[]): void {
@@ -698,6 +721,8 @@ export class StateManager {
     node.cwd = cwd
     this.onNodeUpdate(nodeId, { cwd } as Partial<DirectoryNodeData>)
     this.schedulePersist()
+    // Recheck cwd-mismatch alerts for descendants whose ancestor cwd changed
+    this.recheckDescendantCwdAlerts(nodeId)
   }
 
   updateDirectoryGitStatus(nodeId: string, gitStatus: GitStatus | null): void {
@@ -828,6 +853,98 @@ export class StateManager {
     if (!node || node.type !== 'title') return
     node.text = text
     this.onNodeUpdate(nodeId, { text } as Partial<TitleNodeData>)
+    this.schedulePersist()
+  }
+
+  // --- Alerts ---
+
+  /** Normalize a path for comparison: expand ~ and strip trailing slashes. */
+  private normalizePath(p: string): string {
+    const home = homedir()
+    let out = p
+    if (out === '~') out = home
+    else if (out.startsWith('~/')) out = home + out.slice(1)
+    if (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1)
+    return out
+  }
+
+  /** Abbreviate a path with ~ for the home directory. */
+  private abbreviatePath(p: string): string {
+    const home = homedir()
+    if (p === home) return '~'
+    if (p.startsWith(home + '/')) return '~' + p.slice(home.length)
+    return p
+  }
+
+  /** Scan all existing Claude terminals for cwd-mismatch alerts on startup. */
+  private initialAlertScan(): void {
+    for (const node of Object.values(this.state.nodes)) {
+      if (node.type === 'terminal' && node.claudeSessionHistory.length > 0) {
+        this.checkCwdMismatchAlert(node)
+      }
+    }
+  }
+
+  /** Check a single terminal node for cwd-mismatch alert. */
+  private checkCwdMismatchAlert(node: TerminalNodeData): void {
+    if (node.claudeSessionHistory.length === 0) return
+    const parentCwd = getAncestorCwd(this.state.nodes, node.parentId)
+    if (!parentCwd || !node.cwd) return
+
+    const normalizedNodeCwd = this.normalizePath(node.cwd)
+    const normalizedParentCwd = this.normalizePath(parentCwd)
+
+    const alerts = node.alerts ?? []
+    const existingIdx = alerts.findIndex(a => a.type === 'cwd-mismatch')
+
+    if (normalizedNodeCwd !== normalizedParentCwd) {
+      // Mismatch detected — add alert if not already present
+      if (existingIdx === -1) {
+        const message = `Working directory changed to ${this.abbreviatePath(node.cwd)} (parent: ${this.abbreviatePath(parentCwd)})`
+        const newAlerts: NodeAlert[] = [...alerts, { type: 'cwd-mismatch', message, timestamp: Date.now() }]
+        node.alerts = newAlerts
+        this.onNodeUpdate(node.id, { alerts: newAlerts } as Partial<NodeData>)
+        this.schedulePersist()
+      }
+    } else {
+      // Match — remove existing cwd-mismatch alert if present
+      if (existingIdx !== -1) {
+        const newAlerts = alerts.filter(a => a.type !== 'cwd-mismatch')
+        node.alerts = newAlerts.length > 0 ? newAlerts : undefined
+        this.onNodeUpdate(node.id, { alerts: node.alerts ?? [] } as Partial<NodeData>)
+        this.schedulePersist()
+      }
+    }
+  }
+
+  /** BFS descendants of nodeId, calling checkCwdMismatchAlert on every Claude terminal found. */
+  recheckDescendantCwdAlerts(nodeId: string): void {
+    const queue = [nodeId]
+    const visited = new Set<string>()
+    while (queue.length > 0) {
+      const id = queue.shift()!
+      if (visited.has(id)) continue
+      visited.add(id)
+      const node = this.state.nodes[id]
+      if (!node) continue
+      if (node.type === 'terminal' && node.claudeSessionHistory.length > 0) {
+        this.checkCwdMismatchAlert(node)
+      }
+      // Enqueue children
+      for (const child of Object.values(this.state.nodes)) {
+        if (child.parentId === id && !visited.has(child.id)) {
+          queue.push(child.id)
+        }
+      }
+    }
+  }
+
+  /** Set the alerts-read timestamp on a node. */
+  setAlertsReadTimestamp(nodeId: string, timestamp: number): void {
+    const node = this.state.nodes[nodeId]
+    if (!node) return
+    node.alertsReadTimestamp = timestamp
+    this.onNodeUpdate(nodeId, { alertsReadTimestamp: timestamp } as Partial<NodeData>)
     this.schedulePersist()
   }
 

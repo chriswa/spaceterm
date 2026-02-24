@@ -26,6 +26,17 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick,
     return () => viewport.removeEventListener('wheel', onWheel)
   }, [onWheel])
 
+  // Prevent focus-induced scroll on the viewport. Browser focus() auto-scrolls
+  // overflow:hidden containers, which shifts the WebGL background canvas off-screen.
+  // The camera system manages positioning via CSS transforms, never scroll offsets.
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const resetScroll = () => { viewport.scrollLeft = 0; viewport.scrollTop = 0 }
+    viewport.addEventListener('scroll', resetScroll)
+    return () => viewport.removeEventListener('scroll', resetScroll)
+  }, [])
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
     if ((e.target as HTMLElement).closest('.canvas-node')) return
