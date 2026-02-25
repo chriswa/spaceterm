@@ -316,6 +316,12 @@ export interface SetClaudeStatusUnreadMessage {
   unread: boolean
 }
 
+export interface SetClaudeStatusAsleepMessage {
+  type: 'set-claude-status-asleep'
+  sessionId: string
+  asleep: boolean
+}
+
 export interface ForkSessionMessage {
   type: 'fork-session'
   seq: number
@@ -376,6 +382,7 @@ export type ClientMessage =
   | TerminalReincarnateMessage
   | SetTerminalModeMessage
   | SetClaudeStatusUnreadMessage
+  | SetClaudeStatusAsleepMessage
   | DirectoryAddMessage
   | DirectoryCwdMessage
   | DirectoryGitFetchMessage

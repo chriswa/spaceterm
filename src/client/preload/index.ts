@@ -170,6 +170,7 @@ const nodeApi: NodeApi = {
 
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
   setClaudeStatusUnread: (sessionId: string, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
+  setClaudeStatusAsleep: (sessionId: string, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
   setAlertsReadTimestamp: (nodeId: string, timestamp: number) => ipcRenderer.send('node:set-alerts-read-timestamp', nodeId, timestamp),
   onSnapshot: (sessionId, callback) => {
     const channel = `snapshot:${sessionId}`

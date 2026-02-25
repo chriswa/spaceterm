@@ -429,6 +429,25 @@ export class ClaudeStateMachine {
     })
   }
 
+  /**
+   * Process a client request to mark/unmark a surface as asleep.
+   *
+   * Asleep is a user-toggled flag that dims/hides a crab from navigation
+   * without affecting the underlying claude state. Unlike unread (which auto-sets
+   * on state transitions), asleep is purely manual.
+   */
+  handleClientMarkAsleep(surfaceId: string, asleep: boolean): void {
+    this.deps.setClaudeStatusAsleep(surfaceId, asleep)
+    this.decisionLogger.log(surfaceId, {
+      timestamp: localISOTimestamp(),
+      source: 'client',
+      event: asleep ? 'client:markAsleep' : 'client:markAwake',
+      prevState: this.deps.getClaudeState(surfaceId),
+      newState: this.deps.getClaudeState(surfaceId),
+      unread: false
+    })
+  }
+
   // ─── Core transition logic ──────────────────────────────────────────────
 
   /**
@@ -447,33 +466,45 @@ export class ClaudeStateMachine {
     this.lastActivityBySurface.set(surfaceId, Date.now())
     const prevState = this.deps.getClaudeState(surfaceId) ?? 'stopped'
 
-    // ── Guard: jsonl:assistant must not override waiting states ──
-    // When Claude produces multiple tool_use blocks in a single response (parallel
-    // tool calls), the JSONL entries for the 2nd/3rd/etc blocks arrive AFTER the
-    // PermissionRequest hook for the first block. Without this guard, those later
-    // jsonl:assistant entries clobber waiting_permission back to working, causing
-    // the indicator to show "working" (and eventually "stuck" after 2min) while
-    // the user is actually being asked for permission.
+    // ── Guard: only targeted signals can exit waiting states to working ──
+    // Waiting states are "sticky" — most working signals are suppressed.
+    // Two categories of untargeted signals would incorrectly clear them:
     //
-    // This is safe because:
-    // - After user approves: PostToolUse (matching ID) transitions to working
-    // - After user rejects: jsonl:user:rejected transitions to stopped
-    // - If Claude resumes after approval, PreToolUse hook fires → working
-    // - A new user prompt fires UserPromptSubmit hook → working
-    // So there is always a hook-based path out of waiting states; we never
-    // rely on jsonl:assistant to escape them.
+    // 1. Hook working signals (PreToolUse, SubagentStart, PreCompact):
+    //    Subagent events fire on the same surface as the main agent. If the
+    //    main agent is waiting for permission and a subagent runs tools, the
+    //    subagent's PreToolUse would incorrectly clear waiting_permission.
+    //    Analysis of 607 decision logs found 61 occurrences of this bug
+    //    across 22 sessions, with zero counterexamples.
+    //
+    // 2. JSONL working signals (jsonl:assistant, jsonl:user:string):
+    //    Parallel tool_use blocks in a single response produce JSONL entries
+    //    AFTER the PermissionRequest hook, which would clobber waiting → working.
+    //
+    // Only these targeted signals can clear waiting → working:
+    // - hook:PostToolUse/PostToolUseFailure (ID-matched: permission resolved)
+    // - hook:UserPromptSubmit (user started a new turn)
+    // Other exits from waiting states use newState !== 'working' (e.g.
+    // Stop → stopped, jsonl:user:rejected → stopped) and bypass this guard.
+    // client:promptSubmit bypasses applyTransition entirely (handleClientWrite).
     const isWaitingState = prevState === 'waiting_permission' || prevState === 'waiting_question' || prevState === 'waiting_plan'
-    if (source === 'jsonl' && newState === 'working' && isWaitingState) {
-      this.decisionLogger.log(surfaceId, {
-        timestamp: localISOTimestamp(),
-        source,
-        event,
-        prevState,
-        newState: prevState,
-        detail,
-        suppressed: true
-      })
-      return
+    if (isWaitingState && newState === 'working') {
+      const canClearWaiting =
+        event === 'hook:UserPromptSubmit' ||
+        event === 'hook:PostToolUse' ||
+        event === 'hook:PostToolUseFailure'
+      if (!canClearWaiting) {
+        this.decisionLogger.log(surfaceId, {
+          timestamp: localISOTimestamp(),
+          source,
+          event,
+          prevState,
+          newState: prevState,
+          detail,
+          suppressed: true
+        })
+        return
+      }
     }
 
     this.deps.setClaudeState(surfaceId, newState)

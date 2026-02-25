@@ -129,3 +129,60 @@ export function useCrabDance(
     }
   }, [active, ref])
 }
+
+/**
+ * Hook that applies a beat-synced boxShadow glow to an element.
+ * Reads camera.z directly from a ref each frame so glow updates in realtime
+ * during zoom animations. Glow radius scales inversely with zoom so it
+ * remains visible when zoomed out. Clears styles when inactive, letting
+ * React inline styles (e.g. focus glow) take over without conflict.
+ */
+export function useUnreadGlow(
+  ref: React.RefObject<HTMLElement | null>,
+  color: string,
+  cameraRef: React.RefObject<{ z: number }>,
+  active: boolean
+): void {
+  const colorRef = useRef(color)
+  colorRef.current = color
+
+  useEffect(() => {
+    if (!active) {
+      const el = ref.current
+      if (el) {
+        el.style.boxShadow = ''
+        el.style.borderColor = ''
+      }
+      return
+    }
+
+    const dance = new CrabDance()
+    let rafId = 0
+
+    const tick = () => {
+      rafId = requestAnimationFrame(tick)
+      const el = ref.current
+      if (!el) return
+
+      const { glowPulse } = dance.tick()
+      const z = cameraRef.current.z
+      const s = Math.max(1, 1 / z)
+      const blur = (3 + 5 * glowPulse) * s
+      const spread = (0.5 + 1.5 * glowPulse) * s
+      const c = colorRef.current
+      el.style.boxShadow = `0 0 ${blur}px ${spread}px ${c}`
+      el.style.borderColor = c
+    }
+
+    rafId = requestAnimationFrame(tick)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      const el = ref.current
+      if (el) {
+        el.style.boxShadow = ''
+        el.style.borderColor = ''
+      }
+    }
+  }, [active, ref, cameraRef])
+}

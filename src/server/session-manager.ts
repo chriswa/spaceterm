@@ -31,6 +31,7 @@ interface Session {
   pendingStop: boolean
   claudeState: ClaudeState
   claudeStatusUnread: boolean
+  claudeStatusAsleep: boolean
   claudeContextPercent: number | null
   claudeSessionLineCount: number | null
   cwd: string
@@ -47,6 +48,7 @@ export type ClaudeStateCallback = (sessionId: string, state: ClaudeState) => voi
 export type ClaudeContextCallback = (sessionId: string, contextRemainingPercent: number) => void
 export type ClaudeSessionLineCountCallback = (sessionId: string, lineCount: number) => void
 export type ClaudeStatusUnreadCallback = (sessionId: string, unread: boolean) => void
+export type ClaudeStatusAsleepCallback = (sessionId: string, asleep: boolean) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -59,8 +61,9 @@ export class SessionManager {
   private onClaudeContext: ClaudeContextCallback
   private onClaudeSessionLineCount: ClaudeSessionLineCountCallback
   private onClaudeStatusUnread: ClaudeStatusUnreadCallback
+  private onClaudeStatusAsleep: ClaudeStatusAsleepCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback) {
+  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback, onClaudeStatusAsleep: ClaudeStatusAsleepCallback) {
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
@@ -70,6 +73,7 @@ export class SessionManager {
     this.onClaudeContext = onClaudeContext
     this.onClaudeSessionLineCount = onClaudeSessionLineCount
     this.onClaudeStatusUnread = onClaudeStatusUnread
+    this.onClaudeStatusAsleep = onClaudeStatusAsleep
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -161,6 +165,7 @@ export class SessionManager {
       pendingStop: false,
       claudeState: 'stopped' as ClaudeState,
       claudeStatusUnread: false,
+      claudeStatusAsleep: false,
       claudeContextPercent: null,
       claudeSessionLineCount: null,
       cwd,
@@ -289,6 +294,17 @@ export class SessionManager {
     return this.sessions.get(sessionId)?.claudeStatusUnread ?? false
   }
 
+  setClaudeStatusAsleep(surfaceId: string, asleep: boolean): void {
+    const session = this.sessions.get(surfaceId)
+    if (!session || session.claudeStatusAsleep === asleep) return
+    session.claudeStatusAsleep = asleep
+    this.onClaudeStatusAsleep(surfaceId, asleep)
+  }
+
+  getClaudeStatusAsleep(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.claudeStatusAsleep ?? false
+  }
+
   setClaudeContextPercent(surfaceId: string, percent: number): void {
     const session = this.sessions.get(surfaceId)
     if (!session) return
@@ -320,7 +336,23 @@ export class SessionManager {
   seedTitleHistory(sessionId: string, history: string[]): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
-    session.shellTitleHistory.push(...history.filter(t => !isSpuriousTitle(t)))
+    const filtered = history.filter(t => !isSpuriousTitle(t))
+    session.shellTitleHistory.push(...filtered)
+  }
+
+  /** Inject a title using the same LRU logic as the OSC title callback. */
+  injectTitle(sessionId: string, title: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    if (isSpuriousTitle(title)) return
+    const { shellTitleHistory } = session
+    const idx = shellTitleHistory.indexOf(title)
+    if (idx !== -1) shellTitleHistory.splice(idx, 1)
+    shellTitleHistory.unshift(title)
+    if (shellTitleHistory.length > MAX_TITLE_HISTORY) {
+      shellTitleHistory.pop()
+    }
+    this.onTitleHistory(sessionId, shellTitleHistory)
   }
 
   getLastClaudeSessionId(sessionId: string): string | null {

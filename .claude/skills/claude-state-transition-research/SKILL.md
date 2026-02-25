@@ -41,49 +41,55 @@ General application log. Check for errors around the timestamps in question.
 
 ## State machine overview
 
-States: `stopped`, `working`, `waiting_permission`, `waiting_plan`
+States: `stopped`, `working`, `waiting_permission`, `waiting_question`, `waiting_plan`, `stuck`
 
 ### Signals that set state
 
 | Signal | Source | New State |
 |--------|--------|-----------|
 | `UserPromptSubmit` hook | hook | working |
-| `PreToolUse` hook | hook | working |
-| `SubagentStart` hook | hook | working |
-| `PreCompact` hook | hook | working |
+| `PreToolUse` hook | hook | working (suppressed when in waiting state) |
+| `SubagentStart` hook | hook | working (suppressed when in waiting state) |
+| `PreCompact` hook | hook | working (suppressed when in waiting state) |
+| `PostToolUse` hook (ID-matched) | hook | working |
+| `PostToolUseFailure` hook (ID-matched) | hook | working |
 | `PermissionRequest` hook (ExitPlanMode) | hook | waiting_plan |
+| `PermissionRequest` hook (AskUserQuestion) | hook | waiting_question |
 | `PermissionRequest` hook (other tools) | hook | waiting_permission |
-| `Notification` (permission_prompt / elicitation_dialog) | hook | waiting_permission |
 | `Stop` hook | hook | stopped |
 | `SessionEnd` hook | hook | stopped |
 | `SessionStart` hook (compact source) | hook | stopped |
-| JSONL `assistant` entry | jsonl | working |
-| JSONL `user` string entry | jsonl | working |
+| JSONL `assistant` entry | jsonl | working (suppressed when in waiting state) |
+| JSONL `user` string entry | jsonl | working (suppressed when in waiting state) |
 | JSONL `user` array with "interrupted by user" | jsonl | stopped |
+| JSONL `user` array with "rejected" | jsonl | stopped |
+| stale sweep (2min timeout) | stale | stuck (from working only) |
 
 ### Signals that DON'T change state
-- `PostToolUse` / `PostToolUseFailure` — not wired to transitions (known gap)
+- `PostToolUse` / `PostToolUseFailure` with non-matching tool_use_id — ignored (prevents subagent events from clobbering main agent state)
+- `Notification` hooks — intentionally not handled (always redundant with PermissionRequest)
 - `client:markRead` / `client:markUnread` — only toggles the `unread` flag, never changes state
-- JSONL `user` array entries (tool results) without interruption — hooks handle this
+- JSONL `user` array entries (tool results) without interruption or rejection — hooks handle this
 
 ### Guard logic
-- `waiting_plan` cannot be downgraded to `waiting_permission` (Notification is suppressed)
+- Waiting states are sticky — only `hook:PostToolUse`/`hook:PostToolUseFailure` (ID-matched), `hook:UserPromptSubmit`, and `client:promptSubmit` can transition waiting → working. All other working signals are suppressed.
 
 ### Transition queue
 Events are held for 500ms then processed in source-timestamp order. This prevents race conditions between hook and JSONL events (e.g. a late JSONL assistant message overriding a Stop hook). The drain interval is 50ms.
 
 ## Key code locations
 
-All in `src/server/index.ts`:
-- **~line 117-163**: Transition queue (queueTransition, drainTransitionQueue)
-- **~line 165-209**: applyTransition — guard logic, unread computation, decision logging
-- **~line 303-379**: Hook event handlers — maps hook types to state transitions
-- **~line 798-809**: markRead handler — client unread toggle
-- **~line 920-965**: JSONL file watcher — maps transcript entries to state transitions
+State machine: `src/server/claude-state/index.ts` (single file for all transition logic):
+- `handleHook()` — maps hook types to state transitions, manages permission tracking (lastPreToolUseId, pendingPermissionIds)
+- `handleJsonlEntries()` — maps JSONL transcript entries to state transitions
+- `handleClientWrite()` — handles Enter key / prompt submit (bypasses applyTransition)
+- `applyTransition()` — guard logic, unread computation, decision logging. The sticky-waiting-states guard lives here.
+- `sweepStaleSurfaces()` — detects working → stuck after 2min inactivity
 
 Supporting files:
-- `src/shared/state.ts` — ClaudeState type definition
-- `src/server/decision-logger.ts` — writes decision log entries
+- `src/server/claude-state/transition-queue.ts` — 500ms delay queue, source-timestamp ordering
+- `src/server/claude-state/decision-logger.ts` — writes decision log entries
+- `src/server/claude-state/types.ts` — ClaudeState type, StateMachineDeps interface
 - `src/server/session-manager.ts` — holds per-surface state (claudeState, claudeStatusUnread)
 - `src/server/state-manager.ts` — broadcasts state changes to clients
 - `src/server/session-file-watcher.ts` — watches Claude JSONL files for new entries
@@ -121,10 +127,44 @@ Output format: `HH:MM:SS.mmm  [source]  file:line  summary`. Timestamps are loca
 3. **Check the JSONL transcript** if the decision log shows `jsonl:assistant` as the event that eventually corrected the state. This means no hook fired to do it sooner.
 4. **Check for subagent interleaving.** If state bounces between `waiting_permission` and `working`, subagent tool events (PreToolUse, PostToolUse) may be clearing `waiting_permission` incorrectly — they fire on the same surface as the main agent.
 
+## Before proposing a fix: counterexample analysis
+
+Before changing transition logic, search ALL decision logs (`~/.spaceterm/decision-logs/*.jsonl`) for counterexamples — cases where the transition you want to suppress was actually correct. For example, if you want to prevent `PreToolUse` from clearing `waiting_permission`, search for every instance where it did clear it and verify that NONE were legitimate.
+
+```bash
+# Find all instances where PreToolUse cleared a waiting state
+for f in ~/.spaceterm/decision-logs/*.jsonl; do
+  python3 -c "
+import json, sys
+for i, line in enumerate(open('$f')):
+    d = json.loads(line)
+    if d.get('event') == 'hook:PreToolUse' and d.get('prevState','').startswith('waiting_') and d.get('newState') == 'working':
+        print(f'$f:{i+1}  {d[\"timestamp\"]}  {d[\"prevState\"]} -> {d[\"newState\"]}')
+" 2>/dev/null
+done
+```
+
+For each match, check the surrounding lines: was there a PostToolUse that should have cleared the state first? Did the state bounce back to waiting immediately? A fix with zero counterexamples across all logs is safe to ship.
+
+## Canonical data points (regression testing)
+
+File: `.claude/skills/claude-state-transition-research/canonical-observations.jsonl`
+
+This file contains user-reported observations — moments where the user told us what they saw on screen and what the correct state should have been. Each line is a JSON object with:
+- `timestamp` — when the observation occurred (ISO 8601)
+- `surfaceId` — which surface was affected
+- `claudeSessionId` — the Claude Code session ID (needed to find the JSONL transcript)
+- `observedState` — what the indicator was showing
+- `expectedState` — what it should have been showing
+- `context` — brief description of what Claude was actually doing
+- `rootCause` — (added after investigation) what caused the wrong state
+- `fixed` — whether this class of bug has been fixed, and how
+
+**Before shipping any state machine change**, replay all canonical observations against the new logic to confirm none regress. For each entry, read the decision log at the given timestamp and verify the new code would produce `expectedState`.
+
+**When the user reports a new bug**, always append a new line to this file with their observation before starting the investigation. This is the single source of truth for "what the user actually saw" — decision logs show what the code decided, but only this file records what was *correct*.
+
 ## Known issues
 
-### PostToolUse doesn't transition to working
-After a user grants permission, the `PostToolUse` hook fires but doesn't trigger a state change. The state stays `waiting_permission` until a `jsonl:assistant` entry appears (5-10+ seconds later). `HOOK_INVESTIGATION.md` at the repo root documents the full hook investigation including the subagent interleaving edge case.
-
 ### Subagent events share the surface
-`PreToolUse` and `PostToolUse` from subagents fire on the same surface ID as the main agent. If the main agent is waiting for permission while a subagent runs, the subagent's tool events can briefly clear `waiting_permission`. The `Notification(permission_prompt)` at +6s corrects this, but there's a window of incorrect state.
+`PreToolUse` and `PostToolUse` from subagents fire on the same surface ID as the main agent. The sticky-waiting-states guard in `applyTransition` prevents subagent `PreToolUse` events from clobbering waiting states. `PostToolUse` is protected by tool_use_id matching (only the ID-matched permission-gated tool clears the state).

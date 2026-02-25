@@ -23,6 +23,7 @@ import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { fetchClaudeUsage } from './claude-usage'
 import { parse as shellParse } from 'shell-quote'
 import { AutoContinueManager } from './auto-continue'
+import { SessionTitleSummarizer } from './session-title-summarizer'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -193,6 +194,7 @@ let gitStatusPoller: GitStatusPoller
 let planCacheManager: PlanCacheManager
 let claudeStateMachine: ClaudeStateMachine
 let autoContinueManager: AutoContinueManager
+let sessionTitleSummarizer: SessionTitleSummarizer
 
 function send(socket: net.Socket, msg: ServerMessage): void {
   try {
@@ -251,6 +253,14 @@ function handleIngestMessage(msg: IngestMessage): void {
           if (hookCwd) {
             sessionFileWatcher.watch(msg.surfaceId, claudeSessionId, hookCwd)
           }
+        }
+      }
+
+      // Generate auto-summary title on UserPromptSubmit (fire-and-forget)
+      if (hookType === 'UserPromptSubmit' && msg.payload && typeof msg.payload === 'object') {
+        const transcriptPath = 'transcript_path' in msg.payload ? String(msg.payload.transcript_path) : ''
+        if (transcriptPath) {
+          sessionTitleSummarizer.summarize(msg.surfaceId, transcriptPath)
         }
       }
       break
@@ -905,6 +915,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'set-claude-status-asleep': {
+      claudeStateMachine.handleClientMarkAsleep(msg.sessionId, msg.asleep)
+      break
+    }
+
     case 'fork-session': {
       try {
         const forkNode = stateManager.getNode(msg.nodeId)
@@ -1236,11 +1251,20 @@ async function startServer(): Promise<void> {
     // onClaudeStatusUnread: update state manager (node-updated broadcast handles client sync)
     (sessionId, unread) => {
       stateManager.updateClaudeStatusUnread(sessionId, unread)
+    },
+    // onClaudeStatusAsleep: update state manager (node-updated broadcast handles client sync)
+    (sessionId, asleep) => {
+      stateManager.updateClaudeStatusAsleep(sessionId, asleep)
     }
   )
 
   // Initialize PlanCacheManager — caches plan file revisions for diffing
   planCacheManager = new PlanCacheManager()
+
+  // Initialize SessionTitleSummarizer — generates 3-word titles from session transcripts
+  sessionTitleSummarizer = new SessionTitleSummarizer({
+    injectTitle: (sessionId, title) => sessionManager.injectTitle(sessionId, title),
+  })
 
   // Initialize AutoContinueManager — auto-sends "continue" after API error stops
   autoContinueManager = new AutoContinueManager({
@@ -1267,6 +1291,8 @@ async function startServer(): Promise<void> {
     broadcastClaudeState: (id, state) => stateManager.updateClaudeState(id, state),
     broadcastClaudeStateDecisionTime: (id, ts) => stateManager.updateClaudeStateDecisionTime(id, ts),
     broadcastClaudeStatusUnread: (id, unread) => stateManager.updateClaudeStatusUnread(id, unread),
+    setClaudeStatusAsleep: (id, asleep) => sessionManager.setClaudeStatusAsleep(id, asleep),
+    broadcastClaudeStatusAsleep: (id, asleep) => stateManager.updateClaudeStatusAsleep(id, asleep),
   })
 
   // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + plan cache + state routing

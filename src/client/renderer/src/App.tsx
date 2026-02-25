@@ -151,10 +151,10 @@ export function App() {
 
     for (const node of Object.values(nodes)) {
       if (node.type !== 'terminal') continue
-      const appearance = deriveCrabAppearance(node.claudeState, node.claudeStatusUnread, node.claudeSessionHistory.length > 0)
+      const appearance = deriveCrabAppearance(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0)
       if (appearance) {
         const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-        entries.push({ nodeId: node.id, color: appearance.color, unviewed: appearance.unviewed, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
+        entries.push({ nodeId: node.id, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
       }
     }
 
@@ -688,11 +688,19 @@ export function App() {
     })
   }, [])
 
-  const handleCrabClick = useCallback((nodeId: string) => {
+  const handleCrabClick = useCallback((nodeId: string, metaKey: boolean) => {
     setSearchVisible(false)
     setHelpVisible(false)
     if (nodeId === 'root') {
       handleNodeFocus(nodeId)
+      return
+    }
+    // Cmd+click toggles asleep state
+    if (metaKey) {
+      const node = useNodeStore.getState().nodes[nodeId]
+      if (node?.type === 'terminal') {
+        window.api.node.setClaudeStatusAsleep(node.sessionId, !(node.claudeStatusAsleep ?? false))
+      }
       return
     }
     // If already focused, toggle unread state
@@ -1625,6 +1633,7 @@ export function App() {
             selected={selection === t.id}
             anyNodeFocused={focusedId !== null}
             claudeStatusUnread={t.claudeStatusUnread}
+            claudeStatusAsleep={t.claudeStatusAsleep}
             scrollMode={scrollMode}
             onFocus={handleNodeFocus}
             onUnfocus={handleUnfocus}

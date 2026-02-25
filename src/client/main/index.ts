@@ -338,6 +338,10 @@ function setupIPC(): void {
     client!.setClaudeStatusUnread(sessionId, unread)
   })
 
+  ipcMain.on('node:set-claude-status-asleep', (_event, sessionId: string, asleep: boolean) => {
+    client!.setClaudeStatusAsleep(sessionId, asleep)
+  })
+
   ipcMain.on('node:set-alerts-read-timestamp', (_event, nodeId: string, timestamp: number) => {
     client!.setAlertsReadTimestamp(nodeId, timestamp)
   })

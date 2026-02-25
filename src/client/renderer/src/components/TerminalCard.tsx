@@ -6,7 +6,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
 import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '../lib/constants'
 import { classifyWheelEvent } from '../lib/wheel-gesture'
-import { type ColorPreset, blendHex } from '../lib/color-presets'
+import { type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import type { SnapshotMessage } from '../../../../shared/protocol'
@@ -20,7 +20,7 @@ import { showToast } from '../lib/toast'
 import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScrollRestore } from '../lib/focus-storage'
 import crabIcon from '../assets/crab.png'
 import { deriveCrabAppearance, CRAB_COLORS } from '../lib/crab-nav'
-import { useCrabDance } from '../lib/crab-dance'
+import { useCrabDance, useUnreadGlow } from '../lib/crab-dance'
 import { angleBorderColor } from '../lib/angle-color'
 
 function cleanTerminalCopy(raw: string): string {
@@ -52,16 +52,6 @@ function cleanTerminalCopy(raw: string): string {
 const DRAG_THRESHOLD = 5
 const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
 const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
-/** Fraction by which snapshot colors are faded toward the terminal background. */
-const SNAPSHOT_FADE = 0.50
-
-const darkenHex = (hex: string, amount: number): string => {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  const f = 1 - amount
-  return '#' + [r, g, b].map(c => Math.round(c * f).toString(16).padStart(2, '0')).join('')
-}
 
 export const terminalSelectionGetters = new Map<string, () => string>()
 export const terminalSearchOpeners = new Map<string, () => void>()
@@ -88,6 +78,7 @@ interface TerminalCardProps {
   selected: boolean
   anyNodeFocused: boolean
   claudeStatusUnread?: boolean
+  claudeStatusAsleep?: boolean
   scrollMode: boolean
   onFocus: (id: string) => void
   onUnfocus: () => void
@@ -120,7 +111,7 @@ interface TerminalCardProps {
 }
 
 export function TerminalCard({
-  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, scrollMode,
+  id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   claudeSessionHistory, claudeState, claudeModel, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
@@ -617,7 +608,6 @@ export function TerminalCard({
     }
 
     const termBg = preset?.terminalBg ?? DEFAULT_BG
-    const fade = 1 - SNAPSHOT_FADE
     ctx.fillStyle = termBg
     ctx.fillRect(0, 0, cw, ch)
 
@@ -628,16 +618,13 @@ export function TerminalCard({
       for (const span of row) {
         const spanWidth = span.text.length * CELL_WIDTH
 
-        if (span.bg !== DEFAULT_BG) {
-          const spanBg = blendHex(span.bg, termBg, fade)
-          if (spanBg !== termBg) {
-            ctx.fillStyle = spanBg
-            ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
-          }
+        if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+          ctx.fillStyle = span.bg
+          ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
         }
 
         if (span.text.trim().length > 0) {
-          ctx.fillStyle = blendHex(span.fg, termBg, fade)
+          ctx.fillStyle = span.fg
           ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
           ctx.textBaseline = 'top'
           for (let i = 0; i < span.text.length; i++) {
@@ -816,8 +803,9 @@ export function TerminalCard({
       : 'terminal-card--focused'
     : selected ? 'terminal-card--selected' : ''
   const focusGlowColor = focused ? angleBorderColor(x, y, scrollMode ? 1.3 : 1) : undefined
-  const crabAppearance = deriveCrabAppearance(claudeState, claudeStatusUnread ?? false, (claudeSessionHistory?.length ?? 0) > 0)
+  const crabAppearance = deriveCrabAppearance(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0)
   useCrabDance(behindCrabRef, crabAppearance?.unviewed ?? false, 2.5)
+  useUnreadGlow(cardRef, crabAppearance ? CRAB_COLORS[crabAppearance.color] : '#fff', cameraRef, !!(crabAppearance?.unviewed) && !focused)
 
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
@@ -889,7 +877,7 @@ export function TerminalCard({
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       className={`terminal-card ${focusClass}`}
-      style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 4px ${focusGlowColor}` } : undefined}
+      style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 16px 4px ${focusGlowColor}` } : undefined}
       cardRef={cardRef}
       onMouseEnter={() => {
         if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id)
@@ -908,6 +896,7 @@ export function TerminalCard({
               maskImage: `url(${crabIcon})`,
               WebkitMaskImage: `url(${crabIcon})`,
               backgroundColor: CRAB_COLORS[crabAppearance.color],
+              ...(crabAppearance.asleep ? { transform: 'rotate(180deg)' } : {}),
             }}
           />
         ) : undefined
@@ -929,7 +918,7 @@ export function TerminalCard({
           style={{
             width: Math.ceil(cols * CELL_WIDTH),
             height: Math.ceil(rows * CELL_HEIGHT),
-            display: 'block'
+            display: 'block',
           }}
         />
       </div>

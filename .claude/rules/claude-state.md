@@ -35,4 +35,4 @@ When modifying transition logic, these invariants must be preserved:
 7. Stale sweep only transitions working→stuck (not other states) after 2min of no activity
 8. Stop and SessionEnd clear lastActivityBySurface (prevents false stuck transitions after restart)
 9. Status-line events reset lastActivityBySurface and recover from stuck→working (proves session is alive)
-10. jsonl:assistant must not override waiting states (waiting_permission, waiting_question, waiting_plan) — parallel tool_use blocks in a single response produce JSONL entries after the PermissionRequest hook, which would clobber the waiting state back to working
+10. Waiting states are sticky — only targeted signals can clear waiting → working: hook:PostToolUse/PostToolUseFailure (ID-matched), hook:UserPromptSubmit, and client:promptSubmit (which bypasses applyTransition). All other working signals (PreToolUse, SubagentStart, PreCompact, jsonl:assistant, jsonl:user:string) are suppressed. This prevents both subagent interleaving (61 occurrences across 607 decision logs) and parallel tool_use JSONL races from clobbering waiting states.

@@ -15,7 +15,7 @@ interface ToolbarProps {
   inputDevice: InputDevice
   onToggleInputDevice: () => void
   crabs: CrabEntry[]
-  onCrabClick: (nodeId: string) => void
+  onCrabClick: (nodeId: string, metaKey: boolean) => void
   onCrabReorder: (order: string[]) => void
   selectedNodeId: string | null
   crabNavEvent: CrabNavEvent
@@ -161,7 +161,7 @@ function AudioTapToggle() {
   )
 }
 
-function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null; crabNavEvent: CrabNavEvent }) {
+function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string, metaKey: boolean) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null; crabNavEvent: CrabNavEvent }) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
@@ -323,6 +323,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
     if (!container) return
 
     const startX = e.clientX
+    const metaKey = e.metaKey
     const nodeId = crabs[crabIndex].nodeId
     let dragging = false
 
@@ -404,7 +405,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
 
       if (!dragging) {
         isDraggingRef.current = false
-        onCrabClick(nodeId)
+        onCrabClick(nodeId, metaKey)
         return
       }
 
@@ -512,7 +513,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
       {crabs.map((crab, i) => (
           <div key={crab.nodeId} className="toolbar__crab-slot" data-node-id={crab.nodeId}>
             <button
-              className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}`}
+              className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
               style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
               onMouseDown={(e) => handleCrabMouseDown(e, i)}
               data-tooltip={crab.title}

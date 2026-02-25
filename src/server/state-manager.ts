@@ -138,6 +138,10 @@ export class StateManager {
         (node as any).claudeStatusUnread = false
       }
 
+      if (node.claudeStatusAsleep === undefined) {
+        (node as any).claudeStatusAsleep = false
+      }
+
       // End current terminal session if still open
       if (node.alive) {
         const currentSession = node.terminalSessions[node.terminalSessions.length - 1]
@@ -251,6 +255,7 @@ export class StateManager {
       cwd,
       claudeState: 'stopped',
       claudeStatusUnread: false,
+      claudeStatusAsleep: false,
       sortOrder,
       terminalSessions: [initialSession],
       claudeSessionHistory: [],
@@ -681,6 +686,14 @@ export class StateManager {
     if (!node) return
     node.claudeStatusUnread = unread
     this.onNodeUpdate(node.id, { claudeStatusUnread: unread } as Partial<TerminalNodeData>)
+    this.schedulePersist()
+  }
+
+  updateClaudeStatusAsleep(ptySessionId: string, asleep: boolean): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node) return
+    node.claudeStatusAsleep = asleep
+    this.onNodeUpdate(node.id, { claudeStatusAsleep: asleep } as Partial<TerminalNodeData>)
     this.schedulePersist()
   }
 

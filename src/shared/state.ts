@@ -52,6 +52,7 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean
+  claudeStatusAsleep: boolean
   claudeModel?: string
   sortOrder: number
   terminalSessions: TerminalSessionEntry[]

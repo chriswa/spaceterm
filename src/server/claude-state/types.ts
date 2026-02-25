@@ -16,6 +16,8 @@ export interface StateMachineDeps {
   broadcastClaudeState(surfaceId: string, state: ClaudeState): void
   broadcastClaudeStateDecisionTime(surfaceId: string, timestamp: number): void
   broadcastClaudeStatusUnread(surfaceId: string, unread: boolean): void
+  setClaudeStatusAsleep(surfaceId: string, asleep: boolean): void
+  broadcastClaudeStatusAsleep(surfaceId: string, asleep: boolean): void
 }
 
 /**

@@ -345,6 +345,10 @@ export class ServerClient extends EventEmitter {
     this.sendFireAndForget({ type: 'set-claude-status-unread', sessionId, unread } as ClientMessage)
   }
 
+  setClaudeStatusAsleep(sessionId: string, asleep: boolean): void {
+    this.sendFireAndForget({ type: 'set-claude-status-asleep', sessionId, asleep } as ClientMessage)
+  }
+
   setAlertsReadTimestamp(nodeId: string, timestamp: number): void {
     this.sendFireAndForget({ type: 'set-alerts-read-timestamp', nodeId, timestamp } as ClientMessage)
   }
