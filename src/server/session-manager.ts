@@ -1,6 +1,6 @@
 import * as pty from 'node-pty'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
@@ -98,9 +98,14 @@ export class SessionManager {
     // Always copy env to avoid mutating process.env
     const env = isCommand ? { ...baseEnv } : getShellEnv(shell, baseEnv)
     env.SPACETERM_SURFACE_ID = sessionId
+    // Stable node ID — survives reincarnation. Falls back to sessionId for initial creation.
+    env.SPACETERM_NODE_ID = options?.nodeId ?? sessionId
     if (process.env.SPACETERM_HOME) {
       env.SPACETERM_HOME = process.env.SPACETERM_HOME
     }
+    // CLI path for scripts to call spaceterm-cli commands
+    const projectRoot = resolve(__dirname, '..', '..')
+    env.SPACETERM_CLI = join(projectRoot, 'node_modules', '.bin', 'tsx') + ' ' + join(projectRoot, 'src', 'cli', 'spaceterm-cli.ts')
 
     const ptyProcess = pty.spawn(executable, args, {
       name: 'xterm-256color',

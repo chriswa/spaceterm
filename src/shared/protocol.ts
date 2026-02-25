@@ -6,6 +6,8 @@ export const SOCKET_DIR = process.env.SPACETERM_HOME ?? join(homedir(), '.spacet
 export const SOCKET_PATH = join(SOCKET_DIR, 'bidirectional.sock')
 /** Ingest-only socket for fire-and-forget messages (hooks, status-line, MCP tools). */
 export const HOOKS_SOCKET_PATH = join(SOCKET_DIR, 'hooks.sock')
+/** Request/response socket for scripts running inside PTYs. */
+export const SCRIPTS_SOCKET_PATH = join(SOCKET_DIR, 'scripts.sock')
 export const HOOK_LOG_DIR = join(SOCKET_DIR, 'hook-logs')
 export const DECISION_LOG_DIR = join(SOCKET_DIR, 'decision-logs')
 
@@ -22,6 +24,8 @@ export interface CreateOptions {
   command?: string
   args?: string[]
   claude?: { prompt?: string; resumeSessionId?: string; appendSystemPrompt?: boolean }
+  /** Stable node ID for SPACETERM_NODE_ID env var. Used during reincarnation when nodeId !== sessionId. */
+  nodeId?: string
 }
 
 export interface CreateMessage {
@@ -550,6 +554,76 @@ export interface ClaudeUsageMessage {
   subscriptionType: string
   rateLimitTier: string
 }
+
+// --- Script socket messages (scripts.sock) ---
+
+export interface ScriptGetAncestorsMessage {
+  type: 'script-get-ancestors'
+  seq: number
+  nodeId: string
+}
+
+export interface ScriptGetNodeMessage {
+  type: 'script-get-node'
+  seq: number
+  nodeId: string
+}
+
+export interface ScriptShipItMessage {
+  type: 'script-ship-it'
+  seq: number
+  nodeId: string
+  data: string
+  submit?: boolean  // default true — send \r after 200ms delay
+}
+
+export interface ScriptSubscribeMessage {
+  type: 'script-subscribe'
+  seq: number
+  events?: string[]   // event types to receive; omit for all
+  nodeIds?: string[]  // node IDs to filter on; omit for all
+}
+
+export type ScriptMessage =
+  | ScriptGetAncestorsMessage
+  | ScriptGetNodeMessage
+  | ScriptShipItMessage
+  | ScriptSubscribeMessage
+
+// --- Script socket responses ---
+
+export interface ScriptGetAncestorsResult {
+  type: 'script-get-ancestors-result'
+  seq: number
+  ancestors: string[]  // [self, parent, grandparent, ...]
+  error?: string
+}
+
+export interface ScriptGetNodeResult {
+  type: 'script-get-node-result'
+  seq: number
+  node?: Omit<NodeData, 'archivedChildren'> & { archivedChildren: [] }
+  error?: string
+}
+
+export interface ScriptShipItResult {
+  type: 'script-ship-it-result'
+  seq: number
+  ok: boolean
+  error?: string
+}
+
+export interface ScriptSubscribeResult {
+  type: 'script-subscribe-result'
+  seq: number
+  ok: boolean
+}
+
+export type ScriptResponse =
+  | ScriptGetAncestorsResult
+  | ScriptGetNodeResult
+  | ScriptShipItResult
+  | ScriptSubscribeResult
 
 export type ServerMessage =
   | CreatedMessage

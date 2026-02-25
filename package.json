@@ -12,6 +12,7 @@
     "client:package": "electron-vite build && electron-builder",
     "start": "npm run client:build && concurrently \"npm run server:dev\" \"npm run client:preview\"",
     "et": "tsx src/cli/emergency-terminal.ts",
+    "cli": "tsx src/cli/spaceterm-cli.ts",
     "lint": "eslint src/",
     "build": "npm run client:build",
     "postinstall": "electron-rebuild"

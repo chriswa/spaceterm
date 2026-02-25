@@ -3,8 +3,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
-import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
-import type { ClientMessage, IngestMessage, ServerMessage, CreateOptions } from '../shared/protocol'
+import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions } from '../shared/protocol'
 import { SessionManager } from './session-manager'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
@@ -342,6 +342,131 @@ function handleIngestMessage(msg: IngestMessage): void {
   }
 }
 
+// --- Script socket (scripts.sock) ---
+
+interface ScriptSubscriber {
+  socket: net.Socket
+  events: Set<string> | null   // null = all events
+  nodeIds: Set<string> | null  // null = all nodes
+}
+const scriptSubscribers = new Set<ScriptSubscriber>()
+
+function broadcastToScriptSubscribers(eventType: string, nodeId: string | undefined, msg: Record<string, unknown>): void {
+  scriptSubscribers.forEach((sub) => {
+    if (sub.events && !sub.events.has(eventType)) return
+    if (sub.nodeIds && nodeId && !sub.nodeIds.has(nodeId)) return
+    try {
+      sub.socket.write(JSON.stringify(msg) + '\n')
+    } catch {
+      // Disconnected — will be cleaned up by 'close'/'error' handler
+    }
+  })
+}
+
+function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
+  const sendAndClose = (resp: ScriptResponse): void => {
+    try {
+      socket.write(JSON.stringify(resp) + '\n')
+    } catch { /* disconnected */ }
+    socket.end()
+  }
+
+  switch (msg.type) {
+    case 'script-get-ancestors': {
+      const node = stateManager.getNode(msg.nodeId)
+      if (!node) {
+        sendAndClose({ type: 'script-get-ancestors-result', seq: msg.seq, ancestors: [], error: 'unknown-node' })
+        return
+      }
+      const ancestors: string[] = [node.id]
+      let currentId = node.parentId
+      const visited = new Set<string>()
+      while (currentId && currentId !== 'root' && !visited.has(currentId)) {
+        visited.add(currentId)
+        const ancestor = stateManager.getNode(currentId)
+        if (!ancestor) break
+        ancestors.push(ancestor.id)
+        currentId = ancestor.parentId
+      }
+      sendAndClose({ type: 'script-get-ancestors-result', seq: msg.seq, ancestors })
+      break
+    }
+
+    case 'script-get-node': {
+      const node = stateManager.getNode(msg.nodeId)
+      if (!node) {
+        sendAndClose({ type: 'script-get-node-result', seq: msg.seq, error: 'unknown-node' })
+        return
+      }
+      const stripped = { ...node, archivedChildren: [] as [] }
+      sendAndClose({ type: 'script-get-node-result', seq: msg.seq, node: stripped })
+      break
+    }
+
+    case 'script-ship-it': {
+      const node = stateManager.getNode(msg.nodeId)
+      if (!node) {
+        sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: false, error: 'unknown-node' })
+        return
+      }
+      if (node.type !== 'terminal') {
+        sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: false, error: 'not-a-terminal' })
+        return
+      }
+      if (!node.alive) {
+        sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: false, error: 'terminal-not-alive' })
+        return
+      }
+
+      const targetSessionId = node.sessionId
+      const content = msg.data.replace(/\r?\n/g, '\r')
+      sessionManager.write(targetSessionId, '\x1b[200~' + content + '\x1b[201~')
+      claudeStateMachine.handleClientWrite(targetSessionId, false)
+      autoContinueManager.cancelForSurface(targetSessionId)
+
+      const submit = msg.submit !== false  // default true
+      if (submit) {
+        setTimeout(() => {
+          sessionManager.write(targetSessionId, '\r')
+          claudeStateMachine.handleClientWrite(targetSessionId, true)
+        }, 200)
+      }
+
+      sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: true })
+      break
+    }
+
+    case 'script-subscribe': {
+      const events = msg.events ? new Set(msg.events) : null
+      const nodeIds = msg.nodeIds ? new Set(msg.nodeIds) : null
+      const sub: ScriptSubscriber = { socket, events, nodeIds }
+      scriptSubscribers.add(sub)
+
+      // Ack the subscription
+      try {
+        socket.write(JSON.stringify({ type: 'script-subscribe-result', seq: msg.seq, ok: true }) + '\n')
+      } catch { /* disconnected */ }
+
+      // Clean up on disconnect
+      const cleanup = () => { scriptSubscribers.delete(sub) }
+      socket.on('close', cleanup)
+      socket.on('error', cleanup)
+      // Do NOT call socket.end() — keep alive for event streaming
+      break
+    }
+
+    default: {
+      const unknownType = (msg as Record<string, unknown>).type
+      console.error(`[scripts] Unknown message type: ${unknownType}`)
+      try {
+        socket.write(JSON.stringify({ type: 'error', error: `Unknown message type: ${unknownType}` }) + '\n')
+      } catch { /* disconnected */ }
+      socket.end()
+      break
+    }
+  }
+}
+
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   lastClientCommandAt = Date.now()
   switch (msg.type) {
@@ -504,7 +629,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const validClaudeId = findValidClaudeSession(history, restoredNode.cwd)
         if (validClaudeId) {
           try {
-            const restoreOptions = buildClaudeCodeCreateOptions(restoredNode.cwd, validClaudeId, undefined, undefined, parseExtraCliArgs(restoredNode.extraCliArgs))
+            const restoreOptions = { ...buildClaudeCodeCreateOptions(restoredNode.cwd, validClaudeId, undefined, undefined, parseExtraCliArgs(restoredNode.extraCliArgs)), nodeId: msg.archivedNodeId }
             const { sessionId: newPtyId, cols, rows } = sessionManager.create(restoreOptions)
             snapshotManager.addSession(newPtyId, cols, rows)
             if (restoredNode.shellTitleHistory?.length) {
@@ -624,8 +749,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         if (msg.options?.claude) {
           rOptions = buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, msg.options.claude.prompt, msg.options.claude.appendSystemPrompt)
         } else {
-          rOptions = msg.options
+          rOptions = msg.options ? { ...msg.options } : undefined
         }
+        // Pass stable nodeId so SPACETERM_NODE_ID survives reincarnation
+        rOptions = { ...rOptions, nodeId: msg.nodeId }
         const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(rOptions)
         snapshotManager.addSession(newPtyId, rCols, rRows)
         // Seed the new PTY session with the remnant's title history before reincarnation
@@ -1020,7 +1147,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
         // Build new PTY with (potentially new) extra args
         const extraArgs = parseExtraCliArgs(msg.extraCliArgs)
-        const restartOptions = buildClaudeCodeCreateOptions(restartCwd, restartClaudeId, undefined, undefined, extraArgs)
+        const restartOptions = { ...buildClaudeCodeCreateOptions(restartCwd, restartClaudeId, undefined, undefined, extraArgs), nodeId: msg.nodeId }
         const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = sessionManager.create(restartOptions)
         snapshotManager.addSession(newPtyId, restartCols, restartRows)
         if (restartNode.shellTitleHistory?.length) {
@@ -1092,17 +1219,21 @@ async function startServer(): Promise<void> {
   // Claude surface detection.
   await cleanStaleSocket(SOCKET_PATH, true)
   await cleanStaleSocket(HOOKS_SOCKET_PATH, false)
+  await cleanStaleSocket(SCRIPTS_SOCKET_PATH, false)
 
-  // Initialize StateManager — broadcasts node changes to all clients
+  // Initialize StateManager — broadcasts node changes to all clients and script subscribers
   stateManager = new StateManager(
     (nodeId, fields) => {
       broadcastToAll({ type: 'node-updated', nodeId, fields })
+      broadcastToScriptSubscribers('node-updated', nodeId, { type: 'node-updated', nodeId, fields })
     },
     (node) => {
       broadcastToAll({ type: 'node-added', node })
+      broadcastToScriptSubscribers('node-added', node.id, { type: 'node-added', node })
     },
     (nodeId) => {
       broadcastToAll({ type: 'node-removed', nodeId })
+      broadcastToScriptSubscribers('node-removed', nodeId, { type: 'node-removed', nodeId })
     }
   )
 
@@ -1154,7 +1285,7 @@ async function startServer(): Promise<void> {
               const recoveryHistory = recoveryNode.claudeSessionHistory ?? []
               const recoveryClaudeId = findValidClaudeSession(recoveryHistory, recoveryCwd)
               const recoveryArgs = parseExtraCliArgs(recovery.previousExtraCliArgs)
-              const recoveryOptions = buildClaudeCodeCreateOptions(recoveryCwd, recoveryClaudeId, undefined, undefined, recoveryArgs)
+              const recoveryOptions = { ...buildClaudeCodeCreateOptions(recoveryCwd, recoveryClaudeId, undefined, undefined, recoveryArgs), nodeId }
               const { sessionId: recoveryPtyId, cols: recoveryCols, rows: recoveryRows } = sessionManager.create(recoveryOptions)
               snapshotManager.addSession(recoveryPtyId, recoveryCols, recoveryRows)
               if (recoveryNode.shellTitleHistory?.length) {
@@ -1185,6 +1316,7 @@ async function startServer(): Promise<void> {
           }
 
           broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
+          broadcastToScriptSubscribers('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
           clients.forEach((client) => {
             client.attachedSessions.delete(sessionId)
             client.snapshotSessions.delete(sessionId)
@@ -1211,6 +1343,7 @@ async function startServer(): Promise<void> {
 
       stateManager.terminalExited(sessionId, exitCode)
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
+      broadcastToScriptSubscribers('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
       // Remove from all clients' attached/snapshot sets
       clients.forEach((client) => {
         client.attachedSessions.delete(sessionId)
@@ -1357,7 +1490,7 @@ async function startServer(): Promise<void> {
 
       try {
         stateManager.markReviving(nodeId)
-        const reviveOptions = buildClaudeCodeCreateOptions(cwd, validSessionId, undefined, undefined, parseExtraCliArgs(extraCliArgs))
+        const reviveOptions = { ...buildClaudeCodeCreateOptions(cwd, validSessionId, undefined, undefined, parseExtraCliArgs(extraCliArgs)), nodeId }
         const { sessionId, cols, rows } = sessionManager.create(reviveOptions)
         snapshotManager.addSession(sessionId, cols, rows)
         const revivingNode = stateManager.getNode(nodeId)
@@ -1506,6 +1639,29 @@ async function startServer(): Promise<void> {
     process.exit(1)
   })
 
+  // --- Scripts socket (request/response + subscriptions for scripts inside PTYs) ---
+  const scriptsServer = net.createServer((socket) => {
+    socket.setEncoding('utf8')
+
+    const parser = new LineParser((msg) => {
+      handleScriptMessage(socket, msg as ScriptMessage)
+    })
+
+    socket.on('data', (data) => parser.feed(data as string))
+    socket.on('error', (err) => {
+      console.error('Scripts socket error:', err.message)
+    })
+  })
+
+  scriptsServer.listen(SCRIPTS_SOCKET_PATH, () => {
+    console.log(`Scripts server listening on ${SCRIPTS_SOCKET_PATH}`)
+  })
+
+  scriptsServer.on('error', (err) => {
+    console.error('Scripts server error:', err)
+    process.exit(1)
+  })
+
   // Graceful shutdown
   let socketWatchdog: ReturnType<typeof setInterval> | null = null
   const shutdown = () => {
@@ -1522,8 +1678,10 @@ async function startServer(): Promise<void> {
     sessionManager.destroyAll()
     server.close()
     hooksServer.close()
+    scriptsServer.close()
     try { fs.unlinkSync(SOCKET_PATH) } catch { /* ignore */ }
     try { fs.unlinkSync(HOOKS_SOCKET_PATH) } catch { /* ignore */ }
+    try { fs.unlinkSync(SCRIPTS_SOCKET_PATH) } catch { /* ignore */ }
     process.exit(0)
   }
 
@@ -1536,7 +1694,7 @@ async function startServer(): Promise<void> {
   // Die immediately so the user (or a process manager) can restart cleanly.
   const SOCKET_WATCHDOG_INTERVAL_MS = 5_000
   socketWatchdog = setInterval(() => {
-    if (!fs.existsSync(SOCKET_PATH) || !fs.existsSync(HOOKS_SOCKET_PATH)) {
+    if (!fs.existsSync(SOCKET_PATH) || !fs.existsSync(HOOKS_SOCKET_PATH) || !fs.existsSync(SCRIPTS_SOCKET_PATH)) {
       console.error('Socket file disappeared — another server may have taken over. Shutting down.')
       shutdown()
     }
