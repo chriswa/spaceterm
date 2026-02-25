@@ -930,9 +930,10 @@ export function TerminalCard({
         const footerContent = (
           <>
             {abbrevCwd && <><span>{abbrevCwd}</span><span>&nbsp;|&nbsp;</span></>}
-            <span>Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => {
+            <span>Node:&nbsp;{id.slice(0, 8)}</span>
+            <span>&nbsp;|&nbsp;Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => {
               e.stopPropagation()
-              let text = `${new Date().toISOString()} Surface ID: ${id}`
+              let text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id}`
               if (lastClaudeSession) text += ` Claude session ID: ${lastClaudeSession.claudeSessionId}`
               text += ` Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
               navigator.clipboard.writeText(text)
@@ -941,7 +942,7 @@ export function TerminalCard({
             <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
             <span className="terminal-card__footer-id" onClick={(e) => {
               e.stopPropagation()
-              const text = `${new Date().toISOString()} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+              const text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
               navigator.clipboard.writeText(text)
               showToast(`Copied to clipboard: ${text}`)
             }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
