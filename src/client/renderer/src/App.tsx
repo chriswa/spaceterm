@@ -95,6 +95,8 @@ export function App() {
   const [quickActions, setQuickActions] = useState<{ nodeId: string; screenX: number; screenY: number } | null>(null)
   const [edgeSplit, setEdgeSplit] = useState<{ parentId: string; childId: string; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
   const cmdClickPendingRef = useRef<{ nodeId: string; screenX: number; screenY: number } | null>(null)
+  const shiftClickPendingRef = useRef(false)
+  const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
   const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
 
@@ -270,16 +272,25 @@ export function App() {
     initTooltips()
   }, [])
 
-  // Detect cmd+click on canvas nodes — record pending so handleNodeFocus can intercept
+  // Detect cmd+click / shift+click on canvas nodes — record pending so handleNodeFocus can intercept
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (!e.metaKey) return
       const canvasNode = (e.target as HTMLElement).closest('.canvas-node') as HTMLElement | null
       if (!canvasNode) return
       const nodeId = canvasNode.dataset.nodeId
       if (!nodeId) return
-      if (nodeId === focusRef.current) return
-      cmdClickPendingRef.current = { nodeId, screenX: e.clientX, screenY: e.clientY }
+
+      // Cmd+click: quick-actions toolbar (takes priority over shift)
+      if (e.metaKey) {
+        if (nodeId === focusRef.current) return
+        cmdClickPendingRef.current = { nodeId, screenX: e.clientX, screenY: e.clientY }
+        return
+      }
+
+      // Shift+click: pinned focus (no camera fly, pan/wheel keep focus)
+      if (e.shiftKey) {
+        shiftClickPendingRef.current = true
+      }
     }
     window.addEventListener('mousedown', handler, { capture: true })
     return () => window.removeEventListener('mousedown', handler, { capture: true })
@@ -570,6 +581,11 @@ export function App() {
       return
     }
 
+    // Shift+click: pin focus without camera animation
+    const shiftPending = shiftClickPendingRef.current
+    shiftClickPendingRef.current = false
+    pinnedFocusRef.current = shiftPending
+
     flashNode(nodeId)
     setFocusedId(nodeId)
     setSelection(nodeId)
@@ -584,12 +600,7 @@ export function App() {
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
 
-    let bounds: { x: number; y: number; width: number; height: number }
-    let padding = 0.025
-
     if (nodeId === 'root') {
-      bounds = { x: -200, y: -200, width: 400, height: 400 }
-      padding = 0.05
       setScrollMode(false)
     } else {
       const node = useNodeStore.getState().nodes[nodeId]
@@ -598,18 +609,30 @@ export function App() {
         setScrollMode(false)
         return
       }
-      const size = nodePixelSize(node)
-      bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
       setScrollMode(node.type === 'terminal' && node.alive)
       sendBringToFront(nodeId)
       bringToFront(nodeId)
     }
 
-    const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding)
-    const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
-    const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
-    const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
-    flyTo(targetCamera, computeFlyToSpeed(dist))
+    if (!pinnedFocusRef.current) {
+      let bounds: { x: number; y: number; width: number; height: number }
+      let padding = 0.025
+
+      if (nodeId === 'root') {
+        bounds = { x: -200, y: -200, width: 400, height: 400 }
+        padding = 0.05
+      } else {
+        const node = useNodeStore.getState().nodes[nodeId]!
+        const size = nodePixelSize(node)
+        bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
+      }
+
+      const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding)
+      const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
+      const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
+      const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+      flyTo(targetCamera, computeFlyToSpeed(dist))
+    }
   }, [bringToFront, flyTo, cameraRef, flashNode])
 
   const navigateToNode = useCallback(async (nodeId: string) => {
@@ -626,6 +649,7 @@ export function App() {
     setFocusedId(nodeId)
     setSelection(nodeId)
     lastFocusedRef.current = nodeId
+    pinnedFocusRef.current = false
 
     const node = useNodeStore.getState().nodes[nodeId]
     if (!node) return
@@ -867,6 +891,7 @@ export function App() {
 
   const handleUnfocus = useCallback(() => {
     focusRef.current = null
+    pinnedFocusRef.current = false
     setFocusedId(null)
     setScrollMode(false)
   }, [])
@@ -1514,6 +1539,7 @@ export function App() {
 
   const handleNodeReady = useCallback((nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => {
     if (focusRef.current !== nodeId) return
+    if (pinnedFocusRef.current) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
     flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025))
@@ -1526,7 +1552,7 @@ export function App() {
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
-    if (focusRef.current) {
+    if (focusRef.current && !pinnedFocusRef.current) {
       e.preventDefault()
       handleUnfocus()
       flyToUnfocusZoom()
@@ -1539,7 +1565,7 @@ export function App() {
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
-    if (focusRef.current) {
+    if (focusRef.current && !pinnedFocusRef.current) {
       handleUnfocus()
       flyToUnfocusZoom()
     }
