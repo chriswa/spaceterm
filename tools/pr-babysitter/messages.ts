@@ -3,9 +3,11 @@ const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes 
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;
 
-const RESOLVE_THREAD_INSTRUCTIONS = `Never silently resolve a thread. Every resolution must include a reply on the thread:
-- **Valid concern → code fix**: Make the change, reply briefly describing what you did, then resolve.
-- **Out of scope or wrong**: Reply explaining why no change is needed, then resolve.
+const RESOLVE_THREAD_INSTRUCTIONS = `**CRITICAL: Every comment you post on the PR MUST be prefixed with "[Claude]"** so human readers know it was written by an AI agent and the PR author may not have seen it. Example: "[Claude] Fixed by renaming the variable in abc123."
+
+Never silently resolve a thread. Every resolution must include a reply on the thread:
+- **Valid concern → code fix**: Make the change, reply briefly describing what you did (prefixed with [Claude]), then resolve.
+- **Out of scope or wrong**: Reply explaining why no change is needed (prefixed with [Claude]), then resolve.
 Note: top-level review comments (the review body) cannot be resolved as threads — add a 👍 reaction to those instead.
 To fetch unresolved thread IDs:
 \`\`\`
@@ -36,7 +38,7 @@ export function buildRemediateMessage(
       case "Dequeued":
         parts.push(`**My PR was kicked from the merge queue.**`);
         parts.push(
-          `Post a comment on the root of the PR that reads exactly: \`@mergifyio requeue\`. Use: \`gh pr comment <PR_NUMBER> --body "@mergifyio requeue"\``,
+          `Post a comment on the root of the PR that reads: \`[Claude] @mergifyio requeue\`. Use: \`gh pr comment <PR_NUMBER> --body "[Claude] @mergifyio requeue"\``,
         );
         parts.push("");
         break;
