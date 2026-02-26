@@ -23,13 +23,21 @@ export function buildRemediateMessage(
   parts.push(`I just ran pr-check on my PR and found issues that need attention.`);
   parts.push("");
 
-  const priority = ["Conflicts", "Tests", "CodeRabbit", "Changes requested", "Review Comments", "Self Comment"];
+  const priority = ["Dequeued", "Conflicts", "Tests", "CodeRabbit", "Changes requested", "Review Comments", "Self Comment"];
   const ordered = [...remediate].sort((a, b) => {
     return priority.indexOf(a) - priority.indexOf(b);
   });
 
   for (const blocker of ordered) {
     switch (blocker) {
+      case "Dequeued":
+        parts.push(`**My PR was kicked from the merge queue.**`);
+        parts.push(
+          `Post a comment on the root of the PR that reads exactly: \`@mergifyio requeue\`. Use: \`gh pr comment <PR_NUMBER> --body "@mergifyio requeue"\``,
+        );
+        parts.push("");
+        break;
+
       case "Tests":
         parts.push(`**Tests are failing.** This is the highest priority.`);
         if (failedTestUrls.length > 0) {
@@ -106,8 +114,6 @@ export function buildHaltMessage(halt: string[], meticulousUrl: string | null): 
         return "a breaking API change was detected";
       case "Safety":
         return "the PR safety check failed";
-      case "Dequeued":
-        return "the PR was kicked from the merge queue";
       case "-auto-merge":
         return "the auto-merge label is missing";
       case "Checklist":
