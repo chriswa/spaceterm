@@ -3,7 +3,16 @@ const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes 
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;
 
-const THUMBS_UP_CONVENTION = `I use 👍 reactions on individual reviewer comments to track which ones I've dealt with. Comments without a 👍 from me are the ones that still need attention. After addressing each comment, add a 👍 reaction to it.`;
+const RESOLVE_THREAD_INSTRUCTIONS = `After addressing each comment, add a 👍 reaction to it. Then, once all comments in a thread are addressed, resolve the thread using the GitHub GraphQL API.
+To fetch unresolved thread IDs:
+\`\`\`
+jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {threadId: .id, path: .path, line: .line, comments: [.comments.nodes[] | {author: .author.login, body: .body}]}]' <<< $(gh api graphql -f query=$'query($owner: String!, $repo: String!, $prNumber: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $prNumber) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }' -F owner='{owner}' -F repo='{repo}' -F prNumber={number})
+\`\`\`
+To resolve a thread:
+\`\`\`
+gh api graphql -f query='mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } } }' -f threadId='<THREAD_ID>'
+\`\`\`
+If you cannot confidently resolve a comment, do NOT 👍 or resolve it — halt instead so I can address it myself.`;
 
 export function buildRemediateMessage(
   remediate: string[],
@@ -37,6 +46,7 @@ export function buildRemediateMessage(
 
       case "CodeRabbit":
         parts.push(`**CodeRabbit has requested changes.**`);
+        parts.push(RESOLVE_THREAD_INSTRUCTIONS);
         parts.push(
           `I need you to review the CodeRabbit comments on the PR. For each one, decide if it's (A) out of scope for this PR, (B) wrong or misguided, or (C) a valid concern. Fix any easy C items. Draft reply text for A and B items. If everything is straightforward, go ahead and push.`,
         );
@@ -45,7 +55,7 @@ export function buildRemediateMessage(
 
       case "Changes requested":
         parts.push(`**A human reviewer has requested changes.**`);
-        parts.push(THUMBS_UP_CONVENTION);
+        parts.push(RESOLVE_THREAD_INSTRUCTIONS);
         parts.push(
           `I need you to review their comments on the PR carefully. For each un-👍'd comment, classify as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
         );
@@ -54,7 +64,7 @@ export function buildRemediateMessage(
 
       case "Review Comments":
         parts.push(`**A reviewer has left unresolved comments on my PR.**`);
-        parts.push(THUMBS_UP_CONVENTION);
+        parts.push(RESOLVE_THREAD_INSTRUCTIONS);
         parts.push(
           `I need you to review each un-👍'd reviewer comment carefully. For each one, classify as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
         );
@@ -71,6 +81,7 @@ export function buildRemediateMessage(
 
       case "Self Comment":
         parts.push(`**I have unresolved comments on my own PR.**`);
+        parts.push(RESOLVE_THREAD_INSTRUCTIONS);
         parts.push(
           `These are action items I left for myself. Review each one and immediately plan fixes. For simple fixes, go ahead and implement and push. For complex changes that could affect the design intent, tell me what you think the fix should be so I can decide.`,
         );
