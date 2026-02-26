@@ -3,7 +3,10 @@ const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes 
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;
 
-const RESOLVE_THREAD_INSTRUCTIONS = `After addressing each comment thread, resolve it using the GitHub GraphQL API. Note: top-level review comments (the review body) cannot be resolved as threads — add a 👍 reaction to those instead.
+const RESOLVE_THREAD_INSTRUCTIONS = `Never silently resolve a thread. Every resolution must include a reply on the thread:
+- **Valid concern → code fix**: Make the change, reply briefly describing what you did, then resolve.
+- **Out of scope or wrong**: Reply explaining why no change is needed, then resolve.
+Note: top-level review comments (the review body) cannot be resolved as threads — add a 👍 reaction to those instead.
 To fetch unresolved thread IDs:
 \`\`\`
 gh api graphql -f query='query { repository(owner: "{owner}", name: "{repo}") { pullRequest(number: {number}) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }' | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {threadId: .id, path: .path, line: .line, comments: [.comments.nodes[] | {author: .author.login, body: .body}]}]'
