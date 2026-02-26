@@ -13,10 +13,26 @@ const CLI = (process.env.SPACETERM_CLI ?? "spaceterm-cli").split(" ");
 
 // ---- Setup ----
 
-const prUrl = process.argv[2];
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(`Usage: pr-babysitter [PR_URL]
+
+Monitors a GitHub PR's CI checks and nudges the parent Claude Code session
+to fix failures or acknowledge terminal states.
+
+If PR_URL is omitted, detects the PR for the current branch via \`gh pr view\`.
+
+Requires SPACETERM_NODE_ID to be set (run inside a spaceterm terminal).`);
+  process.exit(0);
+}
+
+let prUrl = process.argv[2];
 if (!prUrl) {
-  console.error("Usage: pr-babysitter <PR_URL>");
-  process.exit(1);
+  try {
+    prUrl = (await $`gh pr view --json url --jq '.url'`.text()).trim();
+  } catch {
+    console.error("No PR URL provided and no PR found for the current branch.\nRun `pr-babysitter --help` for usage.");
+    process.exit(1);
+  }
 }
 
 const nodeId = process.env.SPACETERM_NODE_ID;
@@ -223,6 +239,7 @@ async function main() {
       const waitResult = await waitForClaude();
       if (waitResult.outcome === "halt") {
         console.log("Claude halted for user input. Exiting babysitter.");
+        await $`${CLI} unread ${parentId}`.quiet();
         process.exit(0);
       }
       // outcome === "resume" → continue the loop
@@ -233,6 +250,7 @@ async function main() {
     if (triage.halt.length > 0) {
       await shipIt(buildHaltMessage(triage.halt, result.meticulousUrl));
       console.log("Halt condition reached. Exiting.");
+      await $`${CLI} unread ${parentId}`.quiet();
       process.exit(0);
     }
 
