@@ -450,9 +450,9 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('claude-usage', (usage: Record<string, unknown>, subscriptionType: string, rateLimitTier: string) => {
+  client!.on('claude-usage', (usage: Record<string, unknown>, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier)
+      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier, creditHistory)
     }
   })
 

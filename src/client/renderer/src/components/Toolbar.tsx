@@ -711,6 +711,83 @@ function formatCredits(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
 
+// --- Credit delta sparkline ---
+
+const SPARKLINE_W = 80
+const SPARKLINE_H = 20
+const SPARKLINE_PAD = 2
+
+function CreditSparkline({ history }: { history: (number | null)[] }) {
+  // Compute deltas between consecutive non-null entries
+  const deltas: { index: number; delta: number }[] = []
+  let prevVal: number | null = null
+  for (let i = 0; i < history.length; i++) {
+    const val = history[i]
+    if (val == null) { prevVal = null; continue }
+    if (prevVal != null) {
+      deltas.push({ index: i, delta: val - prevVal })
+    }
+    prevVal = val
+  }
+
+  // Only show if there are non-zero deltas
+  if (deltas.length < 2 || !deltas.some(d => d.delta !== 0)) return null
+
+  const maxD = Math.max(...deltas.map(d => d.delta))
+  const range = maxD || 1  // bottom is always 0
+
+  const points = deltas.map((d, i) => ({
+    x: SPARKLINE_PAD + (i / (deltas.length - 1)) * (SPARKLINE_W - 2 * SPARKLINE_PAD),
+    y: SPARKLINE_PAD + (1 - d.delta / range) * (SPARKLINE_H - 2 * SPARKLINE_PAD),
+  }))
+
+  // Build filled area segments, breaking on gaps in the original history indices
+  const bottomY = SPARKLINE_H - SPARKLINE_PAD
+  const segments: { line: string; area: string }[] = []
+  let startIdx = 0
+  for (let i = 0; i <= points.length; i++) {
+    if (i === points.length || (i > 0 && deltas[i].index - deltas[i - 1].index > 1)) {
+      // Close out the current segment
+      const seg = points.slice(startIdx, i)
+      const line = seg.map((p, j) => `${j === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+      const area = line + ` L ${seg[seg.length - 1].x} ${bottomY} L ${seg[0].x} ${bottomY} Z`
+      segments.push({ line, area })
+      startIdx = i
+    }
+  }
+
+  return (
+    <svg
+      width={SPARKLINE_W}
+      height={SPARKLINE_H}
+      viewBox={`0 0 ${SPARKLINE_W} ${SPARKLINE_H}`}
+      style={{
+        position: 'absolute',
+        bottom: '100%',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        marginBottom: 2,
+        pointerEvents: 'none',
+      }}
+    >
+      {segments.map((seg, i) => (
+        <g key={i}>
+          <path d={seg.area} fill="rgba(74,222,128,0.5)" />
+          <path
+            d={seg.line}
+            fill="none"
+            stroke="#4ade80"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={0.8}
+          />
+        </g>
+      ))}
+    </svg>
+  )
+}
+
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000
 const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000
 /** Minimum elapsed time before showing a projection (avoids wild swings early). */
@@ -757,6 +834,7 @@ function utilizationColor(pct: number): string {
 function UsageIndicators() {
   const usage = useUsageStore(s => s.usage)
   const subscriptionType = useUsageStore(s => s.subscriptionType)
+  const creditHistory = useUsageStore(s => s.creditHistory)
   const prevCreditsRef = useRef<number | null>(null)
   const extraRef = useRef<HTMLSpanElement>(null)
 
@@ -840,6 +918,7 @@ function UsageIndicators() {
           data-tooltip={extra.monthly_limit != null ? `Limit: ${formatCredits(extra.monthly_limit)}` : 'Limit: unlimited'}
           data-tooltip-no-flip
         >
+          <CreditSparkline history={creditHistory} />
           {formatCredits(extra.used_credits)}
         </span>
       )}

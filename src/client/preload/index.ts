@@ -204,7 +204,7 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener('server:error', listener)
   },
   onClaudeUsage: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string, rateLimitTier: string) => callback(usage, subscriptionType, rateLimitTier)
+    const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => callback(usage, subscriptionType, rateLimitTier, creditHistory)
     ipcRenderer.on('claude-usage', listener)
     return () => ipcRenderer.removeListener('claude-usage', listener)
   }

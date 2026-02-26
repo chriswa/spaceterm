@@ -21,7 +21,7 @@ import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
-import { fetchClaudeUsage } from './claude-usage'
+import { fetchClaudeUsage, type ClaudeUsageData } from './claude-usage'
 import { parse as shellParse } from 'shell-quote'
 import { AutoContinueManager } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
@@ -182,6 +182,86 @@ const USAGE_IDLE_TIMEOUT_MS = 5 * 60_000 // stop fetching after 5 min of no clie
 let lastClientCommandAt = 0
 let lastUsageFetchAt = 0
 const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
+const USAGE_CACHE_FILE = path.join(SOCKET_DIR, 'usage-cache.json')
+
+// Cached last usage response — sent immediately to newly connected clients
+let cachedUsage: { usage: ClaudeUsageData; subscriptionType: string; rateLimitTier: string } | null = null
+
+function loadCachedUsage(): void {
+  try {
+    if (!fs.existsSync(USAGE_CACHE_FILE)) return
+    const data = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'))
+    if (data?.usage && data?.subscriptionType && data?.rateLimitTier) {
+      cachedUsage = data
+      // Seed credit history from the log now that we know the subscription type
+      seedCreditHistoryFromLog(data.subscriptionType)
+      console.log(`[claude-usage] Loaded cached usage (${data.subscriptionType})`)
+    }
+  } catch (err: any) {
+    console.error(`[claude-usage] Failed to load usage cache: ${err.message}`)
+  }
+}
+
+function saveCachedUsage(usage: ClaudeUsageData, subscriptionType: string, rateLimitTier: string): void {
+  cachedUsage = { usage, subscriptionType, rateLimitTier }
+  fs.writeFile(USAGE_CACHE_FILE, JSON.stringify(cachedUsage), (err) => {
+    if (err) console.error(`[claude-usage] Failed to save usage cache: ${err.message}`)
+  })
+}
+
+// --- Credit history ring buffer (minute-keyed, 21 slots) ---
+const CREDIT_HISTORY_SLOTS = 61
+interface CreditSlot { minuteKey: number; credits: number }
+const creditHistory: (CreditSlot | null)[] = new Array(CREDIT_HISTORY_SLOTS).fill(null)
+let creditHistorySeeded = false
+
+function seedCreditHistoryFromLog(subscriptionType: string): void {
+  if (creditHistorySeeded) return
+  creditHistorySeeded = true
+  try {
+    const logFile = path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`)
+    if (!fs.existsSync(logFile)) return
+
+    // Read the tail of the file — grab last ~4KB which is plenty for 30 lines
+    const fd = fs.openSync(logFile, 'r')
+    const stat = fs.fstatSync(fd)
+    const readSize = Math.min(stat.size, 4096)
+    const buf = Buffer.alloc(readSize)
+    fs.readSync(fd, buf, 0, readSize, stat.size - readSize)
+    fs.closeSync(fd)
+
+    const cutoffMinute = Math.floor(Date.now() / 60_000) - CREDIT_HISTORY_SLOTS
+    const lines = buf.toString('utf8').split('\n').filter(Boolean)
+    // If we sliced mid-line, skip the first partial line
+    const startIdx = stat.size > readSize ? 1 : 0
+    for (let i = startIdx; i < lines.length; i++) {
+      try {
+        const entry = JSON.parse(lines[i])
+        const credits = entry['extra_usage.used_credits']
+        if (typeof credits !== 'number' || !entry.timestamp) continue
+        const minuteKey = Math.floor(new Date(entry.timestamp).getTime() / 60_000)
+        if (minuteKey <= cutoffMinute) continue
+        const slotIndex = ((minuteKey % CREDIT_HISTORY_SLOTS) + CREDIT_HISTORY_SLOTS) % CREDIT_HISTORY_SLOTS
+        creditHistory[slotIndex] = { minuteKey, credits }
+      } catch { /* skip malformed line */ }
+    }
+    console.log(`[claude-usage] Seeded credit history from log (${lines.length - startIdx} entries scanned)`)
+  } catch (err: any) {
+    console.error(`[claude-usage] Failed to seed credit history: ${err.message}`)
+  }
+}
+
+function buildCreditHistoryArray(): (number | null)[] {
+  const nowMinute = Math.floor(Date.now() / 60_000)
+  const result: (number | null)[] = []
+  for (let i = CREDIT_HISTORY_SLOTS - 1; i >= 0; i--) {
+    const targetMinute = nowMinute - i
+    const slotIndex = ((targetMinute % CREDIT_HISTORY_SLOTS) + CREDIT_HISTORY_SLOTS) % CREDIT_HISTORY_SLOTS
+    const slot = creditHistory[slotIndex]
+    result.push(slot && slot.minuteKey === targetMinute ? slot.credits : null)
+  }
+  return result
+}
 
 let daemonClient: DaemonClient
 let sessionManager: SessionManager
@@ -1767,7 +1847,8 @@ async function startServer(): Promise<void> {
     (nodeId, gitStatus) => stateManager.updateDirectoryGitStatus(nodeId, gitStatus)
   )
 
-  // --- Claude usage polling ---
+  // --- Claude usage: load cached data and start polling ---
+  loadCachedUsage()
   let usageLogDirReady = false
   setInterval(async () => {
     const now = Date.now()
@@ -1776,7 +1857,20 @@ async function startServer(): Promise<void> {
     lastUsageFetchAt = now
     try {
       const { usage, subscriptionType, rateLimitTier } = await fetchClaudeUsage()
-      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier })
+
+      // Seed ring buffer from persisted log on first fetch
+      seedCreditHistoryFromLog(subscriptionType)
+
+      // Record credits in the minute-keyed ring buffer
+      const credits = usage.extra_usage?.used_credits ?? null
+      if (credits != null) {
+        const minuteKey = Math.floor(now / 60_000)
+        const slotIndex = ((minuteKey % CREDIT_HISTORY_SLOTS) + CREDIT_HISTORY_SLOTS) % CREDIT_HISTORY_SLOTS
+        creditHistory[slotIndex] = { minuteKey, credits }
+      }
+
+      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier, creditHistory: buildCreditHistoryArray() })
+      saveCachedUsage(usage, subscriptionType, rateLimitTier)
 
       // Log usage data with flat dot-notation keys
       if (!usageLogDirReady) {
@@ -1827,6 +1921,15 @@ async function startServer(): Promise<void> {
 
     clients.add(client)
     console.log(`Client connected (${clients.size} total)`)
+
+    // Send cached usage data immediately so the client doesn't wait for the next poll
+    if (cachedUsage) {
+      send(socket, {
+        type: 'claude-usage',
+        ...cachedUsage,
+        creditHistory: buildCreditHistoryArray(),
+      })
+    }
 
     socket.on('data', (data) => {
       client.parser.feed(data as string)

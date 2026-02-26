@@ -562,6 +562,7 @@ export interface ClaudeUsageMessage {
   usage: import('../server/claude-usage').ClaudeUsageData
   subscriptionType: string
   rateLimitTier: string
+  creditHistory: (number | null)[]
 }
 
 // --- Script socket messages (scripts.sock) ---

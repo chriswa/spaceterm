@@ -51,8 +51,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier) => {
-      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier)
+    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier, creditHistory) => {
+      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier, creditHistory)
     })
   )
 

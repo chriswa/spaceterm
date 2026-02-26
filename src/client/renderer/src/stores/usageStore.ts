@@ -5,12 +5,15 @@ interface UsageState {
   usage: ClaudeUsageData | null
   subscriptionType: string | null
   rateLimitTier: string | null
-  update: (usage: ClaudeUsageData, subscriptionType: string, rateLimitTier: string) => void
+  creditHistory: (number | null)[]
+  update: (usage: ClaudeUsageData, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => void
 }
 
 export const useUsageStore = create<UsageState>((set) => ({
   usage: null,
   subscriptionType: null,
   rateLimitTier: null,
-  update: (usage, subscriptionType, rateLimitTier) => set({ usage, subscriptionType, rateLimitTier }),
+  creditHistory: [],
+  update: (usage, subscriptionType, rateLimitTier, creditHistory) =>
+    set({ usage, subscriptionType, rateLimitTier, creditHistory }),
 }))

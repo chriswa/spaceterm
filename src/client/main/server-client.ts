@@ -148,7 +148,7 @@ export class ServerClient extends EventEmitter {
     }
 
     if (msg.type === 'claude-usage') {
-      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier)
+      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier, msg.creditHistory)
       return
     }
 
