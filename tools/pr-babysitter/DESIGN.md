@@ -62,7 +62,35 @@ The presence of `"Draft"` in the blocker list means the PR is in draft state.
 
 ### Ready Mode
 
-When `Draft` is **not** present, all blockers are meaningful.
+When `Draft` is **not** present, all blockers are meaningful — but they surface in a staged order, not all at once.
+
+## Staged Flow (Ready Mode)
+
+Blockers are surfaced in a strict pipeline. Later-stage items are suppressed while earlier-stage items are still active. This prevents premature actions (e.g. adding auto-merge while tests are still running).
+
+```
+Stage 1: Unsettled       While any automated check is unsettled → WAIT
+                          Don't surface any human-decision blockers.
+
+Stage 2: Automated       After everything settles, if there are failures
+                          (Tests, CodeRabbit, Safety, etc.) → REMEDIATE
+
+Stage 3: Comments         After automated stuff passes, resolve outstanding
+                          PR comment threads (Self Comment, Review Comments,
+                          Changes requested).
+
+Stage 4: Reviewers        After comments are dealt with, if reviewers are
+                          missing → HALT, tell user to add reviewers.
+
+Stage 5: Wait for reviews Spin waiting for reviews to come in.
+                          Nothing for Claude to do here.
+
+Stage 6: Auto-merge       After reviews come in and auto-merge is the
+                          ONLY remaining blocker → HALT, tell user to
+                          add the auto-merge label.
+```
+
+**Implementation**: `computeTriage()` in pr-check's `display.ts` enforces this by suppressing group 4 (human decisions) items from `halt` while earlier-stage `wait` or `remediate` items exist. `-auto-merge` is only surfaced when it is the sole remaining actionable blocker across all categories.
 
 ## Git Discipline
 
@@ -94,6 +122,9 @@ If `git push` fails due to new remote commits:
 - **All blockers are in the ignore list** → draft-clean terminal condition
 
 ### 2. Auto-Remediate
+
+#### `Dequeued` (kicked from merge queue)
+Post `@mergifyio requeue` as a PR comment to re-enter the queue.
 
 #### `Tests` (CI failure)
 1. Spawn a subagent to pull CI logs and identify the failure
@@ -130,8 +161,13 @@ Resolve by merging master into the branch (see Git Discipline above for why neve
 
 #### `Self Comment` (unresolved author comments)
 1. Look at unresolved self-comments on the PR
-2. Resolve any that are stale or no longer relevant
-3. If any need actual work: alert user
+2. For each: fix the issue, 👍 the comment, resolve the thread
+3. If any need actual work: halt for user
+
+#### Comment acknowledgment convention
+All comment-related blockers (Self Comment, CodeRabbit, Changes requested, Review Comments) use a two-layer acknowledgment:
+- **👍 reaction** on individual comments — marks which comments have been addressed. Essential for reopened threads where old 👍'd comments are stale context and new un-👍'd comments need attention.
+- **Thread resolution** via `resolveReviewThread` GraphQL mutation — marks the whole thread as done. `pr-check` skips resolved threads, which breaks the re-flagging loop.
 
 ### 3. Halt (stop the loop and notify user)
 
@@ -142,9 +178,8 @@ Resolve by merging master into the branch (see Git Discipline above for why neve
 | `Security` | Security scan failure — needs review |
 | `Breaking` | Breaking API change — intentional? |
 | `Safety` | Safety check failure |
-| `Dequeued` | Kicked from merge queue — needs investigation |
-| `-1 Reviewers` (ready mode) | Reviewers need to be added to the PR |
-| `-auto-merge` (ready mode) | Label missing — user decision (**only halt when this is the sole remaining actionable blocker**) |
+| `-1 Reviewers` (ready mode) | Reviewers need to be added to the PR (only surfaced after all automated checks pass) |
+| `-auto-merge` (ready mode) | Label missing — **only surfaced when this is the sole remaining actionable blocker** |
 | `Checklist` (ready mode) | PR checklist incomplete |
 | All blockers ignored (draft mode) | Draft PR is clean — all draft-mode checks pass |
 
