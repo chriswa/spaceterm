@@ -14,6 +14,7 @@ export const CRAB_COLORS: Record<CrabColor, string> = {
 
 export interface CrabEntry {
   nodeId: string
+  kind: 'claude' | 'terminal'
   color: CrabColor
   unviewed: boolean
   asleep: boolean
@@ -24,41 +25,39 @@ export interface CrabEntry {
 }
 
 /**
- * Derive the crab indicator color and unviewed status from a terminal node's
- * claude state. Returns null when the node has no crab indicator.
+ * Derive the toolbar indicator color and unviewed status from a terminal node's
+ * state. Every terminal node produces an indicator — Claude surfaces use
+ * claude-state-driven colors, plain terminals default to gray/white.
  *
- * When asleep, the crab is forced to a very dark grey regardless of underlying state.
+ * When asleep, the indicator is forced to a very dark grey regardless of underlying state.
  */
-export function deriveCrabAppearance(
+export function deriveToolbarIndicator(
   claudeState: string | undefined,
   claudeStatusUnread: boolean,
   claudeStatusAsleep: boolean,
   hasClaudeHistory: boolean
-): { color: CrabColor; unviewed: boolean; asleep: boolean } | null {
+): { kind: 'claude' | 'terminal'; color: CrabColor; unviewed: boolean; asleep: boolean } {
+  const base = deriveToolbarIndicatorInner(claudeState, claudeStatusUnread, hasClaudeHistory)
   if (claudeStatusAsleep) {
-    // Asleep overrides all visual state — show as dark grey, no attention indicators
-    const base = deriveCrabAppearanceInner(claudeState, claudeStatusUnread, hasClaudeHistory)
-    if (!base) return null
-    return { color: 'asleep', unviewed: false, asleep: true }
+    return { kind: base.kind, color: 'asleep', unviewed: false, asleep: true }
   }
-  const base = deriveCrabAppearanceInner(claudeState, claudeStatusUnread, hasClaudeHistory)
-  if (!base) return null
   return { ...base, asleep: false }
 }
 
-function deriveCrabAppearanceInner(
+function deriveToolbarIndicatorInner(
   claudeState: string | undefined,
   claudeStatusUnread: boolean,
   hasClaudeHistory: boolean
-): { color: CrabColor; unviewed: boolean } | null {
-  if (claudeState === 'waiting_permission') return { color: 'red', unviewed: claudeStatusUnread }
-  if (claudeState === 'waiting_question') return { color: 'green', unviewed: claudeStatusUnread }
-  if (claudeState === 'waiting_plan') return { color: 'purple', unviewed: claudeStatusUnread }
-  if (claudeState === 'working') return { color: 'orange', unviewed: false }
-  if (claudeState === 'stuck') return { color: 'dim-orange', unviewed: claudeStatusUnread }
-  if (claudeState === 'stopped' && claudeStatusUnread) return { color: 'white', unviewed: true }
-  if (hasClaudeHistory) return { color: 'gray', unviewed: false }
-  return null
+): { kind: 'claude' | 'terminal'; color: CrabColor; unviewed: boolean } {
+  if (claudeState === 'waiting_permission') return { kind: 'claude', color: 'red', unviewed: claudeStatusUnread }
+  if (claudeState === 'waiting_question') return { kind: 'claude', color: 'green', unviewed: claudeStatusUnread }
+  if (claudeState === 'waiting_plan') return { kind: 'claude', color: 'purple', unviewed: claudeStatusUnread }
+  if (claudeState === 'working') return { kind: 'claude', color: 'orange', unviewed: false }
+  if (claudeState === 'stuck') return { kind: 'claude', color: 'dim-orange', unviewed: claudeStatusUnread }
+  if (claudeState === 'stopped' && claudeStatusUnread && hasClaudeHistory) return { kind: 'claude', color: 'white', unviewed: true }
+  if (hasClaudeHistory) return { kind: 'claude', color: 'gray', unviewed: false }
+  // Plain terminal — no Claude history
+  return { kind: 'terminal', color: claudeStatusUnread ? 'white' : 'gray', unviewed: claudeStatusUnread }
 }
 
 /**
@@ -115,6 +114,9 @@ export function adjacentCrab(
 }
 
 /**
+ * Returns the highest-priority Claude surface crab. Terminal crabs are excluded —
+ * Cmd+Down is strictly for jumping to Claude surfaces.
+ *
  * Priority tiers (lower = higher priority):
  *   0:   red + unviewed        (waiting_permission, unread)
  *   0.5: green + unviewed      (waiting_question, unread)
@@ -132,13 +134,14 @@ export function adjacentCrab(
  * Tiebreaker: prefer oldest (leftmost in toolbar). Since crabs are sorted
  * oldest-first, iterate forward with < so the first match (oldest) wins.
  */
-export function highestPriorityCrab(crabs: CrabEntry[]): CrabEntry | null {
+export function highestPriorityClaudeCrab(crabs: CrabEntry[]): CrabEntry | null {
   if (crabs.length === 0) return null
 
   let best: CrabEntry | null = null
   let bestTier = Infinity
 
   for (const crab of crabs) {
+    if (crab.kind === 'terminal') continue
     const tier = crabTier(crab)
     if (tier < bestTier) {
       bestTier = tier
@@ -150,6 +153,7 @@ export function highestPriorityCrab(crabs: CrabEntry[]): CrabEntry | null {
 }
 
 function crabTier(crab: CrabEntry): number {
+  if (crab.kind === 'terminal') return 100
   if (crab.asleep) return 99
   switch (crab.color) {
     case 'red':    return crab.unviewed ? 0 : 3

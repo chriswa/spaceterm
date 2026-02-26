@@ -305,6 +305,7 @@ html, body, #root {
   color: rgba(255,255,255,0.5);
 }
 
+
 .toolbar__btn--active {
   background: #fff;
   color: #000;

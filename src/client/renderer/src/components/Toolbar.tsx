@@ -4,6 +4,7 @@ import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
 import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
+import terminalIcon from '../assets/terminal.png'
 import type { CrabEntry } from '../lib/crab-nav'
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
@@ -219,7 +220,8 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
         const phantomLeft = containerWidth - oldRightOffset
         const phantom = document.createElement('button')
         phantom.className = `toolbar__crab toolbar__crab--${prev.color}`
-        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;-webkit-mask-image:url(${crabIcon});mask-image:url(${crabIcon});-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;`
+        const maskUrl = prev.kind === 'terminal' ? terminalIcon : crabIcon
+        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;-webkit-mask-image:url(${maskUrl});mask-image:url(${maskUrl});-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;`
         el.appendChild(phantom)
 
         const anim = phantom.animate(
@@ -374,6 +376,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
       if (!dragging) {
         dragging = true
         isDraggingRef.current = true
+        useHoveredCardStore.getState().setToolbarHoveredNode(null)
         draggedSlot.classList.add('toolbar__crab-slot--dragging')
         for (let i = 0; i < slots.length; i++) {
           if (i !== crabIndex) slots[i].classList.add('toolbar__crab-slot--shifting')
@@ -514,9 +517,20 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
           <div key={crab.nodeId} className="toolbar__crab-slot" data-node-id={crab.nodeId}>
             <button
               className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
-              style={{ WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }}
+              style={crab.kind === 'terminal'
+                ? { WebkitMaskImage: `url(${terminalIcon})`, maskImage: `url(${terminalIcon})` }
+                : { WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }
+              }
               onMouseDown={(e) => handleCrabMouseDown(e, i)}
-              data-tooltip={crab.title}
+              onMouseEnter={() => {
+                if (!isDraggingRef.current) {
+                  useHoveredCardStore.getState().setToolbarHoveredNode(crab.nodeId)
+                }
+              }}
+              onMouseLeave={() => {
+                useHoveredCardStore.getState().setToolbarHoveredNode(null)
+              }}
+              data-tooltip={crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title}
               data-tooltip-no-flip
             />
           </div>
@@ -720,9 +734,9 @@ function projectUsage(utilization: number, resetsAt: string, windowMs: number): 
   }
 }
 
-/** Color for the 5-hour utilization indicator.
+/** Color for a utilization indicator.
  *  0–50%: white, 50–75%: white→yellow, 75–99%: yellow→orange, 100%: red */
-function fiveHourColor(pct: number): string {
+function utilizationColor(pct: number): string {
   if (pct >= 100) return '#ff3b30'
   if (pct <= 50) return '#ffffff'
   if (pct <= 75) {
@@ -743,6 +757,34 @@ function fiveHourColor(pct: number): string {
 function UsageIndicators() {
   const usage = useUsageStore(s => s.usage)
   const subscriptionType = useUsageStore(s => s.subscriptionType)
+  const prevCreditsRef = useRef<number | null>(null)
+  const extraRef = useRef<HTMLSpanElement>(null)
+
+  const credits = usage?.extra_usage?.used_credits ?? null
+
+  // Floating combat text on credit increase
+  useEffect(() => {
+    const prev = prevCreditsRef.current
+    prevCreditsRef.current = credits
+    if (prev == null || credits == null || credits <= prev) return
+
+    const container = extraRef.current
+    if (!container) return
+
+    const diff = credits - prev
+    const el = document.createElement('span')
+    el.textContent = `+$${(diff / 100).toFixed(2)}`
+    el.style.cssText = 'position:absolute;left:50%;bottom:100%;pointer-events:none;font-size:28px;font-weight:700;color:#4ade80;white-space:nowrap;text-shadow:0 0 8px rgba(74,222,128,0.6);'
+    container.appendChild(el)
+    const anim = el.animate(
+      [
+        { transform: 'translate(-50%, 0)', opacity: 1 },
+        { transform: 'translate(-50%, -90px)', opacity: 0 },
+      ],
+      { duration: 2800, easing: 'ease-out', fill: 'forwards' }
+    )
+    anim.onfinish = () => el.remove()
+  }, [credits])
 
   if (!usage || !subscriptionType) return null
 
@@ -762,12 +804,11 @@ function UsageIndicators() {
       {fiveHour != null && typeof fiveHour.utilization === 'number' && (
         <span
           className="toolbar__status-item toolbar__metric"
-          style={{ color: fiveHourColor(fiveHour.utilization) }}
           data-tooltip={formatResetTime('5-hour usage', fiveHour.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
           <span className="toolbar__metric-label">5h </span>
-          {Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span>
+          <span style={{ color: utilizationColor(fiveHour.utilization) }}>{Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span></span>
           {projected5h != null && (
             <span style={{ color: '#888' }} data-tooltip="5-hour usage linear extrapolation">
               {' '}({Math.round(projected5h)}<span className="toolbar__metric-label">%</span>)
@@ -782,7 +823,7 @@ function UsageIndicators() {
           data-tooltip-no-flip
         >
           <span className="toolbar__metric-label">7d </span>
-          {Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span>
+          <span style={{ color: utilizationColor(sevenDay.utilization) }}>{Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span></span>
           {projected7d != null && (
             <span style={{ color: '#888' }} data-tooltip="7-day usage linear extrapolation">
               {' '}({Math.round(projected7d)}<span className="toolbar__metric-label">%</span>)
@@ -792,7 +833,9 @@ function UsageIndicators() {
       )}
       {extra != null && typeof extra.used_credits === 'number' && (
         <span
+          ref={extraRef}
           className="toolbar__status-item toolbar__metric"
+          style={{ position: 'relative' }}
           data-tooltip={extra.monthly_limit != null ? `Limit: ${formatCredits(extra.monthly_limit)}` : 'Limit: unlimited'}
           data-tooltip-no-flip
         >

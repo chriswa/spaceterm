@@ -30,12 +30,12 @@ import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
 import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
-import { adjacentCrab, highestPriorityCrab } from './lib/crab-nav'
+import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
 import { pushArchiveUndo, popArchiveUndo } from './lib/undo-archive'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
-import { deriveCrabAppearance } from './lib/crab-nav'
+import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 
 function tieredZIndex(type: import('../../../../shared/state').NodeData['type'], z: number): number {
@@ -153,11 +153,9 @@ export function App() {
 
     for (const node of Object.values(nodes)) {
       if (node.type !== 'terminal') continue
-      const appearance = deriveCrabAppearance(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0)
-      if (appearance) {
-        const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-        entries.push({ nodeId: node.id, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
-      }
+      const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0)
+      const createdAt = node.terminalSessions[0]?.startedAt ?? ''
+      entries.push({ nodeId: node.id, kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
     }
 
     entries.sort((a, b) => a.sortOrder - b.sortOrder)
@@ -1468,7 +1466,7 @@ export function App() {
         e.preventDefault()
         e.stopPropagation()
         snapToTarget()
-        const best = highestPriorityCrab(crabsRef.current)
+        const best = highestPriorityClaudeCrab(crabsRef.current)
         if (!best || best.nodeId === focusRef.current) {
           shakeCamera()
         } else {

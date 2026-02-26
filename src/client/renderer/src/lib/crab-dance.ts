@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useAudioStore } from '../stores/audioStore'
+import { angleBorderColor } from './angle-color'
 
 export interface DanceValues {
   /** Raised-cosine glow pulse, 0..1 */
@@ -172,6 +173,63 @@ export function useUnreadGlow(
       const c = colorRef.current
       el.style.boxShadow = `0 0 ${blur}px ${spread}px ${c}`
       el.style.borderColor = c
+    }
+
+    rafId = requestAnimationFrame(tick)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      const el = ref.current
+      if (el) {
+        el.style.boxShadow = ''
+        el.style.borderColor = ''
+      }
+    }
+  }, [active, ref, cameraRef])
+}
+
+/**
+ * Hook that applies a steady scale-invariant glow to a card when its
+ * corresponding toolbar icon is hovered. Uses angleBorderColor for the
+ * position-based color (same as focus glow) and scales blur/spread
+ * inversely with camera zoom so the glow remains visible when zoomed out.
+ */
+export function useToolbarHoverGlow(
+  ref: React.RefObject<HTMLElement | null>,
+  x: number,
+  y: number,
+  cameraRef: React.RefObject<{ z: number }>,
+  active: boolean
+): void {
+  const coordsRef = useRef({ x, y })
+  coordsRef.current = { x, y }
+
+  useEffect(() => {
+    if (!active) {
+      const el = ref.current
+      if (el) {
+        el.style.boxShadow = ''
+        el.style.borderColor = ''
+      }
+      return
+    }
+
+    let rafId = 0
+
+    const tick = () => {
+      rafId = requestAnimationFrame(tick)
+      const el = ref.current
+      if (!el) return
+
+      const { x: cx, y: cy } = coordsRef.current
+      if (!cameraRef.current) return
+      const z = cameraRef.current.z
+      const s = Math.max(1, 1 / z)
+      const blur = 16 * s
+      const spread = 4 * s
+      const color = angleBorderColor(cx, cy, 1)
+      el.style.boxShadow = `0 0 ${blur}px ${spread}px ${color}`
+      el.style.borderColor = color
     }
 
     rafId = requestAnimationFrame(tick)

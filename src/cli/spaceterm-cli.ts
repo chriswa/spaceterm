@@ -6,6 +6,7 @@
  *   spaceterm-cli get-ancestors                          # ancestor node IDs (self first)
  *   spaceterm-cli get-node <node-id>                     # full node state as JSON
  *   spaceterm-cli ship-it <node-id> <text>               # send keystrokes to a terminal
+ *   spaceterm-cli fork-claude <node-id> <parent-id>      # fork a Claude session, wait for settle
  *   spaceterm-cli subscribe [--events ...] [--nodes ...]  # stream events as JSON lines
  *
  * Environment:
@@ -60,6 +61,15 @@ function oneshot(msg: Record<string, unknown>, replyType: string): Promise<Serve
   })
 }
 
+function fireAndForget(msg: Record<string, unknown>): void {
+  const socket = net.createConnection(SCRIPTS_SOCKET_PATH)
+  socket.on('connect', () => {
+    sendMsg(socket, msg)
+    socket.end()
+  })
+  socket.on('error', (err: Error) => fatal(err.message))
+}
+
 function fatal(msg: string): never {
   process.stderr.write(`Error: ${msg}\n`)
   process.exit(1)
@@ -95,6 +105,19 @@ async function shipIt(nodeId: string, text: string): Promise<void> {
   )
   if (reply.error) fatal(reply.error)
   process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
+}
+
+async function forkClaude(nodeId: string, parentId: string): Promise<void> {
+  const reply = await oneshot(
+    { type: 'script-fork-claude', seq: 1, nodeId, parentId },
+    'script-fork-claude-result'
+  )
+  if (reply.error) fatal(reply.error as string)
+  process.stdout.write(JSON.stringify({ nodeId: reply.nodeId }) + '\n')
+}
+
+function unread(nodeId: string): void {
+  fireAndForget({ type: 'script-unread', nodeId })
 }
 
 function subscribe(events: string[] | undefined, nodeIds: string[] | undefined): void {
@@ -146,10 +169,12 @@ function subscribe(events: string[] | undefined, nodeIds: string[] | undefined):
 
 function printUsage(): void {
   process.stderr.write(`Usage:
-  spaceterm-cli get-ancestors                            Get ancestor node IDs
-  spaceterm-cli get-node <node-id>                       Get full node state
-  spaceterm-cli ship-it <node-id> <text>                 Send keystrokes to terminal
-  spaceterm-cli subscribe [--events e1,e2] [--nodes n1,n2]  Stream events
+  spaceterm-cli get-ancestors                              Get ancestor node IDs
+  spaceterm-cli get-node <node-id>                         Get full node state
+  spaceterm-cli ship-it <node-id> <text>                   Send keystrokes to terminal
+  spaceterm-cli fork-claude <node-id> <parent-id>          Fork a Claude session
+  spaceterm-cli unread <node-id>                           Mark a terminal as unread
+  spaceterm-cli subscribe [--events e1,e2] [--nodes n1,n2] Stream events
 `)
 }
 
@@ -169,6 +194,16 @@ switch (command) {
   case 'ship-it':
     if (!args[1] || !args[2]) { printUsage(); process.exit(1) }
     shipIt(args[1], args[2]).catch((err) => fatal(err.message))
+    break
+
+  case 'fork-claude':
+    if (!args[1] || !args[2]) { printUsage(); process.exit(1) }
+    forkClaude(args[1], args[2]).catch((err) => fatal(err.message))
+    break
+
+  case 'unread':
+    if (!args[1]) { printUsage(); process.exit(1) }
+    unread(args[1])
     break
 
   case 'subscribe': {

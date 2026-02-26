@@ -22,6 +22,20 @@ function getCtx(): CanvasRenderingContext2D {
   return ctx
 }
 
+/** Estimate how many lines a single "word" (no internal spaces) occupies
+ *  when CSS `word-wrap: break-word` forces it to wrap at MAX_TEXT_WIDTH. */
+function measureWordBreakLines(c: CanvasRenderingContext2D, word: string): { lines: number; maxWidth: number } {
+  const fullWidth = c.measureText(word).width
+  if (fullWidth <= MAX_TEXT_WIDTH) return { lines: 1, maxWidth: fullWidth }
+
+  // Approximate character-level wrapping: measure average char width
+  // and compute how many lines the word spans.
+  const avgCharWidth = fullWidth / word.length
+  const charsPerLine = Math.max(1, Math.floor(MAX_TEXT_WIDTH / avgCharWidth))
+  const lines = Math.ceil(word.length / charsPerLine)
+  return { lines, maxWidth: Math.min(fullWidth, MAX_TEXT_WIDTH) }
+}
+
 function measureTooltip(text: string): { width: number; height: number } {
   const c = getCtx()
   const words = text.split(/\s+/)
@@ -35,7 +49,7 @@ function measureTooltip(text: string): { width: number; height: number } {
     }
   }
 
-  // Word-wrap measurement
+  // Word-wrap measurement, accounting for word-wrap: break-word
   let lineCount = 1
   let lineWidth = 0
   let maxLineWidth = 0
@@ -43,6 +57,25 @@ function measureTooltip(text: string): { width: number; height: number } {
 
   for (const word of words) {
     const wordWidth = c.measureText(word).width
+
+    // If a single word exceeds MAX_TEXT_WIDTH, CSS break-word will split it
+    // across multiple lines. Account for this.
+    if (wordWidth > MAX_TEXT_WIDTH) {
+      if (lineWidth > 0) {
+        // Finish current line first
+        maxLineWidth = Math.max(maxLineWidth, lineWidth)
+        lineCount++
+        lineWidth = 0
+      }
+      const wb = measureWordBreakLines(c, word)
+      lineCount += wb.lines - 1 // -1 because the last fragment starts a new "current line"
+      maxLineWidth = Math.max(maxLineWidth, wb.maxWidth)
+      // Estimate remaining width on the last line of the broken word
+      const lastLineChars = word.length % Math.max(1, Math.floor(MAX_TEXT_WIDTH / (wordWidth / word.length)))
+      lineWidth = lastLineChars > 0 ? c.measureText(word.slice(-lastLineChars)).width : wb.maxWidth
+      continue
+    }
+
     if (lineWidth > 0) {
       const testWidth = lineWidth + spaceWidth + wordWidth
       if (testWidth > MAX_TEXT_WIDTH) {

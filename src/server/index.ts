@@ -179,7 +179,7 @@ const clients = new Set<ClientConnection>()
 
 // --- Claude usage polling state ---
 const USAGE_POLL_TICK_MS = 15_000     // check conditions every 15s
-const USAGE_FETCH_COOLDOWN_MS = 5 * 60_000 // never fetch more than once per 5 minutes
+const USAGE_FETCH_COOLDOWN_MS = 1 * 60_000 // never fetch more than once per 1 minute
 const USAGE_IDLE_TIMEOUT_MS = 5 * 60_000 // stop fetching after 5 min of no client commands
 let lastClientCommandAt = 0
 let lastUsageFetchAt = 0
@@ -218,6 +218,13 @@ function broadcastToAll(msg: ServerMessage): void {
   })
 }
 
+/** Pending fork-settle callbacks: surfaceId → { respond, timeoutId }. */
+interface PendingForkSettle {
+  respond: (error?: string) => void
+  timeoutId: ReturnType<typeof setTimeout>
+}
+const pendingForkSettles = new Map<string, PendingForkSettle>()
+
 /** Handle fire-and-forget messages from the hooks socket. No response is sent. */
 function handleIngestMessage(msg: IngestMessage): void {
   switch (msg.type) {
@@ -253,6 +260,16 @@ function handleIngestMessage(msg: IngestMessage): void {
           if (hookCwd) {
             sessionFileWatcher.watch(msg.surfaceId, claudeSessionId, hookCwd)
           }
+        }
+      }
+
+      // Resolve pending fork-settle if this surface has one waiting
+      if (hookType === 'SessionStart') {
+        const pending = pendingForkSettles.get(msg.surfaceId)
+        if (pending) {
+          clearTimeout(pending.timeoutId)
+          pendingForkSettles.delete(msg.surfaceId)
+          pending.respond()
         }
       }
 
@@ -300,6 +317,21 @@ function handleIngestMessage(msg: IngestMessage): void {
       } catch (err: any) {
         console.error(`[spawn-claude-surface] Failed: ${err.message}`)
       }
+      break
+    }
+
+    case 'spaceterm-broadcast': {
+      const broadcastNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!broadcastNodeId) {
+        console.error(`[spaceterm-broadcast] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      broadcastToScriptSubscribers('broadcast', broadcastNodeId, {
+        type: 'broadcast',
+        nodeId: broadcastNodeId,
+        surfaceId: msg.surfaceId,
+        content: msg.content,
+      })
       break
     }
 
@@ -455,8 +487,101 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
       break
     }
 
+    case 'script-fork-claude': {
+      const SETTLE_TIMEOUT_MS = 30_000
+      const sendError = (error: string): void => {
+        try {
+          socket.write(JSON.stringify({ type: 'script-fork-claude-result', seq: msg.seq, nodeId: '', error }) + '\n')
+        } catch { /* disconnected */ }
+        socket.end()
+      }
+
+      try {
+        const forkNode = stateManager.getNode(msg.nodeId)
+        if (!forkNode || forkNode.type !== 'terminal') {
+          sendError(`node ${msg.nodeId} is not a terminal`)
+          break
+        }
+        const history = forkNode.claudeSessionHistory ?? []
+        if (history.length === 0) {
+          sendError('no Claude session history')
+          break
+        }
+        const forkCwd = forkNode.cwd ?? sessionManager.getCwd(forkNode.sessionId)
+        if (!forkCwd) {
+          sendError('cannot determine cwd')
+          break
+        }
+        // Walk backwards through history to find the most recent session with an
+        // existing transcript file on disk.
+        let sourceClaudeSessionId: string | undefined
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
+            sourceClaudeSessionId = history[i].claudeSessionId
+            break
+          }
+        }
+        if (!sourceClaudeSessionId) {
+          sendError('no session transcript file found on disk')
+          break
+        }
+
+        const forkName = computeForkName(forkNode.name)
+        const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
+        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId, undefined, undefined, parseExtraCliArgs(forkNode.extraCliArgs))
+        const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
+        snapshotManager.addSession(forkPtyId, forkCols, forkRows)
+
+        // Place the new terminal below the specified parent (not the source node)
+        const forkPos = computePlacement(stateManager.getState().nodes, msg.parentId, terminalPixelSize(forkCols, forkRows))
+        stateManager.createTerminal(forkPtyId, msg.parentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName)
+        if (forkNode.shellTitleHistory?.length) {
+          sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
+        }
+
+        const newNodeId = forkPtyId
+        let responded = false
+
+        const respond = (error?: string): void => {
+          if (responded) return
+          responded = true
+          pendingForkSettles.delete(forkPtyId)
+          try {
+            socket.write(JSON.stringify({
+              type: 'script-fork-claude-result',
+              seq: msg.seq,
+              nodeId: error ? '' : newNodeId,
+              error
+            }) + '\n')
+          } catch { /* disconnected */ }
+          socket.end()
+        }
+
+        const timeoutId = setTimeout(
+          () => respond('Timed out waiting for session to settle'),
+          SETTLE_TIMEOUT_MS
+        )
+        pendingForkSettles.set(forkPtyId, { respond, timeoutId })
+
+        console.log(`[script-fork-claude] Forked terminal ${msg.nodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (parent ${msg.parentId.slice(0, 8)}), waiting for settle...`)
+      } catch (err: any) {
+        console.error(`script-fork-claude failed: ${err.message}`)
+        sendError(err.message)
+      }
+      break
+    }
+
+    case 'script-unread': {
+      // Fire-and-forget: mark a terminal as unread. Silently no-ops for unknown/non-terminal nodes.
+      const node = stateManager.getNode(msg.nodeId)
+      if (node && node.type === 'terminal') {
+        claudeStateMachine.handleClientMarkUnread(node.sessionId, true)
+      }
+      break
+    }
+
     default: {
-      const unknownType = (msg as Record<string, unknown>).type
+      const unknownType = (msg as unknown as Record<string, unknown>).type
       console.error(`[scripts] Unknown message type: ${unknownType}`)
       try {
         socket.write(JSON.stringify({ type: 'error', error: `Unknown message type: ${unknownType}` }) + '\n')
@@ -1035,10 +1160,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'set-claude-status-unread': {
       claudeStateMachine.handleClientMarkUnread(msg.sessionId, msg.unread)
-      // User acknowledged the surface — cancel any pending auto-continue
-      if (!msg.unread) {
-        autoContinueManager.cancelForSurface(msg.sessionId)
-      }
+      // NOTE: We intentionally do NOT cancel auto-continue here. The client
+      // auto-clears the unread flag via useEffect whenever a surface is already
+      // focused (235ms round-trip), which would kill the recovery timer before
+      // the user has a chance to act. Real user intervention (typing into the
+      // terminal) cancels via the 'write' handler instead.
       break
     }
 
@@ -1259,6 +1385,14 @@ async function startServer(): Promise<void> {
     },
     // onExit: broadcast to all attached clients + update state
     (sessionId, exitCode) => {
+      // If this PTY was awaiting fork-settle, fail it immediately
+      const pendingFork = pendingForkSettles.get(sessionId)
+      if (pendingFork) {
+        clearTimeout(pendingFork.timeoutId)
+        pendingForkSettles.delete(sessionId)
+        pendingFork.respond(`Session exited with code ${exitCode} before settling`)
+      }
+
       sessionFileWatcher.unwatch(sessionId)
       autoContinueManager.cancelForSurface(sessionId)
       snapshotManager.removeSession(sessionId)

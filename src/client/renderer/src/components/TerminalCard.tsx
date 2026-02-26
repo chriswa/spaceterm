@@ -19,8 +19,8 @@ import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { showToast } from '../lib/toast'
 import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScrollRestore } from '../lib/focus-storage'
 import crabIcon from '../assets/crab.png'
-import { deriveCrabAppearance, CRAB_COLORS } from '../lib/crab-nav'
-import { useCrabDance, useUnreadGlow } from '../lib/crab-dance'
+import { deriveToolbarIndicator, CRAB_COLORS } from '../lib/crab-nav'
+import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { angleBorderColor } from '../lib/angle-color'
 
 function cleanTerminalCopy(raw: string): string {
@@ -803,9 +803,12 @@ export function TerminalCard({
       : 'terminal-card--focused'
     : selected ? 'terminal-card--selected' : ''
   const focusGlowColor = focused ? angleBorderColor(x, y, scrollMode ? 1.3 : 1) : undefined
-  const crabAppearance = deriveCrabAppearance(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0)
-  useCrabDance(behindCrabRef, crabAppearance?.unviewed ?? false, 2.5)
-  useUnreadGlow(cardRef, crabAppearance ? CRAB_COLORS[crabAppearance.color] : '#fff', cameraRef, !!(crabAppearance?.unviewed) && !focused)
+  const crabAppearance = deriveToolbarIndicator(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0)
+  useCrabDance(behindCrabRef, crabAppearance.unviewed, 2.5)
+  const anyToolbarHover = useHoveredCardStore(s => s.toolbarHoveredNodeId) != null
+  const toolbarHovered = useHoveredCardStore(s => s.toolbarHoveredNodeId) === id
+  useUnreadGlow(cardRef, CRAB_COLORS[crabAppearance.color], cameraRef, crabAppearance.unviewed && !focused && !anyToolbarHover)
+  useToolbarHoverGlow(cardRef, x, y, cameraRef, toolbarHovered && !focused)
 
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
@@ -888,7 +891,7 @@ export function TerminalCard({
         useHoveredCardStore.getState().setHoveredNode(null)
       }}
       behindContent={
-        crabAppearance ? (
+        crabAppearance.kind === 'claude' ? (
           <div
             ref={behindCrabRef}
             className="terminal-card__crab-behind"

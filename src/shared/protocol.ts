@@ -96,6 +96,12 @@ export interface SpawnClaudeSurfaceMessage {
   title: string
 }
 
+export interface SpacetermBroadcastMessage {
+  type: 'spaceterm-broadcast'
+  surfaceId: string
+  content: string
+}
+
 // --- Client → Server node mutation messages ---
 
 export interface NodeSyncRequestMessage {
@@ -357,6 +363,7 @@ export type IngestMessage =
   | StatusLineMessage
   | EmitMarkdownMessage
   | SpawnClaudeSurfaceMessage
+  | SpacetermBroadcastMessage
 
 /** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
 export type ClientMessage =
@@ -584,11 +591,25 @@ export interface ScriptSubscribeMessage {
   nodeIds?: string[]  // node IDs to filter on; omit for all
 }
 
+export interface ScriptForkClaudeMessage {
+  type: 'script-fork-claude'
+  seq: number
+  nodeId: string    // source terminal node to fork from
+  parentId: string  // parent node for placement (new terminal goes below this)
+}
+
+export interface ScriptUnreadMessage {
+  type: 'script-unread'
+  nodeId: string
+}
+
 export type ScriptMessage =
   | ScriptGetAncestorsMessage
   | ScriptGetNodeMessage
   | ScriptShipItMessage
   | ScriptSubscribeMessage
+  | ScriptForkClaudeMessage
+  | ScriptUnreadMessage
 
 // --- Script socket responses ---
 
@@ -619,11 +640,19 @@ export interface ScriptSubscribeResult {
   ok: boolean
 }
 
+export interface ScriptForkClaudeResult {
+  type: 'script-fork-claude-result'
+  seq: number
+  nodeId: string   // new node ID (empty string on error)
+  error?: string
+}
+
 export type ScriptResponse =
   | ScriptGetAncestorsResult
   | ScriptGetNodeResult
   | ScriptShipItResult
   | ScriptSubscribeResult
+  | ScriptForkClaudeResult
 
 export type ServerMessage =
   | CreatedMessage
