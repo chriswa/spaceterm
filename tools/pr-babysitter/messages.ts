@@ -3,7 +3,7 @@ const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes 
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;
 
-const RESOLVE_THREAD_INSTRUCTIONS = `After addressing each comment, add a 👍 reaction to it. Then, once all comments in a thread are addressed, resolve the thread using the GitHub GraphQL API.
+const RESOLVE_THREAD_INSTRUCTIONS = `After addressing each comment thread, resolve it using the GitHub GraphQL API. Note: top-level review comments (the review body) cannot be resolved as threads — add a 👍 reaction to those instead.
 To fetch unresolved thread IDs:
 \`\`\`
 gh api graphql -f query='query { repository(owner: "{owner}", name: "{repo}") { pullRequest(number: {number}) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }' | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {threadId: .id, path: .path, line: .line, comments: [.comments.nodes[] | {author: .author.login, body: .body}]}]'
@@ -12,7 +12,7 @@ To resolve a thread:
 \`\`\`
 gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THREAD_ID>"}) { thread { id isResolved } } }'
 \`\`\`
-If you cannot confidently resolve a comment, do NOT 👍 or resolve it — halt instead so I can address it myself.`;
+If you cannot confidently resolve a comment, do NOT resolve it — halt instead so I can address it myself.`;
 
 export function buildRemediateMessage(
   remediate: string[],
