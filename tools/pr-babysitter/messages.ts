@@ -6,11 +6,11 @@ If you need my input on something, spaceterm broadcast "babysitter:halt" instead
 const RESOLVE_THREAD_INSTRUCTIONS = `After addressing each comment, add a 👍 reaction to it. Then, once all comments in a thread are addressed, resolve the thread using the GitHub GraphQL API.
 To fetch unresolved thread IDs:
 \`\`\`
-jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {threadId: .id, path: .path, line: .line, comments: [.comments.nodes[] | {author: .author.login, body: .body}]}]' <<< $(gh api graphql -f query=$'query($owner: String!, $repo: String!, $prNumber: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $prNumber) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }' -F owner='{owner}' -F repo='{repo}' -F prNumber={number})
+gh api graphql -f query='query { repository(owner: "{owner}", name: "{repo}") { pullRequest(number: {number}) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }' | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {threadId: .id, path: .path, line: .line, comments: [.comments.nodes[] | {author: .author.login, body: .body}]}]'
 \`\`\`
 To resolve a thread:
 \`\`\`
-gh api graphql -f query='mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } } }' -f threadId='<THREAD_ID>'
+gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THREAD_ID>"}) { thread { id isResolved } } }'
 \`\`\`
 If you cannot confidently resolve a comment, do NOT 👍 or resolve it — halt instead so I can address it myself.`;
 
