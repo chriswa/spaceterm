@@ -778,8 +778,9 @@ function UsageIndicators() {
     container.appendChild(el)
     const anim = el.animate(
       [
-        { transform: 'translate(-50%, 0)', opacity: 1 },
-        { transform: 'translate(-50%, -90px)', opacity: 0 },
+        { transform: 'translate(-50%, 0)', opacity: 1, offset: 0 },
+        { transform: 'translate(-50%, -24px)', opacity: 1, offset: 0.35 },
+        { transform: 'translate(-50%, -54px)', opacity: 0, offset: 1 },
       ],
       { duration: 2800, easing: 'ease-out', fill: 'forwards' }
     )
