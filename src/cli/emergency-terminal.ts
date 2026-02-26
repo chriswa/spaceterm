@@ -17,7 +17,7 @@
 import * as net from 'net'
 import * as path from 'path'
 import { execFileSync, spawnSync } from 'child_process'
-import { SOCKET_PATH } from '../shared/protocol'
+import { SOCKET_PATH, DAEMON_SOCKET_PATH } from '../shared/protocol'
 import type { ServerState, TerminalNodeData } from '../shared/state'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -381,6 +381,275 @@ async function connectTerminal(target: string): Promise<void> {
   spawnSync('tmux', ['attach-session', '-t', tmuxSession], { stdio: 'inherit' })
 }
 
+// ── Daemon-direct mode ───────────────────────────────────────────────
+
+interface DaemonSession {
+  id: string
+  pid: number
+  cols: number
+  rows: number
+  alive: boolean
+  exitCode: number
+}
+
+function daemonOneshot(msg: Record<string, unknown>, replyType: string): Promise<ServerMsg> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(DAEMON_SOCKET_PATH)
+    socket.setEncoding('utf8')
+
+    let buf = ''
+    socket.on('data', (chunk: string) => {
+      buf += chunk
+      const lines = buf.split('\n')
+      buf = lines.pop()!
+      for (const line of lines) {
+        if (!line) continue
+        try {
+          const parsed = JSON.parse(line) as ServerMsg
+          if (parsed.type === replyType) {
+            resolve(parsed)
+            socket.destroy()
+          }
+        } catch { /* ignore malformed */ }
+      }
+    })
+    socket.on('error', reject)
+    socket.on('close', () => reject(new Error('Socket closed before reply')))
+
+    sendMsg(socket, msg)
+  })
+}
+
+async function listDaemonSessions(): Promise<void> {
+  let sessions: DaemonSession[]
+  try {
+    const reply = await daemonOneshot({ type: 'list' }, 'listed')
+    sessions = reply.sessions as DaemonSession[]
+  } catch {
+    console.error('Failed to connect to PTY daemon.')
+    console.error('Is the daemon running? (pty-daemon/pty-daemon start)')
+    process.exit(1)
+  }
+
+  const alive = sessions.filter(s => s.alive)
+  if (alive.length === 0) {
+    console.log('No active daemon sessions.')
+    return
+  }
+
+  console.log()
+  console.log(`${BOLD}${CYAN} PTY Daemon — ${alive.length} active session${alive.length !== 1 ? 's' : ''}${RESET}`)
+  console.log()
+
+  for (let i = 0; i < alive.length; i++) {
+    const s = alive[i]
+    const idx = `${DIM}[${i + 1}]${RESET}`
+    const size = `${DIM}${s.cols}x${s.rows}${RESET}`
+    console.log(`  ${idx} ${BOLD}${s.id.slice(0, 8)}${RESET}   ${YELLOW}PID:${RESET} ${s.pid}   ${size}`)
+  }
+  console.log()
+  console.log(`${DIM}  Connect:  npm run et -- --daemon <number>${RESET}`)
+  console.log(`${DIM}           npm run et -- --daemon <id-prefix>${RESET}`)
+  console.log()
+}
+
+function rawDaemonConnect(sessionId: string): void {
+  const socket = net.createConnection(DAEMON_SOCKET_PATH)
+  socket.setEncoding('utf8')
+
+  let buf = ''
+  let attached = false
+  const CTRL_CLOSE_BRACKET = 0x1d
+
+  function onDaemonMessage(msg: ServerMsg): void {
+    switch (msg.type) {
+      case 'attached': {
+        attached = true
+        const scrollback = msg.scrollback as string
+        if (scrollback) {
+          process.stdout.write(scrollback)
+        }
+        break
+      }
+      case 'data': {
+        if (msg.id === sessionId) {
+          process.stdout.write(msg.data as string)
+        }
+        break
+      }
+      case 'exit': {
+        if (msg.id === sessionId) {
+          process.stderr.write(`\r\n${DIM}[Emergency Terminal] Session exited (code ${msg.exitCode}).${RESET}\r\n`)
+          cleanup()
+        }
+        break
+      }
+    }
+  }
+
+  socket.on('data', (chunk: string) => {
+    buf += chunk
+    const lines = buf.split('\n')
+    buf = lines.pop()!
+    for (const line of lines) {
+      if (!line) continue
+      try {
+        onDaemonMessage(JSON.parse(line) as ServerMsg)
+      } catch { /* ignore */ }
+    }
+  })
+
+  socket.on('error', (err) => {
+    process.stderr.write(`\r\n${RED}[Emergency Terminal] Connection error: ${err.message}${RESET}\r\n`)
+    cleanup()
+  })
+
+  socket.on('close', () => {
+    if (attached) {
+      process.stderr.write(`\r\n${DIM}[Emergency Terminal] Connection closed.${RESET}\r\n`)
+    }
+    cleanup()
+  })
+
+  // Attach to session (daemon protocol)
+  sendMsg(socket, { type: 'attach', id: sessionId })
+
+  // Enter raw mode
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true)
+  }
+  process.stdin.resume()
+
+  process.stdin.on('data', (data: Buffer) => {
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] === CTRL_CLOSE_BRACKET) {
+        process.stderr.write(`\r\n${DIM}[Emergency Terminal] Detached.${RESET}\r\n`)
+        cleanup()
+        return
+      }
+    }
+    sendMsg(socket, { type: 'write', id: sessionId, data: data.toString() })
+  })
+
+  let cleanedUp = false
+  function cleanup(): void {
+    if (cleanedUp) return
+    cleanedUp = true
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false)
+    }
+    process.stdin.pause()
+    socket.destroy()
+    process.exit(0)
+  }
+
+  process.on('SIGINT', cleanup)
+  process.on('SIGTERM', cleanup)
+}
+
+async function resolveDaemonTarget(target: string): Promise<DaemonSession> {
+  let sessions: DaemonSession[]
+  try {
+    const reply = await daemonOneshot({ type: 'list' }, 'listed')
+    sessions = (reply.sessions as DaemonSession[]).filter(s => s.alive)
+  } catch {
+    console.error('Failed to connect to PTY daemon.')
+    process.exit(1)
+  }
+
+  if (sessions.length === 0) {
+    console.error('No active daemon sessions.')
+    process.exit(1)
+  }
+
+  // Try as 1-based index
+  if (/^\d+$/.test(target) && parseInt(target) <= sessions.length) {
+    const idx = parseInt(target) - 1
+    if (idx >= 0 && idx < sessions.length) {
+      return sessions[idx]
+    }
+  }
+
+  // Try as ID prefix
+  const matches = sessions.filter(s => s.id.startsWith(target))
+  if (matches.length === 1) return matches[0]
+  if (matches.length > 1) {
+    console.error(`Ambiguous — multiple sessions match "${target}":`)
+    for (const m of matches) {
+      console.error(`  ${m.id}  (pid ${m.pid})`)
+    }
+    process.exit(1)
+  }
+
+  console.error(`No active daemon session matching "${target}".`)
+  process.exit(1)
+}
+
+async function connectDaemonTerminal(target: string): Promise<void> {
+  const session = await resolveDaemonTarget(target)
+  const sessionId = session.id
+  const ptyCols = session.cols
+  const ptyRows = session.rows
+  const label = sessionId.slice(0, 8)
+
+  // Check tmux is available
+  try {
+    execFileSync('tmux', ['-V'], { stdio: 'pipe' })
+  } catch {
+    console.error(`${RED}tmux is required.${RESET} Install with: brew install tmux`)
+    process.exit(1)
+  }
+
+  // Check local terminal can fit the tmux viewport
+  const localCols = process.stdout.columns || 80
+  const localRows = process.stdout.rows || 24
+  const neededRows = ptyRows + 1
+
+  if (localCols < ptyCols || localRows < neededRows) {
+    console.error(
+      `${RED}${BOLD}Terminal too small.${RESET}\n` +
+        `  Session needs: ${ptyCols}x${ptyRows} (+1 row for status = ${neededRows})\n` +
+        `  Your terminal: ${localCols}x${localRows}\n` +
+        `  Resize your window and retry.`
+    )
+    process.exit(1)
+  }
+
+  const scriptPath = path.resolve(process.argv[1])
+  const projectRoot = path.resolve(scriptPath, '..', '..', '..')
+  const tsxBin = path.join(projectRoot, 'node_modules', '.bin', 'tsx')
+  const tmuxSession = `et-${sessionId.slice(0, 8)}`
+
+  // Kill stale session with same name if it exists
+  try {
+    execFileSync('tmux', ['kill-session', '-t', tmuxSession], { stdio: 'pipe' })
+  } catch { /* doesn't exist, fine */ }
+
+  const innerCmd = `"${tsxBin}" "${scriptPath}" --raw-daemon ${sessionId}`
+  execFileSync('tmux', [
+    'new-session', '-d',
+    '-s', tmuxSession,
+    '-x', String(ptyCols),
+    '-y', String(neededRows),
+    innerCmd
+  ])
+
+  // Configure tmux status bar
+  const tmuxSet = (option: string, value: string): void => {
+    execFileSync('tmux', ['set-option', '-t', tmuxSession, option, value])
+  }
+  tmuxSet('status', 'on')
+  tmuxSet('status-position', 'bottom')
+  tmuxSet('status-style', 'bg=#1e1e2e,fg=#7f849c')
+  tmuxSet('status-left', ` Emergency Terminal (daemon) │ ${label} │ Ctrl+] to detach `)
+  tmuxSet('status-left-length', '120')
+  tmuxSet('status-right', '')
+  tmuxSet('status-right-length', '0')
+
+  // Attach — blocks until the inner process exits or user detaches
+  spawnSync('tmux', ['attach-session', '-t', tmuxSession], { stdio: 'inherit' })
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2)
@@ -388,6 +657,21 @@ const args = process.argv.slice(2)
 if (args[0] === '--raw' && args[1]) {
   // Inner mode: raw pipe connection (called by tmux, not by the user)
   rawConnect(args[1])
+} else if (args[0] === '--raw-daemon' && args[1]) {
+  // Inner mode: raw daemon pipe connection (called by tmux for daemon-direct, not by the user)
+  rawDaemonConnect(args[1])
+} else if (args[0] === '--daemon' || args[0] === '-d') {
+  if (args[1]) {
+    connectDaemonTerminal(args[1]).catch((err) => {
+      console.error(err.message)
+      process.exit(1)
+    })
+  } else {
+    listDaemonSessions().catch((err) => {
+      console.error(err.message)
+      process.exit(1)
+    })
+  }
 } else if (!args[0] || args[0] === '--list' || args[0] === '-l') {
   listTerminals().catch((err) => {
     console.error(err.message)
@@ -398,9 +682,14 @@ if (args[0] === '--raw' && args[1]) {
 ${BOLD}Emergency Terminal${RESET} — connect to active spaceterm sessions from the CLI.
 
 ${YELLOW}Usage:${RESET}
-  npm run et              List active terminals
-  npm run et -- <id>      Connect by session ID (prefix match)
-  npm run et -- <n>       Connect by index number from list
+  npm run et                    List active terminals (via server)
+  npm run et -- <id>            Connect by session ID (prefix match)
+  npm run et -- <n>             Connect by index number from list
+
+${YELLOW}Daemon-direct mode${RESET} (bypasses server, works even if server is down):
+  npm run et -- --daemon        List daemon sessions
+  npm run et -- --daemon <id>   Connect to daemon session by ID prefix
+  npm run et -- --daemon <n>    Connect to daemon session by index
 
 ${YELLOW}While connected:${RESET}
   Ctrl+]    Detach and return to your shell

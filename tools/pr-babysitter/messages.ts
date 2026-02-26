@@ -3,6 +3,8 @@ const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes 
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;
 
+const THUMBS_UP_CONVENTION = `I use 👍 reactions on individual reviewer comments to track which ones I've dealt with. Comments without a 👍 from me are the ones that still need attention. After addressing each comment, add a 👍 reaction to it.`;
+
 export function buildRemediateMessage(
   remediate: string[],
   failedTestUrls: string[],
@@ -12,9 +14,8 @@ export function buildRemediateMessage(
   parts.push(`I just ran pr-check on my PR and found issues that need attention.`);
   parts.push("");
 
-  // Priority order: Conflicts > Tests > CodeRabbit/Changes requested > Linear > Self Comment
+  const priority = ["Conflicts", "Tests", "CodeRabbit", "Changes requested", "Review Comments", "Self Comment"];
   const ordered = [...remediate].sort((a, b) => {
-    const priority = ["Conflicts", "Tests", "CodeRabbit", "Changes requested", "Linear", "Self Comment"];
     return priority.indexOf(a) - priority.indexOf(b);
   });
 
@@ -44,8 +45,18 @@ export function buildRemediateMessage(
 
       case "Changes requested":
         parts.push(`**A human reviewer has requested changes.**`);
+        parts.push(THUMBS_UP_CONVENTION);
         parts.push(
-          `I need you to review their comments on the PR carefully. For each comment, classify as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
+          `I need you to review their comments on the PR carefully. For each un-👍'd comment, classify as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
+        );
+        parts.push("");
+        break;
+
+      case "Review Comments":
+        parts.push(`**A reviewer has left unresolved comments on my PR.**`);
+        parts.push(THUMBS_UP_CONVENTION);
+        parts.push(
+          `I need you to review each un-👍'd reviewer comment carefully. For each one, classify as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
         );
         parts.push("");
         break;
@@ -58,18 +69,10 @@ export function buildRemediateMessage(
         parts.push("");
         break;
 
-      case "Linear":
-        parts.push(`**The PR is missing an associated Linear issue.**`);
-        parts.push(
-          `Check if my branch name contains a Linear ticket ID pattern. If you can figure out the ticket URL, associate it. Otherwise let me know.`,
-        );
-        parts.push("");
-        break;
-
       case "Self Comment":
         parts.push(`**I have unresolved comments on my own PR.**`);
         parts.push(
-          `Look at my unresolved self-comments on the PR and resolve any that are stale or no longer relevant. If any look like they need actual work, tell me what's needed.`,
+          `These are action items I left for myself. Review each one and immediately plan fixes. For simple fixes, go ahead and implement and push. For complex changes that could affect the design intent, tell me what you think the fix should be so I can decide.`,
         );
         parts.push("");
         break;
@@ -83,7 +86,7 @@ export function buildRemediateMessage(
   return parts.join("\n");
 }
 
-export function buildHaltMessage(halt: string[]): string {
+export function buildHaltMessage(halt: string[], meticulousUrl: string | null): string {
   const descriptions = halt.map((b) => {
     switch (b) {
       case "Security":
@@ -94,15 +97,18 @@ export function buildHaltMessage(halt: string[]): string {
         return "the PR safety check failed";
       case "Dequeued":
         return "the PR was kicked from the merge queue";
-      case "Nutshell":
-        return "a specific Nutshell approver is needed";
-      case "-1 Reviewers":
-        return "reviewers need to be added to the PR";
       case "-auto-merge":
         return "the auto-merge label is missing";
       case "Checklist":
         return "the PR checklist is incomplete";
+      case "Linear":
+        return "the PR is missing an associated Linear issue";
+      case "Meticulous":
+        return meticulousUrl
+          ? `Meticulous visual tests failed (${meticulousUrl})`
+          : "Meticulous visual tests failed";
       default:
+        if (/^-\d+ Reviewers?$/.test(b)) return "reviewers need to be added to the PR";
         return `"${b}" is blocking`;
     }
   });

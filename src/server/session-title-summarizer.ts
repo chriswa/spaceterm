@@ -4,11 +4,26 @@ import { spawn } from 'child_process'
 import { homedir } from 'os'
 
 const USER_MESSAGES_TO_SAMPLE = 3
-const LOG_PATH = path.join(process.env.SPACETERM_HOME || path.join(homedir(), '.spaceterm'), 'title-summarizer.log')
+const SPACETERM_HOME = process.env.SPACETERM_HOME || path.join(homedir(), '.spaceterm')
+const LOG_PATH = path.join(SPACETERM_HOME, 'title-summarizer.log')
+const JSONL_PATH = path.join(SPACETERM_HOME, 'title-summarizer.jsonl')
 
 function log(msg: string): void {
   const line = `${new Date().toISOString()} ${msg}\n`
   fs.appendFileSync(LOG_PATH, line)
+}
+
+interface TitleLogEntry {
+  ts: string
+  claudeSessionId: string
+  surfaceId: string
+  input: string[]
+  output: string | null
+  error: string | null
+}
+
+function logJsonl(entry: TitleLogEntry): void {
+  fs.appendFile(JSONL_PATH, JSON.stringify(entry) + '\n', () => {})
 }
 
 function extractUserText(content: unknown): string | null {
@@ -60,11 +75,11 @@ export class SessionTitleSummarizer {
   }
 
   /** Fire-and-forget: read transcript, summarize, inject title. */
-  summarize(surfaceId: string, transcriptPath: string): void {
-    setImmediate(() => this.run(surfaceId, transcriptPath))
+  summarize(surfaceId: string, transcriptPath: string, claudeSessionId: string): void {
+    setImmediate(() => this.run(surfaceId, transcriptPath, claudeSessionId))
   }
 
-  private run(surfaceId: string, transcriptPath: string): void {
+  private run(surfaceId: string, transcriptPath: string, claudeSessionId: string): void {
     log(`${surfaceId.slice(0, 8)}: triggered, reading ${transcriptPath}`)
     const messages = readLastUserMessages(transcriptPath, USER_MESSAGES_TO_SAMPLE)
     if (messages.length === 0) {
@@ -77,6 +92,8 @@ export class SessionTitleSummarizer {
     const prompt =
       `Summarize the following user messages in exactly 3 words. ` +
       `Output ONLY the 3 words, nothing else:\n\n${joined}`
+
+    const ts = new Date().toISOString()
 
     // stdio: 'ignore' stdin — claude -p hangs forever if stdin is a pipe because
     // it unconditionally waits for stdin EOF when process.stdin.isTTY is false.
@@ -92,22 +109,25 @@ export class SessionTitleSummarizer {
     child.stderr!.on('data', (d: string) => { stderr += d })
 
     child.on('error', (err) => {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        log(`ERROR: claude not found in PATH`)
-      } else {
-        log(`${surfaceId.slice(0, 8)}: spawn error: ${err.message}`)
-      }
+      const errorMsg = (err as NodeJS.ErrnoException).code === 'ENOENT'
+        ? 'claude not found in PATH'
+        : `spawn error: ${err.message}`
+      log(`${surfaceId.slice(0, 8)}: ${errorMsg}`)
+      logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: null, error: errorMsg })
     })
 
     child.on('close', (code) => {
       if (code !== 0) {
-        log(`${surfaceId.slice(0, 8)}: claude -p exited ${code} (stderr: ${stderr.trim()})`)
+        const errorMsg = `claude -p exited ${code} (stderr: ${stderr.trim()})`
+        log(`${surfaceId.slice(0, 8)}: ${errorMsg}`)
+        logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: null, error: errorMsg })
         return
       }
 
       const raw = stdout.trim()
       if (!raw) {
         log(`${surfaceId.slice(0, 8)}: empty response`)
+        logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: null, error: 'empty response' })
         return
       }
 
@@ -115,10 +135,12 @@ export class SessionTitleSummarizer {
       const title = raw.split('\n')[0].replace(/[^\x20-\x7E]/g, '').trim()
       if (!title) {
         log(`${surfaceId.slice(0, 8)}: unusable response: ${JSON.stringify(raw)}`)
+        logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: raw, error: 'unusable response' })
         return
       }
 
       log(`${surfaceId.slice(0, 8)}: injecting title "${title}"`)
+      logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: title, error: null })
       this.deps.injectTitle(surfaceId, title)
     })
   }

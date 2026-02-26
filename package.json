@@ -5,6 +5,8 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "concurrently --restart-tries -1 --restart-after 0 \"npm run server:dev\" \"npm run client:dev\"",
+    "daemon:build": "(cd pty-daemon && go build -o pty-daemon .) && echo 'Note: this only builds the binary. If a daemon is already running, use: npm run daemon:dev'",
+    "daemon:dev": "npm run daemon:build && pty-daemon/pty-daemon restart",
     "server:dev": "tsx src/server/index.ts",
     "client:dev": "electron-vite dev",
     "client:build": "electron-vite build",
@@ -23,7 +25,6 @@
     "@codemirror/language": "^6.12.1",
     "@codemirror/state": "^6.5.4",
     "@codemirror/view": "^6.39.14",
-    "@echogarden/macos-native-tts": "^0.1.0",
     "@lezer/markdown": "^1.6.3",
     "@modelcontextprotocol/sdk": "^1.20.0",
     "@xterm/addon-fit": "^0.10.0",
@@ -33,13 +34,15 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^5.5.0",
-    "audiotee": "^0.0.7",
-    "node-pty": "^1.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shell-quote": "^1.8.3",
     "zod": "^4.1.12",
     "zustand": "^5.0.11"
+  },
+  "optionalDependencies": {
+    "@echogarden/macos-native-tts": "^0.1.0",
+    "audiotee": "^0.0.7"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",

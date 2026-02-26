@@ -1,4 +1,3 @@
-import * as pty from 'node-pty'
 import { existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
@@ -6,6 +5,7 @@ import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
 import { TitleParser } from './title-parser'
+import type { DaemonClient } from './daemon-client'
 import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
 import type { ClaudeState } from '../shared/state'
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
@@ -21,7 +21,6 @@ function isSpuriousTitle(title: string): boolean {
 
 interface Session {
   id: string
-  process: pty.IPty
   batcher: DataBatcher
   scrollback: ScrollbackBuffer
   titleParser: TitleParser
@@ -52,6 +51,7 @@ export type ClaudeStatusAsleepCallback = (sessionId: string, asleep: boolean) =>
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
+  private daemon: DaemonClient
   private onData: DataCallback
   private onExit: ExitCallback
   private onTitleHistory: TitleHistoryCallback
@@ -63,7 +63,8 @@ export class SessionManager {
   private onClaudeStatusUnread: ClaudeStatusUnreadCallback
   private onClaudeStatusAsleep: ClaudeStatusAsleepCallback
 
-  constructor(onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback, onClaudeStatusAsleep: ClaudeStatusAsleepCallback) {
+  constructor(daemon: DaemonClient, onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback, onClaudeStatusAsleep: ClaudeStatusAsleepCallback) {
+    this.daemon = daemon
     this.onData = onData
     this.onExit = onExit
     this.onTitleHistory = onTitleHistory
@@ -106,110 +107,93 @@ export class SessionManager {
     // CLI path for scripts to call spaceterm-cli commands
     const projectRoot = resolve(__dirname, '..', '..')
     env.SPACETERM_CLI = join(projectRoot, 'node_modules', '.bin', 'tsx') + ' ' + join(projectRoot, 'src', 'cli', 'spaceterm-cli.ts')
+    // TERM must be explicit (the daemon does not inherit it from the server).
+    env.TERM = 'xterm-256color'
 
-    const ptyProcess = pty.spawn(executable, args, {
-      name: 'xterm-256color',
+    // Ask daemon to spawn the PTY.
+    this.daemon.send({
+      type: 'create',
+      id: sessionId,
+      command: executable,
+      args,
+      cwd,
+      env,
       cols,
       rows,
-      cwd,
-      env
     })
 
-    const scrollback = new ScrollbackBuffer()
-    const shellTitleHistory: string[] = []
-
-    const titleParser = new TitleParser(
-      (title) => {
-        if (isSpuriousTitle(title)) return
-        const idx = shellTitleHistory.indexOf(title)
-        if (idx !== -1) shellTitleHistory.splice(idx, 1)
-        shellTitleHistory.unshift(title)
-        if (shellTitleHistory.length > MAX_TITLE_HISTORY) {
-          shellTitleHistory.pop()
-        }
-        this.onTitleHistory(sessionId, shellTitleHistory)
-      },
-      (newCwd) => {
-        const session = this.sessions.get(sessionId)
-        if (session) {
-          session.cwd = newCwd
-        }
-        this.onCwd(sessionId, newCwd)
-      }
-    )
-
-    const batcher = new DataBatcher((data) => {
-      scrollback.write(data)
-      this.onData(sessionId, data)
-    })
-
-    ptyProcess.onData((data) => {
-      titleParser.write(data)
-      batcher.write(data)
-    })
-
-    ptyProcess.onExit(({ exitCode }) => {
-      this.onExit(sessionId, exitCode)
-      const session = this.sessions.get(sessionId)
-      if (session) {
-        session.batcher.dispose()
-        session.process.kill()
-        this.sessions.delete(sessionId)
-      }
-    })
-
-    this.sessions.set(sessionId, {
-      id: sessionId,
-      process: ptyProcess,
-      batcher,
-      scrollback,
-      titleParser,
-      shellTitleHistory,
-      claudeSessionHistory: [],
-      lastClaudeSessionId: null,
-      pendingStop: false,
-      claudeState: 'stopped' as ClaudeState,
-      claudeStatusUnread: false,
-      claudeStatusAsleep: false,
-      claudeContextPercent: null,
-      claudeSessionLineCount: null,
-      cwd,
-      cols,
-      rows
-    })
+    // Set up local processing pipeline (TitleParser, DataBatcher, ScrollbackBuffer).
+    this.initLocalSession(sessionId, cwd, cols, rows)
 
     return { sessionId, cols, rows }
   }
 
+  /** Called by the daemon message router when PTY output arrives. */
+  handleDaemonData(sessionId: string, data: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    session.titleParser.write(data)
+    session.batcher.write(data)
+  }
+
+  /** Called by the daemon message router when a PTY exits. */
+  handleDaemonExit(sessionId: string, exitCode: number): void {
+    this.onExit(sessionId, exitCode)
+    const session = this.sessions.get(sessionId)
+    if (session) {
+      session.batcher.dispose()
+      this.sessions.delete(sessionId)
+    }
+  }
+
+  /**
+   * Re-attach to a daemon session that survived a server restart.
+   * Replays the scrollback through the local pipeline to rebuild state.
+   * Does NOT broadcast to clients — they get scrollback via the normal attach flow.
+   */
+  reattachSession(sessionId: string, scrollback: string, cols: number, rows: number, cwd?: string): void {
+    this.initLocalSession(sessionId, cwd ?? process.env.HOME ?? '/', cols, rows)
+
+    // Replay scrollback through TitleParser and ScrollbackBuffer only.
+    // Skip DataBatcher to avoid broadcasting stale data to clients.
+    if (scrollback) {
+      const session = this.sessions.get(sessionId)!
+      session.titleParser.write(scrollback)
+      session.scrollback.write(scrollback)
+    }
+  }
+
   write(sessionId: string, data: string): void {
-    this.sessions.get(sessionId)?.process.write(data)
+    if (!this.sessions.has(sessionId)) return
+    this.daemon.send({ type: 'write', id: sessionId, data })
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId)
     if (session) {
-      try {
-        session.process.resize(cols, rows)
-        session.cols = cols
-        session.rows = rows
-      } catch {
-        // Terminal may have already exited
-      }
+      this.daemon.send({ type: 'resize', id: sessionId, cols, rows })
+      session.cols = cols
+      session.rows = rows
     }
   }
 
+  /** Destroy a session in the daemon (kills the PTY process). */
   destroy(sessionId: string): void {
+    this.daemon.send({ type: 'destroy', id: sessionId })
     const session = this.sessions.get(sessionId)
     if (session) {
       session.batcher.dispose()
-      session.process.kill()
       this.sessions.delete(sessionId)
     }
   }
 
+  /**
+   * Clean up local session state only. Does NOT destroy PTYs in the daemon.
+   * Called during server shutdown so sessions survive in the daemon.
+   */
   destroyAll(): void {
-    const ids = Array.from(this.sessions.keys())
-    ids.forEach((id) => this.destroy(id))
+    this.sessions.forEach((session) => session.batcher.dispose())
+    this.sessions.clear()
   }
 
   list(): SessionInfo[] {
@@ -366,5 +350,57 @@ export class SessionManager {
 
   has(sessionId: string): boolean {
     return this.sessions.has(sessionId)
+  }
+
+  // --- Private helpers ---
+
+  /** Create the local processing pipeline for a session (TitleParser, DataBatcher, ScrollbackBuffer). */
+  private initLocalSession(sessionId: string, cwd: string, cols: number, rows: number): void {
+    const scrollback = new ScrollbackBuffer()
+    const shellTitleHistory: string[] = []
+
+    const titleParser = new TitleParser(
+      (title) => {
+        if (isSpuriousTitle(title)) return
+        const idx = shellTitleHistory.indexOf(title)
+        if (idx !== -1) shellTitleHistory.splice(idx, 1)
+        shellTitleHistory.unshift(title)
+        if (shellTitleHistory.length > MAX_TITLE_HISTORY) {
+          shellTitleHistory.pop()
+        }
+        this.onTitleHistory(sessionId, shellTitleHistory)
+      },
+      (newCwd) => {
+        const session = this.sessions.get(sessionId)
+        if (session) {
+          session.cwd = newCwd
+        }
+        this.onCwd(sessionId, newCwd)
+      }
+    )
+
+    const batcher = new DataBatcher((data) => {
+      scrollback.write(data)
+      this.onData(sessionId, data)
+    })
+
+    this.sessions.set(sessionId, {
+      id: sessionId,
+      batcher,
+      scrollback,
+      titleParser,
+      shellTitleHistory,
+      claudeSessionHistory: [],
+      lastClaudeSessionId: null,
+      pendingStop: false,
+      claudeState: 'stopped' as ClaudeState,
+      claudeStatusUnread: false,
+      claudeStatusAsleep: false,
+      claudeContextPercent: null,
+      claudeSessionLineCount: null,
+      cwd,
+      cols,
+      rows
+    })
   }
 }

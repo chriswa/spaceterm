@@ -5,3 +5,4 @@ dist/
 .tmp-image-tools/
 .claude-code-src/
 generated-images/
+pty-daemon/pty-daemon

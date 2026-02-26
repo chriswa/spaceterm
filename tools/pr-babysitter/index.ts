@@ -54,16 +54,19 @@ interface Triage {
   remediate: string[];
   halt: string[];
   done: string[];
+  postDraft: string[];
 }
 
 interface PrCheckOutput {
   blockers: { name: string; action: string }[];
   failedTestUrls: string[];
+  meticulousUrl: string | null;
   triage: Triage;
 }
 
 interface PrCheckResult {
   failedTestUrls: string[];
+  meticulousUrl: string | null;
   triage: Triage;
 }
 
@@ -73,6 +76,7 @@ async function runPrCheck(): Promise<PrCheckResult> {
   const raw: PrCheckOutput = JSON.parse(stdout);
   return {
     failedTestUrls: raw.failedTestUrls,
+    meticulousUrl: raw.meticulousUrl,
     triage: raw.triage,
   };
 }
@@ -227,7 +231,7 @@ async function main() {
 
     // Halt blockers (no remediate items)
     if (triage.halt.length > 0) {
-      await shipIt(buildHaltMessage(triage.halt));
+      await shipIt(buildHaltMessage(triage.halt, result.meticulousUrl));
       console.log("Halt condition reached. Exiting.");
       process.exit(0);
     }

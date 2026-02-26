@@ -6,6 +6,7 @@ import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions } from '../shared/protocol'
 import { SessionManager } from './session-manager'
+import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { canFitAt, computePlacement } from './node-placement'
@@ -114,10 +115,7 @@ function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, pr
 
     // Print a banner showing the appended system prompt, then exec claude.
     // We use stty -echo before the printf to suppress PTY line discipline echo,
-    // which otherwise causes the banner to appear twice — a known node-pty issue:
-    //   https://github.com/microsoft/node-pty/issues/269 (duplicate writes on initial write)
-    //   https://github.com/microsoft/node-pty/issues/78  (PTY echo duplication)
-    //   https://github.com/microsoft/node-pty/issues/354 (duplicated output)
+    // which otherwise causes the banner to appear twice — a known PTY echo issue.
     const header = ' The following was appended to the system prompt '
     const footer = ' The preceding was appended to the system prompt '
     // Normalize newlines to \r\n for terminal display (CRLF)
@@ -185,6 +183,7 @@ let lastClientCommandAt = 0
 let lastUsageFetchAt = 0
 const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
 
+let daemonClient: DaemonClient
 let sessionManager: SessionManager
 let stateManager: StateManager
 let snapshotManager: SnapshotManager
@@ -276,8 +275,9 @@ function handleIngestMessage(msg: IngestMessage): void {
       // Generate auto-summary title on UserPromptSubmit (fire-and-forget)
       if (hookType === 'UserPromptSubmit' && msg.payload && typeof msg.payload === 'object') {
         const transcriptPath = 'transcript_path' in msg.payload ? String(msg.payload.transcript_path) : ''
+        const claudeSessionId = 'session_id' in msg.payload ? String(msg.payload.session_id) : ''
         if (transcriptPath) {
-          sessionTitleSummarizer.summarize(msg.surfaceId, transcriptPath)
+          sessionTitleSummarizer.summarize(msg.surfaceId, transcriptPath, claudeSessionId)
         }
       }
       break
@@ -1377,7 +1377,27 @@ async function startServer(): Promise<void> {
     })
   })
 
+  // Initialize DaemonClient — manages connection to the persistent PTY daemon
+  daemonClient = new DaemonClient((msg) => {
+    switch (msg.type) {
+      case 'data':
+        sessionManager.handleDaemonData(msg.id as string, msg.data as string)
+        break
+      case 'exit':
+        sessionManager.handleDaemonExit(msg.id as string, msg.exitCode as number)
+        break
+      case 'error':
+        console.error(`[pty-daemon] Error: ${msg.message}`)
+        break
+      // 'created' and 'attached' are handled by the startup reconciliation logic below,
+      // or ignored during normal operation (create is fire-and-forget from the server's perspective).
+    }
+  })
+  await daemonClient.connect()
+  console.log('[startup] Connected to PTY daemon')
+
   sessionManager = new SessionManager(
+    daemonClient,
     // onData: broadcast to attached clients + feed snapshot manager
     (sessionId, data) => {
       snapshotManager.write(sessionId, data)
@@ -1603,13 +1623,87 @@ async function startServer(): Promise<void> {
     claudeStateMachine.handleJsonlEntries(surfaceId, newEntries, isBackfill)
   })
 
-  // --- Startup revival: revive terminals with Claude sessions, archive the rest ---
+  // --- Startup: reconcile with daemon sessions, then revive remaining terminals ---
+
+  // Step 1: Ask daemon for all surviving sessions.
+  const daemonSessions = await new Promise<Array<{ id: string; pid: number; cols: number; rows: number; alive: boolean; exitCode: number }>>((resolve) => {
+    const handler = (msg: import('./daemon-client').DaemonMessage) => {
+      if (msg.type === 'listed') {
+        resolve(msg.sessions as Array<{ id: string; pid: number; cols: number; rows: number; alive: boolean; exitCode: number }>)
+      }
+    }
+    // Temporarily intercept the next 'listed' response.
+    const origHandler = daemonClient['onMessage']
+    daemonClient['onMessage'] = (msg) => {
+      if (msg.type === 'listed') {
+        daemonClient['onMessage'] = origHandler
+        handler(msg)
+      } else {
+        origHandler(msg)
+      }
+    }
+    daemonClient.send({ type: 'list' })
+  })
+  const daemonSessionMap = new Map(daemonSessions.map(s => [s.id, s]))
+  console.log(`[startup] Daemon has ${daemonSessions.length} session(s)`)
+
+  // Step 2: Process dead terminals, but check daemon first.
   const deadTerminals = stateManager.processDeadTerminals()
   console.log(`[startup] ${deadTerminals.length} terminal(s) to process`)
   const revivedNodeIds: string[] = []
+  const reattachedSessionIds = new Set<string>()
+
   for (const { nodeId, claudeSessionId, cwd, extraCliArgs } of deadTerminals) {
+    // Check if this terminal's PTY is still alive in the daemon.
+    const node = stateManager.getNode(nodeId)
+    const ptySessionId = node?.type === 'terminal' ? node.sessionId : undefined
+    const daemonSession = ptySessionId ? daemonSessionMap.get(ptySessionId) : undefined
+
+    if (daemonSession && daemonSession.alive) {
+      // PTY survived in daemon — re-attach instead of respawning.
+      reattachedSessionIds.add(ptySessionId!)
+      try {
+        // Request attach — the daemon will send scrollback and start streaming output.
+        const scrollback = await new Promise<string>((resolve) => {
+          const origHandler = daemonClient['onMessage']
+          daemonClient['onMessage'] = (msg) => {
+            if (msg.type === 'attached' && msg.id === ptySessionId) {
+              daemonClient['onMessage'] = origHandler
+              resolve(msg.scrollback as string)
+            } else {
+              origHandler(msg)
+            }
+          }
+          daemonClient.send({ type: 'attach', id: ptySessionId })
+        })
+
+        sessionManager.reattachSession(ptySessionId!, scrollback, daemonSession.cols, daemonSession.rows, cwd)
+        snapshotManager.addSession(ptySessionId!, daemonSession.cols, daemonSession.rows)
+        if (node?.type === 'terminal' && node.shellTitleHistory?.length) {
+          sessionManager.seedTitleHistory(ptySessionId!, node.shellTitleHistory)
+        }
+        stateManager.reincarnateTerminal(nodeId, ptySessionId!, daemonSession.cols, daemonSession.rows)
+
+        // Re-watch Claude session file if applicable.
+        if (claudeSessionId && cwd) {
+          sessionFileWatcher.watch(ptySessionId!, claudeSessionId, cwd)
+        }
+
+        // Feed scrollback into snapshot manager for immediate snapshot availability.
+        if (scrollback) {
+          snapshotManager.write(ptySessionId!, scrollback)
+        }
+
+        console.log(`[startup] Re-attached to daemon session ${ptySessionId!.slice(0, 8)} for terminal ${nodeId.slice(0, 8)}`)
+        continue
+      } catch (err: any) {
+        console.error(`[startup] Failed to re-attach to daemon session ${ptySessionId!.slice(0, 8)}: ${err.message}`)
+        // Fall through to normal revival logic.
+      }
+    }
+
+    // No surviving daemon session — use existing revival logic.
     if (claudeSessionId) {
-      const node = stateManager.getNode(nodeId)
       const history = (node?.type === 'terminal' && node.claudeSessionHistory) || []
       const validSessionId = findValidClaudeSession(history, cwd)
 
@@ -1646,6 +1740,14 @@ async function startServer(): Promise<void> {
     } else {
       stateManager.archiveTerminal(nodeId)
       console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (no Claude session)`)
+    }
+  }
+
+  // Step 3: Destroy orphaned daemon sessions (in daemon but not in state).
+  for (const daemonSess of daemonSessions) {
+    if (!reattachedSessionIds.has(daemonSess.id) && daemonSess.alive) {
+      console.log(`[startup] Destroying orphaned daemon session ${daemonSess.id.slice(0, 8)}`)
+      daemonClient.send({ type: 'destroy', id: daemonSess.id })
     }
   }
 
@@ -1809,7 +1911,8 @@ async function startServer(): Promise<void> {
     sessionFileWatcher.dispose()
     snapshotManager.dispose()
     stateManager.persistImmediate()
-    sessionManager.destroyAll()
+    sessionManager.destroyAll() // Cleans local state only — daemon PTYs persist
+    daemonClient.dispose()
     server.close()
     hooksServer.close()
     scriptsServer.close()

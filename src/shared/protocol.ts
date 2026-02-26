@@ -8,6 +8,8 @@ export const SOCKET_PATH = join(SOCKET_DIR, 'bidirectional.sock')
 export const HOOKS_SOCKET_PATH = join(SOCKET_DIR, 'hooks.sock')
 /** Request/response socket for scripts running inside PTYs. */
 export const SCRIPTS_SOCKET_PATH = join(SOCKET_DIR, 'scripts.sock')
+/** Unix socket for the persistent PTY daemon. */
+export const DAEMON_SOCKET_PATH = join(SOCKET_DIR, 'pty-daemon.sock')
 export const HOOK_LOG_DIR = join(SOCKET_DIR, 'hook-logs')
 export const DECISION_LOG_DIR = join(SOCKET_DIR, 'decision-logs')
 
