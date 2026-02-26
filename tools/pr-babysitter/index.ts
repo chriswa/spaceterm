@@ -239,7 +239,7 @@ async function main() {
       const waitResult = await waitForClaude();
       if (waitResult.outcome === "halt") {
         console.log("Claude halted for user input. Exiting babysitter.");
-        await $`${CLI} unread ${parentId}`.quiet();
+        await $`${CLI} unread ${nodeId}`.quiet();
         process.exit(0);
       }
       // outcome === "resume" → continue the loop
@@ -250,7 +250,7 @@ async function main() {
     if (triage.halt.length > 0) {
       await shipIt(buildHaltMessage(triage.halt, result.meticulousUrl));
       console.log("Halt condition reached. Exiting.");
-      await $`${CLI} unread ${parentId}`.quiet();
+      await $`${CLI} unread ${nodeId}`.quiet();
       process.exit(0);
     }
 
