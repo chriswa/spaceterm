@@ -5,7 +5,7 @@ import { buildRemediateMessage, buildHaltMessage, buildTerminalMessage, buildDra
 
 // ---- Configuration ----
 
-const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const POLL_INTERVAL_MS = 1 * 60 * 1000; // 1 minute
 const NUDGE_DELAY_MS = 5 * 1000; // wait before nudging after Claude stops
 const WAIT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max wait for Claude
 
