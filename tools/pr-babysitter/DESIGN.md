@@ -149,8 +149,8 @@ Post `@mergifyio requeue` as a PR comment to re-enter the queue.
 - **Human reviewer**: Never auto-classify as (B) wrong — present the comment to the user and let them make that call. May auto-push easy C fixes, but **always halt after pushing** to alert the user so they can review the changes and ask the human reviewer(s) to re-review.
 
 #### `Conflicts` (merge conflicts)
-Resolve by merging master into the branch (see Git Discipline above for why never rebase).
-1. `git pull` then `git merge master` into the PR branch
+Resolve by merging the PR's **base branch** into the feature branch (see Git Discipline above for why never rebase). The base branch is NOT always master — check with `gh pr view --json baseRefName`. Merging the wrong branch will balloon the PR diff.
+1. `git pull` then `git merge origin/<baseRefName>` into the PR branch
 2. If resolution is straightforward (no content conflicts in modified lines): push, halt to notify user
 3. If conflicts require judgment: halt, present conflict details to user
 

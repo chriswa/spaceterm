@@ -87,7 +87,7 @@ export function buildRemediateMessage(
       case "Conflicts":
         parts.push(`**There are merge conflicts.**`);
         parts.push(
-          `I need you to resolve the conflicts by merging master into my branch — never rebase, the "changes since last review" incremental diff is sacred. If the conflicts are in files I've modified and require judgment about which changes to keep, tell me about them instead of guessing.`,
+          `First, determine the PR's base branch: \`gh pr view --json baseRefName --jq '.baseRefName'\`. Then merge that base branch (NOT necessarily master) into my branch — never rebase, the "changes since last review" incremental diff is sacred. Merging the wrong branch will balloon the PR diff. If the conflicts are in files I've modified and require judgment about which changes to keep, tell me about them instead of guessing.`,
         );
         parts.push("");
         break;
