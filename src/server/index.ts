@@ -604,7 +604,7 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
         setTimeout(() => {
           sessionManager.write(targetSessionId, '\r')
           claudeStateMachine.handleClientWrite(targetSessionId, true)
-        }, 300)
+        }, 1000)
       }
 
       sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: true })
