@@ -4,7 +4,7 @@ import * as path from 'path'
 import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
-import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData } from '../shared/protocol'
 import { SessionManager } from './session-manager'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
@@ -184,6 +184,72 @@ let lastUsageFetchAt = 0
 const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
 const USAGE_CACHE_FILE = path.join(SOCKET_DIR, 'usage-cache.json')
 
+// --- Minute-keyed ring buffer (reusable for any monotonic time-series) ---
+const HISTORY_SLOTS = 61
+
+class MinuteRingBuffer {
+  private slots: ({ minuteKey: number; value: number } | null)[]
+  private seeded = false
+  private label: string
+
+  constructor(label: string) {
+    this.label = label
+    this.slots = new Array(HISTORY_SLOTS).fill(null)
+  }
+
+  record(value: number, now = Date.now()): void {
+    const minuteKey = Math.floor(now / 60_000)
+    const slotIndex = ((minuteKey % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
+    this.slots[slotIndex] = { minuteKey, value }
+  }
+
+  build(): (number | null)[] {
+    const nowMinute = Math.floor(Date.now() / 60_000)
+    const result: (number | null)[] = []
+    for (let i = HISTORY_SLOTS - 1; i >= 0; i--) {
+      const targetMinute = nowMinute - i
+      const slotIndex = ((targetMinute % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
+      const slot = this.slots[slotIndex]
+      result.push(slot && slot.minuteKey === targetMinute ? slot.value : null)
+    }
+    return result
+  }
+
+  seedFromLog(logFile: string, valueKey: string): void {
+    if (this.seeded) return
+    this.seeded = true
+    try {
+      if (!fs.existsSync(logFile)) return
+      const fd = fs.openSync(logFile, 'r')
+      const stat = fs.fstatSync(fd)
+      const readSize = Math.min(stat.size, 4096)
+      const buf = Buffer.alloc(readSize)
+      fs.readSync(fd, buf, 0, readSize, stat.size - readSize)
+      fs.closeSync(fd)
+
+      const cutoffMinute = Math.floor(Date.now() / 60_000) - HISTORY_SLOTS
+      const lines = buf.toString('utf8').split('\n').filter(Boolean)
+      const startIdx = stat.size > readSize ? 1 : 0
+      for (let i = startIdx; i < lines.length; i++) {
+        try {
+          const entry = JSON.parse(lines[i])
+          const value = entry[valueKey]
+          if (typeof value !== 'number' || !entry.timestamp) continue
+          const minuteKey = Math.floor(new Date(entry.timestamp).getTime() / 60_000)
+          if (minuteKey <= cutoffMinute) continue
+          this.record(value, minuteKey * 60_000)
+        } catch { /* skip malformed line */ }
+      }
+      console.log(`[${this.label}] Seeded history from log (${lines.length - startIdx} entries scanned)`)
+    } catch (err: any) {
+      console.error(`[${this.label}] Failed to seed history: ${err.message}`)
+    }
+  }
+}
+
+const creditHistory = new MinuteRingBuffer('claude-usage')
+const ghRateLimitHistory = new MinuteRingBuffer('gh-rate-limit')
+
 // Cached last usage response — sent immediately to newly connected clients
 let cachedUsage: { usage: ClaudeUsageData; subscriptionType: string; rateLimitTier: string } | null = null
 
@@ -194,7 +260,7 @@ function loadCachedUsage(): void {
     if (data?.usage && data?.subscriptionType && data?.rateLimitTier) {
       cachedUsage = data
       // Seed credit history from the log now that we know the subscription type
-      seedCreditHistoryFromLog(data.subscriptionType)
+      creditHistory.seedFromLog(path.join(USAGE_LOG_DIR, `usage_${data.subscriptionType}.jsonl`), 'extra_usage.used_credits')
       console.log(`[claude-usage] Loaded cached usage (${data.subscriptionType})`)
     }
   } catch (err: any) {
@@ -209,58 +275,55 @@ function saveCachedUsage(usage: ClaudeUsageData, subscriptionType: string, rateL
   })
 }
 
-// --- Credit history ring buffer (minute-keyed, 21 slots) ---
-const CREDIT_HISTORY_SLOTS = 61
-interface CreditSlot { minuteKey: number; credits: number }
-const creditHistory: (CreditSlot | null)[] = new Array(CREDIT_HISTORY_SLOTS).fill(null)
-let creditHistorySeeded = false
+// --- GitHub GraphQL rate limit polling ---
+const GH_RATE_LIMIT_POLL_MS = 60_000 // every 1 minute
+const GH_RATE_LIMIT_LOG_FILE = path.join(USAGE_LOG_DIR, 'gh_rate_limit.jsonl')
+const GH_RATE_LIMIT_CACHE_FILE = path.join(SOCKET_DIR, 'gh-rate-limit-cache.json')
+let cachedGhRateLimit: GhRateLimitData | null = null
 
-function seedCreditHistoryFromLog(subscriptionType: string): void {
-  if (creditHistorySeeded) return
-  creditHistorySeeded = true
+function loadCachedGhRateLimit(): void {
   try {
-    const logFile = path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`)
-    if (!fs.existsSync(logFile)) return
-
-    // Read the tail of the file — grab last ~4KB which is plenty for 30 lines
-    const fd = fs.openSync(logFile, 'r')
-    const stat = fs.fstatSync(fd)
-    const readSize = Math.min(stat.size, 4096)
-    const buf = Buffer.alloc(readSize)
-    fs.readSync(fd, buf, 0, readSize, stat.size - readSize)
-    fs.closeSync(fd)
-
-    const cutoffMinute = Math.floor(Date.now() / 60_000) - CREDIT_HISTORY_SLOTS
-    const lines = buf.toString('utf8').split('\n').filter(Boolean)
-    // If we sliced mid-line, skip the first partial line
-    const startIdx = stat.size > readSize ? 1 : 0
-    for (let i = startIdx; i < lines.length; i++) {
-      try {
-        const entry = JSON.parse(lines[i])
-        const credits = entry['extra_usage.used_credits']
-        if (typeof credits !== 'number' || !entry.timestamp) continue
-        const minuteKey = Math.floor(new Date(entry.timestamp).getTime() / 60_000)
-        if (minuteKey <= cutoffMinute) continue
-        const slotIndex = ((minuteKey % CREDIT_HISTORY_SLOTS) + CREDIT_HISTORY_SLOTS) % CREDIT_HISTORY_SLOTS
-        creditHistory[slotIndex] = { minuteKey, credits }
-      } catch { /* skip malformed line */ }
+    if (fs.existsSync(GH_RATE_LIMIT_CACHE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(GH_RATE_LIMIT_CACHE_FILE, 'utf8'))
+      if (data && typeof data.limit === 'number' && typeof data.used === 'number' && typeof data.resetAt === 'string') {
+        cachedGhRateLimit = data
+        console.log(`[gh-rate-limit] Loaded cached data (${data.used}/${data.limit})`)
+      }
     }
-    console.log(`[claude-usage] Seeded credit history from log (${lines.length - startIdx} entries scanned)`)
   } catch (err: any) {
-    console.error(`[claude-usage] Failed to seed credit history: ${err.message}`)
+    console.error(`[gh-rate-limit] Failed to load cache: ${err.message}`)
   }
+  ghRateLimitHistory.seedFromLog(GH_RATE_LIMIT_LOG_FILE, 'used')
 }
 
-function buildCreditHistoryArray(): (number | null)[] {
-  const nowMinute = Math.floor(Date.now() / 60_000)
-  const result: (number | null)[] = []
-  for (let i = CREDIT_HISTORY_SLOTS - 1; i >= 0; i--) {
-    const targetMinute = nowMinute - i
-    const slotIndex = ((targetMinute % CREDIT_HISTORY_SLOTS) + CREDIT_HISTORY_SLOTS) % CREDIT_HISTORY_SLOTS
-    const slot = creditHistory[slotIndex]
-    result.push(slot && slot.minuteKey === targetMinute ? slot.credits : null)
-  }
-  return result
+function saveCachedGhRateLimit(data: GhRateLimitData): void {
+  cachedGhRateLimit = data
+  fs.writeFile(GH_RATE_LIMIT_CACHE_FILE, JSON.stringify(data), (err) => {
+    if (err) console.error(`[gh-rate-limit] Failed to save cache: ${err.message}`)
+  })
+}
+
+function fetchGhRateLimit(): Promise<GhRateLimitData> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'gh',
+      ['api', 'graphql', '-f', 'query={ rateLimit { limit remaining resetAt } }'],
+      { timeout: 10_000 },
+      (err, stdout) => {
+        if (err) return reject(new Error(`gh api failed: ${err.message}`))
+        try {
+          const parsed = JSON.parse(stdout)
+          const rl = parsed?.data?.rateLimit
+          if (!rl || typeof rl.limit !== 'number' || typeof rl.remaining !== 'number' || typeof rl.resetAt !== 'string') {
+            return reject(new Error('Unexpected gh rate limit response shape'))
+          }
+          resolve({ limit: rl.limit, used: rl.limit - rl.remaining, resetAt: rl.resetAt })
+        } catch (e: any) {
+          reject(new Error(`Failed to parse gh response: ${e.message}`))
+        }
+      }
+    )
+  })
 }
 
 let daemonClient: DaemonClient
@@ -541,7 +604,7 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
         setTimeout(() => {
           sessionManager.write(targetSessionId, '\r')
           claudeStateMachine.handleClientWrite(targetSessionId, true)
-        }, 200)
+        }, 300)
       }
 
       sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: true })
@@ -614,7 +677,7 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
 
         // Place the new terminal below the specified parent (not the source node)
         const forkPos = computePlacement(stateManager.getState().nodes, msg.parentId, terminalPixelSize(forkCols, forkRows))
-        stateManager.createTerminal(forkPtyId, msg.parentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName)
+        stateManager.createTerminal(forkPtyId, msg.parentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName, msg.nodeId)
         if (forkNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
         }
@@ -1293,7 +1356,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
         const forkParentId = msg.nodeId
         const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, terminalPixelSize(forkCols, forkRows))
-        stateManager.createTerminal(forkPtyId, forkParentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName)
+        stateManager.createTerminal(forkPtyId, forkParentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName, msg.nodeId)
         if (forkNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
         }
@@ -1622,6 +1685,10 @@ async function startServer(): Promise<void> {
     // onClaudeStatusAsleep: update state manager (node-updated broadcast handles client sync)
     (sessionId, asleep) => {
       stateManager.updateClaudeStatusAsleep(sessionId, asleep)
+    },
+    // onActivity: track last interaction timestamp for footer display
+    (sessionId) => {
+      stateManager.updateLastInteracted(sessionId, Date.now())
     }
   )
 
@@ -1859,17 +1926,15 @@ async function startServer(): Promise<void> {
       const { usage, subscriptionType, rateLimitTier } = await fetchClaudeUsage()
 
       // Seed ring buffer from persisted log on first fetch
-      seedCreditHistoryFromLog(subscriptionType)
+      creditHistory.seedFromLog(path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`), 'extra_usage.used_credits')
 
       // Record credits in the minute-keyed ring buffer
       const credits = usage.extra_usage?.used_credits ?? null
       if (credits != null) {
-        const minuteKey = Math.floor(now / 60_000)
-        const slotIndex = ((minuteKey % CREDIT_HISTORY_SLOTS) + CREDIT_HISTORY_SLOTS) % CREDIT_HISTORY_SLOTS
-        creditHistory[slotIndex] = { minuteKey, credits }
+        creditHistory.record(credits, now)
       }
 
-      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier, creditHistory: buildCreditHistoryArray() })
+      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier, creditHistory: creditHistory.build() })
       saveCachedUsage(usage, subscriptionType, rateLimitTier)
 
       // Log usage data with flat dot-notation keys
@@ -1891,6 +1956,33 @@ async function startServer(): Promise<void> {
       console.error(`[claude-usage] Fetch failed: ${err.message}`)
     }
   }, USAGE_POLL_TICK_MS)
+
+  // --- GitHub GraphQL rate limit polling ---
+  loadCachedGhRateLimit()
+  const pollGhRateLimit = async () => {
+    const now = Date.now()
+    try {
+      const data = await fetchGhRateLimit()
+      saveCachedGhRateLimit(data)
+      ghRateLimitHistory.record(data.used, now)
+      broadcastToAll({ type: 'gh-rate-limit', data, usedHistory: ghRateLimitHistory.build() })
+      console.log(`[gh-rate-limit] ${data.used}/${data.limit}, resets ${data.resetAt}`)
+
+      // Log to JSONL
+      if (!usageLogDirReady) {
+        fs.mkdirSync(USAGE_LOG_DIR, { recursive: true })
+        usageLogDirReady = true
+      }
+      const logEntry = { timestamp: new Date(now).toISOString(), used: data.used, limit: data.limit, resetAt: data.resetAt }
+      fs.appendFile(GH_RATE_LIMIT_LOG_FILE, JSON.stringify(logEntry) + '\n', (err) => {
+        if (err) console.error(`[gh-rate-limit] Failed to write log: ${err.message}`)
+      })
+    } catch (err: any) {
+      console.error(`[gh-rate-limit] Fetch failed: ${err.message}`)
+    }
+  }
+  pollGhRateLimit() // initial fetch on startup
+  setInterval(pollGhRateLimit, GH_RATE_LIMIT_POLL_MS)
 
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes
@@ -1927,8 +2019,11 @@ async function startServer(): Promise<void> {
       send(socket, {
         type: 'claude-usage',
         ...cachedUsage,
-        creditHistory: buildCreditHistoryArray(),
+        creditHistory: creditHistory.build(),
       })
+    }
+    if (cachedGhRateLimit) {
+      send(socket, { type: 'gh-rate-limit', data: cachedGhRateLimit, usedHistory: ghRateLimitHistory.build() })
     }
 
     socket.on('data', (data) => {
