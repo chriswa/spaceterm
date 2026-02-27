@@ -9,9 +9,9 @@ Never silently resolve a thread. Every resolution must include a reply on the th
 - **Valid concern → code fix**: Make the change, reply briefly describing what you did (prefixed with [Claude]), then resolve.
 - **Out of scope or wrong**: Reply explaining why no change is needed (prefixed with [Claude]), then resolve.
 Note: top-level review comments (the review body) cannot be resolved as threads — add a 👍 reaction to those instead.
-To fetch unresolved thread IDs:
+To reply to a thread:
 \`\`\`
-gh api graphql -f query='query { repository(owner: "{owner}", name: "{repo}") { pullRequest(number: {number}) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }' | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {threadId: .id, path: .path, line: .line, comments: [.comments.nodes[] | {author: .author.login, body: .body}]}]'
+gh api graphql -f query='mutation { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: "<THREAD_ID>", body: "[Claude] your reply"}) { comment { id } } }'
 \`\`\`
 To resolve a thread:
 \`\`\`
@@ -19,9 +19,30 @@ gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THRE
 \`\`\`
 If you cannot confidently resolve a comment, do NOT resolve it — halt instead so I can address it myself.`;
 
+interface ThreadDetail {
+  threadId: string;
+  path: string;
+  line: number | null;
+  comments: { author: string; body: string }[];
+}
+
+interface UnresolvedThreads {
+  selfThreads: ThreadDetail[];
+  reviewerThreads: ThreadDetail[];
+}
+
+function formatThreadsForPrompt(threads: ThreadDetail[]): string {
+  return threads.map((thread) => {
+    const location = thread.line ? `${thread.path}:${thread.line}` : thread.path;
+    const comments = thread.comments.map((c) => `  ${c.author}: ${c.body}`).join("\n");
+    return `**Thread ${thread.threadId}** (${location})\n${comments}`;
+  }).join("\n\n");
+}
+
 export function buildRemediateMessage(
   remediate: string[],
   failedTestUrls: string[],
+  unresolvedThreads?: UnresolvedThreads,
 ): string {
   const parts: string[] = [];
 
@@ -60,6 +81,9 @@ export function buildRemediateMessage(
       case "CodeRabbit":
         parts.push(`**CodeRabbit has requested changes.**`);
         parts.push(RESOLVE_THREAD_INSTRUCTIONS);
+        if (unresolvedThreads?.reviewerThreads.length) {
+          parts.push(`Here are the unresolved threads:\n\n${formatThreadsForPrompt(unresolvedThreads.reviewerThreads)}`);
+        }
         parts.push(
           `I need you to review the CodeRabbit comments on the PR. For each one, decide if it's (A) out of scope for this PR, (B) wrong or misguided, or (C) a valid concern. Fix any easy C items. Draft reply text for A and B items. If everything is straightforward, go ahead and push.`,
         );
@@ -69,8 +93,11 @@ export function buildRemediateMessage(
       case "Changes requested":
         parts.push(`**A human reviewer has requested changes.**`);
         parts.push(RESOLVE_THREAD_INSTRUCTIONS);
+        if (unresolvedThreads?.reviewerThreads.length) {
+          parts.push(`Here are the unresolved threads:\n\n${formatThreadsForPrompt(unresolvedThreads.reviewerThreads)}`);
+        }
         parts.push(
-          `I need you to review their comments on the PR carefully. For each un-👍'd comment, classify as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
+          `I need you to review their comments on the PR carefully. Classify each as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
         );
         parts.push("");
         break;
@@ -78,8 +105,11 @@ export function buildRemediateMessage(
       case "Review Comments":
         parts.push(`**A reviewer has left unresolved comments on my PR.**`);
         parts.push(RESOLVE_THREAD_INSTRUCTIONS);
+        if (unresolvedThreads?.reviewerThreads.length) {
+          parts.push(`Here are the unresolved threads:\n\n${formatThreadsForPrompt(unresolvedThreads.reviewerThreads)}`);
+        }
         parts.push(
-          `I need you to review each un-👍'd reviewer comment carefully. For each one, classify as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
+          `I need you to review each unresolved reviewer comment. Classify each as either (A) out of scope for this PR, or (C) a valid concern. Never assume the reviewer is wrong — I'll make that call myself. Fix easy C items. For anything complex or that could contradict my design intent, tell me what you think. Draft reply text for A items. Go ahead and push straightforward fixes.`,
         );
         parts.push("");
         break;
@@ -95,8 +125,11 @@ export function buildRemediateMessage(
       case "Self Comment":
         parts.push(`**I have unresolved comments on my own PR addressed to you.**`);
         parts.push(RESOLVE_THREAD_INSTRUCTIONS);
+        if (unresolvedThreads?.selfThreads.length) {
+          parts.push(`Here are the threads addressed to you:\n\n${formatThreadsForPrompt(unresolvedThreads.selfThreads)}`);
+        }
         parts.push(
-          `These are action items I left for myself, prefixed with "claude: " to indicate they're directed at you. Only address comments whose body starts with \`claude: \` (case insensitive) — ignore any other self-comments, those are notes for human readers. For simple fixes, go ahead and implement and push. For complex changes that could affect the design intent, tell me what you think the fix should be so I can decide.`,
+          `These are action items I left for myself, prefixed with "claude: " to indicate they're directed at you. For simple fixes, go ahead and implement and push. For complex changes that could affect the design intent, tell me what you think the fix should be so I can decide.`,
         );
         parts.push("");
         break;

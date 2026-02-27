@@ -73,17 +73,31 @@ interface Triage {
   postDraft: string[];
 }
 
+interface ThreadDetail {
+  threadId: string;
+  path: string;
+  line: number | null;
+  comments: { author: string; body: string }[];
+}
+
+interface UnresolvedThreads {
+  selfThreads: ThreadDetail[];
+  reviewerThreads: ThreadDetail[];
+}
+
 interface PrCheckOutput {
   blockers: { name: string; action: string }[];
   failedTestUrls: string[];
   meticulousUrl: string | null;
   triage: Triage;
+  unresolvedThreads?: UnresolvedThreads;
 }
 
 interface PrCheckResult {
   failedTestUrls: string[];
   meticulousUrl: string | null;
   triage: Triage;
+  unresolvedThreads?: UnresolvedThreads;
 }
 
 async function runPrCheck(): Promise<PrCheckResult> {
@@ -94,6 +108,7 @@ async function runPrCheck(): Promise<PrCheckResult> {
     failedTestUrls: raw.failedTestUrls,
     meticulousUrl: raw.meticulousUrl,
     triage: raw.triage,
+    unresolvedThreads: raw.unresolvedThreads,
   };
 }
 
@@ -272,7 +287,7 @@ async function main() {
     // Remediate blockers take priority
     if (triage.remediate.length > 0) {
       const remediatedBlockers = [...triage.remediate];
-      const message = buildRemediateMessage(triage.remediate, result.failedTestUrls);
+      const message = buildRemediateMessage(triage.remediate, result.failedTestUrls, result.unresolvedThreads);
       await shipIt(message);
 
       const waitResult = await waitForClaude();
