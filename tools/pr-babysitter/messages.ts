@@ -1,4 +1,4 @@
-const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes (the CI auto-linter may have pushed). Always add fixes as NEW commits — never amend or squash commits that have already been reviewed, as this breaks GitHub's "changes since last review" diff.`;
+const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes (the CI auto-linter may have pushed). The PR must remain incrementally reviewable — do not rewrite commits that reviewers have already seen (no amending, squashing, or interactive-rebasing reviewed history). Adding new commits and rebasing onto the base branch are both fine.`;
 
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;

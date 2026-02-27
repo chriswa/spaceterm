@@ -99,15 +99,10 @@ The repo has a CI auto-linter that pushes formatting changes to branches. This m
 ### Always pull before making changes
 Before starting any local modifications (test fixes, review feedback, conflict resolution), always `git pull` to pick up any commits the auto-linter (or other CI) may have pushed.
 
-### Commit hygiene for reviewers
-GitHub's "changes since last review" diff is important for human reviewers. What preserves it:
-- **New commits**: Always add fixes as new commits. Reviewers see exactly what changed.
-- **Rebasing onto base branch**: Fine — GitHub can still compute the incremental diff.
-- **Force-push after rebase**: Acceptable when needed (e.g. conflict resolution).
+### Keep the PR incrementally reviewable
+The core principle: **do not rewrite commits that reviewers have already seen.** Amending, squashing, or interactive-rebasing reviewed history destroys GitHub's "changes since last review" diff, forcing reviewers to re-review everything.
 
-What breaks it:
-- **Amending reviewed commits**: The old SHAs disappear. Never do this.
-- **Squashing reviewed commits**: Same problem — history the reviewer saw is gone.
+Everything else is fair game — new commits, rebasing onto the base branch, force-pushing after a rebase — none of these rewrite reviewed history.
 
 ### Conflict recovery during push
 If `git push` fails due to new remote commits:
