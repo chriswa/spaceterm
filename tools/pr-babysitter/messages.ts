@@ -93,10 +93,10 @@ export function buildRemediateMessage(
         break;
 
       case "Self Comment":
-        parts.push(`**I have unresolved comments on my own PR.**`);
+        parts.push(`**I have unresolved comments on my own PR addressed to you.**`);
         parts.push(RESOLVE_THREAD_INSTRUCTIONS);
         parts.push(
-          `These are action items I left for myself. Review each one and immediately plan fixes. For simple fixes, go ahead and implement and push. For complex changes that could affect the design intent, tell me what you think the fix should be so I can decide.`,
+          `These are action items I left for myself, prefixed with "claude: " to indicate they're directed at you. Only address comments whose body starts with \`claude: \` (case insensitive) — ignore any other self-comments, those are notes for human readers. For simple fixes, go ahead and implement and push. For complex changes that could affect the design intent, tell me what you think the fix should be so I can decide.`,
         );
         parts.push("");
         break;
