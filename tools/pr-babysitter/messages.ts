@@ -63,6 +63,9 @@ export function buildRemediateMessage(
         parts.push(
           `I need you to review the CodeRabbit comments on the PR. For each one, decide if it's (A) out of scope for this PR, (B) wrong or misguided, or (C) a valid concern. Fix any easy C items. Draft reply text for A and B items. If everything is straightforward, go ahead and push.`,
         );
+        parts.push(
+          `If you resolved ALL CodeRabbit threads, sleep for 60 seconds (to let GitHub propagate the resolved state), then post \`@coderabbitai approve\` as a PR comment: \`gh pr comment <PR_NUMBER> --body "@coderabbitai approve"\``,
+        );
         parts.push("");
         break;
 
