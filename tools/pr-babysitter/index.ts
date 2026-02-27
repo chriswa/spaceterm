@@ -198,6 +198,30 @@ async function waitForClaude(): Promise<WaitResult> {
   });
 }
 
+// ---- CodeRabbit cooldown ----
+
+const CODERABBIT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+let codeRabbitApprovedAt: number | null = null;
+
+function isCodeRabbitOnCooldown(): boolean {
+  if (codeRabbitApprovedAt === null) return false;
+  if (Date.now() - codeRabbitApprovedAt < CODERABBIT_COOLDOWN_MS) return true;
+  // Cooldown expired
+  codeRabbitApprovedAt = null;
+  return false;
+}
+
+function filterCodeRabbitIfCooling(triage: Triage): void {
+  if (!isCodeRabbitOnCooldown()) return;
+  for (const arr of [triage.remediate, triage.halt, triage.wait] as string[][]) {
+    const idx = arr.indexOf("CodeRabbit");
+    if (idx !== -1) {
+      arr.splice(idx, 1);
+      console.log("CodeRabbit on cooldown — ignoring for up to 10 min after approve.");
+    }
+  }
+}
+
 // ---- Main Loop ----
 
 async function main() {
@@ -208,12 +232,13 @@ async function main() {
       result = await runPrCheck();
     } catch (err) {
       console.error("pr-check failed:", err);
-      console.log("Retrying in 5 minutes...");
+      console.log("Retrying in 1 minute...");
       await Bun.sleep(POLL_INTERVAL_MS);
       continue;
     }
 
     const { triage } = result;
+    filterCodeRabbitIfCooling(triage);
     const allBlockers = [...triage.done, ...triage.wait, ...triage.remediate, ...triage.halt];
     console.log("Blockers:", allBlockers.join(", ") || "(none active)");
 
@@ -233,6 +258,7 @@ async function main() {
 
     // Remediate blockers take priority
     if (triage.remediate.length > 0) {
+      const remediatedBlockers = [...triage.remediate];
       const message = buildRemediateMessage(triage.remediate, result.failedTestUrls);
       await shipIt(message);
 
@@ -242,6 +268,15 @@ async function main() {
         await $`${CLI} unread ${nodeId}`.quiet();
         process.exit(0);
       }
+
+      // CodeRabbit was remediated successfully — post approve and start cooldown
+      if (remediatedBlockers.includes("CodeRabbit")) {
+        console.log("CodeRabbit remediated — posting @coderabbitai approve...");
+        await $`gh pr comment ${prUrl} --body "@coderabbitai approve"`.quiet();
+        codeRabbitApprovedAt = Date.now();
+        console.log("CodeRabbit approve posted. Ignoring CodeRabbit blockers for 10 min.");
+      }
+
       // outcome === "resume" → continue the loop
       continue;
     }
