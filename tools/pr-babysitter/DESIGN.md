@@ -99,14 +99,21 @@ The repo has a CI auto-linter that pushes formatting changes to branches. This m
 ### Always pull before making changes
 Before starting any local modifications (test fixes, review feedback, conflict resolution), always `git pull` to pick up any commits the auto-linter (or other CI) may have pushed.
 
-### Never rebase or force-push
-The "changes since last review" incremental diff on GitHub is sacred. **Never rebase, amend, or force-push.** Always use merge commits to integrate upstream changes. This applies everywhere — not just when handling the `Conflicts` blocker, but any time we encounter conflicts while pushing our own fixes.
+### Commit hygiene for reviewers
+GitHub's "changes since last review" diff is important for human reviewers. What preserves it:
+- **New commits**: Always add fixes as new commits. Reviewers see exactly what changed.
+- **Rebasing onto base branch**: Fine — GitHub can still compute the incremental diff.
+- **Force-push after rebase**: Acceptable when needed (e.g. conflict resolution).
+
+What breaks it:
+- **Amending reviewed commits**: The old SHAs disappear. Never do this.
+- **Squashing reviewed commits**: Same problem — history the reviewer saw is gone.
 
 ### Conflict recovery during push
 If `git push` fails due to new remote commits:
-1. `git pull --no-rebase` (merge, never rebase)
-2. Resolve any conflicts from the merge
-3. Push again
+1. `git pull` (merge or rebase — either is fine)
+2. Resolve any conflicts
+3. Push again (force-push if rebased)
 4. If conflicts are non-trivial, halt and present to user
 
 ## Blocker Response Categories
@@ -149,8 +156,8 @@ Post `@mergifyio requeue` as a PR comment to re-enter the queue.
 - **Human reviewer**: Never auto-classify as (B) wrong — present the comment to the user and let them make that call. May auto-push easy C fixes, but **always halt after pushing** to alert the user so they can review the changes and ask the human reviewer(s) to re-review.
 
 #### `Conflicts` (merge conflicts)
-Resolve by merging the PR's **base branch** into the feature branch (see Git Discipline above for why never rebase). The base branch is NOT always master — check with `gh pr view --json baseRefName`. Merging the wrong branch will balloon the PR diff.
-1. `git pull` then `git merge origin/<baseRefName>` into the PR branch
+Resolve by merging or rebasing onto the PR's **base branch**. The base branch is NOT always master — check with `gh pr view --json baseRefName`. Using the wrong branch will balloon the PR diff.
+1. `git pull` then merge or rebase onto `origin/<baseRefName>`
 2. If resolution is straightforward (no content conflicts in modified lines): push, halt to notify user
 3. If conflicts require judgment: halt, present conflict details to user
 

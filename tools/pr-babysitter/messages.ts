@@ -1,4 +1,4 @@
-const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes (the CI auto-linter may have pushed). Never rebase or force-push — the incremental review diff is sacred. Merge only.`;
+const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes (the CI auto-linter may have pushed). Always add fixes as NEW commits — never amend or squash commits that have already been reviewed, as this breaks GitHub's "changes since last review" diff.`;
 
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;
@@ -87,7 +87,7 @@ export function buildRemediateMessage(
       case "Conflicts":
         parts.push(`**There are merge conflicts.**`);
         parts.push(
-          `First, determine the PR's base branch: \`gh pr view --json baseRefName --jq '.baseRefName'\`. Then merge that base branch (NOT necessarily master) into my branch — never rebase, the "changes since last review" incremental diff is sacred. Merging the wrong branch will balloon the PR diff. If the conflicts are in files I've modified and require judgment about which changes to keep, tell me about them instead of guessing.`,
+          `First, determine the PR's base branch: \`gh pr view --json baseRefName --jq '.baseRefName'\`. Then resolve the conflicts — either merge or rebase onto that base branch (NOT necessarily master). Using the wrong branch will balloon the PR diff. If the conflicts are in files I've modified and require judgment about which changes to keep, tell me about them instead of guessing.`,
         );
         parts.push("");
         break;
