@@ -201,18 +201,31 @@ async function waitForClaude(): Promise<WaitResult> {
 // ---- CodeRabbit cooldown ----
 
 const CODERABBIT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
-let codeRabbitApprovedAt: number | null = null;
 
-function isCodeRabbitOnCooldown(): boolean {
-  if (codeRabbitApprovedAt === null) return false;
-  if (Date.now() - codeRabbitApprovedAt < CODERABBIT_COOLDOWN_MS) return true;
-  // Cooldown expired
-  codeRabbitApprovedAt = null;
-  return false;
+// Extract PR number from URL (e.g. https://github.com/sparelabs/spare/pull/33786 → 33786)
+const prNumber = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? "";
+
+async function getCodeRabbitApproveTimestamp(): Promise<number | null> {
+  try {
+    const result = await $`gh api repos/sparelabs/spare/issues/${prNumber}/comments --jq ${
+      '[.[] | select(.user.login != "coderabbitai[bot]") | select(.body | test("@coderabbitai approve")) | .created_at] | last'
+    }`.text();
+    const timestamp = result.trim();
+    if (!timestamp) return null;
+    return new Date(timestamp).getTime();
+  } catch {
+    return null;
+  }
 }
 
-function filterCodeRabbitIfCooling(triage: Triage): void {
-  if (!isCodeRabbitOnCooldown()) return;
+async function isCodeRabbitOnCooldown(): Promise<boolean> {
+  const approvedAt = await getCodeRabbitApproveTimestamp();
+  if (approvedAt === null) return false;
+  return Date.now() - approvedAt < CODERABBIT_COOLDOWN_MS;
+}
+
+async function filterCodeRabbitIfCooling(triage: Triage): Promise<void> {
+  if (!(await isCodeRabbitOnCooldown())) return;
   for (const arr of [triage.remediate, triage.halt, triage.wait] as string[][]) {
     const idx = arr.indexOf("CodeRabbit");
     if (idx !== -1) {
@@ -238,7 +251,7 @@ async function main() {
     }
 
     const { triage } = result;
-    filterCodeRabbitIfCooling(triage);
+    await filterCodeRabbitIfCooling(triage);
     const allBlockers = [...triage.done, ...triage.wait, ...triage.remediate, ...triage.halt];
     console.log("Blockers:", allBlockers.join(", ") || "(none active)");
 
@@ -273,7 +286,6 @@ async function main() {
       if (remediatedBlockers.includes("CodeRabbit")) {
         console.log("CodeRabbit remediated — posting @coderabbitai approve...");
         await $`gh pr comment ${prUrl} --body "@coderabbitai approve"`.quiet();
-        codeRabbitApprovedAt = Date.now();
         console.log("CodeRabbit approve posted. Ignoring CodeRabbit blockers for 10 min.");
       }
 
