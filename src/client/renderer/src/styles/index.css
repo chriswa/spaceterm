@@ -330,6 +330,85 @@ html, body, #root {
   background: rgba(255,255,255,0.06);
 }
 
+/* Font theme dropdown */
+.toolbar__font-group {
+  position: relative;
+  display: flex;
+  gap: 0;
+}
+
+.toolbar__font-group .toolbar__btn {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.toolbar__font-dropdown-btn {
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-left: 1px solid rgba(255,255,255,0.1);
+  border-radius: 0 4px 4px 0;
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toolbar__font-dropdown-btn:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+.toolbar__font-dropdown-btn--open {
+  background: rgba(255,255,255,0.15);
+}
+
+.toolbar__font-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  min-width: 200px;
+  background: #1e1e2e;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.toolbar__font-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: #cdd6f4;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.toolbar__font-menu-item:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.toolbar__font-menu-item--active {
+  color: #fff;
+  background: rgba(255,255,255,0.1);
+}
+
+.toolbar__font-menu-label {
+  flex-shrink: 0;
+}
+
+.toolbar__font-menu-preview {
+  color: #888;
+  white-space: nowrap;
+}
+
 /* Canvas */
 .canvas-viewport {
   flex: 1;
@@ -340,6 +419,11 @@ html, body, #root {
 
 .canvas-viewport:active {
   cursor: grabbing;
+}
+
+.canvas-viewport.rts-selecting,
+.canvas-viewport.rts-selecting:active {
+  cursor: crosshair;
 }
 
 .canvas-surface {
@@ -709,6 +793,11 @@ html, body, #root {
 
 .terminal-card--focused .xterm-viewport::-webkit-scrollbar-thumb {
   background: #585b70;
+}
+
+/* Hide xterm's canvas rendering when proportional overlay is active */
+.terminal-card--proportional .xterm-screen canvas {
+  visibility: hidden;
 }
 
 /*

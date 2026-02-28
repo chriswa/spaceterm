@@ -565,6 +565,18 @@ export interface ClaudeUsageMessage {
   creditHistory: (number | null)[]
 }
 
+export interface GhRateLimitData {
+  limit: number
+  used: number
+  resetAt: string  // ISO 8601
+}
+
+export interface GhRateLimitMessage {
+  type: 'gh-rate-limit'
+  data: GhRateLimitData
+  usedHistory: (number | null)[]
+}
+
 // --- Script socket messages (scripts.sock) ---
 
 export interface ScriptGetAncestorsMessage {
@@ -680,3 +692,4 @@ export type ServerMessage =
   | PlanCacheUpdateMessage
   | ServerErrorMessage
   | ClaudeUsageMessage
+  | GhRateLimitMessage

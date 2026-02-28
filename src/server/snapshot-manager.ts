@@ -1,6 +1,7 @@
-import { Terminal, type IBufferCell } from '@xterm/headless'
+import { Terminal } from '@xterm/headless'
 import type { AttrSpan, SnapshotRow, SnapshotMessage } from '../shared/protocol'
-import { ANSI_COLORS, DEFAULT_FG, DEFAULT_BG, CUBE_STEPS } from '../shared/theme'
+import { DEFAULT_FG, DEFAULT_BG } from '../shared/theme'
+import { resolveFg, resolveBg } from '../shared/terminal-colors'
 
 const TICK_INTERVAL = 100 // 10 ticks/sec, one dirty session per tick
 
@@ -121,8 +122,10 @@ export class SnapshotManager {
         }
 
         const char = cell.getChars() || ' '
-        const fg = this.resolveFg(cell)
-        const bg = this.resolveBg(cell)
+        const inverse = !!(cell.isInverse && cell.isInverse())
+        let fg = resolveFg(cell)
+        let bg = resolveBg(cell)
+        if (inverse) { const tmp = fg; fg = bg; bg = tmp }
         const bold = !!(cell.isBold && cell.isBold())
         const italic = !!(cell.isItalic && cell.isItalic())
         const underline = !!(cell.isUnderline && cell.isUnderline())
@@ -169,71 +172,6 @@ export class SnapshotManager {
       cursorY: buffer.cursorY,
       lines
     }
-  }
-
-  private resolveFg(cell: IBufferCell): string {
-    try {
-      const fgColor = cell.getFgColor()
-      if (cell.isFgRGB()) {
-        // True color (24-bit)
-        const r = (fgColor >> 16) & 0xFF
-        const g = (fgColor >> 8) & 0xFF
-        const b = fgColor & 0xFF
-        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-      }
-      if (cell.isFgPalette()) {
-        const idx = fgColor
-        if (idx >= 0 && idx < 16) return ANSI_COLORS[idx]
-        // 256-color palette: just return a reasonable approximation
-        if (idx >= 16 && idx < 232) {
-          const n = idx - 16
-          const r = CUBE_STEPS[Math.floor(n / 36) % 6]
-          const g = CUBE_STEPS[Math.floor((n % 36) / 6)]
-          const b = CUBE_STEPS[n % 6]
-          return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-        }
-        if (idx >= 232 && idx < 256) {
-          const grey = (idx - 232) * 10 + 8
-          return `#${grey.toString(16).padStart(2, '0')}${grey.toString(16).padStart(2, '0')}${grey.toString(16).padStart(2, '0')}`
-        }
-      }
-      if (cell.isBold && cell.isBold() && fgColor >= 0 && fgColor < 8) {
-        return ANSI_COLORS[fgColor + 8]
-      }
-    } catch {
-      // fallthrough
-    }
-    return DEFAULT_FG
-  }
-
-  private resolveBg(cell: IBufferCell): string {
-    try {
-      const bgColor = cell.getBgColor()
-      if (cell.isBgRGB()) {
-        const r = (bgColor >> 16) & 0xFF
-        const g = (bgColor >> 8) & 0xFF
-        const b = bgColor & 0xFF
-        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-      }
-      if (cell.isBgPalette()) {
-        const idx = bgColor
-        if (idx >= 0 && idx < 16) return ANSI_COLORS[idx]
-        if (idx >= 16 && idx < 232) {
-          const n = idx - 16
-          const r = CUBE_STEPS[Math.floor(n / 36) % 6]
-          const g = CUBE_STEPS[Math.floor((n % 36) / 6)]
-          const b = CUBE_STEPS[n % 6]
-          return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-        }
-        if (idx >= 232 && idx < 256) {
-          const grey = (idx - 232) * 10 + 8
-          return `#${grey.toString(16).padStart(2, '0')}${grey.toString(16).padStart(2, '0')}${grey.toString(16).padStart(2, '0')}`
-        }
-      }
-    } catch {
-      // fallthrough
-    }
-    return DEFAULT_BG
   }
 
   dispose(): void {

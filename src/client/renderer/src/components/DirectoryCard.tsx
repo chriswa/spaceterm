@@ -9,6 +9,7 @@ import { CardShell } from './CardShell'
 import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
 import { angleBorderColor } from '../lib/angle-color'
+import { useRtsSelectStore } from '../stores/rtsSelectStore'
 
 const DRAG_THRESHOLD = 5
 const DEFAULT_BG = '#1e1e2e'
@@ -113,6 +114,7 @@ export function DirectoryCard({
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const rtsSelectActive = useRtsSelectStore(s => s.active)
   const freshlyCreated = useNodeStore(s => s.freshlyCreatedIds.has(id))
 
   // Auto-enter edit mode when freshly created and focused
@@ -317,7 +319,7 @@ export function DirectoryCard({
         viewBox={`0 0 ${folderWidth} 144`}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        style={focused ? { color: angleBorderColor(x, y), filter: `drop-shadow(0 0 4px ${angleBorderColor(x, y)})` } : undefined}
+        style={focused && !rtsSelectActive ? { color: angleBorderColor(x, y), filter: `drop-shadow(0 0 4px ${angleBorderColor(x, y)})` } : undefined}
       >
         <path d={paths.back} fill={blendHex(preset?.titleBarBg ?? '#ffffff', '#000000', 0.6)} stroke="currentColor" strokeWidth="1.5" />
         <path d={paths.front} fill={blendHex(preset?.titleBarBg ?? '#ffffff', '#000000', 0.8)} stroke="currentColor" strokeWidth="1.5" />

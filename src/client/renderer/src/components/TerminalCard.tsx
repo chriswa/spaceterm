@@ -22,6 +22,9 @@ import crabIcon from '../assets/crab.png'
 import { deriveToolbarIndicator, CRAB_COLORS } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { angleBorderColor } from '../lib/angle-color'
+import { useRtsSelectStore } from '../stores/rtsSelectStore'
+import { useFontStore } from '../stores/fontStore'
+import { useProportionalOverlay, findFirstAlnum } from '../hooks/useProportionalOverlay'
 
 function cleanTerminalCopy(raw: string): string {
   // Strip box-drawing border characters (│, ─, ╭, etc.) from line edges, then trailing whitespace
@@ -49,7 +52,19 @@ function cleanTerminalCopy(raw: string): string {
   return lines.join('\n')
 }
 
+function formatElapsed(epochMs: number): string {
+  const diff = Date.now() - epochMs
+  const minutes = Math.floor(diff / 60000)
+  if (minutes < 1) return '<1m ago'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
 const DRAG_THRESHOLD = 5
+
 const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
 const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
 
@@ -106,6 +121,7 @@ interface TerminalCardProps {
   onFork?: (id: string) => void
   onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
   extraCliArgs?: string
+  lastInteractedAt?: number
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.RefObject<Camera>
 }
@@ -115,7 +131,7 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   claudeSessionHistory, claudeState, claudeModel, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, onAddNode, cameraRef
+  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onAddNode, cameraRef
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -129,6 +145,7 @@ export function TerminalCard({
   const snapshotRef = useRef<SnapshotMessage | null>(null)
   const autoJumpedRef = useRef(false)
   const behindCrabRef = useRef<HTMLDivElement>(null)
+  const proportionalCanvasRef = useRef<HTMLCanvasElement>(null)
 
   // Keep current props in refs for event handlers
   const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onDisableScrollMode, onExit, onNodeReady })
@@ -136,10 +153,17 @@ export function TerminalCard({
 
   const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
   const [claudeSessionLineCount, setClaudeSessionLineCount] = useState<number | undefined>(undefined)
+  const [, setTick] = useState(0)
   const [xtermReady, setXtermReady] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [planCacheFiles, setPlanCacheFiles] = useState<string[]>([])
   const searchOpenRef = useRef(false)
+
+  // Re-render every 30s so "Last Interacted" stays current
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   // Reset when unfocusing so it's always false on next focus
   useEffect(() => {
@@ -160,8 +184,8 @@ export function TerminalCard({
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
 
-  // Derive pixel size from cols/rows (non-Claude terminals have no footer)
-  const hasFooter = !!(claudeSessionHistory && claudeSessionHistory.length > 0)
+  // Derive pixel size from cols/rows — all terminals now have a footer
+  const hasFooter = true
   const { width, height } = terminalPixelSize(cols, rows, hasFooter)
 
   // Mount terminal (only when focused)
@@ -232,9 +256,11 @@ export function TerminalCard({
       const remainder = clamped - line * CELL_HEIGHT
       term.scrollToLine(line)
       pixelOffsetRef.current = remainder
-      screenEl.style.transform = remainder !== 0
-        ? `translateY(${-remainder}px)`
-        : ''
+      const transformVal = remainder !== 0 ? `translateY(${-remainder}px)` : ''
+      screenEl.style.transform = transformVal
+      // Also transform the proportional overlay canvas so it scrolls in sync
+      const overlayCanvas = proportionalCanvasRef.current
+      if (overlayCanvas) overlayCanvas.style.transform = transformVal
     }
 
     // Debounced scroll position save for reload persistence
@@ -560,6 +586,11 @@ export function TerminalCard({
     term.options.theme = { ...term.options.theme, background: bg }
   }, [preset])
 
+  // Proportional font overlay
+  const proportionalFont = useFontStore(s => s.proportional)
+  const termBg = preset?.terminalBg ?? DEFAULT_BG
+  useProportionalOverlay(terminalRef, proportionalCanvasRef, proportionalFont && focused && xtermReady, cols, rows, termBg)
+
   // Keyboard focus management
   useEffect(() => {
     const term = terminalRef.current
@@ -611,30 +642,98 @@ export function TerminalCard({
     ctx.fillStyle = termBg
     ctx.fillRect(0, 0, cw, ch)
 
+    const { proportional: useProportional, theme: fontTheme } = useFontStore.getState()
+
     for (let y = 0; y < snapshot.lines.length; y++) {
       const row = snapshot.lines[y]
       let xOffset = 0
+      let proportional = false
 
       for (const span of row) {
-        const spanWidth = span.text.length * CELL_WIDTH
+        if (useProportional) {
+          const weight = span.bold ? fontTheme.boldWeight : fontTheme.fontWeight
+          ctx.font = `${weight} ${fontTheme.fontSize}px ${fontTheme.fontFamily}`
 
-        if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-          ctx.fillStyle = span.bg
-          ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
-        }
-
-        if (span.text.trim().length > 0) {
-          ctx.fillStyle = span.fg
-          ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
-          ctx.textBaseline = 'top'
-          for (let i = 0; i < span.text.length; i++) {
-            if (span.text[i] !== ' ') {
-              ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
+          if (proportional) {
+            // Fully proportional
+            const tw = ctx.measureText(span.text).width
+            if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+              ctx.fillStyle = span.bg
+              ctx.fillRect(xOffset, y * CELL_HEIGHT, tw, CELL_HEIGHT)
+            }
+            if (span.text.trim().length > 0) {
+              ctx.fillStyle = span.fg
+              ctx.textBaseline = 'top'
+              ctx.fillText(span.text, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
+            }
+            xOffset += tw
+          } else {
+            const match = findFirstAlnum(span.text)
+            if (match === -1) {
+              // Entire span is fixed-width prefix
+              for (let i = 0; i < span.text.length; i++) {
+                const cx = xOffset + i * CELL_WIDTH
+                if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+                  ctx.fillStyle = span.bg
+                  ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
+                }
+                if (span.text[i] !== ' ') {
+                  ctx.fillStyle = span.fg
+                  ctx.textBaseline = 'top'
+                  ctx.fillText(span.text[i], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
+                }
+              }
+              xOffset += span.text.length * CELL_WIDTH
+            } else {
+              // Split: fixed prefix + proportional rest
+              for (let i = 0; i < match; i++) {
+                const cx = xOffset + i * CELL_WIDTH
+                if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+                  ctx.fillStyle = span.bg
+                  ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
+                }
+                if (span.text[i] !== ' ') {
+                  ctx.fillStyle = span.fg
+                  ctx.textBaseline = 'top'
+                  ctx.fillText(span.text[i], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
+                }
+              }
+              xOffset += match * CELL_WIDTH
+              const rest = span.text.slice(match)
+              const tw = ctx.measureText(rest).width
+              if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+                ctx.fillStyle = span.bg
+                ctx.fillRect(xOffset, y * CELL_HEIGHT, tw, CELL_HEIGHT)
+              }
+              if (rest.trim().length > 0) {
+                ctx.fillStyle = span.fg
+                ctx.textBaseline = 'top'
+                ctx.fillText(rest, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
+              }
+              xOffset += tw
+              proportional = true
             }
           }
-        }
+        } else {
+          // Monospace: fixed grid, character by character
+          const spanWidth = span.text.length * CELL_WIDTH
 
-        xOffset += spanWidth
+          if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+            ctx.fillStyle = span.bg
+            ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
+          }
+          if (span.text.trim().length > 0) {
+            ctx.fillStyle = span.fg
+            ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
+            ctx.textBaseline = 'top'
+            for (let i = 0; i < span.text.length; i++) {
+              if (span.text[i] !== ' ') {
+                ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
+              }
+            }
+          }
+          xOffset += spanWidth
+        }
       }
     }
   }
@@ -654,6 +753,14 @@ export function TerminalCard({
       cleanup()
     }
   }, [focused, sessionId])
+
+  // Repaint snapshot canvas when font toggle or theme changes (unfocused terminals)
+  const fontThemeId = useFontStore(s => s.themeId)
+  useEffect(() => {
+    if (focused) return
+    const snapshot = snapshotRef.current
+    if (snapshot) paintCanvas(snapshot)
+  }, [proportionalFont, fontThemeId])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
@@ -802,13 +909,14 @@ export function TerminalCard({
       ? 'terminal-card--focused terminal-card--scroll-mode'
       : 'terminal-card--focused'
     : selected ? 'terminal-card--selected' : ''
-  const focusGlowColor = focused ? angleBorderColor(x, y, scrollMode ? 1.3 : 1) : undefined
+  const rtsSelectActive = useRtsSelectStore(s => s.active)
+  const focusGlowColor = focused && !rtsSelectActive ? angleBorderColor(x, y, scrollMode ? 1.3 : 1) : undefined
   const crabAppearance = deriveToolbarIndicator(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0)
   useCrabDance(behindCrabRef, crabAppearance.unviewed, 2.5)
   const anyToolbarHover = useHoveredCardStore(s => s.toolbarHoveredNodeId) != null
   const toolbarHovered = useHoveredCardStore(s => s.toolbarHoveredNodeId) === id
-  useUnreadGlow(cardRef, CRAB_COLORS[crabAppearance.color], cameraRef, crabAppearance.unviewed && !focused && !anyToolbarHover)
-  useToolbarHoverGlow(cardRef, x, y, cameraRef, toolbarHovered && !focused)
+  useUnreadGlow(cardRef, CRAB_COLORS[crabAppearance.color], cameraRef, crabAppearance.unviewed && !focused && !anyToolbarHover && !rtsSelectActive)
+  useToolbarHoverGlow(cardRef, x, y, cameraRef, toolbarHovered && !focused && !rtsSelectActive)
 
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
@@ -879,7 +987,7 @@ export function TerminalCard({
       onDiffPlans={handleDiffPlans}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
-      className={`terminal-card ${focusClass}`}
+      className={`terminal-card ${focusClass}${focused && proportionalFont ? ' terminal-card--proportional' : ''}`}
       style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 16px 4px ${focusGlowColor}` } : undefined}
       cardRef={cardRef}
       onMouseEnter={() => {
@@ -925,15 +1033,29 @@ export function TerminalCard({
           }}
         />
       </div>
-      {lastClaudeSession && (() => {
-        const pct = Math.max(0, Math.min(100, claudeContextPercent ?? 100))
-        const bright = preset ? preset.titleBarBg : '#181825'
+      {focused && proportionalFont && (
+        <div style={{ position: 'absolute' as const, top: BODY_PADDING_TOP, left: 0, right: 0, bottom: 0, pointerEvents: 'none' as const, overflow: 'hidden', padding: '0 2px' }}>
+          <canvas
+            ref={proportionalCanvasRef}
+            style={{
+              width: Math.ceil(cols * CELL_WIDTH),
+              height: Math.ceil(rows * CELL_HEIGHT),
+              display: 'block',
+            }}
+          />
+        </div>
+      )}
+      {(() => {
+        const pct = lastClaudeSession ? Math.max(0, Math.min(100, claudeContextPercent ?? 100)) : 100
+        const bright = preset ? preset.titleBarBg : '#6c7086'
         const dark = preset ? preset.terminalBg : '#181825'
+        const interactedLabel = lastInteractedAt ? formatElapsed(lastInteractedAt) : '\u2014'
         const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
         const footerContent = (
           <>
-            {abbrevCwd && <><span>{abbrevCwd}</span><span>&nbsp;|&nbsp;</span></>}
-            <span>Node:&nbsp;{id.slice(0, 8)}</span>
+            <span>Last Interacted:&nbsp;{interactedLabel}</span>
+            {abbrevCwd && <><span>&nbsp;|&nbsp;</span><span>{abbrevCwd}</span></>}
+            <span>&nbsp;|&nbsp;Node:&nbsp;{id.slice(0, 8)}</span>
             <span>&nbsp;|&nbsp;Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => {
               e.stopPropagation()
               let text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id}`
@@ -942,29 +1064,39 @@ export function TerminalCard({
               navigator.clipboard.writeText(text)
               showToast(`Copied to clipboard: ${text}`)
             }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
-            <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
-            <span className="terminal-card__footer-id" onClick={(e) => {
-              e.stopPropagation()
-              const text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
-              navigator.clipboard.writeText(text)
-              showToast(`Copied to clipboard: ${text}`)
-            }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
-            {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
-            <span>&nbsp;|&nbsp;</span>
-            <span>{claudeStateLabel(claudeState)}</span>
-            {claudeModel && <><span>&nbsp;|&nbsp;</span><span>{claudeModel}</span></>}
+            {lastClaudeSession && (
+              <>
+                <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
+                <span className="terminal-card__footer-id" onClick={(e) => {
+                  e.stopPropagation()
+                  const text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+                  navigator.clipboard.writeText(text)
+                  showToast(`Copied to clipboard: ${text}`)
+                }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
+                {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
+                <span>&nbsp;|&nbsp;</span>
+                <span>{claudeStateLabel(claudeState)}</span>
+                {claudeModel && <><span>&nbsp;|&nbsp;</span><span>{claudeModel}</span></>}
+              </>
+            )}
             {claudeContextPercent != null && (
               <span className="terminal-card__footer-context">Remaining context: {claudeContextPercent.toFixed(2)}%</span>
             )}
           </>
         )
-        return (
+        return lastClaudeSession ? (
       <div className="terminal-card__footer" style={{ backgroundColor: dark, borderTopColor: preset ? preset.titleBarBg : undefined }}>
         <span className="terminal-card__footer-content terminal-card__footer-content--light" style={{ color: bright }}>
           {footerContent}
         </span>
         <div className="terminal-card__footer-healthbar" style={{ width: `${pct}%`, backgroundColor: bright }} />
         <span className="terminal-card__footer-content terminal-card__footer-content--dark" style={{ color: preset ? preset.titleBarFg : undefined, clipPath: `inset(0 ${100 - pct}% 0 0)` }}>
+          {footerContent}
+        </span>
+      </div>
+        ) : (
+      <div className="terminal-card__footer" style={{ backgroundColor: dark, borderTopColor: preset ? preset.titleBarBg : undefined }}>
+        <span className="terminal-card__footer-content" style={{ color: bright }}>
           {footerContent}
         </span>
       </div>

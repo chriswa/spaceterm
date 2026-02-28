@@ -9,6 +9,8 @@ import type { CrabEntry } from '../lib/crab-nav'
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useUsageStore } from '../stores/usageStore'
+import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
+import { useFontStore, FONT_THEMES } from '../stores/fontStore'
 
 export type CrabNavEvent = { fromNodeId: string | null; toNodeId: string; ts: number } | null
 
@@ -88,6 +90,7 @@ export function Toolbar({
       >
         Good Gfx
       </button>
+      <ProportionalFontToggle />
       <FullscreenToggle />
       <AudioTapToggle />
       <BeatsToggle />
@@ -97,6 +100,7 @@ export function Toolbar({
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
         <span className="toolbar__status-item toolbar__metric">{(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span></span>
         <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
+        <GhRateLimitIndicator />
         <UsageIndicators />
       </span>
       {crabs.length > 0 && (
@@ -159,6 +163,68 @@ function AudioTapToggle() {
     >
       Audio Tap
     </button>
+  )
+}
+
+function ProportionalFontToggle() {
+  const proportional = useFontStore(s => s.proportional)
+  const toggle = useFontStore(s => s.toggle)
+  const themeId = useFontStore(s => s.themeId)
+  const setThemeId = useFontStore(s => s.setThemeId)
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="toolbar__font-group" ref={dropdownRef}>
+      <button
+        className={'toolbar__btn' + (proportional ? ' toolbar__btn--active' : '')}
+        onClick={toggle}
+        data-tooltip={proportional ? 'Switch to monospace font' : 'Switch to proportional font'}
+        data-tooltip-no-flip
+      >
+        Proportional
+      </button>
+      <button
+        className={'toolbar__font-dropdown-btn' + (open ? ' toolbar__font-dropdown-btn--open' : '')}
+        onClick={() => setOpen(o => !o)}
+        data-tooltip="Font theme"
+        data-tooltip-no-flip
+      >
+        ▾
+      </button>
+      {open && (
+        <div className="toolbar__font-menu">
+          {FONT_THEMES.map(t => (
+            <button
+              key={t.id}
+              className={'toolbar__font-menu-item' + (t.id === themeId ? ' toolbar__font-menu-item--active' : '')}
+              onClick={() => {
+                setThemeId(t.id)
+                if (!proportional) toggle()
+                setOpen(false)
+              }}
+            >
+              <span className="toolbar__font-menu-label">{t.label}</span>
+              <span className="toolbar__font-menu-preview" style={{ fontFamily: t.fontFamily, fontSize: t.fontSize, fontWeight: t.fontWeight }}>
+                Abc 123
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -711,79 +777,76 @@ function formatCredits(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-// --- Credit delta sparkline ---
+// --- Delta sparkline (reusable for any minute-keyed monotonic history) ---
 
 const SPARKLINE_W = 80
 const SPARKLINE_H = 20
 const SPARKLINE_PAD = 2
 
-function CreditSparkline({ history }: { history: (number | null)[] }) {
-  // Compute deltas between consecutive non-null entries
-  const deltas: { index: number; delta: number }[] = []
-  let prevVal: number | null = null
-  for (let i = 0; i < history.length; i++) {
-    const val = history[i]
-    if (val == null) { prevVal = null; continue }
-    if (prevVal != null) {
-      deltas.push({ index: i, delta: val - prevVal })
-    }
-    prevVal = val
+interface DeltaSparklineProps {
+  history: (number | null)[]
+  color: string          // e.g. '#4ade80'
+  formatPeak: (value: number) => string  // formats the peak delta for tooltip
+}
+
+function DeltaSparkline({ history, color, formatPeak }: DeltaSparklineProps) {
+  // Build one delta per history slot: zero for gaps, real delta for consecutive non-null pairs
+  const allDeltas: number[] = []
+  for (let i = 1; i < history.length; i++) {
+    const prev = history[i - 1]
+    const cur = history[i]
+    allDeltas.push(prev != null && cur != null ? cur - prev : 0)
   }
 
-  // Only show if there are non-zero deltas
-  if (deltas.length < 2 || !deltas.some(d => d.delta !== 0)) return null
+  // Only show if there's at least one non-zero delta
+  if (!allDeltas.some(d => d !== 0)) return null
 
-  const maxD = Math.max(...deltas.map(d => d.delta))
-  const range = maxD || 1  // bottom is always 0
+  const maxD = Math.max(...allDeltas)
+  const peakIdx = allDeltas.indexOf(maxD)
+  const range = maxD || 1
+  const bottomY = SPARKLINE_H - SPARKLINE_PAD
 
-  const points = deltas.map((d, i) => ({
-    x: SPARKLINE_PAD + (i / (deltas.length - 1)) * (SPARKLINE_W - 2 * SPARKLINE_PAD),
-    y: SPARKLINE_PAD + (1 - d.delta / range) * (SPARKLINE_H - 2 * SPARKLINE_PAD),
+  const points = allDeltas.map((d, i) => ({
+    x: SPARKLINE_PAD + (i / (allDeltas.length - 1)) * (SPARKLINE_W - 2 * SPARKLINE_PAD),
+    y: SPARKLINE_PAD + (1 - d / range) * (SPARKLINE_H - 2 * SPARKLINE_PAD),
   }))
 
-  // Build filled area segments, breaking on gaps in the original history indices
-  const bottomY = SPARKLINE_H - SPARKLINE_PAD
-  const segments: { line: string; area: string }[] = []
-  let startIdx = 0
-  for (let i = 0; i <= points.length; i++) {
-    if (i === points.length || (i > 0 && deltas[i].index - deltas[i - 1].index > 1)) {
-      // Close out the current segment
-      const seg = points.slice(startIdx, i)
-      const line = seg.map((p, j) => `${j === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-      const area = line + ` L ${seg[seg.length - 1].x} ${bottomY} L ${seg[0].x} ${bottomY} Z`
-      segments.push({ line, area })
-      startIdx = i
-    }
-  }
+  const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+  const area = line + ` L ${points[points.length - 1].x} ${bottomY} L ${points[0].x} ${bottomY} Z`
+  const minutesAgo = allDeltas.length - 1 - peakIdx
+  const peakTime = new Date(Date.now() - minutesAgo * 60_000)
+  const timeStr = peakTime.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }).toLowerCase()
+  const peakTooltip = `Recent peak: ${formatPeak(maxD)} / min @ ${timeStr}`
+
+  // Derive fill with 50% opacity from the stroke color
+  const fillColor = color.startsWith('#')
+    ? `${color}80`   // hex + 50% alpha
+    : color.replace('rgb(', 'rgba(').replace(')', ', 0.5)')
 
   return (
     <svg
       width={SPARKLINE_W}
       height={SPARKLINE_H}
       viewBox={`0 0 ${SPARKLINE_W} ${SPARKLINE_H}`}
+      data-tooltip={peakTooltip}
       style={{
         position: 'absolute',
         bottom: '100%',
         left: '50%',
         transform: 'translateX(-50%)',
         marginBottom: 2,
-        pointerEvents: 'none',
       }}
     >
-      {segments.map((seg, i) => (
-        <g key={i}>
-          <path d={seg.area} fill="rgba(74,222,128,0.5)" />
-          <path
-            d={seg.line}
-            fill="none"
-            stroke="#4ade80"
-            strokeWidth={1.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity={0.8}
-          />
-        </g>
-      ))}
+      <path d={area} fill={fillColor} />
+      <path
+        d={line}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={0.8}
+      />
     </svg>
   )
 }
@@ -829,6 +892,46 @@ function utilizationColor(pct: number): string {
   const r = 255
   const g = Math.round(255 - 90 * t) // 255 → 165
   return `rgb(${r},${g},0)`
+}
+
+function formatDelta(resetAt: string): string {
+  const diffMs = new Date(resetAt).getTime() - Date.now()
+  if (diffMs <= 0) return 'now'
+  const totalMinutes = Math.ceil(diffMs / 60_000)
+  if (totalMinutes < 60) return `${totalMinutes}m`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+}
+
+function GhRateLimitIndicator() {
+  const data = useGhRateLimitStore(s => s.data)
+  const usedHistory = useGhRateLimitStore(s => s.usedHistory)
+  const [, setTick] = useState(0)
+
+  // Re-render every 30s to keep the countdown fresh
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!data) return null
+
+  const pct = data.limit > 0 ? (data.used / data.limit) * 100 : 0
+
+  return (
+    <span
+      className="toolbar__status-item toolbar__metric"
+      style={{ position: 'relative' }}
+      data-tooltip={`GitHub GraphQL rate limit \u2022 resets in ${formatDelta(data.resetAt)}`}
+      data-tooltip-no-flip
+    >
+      <DeltaSparkline history={usedHistory} color="#60a5fa" formatPeak={(v) => `${v} req`} />
+      <span className="toolbar__metric-label">GH </span>
+      <span style={{ color: utilizationColor(pct) }}>{data.used}/{data.limit}</span>
+      <span style={{ color: '#888' }}> {formatDelta(data.resetAt)}</span>
+    </span>
+  )
 }
 
 function UsageIndicators() {
@@ -918,7 +1021,7 @@ function UsageIndicators() {
           data-tooltip={extra.monthly_limit != null ? `Limit: ${formatCredits(extra.monthly_limit)}` : 'Limit: unlimited'}
           data-tooltip-no-flip
         >
-          <CreditSparkline history={creditHistory} />
+          <DeltaSparkline history={creditHistory} color="#4ade80" formatPeak={formatCredits} />
           {formatCredits(extra.used_credits)}
         </span>
       )}

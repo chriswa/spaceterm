@@ -152,6 +152,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'gh-rate-limit') {
+      this.emit('gh-rate-limit', msg.data, msg.usedHistory)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)

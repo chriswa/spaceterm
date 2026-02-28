@@ -12,6 +12,7 @@ import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 import { angleBorderColor } from '../lib/angle-color'
+import { useRtsSelectStore } from '../stores/rtsSelectStore'
 
 const DRAG_THRESHOLD = 5
 const CARD_TOP_PADDING = 28
@@ -647,6 +648,7 @@ export function MarkdownCard({
   }
 
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const rtsSelectActive = useRtsSelectStore(s => s.active)
   const isEmpty = !content.trim()
 
   const displayWidth = draftDims?.width ?? width
@@ -680,7 +682,7 @@ export function MarkdownCard({
         '--markdown-accent': preset?.markdownAccent ?? '#4d9eff',
         '--markdown-highlight': preset?.markdownHighlight ?? '#ffc94d',
         '--markdown-blockquote-fg': blendHex(preset?.markdownFg ?? '#cdd6f4', preset?.terminalBg ?? '#1e1e2e', 0.7),
-        ...(focused ? { borderColor: angleBorderColor(x, y), boxShadow: `0 0 4px ${angleBorderColor(x, y)}` } : undefined),
+        ...(focused && !rtsSelectActive ? { borderColor: angleBorderColor(x, y), boxShadow: `0 0 4px ${angleBorderColor(x, y)}` } : undefined),
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}

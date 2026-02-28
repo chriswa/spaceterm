@@ -48,6 +48,7 @@ export type ClaudeContextCallback = (sessionId: string, contextRemainingPercent:
 export type ClaudeSessionLineCountCallback = (sessionId: string, lineCount: number) => void
 export type ClaudeStatusUnreadCallback = (sessionId: string, unread: boolean) => void
 export type ClaudeStatusAsleepCallback = (sessionId: string, asleep: boolean) => void
+export type ActivityCallback = (sessionId: string) => void
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
@@ -62,8 +63,9 @@ export class SessionManager {
   private onClaudeSessionLineCount: ClaudeSessionLineCountCallback
   private onClaudeStatusUnread: ClaudeStatusUnreadCallback
   private onClaudeStatusAsleep: ClaudeStatusAsleepCallback
+  private onActivity: ActivityCallback
 
-  constructor(daemon: DaemonClient, onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback, onClaudeStatusAsleep: ClaudeStatusAsleepCallback) {
+  constructor(daemon: DaemonClient, onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback, onClaudeStatusAsleep: ClaudeStatusAsleepCallback, onActivity: ActivityCallback) {
     this.daemon = daemon
     this.onData = onData
     this.onExit = onExit
@@ -75,6 +77,7 @@ export class SessionManager {
     this.onClaudeSessionLineCount = onClaudeSessionLineCount
     this.onClaudeStatusUnread = onClaudeStatusUnread
     this.onClaudeStatusAsleep = onClaudeStatusAsleep
+    this.onActivity = onActivity
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -134,6 +137,7 @@ export class SessionManager {
     if (!session) return
     session.titleParser.write(data)
     session.batcher.write(data)
+    this.onActivity(sessionId)
   }
 
   /** Called by the daemon message router when a PTY exits. */
@@ -166,6 +170,7 @@ export class SessionManager {
   write(sessionId: string, data: string): void {
     if (!this.sessions.has(sessionId)) return
     this.daemon.send({ type: 'write', id: sessionId, data })
+    this.onActivity(sessionId)
   }
 
   resize(sessionId: string, cols: number, rows: number): void {

@@ -7,6 +7,7 @@ interface CanvasProps {
   surfaceRef?: React.RefObject<HTMLDivElement | null>
   onWheel: (e: WheelEvent) => void
   onPanStart: (e: MouseEvent) => void
+  onRtsSelectStart?: (e: MouseEvent) => void
   onCanvasClick: (e: MouseEvent) => void
   onDoubleClick: () => void
   background?: React.ReactNode
@@ -14,7 +15,7 @@ interface CanvasProps {
   children: React.ReactNode
 }
 
-export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick, onDoubleClick, background, overlay, children }: CanvasProps) {
+export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectStart, onCanvasClick, onDoubleClick, background, overlay, children }: CanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -41,6 +42,12 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick,
     if (e.button !== 0) return
     if ((e.target as HTMLElement).closest('.canvas-node')) return
 
+    // Shift+drag starts RTS select instead of pan
+    if (e.shiftKey && onRtsSelectStart) {
+      onRtsSelectStart(e.nativeEvent)
+      return
+    }
+
     const startX = e.clientX
     const startY = e.clientY
     let didDrag = false
@@ -63,7 +70,7 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onCanvasClick,
 
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
-  }, [onPanStart, onCanvasClick])
+  }, [onPanStart, onRtsSelectStart, onCanvasClick])
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.canvas-node')) return

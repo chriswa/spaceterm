@@ -20,6 +20,7 @@ import { KeycastOverlay } from './components/KeycastOverlay'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
+import { useRtsSelect } from './hooks/useRtsSelect'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
@@ -99,6 +100,29 @@ export function App() {
   const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
   const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
+
+  const { startDrag: startRtsSelect, overlayElement: rtsSelectOverlay } = useRtsSelect(cameraRef, (selectedNodeIds) => {
+    const allNodes = useNodeStore.getState().nodes
+    const rects = selectedNodeIds
+      .map(id => {
+        const node = allNodes[id]
+        if (!node) return null
+        const size = nodePixelSize(node)
+        return { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
+      })
+      .filter((r): r is { x: number; y: number; width: number; height: number } => r !== null)
+    if (rects.length === 0) return
+    const bounds = unionBounds(rects)
+    if (!bounds) return
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+    // Unfocus before flying to selection
+    focusRef.current = null
+    pinnedFocusRef.current = false
+    setFocusedId(null)
+    setScrollMode(false)
+    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05))
+  })
 
   // Subscribe to store
   const nodes = useNodeStore(s => s.nodes)
@@ -1570,6 +1594,17 @@ export function App() {
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
+  const handleRtsSelectStart = useCallback((e: MouseEvent) => {
+    setSearchVisible(false)
+    setHelpVisible(false)
+    setQuickActions(null)
+    setEdgeSplit(null)
+    if (focusRef.current && !pinnedFocusRef.current) {
+      handleUnfocus()
+    }
+    startRtsSelect(e)
+  }, [startRtsSelect, handleUnfocus])
+
   const handleCanvasUnfocus = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
     setHelpVisible(false)
@@ -1625,7 +1660,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} goodGfx={goodGfx} />} overlay={<><SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} goodGfx={goodGfx} />} overlay={<>{rtsSelectOverlay}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <RootNode
           focused={focusedId === 'root'}
           selected={selection === 'root'}
@@ -1684,6 +1719,7 @@ export function App() {
             onFork={handleForkSession}
             onExtraCliArgs={handleExtraCliArgs}
             extraCliArgs={t.extraCliArgs}
+            lastInteractedAt={t.lastInteractedAt}
             onAddNode={handleAddNode}
             cameraRef={cameraRef}
           />

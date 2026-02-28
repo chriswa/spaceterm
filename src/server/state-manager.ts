@@ -227,7 +227,8 @@ export class StateManager {
     rows: number,
     cwd?: string,
     initialTitleHistory?: string[],
-    name?: string
+    name?: string,
+    insertAfterNodeId?: string
   ): TerminalNodeData {
     const zIndex = this.state.nextZIndex++
     const now = new Date().toISOString()
@@ -239,7 +240,24 @@ export class StateManager {
       shellTitleHistory: [...seedHistory]
     }
 
-    const sortOrder = this.nextSortOrder()
+    let sortOrder: number
+    if (insertAfterNodeId) {
+      const sourceNode = this.state.nodes[insertAfterNodeId]
+      if (sourceNode?.type === 'terminal' && sourceNode.sortOrder != null) {
+        const sourceSortOrder = sourceNode.sortOrder
+        for (const node of Object.values(this.state.nodes)) {
+          if (node.type === 'terminal' && node.sortOrder > sourceSortOrder) {
+            node.sortOrder += 1
+            this.onNodeUpdate(node.id, { sortOrder: node.sortOrder } as Partial<TerminalNodeData>)
+          }
+        }
+        sortOrder = sourceSortOrder + 1
+      } else {
+        sortOrder = this.nextSortOrder()
+      }
+    } else {
+      sortOrder = this.nextSortOrder()
+    }
 
     const node: TerminalNodeData = {
       id: sessionId,
@@ -694,6 +712,19 @@ export class StateManager {
     if (!node) return
     node.claudeStatusAsleep = asleep
     this.onNodeUpdate(node.id, { claudeStatusAsleep: asleep } as Partial<TerminalNodeData>)
+    this.schedulePersist()
+  }
+
+  updateLastInteracted(ptySessionId: string, timestamp: number): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node) return
+    const prevMinute = node.lastInteractedAt ? Math.floor(node.lastInteractedAt / 60000) : -1
+    const curMinute = Math.floor(timestamp / 60000)
+    node.lastInteractedAt = timestamp
+    // Only broadcast when the displayed minute value changes (or on first activity)
+    if (curMinute !== prevMinute) {
+      this.onNodeUpdate(node.id, { lastInteractedAt: timestamp } as Partial<TerminalNodeData>)
+    }
     this.schedulePersist()
   }
 

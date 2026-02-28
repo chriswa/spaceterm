@@ -79,6 +79,7 @@ interface NodeApi {
   onRemoved(callback: (nodeId: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
   onClaudeUsage(callback: (usage: import('../../../server/claude-usage').ClaudeUsageData, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => void): () => void
+  onGhRateLimit(callback: (data: import('../../../../shared/protocol').GhRateLimitData, usedHistory: (number | null)[]) => void): () => void
 }
 
 interface TtsApi {

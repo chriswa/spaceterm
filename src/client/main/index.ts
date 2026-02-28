@@ -456,6 +456,12 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('gh-rate-limit', (data: Record<string, unknown>, usedHistory: (number | null)[]) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('gh-rate-limit', data, usedHistory)
+    }
+  })
+
   client!.on('connect', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('server:status', true)

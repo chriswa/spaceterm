@@ -54,6 +54,7 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeStatusUnread: boolean
   claudeStatusAsleep: boolean
   claudeModel?: string
+  lastInteractedAt?: number  // epoch ms — max of last PTY input and last PTY output
   sortOrder: number
   terminalSessions: TerminalSessionEntry[]
   /** Legacy field — kept for backward compat with existing client code during migration */

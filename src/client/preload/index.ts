@@ -207,6 +207,11 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => callback(usage, subscriptionType, rateLimitTier, creditHistory)
     ipcRenderer.on('claude-usage', listener)
     return () => ipcRenderer.removeListener('claude-usage', listener)
+  },
+  onGhRateLimit: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: any, usedHistory: (number | null)[]) => callback(data, usedHistory)
+    ipcRenderer.on('gh-rate-limit', listener)
+    return () => ipcRenderer.removeListener('gh-rate-limit', listener)
   }
 }
 

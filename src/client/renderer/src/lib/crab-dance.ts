@@ -74,7 +74,15 @@ export class CrabDance {
       const maxBounce = 3
       bounce = maxBounce * Math.abs(Math.sin(2 * Math.PI * this.dancePhase))
     } else {
-      glowPulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * now / 2000)
+      // No BPM: gentle time-based fallback (~0.5Hz)
+      const t = (now % 2000) / 2000
+      glowPulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * t)
+
+      const maxRock = 5
+      const c = Math.cos(2 * Math.PI * t)
+      rock = maxRock * c * Math.abs(c)
+
+      bounce = 2 * Math.abs(Math.sin(2 * Math.PI * t * 2))
     }
 
     return { glowPulse, rock, bounce }
