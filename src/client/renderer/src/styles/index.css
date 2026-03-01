@@ -69,7 +69,8 @@ html, body, #root {
   border-radius: 4px;
   background: rgba(255,255,255,0.06);
   color: #fff;
-  font-size: 13px;
+  font-size: 18px;
+  line-height: 1;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -98,25 +99,9 @@ html, body, #root {
   display: none;
 }
 
-.toolbar__status-btn {
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 13px;
-  font-family: inherit;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  padding: 2px 4px 2px 4px;
-  border-radius: 4px;
-}
-
 .toolbar__zoom > :last-child {
   padding-right: 0;
   transition: background 0.15s, color 0.15s;
-}
-
-.toolbar__status-btn:hover {
-  background: rgba(255,255,255,0.12);
 }
 
 .toolbar__perf {

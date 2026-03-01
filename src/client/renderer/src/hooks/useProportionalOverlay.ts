@@ -7,20 +7,107 @@ import { resolveFg, resolveBg } from '../../../../shared/terminal-colors'
 
 interface Span {
   text: string
+  startCol: number    // terminal column where this span starts
+  colCount: number    // number of terminal columns this span covers
   fg: string
   bg: string
   bold: boolean
+  boxDrawing: boolean // true = box-drawing chars, always rendered at grid positions
 }
 
-/** Read visible viewport rows from xterm buffer and group cells into styled spans. */
-function readViewport(term: Terminal): Span[][] {
+interface RowData {
+  spans: Span[]
+}
+
+/** Box-drawing characters (U+2500–U+257F) should always snap to the monospace grid. */
+export function isBoxDrawing(ch: string): boolean {
+  const c = ch.charCodeAt(0)
+  return c >= 0x2500 && c <= 0x257F
+}
+
+/** Classify a box-drawing character's horizontal alignment within its grid cell.
+ *  - 'full':   has both left+right connections (─, ┬, ┴, ┼) — no offset
+ *  - 'center': vertical only (│) — centered in cell
+ *  - 'right':  right connection only (┌, └, ├) — right-aligned
+ *  - 'left':   left connection only (┐, ┘, ┤) — left-aligned */
+export function boxDrawingAlignment(ch: string): 'full' | 'center' | 'left' | 'right' {
+  const c = ch.charCodeAt(0)
+
+  // Vertical lines — center
+  if (c === 0x2502 || c === 0x2503) return 'center'                    // │ ┃
+  if (c === 0x2506 || c === 0x2507) return 'center'                    // ┆ ┇
+  if (c === 0x250A || c === 0x250B) return 'center'                    // ┊ ┋
+  if (c === 0x2551) return 'center'                                    // ║
+  if (c === 0x2575 || c === 0x2577 || c === 0x2579 || c === 0x257B) return 'center' // ╵╷╹╻
+  if (c === 0x257D || c === 0x257F) return 'center'                    // ╽╿
+
+  // Down-right corners — right-align
+  if (c >= 0x250C && c <= 0x250F) return 'right'                       // ┌┍┎┏
+  // Up-right corners — right-align
+  if (c >= 0x2514 && c <= 0x2517) return 'right'                       // └┕┖┗
+  // T-right pieces — right-align
+  if (c >= 0x251C && c <= 0x2523) return 'right'                       // ├┝┞┟┠┡┢┣
+
+  // Down-left corners — left-align
+  if (c >= 0x2510 && c <= 0x2513) return 'left'                        // ┐┑┒┓
+  // Up-left corners — left-align
+  if (c >= 0x2518 && c <= 0x251B) return 'left'                        // ┘┙┚┛
+  // T-left pieces — left-align
+  if (c >= 0x2524 && c <= 0x252B) return 'left'                        // ┤┥┦┧┨┩┪┫
+
+  // Double-line variants
+  if (c >= 0x2552 && c <= 0x2554) return 'right'                       // ╒╓╔
+  if (c >= 0x2555 && c <= 0x2557) return 'left'                        // ╕╖╗
+  if (c >= 0x2558 && c <= 0x255A) return 'right'                       // ╘╙╚
+  if (c >= 0x255B && c <= 0x255D) return 'left'                        // ╛╜╝
+  if (c >= 0x255E && c <= 0x2560) return 'right'                       // ╞╟╠
+  if (c >= 0x2561 && c <= 0x2563) return 'left'                        // ╡╢╣
+
+  // Rounded corners
+  if (c === 0x256D || c === 0x2570) return 'right'                     // ╭╰
+  if (c === 0x256E || c === 0x256F) return 'left'                      // ╮╯
+
+  // Half-lines
+  if (c === 0x2574 || c === 0x2578) return 'left'                      // ╴╸
+  if (c === 0x2576 || c === 0x257A) return 'right'                     // ╶╺
+
+  // Everything else: horizontal lines, T-down/up, crosses → full width
+  return 'full'
+}
+
+/** Draw a single box-drawing character at the correct alignment within its grid cell. */
+function drawBoxChar(
+  ctx: CanvasRenderingContext2D,
+  ch: string,
+  cx: number,
+  rowY: number,
+  fg: string,
+  verticalOffset: number,
+) {
+  if (ch === ' ') return
+  const align = boxDrawingAlignment(ch)
+  let drawX = cx
+  if (align === 'center') {
+    drawX = cx + (CELL_WIDTH - ctx.measureText(ch).width) / 2
+  } else if (align === 'right') {
+    drawX = cx + CELL_WIDTH - ctx.measureText(ch).width
+  }
+  ctx.fillStyle = fg
+  ctx.textBaseline = 'top'
+  ctx.fillText(ch, drawX, rowY + verticalOffset)
+}
+
+/** Read visible viewport rows from xterm buffer, grouping cells into styled spans.
+ *  Box-drawing characters are isolated into separate spans so they can be
+ *  anchored to their monospace grid positions during painting. */
+function readViewport(term: Terminal): RowData[] {
   const buffer = term.buffer.active
-  const rows: Span[][] = []
+  const rowData: RowData[] = []
 
   for (let y = 0; y < term.rows; y++) {
     const line = buffer.getLine(buffer.viewportY + y)
     if (!line) {
-      rows.push([])
+      rowData.push({ spans: [] })
       continue
     }
 
@@ -30,8 +117,12 @@ function readViewport(term: Terminal): Span[][] {
     for (let x = 0; x < term.cols; x++) {
       const cell = line.getCell(x)
       if (!cell) {
-        if (cur) cur.text += ' '
-        else { cur = { text: ' ', fg: '', bg: DEFAULT_BG, bold: false }; spans.push(cur) }
+        // Null cell: append space, never box-drawing
+        if (cur && !cur.boxDrawing) { cur.text += ' '; cur.colCount++ }
+        else {
+          cur = { text: ' ', startCol: x, colCount: 1, fg: '', bg: DEFAULT_BG, bold: false, boxDrawing: false }
+          spans.push(cur)
+        }
         continue
       }
 
@@ -41,19 +132,22 @@ function readViewport(term: Terminal): Span[][] {
       let bg = resolveBg(cell)
       if (inverse) { const tmp = fg; fg = bg; bg = tmp }
       const bold = !!(cell.isBold && cell.isBold())
+      const box = isBoxDrawing(ch)
 
-      if (cur && cur.fg === fg && cur.bg === bg && cur.bold === bold) {
+      // Merge into current span only if attributes match AND box-drawing mode matches
+      if (cur && cur.fg === fg && cur.bg === bg && cur.bold === bold && cur.boxDrawing === box) {
         cur.text += ch
+        cur.colCount++
       } else {
-        cur = { text: ch, fg, bg, bold }
+        cur = { text: ch, startCol: x, colCount: 1, fg, bg, bold, boxDrawing: box }
         spans.push(cur)
       }
     }
 
-    rows.push(spans)
+    rowData.push({ spans })
   }
 
-  return rows
+  return rowData
 }
 
 /** Build a CSS font string from a theme and bold flag. */
@@ -66,7 +160,7 @@ function fontString(theme: FontTheme, bold: boolean): string {
  *  fixed-width indentation to proportional text.
  *  Explicitly enumerates script ranges so symbols (box-drawing, dingbats,
  *  miscellaneous technical, etc.) stay in fixed-width mode. */
-function isAlphanumeric(ch: string): boolean {
+export function isAlphanumeric(ch: string): boolean {
   const c = ch.charCodeAt(0)
   return (c >= 0x30 && c <= 0x39)       // 0-9
       || (c >= 0x41 && c <= 0x5A)       // A-Z
@@ -91,67 +185,39 @@ export function findFirstAlnum(text: string): number {
   return -1
 }
 
-/** Draw a span segment with fixed-width character spacing (CELL_WIDTH per char).
- *  Used for leading indentation / box-drawing / symbols. */
-function drawFixed(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  xOffset: number,
-  rowY: number,
-  rowHeight: number,
-  fg: string,
-  bg: string,
-  termBg: string,
-  verticalOffset: number,
-) {
-  for (let i = 0; i < text.length; i++) {
-    const cx = xOffset + i * CELL_WIDTH
-    if (bg !== DEFAULT_BG && bg !== termBg) {
-      ctx.fillStyle = bg
-      ctx.fillRect(cx, rowY, CELL_WIDTH, rowHeight)
-    }
-    if (text[i] !== ' ') {
-      ctx.fillStyle = fg
-      ctx.textBaseline = 'top'
-      ctx.fillText(text[i], cx, rowY + verticalOffset)
+
+/** Minimum columns a background color must cover to be considered structural
+ *  (full-line diff bands). Prevents small elements like cursors or short
+ *  highlights from being grid-positioned. */
+const STRUCTURAL_BG_MIN_COLS = 8
+
+/** Find the dominant (most-used) non-default background color on a row.
+ *  Returns '' if no color covers at least STRUCTURAL_BG_MIN_COLS columns. */
+function findStructuralBg(spans: Span[], termBg: string): string {
+  const counts = new Map<string, number>()
+  for (const span of spans) {
+    if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+      counts.set(span.bg, (counts.get(span.bg) ?? 0) + span.colCount)
     }
   }
+  let best = ''
+  let bestCount = 0
+  for (const [bg, count] of counts) {
+    if (count > bestCount) { bestCount = count; best = bg }
+  }
+  return bestCount >= STRUCTURAL_BG_MIN_COLS ? best : ''
 }
 
-/** Draw a span segment with proportional (natural) character spacing.
- *  Used for actual text content after the indentation prefix. */
-function drawProportional(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  xOffset: number,
-  rowY: number,
-  rowHeight: number,
-  fg: string,
-  bg: string,
-  termBg: string,
-  verticalOffset: number,
-): number {
-  const textWidth = ctx.measureText(text).width
-  if (bg !== DEFAULT_BG && bg !== termBg) {
-    ctx.fillStyle = bg
-    ctx.fillRect(xOffset, rowY, textWidth, rowHeight)
-  }
-  if (text.trim().length > 0) {
-    ctx.fillStyle = fg
-    ctx.textBaseline = 'top'
-    ctx.fillText(text, xOffset, rowY + verticalOffset)
-  }
-  return textWidth
-}
-
-/** Paint text to the overlay canvas using hybrid spacing:
- *  - Leading non-alphanumeric characters (indentation, box-drawing, symbols)
- *    are rendered at fixed CELL_WIDTH spacing to preserve alignment.
- *  - Once the first letter or digit is encountered on a row, the remainder
- *    of that row is rendered with proportional (natural) spacing. */
+/** Paint text to the overlay canvas using three-layer rendering per row:
+ *  Layer 1 (bottom): structural backgrounds at monospace grid positions — the
+ *    dominant bg color on each row tiles seamlessly for clean diff bands.
+ *  Layer 2 (middle): contextual backgrounds at proportional positions — inline
+ *    highlights (non-dominant bg) track the text they annotate.
+ *  Layer 3 (top): text using hybrid spacing (fixed prefix + proportional +
+ *    box-drawing anchors). */
 function paint(
   ctx: CanvasRenderingContext2D,
-  spans: Span[][],
+  rowData: RowData[],
   cols: number,
   rows: number,
   termBg: string,
@@ -164,38 +230,102 @@ function paint(
   ctx.fillStyle = termBg
   ctx.fillRect(0, 0, cw, ch)
 
-  for (let y = 0; y < spans.length; y++) {
-    let xOffset = 0
-    let proportional = false // flips to true at first letter/digit on this row
+  // --- Layer 1: structural backgrounds at monospace grid positions ---
+  for (let y = 0; y < rowData.length; y++) {
     const rowY = y * rowHeight
+    const structBg = findStructuralBg(rowData[y].spans, termBg)
+    if (!structBg) continue
+    // Fill structural bg for ALL non-default spans (not just matching ones),
+    // since contextual-bg spans sit within the structural band and Layer 2
+    // will overpaint them at proportional positions.
+    ctx.fillStyle = structBg
+    for (const span of rowData[y].spans) {
+      if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+        ctx.fillRect(span.startCol * CELL_WIDTH, rowY, span.colCount * CELL_WIDTH, rowHeight)
+      }
+    }
+  }
 
-    for (const span of spans[y]) {
+  // --- Layers 2+3: contextual backgrounds + text (interleaved per span) ---
+  for (let y = 0; y < rowData.length; y++) {
+    let xOffset = 0
+    let proportional = false
+    const rowY = y * rowHeight
+    const structBg = findStructuralBg(rowData[y].spans, termBg)
+
+    for (const span of rowData[y].spans) {
       ctx.font = fontString(theme, span.bold)
 
-      if (proportional) {
-        // Entire span is proportional
-        xOffset += drawProportional(ctx, span.text, xOffset, rowY, rowHeight,
-          span.fg, span.bg, termBg, theme.verticalOffset)
-      } else {
-        // Scan for the first alphanumeric character in this span
-        const match = findFirstAlnum(span.text)
+      // Determine proportional width for this span (used for contextual bg + xOffset)
+      let spanPxWidth: number
 
+      if (span.boxDrawing) {
+        // Box-drawing: always snap to monospace grid position
+        xOffset = span.startCol * CELL_WIDTH
+        spanPxWidth = span.text.length * CELL_WIDTH
+      } else if (proportional) {
+        spanPxWidth = ctx.measureText(span.text).width
+      } else {
+        const match = findFirstAlnum(span.text)
         if (match === -1) {
-          // Entire span is fixed-width prefix
-          drawFixed(ctx, span.text, xOffset, rowY, rowHeight,
-            span.fg, span.bg, termBg, theme.verticalOffset)
-          xOffset += span.text.length * CELL_WIDTH
+          spanPxWidth = span.text.length * CELL_WIDTH
         } else {
-          // Split: fixed-width prefix, then proportional remainder
-          if (match > 0) {
-            const prefix = span.text.slice(0, match)
-            drawFixed(ctx, prefix, xOffset, rowY, rowHeight,
-              span.fg, span.bg, termBg, theme.verticalOffset)
-            xOffset += prefix.length * CELL_WIDTH
+          // prefix is fixed, rest is proportional — compute combined width
+          spanPxWidth = match * CELL_WIDTH + ctx.measureText(span.text.slice(match)).width
+        }
+      }
+
+      // Layer 2: contextual background (non-structural, non-default)
+      const isContextualBg = span.bg !== DEFAULT_BG && span.bg !== termBg && span.bg !== structBg
+      if (isContextualBg) {
+        ctx.fillStyle = span.bg
+        ctx.fillRect(xOffset, rowY, spanPxWidth, rowHeight)
+      }
+
+      // Layer 3: text
+      if (span.boxDrawing) {
+        for (let i = 0; i < span.text.length; i++) {
+          drawBoxChar(ctx, span.text[i], xOffset + i * CELL_WIDTH, rowY, span.fg, theme.verticalOffset)
+        }
+        xOffset += spanPxWidth
+      } else if (proportional) {
+        if (span.text.trim().length > 0) {
+          ctx.fillStyle = span.fg
+          ctx.textBaseline = 'top'
+          ctx.fillText(span.text, xOffset, rowY + theme.verticalOffset)
+        }
+        xOffset += spanPxWidth
+      } else {
+        const match = findFirstAlnum(span.text)
+        if (match === -1) {
+          for (let i = 0; i < span.text.length; i++) {
+            if (isBoxDrawing(span.text[i])) {
+              drawBoxChar(ctx, span.text[i], xOffset + i * CELL_WIDTH, rowY, span.fg, theme.verticalOffset)
+            } else if (span.text[i] !== ' ') {
+              ctx.fillStyle = span.fg
+              ctx.textBaseline = 'top'
+              ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, rowY + theme.verticalOffset)
+            }
           }
+          xOffset += spanPxWidth
+        } else {
+          for (let i = 0; i < match; i++) {
+            if (isBoxDrawing(span.text[i])) {
+              drawBoxChar(ctx, span.text[i], xOffset + i * CELL_WIDTH, rowY, span.fg, theme.verticalOffset)
+            } else if (span.text[i] !== ' ') {
+              ctx.fillStyle = span.fg
+              ctx.textBaseline = 'top'
+              ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, rowY + theme.verticalOffset)
+            }
+          }
+          xOffset += match * CELL_WIDTH
           const rest = span.text.slice(match)
-          xOffset += drawProportional(ctx, rest, xOffset, rowY, rowHeight,
-            span.fg, span.bg, termBg, theme.verticalOffset)
+          if (rest.trim().length > 0) {
+            ctx.fillStyle = span.fg
+            ctx.textBaseline = 'top'
+            ctx.fillText(rest, xOffset, rowY + theme.verticalOffset)
+          }
+          xOffset += ctx.measureText(rest).width
           proportional = true
         }
       }
@@ -246,8 +376,8 @@ export function useProportionalOverlay(
 
     const repaint = () => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      const spans = readViewport(term)
-      paint(ctx, spans, cols, rows, termBg, theme)
+      const rowData = readViewport(term)
+      paint(ctx, rowData, cols, rows, termBg, theme)
     }
 
     // Initial paint

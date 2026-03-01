@@ -144,9 +144,20 @@ function hide() {
 }
 
 export function initTooltips(): void {
+  // Watch for data-tooltip attribute changes while a tooltip is visible.
+  // This handles cases where React re-renders a button mid-hover (e.g. toggle
+  // buttons) and changes the attribute without triggering a new mouseover event.
+  const observer = new MutationObserver(() => {
+    if (currentTarget) {
+      show(currentTarget)
+    }
+  })
+
   document.addEventListener('mouseover', (e) => {
     const target = (e.target as HTMLElement).closest?.('[data-tooltip]') as HTMLElement | null
     if (target) {
+      observer.disconnect()
+      observer.observe(target, { attributeFilter: ['data-tooltip'] })
       show(target)
     } else if (currentTarget) {
       hide()
@@ -157,6 +168,7 @@ export function initTooltips(): void {
     if (!currentTarget) return
     const related = e.relatedTarget as HTMLElement | null
     if (!related || !currentTarget.contains(related)) {
+      observer.disconnect()
       hide()
     }
   })

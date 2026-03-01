@@ -33,7 +33,6 @@ function camerasClose(a: Camera, b: Camera): boolean {
 }
 
 export type CameraEventType = 'flyTo' | 'settle' | 'snapback'
-export type InputDevice = 'mouse' | 'trackpad'
 
 export function useCamera(
   initialCamera?: Camera,
@@ -53,9 +52,6 @@ export function useCamera(
 
   const surfaceRef = useRef<HTMLDivElement>(null)
   const syncTimerRef = useRef<number>(0)
-
-  const inputDeviceRef = useRef<InputDevice>('mouse')
-  const [inputDevice, setInputDevice] = useState<InputDevice>('mouse')
 
   const snapBackTimerRef = useRef<number>(0)
   const isSnapBackRef = useRef(false)
@@ -245,12 +241,6 @@ export function useCamera(
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
 
-    // Detect trackpad: mice can't produce simultaneous X+Y scroll
-    if (e.deltaX !== 0 && inputDeviceRef.current === 'mouse') {
-      inputDeviceRef.current = 'trackpad'
-      setInputDevice('trackpad')
-    }
-
     const isZoomAnimating = Math.abs(cameraRef.current.z - targetRef.current.z) > 0.001
 
     if (e.ctrlKey || e.metaKey) {
@@ -270,25 +260,9 @@ export function useCamera(
       scheduleSync()
       lastZoomPointRef.current = point
       scheduleSnapBack(next, snapMax, point)
-    } else if (inputDeviceRef.current === 'trackpad') {
-      // Trackpad pan — always allowed, scaled for target zoom feel
-      userPan(e.deltaX, e.deltaY)
     } else {
-      // Mouse wheel zoom — block during flyTo but allow during snap-back
-      if (isZoomAnimating && !isSnapBackRef.current) return
-      if (isSnapBackRef.current) {
-        targetRef.current = { ...cameraRef.current }
-        isSnapBackRef.current = false
-      }
-      const point = { x: e.clientX, y: e.clientY }
-      const snapMax = focusedRef?.current ? ZOOM_SNAP_HIGH : ZOOM_SNAP_HIGH_UNFOCUSED
-      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY, snapMax)
-      cameraRef.current = next
-      targetRef.current = { ...next }
-      applyToDOM(next)
-      scheduleSync()
-      lastZoomPointRef.current = point
-      scheduleSnapBack(next, snapMax, point)
+      // Trackpad pan
+      userPan(e.deltaX, e.deltaY)
     }
   }, [focusedRef, userPan, applyToDOM, scheduleSync, scheduleSnapBack])
 
@@ -515,12 +489,6 @@ export function useCamera(
     rafRef.current = requestAnimationFrame(hopTick)
   }, [applyToDOM])
 
-  const toggleInputDevice = useCallback(() => {
-    const next = inputDeviceRef.current === 'mouse' ? 'trackpad' : 'mouse'
-    inputDeviceRef.current = next
-    setInputDevice(next)
-  }, [])
-
   const captureDebugState = useCallback(() => {
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     const canvas = document.querySelector('.canvas-viewport canvas') as HTMLCanvasElement | null
@@ -602,5 +570,5 @@ export function useCamera(
     rafRef.current = requestAnimationFrame(shakeTick)
   }, [applyToDOM])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef, captureDebugState }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState }
 }

@@ -29,6 +29,7 @@ import { DEFAULT_PRESET } from './lib/color-presets'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
+import { useCameraLockStore } from './stores/cameraLockStore'
 import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
@@ -99,7 +100,7 @@ export function App() {
   const shiftClickPendingRef = useRef(false)
   const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, inputDevice, toggleInputDevice, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
 
   const { startDrag: startRtsSelect, overlayElement: rtsSelectOverlay } = useRtsSelect(cameraRef, (selectedNodeIds) => {
     const allNodes = useNodeStore.getState().nodes
@@ -121,7 +122,7 @@ export function App() {
     pinnedFocusRef.current = false
     setFocusedId(null)
     setScrollMode(false)
-    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05))
+    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0))
   })
 
   // Subscribe to store
@@ -636,7 +637,7 @@ export function App() {
       bringToFront(nodeId)
     }
 
-    if (!pinnedFocusRef.current) {
+    if (!pinnedFocusRef.current && !useCameraLockStore.getState().locked) {
       let bounds: { x: number; y: number; width: number; height: number }
       let padding = 0.025
 
@@ -687,27 +688,28 @@ export function App() {
     sendBringToFront(nodeId)
     bringToFront(nodeId)
 
-    const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
-    const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
-    const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+    if (!useCameraLockStore.getState().locked) {
+      const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
+      const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
+      const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
 
-    if (dist < 50) {
-      flyTo(targetCamera, computeFlyToSpeed(dist))
-      return
-    }
+      if (dist < 50) {
+        flyTo(targetCamera, computeFlyToSpeed(dist))
+      } else {
+        const topLeft = screenToCanvas({ x: 0, y: 0 }, cameraRef.current)
+        const bottomRight = screenToCanvas({ x: viewport.clientWidth, y: viewport.clientHeight }, cameraRef.current)
+        const targetInViewport =
+          targetBounds.x >= topLeft.x &&
+          targetBounds.y >= topLeft.y &&
+          targetBounds.x + targetBounds.width <= bottomRight.x &&
+          targetBounds.y + targetBounds.height <= bottomRight.y
 
-    const topLeft = screenToCanvas({ x: 0, y: 0 }, cameraRef.current)
-    const bottomRight = screenToCanvas({ x: viewport.clientWidth, y: viewport.clientHeight }, cameraRef.current)
-    const targetInViewport =
-      targetBounds.x >= topLeft.x &&
-      targetBounds.y >= topLeft.y &&
-      targetBounds.x + targetBounds.width <= bottomRight.x &&
-      targetBounds.y + targetBounds.height <= bottomRight.y
-
-    if (targetInViewport) {
-      flyTo(targetCamera, computeFlyToSpeed(dist))
-    } else {
-      hopFlyTo({ targetCamera, targetBounds, duration: computeFlyToDuration(dist) })
+        if (targetInViewport) {
+          flyTo(targetCamera, computeFlyToSpeed(dist))
+        } else {
+          hopFlyTo({ targetCamera, targetBounds, duration: computeFlyToDuration(dist) })
+        }
+      }
     }
   }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
 
@@ -1562,6 +1564,7 @@ export function App() {
   const handleNodeReady = useCallback((nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => {
     if (focusRef.current !== nodeId) return
     if (pinnedFocusRef.current) return
+    if (useCameraLockStore.getState().locked) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
     flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025))
@@ -1885,8 +1888,6 @@ export function App() {
         />
       </Canvas>
       <Toolbar
-        inputDevice={inputDevice}
-        onToggleInputDevice={toggleInputDevice}
         crabs={crabs}
         onCrabClick={handleCrabClick}
         onCrabReorder={handleCrabReorder}

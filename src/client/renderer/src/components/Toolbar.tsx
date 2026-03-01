@@ -1,5 +1,4 @@
 import { useRef, useEffect, useLayoutEffect, useState } from 'react'
-import type { InputDevice } from '../hooks/useCamera'
 import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
 import { useAudioStore } from '../stores/audioStore'
@@ -11,12 +10,11 @@ import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useFontStore, FONT_THEMES } from '../stores/fontStore'
+import { useCameraLockStore } from '../stores/cameraLockStore'
 
 export type CrabNavEvent = { fromNodeId: string | null; toNodeId: string; ts: number } | null
 
 interface ToolbarProps {
-  inputDevice: InputDevice
-  onToggleInputDevice: () => void
   crabs: CrabEntry[]
   onCrabClick: (nodeId: string, metaKey: boolean) => void
   onCrabReorder: (order: string[]) => void
@@ -32,8 +30,6 @@ interface ToolbarProps {
 }
 
 export function Toolbar({
-  inputDevice,
-  onToggleInputDevice,
   crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent, zoom,
   onHelpClick,
   keycastEnabled, onKeycastToggle,
@@ -53,53 +49,53 @@ export function Toolbar({
         data-tooltip="Help (⌘?)"
         data-tooltip-no-flip
       >
-        Help
+        ?
       </button>
-      <button
-        className={'toolbar__btn' + (keycastEnabled ? ' toolbar__btn--active' : '')}
-        onClick={onKeycastToggle}
-        data-tooltip="Show key presses on screen"
-        data-tooltip-no-flip
-      >
-        Keycast
-      </button>
+      <FullscreenToggle />
+      <CameraLockToggle />
       <div className="toolbar__perf">
         <button
           className={'toolbar__btn' + (tracing ? ' toolbar__btn--recording' : '')}
           onClick={startTrace}
           disabled={tracing}
-          data-tooltip="Record 5s Chrome content trace"
+          data-tooltip="Perf Trace — Record 5s Chrome content trace"
           data-tooltip-no-flip
         >
-          {tracing ? 'Tracing...' : 'Perf Trace'}
+          <MagnifyIcon />
         </button>
       </div>
       <button
         className="toolbar__btn"
         onClick={onDebugCapture}
-        data-tooltip="Copy camera/viewport state to clipboard"
+        data-tooltip="Camera Debug — Copy camera/viewport state to clipboard"
         data-tooltip-no-flip
       >
-        Camera Debug
+        <MagnifyIcon />
       </button>
       <button
         className={'toolbar__btn' + (goodGfx ? ' toolbar__btn--active' : '')}
         onClick={onGoodGfxToggle}
-        data-tooltip={goodGfx ? 'Switch to simple background shader' : 'Switch to full background shader'}
+        data-tooltip={goodGfx ? 'Good Gfx — Switch to simple background shader' : 'Good Gfx — Switch to full background shader'}
         data-tooltip-no-flip
       >
-        Good Gfx
+        ✦
       </button>
-      <ProportionalFontToggle />
-      <FullscreenToggle />
+      <button
+        className={'toolbar__btn' + (keycastEnabled ? ' toolbar__btn--active' : '')}
+        onClick={onKeycastToggle}
+        data-tooltip="Keycast — Show key presses on screen"
+        data-tooltip-no-flip
+      >
+        <KeycastIcon />
+      </button>
       <AudioTapToggle />
       <BeatsToggle />
+      <ProportionalFontToggle />
       <BeatIndicators />
       <span className="toolbar__zoom">
         <BpmIndicator />
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
         <span className="toolbar__status-item toolbar__metric">{(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span></span>
-        <button className="toolbar__status-btn" onClick={onToggleInputDevice}>{inputDevice}</button>
         <GhRateLimitIndicator />
         <UsageIndicators />
       </span>
@@ -107,6 +103,85 @@ export function Toolbar({
         <CrabGroup crabs={crabs} onCrabClick={onCrabClick} onCrabReorder={onCrabReorder} selectedNodeId={selectedNodeId} crabNavEvent={crabNavEvent} />
       )}
     </div>
+  )
+}
+
+function KeycastIcon() {
+  // Vintage keyboard key from the front, slightly above.
+  // Cap: front face (rectangle) + thin top surface strip visible from above.
+  // Base is wider than the cap, so the back perspective lines peek out on
+  // the sides — the "perspective trick" that makes it read as a 3D key.
+  return (
+    <svg viewBox="0 0 18 18" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Cap: front face + top surface (lit from above) */}
+      <path d="M5 5 L4 3 L14 3 L13 5 L13 10 L5 10 Z" fill="currentColor" fillOpacity="0.2" />
+      {/* Front slopes down to wider base front edge */}
+      <path d="M5 10 L2 16 L16 16 L13 10" />
+      {/* Back perspective lines + base back edge (visible outside cap because base is wider) */}
+      <path d="M4 3 L1 14 L17 14 L14 3" />
+      {/* Short base side connectors joining front and back base edges */}
+      <line x1="1" y1="14" x2="2" y2="16" />
+      <line x1="17" y1="14" x2="16" y2="16" />
+    </svg>
+  )
+}
+
+function MagnifyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ display: 'block' }}>
+      <circle cx="6.5" cy="6.5" r="4.5" />
+      <line x1="9.7" y1="9.7" x2="14" y2="14" />
+    </svg>
+  )
+}
+
+function AudioVisIcon() {
+  const bars: Array<[number, number]> = [
+    [1, 1.5], [4, 4], [7, 6], [10, 2.5], [13, 5.5], [16, 3], [19, 1.5]
+  ]
+  return (
+    <svg viewBox="0 0 20 14" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ display: 'block' }}>
+      {bars.map(([x, h], i) => (
+        <line key={i} x1={x} y1={7 - h} x2={x} y2={7 + h} />
+      ))}
+    </svg>
+  )
+}
+
+function FullscreenIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <polyline points="1,5 1,1 5,1" />
+      <polyline points="11,1 15,1 15,5" />
+      <polyline points="15,11 15,15 11,15" />
+      <polyline points="5,15 1,15 1,11" />
+    </svg>
+  )
+}
+
+function LockIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Shackle */}
+      <path d="M5 7V5a3 3 0 0 1 6 0v2" />
+      {/* Body */}
+      <rect x="3.5" y="7" width="9" height="7" rx="1.5" fill="currentColor" fillOpacity="0.2" />
+    </svg>
+  )
+}
+
+function CameraLockToggle() {
+  const locked = useCameraLockStore(s => s.locked)
+  const toggle = useCameraLockStore(s => s.toggle)
+  return (
+    <button
+      className={'toolbar__btn' + (locked ? ' toolbar__btn--active' : '')}
+      onClick={toggle}
+      data-tooltip={locked ? 'Camera Lock — Unlock auto-zoom on focus' : 'Camera Lock — Lock camera from auto-zoom on focus'}
+      data-tooltip-no-flip
+    >
+      <LockIcon />
+    </button>
   )
 }
 
@@ -133,10 +208,10 @@ function FullscreenToggle() {
     <button
       className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
       onClick={toggle}
-      data-tooltip={on ? 'Exit fullscreen' : 'Enter fullscreen'}
+      data-tooltip={on ? 'Fullscreen — Exit fullscreen' : 'Fullscreen — Enter fullscreen'}
       data-tooltip-no-flip
     >
-      Fullscreen
+      <FullscreenIcon />
     </button>
   )
 }
@@ -158,10 +233,10 @@ function AudioTapToggle() {
     <button
       className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
       onClick={toggle}
-      data-tooltip={on ? 'Stop audio tap' : 'Start audio tap'}
+      data-tooltip={on ? 'Audio Tap — Stop audio tap' : 'Audio Tap — Start audio tap'}
       data-tooltip-no-flip
     >
-      Audio Tap
+      ♪
     </button>
   )
 }
@@ -191,10 +266,10 @@ function ProportionalFontToggle() {
       <button
         className={'toolbar__btn' + (proportional ? ' toolbar__btn--active' : '')}
         onClick={toggle}
-        data-tooltip={proportional ? 'Switch to monospace font' : 'Switch to proportional font'}
+        data-tooltip={proportional ? 'Proportional — Switch to monospace font' : 'Proportional — Switch to proportional font'}
         data-tooltip-no-flip
       >
-        Proportional
+        Aa
       </button>
       <button
         className={'toolbar__font-dropdown-btn' + (open ? ' toolbar__font-dropdown-btn--open' : '')}
@@ -613,10 +688,10 @@ function BeatsToggle() {
     <button
       className={'toolbar__btn' + (beatsVisible ? ' toolbar__btn--active' : '')}
       onClick={toggleBeats}
-      data-tooltip={beatsVisible ? 'Hide beat indicator (raw energy → onset detection → phase-locked pulse)' : 'Show beat indicator (raw energy → onset detection → phase-locked pulse)'}
+      data-tooltip={beatsVisible ? 'Audio Vis — Hide beat indicator (raw energy → onset detection → phase-locked pulse)' : 'Audio Vis — Show beat indicator (raw energy → onset detection → phase-locked pulse)'}
       data-tooltip-no-flip
     >
-      Audio Vis
+      <AudioVisIcon />
     </button>
   )
 }

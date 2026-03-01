@@ -24,7 +24,7 @@ import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-da
 import { angleBorderColor } from '../lib/angle-color'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { useFontStore } from '../stores/fontStore'
-import { useProportionalOverlay, findFirstAlnum } from '../hooks/useProportionalOverlay'
+import { useProportionalOverlay, isBoxDrawing, isAlphanumeric, boxDrawingAlignment } from '../hooks/useProportionalOverlay'
 
 function cleanTerminalCopy(raw: string): string {
   // Strip box-drawing border characters (│, ─, ╭, etc.) from line edges, then trailing whitespace
@@ -648,72 +648,77 @@ export function TerminalCard({
       const row = snapshot.lines[y]
       let xOffset = 0
       let proportional = false
+      let col = 0 // terminal column counter
 
       for (const span of row) {
         if (useProportional) {
           const weight = span.bold ? fontTheme.boldWeight : fontTheme.fontWeight
           ctx.font = `${weight} ${fontTheme.fontSize}px ${fontTheme.fontFamily}`
 
-          if (proportional) {
-            // Fully proportional
-            const tw = ctx.measureText(span.text).width
-            if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-              ctx.fillStyle = span.bg
-              ctx.fillRect(xOffset, y * CELL_HEIGHT, tw, CELL_HEIGHT)
-            }
-            if (span.text.trim().length > 0) {
-              ctx.fillStyle = span.fg
-              ctx.textBaseline = 'top'
-              ctx.fillText(span.text, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
-            }
-            xOffset += tw
-          } else {
-            const match = findFirstAlnum(span.text)
-            if (match === -1) {
-              // Entire span is fixed-width prefix
-              for (let i = 0; i < span.text.length; i++) {
-                const cx = xOffset + i * CELL_WIDTH
+          // Check if span starts with box-drawing: process char-by-char to split
+          // at box-drawing boundaries and snap those to the grid
+          let i = 0
+          while (i < span.text.length) {
+            if (isBoxDrawing(span.text[i])) {
+              // Run of box-drawing chars: snap to grid
+              const start = i
+              while (i < span.text.length && isBoxDrawing(span.text[i])) i++
+              const segment = span.text.slice(start, i)
+              xOffset = (col + start) * CELL_WIDTH
+              for (let j = 0; j < segment.length; j++) {
+                const cx = xOffset + j * CELL_WIDTH
                 if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
                   ctx.fillStyle = span.bg
                   ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
                 }
-                if (span.text[i] !== ' ') {
+                // Align box-drawing glyph within its cell
+                const align = boxDrawingAlignment(segment[j])
+                let drawX = cx
+                if (align === 'center') drawX = cx + (CELL_WIDTH - ctx.measureText(segment[j]).width) / 2
+                else if (align === 'right') drawX = cx + CELL_WIDTH - ctx.measureText(segment[j]).width
+                ctx.fillStyle = span.fg
+                ctx.textBaseline = 'top'
+                ctx.fillText(segment[j], drawX, y * CELL_HEIGHT + fontTheme.verticalOffset)
+              }
+              xOffset += segment.length * CELL_WIDTH
+            } else if (!proportional && !isAlphanumeric(span.text[i])) {
+              // Fixed-width prefix (leading symbols/spaces)
+              const start = i
+              while (i < span.text.length && !isAlphanumeric(span.text[i]) && !isBoxDrawing(span.text[i])) i++
+              const segment = span.text.slice(start, i)
+              for (let j = 0; j < segment.length; j++) {
+                const cx = xOffset + j * CELL_WIDTH
+                if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+                  ctx.fillStyle = span.bg
+                  ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
+                }
+                if (segment[j] !== ' ') {
                   ctx.fillStyle = span.fg
                   ctx.textBaseline = 'top'
-                  ctx.fillText(span.text[i], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
+                  ctx.fillText(segment[j], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
                 }
               }
-              xOffset += span.text.length * CELL_WIDTH
+              xOffset += segment.length * CELL_WIDTH
             } else {
-              // Split: fixed prefix + proportional rest
-              for (let i = 0; i < match; i++) {
-                const cx = xOffset + i * CELL_WIDTH
-                if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-                  ctx.fillStyle = span.bg
-                  ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
-                }
-                if (span.text[i] !== ' ') {
-                  ctx.fillStyle = span.fg
-                  ctx.textBaseline = 'top'
-                  ctx.fillText(span.text[i], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
-                }
-              }
-              xOffset += match * CELL_WIDTH
-              const rest = span.text.slice(match)
-              const tw = ctx.measureText(rest).width
+              // Proportional text: consume until next box-drawing char
+              proportional = true
+              const start = i
+              while (i < span.text.length && !isBoxDrawing(span.text[i])) i++
+              const segment = span.text.slice(start, i)
+              const tw = ctx.measureText(segment).width
               if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
                 ctx.fillStyle = span.bg
                 ctx.fillRect(xOffset, y * CELL_HEIGHT, tw, CELL_HEIGHT)
               }
-              if (rest.trim().length > 0) {
+              if (segment.trim().length > 0) {
                 ctx.fillStyle = span.fg
                 ctx.textBaseline = 'top'
-                ctx.fillText(rest, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
+                ctx.fillText(segment, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
               }
               xOffset += tw
-              proportional = true
             }
           }
+          col += span.text.length
         } else {
           // Monospace: fixed grid, character by character
           const spanWidth = span.text.length * CELL_WIDTH
@@ -1051,27 +1056,26 @@ export function TerminalCard({
         const dark = preset ? preset.terminalBg : '#181825'
         const interactedLabel = lastInteractedAt ? formatElapsed(lastInteractedAt) : '\u2014'
         const abbrevCwd = cwd?.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')
+        const copySurfaceInfo = (e: React.MouseEvent) => {
+          e.stopPropagation()
+          let text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id}`
+          if (lastClaudeSession) text += ` Claude session ID: ${lastClaudeSession.claudeSessionId}`
+          text += ` Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+          navigator.clipboard.writeText(text)
+          showToast(`Copied to clipboard: ${text}`)
+        }
         const footerContent = (
           <>
-            <span>Last Interacted:&nbsp;{interactedLabel}</span>
-            {abbrevCwd && <><span>&nbsp;|&nbsp;</span><span>{abbrevCwd}</span></>}
-            <span>&nbsp;|&nbsp;Node:&nbsp;{id.slice(0, 8)}</span>
-            <span>&nbsp;|&nbsp;Surface ID:&nbsp;</span><span className="terminal-card__footer-id" onClick={(e) => {
-              e.stopPropagation()
-              let text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id}`
-              if (lastClaudeSession) text += ` Claude session ID: ${lastClaudeSession.claudeSessionId}`
-              text += ` Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
-              navigator.clipboard.writeText(text)
-              showToast(`Copied to clipboard: ${text}`)
-            }} onMouseDown={(e) => e.stopPropagation()}>{id.slice(0, 8)}</span>
+            {abbrevCwd && <><span>{abbrevCwd}</span><span>&nbsp;|&nbsp;</span></>}
+            <span className="terminal-card__footer-id" onClick={copySurfaceInfo} onMouseDown={(e) => e.stopPropagation()}>Node:&nbsp;{id.slice(0, 8)}</span>
+            <span>&nbsp;|&nbsp;</span><span className="terminal-card__footer-id" onClick={copySurfaceInfo} onMouseDown={(e) => e.stopPropagation()}>Surface ID:&nbsp;{id.slice(0, 8)}</span>
             {lastClaudeSession && (
               <>
                 <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
                 <span className="terminal-card__footer-id" onClick={(e) => {
                   e.stopPropagation()
-                  const text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id} Claude session ID: ${lastClaudeSession.claudeSessionId} Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
-                  navigator.clipboard.writeText(text)
-                  showToast(`Copied to clipboard: ${text}`)
+                  navigator.clipboard.writeText(lastClaudeSession.claudeSessionId)
+                  showToast(`Copied to clipboard: ${lastClaudeSession.claudeSessionId}`)
                 }} onMouseDown={(e) => e.stopPropagation()}>{lastClaudeSession.claudeSessionId.slice(0, 8)}</span>
                 {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
                 <span>&nbsp;|&nbsp;</span>
@@ -1079,6 +1083,7 @@ export function TerminalCard({
                 {claudeModel && <><span>&nbsp;|&nbsp;</span><span>{claudeModel}</span></>}
               </>
             )}
+            <span>&nbsp;|&nbsp;Last Interacted:&nbsp;{interactedLabel}</span>
             {claudeContextPercent != null && (
               <span className="terminal-card__footer-context">Remaining context: {claudeContextPercent.toFixed(2)}%</span>
             )}

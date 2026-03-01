@@ -62,6 +62,26 @@ export function forkSession(cwd: string, sourceClaudeSessionId: string): string 
 
   const newSessionId = crypto.randomUUID()
 
+  // Detect plan file slug (last entry wins — a session may use multiple plans)
+  let oldSlug: string | undefined
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (typeof entries[i].slug === 'string') {
+      oldSlug = entries[i].slug as string
+      break
+    }
+  }
+  const newSlug = oldSlug ? `${oldSlug}-fork-${crypto.randomBytes(2).toString('hex')}` : undefined
+
+  // Copy the plan file on disk so the fork gets its own independent copy
+  if (oldSlug && newSlug) {
+    const plansDir = path.join(homedir(), '.claude', 'plans')
+    const oldPlanPath = path.join(plansDir, `${oldSlug}.md`)
+    const newPlanPath = path.join(plansDir, `${newSlug}.md`)
+    if (fs.existsSync(oldPlanPath)) {
+      fs.copyFileSync(oldPlanPath, newPlanPath)
+    }
+  }
+
   // Build UUID remapping: old uuid → new uuid, so parentUuid chains stay valid
   const uuidMap = new Map<string, string>()
   for (const entry of entries) {
@@ -97,7 +117,21 @@ export function forkSession(cwd: string, sourceClaudeSessionId: string): string 
       }
     }
 
-    rewritten.push(JSON.stringify(newEntry))
+    // Rewrite plan slug field
+    if (newSlug && typeof newEntry.slug === 'string') {
+      newEntry.slug = newSlug
+    }
+
+    let json = JSON.stringify(newEntry)
+
+    // Rewrite plan file path references in message content (covers both
+    // absolute paths like /Users/.../.claude/plans/slug.md and tilde
+    // paths like ~/.claude/plans/slug.md)
+    if (oldSlug && newSlug) {
+      json = json.split(`.claude/plans/${oldSlug}.md`).join(`.claude/plans/${newSlug}.md`)
+    }
+
+    rewritten.push(json)
   }
 
   // Write to new file
