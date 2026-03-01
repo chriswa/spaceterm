@@ -148,12 +148,22 @@ export class ServerClient extends EventEmitter {
     }
 
     if (msg.type === 'claude-usage') {
-      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier, msg.creditHistory)
+      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier, msg.creditHistory, msg.fiveHourHistory, msg.sevenDayHistory)
       return
     }
 
     if (msg.type === 'gh-rate-limit') {
       this.emit('gh-rate-limit', msg.data, msg.usedHistory)
+      return
+    }
+
+    if (msg.type === 'play-sound') {
+      this.emit('play-sound', msg.sound)
+      return
+    }
+
+    if (msg.type === 'speak') {
+      this.emit('speak', msg.text)
       return
     }
 
@@ -252,6 +262,14 @@ export class ServerClient extends EventEmitter {
 
   async nodeArchiveDelete(parentNodeId: string, archivedNodeId: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-archive-delete', parentNodeId, archivedNodeId })
+  }
+
+  async undoPush(entry: import('../../shared/undo-types').UndoEntry): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'undo-buffer-push', entry })
+  }
+
+  async undoPop(): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'undo-buffer-pop' })
   }
 
   async nodeBringToFront(nodeId: string): Promise<ServerMessage> {

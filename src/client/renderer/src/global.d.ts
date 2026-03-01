@@ -51,6 +51,8 @@ interface NodeApi {
   archive(nodeId: string): Promise<void>
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
+  undoPush(entry: import('../../../shared/undo-types').UndoEntry): Promise<void>
+  undoPop(): Promise<import('../../../shared/undo-types').UndoEntry | null>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
   terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<{ sessionId: string; cols: number; rows: number }>
@@ -78,8 +80,10 @@ interface NodeApi {
   onAdded(callback: (node: import('../../../shared/state').NodeData) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
-  onClaudeUsage(callback: (usage: import('../../../server/claude-usage').ClaudeUsageData, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => void): () => void
+  onClaudeUsage(callback: (usage: import('../../../server/claude-usage').ClaudeUsageData, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[]) => void): () => void
   onGhRateLimit(callback: (data: import('../../../../shared/protocol').GhRateLimitData, usedHistory: (number | null)[]) => void): () => void
+  onPlaySound(callback: (sound: string) => void): () => void
+  onSpeak(callback: (text: string) => void): () => void
 }
 
 interface TtsApi {

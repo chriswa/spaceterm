@@ -236,3 +236,42 @@ export function computeFlyToSpeed(distance: number): number {
   const durationRatio = Math.min(FLY_TO_MAX_DURATION / FLY_TO_BASE_DURATION, 1 + distance / FLY_TO_HALF_RANGE)
   return FOCUS_SPEED / durationRatio
 }
+
+/**
+ * Camera-lock "expand to include": if the node center is already in the
+ * viewport, returns null (no fly needed).  Otherwise returns the smallest
+ * camera that fits the union of the current viewport rect and the full
+ * bounding box of the target node.
+ */
+export function expandCameraToInclude(
+  nodeBounds: Bounds,
+  camera: Camera,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 0.025
+): Camera | null {
+  const topLeft = screenToCanvas({ x: 0, y: 0 }, camera)
+  const bottomRight = screenToCanvas({ x: viewportWidth, y: viewportHeight }, camera)
+
+  const nodeCenterX = nodeBounds.x + nodeBounds.width / 2
+  const nodeCenterY = nodeBounds.y + nodeBounds.height / 2
+
+  if (
+    nodeCenterX >= topLeft.x && nodeCenterX <= bottomRight.x &&
+    nodeCenterY >= topLeft.y && nodeCenterY <= bottomRight.y
+  ) {
+    return null
+  }
+
+  const viewportRect: Bounds = {
+    x: topLeft.x,
+    y: topLeft.y,
+    width: bottomRight.x - topLeft.x,
+    height: bottomRight.y - topLeft.y
+  }
+
+  const union = unionBounds([viewportRect, nodeBounds])
+  if (!union) return null
+
+  return cameraToFitBounds(union, viewportWidth, viewportHeight, padding)
+}

@@ -248,6 +248,8 @@ class MinuteRingBuffer {
 }
 
 const creditHistory = new MinuteRingBuffer('claude-usage')
+const fiveHourHistory = new MinuteRingBuffer('5h-usage')
+const sevenDayHistory = new MinuteRingBuffer('7d-usage')
 const ghRateLimitHistory = new MinuteRingBuffer('gh-rate-limit')
 
 // Cached last usage response — sent immediately to newly connected clients
@@ -259,8 +261,11 @@ function loadCachedUsage(): void {
     const data = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'))
     if (data?.usage && data?.subscriptionType && data?.rateLimitTier) {
       cachedUsage = data
-      // Seed credit history from the log now that we know the subscription type
-      creditHistory.seedFromLog(path.join(USAGE_LOG_DIR, `usage_${data.subscriptionType}.jsonl`), 'extra_usage.used_credits')
+      // Seed history buffers from the log now that we know the subscription type
+      const logFile = path.join(USAGE_LOG_DIR, `usage_${data.subscriptionType}.jsonl`)
+      creditHistory.seedFromLog(logFile, 'extra_usage.used_credits')
+      fiveHourHistory.seedFromLog(logFile, 'five_hour.utilization')
+      sevenDayHistory.seedFromLog(logFile, 'seven_day.utilization')
       console.log(`[claude-usage] Loaded cached usage (${data.subscriptionType})`)
     }
   } catch (err: any) {
@@ -475,6 +480,16 @@ function handleIngestMessage(msg: IngestMessage): void {
         surfaceId: msg.surfaceId,
         content: msg.content,
       })
+      break
+    }
+
+    case 'play-sound': {
+      broadcastToAll({ type: 'play-sound', sound: msg.sound })
+      break
+    }
+
+    case 'speak': {
+      broadcastToAll({ type: 'speak', text: msg.text })
       break
     }
 
@@ -926,6 +941,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'node-archive-delete': {
       stateManager.deleteArchivedNode(msg.parentNodeId, msg.archivedNodeId)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'undo-buffer-push': {
+      stateManager.pushUndoEntry(msg.entry)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'undo-buffer-pop': {
+      const entry = stateManager.popUndoEntry()
+      send(client.socket, { type: 'undo-buffer-pop-result', seq: msg.seq, entry })
       break
     }
 
@@ -1925,16 +1952,19 @@ async function startServer(): Promise<void> {
     try {
       const { usage, subscriptionType, rateLimitTier } = await fetchClaudeUsage()
 
-      // Seed ring buffer from persisted log on first fetch
-      creditHistory.seedFromLog(path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`), 'extra_usage.used_credits')
+      // Seed ring buffers from persisted log on first fetch
+      const seedLog = path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`)
+      creditHistory.seedFromLog(seedLog, 'extra_usage.used_credits')
+      fiveHourHistory.seedFromLog(seedLog, 'five_hour.utilization')
+      sevenDayHistory.seedFromLog(seedLog, 'seven_day.utilization')
 
-      // Record credits in the minute-keyed ring buffer
+      // Record values in the minute-keyed ring buffers
       const credits = usage.extra_usage?.used_credits ?? null
-      if (credits != null) {
-        creditHistory.record(credits, now)
-      }
+      if (credits != null) creditHistory.record(credits, now)
+      if (usage.five_hour) fiveHourHistory.record(usage.five_hour.utilization, now)
+      if (usage.seven_day) sevenDayHistory.record(usage.seven_day.utilization, now)
 
-      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier, creditHistory: creditHistory.build() })
+      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier, creditHistory: creditHistory.build(), fiveHourHistory: fiveHourHistory.build(), sevenDayHistory: sevenDayHistory.build() })
       saveCachedUsage(usage, subscriptionType, rateLimitTier)
 
       // Log usage data with flat dot-notation keys
@@ -2020,6 +2050,8 @@ async function startServer(): Promise<void> {
         type: 'claude-usage',
         ...cachedUsage,
         creditHistory: creditHistory.build(),
+        fiveHourHistory: fiveHourHistory.build(),
+        sevenDayHistory: sevenDayHistory.build(),
       })
     }
     if (cachedGhRateLimit) {

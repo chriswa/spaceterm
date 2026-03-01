@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
 import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
+import { useCameraLockStore } from '../stores/cameraLockStore'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
 // zoom), we write the CSS transform directly to the DOM via surfaceRef instead
@@ -168,6 +169,7 @@ export function useCamera(
   }, [flyTo])
 
   const userPan = useCallback((dx: number, dy: number) => {
+    if (useCameraLockStore.getState().locked) return
     // Scale delta so panning feels like target zoom speed
     const scale = cameraRef.current.z / targetRef.current.z
     const sdx = dx * scale

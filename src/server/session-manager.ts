@@ -97,7 +97,7 @@ export class SessionManager {
     const baseEnv = process.env as Record<string, string>
     const isCommand = !!options?.command
     const executable = isCommand ? options!.command! : shell
-    const args = isCommand ? (options!.args || []) : []
+    const args = isCommand ? (options!.args || []) : ['-l']
     // Only apply shell integration env when spawning a shell (not a command)
     // Always copy env to avoid mutating process.env
     const env = isCommand ? { ...baseEnv } : getShellEnv(shell, baseEnv)

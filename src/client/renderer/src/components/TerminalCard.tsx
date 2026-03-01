@@ -122,6 +122,8 @@ interface TerminalCardProps {
   onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
   extraCliArgs?: string
   lastInteractedAt?: number
+  onHoverFocus?: (id: string) => void
+  onHoverUnfocus?: () => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.RefObject<Camera>
 }
@@ -131,7 +133,7 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   claudeSessionHistory, claudeState, claudeModel, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onAddNode, cameraRef
+  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
@@ -998,10 +1000,12 @@ export function TerminalCard({
       onMouseEnter={() => {
         if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id)
         useHoveredCardStore.getState().setHoveredNode(id)
+        onHoverFocus?.(id)
       }}
       onMouseLeave={() => {
         if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null)
         useHoveredCardStore.getState().setHoveredNode(null)
+        onHoverUnfocus?.()
       }}
       behindContent={
         crabAppearance.kind === 'claude' ? (

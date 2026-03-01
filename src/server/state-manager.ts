@@ -54,6 +54,10 @@ export class StateManager {
       if (!this.state.rootArchivedChildren) {
         this.state.rootArchivedChildren = []
       }
+      // Backfill for state files that predate undoBuffer
+      if (!this.state.undoBuffer) {
+        this.state.undoBuffer = []
+      }
       // Dead terminal processing is done by the caller via processDeadTerminals()
 
       // MIGRATION: Backfill sortOrder for terminals that predate this field.
@@ -78,7 +82,8 @@ export class StateManager {
         version: STATE_VERSION,
         nextZIndex: 1,
         nodes: {},
-        rootArchivedChildren: []
+        rootArchivedChildren: [],
+        undoBuffer: []
       }
     }
   }
@@ -604,6 +609,21 @@ export class StateManager {
     }
 
     this.schedulePersist()
+  }
+
+  // --- Undo buffer ---
+
+  pushUndoEntry(entry: import('../shared/undo-types').UndoEntry): void {
+    this.state.undoBuffer.push(entry)
+    if (this.state.undoBuffer.length > 100) this.state.undoBuffer.shift()
+    this.schedulePersist()
+  }
+
+  popUndoEntry(): import('../shared/undo-types').UndoEntry | null {
+    if (this.state.undoBuffer.length === 0) return null
+    const entry = this.state.undoBuffer.pop()!
+    this.schedulePersist()
+    return entry
   }
 
   // --- Terminal metadata updates (from SessionManager callbacks) ---

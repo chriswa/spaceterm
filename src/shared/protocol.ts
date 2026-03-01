@@ -1,6 +1,10 @@
 import { join } from 'path'
 import { homedir } from 'os'
 
+/** Sound names available for the play-sound MCP tool. */
+export const SOUND_NAMES = ['done', 'error'] as const
+export type SoundName = (typeof SOUND_NAMES)[number]
+
 export const SOCKET_DIR = process.env.SPACETERM_HOME ?? join(homedir(), '.spaceterm')
 /** Bidirectional socket for Electron client ↔ server communication. */
 export const SOCKET_PATH = join(SOCKET_DIR, 'bidirectional.sock')
@@ -104,6 +108,12 @@ export interface SpacetermBroadcastMessage {
   content: string
 }
 
+export interface PlaySoundMessage {
+  type: 'play-sound'
+  surfaceId: string
+  sound: SoundName
+}
+
 // --- Client → Server node mutation messages ---
 
 export interface NodeSyncRequestMessage {
@@ -157,6 +167,23 @@ export interface NodeArchiveDeleteMessage {
   seq: number
   parentNodeId: string
   archivedNodeId: string
+}
+
+export interface UndoBufferPushMessage {
+  type: 'undo-buffer-push'
+  seq: number
+  entry: import('./undo-types').UndoEntry
+}
+
+export interface UndoBufferPopMessage {
+  type: 'undo-buffer-pop'
+  seq: number
+}
+
+export interface UndoBufferPopResultMessage {
+  type: 'undo-buffer-pop-result'
+  seq: number
+  entry: import('./undo-types').UndoEntry | null
 }
 
 export interface NodeBringToFrontMessage {
@@ -366,6 +393,8 @@ export type IngestMessage =
   | EmitMarkdownMessage
   | SpawnClaudeSurfaceMessage
   | SpacetermBroadcastMessage
+  | PlaySoundMessage
+  | SpeakMessage
 
 /** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
 export type ClientMessage =
@@ -410,6 +439,8 @@ export type ClientMessage =
   | TerminalRestartMessage
   | CrabReorderMessage
   | SetAlertsReadTimestampMessage
+  | UndoBufferPushMessage
+  | UndoBufferPopMessage
 
 // --- Server → Client messages ---
 
@@ -563,6 +594,8 @@ export interface ClaudeUsageMessage {
   subscriptionType: string
   rateLimitTier: string
   creditHistory: (number | null)[]
+  fiveHourHistory: (number | null)[]
+  sevenDayHistory: (number | null)[]
 }
 
 export interface GhRateLimitData {
@@ -575,6 +608,22 @@ export interface GhRateLimitMessage {
   type: 'gh-rate-limit'
   data: GhRateLimitData
   usedHistory: (number | null)[]
+}
+
+export interface PlaySoundServerMessage {
+  type: 'play-sound'
+  sound: SoundName
+}
+
+export interface SpeakMessage {
+  type: 'speak'
+  surfaceId: string
+  text: string
+}
+
+export interface SpeakServerMessage {
+  type: 'speak'
+  text: string
 }
 
 // --- Script socket messages (scripts.sock) ---
@@ -693,3 +742,6 @@ export type ServerMessage =
   | ServerErrorMessage
   | ClaudeUsageMessage
   | GhRateLimitMessage
+  | UndoBufferPopResultMessage
+  | PlaySoundServerMessage
+  | SpeakServerMessage

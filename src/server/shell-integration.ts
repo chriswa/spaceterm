@@ -25,6 +25,11 @@ __spaceterm_osc7() {
 
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd __spaceterm_osc7
+
+# Force emacs keybindings (Ctrl-A, Ctrl-E, etc.) regardless of EDITOR=vi.
+# This runs in .zshenv (before .zshrc), so if the user explicitly sets
+# bindkey -v in their .zshrc, their choice takes precedence.
+bindkey -e
 `
 
 /**

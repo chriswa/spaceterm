@@ -198,6 +198,16 @@ function setupIPC(): void {
     await client!.nodeArchiveDelete(parentNodeId, archivedNodeId)
   })
 
+  ipcMain.handle('node:undo-push', async (_event, entry: import('../../shared/undo-types').UndoEntry) => {
+    await client!.undoPush(entry)
+  })
+
+  ipcMain.handle('node:undo-pop', async () => {
+    const resp = await client!.undoPop()
+    if (resp && 'entry' in resp) return (resp as any).entry
+    return null
+  })
+
   ipcMain.handle('node:bring-to-front', async (_event, nodeId: string) => {
     await client!.nodeBringToFront(nodeId)
   })
@@ -450,15 +460,27 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('claude-usage', (usage: Record<string, unknown>, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => {
+  client!.on('claude-usage', (usage: Record<string, unknown>, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[]) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier, creditHistory)
+      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory)
     }
   })
 
   client!.on('gh-rate-limit', (data: Record<string, unknown>, usedHistory: (number | null)[]) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('gh-rate-limit', data, usedHistory)
+    }
+  })
+
+  client!.on('play-sound', (sound: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('play-sound', sound)
+    }
+  })
+
+  client!.on('speak', (text: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('speak', text)
     }
   })
 

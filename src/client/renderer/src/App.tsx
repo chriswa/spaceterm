@@ -21,7 +21,7 @@ import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
-import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed } from './lib/camera'
+import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
@@ -30,11 +30,13 @@ import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoPop } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
-import { pushArchiveUndo, popArchiveUndo } from './lib/undo-archive'
+import { pushUndo, popUndo, peekUndo, getConfirmation, setConfirmation, clearConfirmation, setUndoInProgress, getUndoInProgress } from './lib/undo-buffer'
+import { nodeUndoDescription } from './lib/node-title'
+import type { UndoEntry, UndoMoveEntry, UndoArchiveEntry, UndoUnarchiveEntry } from '../../../shared/undo-types'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
 import { deriveToolbarIndicator } from './lib/crab-nav'
@@ -457,6 +459,11 @@ export function App() {
   const snapStateRef = useRef<{ nodeId: string; axis: 'x' | 'y' } | null>(null)
   const snapGuideRef = useRef<HTMLDivElement>(null)
 
+  // Undo: pre-drag position capture
+  const preDragPositionsRef = useRef<Array<{ nodeId: string; x: number; y: number }>>([])
+  const preDragParentRef = useRef<string>('root')
+  const preDragDescriptionRef = useRef<string>('')
+
   // Rotational drag state (Shift+drag)
   const rotationalDragRef = useRef<{
     pivotX: number
@@ -501,6 +508,21 @@ export function App() {
         }
       }
     }
+
+    // Capture pre-drag positions for undo
+    const allNodesForUndo = useNodeStore.getState().nodes
+    const dragNode = allNodesForUndo[id]
+    const positions: Array<{ nodeId: string; x: number; y: number }> = []
+    if (dragNode) {
+      positions.push({ nodeId: id, x: dragNode.x, y: dragNode.y })
+      preDragParentRef.current = dragNode.parentId
+      preDragDescriptionRef.current = nodeUndoDescription(dragNode)
+    }
+    for (const d of dragDescendantsRef.current) {
+      const dn = allNodesForUndo[d]
+      if (dn) positions.push({ nodeId: d, x: dn.x, y: dn.y })
+    }
+    preDragPositionsRef.current = positions
   }, [])
 
   const handleDragEnd = useCallback((id: string) => {
@@ -534,6 +556,26 @@ export function App() {
     if (moves.length > 0) {
       sendBatchMove(moves)
     }
+
+    // Push move undo entry if any position actually changed
+    if (!getUndoInProgress() && preDragPositionsRef.current.length > 0) {
+      const changed = preDragPositionsRef.current.some(pre => {
+        const cur = allNodes[pre.nodeId]
+        return cur && (Math.abs(cur.x - pre.x) > 0.5 || Math.abs(cur.y - pre.y) > 0.5)
+      })
+      if (changed) {
+        const entry: UndoMoveEntry = {
+          kind: 'move',
+          ts: Date.now(),
+          description: preDragDescriptionRef.current,
+          positions: preDragPositionsRef.current,
+          parentId: preDragParentRef.current
+        }
+        pushUndo(entry)
+        sendUndoPush(entry)
+      }
+    }
+    preDragPositionsRef.current = []
   }, [])
 
   // CWD tracking — ref so optimistic writes (spawnNode, createChildNode) don't trigger re-renders.
@@ -637,9 +679,9 @@ export function App() {
       bringToFront(nodeId)
     }
 
-    if (!pinnedFocusRef.current && !useCameraLockStore.getState().locked) {
+    if (!pinnedFocusRef.current) {
       let bounds: { x: number; y: number; width: number; height: number }
-      let padding = 0.025
+      let padding = 0
 
       if (nodeId === 'root') {
         bounds = { x: -200, y: -200, width: 400, height: 400 }
@@ -650,11 +692,24 @@ export function App() {
         bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
       }
 
-      const targetCamera = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, padding)
-      const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
-      const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
-      const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
-      flyTo(targetCamera, computeFlyToSpeed(dist))
+      const vw = viewport.clientWidth
+      const vh = viewport.clientHeight
+
+      if (useCameraLockStore.getState().locked) {
+        const expanded = expandCameraToInclude(bounds, cameraRef.current, vw, vh, padding)
+        if (expanded) {
+          const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, cameraRef.current)
+          const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, expanded)
+          const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+          flyTo(expanded, computeFlyToSpeed(dist))
+        }
+      } else {
+        const targetCamera = cameraToFitBounds(bounds, vw, vh, padding)
+        const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, cameraRef.current)
+        const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, targetCamera)
+        const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+        flyTo(targetCamera, computeFlyToSpeed(dist))
+      }
     }
   }, [bringToFront, flyTo, cameraRef, flashNode])
 
@@ -682,22 +737,33 @@ export function App() {
 
     const size = nodePixelSize(node)
     const targetBounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
-    const targetCamera = cameraToFitBounds(targetBounds, viewport.clientWidth, viewport.clientHeight, 0.025)
+    const targetCamera = cameraToFitBounds(targetBounds, viewport.clientWidth, viewport.clientHeight, 0)
 
     setScrollMode(node.type === 'terminal' && node.alive)
     sendBringToFront(nodeId)
     bringToFront(nodeId)
 
-    if (!useCameraLockStore.getState().locked) {
-      const sourceCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cameraRef.current)
-      const targetCenter = screenToCanvas({ x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, targetCamera)
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
+
+    if (useCameraLockStore.getState().locked) {
+      const expanded = expandCameraToInclude(targetBounds, cameraRef.current, vw, vh, 0)
+      if (expanded) {
+        const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, cameraRef.current)
+        const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, expanded)
+        const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+        flyTo(expanded, computeFlyToSpeed(dist))
+      }
+    } else {
+      const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, cameraRef.current)
+      const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, targetCamera)
       const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
 
       if (dist < 50) {
         flyTo(targetCamera, computeFlyToSpeed(dist))
       } else {
         const topLeft = screenToCanvas({ x: 0, y: 0 }, cameraRef.current)
-        const bottomRight = screenToCanvas({ x: viewport.clientWidth, y: viewport.clientHeight }, cameraRef.current)
+        const bottomRight = screenToCanvas({ x: vw, y: vh }, cameraRef.current)
         const targetInViewport =
           targetBounds.x >= topLeft.x &&
           targetBounds.y >= topLeft.y &&
@@ -734,6 +800,7 @@ export function App() {
         navigateToNode(result.sessionId)
       })
     })
+    return destroyServerSync
   }, [])
 
   const handleCrabClick = useCallback((nodeId: string, metaKey: boolean) => {
@@ -804,7 +871,7 @@ export function App() {
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
     const tgtNode = allNodes[targetId]
-    if (srcNode && tgtNode) {
+    if (srcNode && tgtNode && !useCameraLockStore.getState().locked) {
       const srcSize = nodePixelSize(srcNode)
       const tgtSize = nodePixelSize(tgtNode)
       const bounds = unionBounds([
@@ -819,11 +886,45 @@ export function App() {
 
 
   const handleUnarchive = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
+    if (!getUndoInProgress()) {
+      const { nodes, rootArchivedChildren } = useNodeStore.getState()
+      const archiveArray = parentNodeId === 'root'
+        ? rootArchivedChildren
+        : nodes[parentNodeId]?.archivedChildren ?? []
+      const archived = archiveArray.find(e => e.data.id === archivedNodeId)
+      if (archived) {
+        const entry: UndoUnarchiveEntry = {
+          kind: 'unarchive',
+          ts: Date.now(),
+          description: nodeUndoDescription(archived.data),
+          nodeId: archivedNodeId
+        }
+        pushUndo(entry)
+        sendUndoPush(entry)
+      }
+    }
     await sendUnarchive(parentNodeId, archivedNodeId)
   }, [])
 
   const handleReviveNode = useCallback(async (archiveParentId: string, archivedNodeId: string) => {
     setSearchVisible(false)
+    if (!getUndoInProgress()) {
+      const { nodes, rootArchivedChildren } = useNodeStore.getState()
+      const archiveArray = archiveParentId === 'root'
+        ? rootArchivedChildren
+        : nodes[archiveParentId]?.archivedChildren ?? []
+      const archived = archiveArray.find(e => e.data.id === archivedNodeId)
+      if (archived) {
+        const entry: UndoUnarchiveEntry = {
+          kind: 'unarchive',
+          ts: Date.now(),
+          description: nodeUndoDescription(archived.data),
+          nodeId: archivedNodeId
+        }
+        pushUndo(entry)
+        sendUndoPush(entry)
+      }
+    }
     await sendUnarchive(archiveParentId, archivedNodeId)
     await navigateToNode(archivedNodeId)
   }, [navigateToNode])
@@ -870,13 +971,115 @@ export function App() {
     cwdMapRef.current.delete(id)
     const { nodes } = useNodeStore.getState()
     const node = nodes[id]
-    if (node && !isDisposable(node)) {
+    if (node && !isDisposable(node) && !getUndoInProgress()) {
       const reparentedChildIds = Object.keys(nodes).filter(k => nodes[k].parentId === id)
-      pushArchiveUndo({ nodeId: id, parentId: node.parentId, reparentedChildIds })
+      const entry: UndoArchiveEntry = {
+        kind: 'archive',
+        ts: Date.now(),
+        description: nodeUndoDescription(node),
+        nodeId: id,
+        parentId: node.parentId,
+        reparentedChildIds
+      }
+      pushUndo(entry)
+      sendUndoPush(entry)
     }
     await sendArchive(id)
     // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
   }, [])
+
+  const executeUndo = useCallback((entry: UndoEntry) => {
+    switch (entry.kind) {
+      case 'move': {
+        // Restore positions instantly
+        const allNodes = useNodeStore.getState().nodes
+        const validPositions = entry.positions.filter(p => allNodes[p.nodeId])
+        if (validPositions.length === 0) {
+          shakeCamera()
+          return
+        }
+
+        // Batch local update (compute deltas from current → target)
+        const deltas = validPositions.map(p => ({
+          id: p.nodeId,
+          dx: p.x - allNodes[p.nodeId].x,
+          dy: p.y - allNodes[p.nodeId].y
+        }))
+        useNodeStore.getState().batchMoveNodes(deltas)
+
+        // Send absolute positions to server
+        sendBatchMove(validPositions.map(p => ({ nodeId: p.nodeId, x: p.x, y: p.y })))
+
+        // Fit camera to include all restored nodes + parent
+        const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+        if (viewport) {
+          const vw = viewport.clientWidth
+          const vh = viewport.clientHeight
+          const nodesAfter = useNodeStore.getState().nodes
+          const rects: Array<{ x: number; y: number; width: number; height: number }> = []
+
+          for (const pos of validPositions) {
+            const node = nodesAfter[pos.nodeId]
+            if (node) {
+              const size = nodePixelSize(node)
+              rects.push({ x: node.x - size.width / 2, y: node.y - size.height / 2, ...size })
+            }
+          }
+
+          // Include the parent node in the camera bounds
+          if (entry.parentId !== 'root') {
+            const parent = nodesAfter[entry.parentId]
+            if (parent) {
+              const size = nodePixelSize(parent)
+              rects.push({ x: parent.x - size.width / 2, y: parent.y - size.height / 2, ...size })
+            }
+          }
+
+          const bounds = unionBounds(rects)
+          if (bounds) {
+            // Only expand — never shrink the viewport
+            const expanded = expandCameraToInclude(bounds, cameraRef.current, vw, vh)
+            if (expanded) flyTo(expanded)
+          }
+        }
+        break
+      }
+
+      case 'archive': {
+        // Undo archive = unarchive the node, then reparent children back
+        setUndoInProgress(true)
+        ;(async () => {
+          try {
+            await sendUnarchive(entry.parentId, entry.nodeId)
+            const { nodes } = useNodeStore.getState()
+            for (const childId of entry.reparentedChildIds) {
+              const child = nodes[childId]
+              if (child && child.parentId === entry.parentId) {
+                sendReparent(childId, entry.nodeId)
+              }
+            }
+            navigateToNode(entry.nodeId)
+          } finally {
+            setUndoInProgress(false)
+          }
+        })()
+        break
+      }
+
+      case 'unarchive': {
+        // Undo unarchive = re-archive the node
+        setUndoInProgress(true)
+        ;(async () => {
+          try {
+            await sendArchive(entry.nodeId)
+          } finally {
+            setUndoInProgress(false)
+          }
+        })()
+        break
+      }
+    }
+  }, [flyTo, navigateToNode])
 
   const handleShipIt = useCallback((nodeId: string) => {
     const { nodes } = useNodeStore.getState()
@@ -914,6 +1117,28 @@ export function App() {
   }, [flyTo])
 
   const handleUnfocus = useCallback(() => {
+    focusRef.current = null
+    pinnedFocusRef.current = false
+    setFocusedId(null)
+    setScrollMode(false)
+  }, [])
+
+  const handleHoverFocus = useCallback((nodeId: string) => {
+    if (!useCameraLockStore.getState().locked) return
+    const node = useNodeStore.getState().nodes[nodeId]
+    if (!node) return
+    setFocusedId(nodeId)
+    setSelection(nodeId)
+    focusRef.current = nodeId
+    lastFocusedRef.current = nodeId
+    setScrollMode(node.type === 'terminal' && node.alive)
+    sendBringToFront(nodeId)
+    bringToFront(nodeId)
+  }, [bringToFront])
+
+  const handleHoverUnfocus = useCallback(() => {
+    if (!useCameraLockStore.getState().locked) return
+    if (!focusRef.current) return
     focusRef.current = null
     pinnedFocusRef.current = false
     setFocusedId(null)
@@ -973,11 +1198,32 @@ export function App() {
         lastFocusedRef.current = parentId
         setSelection(parentId)
         flashNode(parentId)
-        flyToSelection(parentId)
+
+        if (useCameraLockStore.getState().locked) {
+          const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+          if (viewport) {
+            let parentBounds: { x: number; y: number; width: number; height: number }
+            if (parentId === 'root') {
+              parentBounds = { x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 }
+            } else {
+              const parentNode = state.nodes[parentId]
+              if (parentNode) {
+                const size = nodePixelSize(parentNode)
+                parentBounds = { x: parentNode.x - size.width / 2, y: parentNode.y - size.height / 2, ...size }
+              } else {
+                parentBounds = { x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 }
+              }
+            }
+            const expanded = expandCameraToInclude(parentBounds, cameraRef.current, viewport.clientWidth, viewport.clientHeight)
+            if (expanded) flyTo(expanded)
+          }
+        } else {
+          flyToSelection(parentId)
+        }
       }
     })
     return unsub
-  }, [flyToSelection])
+  }, [flyToSelection, flyTo, cameraRef])
 
   // Clear unread flag on server when a terminal is focused
   useEffect(() => {
@@ -1339,26 +1585,39 @@ export function App() {
         }
       }
 
-      // Cmd+Z: undo archive (only when not in a text field — the isEditable guard above returns early)
+      // Cmd+Z: undo (only when not in a text field — the isEditable guard above returns early)
       if (e.metaKey && e.key === 'z') {
         e.preventDefault()
         e.stopPropagation()
-        const entry = popArchiveUndo()
+
+        const confirmation = getConfirmation()
+
+        if (confirmation) {
+          // Second Cmd+Z within 5s — execute the confirmed undo
+          clearConfirmation()
+          popUndo()
+          sendUndoPop()
+          executeUndo(confirmation)
+          return
+        }
+
+        const entry = peekUndo()
         if (!entry) {
           shakeCamera()
           return
         }
-        ;(async () => {
-          await sendUnarchive(entry.parentId, entry.nodeId)
-          const { nodes } = useNodeStore.getState()
-          for (const childId of entry.reparentedChildIds) {
-            const child = nodes[childId]
-            if (child && child.parentId === entry.parentId) {
-              sendReparent(childId, entry.nodeId)
-            }
-          }
-          navigateToNode(entry.nodeId)
-        })()
+
+        if (entry.kind === 'move') {
+          // Move undo: execute immediately
+          popUndo()
+          sendUndoPop()
+          executeUndo(entry)
+        } else {
+          // Archive or unarchive: require confirmation via toast
+          const verb = entry.kind === 'archive' ? 'Unarchive' : 'Archive'
+          showToast(`Undo again: ${verb} ${entry.description}`)
+          setConfirmation(entry)
+        }
         return
       }
 
@@ -1564,11 +1823,18 @@ export function App() {
   const handleNodeReady = useCallback((nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => {
     if (focusRef.current !== nodeId) return
     if (pinnedFocusRef.current) return
-    if (useCameraLockStore.getState().locked) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
-    flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.025))
-  }, [flyTo])
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
+
+    if (useCameraLockStore.getState().locked) {
+      const expanded = expandCameraToInclude(bounds, cameraRef.current, vw, vh, 0)
+      if (expanded) flyTo(expanded)
+    } else {
+      flyTo(cameraToFitBounds(bounds, vw, vh, 0))
+    }
+  }, [flyTo, cameraRef])
 
   const handleCanvasWheel = useCallback((e: WheelEvent) => {
     // Search/help modals handle their own wheel events
@@ -1580,7 +1846,7 @@ export function App() {
     if (focusRef.current && !pinnedFocusRef.current) {
       e.preventDefault()
       handleUnfocus()
-      flyToUnfocusZoom()
+      if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
     }
     handleWheel(e)
   }, [handleWheel, flyToUnfocusZoom, handleUnfocus])
@@ -1592,7 +1858,7 @@ export function App() {
     setEdgeSplit(null)
     if (focusRef.current && !pinnedFocusRef.current) {
       handleUnfocus()
-      flyToUnfocusZoom()
+      if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
     }
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
@@ -1644,7 +1910,7 @@ export function App() {
             rects.push({ x: child.x - size.width / 2, y: child.y - size.height / 2, ...size })
           }
           const bounds = unionBounds(rects)
-          if (bounds) {
+          if (bounds && !useCameraLockStore.getState().locked) {
             flyTo(cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.1, UNFOCUS_SNAP_ZOOM))
           }
         }
@@ -1653,11 +1919,11 @@ export function App() {
     }
     if (focusRef.current) {
       handleUnfocus()
-      flyToUnfocusZoom()
+      if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
     } else {
       setSelection(null)
       handleUnfocus()
-      flyToUnfocusZoom()
+      if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
     }
   }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, hoveredEdgeRef, clearHoveredEdge])
 
@@ -1723,6 +1989,8 @@ export function App() {
             onExtraCliArgs={handleExtraCliArgs}
             extraCliArgs={t.extraCliArgs}
             lastInteractedAt={t.lastInteractedAt}
+            onHoverFocus={handleHoverFocus}
+            onHoverUnfocus={handleHoverUnfocus}
             onAddNode={handleAddNode}
             cameraRef={cameraRef}
           />
@@ -1751,7 +2019,7 @@ export function App() {
               focused={focusedId === m.id}
               selected={selection === m.id}
               onFocus={handleNodeFocus}
-              onUnfocus={() => { handleUnfocus(); flyToUnfocusZoom() }}
+              onUnfocus={() => { handleUnfocus(); if (!useCameraLockStore.getState().locked) flyToUnfocusZoom() }}
               onClose={handleRemoveNode}
               onMove={handleMove}
               onResize={handleResizeMarkdown}

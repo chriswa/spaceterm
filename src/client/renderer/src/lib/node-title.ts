@@ -31,3 +31,12 @@ export function nodeDisplayTitle(data: NodeData): string {
   if (data.type === 'file') return data.filePath
   return data.id.slice(0, 8)
 }
+
+const MAX_UNDO_DESCRIPTION = 40
+
+/** Terse description for undo toast messages. Truncated to ~40 chars. */
+export function nodeUndoDescription(data: NodeData): string {
+  const full = nodeDisplayTitle(data)
+  if (full.length <= MAX_UNDO_DESCRIPTION) return full
+  return full.slice(0, MAX_UNDO_DESCRIPTION - 1) + '\u2026'
+}

@@ -1,7 +1,29 @@
 import { useNodeStore } from '../stores/nodeStore'
 import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
+import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import type { NodeData } from '../../../../shared/state'
+import type { UndoEntry } from '../../../../shared/undo-types'
+import { syncUndoBuffer } from './undo-buffer'
+import { playSound } from './sounds'
+import { speakText } from './tts-player'
+import type { SoundName } from '../../../../shared/protocol'
+
+/** Count terminal nodes with claudeStatusUnread === true in the current store. */
+function countUnread(): number {
+  let count = 0
+  for (const node of Object.values(useNodeStore.getState().nodes)) {
+    if (node.type === 'terminal' && node.claudeStatusUnread) count++
+  }
+  return count
+}
+
+/** Play notification sound if transitioning from 0 unread to 1+ unread. */
+function maybePlayUnreadSound(): void {
+  if (countUnread() === 0 && useNotificationSoundStore.getState().enabled) {
+    playSound('done')
+  }
+}
 
 /** Called before a node-updated patch is applied to the store. */
 export type NodeUpdateInterceptor = (
@@ -29,12 +51,26 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     window.api.node.onUpdated((nodeId: string, fields: Partial<NodeData>) => {
       const prev = useNodeStore.getState().nodes[nodeId]
       onBeforeNodeUpdate?.(nodeId, fields, prev)
+
+      // Notification sound: detect 0 → 1+ unread transition
+      if (
+        'claudeStatusUnread' in fields &&
+        (fields as { claudeStatusUnread: boolean }).claudeStatusUnread === true &&
+        !(prev?.type === 'terminal' && prev.claudeStatusUnread)
+      ) {
+        maybePlayUnreadSound()
+      }
+
       useNodeStore.getState().applyServerNodeUpdate(nodeId, fields)
     })
   )
 
   cleanupFns.push(
     window.api.node.onAdded((node: NodeData) => {
+      // Notification sound: new node arriving already unread
+      if (node.type === 'terminal' && node.claudeStatusUnread) {
+        maybePlayUnreadSound()
+      }
       useNodeStore.getState().applyServerNodeAdd(node)
     })
   )
@@ -52,8 +88,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier, creditHistory) => {
-      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier, creditHistory)
+    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory) => {
+      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory)
     })
   )
 
@@ -63,10 +99,23 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     })
   )
 
+  cleanupFns.push(
+    window.api.node.onPlaySound((sound: string) => {
+      playSound(sound as SoundName)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.node.onSpeak((text: string) => {
+      speakText(text)
+    })
+  )
+
   // Request full state from server
   try {
     const serverState = await window.api.node.syncRequest()
     store.applyServerState(serverState)
+    syncUndoBuffer(serverState.undoBuffer ?? [])
   } catch {
     // Server not connected yet — will sync on reconnect
   }
@@ -205,4 +254,12 @@ export async function sendCrabReorder(order: string[]): Promise<void> {
 
 export function sendSetAlertsReadTimestamp(nodeId: string, timestamp: number): void {
   window.api.node.setAlertsReadTimestamp(nodeId, timestamp)
+}
+
+export async function sendUndoPush(entry: UndoEntry): Promise<void> {
+  await window.api.node.undoPush(entry)
+}
+
+export async function sendUndoPop(): Promise<UndoEntry | null> {
+  return window.api.node.undoPop()
 }

@@ -1,4 +1,5 @@
 import type { ClaudeSessionEntry } from './protocol'
+import type { UndoEntry } from './undo-types'
 
 // --- Claude state enum ---
 
@@ -115,4 +116,5 @@ export interface ServerState {
   nextZIndex: number
   nodes: Record<string, NodeData>
   rootArchivedChildren: ArchivedNode[]
+  undoBuffer: UndoEntry[]
 }

@@ -106,6 +106,8 @@ interface NodeApi {
   archive(nodeId: string): Promise<void>
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
+  undoPush(entry: any): Promise<void>
+  undoPop(): Promise<any>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
   terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<{ sessionId: string; cols: number; rows: number }>
@@ -134,6 +136,8 @@ interface NodeApi {
   onRemoved(callback: (nodeId: string) => void): () => void
   onFileContent(callback: (nodeId: string, content: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
+  onPlaySound(callback: (sound: string) => void): () => void
+  onSpeak(callback: (text: string) => void): () => void
 }
 
 const nodeApi: NodeApi = {
@@ -145,6 +149,8 @@ const nodeApi: NodeApi = {
   archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
   unarchive: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:unarchive', parentNodeId, archivedNodeId),
   archiveDelete: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:archive-delete', parentNodeId, archivedNodeId),
+  undoPush: (entry) => ipcRenderer.invoke('node:undo-push', entry),
+  undoPop: () => ipcRenderer.invoke('node:undo-pop'),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
   terminalCreate: (parentId, options?, initialTitleHistory?, initialName?, x?, y?, initialInput?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput),
@@ -204,7 +210,7 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener('server:error', listener)
   },
   onClaudeUsage: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[]) => callback(usage, subscriptionType, rateLimitTier, creditHistory)
+    const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[]) => callback(usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory)
     ipcRenderer.on('claude-usage', listener)
     return () => ipcRenderer.removeListener('claude-usage', listener)
   },
@@ -212,6 +218,16 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, data: any, usedHistory: (number | null)[]) => callback(data, usedHistory)
     ipcRenderer.on('gh-rate-limit', listener)
     return () => ipcRenderer.removeListener('gh-rate-limit', listener)
+  },
+  onPlaySound: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, sound: string) => callback(sound)
+    ipcRenderer.on('play-sound', listener)
+    return () => ipcRenderer.removeListener('play-sound', listener)
+  },
+  onSpeak: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, text: string) => callback(text)
+    ipcRenderer.on('speak', listener)
+    return () => ipcRenderer.removeListener('speak', listener)
   }
 }
 

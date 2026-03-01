@@ -11,6 +11,7 @@ import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useFontStore, FONT_THEMES } from '../stores/fontStore'
 import { useCameraLockStore } from '../stores/cameraLockStore'
+import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 
 export type CrabNavEvent = { fromNodeId: string | null; toNodeId: string; ts: number } | null
 
@@ -90,6 +91,7 @@ export function Toolbar({
       </button>
       <AudioTapToggle />
       <BeatsToggle />
+      <NotificationSoundToggle />
       <ProportionalFontToggle />
       <BeatIndicators />
       <span className="toolbar__zoom">
@@ -696,6 +698,30 @@ function BeatsToggle() {
   )
 }
 
+function BellIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M3 6.5a5 5 0 0 1 10 0c0 3 1.5 4.5 1.5 4.5H1.5S3 9.5 3 6.5" />
+      <path d="M6 11a2 2 0 0 0 4 0" />
+    </svg>
+  )
+}
+
+function NotificationSoundToggle() {
+  const enabled = useNotificationSoundStore(s => s.enabled)
+  const toggle = useNotificationSoundStore(s => s.toggle)
+  return (
+    <button
+      className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
+      onClick={toggle}
+      data-tooltip={enabled ? 'Notification Sound — Disable sound on new unread surfaces' : 'Notification Sound — Play sound when surfaces need attention'}
+      data-tooltip-no-flip
+    >
+      <BellIcon />
+    </button>
+  )
+}
+
 function BpmIndicator() {
   const [displayBpm, setDisplayBpm] = useState(0)
 
@@ -926,6 +952,7 @@ function DeltaSparkline({ history, color, formatPeak }: DeltaSparklineProps) {
   )
 }
 
+const ONE_HOUR_MS = 60 * 60 * 1000
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000
 const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000
 /** Minimum elapsed time before showing a projection (avoids wild swings early). */
@@ -993,6 +1020,7 @@ function GhRateLimitIndicator() {
   if (!data) return null
 
   const pct = data.limit > 0 ? (data.used / data.limit) * 100 : 0
+  const projectedGh = projectUsage(pct, data.resetAt, ONE_HOUR_MS)
 
   return (
     <span
@@ -1003,8 +1031,12 @@ function GhRateLimitIndicator() {
     >
       <DeltaSparkline history={usedHistory} color="#60a5fa" formatPeak={(v) => `${v} req`} />
       <span className="toolbar__metric-label">GH </span>
-      <span style={{ color: utilizationColor(pct) }}>{data.used}/{data.limit}</span>
-      <span style={{ color: '#888' }}> {formatDelta(data.resetAt)}</span>
+      <span style={{ color: utilizationColor(pct) }}>{Math.round(pct)}<span className="toolbar__metric-label">%</span></span>
+      {projectedGh != null && (
+        <span style={{ color: '#888' }} data-tooltip="GitHub rate limit linear extrapolation">
+          {' '}({Math.round(projectedGh)}<span className="toolbar__metric-label">%</span>)
+        </span>
+      )}
     </span>
   )
 }
@@ -1013,6 +1045,8 @@ function UsageIndicators() {
   const usage = useUsageStore(s => s.usage)
   const subscriptionType = useUsageStore(s => s.subscriptionType)
   const creditHistory = useUsageStore(s => s.creditHistory)
+  const fiveHourHistory = useUsageStore(s => s.fiveHourHistory)
+  const sevenDayHistory = useUsageStore(s => s.sevenDayHistory)
   const prevCreditsRef = useRef<number | null>(null)
   const extraRef = useRef<HTMLSpanElement>(null)
 
@@ -1061,9 +1095,11 @@ function UsageIndicators() {
       {fiveHour != null && typeof fiveHour.utilization === 'number' && (
         <span
           className="toolbar__status-item toolbar__metric"
+          style={{ position: 'relative' }}
           data-tooltip={formatResetTime('5-hour usage', fiveHour.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
+          <DeltaSparkline history={fiveHourHistory} color={utilizationColor(fiveHour.utilization)} formatPeak={(v) => `${v}%pts`} />
           <span className="toolbar__metric-label">5h </span>
           <span style={{ color: utilizationColor(fiveHour.utilization) }}>{Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span></span>
           {projected5h != null && (
@@ -1076,9 +1112,11 @@ function UsageIndicators() {
       {sevenDay != null && typeof sevenDay.utilization === 'number' && (
         <span
           className="toolbar__status-item toolbar__metric"
+          style={{ position: 'relative' }}
           data-tooltip={formatResetTime('7-day usage', sevenDay.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
+          <DeltaSparkline history={sevenDayHistory} color={utilizationColor(sevenDay.utilization)} formatPeak={(v) => `${v}%pts`} />
           <span className="toolbar__metric-label">7d </span>
           <span style={{ color: utilizationColor(sevenDay.utilization) }}>{Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span></span>
           {projected7d != null && (

@@ -3,7 +3,6 @@ import * as path from 'path'
 import { spawn } from 'child_process'
 import { homedir } from 'os'
 
-const USER_MESSAGES_TO_SAMPLE = 3
 const SPACETERM_HOME = process.env.SPACETERM_HOME || path.join(homedir(), '.spaceterm')
 const LOG_PATH = path.join(SPACETERM_HOME, 'title-summarizer.log')
 const JSONL_PATH = path.join(SPACETERM_HOME, 'title-summarizer.jsonl')
@@ -17,7 +16,7 @@ interface TitleLogEntry {
   ts: string
   claudeSessionId: string
   surfaceId: string
-  input: string[]
+  input: string
   output: string | null
   error: string | null
 }
@@ -39,28 +38,28 @@ function extractUserText(content: unknown): string | null {
   return joined || null
 }
 
-function readLastUserMessages(transcriptPath: string, count: number): string[] {
+function readLastUserMessage(transcriptPath: string): string | null {
   let raw: string
   try {
     raw = fs.readFileSync(transcriptPath, 'utf-8')
   } catch {
-    return []
+    return null
   }
 
-  const texts: string[] = []
+  let last: string | null = null
   for (const line of raw.split('\n')) {
     if (!line) continue
     try {
       const obj = JSON.parse(line)
       if (!obj || obj.type !== 'user') continue
       const text = extractUserText(obj.message?.content)
-      if (text) texts.push(text)
+      if (text) last = text
     } catch {
       // Skip malformed lines
     }
   }
 
-  return texts.slice(-count)
+  return last
 }
 
 export interface SummarizerDeps {
@@ -81,17 +80,16 @@ export class SessionTitleSummarizer {
 
   private run(surfaceId: string, transcriptPath: string, claudeSessionId: string): void {
     log(`${surfaceId.slice(0, 8)}: triggered, reading ${transcriptPath}`)
-    const messages = readLastUserMessages(transcriptPath, USER_MESSAGES_TO_SAMPLE)
-    if (messages.length === 0) {
+    const message = readLastUserMessage(transcriptPath)
+    if (!message) {
       log(`${surfaceId.slice(0, 8)}: no user messages, skipping`)
       return
     }
 
-    log(`${surfaceId.slice(0, 8)}: found ${messages.length} user messages, spawning claude -p`)
-    const joined = messages.map((m, i) => `${i + 1}. ${m}`).join('\n')
+    log(`${surfaceId.slice(0, 8)}: found last user message, spawning claude -p`)
     const prompt =
       `Summarize the following user messages in exactly 3 words. ` +
-      `Output ONLY the 3 words, nothing else:\n\n${joined}`
+      `Output ONLY the 3 words, nothing else:\n\n${message}`
 
     const ts = new Date().toISOString()
 
@@ -113,34 +111,42 @@ export class SessionTitleSummarizer {
         ? 'claude not found in PATH'
         : `spawn error: ${err.message}`
       log(`${surfaceId.slice(0, 8)}: ${errorMsg}`)
-      logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: null, error: errorMsg })
+      logJsonl({ ts, claudeSessionId, surfaceId, input: message, output: null, error: errorMsg })
     })
 
     child.on('close', (code) => {
       if (code !== 0) {
         const errorMsg = `claude -p exited ${code} (stderr: ${stderr.trim()})`
         log(`${surfaceId.slice(0, 8)}: ${errorMsg}`)
-        logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: null, error: errorMsg })
+        logJsonl({ ts, claudeSessionId, surfaceId, input: message, output: null, error: errorMsg })
         return
       }
 
       const raw = stdout.trim()
       if (!raw) {
         log(`${surfaceId.slice(0, 8)}: empty response`)
-        logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: null, error: 'empty response' })
+        logJsonl({ ts, claudeSessionId, surfaceId, input: message, output: null, error: 'empty response' })
         return
       }
 
-      // Accept only the first line, strip non-printable characters
-      const title = raw.split('\n')[0].replace(/[^\x20-\x7E]/g, '').trim()
+      // Accept only the first line, strip non-printable characters, truncate if too long
+      const MAX_WORDS = 5
+      const MAX_CHARS = 40
+      let title = raw.split('\n')[0].replace(/[^\x20-\x7E]/g, '').trim()
+      const words = title.split(/\s+/)
+      if (words.length > MAX_WORDS) {
+        title = words.slice(0, MAX_WORDS).join(' ') + '...'
+      } else if (title.length > MAX_CHARS) {
+        title = title.slice(0, MAX_CHARS) + '...'
+      }
       if (!title) {
         log(`${surfaceId.slice(0, 8)}: unusable response: ${JSON.stringify(raw)}`)
-        logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: raw, error: 'unusable response' })
+        logJsonl({ ts, claudeSessionId, surfaceId, input: message, output: raw, error: 'unusable response' })
         return
       }
 
       log(`${surfaceId.slice(0, 8)}: injecting title "${title}"`)
-      logJsonl({ ts, claudeSessionId, surfaceId, input: messages, output: title, error: null })
+      logJsonl({ ts, claudeSessionId, surfaceId, input: message, output: title, error: null })
       this.deps.injectTitle(surfaceId, title)
     })
   }
