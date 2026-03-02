@@ -214,6 +214,10 @@ function setupIPC(): void {
     await client!.nodeReparent(nodeId, newParentId)
   })
 
+  ipcMain.handle('node:swap-parent-child', async (_event, nodeId: string, childId: string) => {
+    await client!.nodeSwapParentChild(nodeId, childId)
+  })
+
   ipcMain.handle('node:terminal-create', async (_event, parentId: string, options?: Record<string, unknown>, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string) => {
     const resp = await client!.terminalCreate(parentId, options as any, initialTitleHistory, initialName, x, y, initialInput)
     if (resp.type === 'created') {

@@ -194,6 +194,13 @@ export interface NodeReparentMessage {
   newParentId: string
 }
 
+export interface NodeSwapParentChildMessage {
+  type: 'node-swap-parent-child'
+  seq: number
+  nodeId: string   // P — the node being re-parented
+  childId: string  // C — P's immediate child that becomes P's new parent
+}
+
 export interface TerminalCreateMessage {
   type: 'terminal-create'
   seq: number
@@ -410,6 +417,7 @@ export type ClientMessage =
   | NodeArchiveDeleteMessage
   | NodeBringToFrontMessage
   | NodeReparentMessage
+  | NodeSwapParentChildMessage
   | TerminalCreateMessage
   | TerminalResizeMessage
   | MarkdownAddMessage

@@ -110,6 +110,7 @@ interface NodeApi {
   undoSetCursor(cursor: number): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
+  swapParentChild(nodeId: string, childId: string): Promise<void>
   terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<{ sessionId: string; cols: number; rows: number }>
   terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
   terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
@@ -153,6 +154,7 @@ const nodeApi: NodeApi = {
   undoSetCursor: (cursor: number) => ipcRenderer.invoke('node:undo-set-cursor', cursor),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
+  swapParentChild: (nodeId, childId) => ipcRenderer.invoke('node:swap-parent-child', nodeId, childId),
   terminalCreate: (parentId, options?, initialTitleHistory?, initialName?, x?, y?, initialInput?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput),
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),

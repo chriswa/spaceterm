@@ -211,6 +211,10 @@ export async function sendReparent(nodeId: string, newParentId: string): Promise
   await window.api.node.reparent(nodeId, newParentId)
 }
 
+export async function sendSwapParentChild(nodeId: string, childId: string): Promise<void> {
+  await window.api.node.swapParentChild(nodeId, childId)
+}
+
 export async function sendTitleAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }> {
   return window.api.node.titleAdd(parentId, x, y)
 }

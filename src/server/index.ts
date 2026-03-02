@@ -981,6 +981,50 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'node-swap-parent-child': {
+      const swapParent = stateManager.getNode(msg.nodeId)
+      const swapChild = stateManager.getNode(msg.childId)
+
+      if (!swapParent || !swapChild || swapChild.parentId !== msg.nodeId || msg.nodeId === 'root') {
+        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        break
+      }
+
+      // Collect all nodes whose parentId will change
+      const affectedIds = [msg.nodeId, msg.childId]
+      for (const node of Object.values(stateManager.getState().nodes)) {
+        if (node.parentId === msg.childId) {
+          affectedIds.push(node.id)
+        }
+      }
+
+      // Stop file watchers for affected file-backed markdown nodes
+      for (const id of affectedIds) {
+        const node = stateManager.getNode(id)
+        if (node?.type === 'markdown' && node.fileBacked) {
+          fileContentManager.stopWatching(id)
+        }
+      }
+
+      stateManager.swapParentChild(msg.nodeId, msg.childId)
+
+      // Restart file watchers under new parents
+      for (const id of affectedIds) {
+        const node = stateManager.getNode(id)
+        if (node?.type === 'markdown' && node.fileBacked) {
+          const newParent = stateManager.getNode(node.parentId)
+          if (newParent?.type === 'file') {
+            const cwd = getAncestorCwd(stateManager.getState().nodes, newParent.id)
+            const filePath = resolveFilePath(newParent.filePath, cwd)
+            fileContentManager.startWatching(id, newParent.id, filePath)
+          }
+        }
+      }
+
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'terminal-create': {
       try {
         let options: CreateOptions | undefined

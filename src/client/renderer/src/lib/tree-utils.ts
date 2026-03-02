@@ -88,6 +88,15 @@ export function resolveInheritedPreset(
   return DEFAULT_PRESET
 }
 
+export function isImmediateChildOf(
+  nodes: Record<string, NodeData>,
+  potentialChildId: string,
+  parentId: string
+): boolean {
+  const node = nodes[potentialChildId]
+  return !!node && node.parentId === parentId
+}
+
 export function isDescendantOf(
   nodes: Record<string, NodeData>,
   nodeId: string,

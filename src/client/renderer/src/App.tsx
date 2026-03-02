@@ -24,13 +24,13 @@ import { useRtsSelect } from './hooks/useRtsSelect'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { isDescendantOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
+import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -208,8 +208,9 @@ export function App() {
     const tgtNode = reparentHoveredNodeId === 'root'
       ? { x: 0, y: 0 }
       : allNodes[reparentHoveredNodeId]
+    const isImmediateChild = isImmediateChildOf(allNodes, reparentHoveredNodeId, reparentingNodeId)
     const isInvalid = reparentHoveredNodeId === reparentingNodeId ||
-      isDescendantOf(allNodes, reparentHoveredNodeId, reparentingNodeId) ||
+      (!isImmediateChild && isDescendantOf(allNodes, reparentHoveredNodeId, reparentingNodeId)) ||
       (srcNode && srcNode.parentId === reparentHoveredNodeId)
     if (isInvalid || !srcNode || !tgtNode) {
       reparentEdgeRef.current = null
@@ -861,7 +862,10 @@ export function App() {
 
     const allNodes = useNodeStore.getState().nodes
     const srcNode = allNodes[srcId]
-    const isInvalid = targetId === srcId || isDescendantOf(allNodes, targetId, srcId) || (srcNode && srcNode.parentId === targetId)
+    const isImmediateChild = isImmediateChildOf(allNodes, targetId, srcId)
+    const isInvalid = targetId === srcId ||
+      (!isImmediateChild && isDescendantOf(allNodes, targetId, srcId)) ||
+      (srcNode && srcNode.parentId === targetId)
 
     if (isInvalid) {
       useReparentStore.getState().reset()
@@ -869,7 +873,11 @@ export function App() {
       return
     }
 
-    sendReparent(srcId, targetId)
+    if (isImmediateChild) {
+      sendSwapParentChild(srcId, targetId)
+    } else {
+      sendReparent(srcId, targetId)
+    }
     useReparentStore.getState().reset()
 
     // Fly camera to fit bounds of both nodes

@@ -469,6 +469,50 @@ export class StateManager {
   }
 
   /**
+   * Swap a parent node (P) with its immediate child (C):
+   * - C gets P's old parent
+   * - P becomes C's child
+   * - C's former children become P's children
+   */
+  swapParentChild(nodeId: string, childId: string): void {
+    const parent = this.state.nodes[nodeId]
+    const child = this.state.nodes[childId]
+    if (!parent || !child) return
+    if (child.parentId !== nodeId) return
+
+    const oldParentOfP = parent.parentId
+
+    // Collect C's current children before mutating
+    const cChildIds: string[] = []
+    for (const id in this.state.nodes) {
+      if (this.state.nodes[id].parentId === childId) {
+        cChildIds.push(id)
+      }
+    }
+
+    // C takes P's old parent
+    child.parentId = oldParentOfP
+    this.onNodeUpdate(childId, { parentId: oldParentOfP })
+
+    // P becomes C's child
+    parent.parentId = childId
+    this.onNodeUpdate(nodeId, { parentId: childId })
+
+    // C's old children become P's children
+    for (const id of cChildIds) {
+      const node = this.state.nodes[id]
+      if (node) {
+        node.parentId = nodeId
+        this.onNodeUpdate(id, { parentId: nodeId })
+      }
+    }
+
+    this.schedulePersist()
+    this.recheckDescendantCwdAlerts(childId)
+    this.recheckDescendantCwdAlerts(nodeId)
+  }
+
+  /**
    * Archive a node: snapshot into parent's archivedChildren, reparent children, remove node.
    */
   archiveNode(nodeId: string): void {
