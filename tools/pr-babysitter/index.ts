@@ -217,12 +217,14 @@ async function waitForClaude(): Promise<WaitResult> {
 
 const CODERABBIT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
-// Extract PR number from URL (e.g. https://github.com/sparelabs/spare/pull/33786 → 33786)
-const prNumber = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? "";
+// Extract owner/repo and PR number from URL (e.g. https://github.com/owner/repo/pull/123)
+const prMatch = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+const prRepo = prMatch?.[1] ?? "";
+const prNumber = prMatch?.[2] ?? "";
 
 async function getCodeRabbitApproveTimestamp(): Promise<number | null> {
   try {
-    const result = await $`gh api repos/sparelabs/spare/issues/${prNumber}/comments --jq ${
+    const result = await $`gh api repos/${prRepo}/issues/${prNumber}/comments --jq ${
       '[.[] | select(.user.login != "coderabbitai[bot]") | select(.body | test("@coderabbitai approve")) | .created_at] | last'
     }`.text();
     const timestamp = result.trim();

@@ -268,8 +268,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'undo-buffer-push', entry })
   }
 
-  async undoPop(): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'undo-buffer-pop' })
+  async undoSetCursor(cursor: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'undo-buffer-set-cursor', cursor })
   }
 
   async nodeBringToFront(nodeId: string): Promise<ServerMessage> {

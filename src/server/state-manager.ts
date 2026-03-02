@@ -58,6 +58,10 @@ export class StateManager {
       if (!this.state.undoBuffer) {
         this.state.undoBuffer = []
       }
+      // Backfill for state files that predate undoCursor
+      if (this.state.undoCursor == null) {
+        this.state.undoCursor = this.state.undoBuffer.length
+      }
       // Dead terminal processing is done by the caller via processDeadTerminals()
 
       // MIGRATION: Backfill sortOrder for terminals that predate this field.
@@ -83,7 +87,8 @@ export class StateManager {
         nextZIndex: 1,
         nodes: {},
         rootArchivedChildren: [],
-        undoBuffer: []
+        undoBuffer: [],
+        undoCursor: 0
       }
     }
   }
@@ -614,16 +619,21 @@ export class StateManager {
   // --- Undo buffer ---
 
   pushUndoEntry(entry: import('../shared/undo-types').UndoEntry): void {
+    // Truncate redo entries beyond cursor
+    this.state.undoBuffer.splice(this.state.undoCursor)
     this.state.undoBuffer.push(entry)
-    if (this.state.undoBuffer.length > 100) this.state.undoBuffer.shift()
+    this.state.undoCursor = this.state.undoBuffer.length
+    // Trim FIFO if over limit
+    if (this.state.undoBuffer.length > 100) {
+      this.state.undoBuffer.shift()
+      this.state.undoCursor--
+    }
     this.schedulePersist()
   }
 
-  popUndoEntry(): import('../shared/undo-types').UndoEntry | null {
-    if (this.state.undoBuffer.length === 0) return null
-    const entry = this.state.undoBuffer.pop()!
+  setUndoCursor(cursor: number): void {
+    this.state.undoCursor = cursor
     this.schedulePersist()
-    return entry
   }
 
   // --- Terminal metadata updates (from SessionManager callbacks) ---

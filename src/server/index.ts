@@ -950,9 +950,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'undo-buffer-pop': {
-      const entry = stateManager.popUndoEntry()
-      send(client.socket, { type: 'undo-buffer-pop-result', seq: msg.seq, entry })
+    case 'undo-buffer-set-cursor': {
+      stateManager.setUndoCursor(msg.cursor)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 

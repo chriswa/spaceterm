@@ -202,10 +202,8 @@ function setupIPC(): void {
     await client!.undoPush(entry)
   })
 
-  ipcMain.handle('node:undo-pop', async () => {
-    const resp = await client!.undoPop()
-    if (resp && 'entry' in resp) return (resp as any).entry
-    return null
+  ipcMain.handle('node:undo-set-cursor', async (_event, cursor: number) => {
+    await client!.undoSetCursor(cursor)
   })
 
   ipcMain.handle('node:bring-to-front', async (_event, nodeId: string) => {

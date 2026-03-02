@@ -107,7 +107,7 @@ interface NodeApi {
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   undoPush(entry: any): Promise<void>
-  undoPop(): Promise<any>
+  undoSetCursor(cursor: number): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
   terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<{ sessionId: string; cols: number; rows: number }>
@@ -150,7 +150,7 @@ const nodeApi: NodeApi = {
   unarchive: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:unarchive', parentNodeId, archivedNodeId),
   archiveDelete: (parentNodeId, archivedNodeId) => ipcRenderer.invoke('node:archive-delete', parentNodeId, archivedNodeId),
   undoPush: (entry) => ipcRenderer.invoke('node:undo-push', entry),
-  undoPop: () => ipcRenderer.invoke('node:undo-pop'),
+  undoSetCursor: (cursor: number) => ipcRenderer.invoke('node:undo-set-cursor', cursor),
   bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
   reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
   terminalCreate: (parentId, options?, initialTitleHistory?, initialName?, x?, y?, initialInput?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput),

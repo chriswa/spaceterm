@@ -30,11 +30,11 @@ import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoPop } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
-import { pushUndo, popUndo, peekUndo, getConfirmation, setConfirmation, clearConfirmation, setUndoInProgress, getUndoInProgress } from './lib/undo-buffer'
+import { pushUndo, peekUndo, peekRedo, undoStep, redoStep, getCursor, getConfirmation, setConfirmation, clearConfirmation, setUndoInProgress, getUndoInProgress } from './lib/undo-buffer'
 import { nodeUndoDescription } from './lib/node-title'
 import type { UndoEntry, UndoMoveEntry, UndoArchiveEntry, UndoUnarchiveEntry } from '../../../shared/undo-types'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
@@ -564,11 +564,16 @@ export function App() {
         return cur && (Math.abs(cur.x - pre.x) > 0.5 || Math.abs(cur.y - pre.y) > 0.5)
       })
       if (changed) {
+        const afterPositions = preDragPositionsRef.current.map(pre => {
+          const cur = allNodes[pre.nodeId]
+          return { nodeId: pre.nodeId, x: cur ? cur.x : pre.x, y: cur ? cur.y : pre.y }
+        })
         const entry: UndoMoveEntry = {
           kind: 'move',
           ts: Date.now(),
           description: preDragDescriptionRef.current,
           positions: preDragPositionsRef.current,
+          afterPositions,
           parentId: preDragParentRef.current
         }
         pushUndo(entry)
@@ -897,7 +902,8 @@ export function App() {
           kind: 'unarchive',
           ts: Date.now(),
           description: nodeUndoDescription(archived.data),
-          nodeId: archivedNodeId
+          nodeId: archivedNodeId,
+          parentId: parentNodeId
         }
         pushUndo(entry)
         sendUndoPush(entry)
@@ -919,7 +925,8 @@ export function App() {
           kind: 'unarchive',
           ts: Date.now(),
           description: nodeUndoDescription(archived.data),
-          nodeId: archivedNodeId
+          nodeId: archivedNodeId,
+          parentId: archiveParentId
         }
         pushUndo(entry)
         sendUndoPush(entry)
@@ -988,12 +995,13 @@ export function App() {
     // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
   }, [])
 
-  const executeUndo = useCallback((entry: UndoEntry) => {
+  const executeUndoRedo = useCallback((entry: UndoEntry, direction: 'undo' | 'redo') => {
     switch (entry.kind) {
       case 'move': {
-        // Restore positions instantly
+        // Restore positions: undo → original positions, redo → after positions
+        const targetPositions = direction === 'undo' ? entry.positions : entry.afterPositions
         const allNodes = useNodeStore.getState().nodes
-        const validPositions = entry.positions.filter(p => allNodes[p.nodeId])
+        const validPositions = targetPositions.filter(p => allNodes[p.nodeId])
         if (validPositions.length === 0) {
           shakeCamera()
           return
@@ -1046,36 +1054,61 @@ export function App() {
       }
 
       case 'archive': {
-        // Undo archive = unarchive the node, then reparent children back
-        setUndoInProgress(true)
-        ;(async () => {
-          try {
-            await sendUnarchive(entry.parentId, entry.nodeId)
-            const { nodes } = useNodeStore.getState()
-            for (const childId of entry.reparentedChildIds) {
-              const child = nodes[childId]
-              if (child && child.parentId === entry.parentId) {
-                sendReparent(childId, entry.nodeId)
+        if (direction === 'undo') {
+          // Undo archive = unarchive the node, then reparent children back
+          setUndoInProgress(true)
+          ;(async () => {
+            try {
+              await sendUnarchive(entry.parentId, entry.nodeId)
+              const { nodes } = useNodeStore.getState()
+              for (const childId of entry.reparentedChildIds) {
+                const child = nodes[childId]
+                if (child && child.parentId === entry.parentId) {
+                  sendReparent(childId, entry.nodeId)
+                }
               }
+              navigateToNode(entry.nodeId)
+            } finally {
+              setUndoInProgress(false)
             }
-            navigateToNode(entry.nodeId)
-          } finally {
-            setUndoInProgress(false)
-          }
-        })()
+          })()
+        } else {
+          // Redo archive = re-archive the node
+          setUndoInProgress(true)
+          ;(async () => {
+            try {
+              await sendArchive(entry.nodeId)
+            } finally {
+              setUndoInProgress(false)
+            }
+          })()
+        }
         break
       }
 
       case 'unarchive': {
-        // Undo unarchive = re-archive the node
-        setUndoInProgress(true)
-        ;(async () => {
-          try {
-            await sendArchive(entry.nodeId)
-          } finally {
-            setUndoInProgress(false)
-          }
-        })()
+        if (direction === 'undo') {
+          // Undo unarchive = re-archive the node
+          setUndoInProgress(true)
+          ;(async () => {
+            try {
+              await sendArchive(entry.nodeId)
+            } finally {
+              setUndoInProgress(false)
+            }
+          })()
+        } else {
+          // Redo unarchive = unarchive the node again
+          setUndoInProgress(true)
+          ;(async () => {
+            try {
+              await sendUnarchive(entry.parentId, entry.nodeId)
+              navigateToNode(entry.nodeId)
+            } finally {
+              setUndoInProgress(false)
+            }
+          })()
+        }
         break
       }
     }
@@ -1586,18 +1619,23 @@ export function App() {
       }
 
       // Cmd+Z: undo (only when not in a text field — the isEditable guard above returns early)
-      if (e.metaKey && e.key === 'z') {
+      if (e.metaKey && e.key === 'z' && !e.shiftKey) {
         e.preventDefault()
         e.stopPropagation()
 
         const confirmation = getConfirmation()
 
         if (confirmation) {
-          // Second Cmd+Z within 5s — execute the confirmed undo
-          clearConfirmation()
-          popUndo()
-          sendUndoPop()
-          executeUndo(confirmation)
+          if (confirmation.direction === 'undo') {
+            // Second Cmd+Z within 5s — execute the confirmed undo
+            clearConfirmation()
+            undoStep()
+            sendUndoSetCursor(getCursor())
+            executeUndoRedo(confirmation.entry, 'undo')
+          } else {
+            // Pending redo confirmation — wrong direction, clear and fall through
+            clearConfirmation()
+          }
           return
         }
 
@@ -1609,14 +1647,55 @@ export function App() {
 
         if (entry.kind === 'move') {
           // Move undo: execute immediately
-          popUndo()
-          sendUndoPop()
-          executeUndo(entry)
+          undoStep()
+          sendUndoSetCursor(getCursor())
+          executeUndoRedo(entry, 'undo')
         } else {
           // Archive or unarchive: require confirmation via toast
           const verb = entry.kind === 'archive' ? 'Unarchive' : 'Archive'
           showToast(`Undo again: ${verb} ${entry.description}`)
-          setConfirmation(entry)
+          setConfirmation(entry, 'undo')
+        }
+        return
+      }
+
+      // Cmd+Shift+Z: redo
+      if (e.metaKey && e.key === 'z' && e.shiftKey) {
+        e.preventDefault()
+        e.stopPropagation()
+
+        const confirmation = getConfirmation()
+
+        if (confirmation) {
+          if (confirmation.direction === 'redo') {
+            // Second Cmd+Shift+Z within 5s — execute the confirmed redo
+            clearConfirmation()
+            redoStep()
+            sendUndoSetCursor(getCursor())
+            executeUndoRedo(confirmation.entry, 'redo')
+          } else {
+            // Pending undo confirmation — wrong direction, clear and fall through
+            clearConfirmation()
+          }
+          return
+        }
+
+        const entry = peekRedo()
+        if (!entry) {
+          shakeCamera()
+          return
+        }
+
+        if (entry.kind === 'move') {
+          // Move redo: execute immediately
+          redoStep()
+          sendUndoSetCursor(getCursor())
+          executeUndoRedo(entry, 'redo')
+        } else {
+          // Archive or unarchive: require confirmation via toast
+          const verb = entry.kind === 'archive' ? 'Archive' : 'Unarchive'
+          showToast(`Redo again: ${verb} ${entry.description}`)
+          setConfirmation(entry, 'redo')
         }
         return
       }

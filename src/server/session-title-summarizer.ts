@@ -25,19 +25,6 @@ function logJsonl(entry: TitleLogEntry): void {
   fs.appendFile(JSONL_PATH, JSON.stringify(entry) + '\n', () => {})
 }
 
-function extractUserText(content: unknown): string | null {
-  if (typeof content === 'string') return content.trim() || null
-  if (!Array.isArray(content)) return null
-  const texts: string[] = []
-  for (const block of content) {
-    if (block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
-      texts.push(block.text)
-    }
-  }
-  const joined = texts.join(' ').trim()
-  return joined || null
-}
-
 function readLastUserMessage(transcriptPath: string): string | null {
   let raw: string
   try {
@@ -52,7 +39,11 @@ function readLastUserMessage(transcriptPath: string): string | null {
     try {
       const obj = JSON.parse(line)
       if (!obj || obj.type !== 'user') continue
-      const text = extractUserText(obj.message?.content)
+      // Human-typed messages have content as a string;
+      // tool results have it as an array — skip those.
+      const content = obj.message?.content
+      if (typeof content !== 'string') continue
+      const text = content.trim()
       if (text) last = text
     } catch {
       // Skip malformed lines

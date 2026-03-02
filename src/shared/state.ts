@@ -117,4 +117,5 @@ export interface ServerState {
   nodes: Record<string, NodeData>
   rootArchivedChildren: ArchivedNode[]
   undoBuffer: UndoEntry[]
+  undoCursor: number
 }

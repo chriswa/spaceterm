@@ -9,18 +9,9 @@ import { playSound } from './sounds'
 import { speakText } from './tts-player'
 import type { SoundName } from '../../../../shared/protocol'
 
-/** Count terminal nodes with claudeStatusUnread === true in the current store. */
-function countUnread(): number {
-  let count = 0
-  for (const node of Object.values(useNodeStore.getState().nodes)) {
-    if (node.type === 'terminal' && node.claudeStatusUnread) count++
-  }
-  return count
-}
-
-/** Play notification sound if transitioning from 0 unread to 1+ unread. */
-function maybePlayUnreadSound(): void {
-  if (countUnread() === 0 && useNotificationSoundStore.getState().enabled) {
+/** Play notification sound if enabled. */
+function playUnreadSound(): void {
+  if (useNotificationSoundStore.getState().enabled) {
     playSound('done')
   }
 }
@@ -52,13 +43,13 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
       const prev = useNodeStore.getState().nodes[nodeId]
       onBeforeNodeUpdate?.(nodeId, fields, prev)
 
-      // Notification sound: detect 0 → 1+ unread transition
+      // Notification sound: node became unread
       if (
         'claudeStatusUnread' in fields &&
         (fields as { claudeStatusUnread: boolean }).claudeStatusUnread === true &&
         !(prev?.type === 'terminal' && prev.claudeStatusUnread)
       ) {
-        maybePlayUnreadSound()
+        playUnreadSound()
       }
 
       useNodeStore.getState().applyServerNodeUpdate(nodeId, fields)
@@ -69,7 +60,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     window.api.node.onAdded((node: NodeData) => {
       // Notification sound: new node arriving already unread
       if (node.type === 'terminal' && node.claudeStatusUnread) {
-        maybePlayUnreadSound()
+        playUnreadSound()
       }
       useNodeStore.getState().applyServerNodeAdd(node)
     })
@@ -115,7 +106,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   try {
     const serverState = await window.api.node.syncRequest()
     store.applyServerState(serverState)
-    syncUndoBuffer(serverState.undoBuffer ?? [])
+    syncUndoBuffer(serverState.undoBuffer ?? [], serverState.undoCursor)
   } catch {
     // Server not connected yet — will sync on reconnect
   }
@@ -260,6 +251,6 @@ export async function sendUndoPush(entry: UndoEntry): Promise<void> {
   await window.api.node.undoPush(entry)
 }
 
-export async function sendUndoPop(): Promise<UndoEntry | null> {
-  return window.api.node.undoPop()
+export async function sendUndoSetCursor(cursor: number): Promise<void> {
+  await window.api.node.undoSetCursor(cursor)
 }

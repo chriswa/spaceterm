@@ -5,6 +5,7 @@ export interface UndoMoveEntry {
   ts: number
   description: string
   positions: Array<{ nodeId: string; x: number; y: number }>
+  afterPositions: Array<{ nodeId: string; x: number; y: number }>
   parentId: string
 }
 
@@ -22,6 +23,7 @@ export interface UndoUnarchiveEntry {
   ts: number
   description: string
   nodeId: string
+  parentId: string
 }
 
 export type UndoEntry = UndoMoveEntry | UndoArchiveEntry | UndoUnarchiveEntry

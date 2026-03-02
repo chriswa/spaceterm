@@ -175,15 +175,10 @@ export interface UndoBufferPushMessage {
   entry: import('./undo-types').UndoEntry
 }
 
-export interface UndoBufferPopMessage {
-  type: 'undo-buffer-pop'
+export interface UndoBufferSetCursorMessage {
+  type: 'undo-buffer-set-cursor'
   seq: number
-}
-
-export interface UndoBufferPopResultMessage {
-  type: 'undo-buffer-pop-result'
-  seq: number
-  entry: import('./undo-types').UndoEntry | null
+  cursor: number
 }
 
 export interface NodeBringToFrontMessage {
@@ -440,7 +435,7 @@ export type ClientMessage =
   | CrabReorderMessage
   | SetAlertsReadTimestampMessage
   | UndoBufferPushMessage
-  | UndoBufferPopMessage
+  | UndoBufferSetCursorMessage
 
 // --- Server → Client messages ---
 
@@ -742,6 +737,5 @@ export type ServerMessage =
   | ServerErrorMessage
   | ClaudeUsageMessage
   | GhRateLimitMessage
-  | UndoBufferPopResultMessage
   | PlaySoundServerMessage
   | SpeakServerMessage

@@ -52,7 +52,7 @@ interface NodeApi {
   unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
   archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
   undoPush(entry: import('../../../shared/undo-types').UndoEntry): Promise<void>
-  undoPop(): Promise<import('../../../shared/undo-types').UndoEntry | null>
+  undoSetCursor(cursor: number): Promise<void>
   bringToFront(nodeId: string): Promise<void>
   reparent(nodeId: string, newParentId: string): Promise<void>
   terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string): Promise<{ sessionId: string; cols: number; rows: number }>
