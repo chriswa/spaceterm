@@ -5,7 +5,8 @@ import type {
   ClientMessage,
   CreateOptions,
   ServerMessage,
-  SessionInfo
+  SessionInfo,
+  CameraBounds
 } from '../../shared/protocol'
 import { LineParser } from '../../server/line-parser'
 
@@ -148,12 +149,12 @@ export class ServerClient extends EventEmitter {
     }
 
     if (msg.type === 'claude-usage') {
-      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier, msg.creditHistory, msg.fiveHourHistory, msg.sevenDayHistory)
+      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier, msg.usageError, msg.creditHistory, msg.fiveHourHistory, msg.sevenDayHistory, msg.slotMinutes)
       return
     }
 
     if (msg.type === 'gh-rate-limit') {
-      this.emit('gh-rate-limit', msg.data, msg.usedHistory)
+      this.emit('gh-rate-limit', msg.data, msg.usedHistory, msg.slotMinutes)
       return
     }
 
@@ -164,6 +165,21 @@ export class ServerClient extends EventEmitter {
 
     if (msg.type === 'speak') {
       this.emit('speak', msg.text)
+      return
+    }
+
+    if (msg.type === 'peer-connected') {
+      this.emit('peer-connected', msg.clientId)
+      return
+    }
+
+    if (msg.type === 'peer-disconnected') {
+      this.emit('peer-disconnected', msg.clientId)
+      return
+    }
+
+    if (msg.type === 'peer-camera-bounds') {
+      this.emit('peer-camera-bounds', msg.clientId, msg.bounds)
       return
     }
 
@@ -378,6 +394,10 @@ export class ServerClient extends EventEmitter {
 
   setAlertsReadTimestamp(nodeId: string, timestamp: number): void {
     this.sendFireAndForget({ type: 'set-alerts-read-timestamp', nodeId, timestamp } as ClientMessage)
+  }
+
+  sendCameraBounds(bounds: CameraBounds): void {
+    this.sendFireAndForget({ type: 'camera-bounds', bounds })
   }
 
   isConnected(): boolean {

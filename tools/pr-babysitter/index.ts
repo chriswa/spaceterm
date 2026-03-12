@@ -13,19 +13,24 @@ const CLI = (process.env.SPACETERM_CLI ?? "spaceterm-cli").split(" ");
 
 // ---- Setup ----
 
+const continueMode = process.argv.includes("--continue");
+
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
-  console.log(`Usage: pr-babysitter [PR_URL]
+  console.log(`Usage: pr-babysitter [--continue] [PR_URL]
 
 Monitors a GitHub PR's CI checks and nudges the parent Claude Code session
 to fix failures or acknowledge terminal states.
 
 If PR_URL is omitted, detects the PR for the current branch via \`gh pr view\`.
 
+Options:
+  --continue  Start by waiting for a broadcast instead of running pr-check first.
+
 Requires SPACETERM_NODE_ID to be set (run inside a spaceterm terminal).`);
   process.exit(0);
 }
 
-let prUrl = process.argv[2];
+let prUrl = process.argv.find((a, i) => i >= 2 && !a.startsWith("--"));
 if (!prUrl) {
   try {
     prUrl = (await $`gh pr view --json url --jq '.url'`.text()).trim();
@@ -255,6 +260,16 @@ async function filterCodeRabbitIfCooling(triage: Triage): Promise<void> {
 // ---- Main Loop ----
 
 async function main() {
+  if (continueMode) {
+    console.log("--continue: waiting for broadcast before first pr-check...");
+    const waitResult = await waitForClaude();
+    if (waitResult.outcome === "halt") {
+      console.log("Claude halted for user input. Exiting babysitter.");
+      await $`${CLI} unread ${nodeId}`.quiet();
+      process.exit(0);
+    }
+  }
+
   while (true) {
     console.log(`\n[${new Date().toLocaleTimeString()}] Running pr-check...`);
     let result: PrCheckResult;

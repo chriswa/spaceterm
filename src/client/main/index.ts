@@ -358,6 +358,10 @@ function setupIPC(): void {
     client!.setAlertsReadTimestamp(nodeId, timestamp)
   })
 
+  ipcMain.on('node:camera-bounds', (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+    client!.sendCameraBounds(bounds)
+  })
+
   // --- Window mode ---
 
   ipcMain.handle('window:is-fullscreen', () => {
@@ -462,15 +466,15 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('claude-usage', (usage: Record<string, unknown>, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[]) => {
+  client!.on('claude-usage', (usage: Record<string, unknown> | null, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[], slotMinutes: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory)
+      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes)
     }
   })
 
-  client!.on('gh-rate-limit', (data: Record<string, unknown>, usedHistory: (number | null)[]) => {
+  client!.on('gh-rate-limit', (data: Record<string, unknown>, usedHistory: (number | null)[], slotMinutes: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('gh-rate-limit', data, usedHistory)
+      mainWindow.webContents.send('gh-rate-limit', data, usedHistory, slotMinutes)
     }
   })
 
@@ -483,6 +487,24 @@ function wireClientEvents(): void {
   client!.on('speak', (text: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('speak', text)
+    }
+  })
+
+  client!.on('peer-connected', (clientId: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('peer:connected', clientId)
+    }
+  })
+
+  client!.on('peer-disconnected', (clientId: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('peer:disconnected', clientId)
+    }
+  })
+
+  client!.on('peer-camera-bounds', (clientId: string, bounds: { x: number; y: number; width: number; height: number }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('peer:camera-bounds', clientId, bounds)
     }
   })
 

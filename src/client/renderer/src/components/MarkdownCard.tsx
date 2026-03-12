@@ -64,12 +64,16 @@ const cmTheme = EditorView.theme({
   '&': {
     backgroundColor: 'transparent',
     color: 'var(--markdown-fg, #cdd6f4)',
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    fontSize: '14px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    fontSize: '12px',
+    fontWeight: '400',
   },
   '.cm-content': {
     caretColor: '#f5e0dc',
     padding: '8px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    fontSize: '12px',
+    fontWeight: '400',
   },
   '&.cm-focused .cm-cursor': {
     borderLeftColor: '#f5e0dc',

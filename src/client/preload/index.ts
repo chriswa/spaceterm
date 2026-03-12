@@ -180,6 +180,7 @@ const nodeApi: NodeApi = {
   setClaudeStatusUnread: (sessionId: string, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
   setClaudeStatusAsleep: (sessionId: string, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
   setAlertsReadTimestamp: (nodeId: string, timestamp: number) => ipcRenderer.send('node:set-alerts-read-timestamp', nodeId, timestamp),
+  sendCameraBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:camera-bounds', bounds),
   onSnapshot: (sessionId, callback) => {
     const channel = `snapshot:${sessionId}`
     const listener = (_event: Electron.IpcRendererEvent, snapshot: any) => callback(snapshot)
@@ -212,12 +213,12 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener('server:error', listener)
   },
   onClaudeUsage: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[]) => callback(usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory)
+    const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[], slotMinutes: number) => callback(usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes)
     ipcRenderer.on('claude-usage', listener)
     return () => ipcRenderer.removeListener('claude-usage', listener)
   },
   onGhRateLimit: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, data: any, usedHistory: (number | null)[]) => callback(data, usedHistory)
+    const listener = (_event: Electron.IpcRendererEvent, data: any, usedHistory: (number | null)[], slotMinutes: number) => callback(data, usedHistory, slotMinutes)
     ipcRenderer.on('gh-rate-limit', listener)
     return () => ipcRenderer.removeListener('gh-rate-limit', listener)
   },
@@ -230,6 +231,21 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, text: string) => callback(text)
     ipcRenderer.on('speak', listener)
     return () => ipcRenderer.removeListener('speak', listener)
+  },
+  onPeerConnected: (callback: (clientId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, clientId: string) => callback(clientId)
+    ipcRenderer.on('peer:connected', listener)
+    return () => ipcRenderer.removeListener('peer:connected', listener)
+  },
+  onPeerDisconnected: (callback: (clientId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, clientId: string) => callback(clientId)
+    ipcRenderer.on('peer:disconnected', listener)
+    return () => ipcRenderer.removeListener('peer:disconnected', listener)
+  },
+  onPeerCameraBounds: (callback: (clientId: string, bounds: { x: number; y: number; width: number; height: number }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, clientId: string, bounds: { x: number; y: number; width: number; height: number }) => callback(clientId, bounds)
+    ipcRenderer.on('peer:camera-bounds', listener)
+    return () => ipcRenderer.removeListener('peer:camera-bounds', listener)
   }
 }
 

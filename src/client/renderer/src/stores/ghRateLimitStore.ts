@@ -4,11 +4,13 @@ import type { GhRateLimitData } from '../../../../shared/protocol'
 interface GhRateLimitState {
   data: GhRateLimitData | null
   usedHistory: (number | null)[]
-  update: (data: GhRateLimitData, usedHistory: (number | null)[]) => void
+  slotMinutes: number
+  update: (data: GhRateLimitData, usedHistory: (number | null)[], slotMinutes: number) => void
 }
 
 export const useGhRateLimitStore = create<GhRateLimitState>((set) => ({
   data: null,
   usedHistory: [],
-  update: (data, usedHistory) => set({ data, usedHistory }),
+  slotMinutes: 1,
+  update: (data, usedHistory, slotMinutes) => set({ data, usedHistory, slotMinutes }),
 }))

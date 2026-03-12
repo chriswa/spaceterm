@@ -2,7 +2,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 
 /** Sound names available for the play-sound MCP tool. */
-export const SOUND_NAMES = ['done', 'error'] as const
+export const SOUND_NAMES = ['done', 'error', 'success'] as const
 export type SoundName = (typeof SOUND_NAMES)[number]
 
 export const SOCKET_DIR = process.env.SPACETERM_HOME ?? join(homedir(), '.spaceterm')
@@ -97,6 +97,13 @@ export interface EmitMarkdownMessage {
 
 export interface SpawnClaudeSurfaceMessage {
   type: 'spawn-claude-surface'
+  surfaceId: string
+  prompt: string
+  title: string
+}
+
+export interface ForkClaudeSurfaceMessage {
+  type: 'fork-claude-surface'
   surfaceId: string
   prompt: string
   title: string
@@ -388,12 +395,25 @@ export interface SetAlertsReadTimestampMessage {
   timestamp: number
 }
 
+export interface CameraBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface CameraBoundsMessage {
+  type: 'camera-bounds'
+  bounds: CameraBounds
+}
+
 /** Fire-and-forget messages received on the hooks socket (no response sent). */
 export type IngestMessage =
   | HookMessage
   | StatusLineMessage
   | EmitMarkdownMessage
   | SpawnClaudeSurfaceMessage
+  | ForkClaudeSurfaceMessage
   | SpacetermBroadcastMessage
   | PlaySoundMessage
   | SpeakMessage
@@ -444,6 +464,7 @@ export type ClientMessage =
   | SetAlertsReadTimestampMessage
   | UndoBufferPushMessage
   | UndoBufferSetCursorMessage
+  | CameraBoundsMessage
 
 // --- Server → Client messages ---
 
@@ -593,12 +614,15 @@ export interface ServerErrorMessage {
 
 export interface ClaudeUsageMessage {
   type: 'claude-usage'
-  usage: import('../server/claude-usage').ClaudeUsageData
-  subscriptionType: string
-  rateLimitTier: string
+  usage: import('../server/claude-usage').ClaudeUsageData | null
+  subscriptionType: string | null
+  rateLimitTier: string | null
+  usageError: string | null
   creditHistory: (number | null)[]
   fiveHourHistory: (number | null)[]
   sevenDayHistory: (number | null)[]
+  /** Minutes per history slot (matches the server's polling interval). */
+  slotMinutes: number
 }
 
 export interface GhRateLimitData {
@@ -611,6 +635,8 @@ export interface GhRateLimitMessage {
   type: 'gh-rate-limit'
   data: GhRateLimitData
   usedHistory: (number | null)[]
+  /** Minutes per history slot (matches the server's polling interval). */
+  slotMinutes: number
 }
 
 export interface PlaySoundServerMessage {
@@ -627,6 +653,22 @@ export interface SpeakMessage {
 export interface SpeakServerMessage {
   type: 'speak'
   text: string
+}
+
+export interface PeerConnectedMessage {
+  type: 'peer-connected'
+  clientId: string
+}
+
+export interface PeerDisconnectedMessage {
+  type: 'peer-disconnected'
+  clientId: string
+}
+
+export interface PeerCameraBoundsMessage {
+  type: 'peer-camera-bounds'
+  clientId: string
+  bounds: CameraBounds
 }
 
 // --- Script socket messages (scripts.sock) ---
@@ -747,3 +789,6 @@ export type ServerMessage =
   | GhRateLimitMessage
   | PlaySoundServerMessage
   | SpeakServerMessage
+  | PeerConnectedMessage
+  | PeerDisconnectedMessage
+  | PeerCameraBoundsMessage

@@ -1,6 +1,19 @@
 import { execFile } from 'child_process'
 
 const KEYCHAIN_SERVICE = 'Claude Code-credentials'
+
+/**
+ * Thrown when the keychain has no OAuth credentials — i.e. the account is API-key
+ * based rather than a Claude.ai subscription. The usage poller should stop permanently
+ * on this error rather than retrying every tick.
+ */
+export class NoOAuthCredentialsError extends Error {
+  constructor() {
+    super('No Claude OAuth credentials in Keychain — account is API key type')
+    this.name = 'NoOAuthCredentialsError'
+  }
+}
+
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const USER_AGENT = 'claude-code/2.1.47'
 const TIMEOUT_MS = 5000
@@ -11,8 +24,8 @@ interface ClaudeOAuthCredentials {
     refreshToken: string
     expiresAt: number
     scopes: string[]
-    subscriptionType: string
-    rateLimitTier: string
+    subscriptionType: string | null
+    rateLimitTier: string | null
   }
 }
 
@@ -44,7 +57,7 @@ function readKeychain(): Promise<string> {
       ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', process.env.USER ?? 'unknown', '-w'],
       { timeout: 3000 },
       (err, stdout) => {
-        if (err) return reject(new Error('No Claude OAuth credentials found in Keychain'))
+        if (err) return reject(new NoOAuthCredentialsError())
         const trimmed = stdout.trim()
         if (!trimmed) return reject(new Error('Empty Keychain entry'))
         resolve(trimmed)
@@ -63,8 +76,8 @@ function parseCredentials(raw: string): ClaudeOAuthCredentials {
 
 export interface ClaudeUsageResult {
   usage: ClaudeUsageData
-  subscriptionType: string
-  rateLimitTier: string
+  subscriptionType: string | null
+  rateLimitTier: string | null
 }
 
 export async function fetchClaudeUsage(): Promise<ClaudeUsageResult> {

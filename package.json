@@ -15,6 +15,7 @@
     "start": "npm run client:build && concurrently \"npm run server:dev\" \"npm run client:preview\"",
     "et": "tsx src/cli/emergency-terminal.ts",
     "cli": "tsx src/cli/spaceterm-cli.ts",
+    "get-env": "op item get 'Anthropic Platform' --vault='Engineering' --fields label=ANTHROPIC_ORG_ID,label=ANTHROPIC_WORKSPACE_ID --format json | node -e \"const f=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.stdout.write(f.map(x=>x.label+'='+x.value).join('\\n')+'\\n')\" > .env && echo '.env written from 1Password'",
     "lint": "eslint src/",
     "build": "npm run client:build",
     "postinstall": "electron-rebuild"

@@ -4,7 +4,8 @@ import * as path from 'path'
 import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
-import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
+import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
@@ -21,7 +22,8 @@ import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
-import { fetchClaudeUsage, type ClaudeUsageData } from './claude-usage'
+import { fetchClaudeUsage, NoOAuthCredentialsError, type ClaudeUsageData } from './claude-usage'
+import { fetchApiUsage } from './api-usage'
 import { parse as shellParse } from 'shell-quote'
 import { AutoContinueManager } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
@@ -35,6 +37,16 @@ const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 33_000
 
 /** Spaceterm project root (two levels up from src/server/). */
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
+
+/**
+ * Appends a timestamped message to the shared electron.log file so that server-side
+ * events are visible alongside main-process logs. Uses async appendFile to avoid
+ * blocking the event loop.
+ */
+function serverLog(message: string): void {
+  const line = `${new Date().toISOString()}  ${message}\n`
+  fs.appendFile(path.join(SOCKET_DIR, 'electron.log'), line, () => {})
+}
 
 /**
  * Build CreateOptions for spawning a Claude Code PTY with full plugin/settings args.
@@ -158,11 +170,13 @@ function findValidClaudeSession(history: Array<{ claudeSessionId: string }>, cwd
 }
 
 interface ClientConnection {
+  id: string
   socket: net.Socket
   attachedSessions: Set<string>
   /** Sessions where this client wants snapshot mode instead of live data */
   snapshotSessions: Set<string>
   parser: LineParser
+  cameraBounds: CameraBounds | null
 }
 
 /** Tracks manual restarts for auto-recovery when the new PTY exits quickly. */
@@ -175,42 +189,48 @@ const restartRecovery = new Map<string, {
 
 const clients = new Set<ClientConnection>()
 
-// --- Claude usage polling state ---
+// --- Polling intervals (shared with ring buffer slot widths) ---
 const USAGE_POLL_TICK_MS = 15_000     // check conditions every 15s
-const USAGE_FETCH_COOLDOWN_MS = 1 * 60_000 // never fetch more than once per 1 minute
+const USAGE_FETCH_COOLDOWN_MS = 5 * 60_000 // never fetch more than once per 5 minutes
+const GH_RATE_LIMIT_POLL_MS = 60_000 // every 1 minute
+// Slot widths in minutes — sent to the client so sparkline tooltips show correct per-minute rates
+const USAGE_SLOT_MINUTES = USAGE_FETCH_COOLDOWN_MS / 60_000
+const GH_RATE_LIMIT_SLOT_MINUTES = GH_RATE_LIMIT_POLL_MS / 60_000
 const USAGE_IDLE_TIMEOUT_MS = 5 * 60_000 // stop fetching after 5 min of no client commands
 let lastClientCommandAt = 0
 let lastUsageFetchAt = 0
 const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
 const USAGE_CACHE_FILE = path.join(SOCKET_DIR, 'usage-cache.json')
 
-// --- Minute-keyed ring buffer (reusable for any monotonic time-series) ---
+// --- Ring buffer keyed by time slots (reusable for any monotonic time-series) ---
 const HISTORY_SLOTS = 61
 
-class MinuteRingBuffer {
-  private slots: ({ minuteKey: number; value: number } | null)[]
+class RingBuffer {
+  private slots: ({ slotKey: number; value: number } | null)[]
   private seeded = false
   private label: string
+  private slotMs: number
 
-  constructor(label: string) {
+  constructor(label: string, slotMs: number) {
     this.label = label
+    this.slotMs = slotMs
     this.slots = new Array(HISTORY_SLOTS).fill(null)
   }
 
   record(value: number, now = Date.now()): void {
-    const minuteKey = Math.floor(now / 60_000)
-    const slotIndex = ((minuteKey % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
-    this.slots[slotIndex] = { minuteKey, value }
+    const slotKey = Math.floor(now / this.slotMs)
+    const slotIndex = ((slotKey % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
+    this.slots[slotIndex] = { slotKey, value }
   }
 
   build(): (number | null)[] {
-    const nowMinute = Math.floor(Date.now() / 60_000)
+    const nowSlot = Math.floor(Date.now() / this.slotMs)
     const result: (number | null)[] = []
     for (let i = HISTORY_SLOTS - 1; i >= 0; i--) {
-      const targetMinute = nowMinute - i
-      const slotIndex = ((targetMinute % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
+      const targetSlot = nowSlot - i
+      const slotIndex = ((targetSlot % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
       const slot = this.slots[slotIndex]
-      result.push(slot && slot.minuteKey === targetMinute ? slot.value : null)
+      result.push(slot && slot.slotKey === targetSlot ? slot.value : null)
     }
     return result
   }
@@ -222,12 +242,12 @@ class MinuteRingBuffer {
       if (!fs.existsSync(logFile)) return
       const fd = fs.openSync(logFile, 'r')
       const stat = fs.fstatSync(fd)
-      const readSize = Math.min(stat.size, 4096)
+      const readSize = Math.min(stat.size, Math.ceil(this.slotMs / 60_000) * 4096)
       const buf = Buffer.alloc(readSize)
       fs.readSync(fd, buf, 0, readSize, stat.size - readSize)
       fs.closeSync(fd)
 
-      const cutoffMinute = Math.floor(Date.now() / 60_000) - HISTORY_SLOTS
+      const cutoffSlot = Math.floor(Date.now() / this.slotMs) - HISTORY_SLOTS
       const lines = buf.toString('utf8').split('\n').filter(Boolean)
       const startIdx = stat.size > readSize ? 1 : 0
       for (let i = startIdx; i < lines.length; i++) {
@@ -235,9 +255,9 @@ class MinuteRingBuffer {
           const entry = JSON.parse(lines[i])
           const value = entry[valueKey]
           if (typeof value !== 'number' || !entry.timestamp) continue
-          const minuteKey = Math.floor(new Date(entry.timestamp).getTime() / 60_000)
-          if (minuteKey <= cutoffMinute) continue
-          this.record(value, minuteKey * 60_000)
+          const slotKey = Math.floor(new Date(entry.timestamp).getTime() / this.slotMs)
+          if (slotKey <= cutoffSlot) continue
+          this.record(value, slotKey * this.slotMs)
         } catch { /* skip malformed line */ }
       }
       console.log(`[${this.label}] Seeded history from log (${lines.length - startIdx} entries scanned)`)
@@ -247,41 +267,61 @@ class MinuteRingBuffer {
   }
 }
 
-const creditHistory = new MinuteRingBuffer('claude-usage')
-const fiveHourHistory = new MinuteRingBuffer('5h-usage')
-const sevenDayHistory = new MinuteRingBuffer('7d-usage')
-const ghRateLimitHistory = new MinuteRingBuffer('gh-rate-limit')
+const creditHistory = new RingBuffer('claude-usage', USAGE_FETCH_COOLDOWN_MS)
+const fiveHourHistory = new RingBuffer('5h-usage', USAGE_FETCH_COOLDOWN_MS)
+const sevenDayHistory = new RingBuffer('7d-usage', USAGE_FETCH_COOLDOWN_MS)
+const ghRateLimitHistory = new RingBuffer('gh-rate-limit', GH_RATE_LIMIT_POLL_MS)
 
 // Cached last usage response — sent immediately to newly connected clients
-let cachedUsage: { usage: ClaudeUsageData; subscriptionType: string; rateLimitTier: string } | null = null
+let cachedUsage: { usage: ClaudeUsageData | null; subscriptionType: string | null; rateLimitTier: string | null; usageError: string | null } | null = null
 
 function loadCachedUsage(): void {
   try {
     if (!fs.existsSync(USAGE_CACHE_FILE)) return
     const data = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'))
-    if (data?.usage && data?.subscriptionType && data?.rateLimitTier) {
-      cachedUsage = data
-      // Seed history buffers from the log now that we know the subscription type
-      const logFile = path.join(USAGE_LOG_DIR, `usage_${data.subscriptionType}.jsonl`)
+    if (data?.usage) {
+      cachedUsage = { ...data, usageError: data.usageError ?? null }
+      // Seed history buffers from the log; subscription type may be null for some account types
+      const logFile = path.join(USAGE_LOG_DIR, `usage_${data.subscriptionType ?? 'unknown'}.jsonl`)
       creditHistory.seedFromLog(logFile, 'extra_usage.used_credits')
       fiveHourHistory.seedFromLog(logFile, 'five_hour.utilization')
       sevenDayHistory.seedFromLog(logFile, 'seven_day.utilization')
-      console.log(`[claude-usage] Loaded cached usage (${data.subscriptionType})`)
+      serverLog(`[claude-usage] Loaded cached usage (${data.subscriptionType})`)
     }
   } catch (err: any) {
-    console.error(`[claude-usage] Failed to load usage cache: ${err.message}`)
+    serverLog(`[claude-usage] Failed to load usage cache: ${err.message}`)
   }
 }
 
-function saveCachedUsage(usage: ClaudeUsageData, subscriptionType: string, rateLimitTier: string): void {
-  cachedUsage = { usage, subscriptionType, rateLimitTier }
+// --- Cross-source MTD cost cache ---
+// When switching between "team" and "API", the toolbar should show the combined
+// total from both sources for the current month. Each source persists its last
+// known MTD cost here, and the poller adds the other source's value to the display.
+const CROSS_CACHE_PATH = path.join(SOCKET_DIR, 'usage-cross-cache.json')
+interface CrossCache { month: string; team: number; api: number }
+
+function loadCrossCache(): CrossCache {
+  const currentMonth = new Date().toISOString().slice(0, 7) // "2026-03"
+  try {
+    const data = JSON.parse(fs.readFileSync(CROSS_CACHE_PATH, 'utf8')) as CrossCache
+    if (data.month === currentMonth) return data
+  } catch { /* missing or corrupt */ }
+  return { month: currentMonth, team: 0, api: 0 }
+}
+
+function saveCrossCache(cache: CrossCache): void {
+  fs.writeFile(CROSS_CACHE_PATH, JSON.stringify(cache), () => {})
+}
+
+
+function saveCachedUsage(usage: ClaudeUsageData | null, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null = null): void {
+  cachedUsage = { usage, subscriptionType, rateLimitTier, usageError }
   fs.writeFile(USAGE_CACHE_FILE, JSON.stringify(cachedUsage), (err) => {
-    if (err) console.error(`[claude-usage] Failed to save usage cache: ${err.message}`)
+    if (err) serverLog(`[claude-usage] Failed to save usage cache: ${err.message}`)
   })
 }
 
 // --- GitHub GraphQL rate limit polling ---
-const GH_RATE_LIMIT_POLL_MS = 60_000 // every 1 minute
 const GH_RATE_LIMIT_LOG_FILE = path.join(USAGE_LOG_DIR, 'gh_rate_limit.jsonl')
 const GH_RATE_LIMIT_CACHE_FILE = path.join(SOCKET_DIR, 'gh-rate-limit-cache.json')
 let cachedGhRateLimit: GhRateLimitData | null = null
@@ -362,6 +402,14 @@ function broadcastToAttached(sessionId: string, msg: ServerMessage): void {
 function broadcastToAll(msg: ServerMessage): void {
   clients.forEach((client) => {
     send(client.socket, msg)
+  })
+}
+
+function broadcastToOthers(excludeSocket: net.Socket, msg: ServerMessage): void {
+  clients.forEach((client) => {
+    if (client.socket !== excludeSocket) {
+      send(client.socket, msg)
+    }
   })
 }
 
@@ -464,6 +512,58 @@ function handleIngestMessage(msg: IngestMessage): void {
         console.log(`[spawn-claude-surface] Created terminal "${msg.title}" parented to ${spawnParentNodeId.slice(0, 8)}`)
       } catch (err: any) {
         console.error(`[spawn-claude-surface] Failed: ${err.message}`)
+      }
+      break
+    }
+
+    case 'fork-claude-surface': {
+      const forkSrcNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!forkSrcNodeId) {
+        console.error(`[fork-claude-surface] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      try {
+        const forkSrcNode = stateManager.getNode(forkSrcNodeId)
+        if (!forkSrcNode || forkSrcNode.type !== 'terminal') {
+          console.error(`[fork-claude-surface] Node ${forkSrcNodeId} is not a terminal`)
+          break
+        }
+        const history = forkSrcNode.claudeSessionHistory ?? []
+        if (history.length === 0) {
+          console.error(`[fork-claude-surface] No Claude session history for ${forkSrcNodeId.slice(0, 8)}`)
+          break
+        }
+        const forkCwd = forkSrcNode.cwd ?? sessionManager.getCwd(forkSrcNode.sessionId)
+        if (!forkCwd) {
+          console.error(`[fork-claude-surface] Cannot determine cwd for ${forkSrcNodeId.slice(0, 8)}`)
+          break
+        }
+        let sourceClaudeSessionId: string | undefined
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
+            sourceClaudeSessionId = history[i].claudeSessionId
+            break
+          }
+        }
+        if (!sourceClaudeSessionId) {
+          console.error(`[fork-claude-surface] No session transcript found on disk for ${forkSrcNodeId.slice(0, 8)}`)
+          break
+        }
+
+        const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
+        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId, msg.prompt, undefined, parseExtraCliArgs(forkSrcNode.extraCliArgs))
+        const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
+        snapshotManager.addSession(forkPtyId, forkCols, forkRows)
+
+        const forkPos = computePlacement(stateManager.getState().nodes, forkSrcNodeId, terminalPixelSize(forkCols, forkRows))
+        stateManager.createTerminal(forkPtyId, forkSrcNodeId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkSrcNode.shellTitleHistory, msg.title)
+        if (forkSrcNode.shellTitleHistory?.length) {
+          sessionManager.seedTitleHistory(forkPtyId, forkSrcNode.shellTitleHistory)
+        }
+
+        console.log(`[fork-claude-surface] Forked "${msg.title}" from ${forkSrcNodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (claude session ${newClaudeSessionId.slice(0, 8)})`)
+      } catch (err: any) {
+        console.error(`[fork-claude-surface] Failed: ${err.message}`)
       }
       break
     }
@@ -1514,6 +1614,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'camera-bounds': {
+      client.cameraBounds = msg.bounds
+      const otherCount = clients.size - 1
+      if (otherCount > 0) {
+        serverLog(`[camera-bounds] client=${client.id.slice(0, 8)} broadcasting to ${otherCount} peers bounds=(${Math.round(msg.bounds.x)},${Math.round(msg.bounds.y)} ${Math.round(msg.bounds.width)}x${Math.round(msg.bounds.height)})`)
+      }
+      broadcastToOthers(client.socket, { type: 'peer-camera-bounds', clientId: client.id, bounds: msg.bounds })
+      break
+    }
+
     default: {
       const unknownType = (msg as any).type
       console.error(`Unknown message type: ${unknownType}`)
@@ -1985,49 +2095,152 @@ async function startServer(): Promise<void> {
     (nodeId, gitStatus) => stateManager.updateDirectoryGitStatus(nodeId, gitStatus)
   )
 
-  // --- Claude usage: load cached data and start polling ---
+  // --- Claude usage: unified polling ---
+  // Each tick: try OAuth first (subscription accounts). If NoOAuthCredentialsError,
+  // fall back to the API usage scraper. This handles live switching between account
+  // types without requiring a restart.
   loadCachedUsage()
   let usageLogDirReady = false
+  let lastUsageSource: 'oauth' | 'api' | null = null
+  let lastOAuthSubscriptionType: string | null = null // remember sub type across 429s
+  let lastApiSeeded = false
+  const apiLogFile = path.join(USAGE_LOG_DIR, 'usage_API.jsonl')
   setInterval(async () => {
     const now = Date.now()
     if (now - lastClientCommandAt > USAGE_IDLE_TIMEOUT_MS) return
     if (now - lastUsageFetchAt < USAGE_FETCH_COOLDOWN_MS) return
     lastUsageFetchAt = now
+
+    // --- Fetch OAuth usage (subscription accounts: Team, Pro, etc.) ---
+    let oauthUsage: ClaudeUsageData | null = null
+    let oauthSubType: string | null = null
+    let oauthRateLimitTier: string | null = null
+    let oauthOk = false
+    let oauthCredits: number | null = null
+    let apiCredits: number | null = null
+
     try {
-      const { usage, subscriptionType, rateLimitTier } = await fetchClaudeUsage()
+      const result = await fetchClaudeUsage()
+      oauthUsage = result.usage
+      oauthSubType = result.subscriptionType
+      oauthRateLimitTier = result.rateLimitTier
+      lastOAuthSubscriptionType = oauthSubType
+      oauthOk = true
 
-      // Seed ring buffers from persisted log on first fetch
-      const seedLog = path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`)
-      creditHistory.seedFromLog(seedLog, 'extra_usage.used_credits')
-      fiveHourHistory.seedFromLog(seedLog, 'five_hour.utilization')
-      sevenDayHistory.seedFromLog(seedLog, 'seven_day.utilization')
-
-      // Record values in the minute-keyed ring buffers
-      const credits = usage.extra_usage?.used_credits ?? null
-      if (credits != null) creditHistory.record(credits, now)
-      if (usage.five_hour) fiveHourHistory.record(usage.five_hour.utilization, now)
-      if (usage.seven_day) sevenDayHistory.record(usage.seven_day.utilization, now)
-
-      broadcastToAll({ type: 'claude-usage', usage, subscriptionType, rateLimitTier, creditHistory: creditHistory.build(), fiveHourHistory: fiveHourHistory.build(), sevenDayHistory: sevenDayHistory.build() })
-      saveCachedUsage(usage, subscriptionType, rateLimitTier)
-
-      // Log usage data with flat dot-notation keys
-      if (!usageLogDirReady) {
-        fs.mkdirSync(USAGE_LOG_DIR, { recursive: true })
-        usageLogDirReady = true
+      if (lastUsageSource !== 'oauth') {
+        serverLog(`[claude-usage] Using OAuth (${oauthSubType})`)
+        const seedLog = path.join(USAGE_LOG_DIR, `usage_${oauthSubType ?? 'unknown'}.jsonl`)
+        creditHistory.seedFromLog(seedLog, 'extra_usage.used_credits')
+        fiveHourHistory.seedFromLog(seedLog, 'five_hour.utilization')
+        sevenDayHistory.seedFromLog(seedLog, 'seven_day.utilization')
+        lastUsageSource = 'oauth'
       }
-      const logEntry: Record<string, string | number | boolean | null> = {
-        timestamp: new Date(now).toISOString(),
-      }
-      if (usage.five_hour) logEntry['five_hour.utilization'] = usage.five_hour.utilization
-      if (usage.seven_day) logEntry['seven_day.utilization'] = usage.seven_day.utilization
-      if (usage.extra_usage) logEntry['extra_usage.used_credits'] = usage.extra_usage.used_credits
-      const logFile = path.join(USAGE_LOG_DIR, `usage_${subscriptionType}.jsonl`)
+
+      if (oauthUsage.five_hour) fiveHourHistory.record(oauthUsage.five_hour.utilization, now)
+      if (oauthUsage.seven_day) sevenDayHistory.record(oauthUsage.seven_day.utilization, now)
+
+      // Track team credits for combining after both fetches
+      oauthCredits = oauthUsage.extra_usage?.used_credits ?? null
+
+      // Log OAuth data
+      if (!usageLogDirReady) { fs.mkdirSync(USAGE_LOG_DIR, { recursive: true }); usageLogDirReady = true }
+      const logEntry: Record<string, string | number | boolean | null> = { timestamp: new Date(now).toISOString() }
+      if (oauthUsage.five_hour) logEntry['five_hour.utilization'] = oauthUsage.five_hour.utilization
+      if (oauthUsage.seven_day) logEntry['seven_day.utilization'] = oauthUsage.seven_day.utilization
+      if (oauthUsage.extra_usage) logEntry['extra_usage.used_credits'] = oauthUsage.extra_usage.used_credits
+      const logFile = path.join(USAGE_LOG_DIR, `usage_${oauthSubType ?? 'unknown'}.jsonl`)
       fs.appendFile(logFile, JSON.stringify(logEntry) + '\n', (err) => {
-        if (err) console.error(`Failed to write usage log: ${err.message}`)
+        if (err) serverLog(`[claude-usage] Failed to write usage log: ${err.message}`)
       })
-    } catch (err: any) {
-      console.error(`[claude-usage] Fetch failed: ${err.message}`)
+    } catch (oauthErr: any) {
+      if (!(oauthErr instanceof NoOAuthCredentialsError)) {
+        if (!lastOAuthSubscriptionType) lastOAuthSubscriptionType = cachedUsage?.subscriptionType ?? 'team'
+        serverLog(`[claude-usage] OAuth fetch failed: ${oauthErr.message}`)
+        const httpMatch = oauthErr.message.match(/returned (\d{3})/)
+        if (httpMatch) {
+          broadcastToAll({ type: 'server-error', message: `Claude usage: OAuth endpoint returned ${httpMatch[1]}` })
+        }
+      }
+    }
+
+    // --- Fetch API usage (Platform Console scraping) ---
+    // Skip for pro accounts (no API keys to track)
+    const isPro = (oauthSubType ?? lastOAuthSubscriptionType)?.toLowerCase() === 'pro'
+    if (!isPro) {
+      try {
+        if (!lastApiSeeded) {
+          creditHistory.seedFromLog(apiLogFile, 'extra_usage.used_credits')
+          lastApiSeeded = true
+        }
+
+        const result = await fetchApiUsage(serverLog)
+        const rawApiCredits = result.usage?.extra_usage?.used_credits ?? null
+
+        if (rawApiCredits != null) {
+          apiCredits = rawApiCredits
+          serverLog(`[api-usage] MTD cost: $${(rawApiCredits / 100).toFixed(2)}`)
+        }
+
+        // Log API data
+        if (!usageLogDirReady) { fs.mkdirSync(USAGE_LOG_DIR, { recursive: true }); usageLogDirReady = true }
+        const logEntry = { timestamp: new Date(now).toISOString(), 'extra_usage.used_credits': rawApiCredits }
+        fs.appendFile(apiLogFile, JSON.stringify(logEntry) + '\n', (writeErr) => {
+          if (writeErr) serverLog(`[api-usage] Failed to write usage log: ${writeErr.message}`)
+        })
+      } catch (apiErr: any) {
+        serverLog(`[api-usage] Fetch failed: ${apiErr.message}`)
+        const httpMatch = apiErr.message.match(/returned (\d{3})/)
+        if (httpMatch) {
+          broadcastToAll({ type: 'server-error', message: `Claude usage: Platform API returned ${httpMatch[1]}` })
+        }
+      }
+    }
+
+    // --- Combine and broadcast ---
+    // Merge fresh values with persisted cross-cache, then save
+    const crossCache = loadCrossCache()
+    if (oauthCredits != null) crossCache.team = oauthCredits
+    if (apiCredits != null) crossCache.api = apiCredits
+    saveCrossCache(crossCache)
+
+    const effectiveSubType = oauthSubType ?? lastOAuthSubscriptionType ?? 'API'
+    const combinedCredits = isPro
+      ? (oauthUsage?.extra_usage?.used_credits ?? null)
+      : (crossCache.team + crossCache.api) || null
+
+    if (combinedCredits != null) creditHistory.record(combinedCredits, now)
+
+    const baseUsage = oauthUsage ?? cachedUsage?.usage ?? null
+    const broadcastUsage = baseUsage && combinedCredits != null && baseUsage.extra_usage
+      ? { ...baseUsage, extra_usage: { ...baseUsage.extra_usage, used_credits: combinedCredits } }
+      : baseUsage
+
+    if (broadcastUsage || oauthOk) {
+      broadcastToAll({
+        type: 'claude-usage',
+        usage: broadcastUsage,
+        subscriptionType: effectiveSubType,
+        rateLimitTier: oauthRateLimitTier ?? cachedUsage?.rateLimitTier ?? null,
+        usageError: null,
+        creditHistory: creditHistory.build(),
+        fiveHourHistory: fiveHourHistory.build(),
+        sevenDayHistory: sevenDayHistory.build(),
+        slotMinutes: USAGE_SLOT_MINUTES,
+      })
+      saveCachedUsage(broadcastUsage, effectiveSubType, oauthRateLimitTier)
+    } else if (!oauthOk) {
+      const errorSubType = lastOAuthSubscriptionType ?? 'API'
+      broadcastToAll({
+        type: 'claude-usage',
+        usage: null,
+        subscriptionType: errorSubType,
+        rateLimitTier: null,
+        usageError: 'Both OAuth and API usage fetches failed',
+        creditHistory: creditHistory.build(),
+        fiveHourHistory: fiveHourHistory.build(),
+        sevenDayHistory: sevenDayHistory.build(),
+        slotMinutes: USAGE_SLOT_MINUTES,
+      })
     }
   }, USAGE_POLL_TICK_MS)
 
@@ -2039,7 +2252,7 @@ async function startServer(): Promise<void> {
       const data = await fetchGhRateLimit()
       saveCachedGhRateLimit(data)
       ghRateLimitHistory.record(data.used, now)
-      broadcastToAll({ type: 'gh-rate-limit', data, usedHistory: ghRateLimitHistory.build() })
+      broadcastToAll({ type: 'gh-rate-limit', data, usedHistory: ghRateLimitHistory.build(), slotMinutes: GH_RATE_LIMIT_SLOT_MINUTES })
       console.log(`[gh-rate-limit] ${data.used}/${data.limit}, resets ${data.resetAt}`)
 
       // Log to JSONL
@@ -2077,16 +2290,27 @@ async function startServer(): Promise<void> {
     socket.setEncoding('utf8')
 
     const client: ClientConnection = {
+      id: randomUUID(),
       socket,
       attachedSessions: new Set(),
       snapshotSessions: new Set(),
       parser: new LineParser((msg) => {
         handleMessage(client, msg as ClientMessage)
-      })
+      }),
+      cameraBounds: null
     }
 
     clients.add(client)
-    console.log(`Client connected (${clients.size} total)`)
+    console.log(`Client connected id=${client.id.slice(0, 8)} (${clients.size} total)`)
+
+    // Send existing peers' camera bounds to the new client
+    clients.forEach((existing) => {
+      if (existing !== client && existing.cameraBounds) {
+        send(socket, { type: 'peer-camera-bounds', clientId: existing.id, bounds: existing.cameraBounds })
+      }
+    })
+    // Notify other clients about the new peer
+    broadcastToOthers(socket, { type: 'peer-connected', clientId: client.id })
 
     // Send cached usage data immediately so the client doesn't wait for the next poll
     if (cachedUsage) {
@@ -2096,10 +2320,11 @@ async function startServer(): Promise<void> {
         creditHistory: creditHistory.build(),
         fiveHourHistory: fiveHourHistory.build(),
         sevenDayHistory: sevenDayHistory.build(),
+        slotMinutes: USAGE_SLOT_MINUTES,
       })
     }
     if (cachedGhRateLimit) {
-      send(socket, { type: 'gh-rate-limit', data: cachedGhRateLimit, usedHistory: ghRateLimitHistory.build() })
+      send(socket, { type: 'gh-rate-limit', data: cachedGhRateLimit, usedHistory: ghRateLimitHistory.build(), slotMinutes: GH_RATE_LIMIT_SLOT_MINUTES })
     }
 
     socket.on('data', (data) => {
@@ -2108,12 +2333,14 @@ async function startServer(): Promise<void> {
 
     socket.on('close', () => {
       clients.delete(client)
-      console.log(`Client disconnected (${clients.size} total)`)
+      console.log(`Client disconnected id=${client.id.slice(0, 8)} (${clients.size} total)`)
+      broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
     })
 
     socket.on('error', (err) => {
       console.error('Client socket error:', err.message)
       clients.delete(client)
+      broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
     })
   })
 

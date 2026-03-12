@@ -418,6 +418,13 @@ html, body, #root {
   will-change: transform;
 }
 
+/* Peer camera viewport rectangles */
+.peer-camera-rect {
+  border: calc(1px / var(--camera-zoom, 1)) solid rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+  z-index: -1;
+}
+
 /* Terminal Card */
 .terminal-card {
   width: 100%;

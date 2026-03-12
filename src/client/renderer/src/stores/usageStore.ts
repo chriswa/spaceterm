@@ -5,19 +5,23 @@ interface UsageState {
   usage: ClaudeUsageData | null
   subscriptionType: string | null
   rateLimitTier: string | null
+  usageError: string | null
   creditHistory: (number | null)[]
   fiveHourHistory: (number | null)[]
   sevenDayHistory: (number | null)[]
-  update: (usage: ClaudeUsageData, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[]) => void
+  slotMinutes: number
+  update: (usage: ClaudeUsageData | null, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[], slotMinutes: number) => void
 }
 
 export const useUsageStore = create<UsageState>((set) => ({
   usage: null,
   subscriptionType: null,
   rateLimitTier: null,
+  usageError: null,
   creditHistory: [],
   fiveHourHistory: [],
   sevenDayHistory: [],
-  update: (usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory) =>
-    set({ usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory: fiveHourHistory ?? [], sevenDayHistory: sevenDayHistory ?? [] }),
+  slotMinutes: 5,
+  update: (usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes) =>
+    set({ usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory: fiveHourHistory ?? [], sevenDayHistory: sevenDayHistory ?? [], slotMinutes }),
 }))

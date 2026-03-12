@@ -2,6 +2,7 @@ import { useNodeStore } from '../stores/nodeStore'
 import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
+import { usePeerStore } from '../stores/peerStore'
 import type { NodeData } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
@@ -79,14 +80,14 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory) => {
-      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier, creditHistory, fiveHourHistory, sevenDayHistory)
+    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes) => {
+      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes)
     })
   )
 
   cleanupFns.push(
-    window.api.node.onGhRateLimit((data, usedHistory) => {
-      useGhRateLimitStore.getState().update(data, usedHistory)
+    window.api.node.onGhRateLimit((data, usedHistory, slotMinutes) => {
+      useGhRateLimitStore.getState().update(data, usedHistory, slotMinutes)
     })
   )
 
@@ -99,6 +100,24 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onSpeak((text: string) => {
       speakText(text)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.node.onPeerConnected((clientId: string) => {
+      usePeerStore.getState().addPeer(clientId)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.node.onPeerDisconnected((clientId: string) => {
+      usePeerStore.getState().removePeer(clientId)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.node.onPeerCameraBounds((clientId: string, bounds) => {
+      usePeerStore.getState().updateBounds(clientId, bounds)
     })
   )
 
@@ -257,4 +276,8 @@ export async function sendUndoPush(entry: UndoEntry): Promise<void> {
 
 export async function sendUndoSetCursor(cursor: number): Promise<void> {
   await window.api.node.undoSetCursor(cursor)
+}
+
+export function sendCameraBounds(bounds: { x: number; y: number; width: number; height: number }): void {
+  window.api.node.sendCameraBounds(bounds)
 }

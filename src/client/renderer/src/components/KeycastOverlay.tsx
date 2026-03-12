@@ -75,7 +75,7 @@ const shortcutNames: Map<string, string> = (() => {
         // Skip mouse/click/drag entries — they don't map to keyboard combos
         if (/click|drag|pinch|scroll/i.test(normalized)) continue
         // Skip entries that are just descriptions (no modifier and not a known single key)
-        if (!modPrefix && variantMods.length === 0 && normalized !== 'Esc') continue
+        if (!modPrefix && variantMods.length === 0) continue
         map.set(normalized, entry.name)
       }
     }
@@ -609,7 +609,17 @@ export function KeycastOverlay() {
         setDisplay(buildModifierString())
         fadeState.current = 'active'
       } else {
-        lockCombo(buildModifierString() + labelForKey(e.key))
+        // Require a command modifier (⌘/⌃/⌥) for non-modifier keys — otherwise
+        // it's just typing. The shortcutNames map (derived from help-registry)
+        // serves as a data-driven allowlist for any registered standalone shortcuts.
+        const comboStr = buildModifierString() + labelForKey(e.key)
+        const hasCommandModifier =
+          heldModifiers.current.has('Meta') ||
+          heldModifiers.current.has('Control') ||
+          heldModifiers.current.has('Alt')
+        if (!hasCommandModifier && !shortcutNames.has(comboStr)) return
+
+        lockCombo(comboStr)
       }
     }
 

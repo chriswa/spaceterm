@@ -1,5 +1,9 @@
 const GIT_DISCIPLINE = `Remember: always \`git pull\` before making any changes (the CI auto-linter may have pushed). The PR must remain incrementally reviewable — do not rewrite commits that reviewers have already seen (no amending, squashing, or interactive-rebasing reviewed history). Adding new commits and rebasing onto the base branch are both fine.`;
 
+const EPISTEMIC_DISCIPLINE = `**Do not guess. Do not assume.** Before taking any action, you must understand the actual problem. If you cannot access CI logs, cannot read error output, or cannot determine the root cause of a failure — STOP and halt. Do not infer what "probably" went wrong from incomplete information. Do not treat a failure to fetch information as evidence that something is broken. Gaps in your knowledge are not clues — they are missing data. When uncertain, halt and tell me what you couldn't access or understand, so I can investigate myself. The cost of halting is near zero; the cost of a confident wrong fix is high.`;
+
+const WORK_THEN_PUSH_FIRST = `**Workflow: lint → push → build & test.** After making changes, run lint first. Then push immediately so CI starts as soon as possible. Only after pushing, build and test locally. If local build/test reveals problems, fix them, then lint and push again before building and testing again. Repeat this cycle as needed. Only spaceterm broadcast after all iterations are complete and the final push is done.`;
+
 const BROADCAST_INSTRUCTIONS = `When you're done, spaceterm broadcast "babysitter:resume" so I can continue monitoring.
 If you need my input on something, spaceterm broadcast "babysitter:halt" instead.`;
 
@@ -48,6 +52,8 @@ export function buildRemediateMessage(
 
   parts.push(`I just ran pr-check on my PR and found issues that need attention.`);
   parts.push("");
+  parts.push(EPISTEMIC_DISCIPLINE);
+  parts.push("");
 
   const priority = ["Dequeued", "Conflicts", "Tests", "CodeRabbit", "Changes requested", "Review Comments", "Self Comment"];
   const ordered = [...remediate].sort((a, b) => {
@@ -73,7 +79,7 @@ export function buildRemediateMessage(
           }
         }
         parts.push(
-          `I need you to investigate these test failures. If it's a simple fix (typo, missing import, lint issue, obvious test assertion), go ahead and fix it. If the fix requires design decisions or seems like it could contradict the intent of my changes, tell me what you found instead.`,
+          `I need you to investigate these test failures. **You MUST read the actual CI logs and identify the specific error before doing anything.** If you cannot fetch or read the CI output, halt immediately — do not speculate about what might be wrong.\n\nSome tests are flaky and fail intermittently for reasons unrelated to any code change. If a failure looks unrelated to my PR's changes (e.g. a timeout, an infrastructure error, a test for an unrelated module), tell me it looks flaky and suggest a re-run — do not make code changes to "fix" something you don't understand.\n\nOnly if the failure IS clearly related to my changes AND it's a simple fix (typo, missing import, lint issue, obvious test assertion), go ahead and fix it. If the fix requires design decisions or seems like it could contradict the intent of my changes, tell me what you found instead.`,
         );
         parts.push("");
         break;
@@ -136,6 +142,8 @@ export function buildRemediateMessage(
     }
   }
 
+  parts.push(WORK_THEN_PUSH_FIRST);
+  parts.push("");
   parts.push(GIT_DISCIPLINE);
   parts.push("");
   parts.push(BROADCAST_INSTRUCTIONS);

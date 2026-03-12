@@ -9,15 +9,18 @@ const SOCKET_PATH = process.env.SPACETERM_HOME
   : path.join(os.homedir(), '.spaceterm', 'hooks.sock')
 const TIMEOUT_MS = 3000
 
-export const speakTool = defineTool({
-  name: 'spaceterm_speak',
+export const forkClaudeSurfaceTool = defineTool({
+  name: 'fork_claude_surface',
   description:
-    'IMPORTANT: Only use this tool when the user explicitly asks for text-to-speech, speech, or to speak aloud. ' +
-    'Speaks text through the spaceterm client\'s text-to-speech engine.',
+    'IMPORTANT: Only use this tool when the user explicitly uses the phrase "fork claude surface" in their message. ' +
+    'Forks the current Claude session, creating a new terminal that inherits the full conversation history ' +
+    'and receives the given prompt as its first new message. ' +
+    'This is fire-and-forget — you will not receive the new session\'s ID or be able to interact with it.',
   inputSchema: z.object({
-    text: z.string().max(200).describe('The text to speak aloud (max 200 characters)'),
+    prompt: z.string().describe('The prompt to send to the forked Claude Code session'),
+    title: z.string().describe('The title for the new terminal node on the canvas'),
   }),
-  async handler({ text }) {
+  async handler({ prompt, title }) {
     const surfaceId = process.env.SPACETERM_SURFACE_ID
     if (!surfaceId) {
       return {
@@ -26,7 +29,7 @@ export const speakTool = defineTool({
       }
     }
 
-    const message = JSON.stringify({ type: 'speak', surfaceId, text }) + '\n'
+    const message = JSON.stringify({ type: 'fork-claude-surface', surfaceId, prompt, title }) + '\n'
 
     await new Promise<void>((resolve, reject) => {
       const socket = net.createConnection(SOCKET_PATH, () => {
@@ -46,7 +49,7 @@ export const speakTool = defineTool({
     })
 
     return {
-      content: [{ type: 'text' as const, text: `Speaking: "${text}"` }],
+      content: [{ type: 'text' as const, text: `Claude surface "${title}" forked successfully.` }],
     }
   },
 })

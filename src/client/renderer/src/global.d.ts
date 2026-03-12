@@ -80,10 +80,14 @@ interface NodeApi {
   onAdded(callback: (node: import('../../../shared/state').NodeData) => void): () => void
   onRemoved(callback: (nodeId: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
-  onClaudeUsage(callback: (usage: import('../../../server/claude-usage').ClaudeUsageData, subscriptionType: string, rateLimitTier: string, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[]) => void): () => void
-  onGhRateLimit(callback: (data: import('../../../../shared/protocol').GhRateLimitData, usedHistory: (number | null)[]) => void): () => void
+  onClaudeUsage(callback: (usage: import('../../../server/claude-usage').ClaudeUsageData | null, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[], slotMinutes: number) => void): () => void
+  onGhRateLimit(callback: (data: import('../../../../shared/protocol').GhRateLimitData, usedHistory: (number | null)[], slotMinutes: number) => void): () => void
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
+  sendCameraBounds(bounds: { x: number; y: number; width: number; height: number }): void
+  onPeerConnected(callback: (clientId: string) => void): () => void
+  onPeerDisconnected(callback: (clientId: string) => void): () => void
+  onPeerCameraBounds(callback: (clientId: string, bounds: { x: number; y: number; width: number; height: number }) => void): () => void
 }
 
 interface TtsApi {

@@ -3,6 +3,7 @@ import * as path from 'path'
 import { spawn } from 'child_process'
 import { homedir } from 'os'
 
+const ENABLED = Boolean(false)
 const SPACETERM_HOME = process.env.SPACETERM_HOME || path.join(homedir(), '.spaceterm')
 const LOG_PATH = path.join(SPACETERM_HOME, 'title-summarizer.log')
 const JSONL_PATH = path.join(SPACETERM_HOME, 'title-summarizer.jsonl')
@@ -66,6 +67,7 @@ export class SessionTitleSummarizer {
 
   /** Fire-and-forget: read transcript, summarize, inject title. */
   summarize(surfaceId: string, transcriptPath: string, claudeSessionId: string): void {
+    if (!ENABLED) return
     setImmediate(() => this.run(surfaceId, transcriptPath, claudeSessionId))
   }
 

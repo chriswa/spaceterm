@@ -880,23 +880,24 @@ function formatCredits(cents: number): string {
 
 // --- Delta sparkline (reusable for any minute-keyed monotonic history) ---
 
-const SPARKLINE_W = 80
+const SPARKLINE_W = 60
 const SPARKLINE_H = 20
 const SPARKLINE_PAD = 2
 
 interface DeltaSparklineProps {
   history: (number | null)[]
   color: string          // e.g. '#4ade80'
-  formatPeak: (value: number) => string  // formats the peak delta for tooltip
+  slotMinutes: number    // width of each history slot in minutes
+  formatPeak: (perMinute: number) => string  // formats the per-minute peak delta for tooltip
 }
 
-function DeltaSparkline({ history, color, formatPeak }: DeltaSparklineProps) {
-  // Build one delta per history slot: zero for gaps, real delta for consecutive non-null pairs
+function DeltaSparkline({ history, color, slotMinutes, formatPeak }: DeltaSparklineProps) {
+  // Build per-minute rate for each slot transition
   const allDeltas: number[] = []
   for (let i = 1; i < history.length; i++) {
     const prev = history[i - 1]
     const cur = history[i]
-    allDeltas.push(prev != null && cur != null ? cur - prev : 0)
+    allDeltas.push(prev != null && cur != null ? (cur - prev) / slotMinutes : 0)
   }
 
   // Only show if there's at least one non-zero delta
@@ -914,10 +915,10 @@ function DeltaSparkline({ history, color, formatPeak }: DeltaSparklineProps) {
 
   const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
   const area = line + ` L ${points[points.length - 1].x} ${bottomY} L ${points[0].x} ${bottomY} Z`
-  const minutesAgo = allDeltas.length - 1 - peakIdx
-  const peakTime = new Date(Date.now() - minutesAgo * 60_000)
+  const slotsAgo = allDeltas.length - 1 - peakIdx
+  const peakTime = new Date(Date.now() - slotsAgo * slotMinutes * 60_000)
   const timeStr = peakTime.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }).toLowerCase()
-  const peakTooltip = `Recent peak: ${formatPeak(maxD)} / min @ ${timeStr}`
+  const peakTooltip = `Recent peak: ${formatPeak(maxD)}/min @ ${timeStr}`
 
   // Derive fill with 50% opacity from the stroke color
   const fillColor = color.startsWith('#')
@@ -1009,6 +1010,7 @@ function formatDelta(resetAt: string): string {
 function GhRateLimitIndicator() {
   const data = useGhRateLimitStore(s => s.data)
   const usedHistory = useGhRateLimitStore(s => s.usedHistory)
+  const ghSlotMinutes = useGhRateLimitStore(s => s.slotMinutes)
   const [, setTick] = useState(0)
 
   // Re-render every 30s to keep the countdown fresh
@@ -1029,7 +1031,7 @@ function GhRateLimitIndicator() {
       data-tooltip={`GitHub GraphQL rate limit \u2022 resets in ${formatDelta(data.resetAt)}`}
       data-tooltip-no-flip
     >
-      <DeltaSparkline history={usedHistory} color="#60a5fa" formatPeak={(v) => `${v} req`} />
+      <DeltaSparkline history={usedHistory} color="#60a5fa" slotMinutes={ghSlotMinutes} formatPeak={(v) => `${Math.round(v)} req`} />
       <span className="toolbar__metric-label">GH </span>
       <span style={{ color: utilizationColor(pct) }}>{Math.round(pct)}<span className="toolbar__metric-label">%</span></span>
       {projectedGh != null && (
@@ -1044,9 +1046,11 @@ function GhRateLimitIndicator() {
 function UsageIndicators() {
   const usage = useUsageStore(s => s.usage)
   const subscriptionType = useUsageStore(s => s.subscriptionType)
+  const usageError = useUsageStore(s => s.usageError)
   const creditHistory = useUsageStore(s => s.creditHistory)
   const fiveHourHistory = useUsageStore(s => s.fiveHourHistory)
   const sevenDayHistory = useUsageStore(s => s.sevenDayHistory)
+  const usageSlotMinutes = useUsageStore(s => s.slotMinutes)
   const prevCreditsRef = useRef<number | null>(null)
   const extraRef = useRef<HTMLSpanElement>(null)
 
@@ -1077,11 +1081,37 @@ function UsageIndicators() {
     anim.onfinish = () => el.remove()
   }, [credits])
 
-  if (!usage || !subscriptionType) return null
+  // No data at all yet (not even a subscription type)
+  if (!subscriptionType) return null
+
+  // Loading state (subscriptionType set but no usage data yet and no error)
+  if (!usage && !usageError) {
+    return (
+      <span className="toolbar__usage">
+        <span className="toolbar__usage-tag">{subscriptionType}</span>
+        <span className="toolbar__status-item" style={{ color: '#888' }}>...</span>
+      </span>
+    )
+  }
+
+  // Error state with no cached data to fall back on
+  if (!usage && usageError) {
+    return (
+      <span className="toolbar__usage">
+        <span className="toolbar__usage-tag">{subscriptionType}</span>
+        <span className="toolbar__status-item" style={{ color: '#f87171' }} data-tooltip={usageError} data-tooltip-no-flip>
+          error
+        </span>
+      </span>
+    )
+  }
+
+  if (!usage) return null
 
   const fiveHour = usage.five_hour
   const sevenDay = usage.seven_day
   const extra = usage.extra_usage
+  const isApi = subscriptionType === 'API'
   const projected5h = fiveHour != null && typeof fiveHour.utilization === 'number'
     ? projectUsage(fiveHour.utilization, fiveHour.resets_at, FIVE_HOUR_MS)
     : null
@@ -1099,7 +1129,7 @@ function UsageIndicators() {
           data-tooltip={formatResetTime('5-hour usage', fiveHour.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
-          <DeltaSparkline history={fiveHourHistory} color={utilizationColor(fiveHour.utilization)} formatPeak={(v) => `${v}%pts`} />
+          <DeltaSparkline history={fiveHourHistory} color={utilizationColor(fiveHour.utilization)} slotMinutes={usageSlotMinutes} formatPeak={(v) => `${v.toFixed(1)}%`} />
           <span className="toolbar__metric-label">5h </span>
           <span style={{ color: utilizationColor(fiveHour.utilization) }}>{Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span></span>
           {projected5h != null && (
@@ -1116,7 +1146,7 @@ function UsageIndicators() {
           data-tooltip={formatResetTime('7-day usage', sevenDay.resets_at) ?? undefined}
           data-tooltip-no-flip
         >
-          <DeltaSparkline history={sevenDayHistory} color={utilizationColor(sevenDay.utilization)} formatPeak={(v) => `${v}%pts`} />
+          <DeltaSparkline history={sevenDayHistory} color={utilizationColor(sevenDay.utilization)} slotMinutes={usageSlotMinutes} formatPeak={(v) => `${v.toFixed(1)}%`} />
           <span className="toolbar__metric-label">7d </span>
           <span style={{ color: utilizationColor(sevenDay.utilization) }}>{Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span></span>
           {projected7d != null && (
@@ -1131,10 +1161,10 @@ function UsageIndicators() {
           ref={extraRef}
           className="toolbar__status-item toolbar__metric"
           style={{ position: 'relative' }}
-          data-tooltip={extra.monthly_limit != null ? `Limit: ${formatCredits(extra.monthly_limit)}` : 'Limit: unlimited'}
+          data-tooltip={isApi ? 'Month-to-date API spend' : (extra.monthly_limit != null ? `Limit: ${formatCredits(extra.monthly_limit)}` : 'Limit: unlimited')}
           data-tooltip-no-flip
         >
-          <DeltaSparkline history={creditHistory} color="#4ade80" formatPeak={formatCredits} />
+          <DeltaSparkline history={creditHistory} color="#4ade80" slotMinutes={usageSlotMinutes} formatPeak={formatCredits} />
           {formatCredits(extra.used_credits)}
         </span>
       )}
