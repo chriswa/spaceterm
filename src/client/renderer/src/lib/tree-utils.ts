@@ -1,5 +1,5 @@
 import type { NodeData } from '../../../../shared/state'
-import { COLOR_PRESET_MAP, DEFAULT_PRESET } from './color-presets'
+import { COLOR_PRESET_MAP } from './color-presets'
 import type { ColorPreset } from './color-presets'
 
 /**
@@ -69,12 +69,13 @@ export function getAncestorCwd(
 /**
  * Walk up the ancestor chain resolving color inheritance.
  * Skips nodes whose colorPresetId is 'inherit' or missing.
- * Returns the first valid ColorPreset, falling back to DEFAULT_PRESET at the root.
+ * Returns the first valid ColorPreset, or null if no ancestor specifies one
+ * (the caller should fall back to a position-based dynamic color).
  */
 export function resolveInheritedPreset(
   nodes: Record<string, NodeData>,
   nodeId: string
-): ColorPreset {
+): ColorPreset | null {
   let current = nodeId
   while (current && current !== 'root') {
     const node = nodes[current]
@@ -85,7 +86,7 @@ export function resolveInheritedPreset(
     }
     current = node.parentId
   }
-  return DEFAULT_PRESET
+  return null
 }
 
 export function isImmediateChildOf(

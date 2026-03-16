@@ -1,8 +1,9 @@
 /**
- * Derives a focus-border color from a node's world-space position using the
- * same radial-rainbow hue as the canvas background, softened by a W3C
- * soft-light blend with white (matching the edge shader's washed-out look).
+ * Position-based color utilities: derives colors from a node's world-space
+ * position using the same radial-rainbow hue as the canvas background.
  */
+
+import type { ColorPreset } from './color-presets'
 
 const PI = Math.PI
 
@@ -87,4 +88,44 @@ export function angleBorderColor(x: number, y: number, boost = 1): string {
   const b = softLightChannel(sb, 1.0)
 
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+}
+
+// --- OkLCh → hex (no soft-light, used for node theme colors) ---
+function oklchToHex(L: number, C: number, hue: number): string {
+  const [lr, lg, lb] = oklch2linearRGB(L, C, hue)
+  return `#${toHex(linearToSRGB(clamp01(lr)))}${toHex(linearToSRGB(clamp01(lg)))}${toHex(linearToSRGB(clamp01(lb)))}`
+}
+
+const presetCache = new Map<string, ColorPreset>()
+const WARM_HUE = 80 * PI / 180 // fixed amber hue for markdownHighlight
+
+/**
+ * Generate a full ColorPreset from a node's world-space position.
+ * Hue follows the canvas background's radial rainbow. OKLCH parameters
+ * match the design language of the 7 hand-tuned chromatic presets.
+ *
+ * Positions are quantized to a 50px grid so dragging doesn't churn objects.
+ */
+export function angleColorPreset(x: number, y: number): ColorPreset {
+  const qx = Math.round(x / 50) * 50
+  const qy = Math.round(y / 50) * 50
+  const key = `${qx},${qy}`
+  const cached = presetCache.get(key)
+  if (cached) return cached
+
+  const theta = Math.atan2(-qy, qx)
+  const hue = PI * 8 / 12 - theta
+
+  const preset: ColorPreset = {
+    id: '__dynamic__',
+    label: 'Dynamic',
+    titleBarBg:        oklchToHex(0.78, 0.16, hue),
+    titleBarFg:        '#1a1a1a',
+    terminalBg:        oklchToHex(0.20, 0.03, hue),
+    markdownFg:        oklchToHex(0.86, 0.04, hue),
+    markdownAccent:    oklchToHex(0.74, 0.11, hue),
+    markdownHighlight: oklchToHex(0.88, 0.06, WARM_HUE),
+  }
+  presetCache.set(key, preset)
+  return preset
 }

@@ -27,6 +27,7 @@ import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECT
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
+import { angleColorPreset } from './lib/angle-color'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useAudioStore } from './stores/audioStore'
@@ -184,7 +185,7 @@ export function App() {
     const map: Record<string, import('./lib/color-presets').ColorPreset> = {}
     map['root'] = DEFAULT_PRESET
     for (const id in nodes) {
-      map[id] = resolveInheritedPreset(nodes, id)
+      map[id] = resolveInheritedPreset(nodes, id) ?? angleColorPreset(nodes[id].x, nodes[id].y)
     }
     return map
   }, [nodes])
