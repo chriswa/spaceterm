@@ -283,7 +283,7 @@ function loadCachedUsage(): void {
       cachedUsage = { ...data, usageError: data.usageError ?? null }
       // Seed history buffers from the log; subscription type may be null for some account types
       const logFile = path.join(USAGE_LOG_DIR, `usage_${data.subscriptionType ?? 'unknown'}.jsonl`)
-      creditHistory.seedFromLog(logFile, 'extra_usage.used_credits')
+      creditHistory.seedFromLog(path.join(USAGE_LOG_DIR, 'usage_combined.jsonl'), 'combined_credits')
       fiveHourHistory.seedFromLog(logFile, 'five_hour.utilization')
       sevenDayHistory.seedFromLog(logFile, 'seven_day.utilization')
       serverLog(`[claude-usage] Loaded cached usage (${data.subscriptionType})`)
@@ -2105,6 +2105,7 @@ async function startServer(): Promise<void> {
   let lastOAuthSubscriptionType: string | null = null // remember sub type across 429s
   let lastApiSeeded = false
   const apiLogFile = path.join(USAGE_LOG_DIR, 'usage_API.jsonl')
+  const combinedCostLogFile = path.join(USAGE_LOG_DIR, 'usage_combined.jsonl')
   setInterval(async () => {
     const now = Date.now()
     if (now - lastClientCommandAt > USAGE_IDLE_TIMEOUT_MS) return
@@ -2130,7 +2131,7 @@ async function startServer(): Promise<void> {
       if (lastUsageSource !== 'oauth') {
         serverLog(`[claude-usage] Using OAuth (${oauthSubType})`)
         const seedLog = path.join(USAGE_LOG_DIR, `usage_${oauthSubType ?? 'unknown'}.jsonl`)
-        creditHistory.seedFromLog(seedLog, 'extra_usage.used_credits')
+        creditHistory.seedFromLog(combinedCostLogFile, 'combined_credits')
         fiveHourHistory.seedFromLog(seedLog, 'five_hour.utilization')
         sevenDayHistory.seedFromLog(seedLog, 'seven_day.utilization')
         lastUsageSource = 'oauth'
@@ -2169,7 +2170,7 @@ async function startServer(): Promise<void> {
     if (!isPro) {
       try {
         if (!lastApiSeeded) {
-          creditHistory.seedFromLog(apiLogFile, 'extra_usage.used_credits')
+          creditHistory.seedFromLog(combinedCostLogFile, 'combined_credits')
           lastApiSeeded = true
         }
 
@@ -2208,7 +2209,13 @@ async function startServer(): Promise<void> {
       ? (oauthUsage?.extra_usage?.used_credits ?? null)
       : (crossCache.team + crossCache.api) || null
 
-    if (combinedCredits != null) creditHistory.record(combinedCredits, now)
+    if (combinedCredits != null) {
+      creditHistory.record(combinedCredits, now)
+      // Log combined cost so creditHistory seeds correctly after restart
+      if (!usageLogDirReady) { fs.mkdirSync(USAGE_LOG_DIR, { recursive: true }); usageLogDirReady = true }
+      const combinedLogEntry = { timestamp: new Date(now).toISOString(), combined_credits: combinedCredits }
+      fs.appendFile(combinedCostLogFile, JSON.stringify(combinedLogEntry) + '\n', () => {})
+    }
 
     const baseUsage = oauthUsage ?? cachedUsage?.usage ?? null
     const broadcastUsage = baseUsage && combinedCredits != null && baseUsage.extra_usage
