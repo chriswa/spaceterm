@@ -345,13 +345,13 @@ export class StateManager {
       currentSession.endedAt = new Date().toISOString()
     }
 
-    this.sessionToNodeId.delete(ptySessionId)
-
     if (isReviving) {
-      // Keep as dead remnant — the surface stays visible and can be manually restarted
+      // Keep as dead remnant — the surface stays visible and can be manually restarted.
+      // Preserve sessionToNodeId so asleep toggles can still resolve the node.
       this.onNodeUpdate(node.id, { alive: false, exitCode, claudeState: 'stopped' } as Partial<TerminalNodeData>)
       this.schedulePersist()
     } else {
+      this.sessionToNodeId.delete(ptySessionId)
       this.archiveNode(node.id)
     }
   }
@@ -366,6 +366,11 @@ export class StateManager {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
     console.log(`[restart] Reincarnated node ${nodeId.slice(0, 8)} → session ${newPtySessionId.slice(0, 8)}`)
+
+    // Clean up old session mapping (may still exist if the PTY died as a remnant)
+    if (node.sessionId !== newPtySessionId) {
+      this.sessionToNodeId.delete(node.sessionId)
+    }
 
     node.alive = true
     node.sessionId = newPtySessionId
@@ -522,8 +527,9 @@ export class StateManager {
 
     const parentId = node.parentId
 
-    // Clean up session-to-node mapping if this is a live terminal
-    if (node.type === 'terminal' && node.alive) {
+    // Clean up session-to-node mapping (covers both live terminals and dead remnants
+    // whose mapping was preserved for asleep toggles)
+    if (node.type === 'terminal') {
       this.sessionToNodeId.delete(node.sessionId)
     }
 

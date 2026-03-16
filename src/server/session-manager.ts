@@ -290,8 +290,12 @@ export class SessionManager {
 
   setClaudeStatusAsleep(surfaceId: string, asleep: boolean): void {
     const session = this.sessions.get(surfaceId)
-    if (!session || session.claudeStatusAsleep === asleep) return
-    session.claudeStatusAsleep = asleep
+    if (session) {
+      session.claudeStatusAsleep = asleep
+    }
+    // Always propagate — session manager's local state may be stale after
+    // reincarnation (initLocalSession resets to false, but node preserves true).
+    // Also handles dead remnants where the session no longer exists.
     this.onClaudeStatusAsleep(surfaceId, asleep)
   }
 
