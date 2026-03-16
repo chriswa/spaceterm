@@ -11,9 +11,14 @@ export function isDisposable(node: NodeData): boolean {
 
   switch (node.type) {
     case 'terminal': {
-      const latest = node.terminalSessions[node.terminalSessions.length - 1]
-      if (!latest || !latest.claudeSessionId) return true // bare terminal, can't revive
-      return latest.shellTitleHistory.length < 1 // no real titles after filtering
+      // A terminal that ever had a Claude session is always worth preserving.
+      // This survives reincarnation — the node-level history persists even when
+      // the latest TerminalSessionEntry hasn't detected the Claude session yet.
+      if (node.claudeSessionHistory.length > 0) return false
+      // Also check individual terminal sessions (covers edge cases where
+      // claudeSessionHistory wasn't populated but a session was recorded)
+      if (node.terminalSessions.some(s => s.claudeSessionId)) return false
+      return true // bare terminal with no Claude sessions
     }
     case 'markdown':
       return node.content.trim() === ''
