@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
 import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
@@ -81,6 +81,11 @@ export function useCamera(
       }
     }, CAMERA_SETTLE_DELAY)
   }, [])
+
+  // Apply zoom-dependent CSS custom properties on mount so scaling is correct on first paint
+  useLayoutEffect(() => {
+    applyToDOM(cameraRef.current)
+  }, [applyToDOM])
 
   // Persist camera to localStorage on every change
   useEffect(() => { saveCameraToStorage(camera) }, [camera])
