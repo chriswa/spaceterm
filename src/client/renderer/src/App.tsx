@@ -22,6 +22,7 @@ import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
+import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
@@ -105,6 +106,7 @@ export function App() {
   const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
   const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
+  const inertiaBlock = useInertiaBlock()
 
   // Send camera bounding box to server whenever camera settles
   useEffect(() => {
@@ -656,8 +658,9 @@ export function App() {
       setScrollMode(false)
     }
 
+    inertiaBlock.activate()
     flyTo(entry.camera, computeFlyToSpeed(dist))
-  }, [shakeCamera, flyTo, bringToFront, flashNode, cameraRef])
+  }, [shakeCamera, flyTo, bringToFront, flashNode, cameraRef, inertiaBlock])
 
   const handleNodeFocus = useCallback((nodeId: string) => {
     // Cmd+click without drag → show floating quick-actions toolbar instead of focusing
@@ -702,6 +705,8 @@ export function App() {
     }
 
     if (!pinnedFocusRef.current) {
+      inertiaBlock.activate()
+
       let bounds: { x: number; y: number; width: number; height: number }
       let padding = 0
 
@@ -733,7 +738,7 @@ export function App() {
         flyTo(targetCamera, computeFlyToSpeed(dist))
       }
     }
-  }, [bringToFront, flyTo, cameraRef, flashNode])
+  }, [bringToFront, flyTo, cameraRef, flashNode, inertiaBlock])
 
   const navigateToNode = useCallback(async (nodeId: string) => {
     // Wait for node to appear in store if not yet present
@@ -745,6 +750,7 @@ export function App() {
       })
     }
 
+    inertiaBlock.activate()
     flashNode(nodeId)
     setFocusedId(nodeId)
     setSelection(nodeId)
@@ -799,7 +805,7 @@ export function App() {
         }
       }
     }
-  }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef])
+  }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef, inertiaBlock])
 
   // Initialize server sync on mount — placed after getParentCwd/navigateToNode/cwdMapRef
   // so the fork-detection interceptor closure can reference them.
@@ -871,6 +877,18 @@ export function App() {
       () => showToast('Failed to copy debug state')
     )
   }, [captureDebugState])
+
+  const handleInertiaLogDump = useCallback(() => {
+    const content = dumpInertiaLog()
+    if (!content) {
+      showToast('Inertia log is empty — scroll around first')
+      return
+    }
+    window.api.writeDebugLog(content).then(
+      (filepath) => showToast(`Inertia log → ${filepath}`),
+      () => showToast('Failed to write inertia log')
+    )
+  }, [])
 
   const handleReparentTarget = useCallback((targetId: string) => {
     const srcId = useReparentStore.getState().reparentingNodeId
@@ -1946,13 +1964,18 @@ export function App() {
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
+    // Block residual trackpad inertia after focus navigation
+    if (!e.ctrlKey && !e.metaKey && inertiaBlock.check(e.deltaX, e.deltaY)) {
+      e.preventDefault()
+      return
+    }
     if (focusRef.current && !pinnedFocusRef.current) {
       e.preventDefault()
       handleUnfocus()
       if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
     }
     handleWheel(e)
-  }, [handleWheel, flyToUnfocusZoom, handleUnfocus])
+  }, [handleWheel, flyToUnfocusZoom, handleUnfocus, inertiaBlock])
 
   const handleCanvasPanStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
@@ -2270,6 +2293,7 @@ export function App() {
         keycastEnabled={keycastEnabled}
         onKeycastToggle={() => setKeycastEnabled(v => { const next = !v; localStorage.setItem('toolbar.keycast', String(next)); return next })}
         onDebugCapture={handleDebugCapture}
+        onInertiaLogDump={handleInertiaLogDump}
         goodGfx={goodGfx}
         onGoodGfxToggle={() => setGoodGfx(v => { const next = !v; localStorage.setItem('toolbar.goodGfx', String(next)); return next })}
       />

@@ -83,3 +83,9 @@ export const FLY_TO_MAX_DURATION = 500
 // The arc operates in log-height space (h = -ln(z)) so zoom changes are multiplicative.
 export const FLY_TO_ZOOM_HALF_RANGE = 25000  // canvas px where arc reaches half of max
 export const FLY_TO_ZOOM_MAX_ARC = 4.605     // -ln(0.01), asymptotic zoom floor ~1%
+
+// Inertia blocking: suppress residual trackpad inertia after focus navigation
+export const INERTIA_BLOCK_TIMEOUT = 300          // ms with no events before auto-clearing block
+export const INERTIA_ANGLE_THRESHOLD = Math.PI / 4 // ~45° change indicates fresh input
+export const INERTIA_RATE_TOLERANCE = 0.05        // px/ms tolerance for rate increase jitter
+export const INERTIA_RECENT_THRESHOLD = 150        // ms — max gap between last scroll and click to activate

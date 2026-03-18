@@ -253,6 +253,7 @@ contextBridge.exposeInMainWorld('api', {
   pty: ptyApi,
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
+  writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   diffFiles: (fileA: string, fileB: string) => ipcRenderer.invoke('shell:diffFiles', fileA, fileB),
   window: {

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, contentTracing, ipcMain, net, protocol, screen, shell } from 'electron'
 import * as path from 'path'
 import { pathToFileURL } from 'url'
-import { mkdirSync } from 'fs'
+import { mkdirSync, writeFileSync } from 'fs'
 import { execFile } from 'child_process'
 import { join } from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
@@ -152,6 +152,14 @@ function setupIPC(): void {
     execFile('cursor', ['--diff', fileA, fileB], (err) => {
       if (err) logger.log(`[diffFiles] error: ${err.message}`)
     })
+  })
+
+  ipcMain.handle('debug:write-log', (_event, content: string) => {
+    const filename = `inertia-debug-${Date.now()}.log`
+    const filepath = join(SOCKET_DIR, filename)
+    writeFileSync(filepath, content)
+    clipboard.writeText(filepath)
+    return filepath
   })
 
   ipcMain.handle('pty:destroy', async (_event, sessionId: string) => {

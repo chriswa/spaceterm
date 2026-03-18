@@ -26,6 +26,7 @@ interface ToolbarProps {
   keycastEnabled: boolean
   onKeycastToggle: () => void
   onDebugCapture: () => void
+  onInertiaLogDump: () => void
   goodGfx: boolean
   onGoodGfxToggle: () => void
 }
@@ -35,6 +36,7 @@ export function Toolbar({
   onHelpClick,
   keycastEnabled, onKeycastToggle,
   onDebugCapture,
+  onInertiaLogDump,
   goodGfx, onGoodGfxToggle
 }: ToolbarProps) {
   const fpsRef = useRef<HTMLSpanElement>(null)
@@ -72,6 +74,14 @@ export function Toolbar({
         data-tooltip-no-flip
       >
         <MagnifyIcon />
+      </button>
+      <button
+        className="toolbar__btn"
+        onClick={onInertiaLogDump}
+        data-tooltip="Inertia Log — Dump last 3s of scroll events to file"
+        data-tooltip-no-flip
+      >
+        I
       </button>
       <button
         className={'toolbar__btn' + (goodGfx ? ' toolbar__btn--active' : '')}

@@ -116,6 +116,7 @@ interface Api {
   pty: PtyApi
   node: NodeApi
   log(message: string): void
+  writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
   diffFiles(fileA: string, fileB: string): Promise<void>
   tts: TtsApi
