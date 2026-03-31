@@ -25,7 +25,7 @@ export interface SearchEntry {
   ancestors: AncestorEntry[]
 }
 
-export type MatchField = 'name' | 'cwd' | 'shellTitle' | 'markdown'
+export type MatchField = 'name' | 'cwd' | 'shellTitle' | 'markdown' | 'claudeSessionId'
 
 export interface SearchResult {
   entry: SearchEntry
@@ -267,6 +267,28 @@ function scoreEntry(entry: SearchEntry, q: string): SearchResult | null {
           bestScore = score
           bestField = 'shellTitle'
           sessionLabel = undefined
+        }
+      }
+    }
+  }
+
+  // Claude session ID match: score 1100
+  if (data.type === 'terminal') {
+    for (const entry of data.claudeSessionHistory) {
+      if (entry.claudeSessionId.toLowerCase().includes(q)) {
+        if (1100 > bestScore) {
+          bestScore = 1100
+          bestField = 'claudeSessionId'
+        }
+        break
+      }
+    }
+    if (bestScore < 1100) {
+      for (const session of data.terminalSessions) {
+        if (session.claudeSessionId && session.claudeSessionId.toLowerCase().includes(q)) {
+          bestScore = 1100
+          bestField = 'claudeSessionId'
+          break
         }
       }
     }
