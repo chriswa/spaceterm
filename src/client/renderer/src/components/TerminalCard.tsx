@@ -249,14 +249,26 @@ export function TerminalCard({
     const screenEl = containerRef.current!.querySelector('.xterm-screen') as HTMLElement
     screenEl.style.willChange = 'transform'
 
+    // Track whether the user is actively reading scrollback (scrolled up from
+    // the bottom). We manage this ourselves rather than relying on xterm's
+    // internal isUserScrolling flag, which can get stuck via internal viewport
+    // DOM scroll events we don't control, causing ydisp to decrement to 0.
+    let userInScrollback = false
+
     // Set absolute scroll position with sub-line pixel precision.
     // Clamps to valid range, updates xterm viewport + pixelOffsetRef + CSS transform.
     const applyPixelScroll = (pixels: number) => {
-      const maxPixels = (term.buffer.active.length - term.rows) * CELL_HEIGHT
+      const ybase = term.buffer.active.length - term.rows
+      const maxPixels = ybase * CELL_HEIGHT
       const clamped = Math.max(0, Math.min(pixels, maxPixels))
       const line = Math.floor(clamped / CELL_HEIGHT)
       const remainder = clamped - line * CELL_HEIGHT
-      term.scrollToLine(line)
+      userInScrollback = line < ybase
+      if (line >= ybase) {
+        term.scrollToBottom()
+      } else {
+        term.scrollToLine(line)
+      }
       pixelOffsetRef.current = remainder
       const transformVal = remainder !== 0 ? `translateY(${-remainder}px)` : ''
       screenEl.style.transform = transformVal
@@ -264,6 +276,15 @@ export function TerminalCard({
       const overlayCanvas = proportionalCanvasRef.current
       if (overlayCanvas) overlayCanvas.style.transform = transformVal
     }
+
+    // After every data write, if the user isn't reading scrollback, force
+    // the viewport to the bottom. This overrides xterm's internal
+    // isUserScrolling flag which can get stuck and cause ydisp drift to 0.
+    term.onWriteParsed(() => {
+      if (!userInScrollback) {
+        term.scrollToBottom()
+      }
+    })
 
     // Debounced scroll position save for reload persistence
     let scrollSaveTimer: ReturnType<typeof setTimeout> | undefined
@@ -433,6 +454,32 @@ export function TerminalCard({
 
     term.onResize(({ cols, rows }) => {
       window.api.pty.resize(propsRef.current.sessionId, cols, rows)
+    })
+
+    // Scroll-jump detector: catch when viewport is near the top while the
+    // cursor is near the bottom of a large buffer. Doesn't depend on tracking
+    // the previous viewport position, so it catches repeated jumps.
+    let lastJumpLogTime = 0
+
+    term.buffer.onBufferChange((buf) => {
+      window.api.log(`[scroll-jump] buffer switched to ${buf.type} viewportY=${buf.viewportY} baseY=${buf.baseY} length=${buf.length}`)
+    })
+
+    term.onScroll((newViewportY) => {
+      const buf = term.buffer.active
+      // Skip alternate buffer — viewportY=0 is normal there
+      if (buf.type !== 'normal') return
+      const expectedBottom = buf.length - term.rows
+      if (newViewportY <= 2 && expectedBottom > 50) {
+        // Throttle: only log once per 2 seconds to avoid spam
+        const now = Date.now()
+        if (now - lastJumpLogTime < 2000) return
+        lastJumpLogTime = now
+        const stack = new Error().stack?.split('\n').slice(1, 6).join(' ← ') ?? ''
+        const msg = `[scroll-jump] viewport at top unexpectedly: viewportY=${newViewportY} expectedBottom=${expectedBottom} bufLen=${buf.length} baseY=${buf.baseY} cursorY=${buf.cursorY} rows=${term.rows} pixelOffset=${pixelOffsetRef.current} stack=${stack}`
+        window.api.log(msg)
+        showToast(`Scroll jump! viewport=${newViewportY} expected≈${expectedBottom}`)
+      }
     })
 
     terminalRef.current = term
