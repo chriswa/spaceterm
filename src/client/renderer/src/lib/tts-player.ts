@@ -1,21 +1,27 @@
 let audioCtx: AudioContext | null = null
-
 function getAudioContext(): AudioContext {
-  if (!audioCtx) {
-    audioCtx = new AudioContext()
-  }
+  if (!audioCtx) audioCtx = new AudioContext()
   return audioCtx
 }
 
-function float32ToAudioBuffer(samples: Float32Array, sampleRate: number): AudioBuffer {
+/** Play a tiny frequency-sweep cue. Rising = start, falling = stop. */
+function playCue(rising: boolean): void {
   const ctx = getAudioContext()
-  const buffer = ctx.createBuffer(1, samples.length, sampleRate)
-  buffer.getChannelData(0).set(samples)
-  return buffer
+  const now = ctx.currentTime
+  const duration = 0.08
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(rising ? 520 : 780, now)
+  osc.frequency.linearRampToValueAtTime(rising ? 780 : 520, now + duration)
+  gain.gain.setValueAtTime(0.15, now)
+  gain.gain.linearRampToValueAtTime(0, now + duration)
+  osc.connect(gain).connect(ctx.destination)
+  osc.start(now)
+  osc.stop(now + duration)
 }
 
 let speaking = false
-let currentSource: AudioBufferSourceNode | null = null
 /** Incremented on each speakText call so stale calls can detect pre-emption. */
 let generation = 0
 
@@ -23,19 +29,13 @@ export function stopSpeaking(): void {
   generation++
   speaking = false
   window.api.tts.stop()
-  if (currentSource) {
-    try {
-      currentSource.stop()
-    } catch {
-      // Already stopped
-    }
-    currentSource = null
-  }
+  playCue(false)
 }
 
 /**
- * Speak text aloud. If already speaking, stops current speech first.
- * Returns false if TTS is unavailable (module not installed).
+ * Speak text aloud via cartesia-read subprocess.
+ * Resolves when speech finishes (or is stopped).
+ * Returns false if TTS is unavailable.
  */
 export async function speakText(text: string): Promise<boolean> {
   if (speaking) {
@@ -44,62 +44,20 @@ export async function speakText(text: string): Promise<boolean> {
 
   const myGeneration = ++generation
   speaking = true
+  playCue(true)
 
   try {
     const result = await window.api.tts.speak(text)
-
-    // Another call pre-empted us while we were awaiting synthesis
-    if (myGeneration !== generation) return true
-
-    if (!result.available) {
-      return false
-    }
-
-    const ctx = getAudioContext()
-
-    for (const chunk of result.chunks) {
-      if (myGeneration !== generation) break
-
-      // Data is Float32 PCM from the native module
-      const samples = new Float32Array(chunk.samples)
-      const audioBuffer = float32ToAudioBuffer(samples, chunk.sampleRate)
-      const source = ctx.createBufferSource()
-      source.buffer = audioBuffer
-      source.connect(ctx.destination)
-      currentSource = source
-
-      await new Promise<void>((resolve) => {
-        source.onended = () => resolve()
-        source.start()
-      })
-
-      currentSource = null
-
-      // Pause between chunks
-      if (chunk.pauseAfterMs > 0 && myGeneration === generation) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, chunk.pauseAfterMs)
-          const check = setInterval(() => {
-            if (myGeneration !== generation) {
-              clearTimeout(timer)
-              clearInterval(check)
-              resolve()
-            }
-          }, 50)
-          setTimeout(() => clearInterval(check), chunk.pauseAfterMs + 100)
-        })
-      }
-    }
+    if (!result.available) return false
+    return true
   } catch {
-    // TTS failed
+    return false
   } finally {
-    // Only clear state if we're still the active generation
     if (myGeneration === generation) {
       speaking = false
-      currentSource = null
+      playCue(false)
     }
   }
-  return true
 }
 
 /** Toggle speech: if speaking, stop; if not, speak. Returns false if TTS unavailable. */

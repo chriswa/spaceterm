@@ -91,7 +91,7 @@ interface NodeApi {
 }
 
 interface TtsApi {
-  speak(text: string): Promise<{ chunks: Array<{ samples: ArrayBuffer; sampleRate: number; pauseAfterMs: number }>; available: boolean }>
+  speak(text: string): Promise<{ available: boolean }>
   stop(): void
 }
 
