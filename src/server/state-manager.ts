@@ -607,7 +607,7 @@ export class StateManager {
     const restoredNode = JSON.parse(JSON.stringify(entry.data)) as import('../shared/state').NodeData
     restoredNode.zIndex = this.state.nextZIndex++
     restoredNode.parentId = parentNodeId
-    restoredNode.archivedChildren = []
+    // Preserve nested archived children from the snapshot so they survive unarchive
 
     if (positionOverride) {
       restoredNode.x = positionOverride.x
