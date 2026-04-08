@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react'
-import { useAudioStore } from '../stores/audioStore'
 import { angleBorderColor } from './angle-color'
 
 export interface DanceValues {
@@ -12,78 +11,24 @@ export interface DanceValues {
 }
 
 /**
- * Beat-synced dance computation.
- * Call tick() each animation frame to advance state and get computed values.
+ * Time-based dance computation (~0.5 Hz).
+ * Call tick() each animation frame to get computed values.
  *
- * The dance runs at half beat-rate: dancePhase 0→2 over 4 real beats.
- * - glowPulse: raised cosine per real beat (2 pulses per dancePhase unit)
- * - rock: ±12° squared cosine, scaled by audio confidence
- * - bounce: 3px absolute sine, 1 bounce per real beat
+ * - glowPulse: gentle sine, 0..1
+ * - rock: ±5° squared cosine
+ * - bounce: 2px absolute sine at double frequency
  */
 export class CrabDance {
-  private dancePhase = 0
-  private lastBpm = 0
-  private lastStorePhase = -1
-  private prevTime = performance.now()
-
   tick(): DanceValues {
     const now = performance.now()
-    const dt = now - this.prevTime
-    this.prevTime = now
+    const t = (now % 2000) / 2000
+    const glowPulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * t)
 
-    const { phase, bpm, confidence } = useAudioStore.getState()
+    const maxRock = 5
+    const c = Math.cos(2 * Math.PI * t)
+    const rock = maxRock * c * Math.abs(c)
 
-    let glowPulse: number
-    let rock = 0
-    let bounce = 0
-
-    if (bpm > 0) {
-      const beatPeriodMs = 60000 / bpm
-
-      if (phase !== this.lastStorePhase || bpm !== this.lastBpm) {
-        const slot = Math.floor(this.dancePhase / 0.5)
-        const slotPhase = (this.dancePhase / 0.5) % 1
-
-        if (slotPhase > 0.7 && phase < 0.3) {
-          const nextSlot = (slot + 1) % 4
-          this.dancePhase = nextSlot * 0.5 + phase * 0.5
-        } else if (slotPhase < 0.3 && phase > 0.7) {
-          const prevSlot = (slot + 3) % 4
-          this.dancePhase = prevSlot * 0.5 + phase * 0.5
-        } else {
-          this.dancePhase = slot * 0.5 + phase * 0.5
-        }
-
-        if (this.dancePhase >= 2) this.dancePhase -= 2
-        if (this.dancePhase < 0) this.dancePhase += 2
-
-        this.lastStorePhase = phase
-        this.lastBpm = bpm
-      } else {
-        this.dancePhase += dt / (beatPeriodMs * 2)
-        if (this.dancePhase >= 2) this.dancePhase -= 2
-      }
-
-      const beatPhase = (this.dancePhase * 2) % 1
-      glowPulse = 0.5 + 0.5 * Math.cos(2 * Math.PI * beatPhase)
-
-      const maxRock = 12
-      const c = Math.cos(Math.PI * this.dancePhase)
-      rock = maxRock * c * Math.abs(c) * confidence
-
-      const maxBounce = 3
-      bounce = maxBounce * Math.abs(Math.sin(2 * Math.PI * this.dancePhase))
-    } else {
-      // No BPM: gentle time-based fallback (~0.5Hz)
-      const t = (now % 2000) / 2000
-      glowPulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * t)
-
-      const maxRock = 5
-      const c = Math.cos(2 * Math.PI * t)
-      rock = maxRock * c * Math.abs(c)
-
-      bounce = 2 * Math.abs(Math.sin(2 * Math.PI * t * 2))
-    }
+    const bounce = 2 * Math.abs(Math.sin(2 * Math.PI * t * 2))
 
     return { glowPulse, rock, bounce }
   }

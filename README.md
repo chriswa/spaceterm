@@ -24,7 +24,7 @@ npm run daemon:build   # initial build of the PTY daemon (Go)
 xcode-select --install
 ```
 
-Optional native modules (`audiotee` for audio capture, `@echogarden/macos-native-tts` for TTS) are in `optionalDependencies` — if they fail to compile, `npm install` still succeeds and those features are silently disabled.
+The optional native module `@echogarden/macos-native-tts` (for TTS) is in `optionalDependencies` — if it fails to compile, `npm install` still succeeds and TTS is silently disabled.
 
 ## Running
 
@@ -39,20 +39,6 @@ This starts two processes concurrently:
 The PTY daemon is a separate long-lived process that manages terminal sessions. It starts automatically and persists across server restarts so terminal sessions are never lost. If you modify the Go code in `pty-daemon/`, use `npm run daemon:dev` to rebuild and restart the daemon.
 
 App data lives in `~/.spaceterm/` (state, logs, hooks). The PTY daemon socket, PID file, and log are also in `~/.spaceterm/`.
-
-## Optional: System audio capture (beat detection)
-
-Spaceterm can capture system audio for real-time beat detection and visual effects. This uses the `audiotee` native module.
-
-### macOS permissions
-
-The terminal app you run `npm run dev` from (e.g. Terminal.app, iTerm2, Kitty) needs **Screen & System Audio Recording** permission:
-
-1. Open **System Settings** → **Privacy & Security** → **Screen & System Audio Recording**
-2. Enable the toggle for your terminal app
-3. Restart the terminal app after granting permission
-
-Audio capture auto-starts when the Electron window opens. If the permission hasn't been granted, it will silently fail (check `~/.spaceterm/electron.log` for `[audio-tap]` messages).
 
 ## Optional: Text-to-speech
 
@@ -72,7 +58,6 @@ The app auto-detects and prefers premium > enhanced > compact voices.
 ```
 Electron main process
   ├─ BrowserWindow (React renderer)
-  ├─ Audio capture + beat detection
   ├─ TTS
   └─ IPC to server via Unix socket
 

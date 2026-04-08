@@ -114,7 +114,6 @@ html, body, #root {
 .toolbar__crabs {
   display: flex;
   align-items: center;
-  gap: 6px;
   margin-left: 8px;
   position: relative;
   clip-path: inset(-8px -100px);
@@ -122,6 +121,7 @@ html, body, #root {
 
 .toolbar__crab-slot {
   flex-shrink: 0;
+  position: relative; /* enables z-index stacking for overlap */
 }
 
 .toolbar__crab-slot--dragging {
@@ -230,39 +230,6 @@ html, body, #root {
 @keyframes crab-wiggle {
   0%, 100% { translate: 0 0; }
   50%      { translate: 0 -2.5px; }
-}
-
-/* Beat indicator */
-.toolbar__beat {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #1DB954;
-  flex-shrink: 0;
-}
-
-.toolbar__beat--no-signal {
-  background: #ff5c8a;
-  opacity: 0.6;
-  box-shadow: none;
-}
-
-/* Beat indicators container (energy → onset → phase) */
-.toolbar__beats {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.toolbar__beat--energy {
-  width: 8px;
-  height: 8px;
-}
-
-.toolbar__beat--onset {
-  width: 10px;
-  height: 10px;
 }
 
 .toolbar__metric {
@@ -392,6 +359,59 @@ html, body, #root {
 .toolbar__font-menu-preview {
   color: #888;
   white-space: nowrap;
+}
+
+/* Debug dropdown */
+.toolbar__debug-group {
+  position: relative;
+}
+
+.toolbar__debug-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  min-width: 160px;
+  background: #1e1e2e;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.toolbar__debug-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: #cdd6f4;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.toolbar__debug-menu-item:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.toolbar__debug-menu-item--active {
+  color: #ff5c8a;
+}
+
+.toolbar__debug-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.toolbar__debug-menu-item svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 /* Canvas */

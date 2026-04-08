@@ -31,7 +31,6 @@ import { DEFAULT_PRESET } from './lib/color-presets'
 import { angleColorPreset } from './lib/angle-color'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useReparentStore } from './stores/reparentStore'
-import { useAudioStore } from './stores/audioStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
 import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
@@ -338,12 +337,6 @@ export function App() {
     }
     window.addEventListener('mousedown', handler, { capture: true })
     return () => window.removeEventListener('mousedown', handler, { capture: true })
-  }, [])
-
-  // Initialize audio beat detection
-  useEffect(() => {
-    const cleanup = useAudioStore.getState().init()
-    return cleanup
   }, [])
 
   // Persist focus state to localStorage (skip until initial restore is done)

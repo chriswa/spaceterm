@@ -8,8 +8,6 @@ import { SOCKET_DIR } from '../../shared/protocol'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
-import { setupAudio } from './audio'
-import * as audioTap from './audio/audio-tap'
 import { loadWindowState, saveWindowState, findTargetDisplay } from './window-state'
 
 let mainWindow: BrowserWindow | null = null
@@ -81,15 +79,6 @@ function setupVisibilityTracking(): void {
     const reason = isHidden ? 'hidden' : isMinimized ? 'minimized' : isOccluded ? 'occluded' : 'restored'
     console.log(`[${ts}] visibility ${visible ? 'ON' : 'OFF'} (${reason})`)
     logger.log(`[visibility] visible=${visible} (hidden=${isHidden} minimized=${isMinimized} occluded=${isOccluded})`)
-
-    if (visible) {
-      audioTap.start().catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err)
-        logger.log(`[visibility] audio restart failed: ${msg}`)
-      })
-    } else {
-      audioTap.stop().catch(() => {})
-    }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('window:visibility-changed', visible)
@@ -589,14 +578,6 @@ app.whenReady().then(async () => {
       input.meta && (input.key.toLowerCase() === 'p' || input.key.toLowerCase() === 'w')
     )
   })
-
-  try {
-    setupAudio(mainWindow!)
-    logger.log('[audio] setupAudio completed')
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    logger.log(`[audio] setupAudio threw: ${msg}`)
-  }
 
   setupVisibilityTracking()
 

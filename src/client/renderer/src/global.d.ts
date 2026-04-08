@@ -100,12 +100,6 @@ interface PerfApi {
   stopTrace(): Promise<string>
 }
 
-interface AudioApi {
-  onBeat(callback: (data: { energy: number; beat: boolean; onset: boolean; bpm: number; phase: number; confidence: number; hasSignal: boolean }) => void): () => void
-  start(): Promise<void>
-  stop(): Promise<void>
-}
-
 interface WindowApi {
   isFullScreen(): Promise<boolean>
   setFullScreen(enabled: boolean): Promise<void>
@@ -121,7 +115,6 @@ interface Api {
   diffFiles(fileA: string, fileB: string): Promise<void>
   tts: TtsApi
   perf: PerfApi
-  audio: AudioApi
   window: WindowApi
 }
 

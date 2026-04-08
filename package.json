@@ -42,8 +42,7 @@
     "zustand": "^5.0.11"
   },
   "optionalDependencies": {
-    "@echogarden/macos-native-tts": "^0.1.0",
-    "audiotee": "^0.0.7"
+    "@echogarden/macos-native-tts": "^0.1.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",

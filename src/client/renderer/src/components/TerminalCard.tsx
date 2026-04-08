@@ -255,6 +255,12 @@ export function TerminalCard({
     // DOM scroll events we don't control, causing ydisp to decrement to 0.
     let userInScrollback = false
 
+    // Authoritative scroll position tracked by our code. xterm's internal
+    // buffer.viewportY (ydisp) can be corrupted by rogue DOM scroll events
+    // that reset scrollTop to 0. All reads of the current scroll position
+    // should use this variable instead of term.buffer.active.viewportY.
+    let lastKnownViewportY = 0
+
     // Set absolute scroll position with sub-line pixel precision.
     // Clamps to valid range, updates xterm viewport + pixelOffsetRef + CSS transform.
     const applyPixelScroll = (pixels: number) => {
@@ -291,7 +297,7 @@ export function TerminalCard({
     const saveScrollDebounced = () => {
       if (scrollSaveTimer !== undefined) clearTimeout(scrollSaveTimer)
       scrollSaveTimer = setTimeout(() => {
-        const pixels = term.buffer.active.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+        const pixels = lastKnownViewportY * CELL_HEIGHT + pixelOffsetRef.current
         saveTerminalScroll(sessionId, pixels)
       }, 300)
     }
@@ -322,7 +328,7 @@ export function TerminalCard({
         if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaPixels *= CELL_HEIGHT
         if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaPixels *= CELL_HEIGHT * term.rows
 
-        const currentPixels = term.buffer.active.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+        const currentPixels = lastKnownViewportY * CELL_HEIGHT + pixelOffsetRef.current
         applyPixelScroll(currentPixels + deltaPixels)
         saveScrollDebounced()
 
@@ -373,6 +379,7 @@ export function TerminalCard({
     //   [scrollback, buffered live data, subsequent live data]
     let cancelled = false
     let scrollbackDone = false
+    let replayingScrollback = true
     let pendingData: string[] = []
     let readyTimeout: ReturnType<typeof setTimeout> | undefined
     let onRenderDisposable: { dispose(): void } | undefined
@@ -414,6 +421,7 @@ export function TerminalCard({
       if (cancelled) return
       if (result.scrollback.length > 0) {
         term.write(result.scrollback, () => {
+          replayingScrollback = false
           flushPendingData()
           // Parsing complete — wait for the next render frame to mark ready
           onRenderDisposable = term.onRender(() => {
@@ -422,6 +430,7 @@ export function TerminalCard({
           })
         })
       } else {
+        replayingScrollback = false
         flushPendingData()
         markReady()
       }
@@ -430,6 +439,7 @@ export function TerminalCard({
       }
     }).catch(() => {
       // Session may not exist on server — still unblock so we don't get stuck on snapshot
+      replayingScrollback = false
       flushPendingData()
       markReady()
     })
@@ -449,16 +459,24 @@ export function TerminalCard({
     })
 
     term.onData((data) => {
-      window.api.pty.write(propsRef.current.sessionId, data)
+      // During scrollback replay, xterm.js re-processes stale escape sequence
+      // queries (CSI 6n, DA, OSC 10/11, DECRPM, etc.) embedded in the historical
+      // PTY output and generates fresh responses.  Those responses must NOT be
+      // forwarded to the PTY — the programs that originally sent the queries have
+      // long since moved on, and the responses appear as garbage text in the shell.
+      if (!replayingScrollback) {
+        window.api.pty.write(propsRef.current.sessionId, data)
+      }
     })
 
     term.onResize(({ cols, rows }) => {
       window.api.pty.resize(propsRef.current.sessionId, cols, rows)
     })
 
-    // Scroll-jump detector: catch when viewport is near the top while the
-    // cursor is near the bottom of a large buffer. Doesn't depend on tracking
-    // the previous viewport position, so it catches repeated jumps.
+    // Scroll-jump guard: revert any rogue jumps to the top caused by xterm's
+    // internal viewport scroll handler reading a stale scrollTop=0 from the
+    // DOM. Because xterm's rendering is rAF-debounced, the revert lands in
+    // the same frame — the rogue position is never painted.
     let lastJumpLogTime = 0
 
     term.buffer.onBufferChange((buf) => {
@@ -469,17 +487,24 @@ export function TerminalCard({
       const buf = term.buffer.active
       // Skip alternate buffer — viewportY=0 is normal there
       if (buf.type !== 'normal') return
+
       const expectedBottom = buf.length - term.rows
-      if (newViewportY <= 2 && expectedBottom > 50) {
-        // Throttle: only log once per 2 seconds to avoid spam
+
+      // Detect rogue jump: viewport suddenly near top, was well into buffer,
+      // and the buffer is large enough that this can't be a legitimate scroll.
+      if (newViewportY <= 2 && lastKnownViewportY > 5 && expectedBottom > 10) {
         const now = Date.now()
-        if (now - lastJumpLogTime < 2000) return
-        lastJumpLogTime = now
-        const stack = new Error().stack?.split('\n').slice(1, 6).join(' ← ') ?? ''
-        const msg = `[scroll-jump] viewport at top unexpectedly: viewportY=${newViewportY} expectedBottom=${expectedBottom} bufLen=${buf.length} baseY=${buf.baseY} cursorY=${buf.cursorY} rows=${term.rows} pixelOffset=${pixelOffsetRef.current} stack=${stack}`
-        window.api.log(msg)
-        showToast(`Scroll jump! viewport=${newViewportY} expected≈${expectedBottom}`)
+        if (now - lastJumpLogTime >= 2000) {
+          lastJumpLogTime = now
+          const stack = new Error().stack?.split('\n').slice(1, 12).join(' ← ') ?? ''
+          window.api.log(`[scroll-jump] reverted rogue jump from ${lastKnownViewportY} to ${newViewportY} expectedBottom=${expectedBottom} bufLen=${buf.length} baseY=${buf.baseY} cursorY=${buf.cursorY} rows=${term.rows} pixelOffset=${pixelOffsetRef.current} stack=${stack}`)
+        }
+        // Revert: restore the viewport to where it was before the rogue jump
+        term.scrollToLine(lastKnownViewportY)
+        return
       }
+
+      lastKnownViewportY = newViewportY
     })
 
     terminalRef.current = term
@@ -510,7 +535,7 @@ export function TerminalCard({
       for (let i = buffer.length - 1; i >= 0; i--) {
         const line = buffer.getLine(i)
         if (line && line.translateToString().includes("Here is Claude's plan:")) {
-          const startPixels = buffer.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+          const startPixels = lastKnownViewportY * CELL_HEIGHT + pixelOffsetRef.current
           const targetPixels = i * CELL_HEIGHT
           const distance = Math.abs(targetPixels - startPixels)
           const duration = 1000 * (1 - 1 / (1 + distance / 1067))
@@ -578,7 +603,7 @@ export function TerminalCard({
     return () => {
       cancelled = true
       // Flush scroll position before teardown
-      const finalPixels = term.buffer.active.viewportY * CELL_HEIGHT + pixelOffsetRef.current
+      const finalPixels = lastKnownViewportY * CELL_HEIGHT + pixelOffsetRef.current
       saveTerminalScroll(sessionId, finalPixels)
       if (scrollSaveTimer !== undefined) clearTimeout(scrollSaveTimer)
       pixelOffsetRef.current = 0

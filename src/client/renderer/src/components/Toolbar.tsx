@@ -1,7 +1,6 @@
 import { useRef, useEffect, useLayoutEffect, useState } from 'react'
 import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
-import { useAudioStore } from '../stores/audioStore'
 import crabIcon from '../assets/crab.png'
 import terminalIcon from '../assets/terminal.png'
 import type { CrabEntry } from '../lib/crab-nav'
@@ -56,33 +55,7 @@ export function Toolbar({
       </button>
       <FullscreenToggle />
       <CameraLockToggle />
-      <div className="toolbar__perf">
-        <button
-          className={'toolbar__btn' + (tracing ? ' toolbar__btn--recording' : '')}
-          onClick={startTrace}
-          disabled={tracing}
-          data-tooltip="Perf Trace — Record 5s Chrome content trace"
-          data-tooltip-no-flip
-        >
-          <MagnifyIcon />
-        </button>
-      </div>
-      <button
-        className="toolbar__btn"
-        onClick={onDebugCapture}
-        data-tooltip="Camera Debug — Copy camera/viewport state to clipboard"
-        data-tooltip-no-flip
-      >
-        <MagnifyIcon />
-      </button>
-      <button
-        className="toolbar__btn"
-        onClick={onInertiaLogDump}
-        data-tooltip="Inertia Log — Dump last 3s of scroll events to file"
-        data-tooltip-no-flip
-      >
-        I
-      </button>
+      <DebugDropdown tracing={tracing} startTrace={startTrace} onDebugCapture={onDebugCapture} onInertiaLogDump={onInertiaLogDump} />
       <button
         className={'toolbar__btn' + (goodGfx ? ' toolbar__btn--active' : '')}
         onClick={onGoodGfxToggle}
@@ -99,13 +72,9 @@ export function Toolbar({
       >
         <KeycastIcon />
       </button>
-      <AudioTapToggle />
-      <BeatsToggle />
       <NotificationSoundToggle />
       <ProportionalFontToggle />
-      <BeatIndicators />
       <span className="toolbar__zoom">
-        <BpmIndicator />
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
         <span className="toolbar__status-item toolbar__metric">{(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span></span>
         <GhRateLimitIndicator />
@@ -138,25 +107,122 @@ function KeycastIcon() {
   )
 }
 
-function MagnifyIcon() {
+function BugIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ display: 'block' }}>
-      <circle cx="6.5" cy="6.5" r="4.5" />
-      <line x1="9.7" y1="9.7" x2="14" y2="14" />
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Body */}
+      <ellipse cx="8" cy="10" rx="4" ry="4.5" fill="currentColor" fillOpacity="0.15" />
+      {/* Head */}
+      <circle cx="8" cy="4.5" r="2" />
+      {/* Antennae */}
+      <path d="M6.5 3 L4 1" />
+      <path d="M9.5 3 L12 1" />
+      {/* Legs */}
+      <path d="M4 8 L1.5 6.5" />
+      <path d="M4 11 L1.5 12.5" />
+      <path d="M12 8 L14.5 6.5" />
+      <path d="M12 11 L14.5 12.5" />
     </svg>
   )
 }
 
-function AudioVisIcon() {
-  const bars: Array<[number, number]> = [
-    [1, 1.5], [4, 4], [7, 6], [10, 2.5], [13, 5.5], [16, 3], [19, 1.5]
-  ]
+function StopwatchIcon() {
   return (
-    <svg viewBox="0 0 20 14" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ display: 'block' }}>
-      {bars.map(([x, h], i) => (
-        <line key={i} x1={x} y1={7 - h} x2={x} y2={7 + h} />
-      ))}
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Top button */}
+      <line x1="7" y1="1" x2="9" y2="1" />
+      <line x1="8" y1="1" x2="8" y2="3" />
+      {/* Clock face */}
+      <circle cx="8" cy="9" r="5.5" />
+      {/* Hand */}
+      <line x1="8" y1="9" x2="8" y2="5.5" />
+      <line x1="8" y1="9" x2="10.5" y2="9" />
     </svg>
+  )
+}
+
+function CameraIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Body */}
+      <rect x="1" y="4.5" width="14" height="9" rx="1.5" />
+      {/* Lens */}
+      <circle cx="8" cy="9" r="2.8" />
+      {/* Flash */}
+      <rect x="5" y="2.5" width="6" height="2" rx="0.5" />
+    </svg>
+  )
+}
+
+function ScrollIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Arrow down */}
+      <line x1="8" y1="1" x2="8" y2="12" />
+      <polyline points="4,8.5 8,12 12,8.5" />
+      {/* Wave at bottom */}
+      <path d="M2 15 Q5 13 8 15 Q11 17 14 15" />
+    </svg>
+  )
+}
+
+function DebugDropdown({ tracing, startTrace, onDebugCapture, onInertiaLogDump }: {
+  tracing: boolean
+  startTrace: () => void
+  onDebugCapture: () => void
+  onInertiaLogDump: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="toolbar__debug-group" ref={dropdownRef}>
+      <button
+        className={'toolbar__btn' + (open ? ' toolbar__btn--active' : '')}
+        onClick={() => setOpen(o => !o)}
+        data-tooltip="Debug tools"
+        data-tooltip-no-flip
+      >
+        <BugIcon />
+      </button>
+      {open && (
+        <div className="toolbar__debug-menu">
+          <button
+            className={'toolbar__debug-menu-item' + (tracing ? ' toolbar__debug-menu-item--active' : '')}
+            onClick={() => { startTrace(); setOpen(false) }}
+            disabled={tracing}
+          >
+            <StopwatchIcon />
+            <span>{tracing ? 'Recording trace…' : 'Perf Trace'}</span>
+          </button>
+          <button
+            className="toolbar__debug-menu-item"
+            onClick={() => { onDebugCapture(); setOpen(false) }}
+          >
+            <CameraIcon />
+            <span>Camera Debug</span>
+          </button>
+          <button
+            className="toolbar__debug-menu-item"
+            onClick={() => { onInertiaLogDump(); setOpen(false) }}
+          >
+            <ScrollIcon />
+            <span>Inertia Log</span>
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -224,31 +290,6 @@ function FullscreenToggle() {
       data-tooltip-no-flip
     >
       <FullscreenIcon />
-    </button>
-  )
-}
-
-function AudioTapToggle() {
-  const [on, setOn] = useState(() => localStorage.getItem('toolbar.audioTap') !== 'false')
-
-  useEffect(() => {
-    if (on) window.api.audio.start().catch(() => {})
-  }, [])
-
-  const toggle = () => {
-    const next = !on
-    localStorage.setItem('toolbar.audioTap', String(next))
-    ;(next ? window.api.audio.start() : window.api.audio.stop()).then(() => setOn(next))
-  }
-
-  return (
-    <button
-      className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
-      onClick={toggle}
-      data-tooltip={on ? 'Audio Tap — Stop audio tap' : 'Audio Tap — Start audio tap'}
-      data-tooltip-no-flip
-    >
-      ♪
     </button>
   )
 }
@@ -664,10 +705,31 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
     }
   }, [crabNavEvent])
 
+  // Compress crab icons when there are more than 20 so they overlap
+  const FULL_COUNT = 20
+  const ICON_SIZE = 20
+  const DEFAULT_GAP = 6
+  const fullWidth = FULL_COUNT * ICON_SIZE + (FULL_COUNT - 1) * DEFAULT_GAP
+  const compressed = crabs.length > FULL_COUNT
+  const slotMargin = compressed
+    ? (fullWidth / crabs.length) - ICON_SIZE
+    : DEFAULT_GAP
+
   return (
     <div className="toolbar__crabs" ref={containerRef}>
       {crabs.map((crab, i) => (
-          <div key={crab.nodeId} className="toolbar__crab-slot" data-node-id={crab.nodeId}>
+          <div
+            key={crab.nodeId}
+            className="toolbar__crab-slot"
+            data-node-id={crab.nodeId}
+            style={{
+              marginRight: i < crabs.length - 1 ? slotMargin : 0,
+              ...(compressed ? {
+                zIndex: i,
+                filter: 'drop-shadow(0 0 1.5px rgba(0,0,0,0.9))',
+              } : {}),
+            }}
+          >
             <button
               className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
               style={crab.kind === 'terminal'
@@ -693,21 +755,6 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
   )
 }
 
-function BeatsToggle() {
-  const beatsVisible = useAudioStore(s => s.beatsVisible)
-  const toggleBeats = useAudioStore(s => s.toggleBeats)
-  return (
-    <button
-      className={'toolbar__btn' + (beatsVisible ? ' toolbar__btn--active' : '')}
-      onClick={toggleBeats}
-      data-tooltip={beatsVisible ? 'Audio Vis — Hide beat indicator (raw energy → onset detection → phase-locked pulse)' : 'Audio Vis — Show beat indicator (raw energy → onset detection → phase-locked pulse)'}
-      data-tooltip-no-flip
-    >
-      <AudioVisIcon />
-    </button>
-  )
-}
-
 function BellIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
@@ -729,140 +776,6 @@ function NotificationSoundToggle() {
     >
       <BellIcon />
     </button>
-  )
-}
-
-function BpmIndicator() {
-  const [displayBpm, setDisplayBpm] = useState(0)
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setDisplayBpm(useAudioStore.getState().bpm)
-    }, 1000)
-    setDisplayBpm(useAudioStore.getState().bpm)
-    return () => clearInterval(id)
-  }, [])
-
-  if (displayBpm <= 0) return null
-
-  return (
-    <span className="toolbar__status-item toolbar__metric">
-      {Math.round(displayBpm)} <span className="toolbar__metric-label">bpm</span>
-    </span>
-  )
-}
-
-function BeatIndicators() {
-  const beatsVisible = useAudioStore(s => s.beatsVisible)
-  const energyRef = useRef<HTMLSpanElement>(null)
-  const onsetRef = useRef<HTMLSpanElement>(null)
-  const phaseRef = useRef<HTMLSpanElement>(null)
-
-  useEffect(() => {
-    let rafId = 0
-    // Energy EMA state
-    let smoothEnergy = 0
-    // Onset decay state
-    let onsetLevel = 0
-    let lastOnset = false
-    // Phase interpolation state
-    let localPhase = 0
-    let lastBpm = 0
-    let lastStorePhase = 0
-    let prevTime = performance.now()
-    let logCounter = 0
-
-    const tick = () => {
-      rafId = requestAnimationFrame(tick)
-      const eEl = energyRef.current
-      const oEl = onsetRef.current
-      const pEl = phaseRef.current
-      if (!eEl || !oEl || !pEl) return
-
-      const now = performance.now()
-      const dt = now - prevTime
-      prevTime = now
-
-      const { phase, bpm, energy, onset, confidence, hasSignal, listening } = useAudioStore.getState()
-
-      // Periodic diagnostic logging
-      logCounter++
-      if (logCounter % 300 === 0) {
-        window.api.log(`[beat-indicators] listening=${listening} hasSignal=${hasSignal} energy=${energy.toFixed(4)} bpm=${bpm} phase=${phase.toFixed(3)} conf=${confidence.toFixed(2)} onset=${onset}`)
-      }
-
-      // --- Energy indicator (most raw) ---
-      smoothEnergy = smoothEnergy + 0.3 * (energy - smoothEnergy)
-      const eNorm = Math.min(1, smoothEnergy / 0.15) // normalize roughly 0..1
-      const eScale = 0.5 + 0.9 * eNorm
-      const eOpacity = 0.15 + 0.85 * eNorm
-      const eGlow = 6 * eNorm
-      const eLightness = 25 + 35 * eNorm
-      eEl.style.transform = `scale(${eScale})`
-      eEl.style.opacity = String(eOpacity)
-      eEl.style.background = `hsl(190, 80%, ${eLightness}%)`
-      eEl.style.boxShadow = eGlow > 0.5 ? `0 0 ${eGlow}px hsl(190, 80%, ${eLightness}%)` : 'none'
-      // tooltip removed — beat indicators don't need tooltips
-
-      // --- Onset indicator (intermediate) ---
-      if (onset && !lastOnset) {
-        onsetLevel = 1
-      }
-      lastOnset = onset
-      onsetLevel *= 0.92
-      const oScale = 0.4 + 1.2 * onsetLevel
-      const oOpacity = 0.1 + 0.9 * onsetLevel
-      const oGlow = 10 * onsetLevel
-      const oLightness = 20 + 45 * onsetLevel
-      oEl.style.transform = `scale(${oScale})`
-      oEl.style.opacity = String(oOpacity)
-      oEl.style.background = `hsl(30, 90%, ${oLightness}%)`
-      oEl.style.boxShadow = oGlow > 0.5 ? `0 0 ${oGlow}px hsl(30, 90%, ${oLightness}%)` : 'none'
-      // tooltip removed — beat indicators don't need tooltips
-
-      // --- Phase indicator ---
-      let pulse: number
-      if (bpm > 0) {
-        const beatPeriodMs = 60000 / bpm
-        if (phase !== lastStorePhase || bpm !== lastBpm) {
-          localPhase = phase
-          lastStorePhase = phase
-          lastBpm = bpm
-        } else {
-          localPhase += dt / beatPeriodMs
-          if (localPhase >= 1) localPhase -= Math.floor(localPhase)
-        }
-        pulse = 0.5 + 0.5 * Math.cos(2 * Math.PI * localPhase)
-      } else {
-        // No BPM estimate: gentle sine oscillation at ~0.67Hz
-        pulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * now / 1500)
-      }
-
-      const scale = 0.6 + pulse * 0.9 * Math.max(0.3, confidence)
-      const baseOpacity = energy > 0.005 ? 0.4 : 0.15
-      const opacity = baseOpacity + pulse * 0.6 * Math.max(0.2, confidence)
-      const glowRadius = 2 + pulse * 8 * confidence
-      const glowAlpha = 0.2 + pulse * 0.8 * confidence
-      const hue = Math.round(confidence * 120)
-
-      pEl.style.transform = `scale(${scale})`
-      pEl.style.opacity = String(opacity)
-      pEl.style.background = `hsl(${hue}, 80%, 50%)`
-      pEl.style.boxShadow = `0 0 ${glowRadius}px hsla(${hue}, 80%, 50%, ${glowAlpha})`
-    }
-
-    rafId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafId)
-  }, [])
-
-  if (!beatsVisible) return null
-
-  return (
-    <span className="toolbar__beats">
-      <span ref={energyRef} className="toolbar__beat toolbar__beat--energy" />
-      <span ref={onsetRef} className="toolbar__beat toolbar__beat--onset" />
-      <span ref={phaseRef} className="toolbar__beat" />
-    </span>
   )
 }
 
