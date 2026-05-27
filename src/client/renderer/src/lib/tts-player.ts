@@ -1,3 +1,5 @@
+import { cleanTerminalCopy } from './cleanTerminalCopy'
+
 let audioCtx: AudioContext | null = null
 function getAudioContext(): AudioContext {
   if (!audioCtx) audioCtx = new AudioContext()
@@ -21,54 +23,91 @@ function playCue(rising: boolean): void {
   osc.stop(now + duration)
 }
 
+const INTER_UTTERANCE_GAP_MS = 1000
+
+type QueueItem = {
+  text: string
+  resolve: (available: boolean) => void
+}
+
 let speaking = false
-/** Incremented on each speakText call so stale calls can detect pre-emption. */
+/** Incremented whenever the queue is cleared so in-flight work can detect pre-emption. */
 let generation = 0
+let queue: QueueItem[] = []
+let queueRunning = false
 
 export function stopSpeaking(): void {
   generation++
+  const cancelled = queue
+  queue = []
+  const wasSpeaking = speaking
   speaking = false
   window.api.tts.stop()
-  playCue(false)
+  if (wasSpeaking) playCue(false)
+  for (const item of cancelled) item.resolve(true) // cancelled items aren't an availability error
+}
+
+async function runQueue(): Promise<void> {
+  if (queueRunning) return
+  queueRunning = true
+  try {
+    while (queue.length > 0) {
+      const item = queue.shift()!
+      const myGeneration = generation
+      speaking = true
+      playCue(true)
+      let available = true
+      try {
+        const cleaned = cleanTerminalCopy(item.text)
+        const result = await window.api.tts.speak(cleaned)
+        available = result.available
+      } catch {
+        available = false
+      }
+      if (myGeneration !== generation) {
+        item.resolve(available)
+        return
+      }
+      speaking = false
+      playCue(false)
+      item.resolve(available)
+      if (queue.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, INTER_UTTERANCE_GAP_MS))
+        if (myGeneration !== generation) return
+      }
+    }
+  } finally {
+    queueRunning = false
+  }
 }
 
 /**
- * Speak text aloud via cartesia-read subprocess.
- * Resolves when speech finishes (or is stopped).
- * Returns false if TTS is unavailable.
+ * Queue text to be spoken aloud via cartesia-read. If something is already
+ * playing, this utterance is appended and plays after the current one finishes
+ * (with a short buffer between items). Runs the shared terminal copy-cleanup
+ * transform before handing text to Cartesia. Resolves to false if TTS is
+ * unavailable.
  */
-export async function speakText(text: string): Promise<boolean> {
-  if (speaking) {
-    stopSpeaking()
-  }
-
-  const myGeneration = ++generation
-  speaking = true
-  playCue(true)
-
-  try {
-    const result = await window.api.tts.speak(text)
-    if (!result.available) return false
-    return true
-  } catch {
-    return false
-  } finally {
-    if (myGeneration === generation) {
-      speaking = false
-      playCue(false)
-    }
-  }
+export function speakText(text: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    queue.push({ text, resolve })
+    void runQueue()
+  })
 }
 
-/** Toggle speech: if speaking, stop; if not, speak. Returns false if TTS unavailable. */
-export async function toggleSpeak(text: string): Promise<boolean> {
-  if (speaking) {
+/**
+ * Toggle speech: if anything is playing or queued, stop everything; otherwise
+ * queue the text. Resolves to false only when starting fresh and TTS is
+ * unavailable.
+ */
+export function toggleSpeak(text: string): Promise<boolean> {
+  if (speaking || queue.length > 0) {
     stopSpeaking()
-    return true
+    return Promise.resolve(true)
   }
   return speakText(text)
 }
 
 export function isSpeaking(): boolean {
-  return speaking
+  return speaking || queue.length > 0
 }

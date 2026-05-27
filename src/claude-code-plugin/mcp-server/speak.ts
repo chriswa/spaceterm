@@ -15,7 +15,7 @@ export const speakTool = defineTool({
     'IMPORTANT: Only use this tool when the user explicitly asks for text-to-speech, speech, or to speak aloud. ' +
     'Speaks text through the spaceterm client\'s text-to-speech engine.',
   inputSchema: z.object({
-    text: z.string().max(200).describe('The text to speak aloud (max 200 characters)'),
+    text: z.string().max(2000).describe('The text to speak aloud (max 2000 characters)'),
   }),
   async handler({ text }) {
     const surfaceId = process.env.SPACETERM_SURFACE_ID
