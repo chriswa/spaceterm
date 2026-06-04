@@ -104,6 +104,7 @@ interface WindowApi {
   isFullScreen(): Promise<boolean>
   setFullScreen(enabled: boolean): Promise<void>
   onVisibilityChanged(callback: (visible: boolean) => void): () => void
+  onFocusNode(callback: (nodeId: string) => void): () => void
 }
 
 interface Api {

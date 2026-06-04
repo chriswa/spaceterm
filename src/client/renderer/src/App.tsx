@@ -800,6 +800,14 @@ export function App() {
     }
   }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef, inertiaBlock])
 
+  // Focus a surface in response to an external `spaceterm-surface://` deep link.
+  // The main process raises this window first; navigateToNode handles the rest.
+  useEffect(() => {
+    return window.api.window.onFocusNode((nodeId) => {
+      navigateToNode(nodeId)
+    })
+  }, [navigateToNode])
+
   // Initialize server sync on mount — placed after getParentCwd/navigateToNode/cwdMapRef
   // so the fork-detection interceptor closure can reference them.
   useEffect(() => {

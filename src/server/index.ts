@@ -1624,6 +1624,24 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'focus-surface-request': {
+      const focusNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!focusNodeId) {
+        console.error(`[focus-surface] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      // Route to the first-connected still-alive client so the choice is
+      // deterministic regardless of which client the OS handed the URL to.
+      const target = clients.values().next().value
+      if (!target) {
+        console.error('[focus-surface] No connected clients to raise')
+        break
+      }
+      serverLog(`[focus-surface] surfaceId=${msg.surfaceId.slice(0, 8)} node=${focusNodeId.slice(0, 8)} -> client=${target.id.slice(0, 8)}`)
+      send(target.socket, { type: 'focus-surface', nodeId: focusNodeId })
+      break
+    }
+
     default: {
       const unknownType = (msg as any).type
       console.error(`Unknown message type: ${unknownType}`)

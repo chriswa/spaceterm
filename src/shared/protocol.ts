@@ -407,6 +407,12 @@ export interface CameraBoundsMessage {
   bounds: CameraBounds
 }
 
+/** Request the server to focus the surface with this SPACETERM_SURFACE_ID on one client. */
+export interface FocusSurfaceRequestMessage {
+  type: 'focus-surface-request'
+  surfaceId: string
+}
+
 /** Fire-and-forget messages received on the hooks socket (no response sent). */
 export type IngestMessage =
   | HookMessage
@@ -465,6 +471,7 @@ export type ClientMessage =
   | UndoBufferPushMessage
   | UndoBufferSetCursorMessage
   | CameraBoundsMessage
+  | FocusSurfaceRequestMessage
 
 // --- Server → Client messages ---
 
@@ -671,6 +678,12 @@ export interface PeerCameraBoundsMessage {
   bounds: CameraBounds
 }
 
+/** Sent to exactly one client, instructing it to raise its window and focus this node. */
+export interface FocusSurfaceMessage {
+  type: 'focus-surface'
+  nodeId: string
+}
+
 // --- Script socket messages (scripts.sock) ---
 
 export interface ScriptGetAncestorsMessage {
@@ -792,3 +805,4 @@ export type ServerMessage =
   | PeerConnectedMessage
   | PeerDisconnectedMessage
   | PeerCameraBoundsMessage
+  | FocusSurfaceMessage

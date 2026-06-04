@@ -2,6 +2,10 @@ appId: com.spaceterm.app
 productName: Spaceterm
 directories:
   buildResources: build
+protocols:
+  - name: Spaceterm Surface
+    schemes:
+      - spaceterm-surface
 files:
   - '!**/.vscode/*'
   - '!src/*'

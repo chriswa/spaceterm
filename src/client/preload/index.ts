@@ -263,6 +263,11 @@ contextBridge.exposeInMainWorld('api', {
       const listener = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible)
       ipcRenderer.on('window:visibility-changed', listener)
       return () => ipcRenderer.removeListener('window:visibility-changed', listener)
+    },
+    onFocusNode: (callback: (nodeId: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, nodeId: string) => callback(nodeId)
+      ipcRenderer.on('window:focus-node', listener)
+      return () => ipcRenderer.removeListener('window:focus-node', listener)
     }
   },
   tts: {

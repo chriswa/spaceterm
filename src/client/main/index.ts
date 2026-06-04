@@ -13,6 +13,62 @@ import { loadWindowState, saveWindowState, findTargetDisplay } from './window-st
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
 
+// Surface id from a `spaceterm-surface://` link that arrived before the server
+// connection was ready (cold launch). Flushed once the client connects.
+let pendingFocusSurfaceId: string | null = null
+// Node id to focus once the renderer has finished loading (cold launch).
+let pendingFocusNodeId: string | null = null
+
+function parseSurfaceUrl(url: string): string | null {
+  const prefix = 'spaceterm-surface://'
+  if (!url.startsWith(prefix)) return null
+  const id = decodeURIComponent(url.slice(prefix.length).replace(/^\/+/, '').replace(/\/+$/, ''))
+  return id || null
+}
+
+function requestFocusSurface(surfaceId: string): void {
+  if (client?.isConnected()) {
+    client.focusSurface(surfaceId)
+  } else {
+    pendingFocusSurfaceId = surfaceId
+  }
+}
+
+// Bring this window to the foreground and tell the renderer to focus the node.
+// The server has already decided this client should be the one to raise.
+function raiseAndFocusNode(nodeId: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+  if (process.platform === 'darwin') app.focus({ steal: true })
+
+  const wc = mainWindow.webContents
+  if (wc.isLoadingMainFrame()) {
+    pendingFocusNodeId = nodeId
+    wc.once('did-finish-load', () => {
+      if (pendingFocusNodeId && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('window:focus-node', pendingFocusNodeId)
+        pendingFocusNodeId = null
+      }
+    })
+  } else {
+    wc.send('window:focus-node', nodeId)
+  }
+}
+
+// Register the OS-level URL scheme. Registered at module load (before app ready)
+// so a cold-launch `open-url` is captured.
+app.setAsDefaultProtocolClient('spaceterm-surface')
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  const surfaceId = parseSurfaceUrl(url)
+  if (surfaceId) {
+    logger.log(`Deep link focus request: surface=${surfaceId}`)
+    requestFocusSurface(surfaceId)
+  }
+})
+
 function createWindow(): void {
   // Determine which display to open on based on saved state
   const saved = loadWindowState()
@@ -397,6 +453,10 @@ function setupIPC(): void {
 }
 
 function wireClientEvents(): void {
+  client!.on('focus-surface', (nodeId: string) => {
+    raiseAndFocusNode(nodeId)
+  })
+
   client!.on('data', (sessionId: string, data: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:data:${sessionId}`, data)
@@ -566,6 +626,12 @@ app.whenReady().then(async () => {
       app.quit()
       return
     }
+  }
+
+  // Flush a deep-link focus request that arrived before the server connection.
+  if (pendingFocusSurfaceId) {
+    client.focusSurface(pendingFocusSurfaceId)
+    pendingFocusSurfaceId = null
   }
 
   createWindow()

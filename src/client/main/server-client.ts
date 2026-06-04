@@ -183,6 +183,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'focus-surface') {
+      this.emit('focus-surface', msg.nodeId)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)
@@ -398,6 +403,10 @@ export class ServerClient extends EventEmitter {
 
   sendCameraBounds(bounds: CameraBounds): void {
     this.sendFireAndForget({ type: 'camera-bounds', bounds })
+  }
+
+  focusSurface(surfaceId: string): void {
+    this.sendFireAndForget({ type: 'focus-surface-request', surfaceId })
   }
 
   isConnected(): boolean {
