@@ -24,6 +24,13 @@ function playCue(rising: boolean): void {
 }
 
 const INTER_UTTERANCE_GAP_MS = 1000
+/**
+ * Hard cap on how long we'll wait for a single utterance to finish before
+ * giving up, force-stopping cartesia-read, and moving on. Generous enough to
+ * cover the 2000-char MCP max at normal speech rate; tight enough that a hung
+ * subprocess can't permanently block the queue.
+ */
+const SPEAK_TIMEOUT_MS = 180_000
 
 type QueueItem = {
   text: string
@@ -59,8 +66,18 @@ async function runQueue(): Promise<void> {
       let available = true
       try {
         const cleaned = cleanTerminalCopy(item.text)
-        const result = await window.api.tts.speak(cleaned)
-        available = result.available
+        const TIMED_OUT = Symbol('timed-out')
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+        const timeoutPromise = new Promise<typeof TIMED_OUT>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve(TIMED_OUT), SPEAK_TIMEOUT_MS)
+        })
+        const result = await Promise.race([window.api.tts.speak(cleaned), timeoutPromise])
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+        if (result === TIMED_OUT) {
+          window.api.tts.stop() // force-kill the stuck subprocess so the next item can run
+        } else {
+          available = result.available
+        }
       } catch {
         available = false
       }
