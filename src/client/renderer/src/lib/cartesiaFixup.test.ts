@@ -107,9 +107,9 @@ const cases: Case[] = [
   // Replace internal underscores with spaces, then ALL-CAPS rule lowercases.
 
   {
-    name: 'YELLING_SNAKE_CASE splits and lowercases',
+    name: 'YELLING_SNAKE_CASE splits; 2-letter chunk MS spells out, GAP pronounces',
     input: 'INTER_UTTERANCE_GAP_MS',
-    expected: 'inter utterance gap ms',
+    expected: 'inter utterance gap M S',
   },
 
   {
@@ -189,6 +189,112 @@ const cases: Case[] = [
     name: 'mixed camelCase and ALL-CAPS snake in one sentence',
     input: 'set MAX_RETRIES on the httpClient instance',
     expected: 'set max retries on the http Client instance',
+  },
+
+  // -- Acronym detection (spell-out vs pronounce) --------------------------
+  // Heuristic: length≥4 AND vowel → pronounce; length=3 AND CVC → pronounce;
+  // otherwise spell out. Plus FORCE_PRONOUNCE / FORCE_SPELL_OUT overrides.
+
+  {
+    name: 'TTS: 3-letter no-vowel acronym spells out',
+    input: 'TTS',
+    expected: 'T T S',
+  },
+
+  {
+    name: 'Cartesia TTS in a sentence (the user-reported case)',
+    input: 'Cartesia TTS now reads things',
+    expected: 'Cartesia T T S now reads things',
+  },
+
+  {
+    name: 'HTTP: 4 letters but no vowel spells out',
+    input: 'HTTP',
+    expected: 'H T T P',
+  },
+
+  {
+    name: 'HTML: 4 letters no vowel spells out',
+    input: 'HTML',
+    expected: 'H T M L',
+  },
+
+  {
+    name: 'CSS: 3 letters no vowel spells out',
+    input: 'CSS',
+    expected: 'C S S',
+  },
+
+  {
+    name: 'API: 3 letters V-C-V (not CVC) spells out',
+    input: 'API',
+    expected: 'A P I',
+  },
+
+  {
+    name: 'API inside a sentence',
+    input: 'call the API endpoint',
+    expected: 'call the A P I endpoint',
+  },
+
+  {
+    name: 'IDE: 3 letters V-C-V spells out',
+    input: 'IDE',
+    expected: 'I D E',
+  },
+
+  {
+    name: 'OS: 2 letters spells out',
+    input: 'the OS handles it',
+    expected: 'the O S handles it',
+  },
+
+  {
+    name: 'URL: 3 letters V-C-C → would spell, but FORCE_PRONOUNCE overrides',
+    input: 'URL',
+    expected: 'url',
+  },
+
+  {
+    name: 'URL inside a sentence (override applies)',
+    input: 'the URL is here',
+    expected: 'the url is here',
+  },
+
+  {
+    name: 'LERP: 4 letters + vowel pronounces',
+    input: 'LERP the values',
+    expected: 'lerp the values',
+  },
+
+  {
+    name: 'JSON: 4 letters + vowel pronounces (Cartesia approximates as "jay-son")',
+    input: 'JSON',
+    expected: 'json',
+  },
+
+  {
+    name: 'YAML: 4 letters + vowel pronounces',
+    input: 'YAML',
+    expected: 'yaml',
+  },
+
+  {
+    name: 'GAP: 3 letters CVC pattern pronounces',
+    input: 'GAP between items',
+    expected: 'gap between items',
+  },
+
+  {
+    name: 'BAR: 3 letters CVC pattern pronounces',
+    input: 'BAR is set',
+    expected: 'bar is set',
+  },
+
+  {
+    name: 'real words like FEATURE / IDEAS / CAVEATS still pronounce',
+    input: 'FEATURE: IDEAS and CAVEATS',
+    expected: 'feature: ideas and caveats',
   },
 ]
 

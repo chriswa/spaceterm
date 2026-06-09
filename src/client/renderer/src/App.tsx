@@ -1662,15 +1662,16 @@ export function App() {
         }
       }
 
-      // Cmd+Shift+0..9: save current viewport to a numbered slot (shared across all clients).
-      // Cmd+0..9: restore that slot. Use e.code (not e.key) — Shift+digit yields symbols on macOS.
-      if (e.metaKey && /^Digit[0-9]$/.test(e.code)) {
+      // Cmd+Option+0..9: save current viewport to a numbered slot (shared across all clients).
+      // Cmd+0..9: restore that slot. Use e.code (not e.key) — Option/Shift+digit yields symbols on
+      // macOS. Option (not Shift) for save because Cmd+Shift+3/4/5 are reserved by macOS screenshots.
+      if (e.metaKey && !e.shiftKey && /^Digit[0-9]$/.test(e.code)) {
         const slot = e.code.slice(5) // 'Digit3' -> '3'
         const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
         const vw = viewport?.clientWidth ?? window.innerWidth
         const vh = viewport?.clientHeight ?? window.innerHeight
 
-        if (e.shiftKey) {
+        if (e.altKey) {
           // Save: store the current visible region as canvas-space bounds (window-independent)
           e.preventDefault()
           e.stopPropagation()

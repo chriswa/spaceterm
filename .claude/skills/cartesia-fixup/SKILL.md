@@ -35,7 +35,10 @@ Read both `src/client/renderer/src/lib/cleanTerminalCopy.ts` and `src/client/ren
   - `.ts` filenames → ` dot T S` (so Cartesia doesn't say "dot tess"). `.tsx`/`.tsv` untouched.
   - `snake_case` and `YELLING_SNAKE_CASE` → space-separated words. Leading/trailing/doubled underscores (`_private`, `__init__`) preserved.
   - `camelCase` / `PascalCase` → space-separated. Runs of consecutive caps (e.g. `HTTPserver`) are NOT split — add an explicit rule if one comes up.
-  - ALL-CAPS words of length ≥ 2 → lowercased so Cartesia reads them as words ("FEATURE" → "feature"). Trade-off: real acronyms (URL, HTTP, NASA, etc.) also get lowercased. If a specific acronym needs to stay spelled out, add a rule for it BEFORE the lowercase pass.
+  - ALL-CAPS words: a phonotactic heuristic decides between lowercase (pronounce as a word) and space-separated letters (spell out), backed by two override lists.
+    - Heuristic — **pronounce** if length ≥ 4 with a vowel, OR length = 3 with a consonant-vowel-consonant pattern. Otherwise **spell out**. Examples: `FEATURE`/`LERP`/`JSON`/`GAP`/`BAR` pronounce; `TTS`/`HTTP`/`CSS`/`API`/`IDE`/`OS` spell out.
+    - `FORCE_PRONOUNCE` set (override → lowercase): seeded with `URL`. Add when the heuristic spells out something that sounds better as a syllable.
+    - `FORCE_SPELL_OUT` set (override → spaced letters): empty by default. Add when the heuristic pronounces something that should be letters (e.g. an acronym that happens to look pronounceable, like a hypothetical `MOON` for an org name).
 
 If the bug is "Cartesia received structurally wrong text" → fix in cleanTerminalCopy. If the bug is "Cartesia received the right text but pronounced it wrong" → fix in cartesiaFixup.
 

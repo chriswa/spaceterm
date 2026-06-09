@@ -28,11 +28,46 @@ export function cartesiaFixup(text: string): string {
   //    becomes `clean Terminal Copy dot T S`.
   out = out.replace(/\.ts\b/g, ' dot T S')
 
-  // 4. ALL-CAPS words of length ≥ 2 → lowercase. Without this, Cartesia
-  //    spells out caps-runs ("FEATURE" → "F E toor"). Trade-off: real
-  //    acronyms (URL, HTTP, etc.) also get lowercased; add an explicit
-  //    acronym rule if a specific one needs to stay spelled out.
-  out = out.replace(/\b[A-Z]{2,}\b/g, m => m.toLowerCase())
+  // 4. ALL-CAPS words: decide between pronouncing (lowercase) and spelling
+  //    out (space-separated letters) using a small phonotactic heuristic +
+  //    two override lists. Cartesia tends to spell out caps runs ("FEATURE"
+  //    → "F E toor", "TTS" → lowercase "tts" → "teets") so we have to take
+  //    a side on each word.
+  out = out.replace(/\b[A-Z]{2,}\b/g, transformAllCapsWord)
 
   return out
+}
+
+// Override lists for the ALL-CAPS pass. Use Sets of UPPERCASE keys.
+//
+// Add a fixture in cartesiaFixup.test.ts FIRST when extending these — see
+// .claude/skills/cartesia-fixup/.
+const FORCE_PRONOUNCE = new Set<string>([
+  'URL', // looks like an acronym, but read as one syllable ("earl") sounds better.
+])
+const FORCE_SPELL_OUT = new Set<string>([
+  // Empty for now — the heuristic correctly spells out API/IDE/OS/TTS/etc.
+])
+
+// 3-letter consonant-vowel-consonant pattern. Letters that read as a single
+// English syllable usually fit this shape (gap, bar, bus, log, max, red).
+// Y is treated as a consonant here; SKY/etc. fall through to spell-out and
+// can be added to FORCE_PRONOUNCE if needed.
+const CVC_3LETTER = /^[BCDFGHJKLMNPQRSTVWXYZ][AEIOU][BCDFGHJKLMNPQRSTVWXYZ]$/
+
+function isPronounceable(word: string): boolean {
+  if (!/[AEIOU]/.test(word)) return false // no vowel → can't be a syllable
+  if (word.length >= 4) return true
+  if (word.length === 3) return CVC_3LETTER.test(word)
+  return false // 2-letter ALL-CAPS: spell out by default (OK → "O K")
+}
+
+function spellOut(word: string): string {
+  return word.split('').join(' ')
+}
+
+function transformAllCapsWord(word: string): string {
+  if (FORCE_PRONOUNCE.has(word)) return word.toLowerCase()
+  if (FORCE_SPELL_OUT.has(word)) return spellOut(word)
+  return isPronounceable(word) ? word.toLowerCase() : spellOut(word)
 }
