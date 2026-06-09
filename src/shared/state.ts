@@ -1,4 +1,4 @@
-import type { ClaudeSessionEntry } from './protocol'
+import type { ClaudeSessionEntry, CameraBounds } from './protocol'
 import type { UndoEntry } from './undo-types'
 
 // --- Claude state enum ---
@@ -118,4 +118,6 @@ export interface ServerState {
   rootArchivedChildren: ArchivedNode[]
   undoBuffer: UndoEntry[]
   undoCursor: number
+  /** Numbered viewport bookmarks (slot '0'..'9' -> canvas-space camera bounds), shared across clients. */
+  savedViewports: Record<string, CameraBounds>
 }

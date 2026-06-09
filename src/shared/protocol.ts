@@ -413,6 +413,13 @@ export interface FocusSurfaceRequestMessage {
   surfaceId: string
 }
 
+/** Store the camera bounds for a numbered viewport slot ('0'..'9'), shared across all clients. */
+export interface SaveViewportMessage {
+  type: 'save-viewport'
+  slot: string
+  bounds: CameraBounds
+}
+
 /** Fire-and-forget messages received on the hooks socket (no response sent). */
 export type IngestMessage =
   | HookMessage
@@ -472,6 +479,7 @@ export type ClientMessage =
   | UndoBufferSetCursorMessage
   | CameraBoundsMessage
   | FocusSurfaceRequestMessage
+  | SaveViewportMessage
 
 // --- Server → Client messages ---
 
@@ -684,6 +692,12 @@ export interface FocusSurfaceMessage {
   nodeId: string
 }
 
+/** Full set of saved viewport slots (slot -> bounds). Sent on connect and broadcast on every save. */
+export interface SavedViewportsMessage {
+  type: 'saved-viewports'
+  viewports: Record<string, CameraBounds>
+}
+
 // --- Script socket messages (scripts.sock) ---
 
 export interface ScriptGetAncestorsMessage {
@@ -806,3 +820,4 @@ export type ServerMessage =
   | PeerDisconnectedMessage
   | PeerCameraBoundsMessage
   | FocusSurfaceMessage
+  | SavedViewportsMessage

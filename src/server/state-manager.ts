@@ -12,7 +12,7 @@ import type {
   TerminalSessionEntry,
   GitStatus
 } from '../shared/state'
-import type { ClaudeSessionEntry } from '../shared/protocol'
+import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { schedulePersist, persistNow, loadState } from './persistence'
 import { getAncestorCwd } from './path-utils'
 import { isDisposable } from '../shared/node-utils'
@@ -62,6 +62,10 @@ export class StateManager {
       if (this.state.undoCursor == null) {
         this.state.undoCursor = this.state.undoBuffer.length
       }
+      // Backfill for state files that predate savedViewports
+      if (!this.state.savedViewports) {
+        this.state.savedViewports = {}
+      }
       // Dead terminal processing is done by the caller via processDeadTerminals()
 
       // MIGRATION: Backfill sortOrder for terminals that predate this field.
@@ -88,7 +92,8 @@ export class StateManager {
         nodes: {},
         rootArchivedChildren: [],
         undoBuffer: [],
-        undoCursor: 0
+        undoCursor: 0,
+        savedViewports: {}
       }
     }
   }
@@ -217,6 +222,15 @@ export class StateManager {
 
   getState(): ServerState {
     return this.state
+  }
+
+  getSavedViewports(): Record<string, CameraBounds> {
+    return this.state.savedViewports
+  }
+
+  setSavedViewport(slot: string, bounds: CameraBounds): void {
+    this.state.savedViewports[slot] = bounds
+    this.schedulePersist()
   }
 
   getNode(id: string): NodeData | undefined {

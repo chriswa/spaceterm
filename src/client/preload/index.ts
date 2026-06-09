@@ -181,6 +181,7 @@ const nodeApi: NodeApi = {
   setClaudeStatusAsleep: (sessionId: string, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
   setAlertsReadTimestamp: (nodeId: string, timestamp: number) => ipcRenderer.send('node:set-alerts-read-timestamp', nodeId, timestamp),
   sendCameraBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:camera-bounds', bounds),
+  saveViewport: (slot: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:save-viewport', slot, bounds),
   onSnapshot: (sessionId, callback) => {
     const channel = `snapshot:${sessionId}`
     const listener = (_event: Electron.IpcRendererEvent, snapshot: any) => callback(snapshot)
@@ -246,6 +247,11 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, clientId: string, bounds: { x: number; y: number; width: number; height: number }) => callback(clientId, bounds)
     ipcRenderer.on('peer:camera-bounds', listener)
     return () => ipcRenderer.removeListener('peer:camera-bounds', listener)
+  },
+  onSavedViewports: (callback: (viewports: Record<string, { x: number; y: number; width: number; height: number }>) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, viewports: Record<string, { x: number; y: number; width: number; height: number }>) => callback(viewports)
+    ipcRenderer.on('viewports:saved', listener)
+    return () => ipcRenderer.removeListener('viewports:saved', listener)
   }
 }
 

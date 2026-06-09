@@ -415,6 +415,10 @@ function setupIPC(): void {
     client!.sendCameraBounds(bounds)
   })
 
+  ipcMain.on('node:save-viewport', (_event, slot: string, bounds: { x: number; y: number; width: number; height: number }) => {
+    client!.saveViewport(slot, bounds)
+  })
+
   // --- Window mode ---
 
   ipcMain.handle('window:is-fullscreen', () => {
@@ -562,6 +566,12 @@ function wireClientEvents(): void {
   client!.on('peer-camera-bounds', (clientId: string, bounds: { x: number; y: number; width: number; height: number }) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('peer:camera-bounds', clientId, bounds)
+    }
+  })
+
+  client!.on('saved-viewports', (viewports: Record<string, { x: number; y: number; width: number; height: number }>) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('viewports:saved', viewports)
     }
   })
 

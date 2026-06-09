@@ -30,9 +30,10 @@ import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, r
 import { DEFAULT_PRESET } from './lib/color-presets'
 import { angleColorPreset } from './lib/angle-color'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
+import { useSavedViewportStore } from './stores/savedViewportStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -1659,6 +1660,52 @@ export function App() {
           // and Cmd+Z (native undo) to reach the control
           if (e.key === 'Escape' || (e.metaKey && (e.key.startsWith('Arrow') || e.key === 'z'))) return
         }
+      }
+
+      // Cmd+Shift+0..9: save current viewport to a numbered slot (shared across all clients).
+      // Cmd+0..9: restore that slot. Use e.code (not e.key) — Shift+digit yields symbols on macOS.
+      if (e.metaKey && /^Digit[0-9]$/.test(e.code)) {
+        const slot = e.code.slice(5) // 'Digit3' -> '3'
+        const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+        const vw = viewport?.clientWidth ?? window.innerWidth
+        const vh = viewport?.clientHeight ?? window.innerHeight
+
+        if (e.shiftKey) {
+          // Save: store the current visible region as canvas-space bounds (window-independent)
+          e.preventDefault()
+          e.stopPropagation()
+          const topLeft = screenToCanvas({ x: 0, y: 0 }, cameraRef.current)
+          const bottomRight = screenToCanvas({ x: vw, y: vh }, cameraRef.current)
+          sendSaveViewport(slot, {
+            x: topLeft.x,
+            y: topLeft.y,
+            width: bottomRight.x - topLeft.x,
+            height: bottomRight.y - topLeft.y,
+          })
+          showToast(`Saved viewport ${slot}`)
+          return
+        }
+
+        // Restore: fit the saved region to this window, or jiggle if the slot is empty
+        e.preventDefault()
+        e.stopPropagation()
+        const bounds = useSavedViewportStore.getState().viewports[slot]
+        if (!bounds) {
+          shakeCamera()
+          showToast(`No viewport saved in slot ${slot}`)
+          return
+        }
+        const target = cameraToFitBounds(bounds, vw, vh, 0)
+        const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, cameraRef.current)
+        const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, target)
+        const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
+        // A viewport restore isn't tied to a node — clear focus/scroll state
+        focusRef.current = null
+        setFocusedId(null)
+        setScrollMode(false)
+        inertiaBlock.activate()
+        flyTo(target, computeFlyToSpeed(dist))
+        return
       }
 
       // Cmd+Z: undo (only when not in a text field — the isEditable guard above returns early)

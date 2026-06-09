@@ -3,6 +3,7 @@ import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { usePeerStore } from '../stores/peerStore'
+import { useSavedViewportStore } from '../stores/savedViewportStore'
 import type { NodeData } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
@@ -118,6 +119,12 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onPeerCameraBounds((clientId: string, bounds) => {
       usePeerStore.getState().updateBounds(clientId, bounds)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.node.onSavedViewports((viewports) => {
+      useSavedViewportStore.getState().setAll(viewports)
     })
   )
 
@@ -280,4 +287,8 @@ export async function sendUndoSetCursor(cursor: number): Promise<void> {
 
 export function sendCameraBounds(bounds: { x: number; y: number; width: number; height: number }): void {
   window.api.node.sendCameraBounds(bounds)
+}
+
+export function sendSaveViewport(slot: string, bounds: { x: number; y: number; width: number; height: number }): void {
+  window.api.node.saveViewport(slot, bounds)
 }

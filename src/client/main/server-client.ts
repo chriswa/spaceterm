@@ -188,6 +188,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'saved-viewports') {
+      this.emit('saved-viewports', msg.viewports)
+      return
+    }
+
     // Request/response correlation
     if ('seq' in msg) {
       const pending = this.pending.get(msg.seq)
@@ -403,6 +408,10 @@ export class ServerClient extends EventEmitter {
 
   sendCameraBounds(bounds: CameraBounds): void {
     this.sendFireAndForget({ type: 'camera-bounds', bounds })
+  }
+
+  saveViewport(slot: string, bounds: CameraBounds): void {
+    this.sendFireAndForget({ type: 'save-viewport', slot, bounds })
   }
 
   focusSurface(surfaceId: string): void {

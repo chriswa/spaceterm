@@ -85,9 +85,11 @@ interface NodeApi {
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
   sendCameraBounds(bounds: { x: number; y: number; width: number; height: number }): void
+  saveViewport(slot: string, bounds: { x: number; y: number; width: number; height: number }): void
   onPeerConnected(callback: (clientId: string) => void): () => void
   onPeerDisconnected(callback: (clientId: string) => void): () => void
   onPeerCameraBounds(callback: (clientId: string, bounds: { x: number; y: number; width: number; height: number }) => void): () => void
+  onSavedViewports(callback: (viewports: Record<string, { x: number; y: number; width: number; height: number }>) => void): () => void
 }
 
 interface TtsApi {

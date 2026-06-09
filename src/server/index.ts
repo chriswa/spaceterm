@@ -1624,6 +1624,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'save-viewport': {
+      stateManager.setSavedViewport(msg.slot, msg.bounds)
+      serverLog(`[save-viewport] slot=${msg.slot} bounds=(${Math.round(msg.bounds.x)},${Math.round(msg.bounds.y)} ${Math.round(msg.bounds.width)}x${Math.round(msg.bounds.height)}) -> broadcasting to ${clients.size} clients`)
+      broadcastToAll({ type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
+      break
+    }
+
     case 'focus-surface-request': {
       const focusNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
       if (!focusNodeId) {
@@ -2336,6 +2343,9 @@ async function startServer(): Promise<void> {
     })
     // Notify other clients about the new peer
     broadcastToOthers(socket, { type: 'peer-connected', clientId: client.id })
+
+    // Send the shared saved viewport slots to the new client
+    send(socket, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
 
     // Send cached usage data immediately so the client doesn't wait for the next poll
     if (cachedUsage) {
