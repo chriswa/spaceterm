@@ -128,11 +128,15 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     })
   )
 
-  // Request full state from server
+  // Request full state from server. This PULL is the source of truth on every
+  // renderer (re)load — the onSavedViewports PUSH above only fires on a fresh
+  // main-process socket connect, which does NOT repeat across a renderer refresh
+  // while the socket stays open, so saved viewports must be hydrated from here.
   try {
     const serverState = await window.api.node.syncRequest()
     store.applyServerState(serverState)
     syncUndoBuffer(serverState.undoBuffer ?? [], serverState.undoCursor)
+    useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
   } catch {
     // Server not connected yet — will sync on reconnect
   }
