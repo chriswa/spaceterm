@@ -781,17 +781,18 @@ function NotificationSoundToggle() {
   )
 }
 
-function BroomIcon() {
+function DustpanIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Pan + lip as a single outline so no horizontal seam separates them */}
+      <path d="M5 7 L11 7 L14 12 L14 14.5 L2 14.5 L2 12 Z" fill="currentColor" fillOpacity="0.2" />
       {/* Handle */}
-      <line x1="13" y1="2" x2="7" y2="8" />
-      {/* Brush head */}
-      <path d="M3 11 L7 7 L11 11 L9.5 14 H4.5 Z" fill="currentColor" fillOpacity="0.2" />
-      {/* Bristle lines */}
-      <line x1="5.5" y1="11.5" x2="5" y2="14" />
-      <line x1="7" y1="10.5" x2="7" y2="14" />
-      <line x1="8.5" y1="11.5" x2="9" y2="14" />
+      <line x1="8" y1="7" x2="8" y2="3" strokeWidth="2" />
+      {/* Grooves — small notches inset from the lip's bottom edge */}
+      <line x1="5" y1="12.7" x2="5" y2="14.3" strokeWidth="0.8" />
+      <line x1="7" y1="12.7" x2="7" y2="14.3" strokeWidth="0.8" />
+      <line x1="9" y1="12.7" x2="9" y2="14.3" strokeWidth="0.8" />
+      <line x1="11" y1="12.7" x2="11" y2="14.3" strokeWidth="0.8" />
     </svg>
   )
 }
@@ -806,7 +807,7 @@ function CopyCleanupToggle() {
       data-tooltip={enabled ? 'Copy Cleanup — Disable to copy raw terminal selection (for capturing fixtures)' : 'Copy Cleanup — Enable to strip Claude Code prefixes and reflow paragraphs on copy'}
       data-tooltip-no-flip
     >
-      <BroomIcon />
+      <DustpanIcon />
     </button>
   )
 }

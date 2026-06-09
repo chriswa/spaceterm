@@ -1,4 +1,5 @@
 import { cleanTerminalCopy } from './cleanTerminalCopy'
+import { cartesiaFixup } from './cartesiaFixup'
 
 let audioCtx: AudioContext | null = null
 function getAudioContext(): AudioContext {
@@ -65,7 +66,10 @@ async function runQueue(): Promise<void> {
       playCue(true)
       let available = true
       try {
-        const cleaned = cleanTerminalCopy(item.text)
+        // TTS always cleans the input regardless of the toolbar Copy Cleanup
+        // toggle (that toggle is only for the clipboard path). Then layer the
+        // Cartesia-specific pronunciation fixups on top.
+        const cleaned = cartesiaFixup(cleanTerminalCopy(item.text))
         const TIMED_OUT = Symbol('timed-out')
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined
         const timeoutPromise = new Promise<typeof TIMED_OUT>((resolve) => {
