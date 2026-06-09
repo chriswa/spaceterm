@@ -2038,34 +2038,33 @@ export function App() {
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
-  // Right-button drag on the canvas background → zoom. Vertical drag drives
-  // the zoom (drag up = zoom in, down = zoom out), anchored at the point where
-  // the drag began so that point stays fixed under the cursor. Owns its own
-  // move/up listeners like handlePanStart.
+  // Right-button drag on the canvas background → zoom. Logarithmic, like
+  // cmd+scroll: total vertical drag distance maps to a zoom *ratio*, so equal
+  // drag distances produce equal zoom multiples regardless of current zoom.
+  // Drag up = zoom in, down = zoom out, anchored at the drag-start point so it
+  // stays fixed under the cursor. Owns its own move/up listeners like
+  // handlePanStart.
   const handleZoomDragStart = useCallback((e: MouseEvent) => {
-    showToast('Zoom drag started')
-
     const anchor = { x: e.clientX, y: e.clientY }
-    let lastY = e.clientY
+    const startY = e.clientY
+    const startZ = cameraRef.current.z
 
     const onMouseMove = (ev: MouseEvent) => {
-      // Match wheel sign convention: positive delta zooms out. Dragging down
-      // (positive dy) zooms out, dragging up zooms in.
-      const dy = ev.clientY - lastY
-      lastY = ev.clientY
-      userZoom(anchor, dy * ZOOM_DRAG_SENSITIVITY)
+      // Up (smaller clientY) → positive distance → zoom in. Exponential map
+      // makes this logarithmic: z = startZ * e^(dist * sensitivity).
+      const dragDist = startY - ev.clientY
+      userZoom(anchor, startZ * Math.exp(dragDist * ZOOM_DRAG_SENSITIVITY))
     }
 
     const onMouseUp = (ev: MouseEvent) => {
       if (ev.button !== 2) return
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
-      showToast('Zoom drag ended')
     }
 
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
-  }, [userZoom])
+  }, [userZoom, cameraRef])
 
   const handleRtsSelectStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)

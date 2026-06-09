@@ -72,6 +72,21 @@ export function zoomCameraElastic(camera: Camera, screenPoint: Point, delta: num
   }
 }
 
+// Like zoomCameraElastic, but sets zoom to an absolute target z (elastic
+// clamped) rather than applying an incremental delta. Used by drag-to-zoom,
+// where the total drag distance maps directly to a target zoom level.
+export function zoomCameraToElastic(camera: Camera, screenPoint: Point, targetZ: number, snapMax = ZOOM_SNAP_HIGH): Camera {
+  const newZ = elasticClamp(targetZ, ZOOM_SNAP_LOW, snapMax)
+
+  // Keep the point under the cursor fixed
+  const canvasPoint = screenToCanvas(screenPoint, camera)
+  return {
+    x: screenPoint.x - canvasPoint.x * newZ,
+    y: screenPoint.y - canvasPoint.y * newZ,
+    z: newZ
+  }
+}
+
 export function getCameraTransform(camera: Camera): string {
   return `translate(${camera.x}px, ${camera.y}px) scale(${camera.z})`
 }

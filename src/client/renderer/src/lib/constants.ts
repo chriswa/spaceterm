@@ -48,10 +48,10 @@ export const ZOOM_SNAP_HIGH = 1.25
 export const ZOOM_SNAP_HIGH_UNFOCUSED = 1.0
 export const UNFOCUS_SNAP_ZOOM = 0.5
 export const ZOOM_SENSITIVITY = 0.004
-// Multiplier converting right-button drag pixels into a zoom delta (fed through
-// ZOOM_SENSITIVITY in zoomCameraElastic). Tuned so a full drag feels like a few
-// wheel ticks.
-export const ZOOM_DRAG_SENSITIVITY = 4
+// Exponent factor (per pixel) for right-button drag-to-zoom. Zoom scales as
+// e^(dragPixels * ZOOM_DRAG_SENSITIVITY), so this controls how many pixels of
+// drag double the zoom: ln(2)/0.0075 ≈ 92px per 2x.
+export const ZOOM_DRAG_SENSITIVITY = 0.0075
 export const ZOOM_RUBBER_BAND_HIGH = 0.08
 export const ZOOM_RUBBER_BAND_LOW = 0.02
 export const ZOOM_SNAP_BACK_SPEED = 15

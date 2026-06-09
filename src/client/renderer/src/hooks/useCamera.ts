@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
+import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, zoomCameraToElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
 import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 import { useCameraLockStore } from '../stores/cameraLockStore'
@@ -245,13 +245,14 @@ export function useCamera(
     }, ZOOM_SNAP_BACK_DELAY)
   }, [flyTo])
 
-  // Zoom toward a fixed screen anchor by a raw delta (used by right-button
-  // drag-to-zoom). Mirrors the ctrl/meta wheel branch of handleWheel: elastic
-  // clamp + snap-back, but driven by a pointer delta rather than wheel events.
-  const userZoom = useCallback((screenPoint: { x: number; y: number }, delta: number) => {
+  // Zoom to an absolute target z anchored at a fixed screen point (used by
+  // right-button drag-to-zoom). Mirrors the ctrl/meta wheel branch of
+  // handleWheel: elastic clamp + snap-back, but driven by an absolute target
+  // rather than incremental wheel deltas.
+  const userZoom = useCallback((screenPoint: { x: number; y: number }, targetZ: number) => {
     if (useCameraLockStore.getState().locked) return
     const snapMax = focusedRef?.current ? ZOOM_SNAP_HIGH : ZOOM_SNAP_HIGH_UNFOCUSED
-    const next = zoomCameraElastic(cameraRef.current, screenPoint, delta, snapMax)
+    const next = zoomCameraToElastic(cameraRef.current, screenPoint, targetZ, snapMax)
     cameraRef.current = next
     targetRef.current = { ...next }
     applyToDOM(next)
