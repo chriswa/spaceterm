@@ -293,6 +293,24 @@ const cases: Case[] = [
   },
 
   {
+    name: 'OUT: 3 letters VVC pattern pronounces',
+    input: 'OUT of order',
+    expected: 'out of order',
+  },
+
+  {
+    name: 'AIM: 3 letters VVC pattern pronounces',
+    input: 'AIM higher',
+    expected: 'aim higher',
+  },
+
+  {
+    name: 'FORCE_SPELL_OUT identifier: each chunk pronounces',
+    input: 'FORCE_SPELL_OUT',
+    expected: 'force spell out',
+  },
+
+  {
     name: 'real words like FEATURE / IDEAS / CAVEATS still pronounce',
     input: 'FEATURE: IDEAS and CAVEATS',
     expected: 'feature: ideas and caveats',

@@ -50,17 +50,23 @@ const FORCE_SPELL_OUT = new Set<string>([
   // Empty for now — the heuristic correctly spells out API/IDE/OS/TTS/etc.
 ])
 
-// 3-letter consonant-vowel-consonant pattern. Letters that read as a single
-// English syllable usually fit this shape (gap, bar, bus, log, max, red).
-// Y is treated as a consonant here; SKY/etc. fall through to spell-out and
-// can be added to FORCE_PRONOUNCE if needed.
-const CVC_3LETTER = /^[BCDFGHJKLMNPQRSTVWXYZ][AEIOU][BCDFGHJKLMNPQRSTVWXYZ]$/
+// 3-letter words we accept as pronounceable: either consonant-vowel-consonant
+// (CVC: gap, bar, bus, log, max) or vowel-vowel-consonant (VVC: out, aim,
+// ear, oar). Both end in a consonant — the closing consonant is the strong
+// signal that this is one syllable.
+//
+// We deliberately don't include VCV (api, ide, usa, fbi-like) or VCC (abc,
+// ant) — those patterns hit too many acronyms even though they catch some
+// real words. Add real-word exceptions to FORCE_PRONOUNCE when they come up.
+// Y is treated as a consonant; SKY/etc. fall through to spell-out.
+const PRONOUNCEABLE_3LETTER =
+  /^([BCDFGHJKLMNPQRSTVWXYZ][AEIOU]|[AEIOU][AEIOU])[BCDFGHJKLMNPQRSTVWXYZ]$/
 
 function isPronounceable(word: string): boolean {
   if (!/[AEIOU]/.test(word)) return false // no vowel → can't be a syllable
   if (word.length >= 4) return true
-  if (word.length === 3) return CVC_3LETTER.test(word)
-  return false // 2-letter ALL-CAPS: spell out by default (OK → "O K")
+  if (word.length === 3) return PRONOUNCEABLE_3LETTER.test(word)
+  return false // 2-letter ALL-CAPS: spell out by default (OK → "O. K.")
 }
 
 function spellOut(word: string): string {
