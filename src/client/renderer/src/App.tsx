@@ -24,7 +24,7 @@ import { useEdgeHover } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize } from './lib/constants'
+import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
@@ -105,7 +105,7 @@ export function App() {
   const shiftClickPendingRef = useRef(false)
   const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
   const inertiaBlock = useInertiaBlock()
 
   // Send camera bounding box to server whenever camera settles
@@ -2038,13 +2038,22 @@ export function App() {
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
-  // Right-button drag on the canvas background → zoom. For now just toast on
-  // start/end; owns its own move/up listeners like handlePanStart.
-  const handleZoomDragStart = useCallback((_e: MouseEvent) => {
+  // Right-button drag on the canvas background → zoom. Vertical drag drives
+  // the zoom (drag up = zoom in, down = zoom out), anchored at the point where
+  // the drag began so that point stays fixed under the cursor. Owns its own
+  // move/up listeners like handlePanStart.
+  const handleZoomDragStart = useCallback((e: MouseEvent) => {
     showToast('Zoom drag started')
 
-    const onMouseMove = (_ev: MouseEvent) => {
-      // TODO: apply zoom based on drag delta
+    const anchor = { x: e.clientX, y: e.clientY }
+    let lastY = e.clientY
+
+    const onMouseMove = (ev: MouseEvent) => {
+      // Match wheel sign convention: positive delta zooms out. Dragging down
+      // (positive dy) zooms out, dragging up zooms in.
+      const dy = ev.clientY - lastY
+      lastY = ev.clientY
+      userZoom(anchor, dy * ZOOM_DRAG_SENSITIVITY)
     }
 
     const onMouseUp = (ev: MouseEvent) => {
@@ -2056,7 +2065,7 @@ export function App() {
 
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
-  }, [])
+  }, [userZoom])
 
   const handleRtsSelectStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)

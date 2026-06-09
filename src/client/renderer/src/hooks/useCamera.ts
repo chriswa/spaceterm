@@ -245,6 +245,20 @@ export function useCamera(
     }, ZOOM_SNAP_BACK_DELAY)
   }, [flyTo])
 
+  // Zoom toward a fixed screen anchor by a raw delta (used by right-button
+  // drag-to-zoom). Mirrors the ctrl/meta wheel branch of handleWheel: elastic
+  // clamp + snap-back, but driven by a pointer delta rather than wheel events.
+  const userZoom = useCallback((screenPoint: { x: number; y: number }, delta: number) => {
+    if (useCameraLockStore.getState().locked) return
+    const snapMax = focusedRef?.current ? ZOOM_SNAP_HIGH : ZOOM_SNAP_HIGH_UNFOCUSED
+    const next = zoomCameraElastic(cameraRef.current, screenPoint, delta, snapMax)
+    cameraRef.current = next
+    targetRef.current = { ...next }
+    applyToDOM(next)
+    scheduleSync()
+    scheduleSnapBack(next, snapMax, screenPoint)
+  }, [focusedRef, applyToDOM, scheduleSync, scheduleSnapBack])
+
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
 
@@ -577,5 +591,5 @@ export function useCamera(
     rafRef.current = requestAnimationFrame(shakeTick)
   }, [applyToDOM])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState }
 }
