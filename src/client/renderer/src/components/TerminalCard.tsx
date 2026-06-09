@@ -26,6 +26,7 @@ import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { useFontStore } from '../stores/fontStore'
 import { useProportionalOverlay, isBoxDrawing, isAlphanumeric, boxDrawingAlignment } from '../hooks/useProportionalOverlay'
 import { cleanTerminalCopy } from '../lib/cleanTerminalCopy'
+import { useCopyCleanupStore } from '../stores/copyCleanupStore'
 
 
 function formatElapsed(epochMs: number): string {
@@ -210,9 +211,13 @@ export function TerminalCard({
     term.open(containerRef.current)
     term.unicode.activeVersion = '11'
 
-    // Clean clipboard text on copy: strip trailing whitespace, Claude Code prefixes, and common indent
+    // Clean clipboard text on copy (when the toolbar toggle is enabled): strip
+    // trailing whitespace, Claude Code prefixes, and common indent. When the
+    // toggle is off we let the browser's default copy run so the raw xterm
+    // selection lands on the clipboard — useful for capturing test fixtures.
     const container = containerRef.current
     const handleCopy = (e: ClipboardEvent) => {
+      if (!useCopyCleanupStore.getState().enabled) return
       const sel = term.getSelection()
       if (sel) {
         e.clipboardData?.setData('text/plain', cleanTerminalCopy(sel))

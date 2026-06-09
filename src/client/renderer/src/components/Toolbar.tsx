@@ -11,6 +11,7 @@ import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useFontStore, FONT_THEMES } from '../stores/fontStore'
 import { useCameraLockStore } from '../stores/cameraLockStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
+import { useCopyCleanupStore } from '../stores/copyCleanupStore'
 
 export type CrabNavEvent = { fromNodeId: string | null; toNodeId: string; ts: number } | null
 
@@ -73,6 +74,7 @@ export function Toolbar({
         <KeycastIcon />
       </button>
       <NotificationSoundToggle />
+      <CopyCleanupToggle />
       <ProportionalFontToggle />
       <span className="toolbar__zoom">
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
@@ -775,6 +777,36 @@ function NotificationSoundToggle() {
       data-tooltip-no-flip
     >
       <BellIcon />
+    </button>
+  )
+}
+
+function BroomIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Handle */}
+      <line x1="13" y1="2" x2="7" y2="8" />
+      {/* Brush head */}
+      <path d="M3 11 L7 7 L11 11 L9.5 14 H4.5 Z" fill="currentColor" fillOpacity="0.2" />
+      {/* Bristle lines */}
+      <line x1="5.5" y1="11.5" x2="5" y2="14" />
+      <line x1="7" y1="10.5" x2="7" y2="14" />
+      <line x1="8.5" y1="11.5" x2="9" y2="14" />
+    </svg>
+  )
+}
+
+function CopyCleanupToggle() {
+  const enabled = useCopyCleanupStore(s => s.enabled)
+  const toggle = useCopyCleanupStore(s => s.toggle)
+  return (
+    <button
+      className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
+      onClick={toggle}
+      data-tooltip={enabled ? 'Copy Cleanup — Disable to copy raw terminal selection (for capturing fixtures)' : 'Copy Cleanup — Enable to strip Claude Code prefixes and reflow paragraphs on copy'}
+      data-tooltip-no-flip
+    >
+      <BroomIcon />
     </button>
   )
 }
