@@ -2038,6 +2038,26 @@ export function App() {
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
+  // Right-button drag on the canvas background → zoom. For now just toast on
+  // start/end; owns its own move/up listeners like handlePanStart.
+  const handleZoomDragStart = useCallback((_e: MouseEvent) => {
+    showToast('Zoom drag started')
+
+    const onMouseMove = (_ev: MouseEvent) => {
+      // TODO: apply zoom based on drag delta
+    }
+
+    const onMouseUp = (ev: MouseEvent) => {
+      if (ev.button !== 2) return
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      showToast('Zoom drag ended')
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [])
+
   const handleRtsSelectStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
     setHelpVisible(false)

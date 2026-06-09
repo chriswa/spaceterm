@@ -8,6 +8,7 @@ interface CanvasProps {
   onWheel: (e: WheelEvent) => void
   onPanStart: (e: MouseEvent) => void
   onRtsSelectStart?: (e: MouseEvent) => void
+  onZoomDragStart?: (e: MouseEvent) => void
   onCanvasClick: (e: MouseEvent) => void
   onDoubleClick: () => void
   background?: React.ReactNode
@@ -15,7 +16,7 @@ interface CanvasProps {
   children: React.ReactNode
 }
 
-export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectStart, onCanvasClick, onDoubleClick, background, overlay, children }: CanvasProps) {
+export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectStart, onZoomDragStart, onCanvasClick, onDoubleClick, background, overlay, children }: CanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -39,8 +40,17 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectSta
   }, [])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return
+    if (e.button !== 0 && e.button !== 2) return
     if ((e.target as HTMLElement).closest('.canvas-node')) return
+
+    // Right-button drag on the background → zoom
+    if (e.button === 2) {
+      if (onZoomDragStart) {
+        e.preventDefault()
+        onZoomDragStart(e.nativeEvent)
+      }
+      return
+    }
 
     // Shift+drag starts RTS select instead of pan
     if (e.shiftKey && onRtsSelectStart) {
@@ -70,15 +80,22 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectSta
 
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
-  }, [onPanStart, onRtsSelectStart, onCanvasClick])
+  }, [onPanStart, onRtsSelectStart, onZoomDragStart, onCanvasClick])
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.canvas-node')) return
     onDoubleClick()
   }, [onDoubleClick])
 
+  // Suppress the native context menu over the background so right-button
+  // drag can be used for zoom without popping a menu.
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.canvas-node')) return
+    e.preventDefault()
+  }, [])
+
   return (
-    <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown} onDoubleClick={handleDoubleClick}>
+    <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick}>
       {background}
       <div
         ref={surfaceRef}
