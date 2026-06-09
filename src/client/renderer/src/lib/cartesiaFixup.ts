@@ -23,10 +23,11 @@ export function cartesiaFixup(text: string): string {
   //    acronym-list rule if/when needed).
   out = out.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
 
-  // 3. ".ts" file extension → " dot T S". `\b` keeps `.tsx`, `.tsv`, etc.
-  //    untouched. Runs after the camelCase split so `cleanTerminalCopy.ts`
-  //    becomes `clean Terminal Copy dot T S`.
-  out = out.replace(/\.ts\b/g, ' dot T S')
+  // 3. ".ts" file extension → " dot T. S." (with trailing periods per the
+  //    spelled-out-letter convention — see spellOut). `\b` keeps `.tsx`,
+  //    `.tsv`, etc. untouched. Runs after the camelCase split so
+  //    `cleanTerminalCopy.ts` becomes `clean Terminal Copy dot T. S.`.
+  out = out.replace(/\.ts\b/g, ' dot T. S.')
 
   // 4. ALL-CAPS words: decide between pronouncing (lowercase) and spelling
   //    out (space-separated letters) using a small phonotactic heuristic +
@@ -63,7 +64,10 @@ function isPronounceable(word: string): boolean {
 }
 
 function spellOut(word: string): string {
-  return word.split('').join(' ')
+  // Trailing periods after each letter force Cartesia to pause between them
+  // instead of running them together as a fake syllable. "T T S" gets slurred;
+  // "T. T. S." is read as three distinct letters.
+  return word.split('').map(c => c + '.').join(' ')
 }
 
 function transformAllCapsWord(word: string): string {

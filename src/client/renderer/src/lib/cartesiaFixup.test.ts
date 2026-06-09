@@ -32,36 +32,37 @@ const cases: Case[] = [
   },
 
   // -- ".ts" filepath rule -------------------------------------------------
-  // Cartesia reads ".ts" as "dot tess" — rewrite to "dot T S".
+  // Cartesia reads ".ts" as "dot tess" — rewrite to "dot T. S." (trailing
+  // periods force a pause between letters; see spellOut).
 
   {
     name: 'single .ts filename at end of word',
     input: 'open foo.ts',
-    expected: 'open foo dot T S',
+    expected: 'open foo dot T. S.',
   },
 
   {
     name: '.ts filename followed by sentence-end punctuation',
     input: 'Update foo.ts.',
-    expected: 'Update foo dot T S.',
+    expected: 'Update foo dot T. S..',
   },
 
   {
     name: '.ts filename inside a path (with camelCase split applied first)',
     input: 'src/client/renderer/src/lib/cleanTerminalCopy.ts',
-    expected: 'src/client/renderer/src/lib/clean Terminal Copy dot T S',
+    expected: 'src/client/renderer/src/lib/clean Terminal Copy dot T. S.',
   },
 
   {
     name: '.ts followed by colon (file:line)',
     input: 'foo.ts:42',
-    expected: 'foo dot T S:42',
+    expected: 'foo dot T. S.:42',
   },
 
   {
     name: 'multiple .ts occurrences in one sentence',
     input: 'edit foo.ts then bar.ts and baz.ts',
-    expected: 'edit foo dot T S then bar dot T S and baz dot T S',
+    expected: 'edit foo dot T. S. then bar dot T. S. and baz dot T. S.',
   },
 
   {
@@ -109,7 +110,7 @@ const cases: Case[] = [
   {
     name: 'YELLING_SNAKE_CASE splits; 2-letter chunk MS spells out, GAP pronounces',
     input: 'INTER_UTTERANCE_GAP_MS',
-    expected: 'inter utterance gap M S',
+    expected: 'inter utterance gap M. S.',
   },
 
   {
@@ -182,7 +183,7 @@ const cases: Case[] = [
   {
     name: 'camelCase identifier in a path with .ts',
     input: 'src/lib/cleanTerminalCopy.ts',
-    expected: 'src/lib/clean Terminal Copy dot T S',
+    expected: 'src/lib/clean Terminal Copy dot T. S.',
   },
 
   {
@@ -198,55 +199,55 @@ const cases: Case[] = [
   {
     name: 'TTS: 3-letter no-vowel acronym spells out',
     input: 'TTS',
-    expected: 'T T S',
+    expected: 'T. T. S.',
   },
 
   {
     name: 'Cartesia TTS in a sentence (the user-reported case)',
     input: 'Cartesia TTS now reads things',
-    expected: 'Cartesia T T S now reads things',
+    expected: 'Cartesia T. T. S. now reads things',
   },
 
   {
     name: 'HTTP: 4 letters but no vowel spells out',
     input: 'HTTP',
-    expected: 'H T T P',
+    expected: 'H. T. T. P.',
   },
 
   {
     name: 'HTML: 4 letters no vowel spells out',
     input: 'HTML',
-    expected: 'H T M L',
+    expected: 'H. T. M. L.',
   },
 
   {
     name: 'CSS: 3 letters no vowel spells out',
     input: 'CSS',
-    expected: 'C S S',
+    expected: 'C. S. S.',
   },
 
   {
     name: 'API: 3 letters V-C-V (not CVC) spells out',
     input: 'API',
-    expected: 'A P I',
+    expected: 'A. P. I.',
   },
 
   {
     name: 'API inside a sentence',
     input: 'call the API endpoint',
-    expected: 'call the A P I endpoint',
+    expected: 'call the A. P. I. endpoint',
   },
 
   {
     name: 'IDE: 3 letters V-C-V spells out',
     input: 'IDE',
-    expected: 'I D E',
+    expected: 'I. D. E.',
   },
 
   {
     name: 'OS: 2 letters spells out',
     input: 'the OS handles it',
-    expected: 'the O S handles it',
+    expected: 'the O. S. handles it',
   },
 
   {
