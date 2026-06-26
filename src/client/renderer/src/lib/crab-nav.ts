@@ -14,6 +14,8 @@ export const CRAB_COLORS: Record<CrabColor, string> = {
 
 export interface CrabEntry {
   nodeId: string
+  /** All Claude session ids this crab has hosted — used to match TTS speaking events. */
+  claudeSessionIds: string[]
   kind: 'claude' | 'terminal'
   color: CrabColor
   unviewed: boolean

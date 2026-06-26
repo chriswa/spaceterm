@@ -4,6 +4,7 @@ import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { usePeerStore } from '../stores/peerStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
+import { useSpeakingStore } from '../stores/speakingStore'
 import type { NodeData } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
@@ -101,6 +102,23 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onSpeak((text: string) => {
       speakText(text)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.node.onSpeakingChanged((claudeSessionId: string, speaking: boolean, voice: string | undefined) => {
+      // Diagnostic: a speaking event we can't tie to any crab usually means the
+      // daemon is tailing a transcript for a Claude session no surface owns. Log
+      // it (to ~/.spaceterm/electron.log) so the mismatch is visible.
+      if (speaking) {
+        const matched = Object.values(useNodeStore.getState().nodes).some(
+          (n) => n.type === 'terminal' && n.claudeSessionHistory.some((e) => e.claudeSessionId === claudeSessionId)
+        )
+        if (!matched) {
+          window.api.log(`[speaking] no crab matches claudeSessionId=${claudeSessionId.slice(0, 8)} (voice=${voice ?? 'n/a'})`)
+        }
+      }
+      useSpeakingStore.getState().setSpeaking(claudeSessionId, speaking, voice)
     })
   )
 

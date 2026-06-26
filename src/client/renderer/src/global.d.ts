@@ -84,6 +84,7 @@ interface NodeApi {
   onGhRateLimit(callback: (data: import('../../../../shared/protocol').GhRateLimitData, usedHistory: (number | null)[], slotMinutes: number) => void): () => void
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
+  onSpeakingChanged(callback: (claudeSessionId: string, speaking: boolean, voice: string | undefined) => void): () => void
   sendCameraBounds(bounds: { x: number; y: number; width: number; height: number }): void
   saveViewport(slot: string, bounds: { x: number; y: number; width: number; height: number }): void
   onPeerConnected(callback: (clientId: string) => void): () => void

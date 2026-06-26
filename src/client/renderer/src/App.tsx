@@ -200,7 +200,7 @@ export function App() {
       if (node.type !== 'terminal') continue
       const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0)
       const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-      entries.push({ nodeId: node.id, kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
+      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
     }
 
     entries.sort((a, b) => a.sortOrder - b.sortOrder)

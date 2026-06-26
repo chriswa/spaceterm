@@ -168,6 +168,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'speaking-changed') {
+      this.emit('speaking-changed', msg.claudeSessionId, msg.speaking, msg.voice)
+      return
+    }
+
     if (msg.type === 'peer-connected') {
       this.emit('peer-connected', msg.clientId)
       return

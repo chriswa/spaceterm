@@ -593,6 +593,19 @@ function handleIngestMessage(msg: IngestMessage): void {
       break
     }
 
+    case 'tts-speaking': {
+      // Pure forward: the renderer resolves claudeSessionId → crab against the
+      // persisted node history (which survives server restarts; this process's
+      // in-memory session map does not).
+      broadcastToAll({
+        type: 'speaking-changed',
+        claudeSessionId: msg.claudeSessionId,
+        speaking: msg.speaking,
+        voice: msg.voice
+      })
+      break
+    }
+
     case 'status-line': {
       // Delegate state logic (stale timer reset, stuck recovery) to state machine
       claudeStateMachine.handleStatusLine(msg.surfaceId)

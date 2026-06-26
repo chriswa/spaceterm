@@ -551,6 +551,12 @@ function wireClientEvents(): void {
     }
   })
 
+  client!.on('speaking-changed', (claudeSessionId: string, speaking: boolean, voice: string | undefined) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('speaking-changed', claudeSessionId, speaking, voice)
+    }
+  })
+
   client!.on('peer-connected', (clientId: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('peer:connected', clientId)

@@ -6,6 +6,7 @@ import terminalIcon from '../assets/terminal.png'
 import type { CrabEntry } from '../lib/crab-nav'
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
+import { useSpeakingStore } from '../stores/speakingStore'
 import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useFontStore, FONT_THEMES } from '../stores/fontStore'
@@ -360,6 +361,7 @@ function ProportionalFontToggle() {
 
 function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string, metaKey: boolean) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null; crabNavEvent: CrabNavEvent }) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
+  const speakingSessions = useSpeakingStore(s => s.speaking)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
   const positionsRef = useRef<Map<string, number>>(new Map())
@@ -719,7 +721,10 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
 
   return (
     <div className="toolbar__crabs" ref={containerRef}>
-      {crabs.map((crab, i) => (
+      {crabs.map((crab, i) => {
+          const speakingId = crab.claudeSessionIds.find(id => speakingSessions[id])
+          const speaking = speakingId ? speakingSessions[speakingId] : undefined
+          return (
           <div
             key={crab.nodeId}
             className="toolbar__crab-slot"
@@ -750,8 +755,27 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
               data-tooltip={crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title}
               data-tooltip-no-flip
             />
+            {speaking && (
+              <svg
+                className="toolbar__crab-sonar"
+                viewBox="0 0 60 60"
+                role="img"
+                aria-label={speaking.voice ? `Speaking (${speaking.voice})` : 'Speaking'}
+              >
+                {/* Two staggered waves; each draws a 60\u00b0 arc above and below the crab. */}
+                <g className="toolbar__crab-sonar-wave">
+                  <path className="toolbar__crab-sonar-arc" d="M 23.5 18.742 A 13 13 0 0 1 36.5 18.742" />
+                  <path className="toolbar__crab-sonar-arc" d="M 36.5 41.258 A 13 13 0 0 1 23.5 41.258" />
+                </g>
+                <g className="toolbar__crab-sonar-wave toolbar__crab-sonar-wave--2">
+                  <path className="toolbar__crab-sonar-arc" d="M 23.5 18.742 A 13 13 0 0 1 36.5 18.742" />
+                  <path className="toolbar__crab-sonar-arc" d="M 36.5 41.258 A 13 13 0 0 1 23.5 41.258" />
+                </g>
+              </svg>
+            )}
           </div>
-      ))}
+          )
+      })}
       <div ref={triangleRef} className="toolbar__crab-nav-triangle" />
     </div>
   )

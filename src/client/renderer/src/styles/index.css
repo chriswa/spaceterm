@@ -116,7 +116,9 @@ html, body, #root {
   align-items: center;
   margin-left: 8px;
   position: relative;
-  clip-path: inset(-8px -100px);
+  /* Vertical inset is generous so the speaking sonar arcs (which extend ~30px
+     above/below a crab) aren't clipped by this container. */
+  clip-path: inset(-30px -100px);
 }
 
 .toolbar__crab-slot {
@@ -207,6 +209,47 @@ html, body, #root {
 .toolbar__crab--asleep:hover,
 .toolbar__crab--asleep.toolbar__crab--card-hovered {
   transform: rotate(180deg) scale(1.3);
+}
+
+/* Speaking (external TTS): SVG sonar arcs emanating above and below the crab.
+   Two staggered waves give a continuous ping. The 60x60 overlay is centered on
+   the crab; arcs start just outside the icon (r=13 vs the ~10px crab radius) and
+   scale outward. (A glow on the crab itself isn't viable — the beat-sync loop in
+   Toolbar.tsx overwrites each crab's inline `filter` every frame.) */
+.toolbar__crab-sonar {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 60px;
+  height: 60px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  overflow: visible;
+  z-index: 4;
+}
+
+.toolbar__crab-sonar-arc {
+  fill: none;
+  stroke: #5fd0ff;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.toolbar__crab-sonar-wave {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: crab-sonar-ping 1.7s ease-out infinite;
+}
+
+.toolbar__crab-sonar-wave--2 {
+  animation-delay: 0.85s;
+}
+
+@keyframes crab-sonar-ping {
+  0%   { transform: scale(1); opacity: 0; }
+  20%  { opacity: 0.9; }
+  100% { transform: scale(2); opacity: 0; }
 }
 
 .toolbar__crab-nav-triangle {

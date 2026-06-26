@@ -430,6 +430,7 @@ export type IngestMessage =
   | SpacetermBroadcastMessage
   | PlaySoundMessage
   | SpeakMessage
+  | TtsSpeakingMessage
 
 /** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
 export type ClientMessage =
@@ -670,6 +671,35 @@ export interface SpeakServerMessage {
   text: string
 }
 
+/**
+ * Fire-and-forget event from an external TTS daemon (e.g. transcript-reader.py),
+ * received on the hooks socket. Keyed by `claudeSessionId` because the daemon
+ * runs outside any surface and does not know surface ids. `speaking: false` is
+ * always sent when speech ends (even on error), but spaceterm must not rely on
+ * it always arriving — see `speaking-changed` handling for the safety timeout.
+ */
+export interface TtsSpeakingMessage {
+  type: 'tts-speaking'
+  speaking: boolean
+  claudeSessionId: string
+  voice?: string
+  text?: string
+}
+
+/**
+ * Server → client: a Claude session started or stopped "speaking" (external TTS).
+ * This is a straight forward of the ingest `TtsSpeakingMessage` — the server does
+ * NOT resolve it to a surface. Matching `claudeSessionId` to a crab happens in the
+ * renderer against each node's persisted `claudeSessionHistory`, which (unlike the
+ * server's in-memory session map) survives a server restart.
+ */
+export interface SpeakingChangedMessage {
+  type: 'speaking-changed'
+  claudeSessionId: string
+  speaking: boolean
+  voice?: string
+}
+
 export interface PeerConnectedMessage {
   type: 'peer-connected'
   clientId: string
@@ -816,6 +846,7 @@ export type ServerMessage =
   | GhRateLimitMessage
   | PlaySoundServerMessage
   | SpeakServerMessage
+  | SpeakingChangedMessage
   | PeerConnectedMessage
   | PeerDisconnectedMessage
   | PeerCameraBoundsMessage

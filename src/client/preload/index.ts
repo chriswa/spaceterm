@@ -139,6 +139,7 @@ interface NodeApi {
   onServerError(callback: (message: string) => void): () => void
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
+  onSpeakingChanged(callback: (claudeSessionId: string, speaking: boolean, voice: string | undefined) => void): () => void
 }
 
 const nodeApi: NodeApi = {
@@ -232,6 +233,11 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, text: string) => callback(text)
     ipcRenderer.on('speak', listener)
     return () => ipcRenderer.removeListener('speak', listener)
+  },
+  onSpeakingChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, claudeSessionId: string, speaking: boolean, voice: string | undefined) => callback(claudeSessionId, speaking, voice)
+    ipcRenderer.on('speaking-changed', listener)
+    return () => ipcRenderer.removeListener('speaking-changed', listener)
   },
   onPeerConnected: (callback: (clientId: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, clientId: string) => callback(clientId)
