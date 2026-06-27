@@ -2170,6 +2170,7 @@ export function App() {
             onFocus={handleNodeFocus}
             onUnfocus={handleUnfocus}
             onDisableScrollMode={handleDisableScrollMode}
+            onForwardWheelToCanvas={handleCanvasWheel}
             onClose={handleRemoveNode}
             onMove={handleMove}
             onResize={handleResizeTerminal}

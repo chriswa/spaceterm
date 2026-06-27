@@ -75,6 +75,11 @@ interface TerminalCardProps {
   onFocus: (id: string) => void
   onUnfocus: () => void
   onDisableScrollMode: () => void
+  // Drive the window-manager camera (pan/zoom) from a wheel event that
+  // occurred over this terminal. Called directly rather than relying on DOM
+  // bubbling, because a TUI app's mouse tracking makes xterm cancel
+  // propagation on every wheel event (see the custom wheel handler).
+  onForwardWheelToCanvas: (e: WheelEvent) => void
   onClose: (id: string) => void
   onMove: (id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onResize: (id: string, cols: number, rows: number) => void
@@ -107,7 +112,7 @@ interface TerminalCardProps {
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
-  onFocus, onUnfocus, onDisableScrollMode, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
+  onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   claudeSessionHistory, claudeState, claudeModel, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
@@ -127,8 +132,8 @@ export function TerminalCard({
   const proportionalCanvasRef = useRef<HTMLCanvasElement>(null)
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onDisableScrollMode, onExit, onNodeReady })
-  propsRef.current = { x, y, zoom, focused, id, sessionId, onDisableScrollMode, onExit, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady }
 
   const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
   const [claudeSessionLineCount, setClaudeSessionLineCount] = useState<number | undefined>(undefined)
@@ -283,39 +288,65 @@ export function TerminalCard({
       }, 300)
     }
 
-    // Custom wheel handler: controls both xterm scroll processing AND
-    // canvas propagation. Attached once at mount — no race condition
-    // since propsRef is updated synchronously during render.
+    // Custom wheel handler. Routes every wheel event over the terminal to one
+    // of three destinations: the window-manager camera, the running TUI app,
+    // or our own pixel-smooth scrollback scroll.
+    //
+    // Critical xterm detail (5.5.0): the return value of this handler only
+    // tells xterm whether to *forward* the wheel to the PTY — it does NOT
+    // control DOM propagation. When a full-screen TUI (e.g. Claude Code's
+    // alternate-screen renderer) enables mouse tracking, xterm's mouse wheel
+    // listener calls preventDefault + stopPropagation on EVERY wheel event
+    // regardless of what we return. So "return false and let it bubble to the
+    // Canvas" silently stops working under mouse tracking. We therefore drive
+    // the camera directly via onForwardWheelToCanvas instead of relying on the
+    // event reaching the Canvas's own listener.
+    //
+    // Attached once at mount — no race condition since propsRef/scrollModeRef
+    // are updated synchronously during render.
+    const forwardToCanvas = (ev: WheelEvent) => {
+      propsRef.current.onForwardWheelToCanvas(ev)
+      ev.preventDefault()
+      ev.stopPropagation()
+      return false
+    }
+
     term.attachCustomWheelEventHandler((ev) => {
-      if (propsRef.current.focused) {
-        // Scroll mode off: all events go to canvas
-        if (!scrollModeRef.current) {
-          return false
-        }
-
-        // Classify gesture: pinch or horizontal → escape to canvas
-        const gesture = classifyWheelEvent(wheelAccRef.current, ev)
-        if (gesture !== 'vertical') {
-          scrollModeRef.current = false
-          propsRef.current.onDisableScrollMode()
-          return false
-        }
-
-        // Pixel-smooth vertical scroll: we handle it ourselves
-        ev.preventDefault()
-        ev.stopPropagation()
-
-        let deltaPixels = ev.deltaY
-        if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaPixels *= CELL_HEIGHT
-        if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaPixels *= CELL_HEIGHT * term.rows
-
-        const currentPixels = lastKnownViewportY * CELL_HEIGHT + pixelOffsetRef.current
-        applyPixelScroll(currentPixels + deltaPixels)
-        saveScrollDebounced()
-
-        return false
+      // Unfocused, or scroll mode off: the terminal never owns the wheel —
+      // it always drives the window-manager camera.
+      if (!propsRef.current.focused || !scrollModeRef.current) {
+        return forwardToCanvas(ev)
       }
-      // Block xterm's scroll processing when not focused
+
+      // Pinch or horizontal swipe → window-manager navigation, in any buffer.
+      const gesture = classifyWheelEvent(wheelAccRef.current, ev)
+      if (gesture !== 'vertical') {
+        scrollModeRef.current = false
+        propsRef.current.onDisableScrollMode()
+        return forwardToCanvas(ev)
+      }
+
+      // Vertical scroll inside a full-screen TUI (alternate screen buffer):
+      // hand the wheel to xterm so it forwards to the app (as a mouse event
+      // when mouse tracking is on, or arrow keys when it isn't) and the TUI
+      // scrolls natively. There is no scrollback to smooth-scroll here.
+      // Return true and DON'T preventDefault so xterm's forwarding runs.
+      if (term.buffer.active.type === 'alternate') {
+        return true
+      }
+
+      // Vertical scroll in the normal buffer: our pixel-smooth scrollback scroll.
+      ev.preventDefault()
+      ev.stopPropagation()
+
+      let deltaPixels = ev.deltaY
+      if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaPixels *= CELL_HEIGHT
+      if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaPixels *= CELL_HEIGHT * term.rows
+
+      const currentPixels = lastKnownViewportY * CELL_HEIGHT + pixelOffsetRef.current
+      applyPixelScroll(currentPixels + deltaPixels)
+      saveScrollDebounced()
+
       return false
     })
 
