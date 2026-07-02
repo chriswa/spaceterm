@@ -184,6 +184,9 @@ export function TerminalCard({
         ...XTERM_THEME,
         background: preset?.terminalBg ?? DEFAULT_BG,
       },
+      // Must hold at least as many lines as the server serializes on attach
+      // (SnapshotManager.SCROLLBACK_LINES) so restored scrollback isn't clipped.
+      scrollback: 1000,
       allowProposedApi: true
     })
 
@@ -326,12 +329,16 @@ export function TerminalCard({
         return forwardToCanvas(ev)
       }
 
-      // Vertical scroll inside a full-screen TUI (alternate screen buffer):
-      // hand the wheel to xterm so it forwards to the app (as a mouse event
-      // when mouse tracking is on, or arrow keys when it isn't) and the TUI
-      // scrolls natively. There is no scrollback to smooth-scroll here.
-      // Return true and DON'T preventDefault so xterm's forwarding runs.
-      if (term.buffer.active.type === 'alternate') {
+      // Forward the wheel to the app whenever it owns the mouse, so it scrolls
+      // its own view: either a full-screen TUI in the alternate buffer, OR any
+      // app that has enabled mouse tracking — notably Claude Code's normal-buffer
+      // in-place renderer, which keeps NO terminal scrollback (baseY stays 0) and
+      // expects forwarded wheel events. Smooth-scrolling those does nothing.
+      // Returning true (without preventDefault) lets xterm forward the wheel as a
+      // mouse event (in the app's chosen encoding) or arrow keys. Only when mouse
+      // tracking is OFF do we smooth-scroll — that's a real shell with real
+      // scrollback to move through.
+      if (term.buffer.active.type === 'alternate' || term.modes.mouseTrackingMode !== 'none') {
         return true
       }
 

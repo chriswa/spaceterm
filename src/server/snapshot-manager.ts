@@ -1,15 +1,56 @@
 import { Terminal } from '@xterm/headless'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import type { AttrSpan, SnapshotRow, SnapshotMessage } from '../shared/protocol'
 import { DEFAULT_FG, DEFAULT_BG } from '../shared/theme'
 import { resolveFg, resolveBg } from '../shared/terminal-colors'
 
 const TICK_INTERVAL = 100 // 10 ticks/sec, one dirty session per tick
 
+// Lines of scrollback retained by each headless terminal. This bounds both the
+// scrollback a re-attaching client can scroll through and the size/cost of the
+// serialized attach payload. Keep the client xterm's `scrollback` option in
+// sync (see TerminalCard).
+export const SCROLLBACK_LINES = 1000
+
 export type SnapshotCallback = (snapshot: SnapshotMessage) => void
+
+// activeProtocol → the DECSET that enables it. xterm tracks the mouse tracking
+// mode here, and SerializeAddon already reproduces it (from terminal.modes), but
+// we re-assert it too so the encoding below always lands in a consistent state.
+const MOUSE_PROTOCOL_DECSET: Record<string, string> = {
+  X10: '\x1b[?9h',
+  VT200: '\x1b[?1000h',
+  DRAG: '\x1b[?1002h',
+  ANY: '\x1b[?1003h',
+}
+// activeEncoding → the DECSET that enables it. THIS is the gap: xterm tracks the
+// mouse *encoding* in coreMouseService, NOT in terminal.modes, so SerializeAddon
+// cannot reproduce it. A TUI like Claude Code enables SGR encoding (?1006h) once
+// at startup and only re-emits it on a full redraw; without it a revived terminal
+// reports wheel/click events in the legacy X10 encoding the app can't parse, so
+// scrolling and clicks silently break until the app next redraws (e.g. on input).
+const MOUSE_ENCODING_DECSET: Record<string, string> = {
+  SGR: '\x1b[?1006h',
+  SGR_PIXELS: '\x1b[?1016h',
+}
+
+/**
+ * Re-assert the live mouse tracking protocol + encoding as DECSET sequences,
+ * read from the emulator's coreMouseService (the encoding is not otherwise
+ * serializable). Returns '' when mouse tracking is off.
+ */
+function serializeMouseState(terminal: Terminal): string {
+  const core = (terminal as unknown as {
+    _core?: { coreMouseService?: { activeProtocol: string; activeEncoding: string } }
+  })._core?.coreMouseService
+  if (!core) return ''
+  return (MOUSE_PROTOCOL_DECSET[core.activeProtocol] ?? '') + (MOUSE_ENCODING_DECSET[core.activeEncoding] ?? '')
+}
 
 interface HeadlessSession {
   sessionId: string
   terminal: Terminal
+  serialize: SerializeAddon
   cols: number
   rows: number
 }
@@ -27,8 +68,13 @@ export class SnapshotManager {
   }
 
   addSession(sessionId: string, cols: number, rows: number): void {
-    const terminal = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true })
-    this.sessions.set(sessionId, { sessionId, terminal, cols, rows })
+    const terminal = new Terminal({ cols, rows, scrollback: SCROLLBACK_LINES, allowProposedApi: true })
+    const serialize = new SerializeAddon()
+    // SerializeAddon is typed against @xterm/xterm's Terminal, but the runtime
+    // API is identical for @xterm/headless (verified by round-trip test).
+    // Derive the expected param type from this terminal to bridge the two.
+    terminal.loadAddon(serialize as unknown as Parameters<typeof terminal.loadAddon>[0])
+    this.sessions.set(sessionId, { sessionId, terminal, serialize, cols, rows })
     this.lastSnapshotTime.set(sessionId, 0)
   }
 
@@ -56,6 +102,37 @@ export class SnapshotManager {
     session.cols = cols
     session.rows = rows
     this.dirtySet.add(sessionId)
+  }
+
+  /**
+   * Serialize the full live state of a session — scrollback, current screen,
+   * cursor, SGR styling, terminal modes (mouse tracking, bracketed paste, …)
+   * and the alternate-screen buffer — into a single replayable escape-sequence
+   * string. Replaying it into a fresh xterm restores all of that by
+   * construction, which a truncated raw-byte replay cannot (it loses the
+   * one-time mode-setup sequences emitted at session start).
+   *
+   * The empty-string write is a drain barrier: xterm parses writes
+   * asynchronously, and an empty write's callback fires only after every chunk
+   * queued before it has been parsed. So the serialized state is a precise cut
+   * of the data stream. Callers MUST begin buffering this session's live output
+   * before calling, and flush that buffer after the callback fires — otherwise
+   * data straddling the cut is lost or duplicated.
+   */
+  serializeForAttach(sessionId: string, cb: (state: string | null) => void): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      cb(null)
+      return
+    }
+    session.terminal.write('', () => {
+      try {
+        const state = session.serialize.serialize({ scrollback: SCROLLBACK_LINES })
+        cb(state + serializeMouseState(session.terminal))
+      } catch {
+        cb(null)
+      }
+    })
   }
 
   /** Force an immediate snapshot for a specific session */
@@ -99,8 +176,13 @@ export class SnapshotManager {
     const buffer = terminal.buffer.active
     const lines: SnapshotRow[] = []
 
+    // `getLine` indexes the whole buffer (0 = oldest scrollback line). Now that
+    // the terminal retains scrollback, the visible screen starts at baseY, not
+    // 0. cursorX/cursorY are already viewport-relative, so they need no offset.
+    const base = buffer.baseY
+
     for (let y = 0; y < rows; y++) {
-      const line = buffer.getLine(y)
+      const line = buffer.getLine(base + y)
       if (!line) {
         lines.push([{ text: ' '.repeat(cols), fg: DEFAULT_FG, bg: DEFAULT_BG }])
         continue

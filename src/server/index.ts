@@ -175,6 +175,13 @@ interface ClientConnection {
   attachedSessions: Set<string>
   /** Sessions where this client wants snapshot mode instead of live data */
   snapshotSessions: Set<string>
+  /**
+   * Sessions mid-attach: live output is queued here instead of being sent,
+   * until the serialized state has been captured and sent. Guarantees a clean
+   * cut between the serialized snapshot and the live feed (see the 'attach'
+   * handler). Absence of an entry means "send live normally".
+   */
+  attachBuffers: Map<string, ServerMessage[]>
   parser: LineParser
   cameraBounds: CameraBounds | null
 }
@@ -394,7 +401,11 @@ function send(socket: net.Socket, msg: ServerMessage): void {
 function broadcastToAttached(sessionId: string, msg: ServerMessage): void {
   clients.forEach((client) => {
     if (client.attachedSessions.has(sessionId)) {
-      send(client.socket, msg)
+      // Mid-attach: queue instead of sending, so live output is held until the
+      // serialized state has been captured and sent (see the 'attach' handler).
+      const buffer = client.attachBuffers.get(sessionId)
+      if (buffer) buffer.push(msg)
+      else send(client.socket, msg)
     }
   })
 }
@@ -879,46 +890,65 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'attach': {
-      const scrollback = sessionManager.getScrollback(msg.sessionId)
-      if (scrollback !== null) {
-        client.attachedSessions.add(msg.sessionId)
-        send(client.socket, {
-          type: 'attached',
-          seq: msg.seq,
-          sessionId: msg.sessionId,
-          scrollback,
-          claudeContextPercent: sessionManager.getClaudeContextPercent(msg.sessionId) ?? undefined,
-          claudeSessionLineCount: sessionManager.getClaudeSessionLineCount(msg.sessionId) ?? undefined
-        })
-      } else {
-        // Session doesn't exist — send attached with empty scrollback
-        // so client can handle gracefully
-        send(client.socket, {
-          type: 'attached',
-          seq: msg.seq,
-          sessionId: msg.sessionId,
-          scrollback: ''
-        })
-      }
-      // Send cached plan files if available — the plan-cache-update event
-      // may have been broadcast during backfill before this client attached.
-      const claudeSessionId = sessionManager.getLastClaudeSessionId(msg.sessionId)
-      if (claudeSessionId) {
+      const sessionId = msg.sessionId
+
+      // Send cached plan files after the 'attached' message (deferred into the
+      // serialize callback below) so ordering is preserved.
+      const sendPlanCache = () => {
+        const claudeSessionId = sessionManager.getLastClaudeSessionId(sessionId)
+        if (!claudeSessionId) return
         const planFiles = planCacheManager.getVersions(claudeSessionId)
         if (planFiles.length >= 2) {
           send(client.socket, {
             type: 'plan-cache-update',
-            sessionId: msg.sessionId,
+            sessionId,
             count: planFiles.length,
             files: planFiles
           })
         }
       }
+
+      // We replay terminal state by serializing the server-side headless
+      // emulator (scrollback + screen + modes + alt buffer) rather than the
+      // truncated raw byte buffer, which loses the one-time mode-setup
+      // sequences for long-running TUI sessions.
+      //
+      // The cut between serialized state and live feed must be exact. These two
+      // statements run in one synchronous block, so no onData chunk can slip
+      // between them: from here on, live output for this session is queued in
+      // attachBuffers (see broadcastToAttached) instead of being sent, and the
+      // drain barrier inside serializeForAttach captures exactly the data
+      // parsed before this point.
+      client.attachedSessions.add(sessionId)
+      const liveBuffer: ServerMessage[] = []
+      client.attachBuffers.set(sessionId, liveBuffer)
+
+      snapshotManager.serializeForAttach(sessionId, (state) => {
+        // The client may have disconnected during the (sub-frame) drain.
+        if (!clients.has(client)) return
+
+        send(client.socket, {
+          type: 'attached',
+          seq: msg.seq,
+          sessionId,
+          scrollback: state ?? '',
+          claudeContextPercent: sessionManager.getClaudeContextPercent(sessionId) ?? undefined,
+          claudeSessionLineCount: sessionManager.getClaudeSessionLineCount(sessionId) ?? undefined
+        })
+
+        // Stop buffering and flush queued live output in order — everything
+        // after the serialized cut. Subsequent output goes live normally.
+        client.attachBuffers.delete(sessionId)
+        for (const queued of liveBuffer) send(client.socket, queued)
+
+        sendPlanCache()
+      })
       break
     }
 
     case 'detach': {
       client.attachedSessions.delete(msg.sessionId)
+      client.attachBuffers.delete(msg.sessionId)
       send(client.socket, { type: 'detached', seq: msg.seq, sessionId: msg.sessionId })
       break
     }
@@ -2339,6 +2369,7 @@ async function startServer(): Promise<void> {
       socket,
       attachedSessions: new Set(),
       snapshotSessions: new Set(),
+      attachBuffers: new Map(),
       parser: new LineParser((msg) => {
         handleMessage(client, msg as ClientMessage)
       }),
