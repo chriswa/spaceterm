@@ -549,6 +549,53 @@ html, body, #root {
   animation: selection-flash 1s ease-in-out forwards !important;
 }
 
+/* Speaking indicator: white rings that emanate outward from the card border and
+   fade — echoes the toolbar crab sonar. Rendered as a sibling of the card inside
+   .card-shell (NOT inside .terminal-card, whose content-visibility:auto paint
+   containment would clip the expanding rings). Sits behind the card so only the
+   portion outside the border shows; never touches the card's own border/box-shadow.
+   pointer-events:none keeps drag/click working. */
+.terminal-card__sonar {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Each ring grows by animating a negative `inset` rather than `transform: scale`
+   so it expands the SAME number of pixels on every side regardless of the card's
+   aspect ratio (scale would stretch proportionally). Thick + blurred so it reads
+   as a soft fuzzy halo that stands clear of the unread-message glow.
+
+   Zoom compensation: reach, border thickness, blur and corner radius are all
+   expressed in SCREEN pixels by dividing a base value by `--camera-zoom` (the
+   live canvas zoom, same var the borders/keycast use). Because the whole surface
+   is scaled by the camera transform, dividing here cancels that scale so the halo
+   looks the SAME on screen at every zoom level — it reaches much farther across
+   the canvas when zoomed out (where a card is tiny and needs a big halo to be
+   seen) yet stays a tight, non-distracting ring when zoomed in. clamp() caps the
+   canvas-space extremes so it never vanishes when fully zoomed in nor paints an
+   absurd area when fully zoomed out. */
+.terminal-card__sonar-ring {
+  --sonar-reach: clamp(8px, calc(22px / var(--camera-zoom, 1)), 600px);
+  position: absolute;
+  inset: 0;
+  border-radius: clamp(0.8px, calc(2px / var(--camera-zoom, 1)), 40px);
+  border: clamp(0.6px, calc(1.8px / var(--camera-zoom, 1)), 96px) solid rgba(255, 255, 255, 1);
+  filter: blur(clamp(0.3px, calc(0.8px / var(--camera-zoom, 1)), 32px));
+  animation: surface-sonar 2s ease-out infinite;
+}
+
+.terminal-card__sonar-ring--2 {
+  animation-delay: 1s;
+}
+
+@keyframes surface-sonar {
+  0%   { inset: 0;                          opacity: 0; }
+  12%  { opacity: 1; }
+  100% { inset: calc(-1 * var(--sonar-reach)); opacity: 0; }
+}
+
 @keyframes selection-flash {
   0% { box-shadow: 0 0 0 0px rgba(166, 108, 255, 0); }
   50% { box-shadow: 0 0 0 30px rgba(166, 108, 255, 0.7); }
@@ -603,6 +650,30 @@ html, body, #root {
   font-weight: 700;
   color: #5d616f;
   flex-shrink: 0;
+}
+
+/* Assigned call-sign badge — extra-bold black pill shown before the custom title.
+   Vertical padding makes the pill taller (extends toward the bar edges) while the
+   equal negative vertical margin keeps its layout height — and thus the title-bar
+   height — unchanged. Text color is set inline to the surface's title-bar color. */
+.terminal-card__session-name {
+  font-weight: 900;
+  font-size: 15px;
+  line-height: 1.1;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  margin: -4px 0;
+  border-radius: 6px;
+  letter-spacing: 0.2px;
+  background: #000;
+  /* Fallback text color for the no-preset case; overridden inline with a preset. */
+  color: #cdd6f4;
+}
+
+.terminal-card__session-name-dash {
+  flex-shrink: 0;
+  opacity: 0.6;
+  margin: 0 2px;
 }
 
 .terminal-card__separator {
