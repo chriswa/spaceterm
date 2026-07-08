@@ -2038,22 +2038,22 @@ export function App() {
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
-  // Right-button drag on the canvas background → zoom. Logarithmic, like
-  // cmd+scroll: total vertical drag distance maps to a zoom *ratio*, so equal
-  // drag distances produce equal zoom multiples regardless of current zoom.
-  // Drag up = zoom in, down = zoom out, anchored at the drag-start point so it
-  // stays fixed under the cursor. Owns its own move/up listeners like
+  // Right-button drag on the canvas background → zoom out. Logarithmic, like
+  // cmd+scroll: radial distance from the drag-start point maps to a zoom
+  // *ratio*, so equal drag distances produce equal zoom multiples regardless
+  // of current zoom. Any direction zooms out; dragging back toward the start
+  // point returns to the original zoom. Anchored at the drag-start point so
+  // it stays fixed under the cursor. Owns its own move/up listeners like
   // handlePanStart.
   const handleZoomDragStart = useCallback((e: MouseEvent) => {
     const anchor = { x: e.clientX, y: e.clientY }
-    const startY = e.clientY
     const startZ = cameraRef.current.z
 
     const onMouseMove = (ev: MouseEvent) => {
-      // Up (smaller clientY) → positive distance → zoom in. Exponential map
-      // makes this logarithmic: z = startZ * e^(dist * sensitivity).
-      const dragDist = startY - ev.clientY
-      userZoom(anchor, startZ * Math.exp(dragDist * ZOOM_DRAG_SENSITIVITY))
+      // Distance is always >= 0, so this only ever zooms out from startZ:
+      // z = startZ * e^(-dist * sensitivity).
+      const dragDist = Math.hypot(ev.clientX - anchor.x, ev.clientY - anchor.y)
+      userZoom(anchor, startZ * Math.exp(-dragDist * ZOOM_DRAG_SENSITIVITY))
     }
 
     const onMouseUp = (ev: MouseEvent) => {
