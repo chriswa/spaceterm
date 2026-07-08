@@ -1606,8 +1606,8 @@ export function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      // Cmd+S / Cmd+K: toggle search modal (before isEditable guard so it works from search input)
-      if (e.metaKey && !e.shiftKey && (e.key === 's' || e.key === 'k')) {
+      // Cmd+K: toggle search modal (before isEditable guard so it works from search input)
+      if (e.metaKey && !e.shiftKey && e.key === 'k') {
         e.preventDefault()
         e.stopPropagation()
         setSearchMode({ kind: 'global' })

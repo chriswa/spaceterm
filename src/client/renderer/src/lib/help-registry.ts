@@ -85,7 +85,7 @@ export const helpGroups: HelpGroup[] = [
   {
     title: 'Search & Find',
     entries: [
-      { keys: `${MAC_CMD} S  /  ${MAC_CMD} K`, name: 'Node search' },
+      { keys: `${MAC_CMD} K`, name: 'Node search' },
       { keys: `${MAC_CMD} F`,            name: 'Find in terminal' },
       { keys: `${MAC_CMD} P`,            name: "Jump to Claude's plan", notes: 'Also happens automatically on focus' },
     ],
