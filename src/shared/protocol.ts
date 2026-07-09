@@ -413,6 +413,19 @@ export interface FocusSurfaceRequestMessage {
   surfaceId: string
 }
 
+/**
+ * Request the server to focus whichever surface hosts a given Claude session.
+ * Used by external senders (e.g. Voice Operator) that know only claude session
+ * ids, not spaceterm's surface/node ids — the server resolves it against each
+ * node's persisted `claudeSessionHistory` (see `getNodeIdForClaudeSession`),
+ * the same restart-surviving matching the speaking indicator uses. Keeps
+ * spaceterm's internal id vocabulary out of external clients.
+ */
+export interface FocusClaudeSessionMessage {
+  type: 'focus-claude-session'
+  claudeSessionId: string
+}
+
 /** Store the camera bounds for a numbered viewport slot ('0'..'9'), shared across all clients. */
 export interface SaveViewportMessage {
   type: 'save-viewport'
@@ -480,6 +493,7 @@ export type ClientMessage =
   | UndoBufferSetCursorMessage
   | CameraBoundsMessage
   | FocusSurfaceRequestMessage
+  | FocusClaudeSessionMessage
   | SaveViewportMessage
 
 // --- Server → Client messages ---

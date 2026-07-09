@@ -329,6 +329,35 @@ export class StateManager {
   }
 
   /**
+   * Resolve a Claude session id to the terminal node hosting it, for external
+   * focus requests that only know claude session ids (e.g. Voice Operator).
+   *
+   * Matches against BOTH the persisted `claudeSessionHistory` and each terminal
+   * session's `claudeSessionId` — the former keeps only the latest id while the
+   * latter retains the full per-session history, so checking both matches an id
+   * no matter which it was last recorded under. A session id can appear in
+   * several nodes via forks/restarts, so an alive node wins over a dead one.
+   *
+   * Deliberately reads persisted node data, NOT the in-memory `sessionToNodeId`
+   * map: that map is rebuilt lazily as ptys re-register after a server restart,
+   * whereas node data is loaded from disk at startup — so this resolves an alive
+   * terminal correctly even immediately after a restart.
+   */
+  getNodeIdForClaudeSession(claudeSessionId: string): string | undefined {
+    let fallback: string | undefined
+    for (const node of Object.values(this.state.nodes)) {
+      if (node.type !== 'terminal') continue
+      const hosts =
+        node.claudeSessionHistory.some((e) => e.claudeSessionId === claudeSessionId) ||
+        node.terminalSessions.some((s) => s.claudeSessionId === claudeSessionId)
+      if (!hosts) continue
+      if (node.alive) return node.id
+      fallback ??= node.id
+    }
+    return fallback
+  }
+
+  /**
    * Handle terminal PTY exit: update metadata then immediately archive.
    */
   terminalExited(ptySessionId: string, exitCode: number): void {

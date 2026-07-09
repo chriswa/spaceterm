@@ -398,6 +398,22 @@ function send(socket: net.Socket, msg: ServerMessage): void {
   }
 }
 
+/**
+ * Tell one client to raise/focus a node. Routes to the first-connected client so
+ * the choice is deterministic regardless of which client the OS handed a URL to.
+ * `tag` names the caller for the log line. Shared by both focus paths
+ * (surface-id and claude-session-id resolution).
+ */
+function raiseNodeOnClient(focusNodeId: string, tag: string): void {
+  const target = clients.values().next().value
+  if (!target) {
+    serverLog(`[${tag}] No connected clients to raise`)
+    return
+  }
+  serverLog(`[${tag}] node=${focusNodeId.slice(0, 8)} -> client=${target.id.slice(0, 8)}`)
+  send(target.socket, { type: 'focus-surface', nodeId: focusNodeId })
+}
+
 function broadcastToAttached(sessionId: string, msg: ServerMessage): void {
   clients.forEach((client) => {
     if (client.attachedSessions.has(sessionId)) {
@@ -1675,20 +1691,31 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'focus-surface-request': {
+      // Internal path (e.g. the spaceterm:// deep link): the sender already knows
+      // a surface (pty session) id. Resolve it via the live pty-session map.
       const focusNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
       if (!focusNodeId) {
-        console.error(`[focus-surface] Unknown surfaceId: ${msg.surfaceId}`)
+        // Use serverLog (not console.error) so this reaches electron.log — the
+        // requester passed a surfaceId that no live pty session owns (a stale or
+        // rotated id, or a node that was closed). Log the full id so it can be
+        // cross-referenced with the sender's own log.
+        serverLog(`[focus-surface] Unknown surfaceId: ${msg.surfaceId} (${clients.size} clients connected)`)
         break
       }
-      // Route to the first-connected still-alive client so the choice is
-      // deterministic regardless of which client the OS handed the URL to.
-      const target = clients.values().next().value
-      if (!target) {
-        console.error('[focus-surface] No connected clients to raise')
+      raiseNodeOnClient(focusNodeId, `focus-surface surfaceId=${msg.surfaceId.slice(0, 8)}`)
+      break
+    }
+
+    case 'focus-claude-session': {
+      // External path (e.g. Voice Operator): the sender knows only a claude
+      // session id. WE resolve it to a node against persisted state, so external
+      // clients never touch spaceterm's surface/node ids.
+      const focusNodeId = stateManager.getNodeIdForClaudeSession(msg.claudeSessionId)
+      if (!focusNodeId) {
+        serverLog(`[focus-claude-session] Unknown claudeSessionId: ${msg.claudeSessionId} (${clients.size} clients connected)`)
         break
       }
-      serverLog(`[focus-surface] surfaceId=${msg.surfaceId.slice(0, 8)} node=${focusNodeId.slice(0, 8)} -> client=${target.id.slice(0, 8)}`)
-      send(target.socket, { type: 'focus-surface', nodeId: focusNodeId })
+      raiseNodeOnClient(focusNodeId, `focus-claude-session claudeSessionId=${msg.claudeSessionId.slice(0, 8)}`)
       break
     }
 
