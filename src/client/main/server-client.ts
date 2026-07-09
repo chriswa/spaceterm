@@ -173,6 +173,11 @@ export class ServerClient extends EventEmitter {
       return
     }
 
+    if (msg.type === 'session-names') {
+      this.emit('session-names', msg.names)
+      return
+    }
+
     if (msg.type === 'peer-connected') {
       this.emit('peer-connected', msg.clientId)
       return

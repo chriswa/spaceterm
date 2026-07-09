@@ -140,6 +140,8 @@ interface NodeApi {
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
   onSpeakingChanged(callback: (claudeSessionId: string, speaking: boolean, voice: string | undefined) => void): () => void
+  onSessionNames(callback: (names: Record<string, string>) => void): () => void
+  getSessionNames(): Promise<Record<string, string>>
 }
 
 const nodeApi: NodeApi = {
@@ -239,6 +241,12 @@ const nodeApi: NodeApi = {
     ipcRenderer.on('speaking-changed', listener)
     return () => ipcRenderer.removeListener('speaking-changed', listener)
   },
+  onSessionNames: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, names: Record<string, string>) => callback(names)
+    ipcRenderer.on('session-names', listener)
+    return () => ipcRenderer.removeListener('session-names', listener)
+  },
+  getSessionNames: () => ipcRenderer.invoke('node:get-session-names'),
   onPeerConnected: (callback: (clientId: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, clientId: string) => callback(clientId)
     ipcRenderer.on('peer:connected', listener)

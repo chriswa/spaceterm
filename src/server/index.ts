@@ -320,6 +320,29 @@ function saveCrossCache(cache: CrossCache): void {
   fs.writeFile(CROSS_CACHE_PATH, JSON.stringify(cache), () => {})
 }
 
+// --- Session names (Claude session id → assigned call-sign) ---
+// Sent by the external Voice Operator daemon on the hooks socket as a complete
+// map (replace wholesale, never merge). Persisted here so the names survive a
+// spaceterm restart even while Voice Operator keeps running, and pushed to every
+// client on connect so a client reconnect immediately re-hydrates.
+const SESSION_NAMES_PATH = path.join(SOCKET_DIR, 'session-names.json')
+
+function loadSessionNames(): Record<string, string> {
+  try {
+    const data = JSON.parse(fs.readFileSync(SESSION_NAMES_PATH, 'utf8'))
+    if (data && typeof data === 'object') return data as Record<string, string>
+  } catch { /* missing or corrupt */ }
+  return {}
+}
+
+function saveSessionNames(names: Record<string, string>): void {
+  fs.writeFile(SESSION_NAMES_PATH, JSON.stringify(names), (err) => {
+    if (err) serverLog(`[session-names] Failed to save: ${err.message}`)
+  })
+}
+
+let sessionNames: Record<string, string> = loadSessionNames()
+
 
 function saveCachedUsage(usage: ClaudeUsageData | null, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null = null): void {
   cachedUsage = { usage, subscriptionType, rateLimitTier, usageError }
@@ -630,6 +653,14 @@ function handleIngestMessage(msg: IngestMessage): void {
         speaking: msg.speaking,
         voice: msg.voice
       })
+      break
+    }
+
+    case 'session-names': {
+      // Authoritative full map — replace wholesale, persist, and fan out to clients.
+      sessionNames = msg.names
+      saveSessionNames(sessionNames)
+      broadcastToAll({ type: 'session-names', names: sessionNames })
       break
     }
 
@@ -2417,6 +2448,9 @@ async function startServer(): Promise<void> {
 
     // Send the shared saved viewport slots to the new client
     send(socket, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
+
+    // Push the current session-name map so a (re)connecting client re-hydrates
+    send(socket, { type: 'session-names', names: sessionNames })
 
     // Send cached usage data immediately so the client doesn't wait for the next poll
     if (cachedUsage) {

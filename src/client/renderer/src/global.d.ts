@@ -85,6 +85,8 @@ interface NodeApi {
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
   onSpeakingChanged(callback: (claudeSessionId: string, speaking: boolean, voice: string | undefined) => void): () => void
+  onSessionNames(callback: (names: Record<string, string>) => void): () => void
+  getSessionNames(): Promise<Record<string, string>>
   sendCameraBounds(bounds: { x: number; y: number; width: number; height: number }): void
   saveViewport(slot: string, bounds: { x: number; y: number; width: number; height: number }): void
   onPeerConnected(callback: (clientId: string) => void): () => void

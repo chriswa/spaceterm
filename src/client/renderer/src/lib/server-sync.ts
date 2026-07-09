@@ -5,6 +5,7 @@ import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { usePeerStore } from '../stores/peerStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useSpeakingStore } from '../stores/speakingStore'
+import { useSessionNamesStore } from '../stores/sessionNamesStore'
 import type { NodeData } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
@@ -145,6 +146,22 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
       useSavedViewportStore.getState().setAll(viewports)
     })
   )
+
+  cleanupFns.push(
+    window.api.node.onSessionNames((names) => {
+      useSessionNamesStore.getState().setNames(names)
+    })
+  )
+
+  // Hydrate session names on renderer (re)load. The onSessionNames PUSH above
+  // only fires on a fresh main-process socket connect, which does NOT repeat
+  // across a renderer refresh while the socket stays open — so pull the cached
+  // map from the main process here (mirrors the saved-viewports pattern below).
+  try {
+    useSessionNamesStore.getState().setNames(await window.api.node.getSessionNames())
+  } catch {
+    // Main process not ready — will hydrate on the next server push.
+  }
 
   // Request full state from server. This PULL is the source of truth on every
   // renderer (re)load — the onSavedViewports PUSH above only fires on a fresh

@@ -12,6 +12,8 @@ import { loadWindowState, saveWindowState, findTargetDisplay } from './window-st
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
+/** Last session-id → name map pushed by the server; served to the renderer on (re)load. */
+let latestSessionNames: Record<string, string> = {}
 
 // Surface id from a `spaceterm-surface://` link that arrived before the server
 // connection was ready (cold launch). Flushed once the client connects.
@@ -222,6 +224,8 @@ function setupIPC(): void {
     if (resp.type === 'sync-state') return resp.state
     throw new Error('Unexpected response')
   })
+
+  ipcMain.handle('node:get-session-names', () => latestSessionNames)
 
   ipcMain.handle('node:move', async (_event, nodeId: string, x: number, y: number) => {
     await client!.nodeMove(nodeId, x, y)
@@ -554,6 +558,15 @@ function wireClientEvents(): void {
   client!.on('speaking-changed', (claudeSessionId: string, speaking: boolean, voice: string | undefined) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('speaking-changed', claudeSessionId, speaking, voice)
+    }
+  })
+
+  client!.on('session-names', (names: Record<string, string>) => {
+    // Cache the latest map so a renderer refresh (which does not trigger a fresh
+    // socket connect/push) can re-hydrate via the node:get-session-names invoke.
+    latestSessionNames = names
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('session-names', names)
     }
   })
 

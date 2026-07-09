@@ -433,6 +433,17 @@ export interface SaveViewportMessage {
   bounds: CameraBounds
 }
 
+/**
+ * Complete Claude-session-id → assigned display-name map, sent by the external
+ * Voice Operator daemon. This is NOT a diff — the receiver must replace any stored
+ * copy wholesale. An empty map means "no named sessions". Used both as an ingest
+ * message (hooks socket) and, re-broadcast verbatim, as a server→client message.
+ */
+export interface SessionNamesMessage {
+  type: 'session-names'
+  names: Record<string, string>
+}
+
 /** Fire-and-forget messages received on the hooks socket (no response sent). */
 export type IngestMessage =
   | HookMessage
@@ -444,6 +455,7 @@ export type IngestMessage =
   | PlaySoundMessage
   | SpeakMessage
   | TtsSpeakingMessage
+  | SessionNamesMessage
 
 /** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
 export type ClientMessage =
@@ -861,6 +873,7 @@ export type ServerMessage =
   | PlaySoundServerMessage
   | SpeakServerMessage
   | SpeakingChangedMessage
+  | SessionNamesMessage
   | PeerConnectedMessage
   | PeerDisconnectedMessage
   | PeerCameraBoundsMessage
