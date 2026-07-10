@@ -55,6 +55,10 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeStatusUnread: boolean
   claudeStatusAsleep: boolean
   claudeModel?: string
+  /** Last-known remaining context %, persisted so it survives a server restart. */
+  claudeContextPercent?: number
+  /** Last-known Claude session JSONL line count, persisted so it survives a server restart. */
+  claudeSessionLineCount?: number
   lastInteractedAt?: number  // epoch ms — max of last PTY input and last PTY output
   sortOrder: number
   terminalSessions: TerminalSessionEntry[]

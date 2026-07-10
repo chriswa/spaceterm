@@ -814,6 +814,30 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  updateClaudeContextPercent(ptySessionId: string, percent: number): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node || node.claudeContextPercent === percent) return
+    node.claudeContextPercent = percent
+    this.onNodeUpdate(node.id, { claudeContextPercent: percent } as Partial<TerminalNodeData>)
+    this.schedulePersist()
+  }
+
+  updateClaudeSessionLineCount(ptySessionId: string, lineCount: number): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node || node.claudeSessionLineCount === lineCount) return
+    node.claudeSessionLineCount = lineCount
+    this.onNodeUpdate(node.id, { claudeSessionLineCount: lineCount } as Partial<TerminalNodeData>)
+    this.schedulePersist()
+  }
+
+  getClaudeContextPercent(ptySessionId: string): number | null {
+    return this.getTerminalBySession(ptySessionId)?.claudeContextPercent ?? null
+  }
+
+  getClaudeSessionLineCount(ptySessionId: string): number | null {
+    return this.getTerminalBySession(ptySessionId)?.claudeSessionLineCount ?? null
+  }
+
   updateClaudeStateDecisionTime(ptySessionId: string, timestamp: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return

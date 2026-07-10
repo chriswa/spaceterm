@@ -690,6 +690,8 @@ function handleIngestMessage(msg: IngestMessage): void {
           const effectiveSize = contextWindowSize - CLAUDE_AUTOCOMPACT_BUFFER_TOKENS
           const remainingPercent = (1 - totalTokens / effectiveSize) * 100
           sessionManager.setClaudeContextPercent(msg.surfaceId, remainingPercent)
+          // Also persist on the node so it survives a server restart (session state is in-memory only).
+          stateManager.updateClaudeContextPercent(msg.surfaceId, remainingPercent)
         }
       }
 
@@ -979,8 +981,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           seq: msg.seq,
           sessionId,
           scrollback: state ?? '',
-          claudeContextPercent: sessionManager.getClaudeContextPercent(sessionId) ?? undefined,
-          claudeSessionLineCount: sessionManager.getClaudeSessionLineCount(sessionId) ?? undefined
+          // After a server restart the in-memory session value is null until Claude next
+          // emits a status line; fall back to the value persisted on the node.
+          claudeContextPercent:
+            sessionManager.getClaudeContextPercent(sessionId)
+            ?? stateManager.getClaudeContextPercent(sessionId)
+            ?? undefined,
+          claudeSessionLineCount:
+            sessionManager.getClaudeSessionLineCount(sessionId)
+            ?? stateManager.getClaudeSessionLineCount(sessionId)
+            ?? undefined
         })
 
         // Stop buffering and flush queued live output in order — everything
@@ -2039,6 +2049,8 @@ async function startServer(): Promise<void> {
   // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + plan cache + state routing
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
     sessionManager.setClaudeSessionLineCount(surfaceId, totalLineCount)
+    // Also persist on the node so it survives a server restart (session state is in-memory only).
+    stateManager.updateClaudeSessionLineCount(surfaceId, totalLineCount)
 
     // Plan-cache tracking: scan assistant entries for plan file writes and ExitPlanMode.
     // This runs for both backfill and live entries (plan file paths need to be ready
