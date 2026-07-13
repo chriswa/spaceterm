@@ -1033,7 +1033,7 @@ export function TerminalCard({
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
       case 'working': return 'Claude is working'
-      case 'stuck': return 'Claude appears stuck'
+      case 'working_background': return 'Claude is finishing background work'
       case 'waiting_permission': return 'Claude is awaiting permission'
       case 'waiting_question': return 'Claude is asking a question'
       case 'waiting_plan': return 'Claude is awaiting plan approval'

@@ -24,7 +24,7 @@ export const TRANSITION_DRAIN_INTERVAL_MS = 50
 export type ApplyFn = (
   surfaceId: string,
   newState: ClaudeState,
-  source: 'hook' | 'jsonl' | 'status-line',
+  source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
   event: string,
   detail?: string
 ) => void
@@ -50,7 +50,7 @@ export class TransitionQueue {
   enqueue(
     surfaceId: string,
     newState: ClaudeState,
-    source: 'hook' | 'jsonl' | 'status-line',
+    source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
     event: string,
     sourceTime: number,
     detail?: string

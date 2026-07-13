@@ -167,7 +167,10 @@ export class StateManager {
 
       const wasAlive = node.alive
       node.alive = false
-      node.claudeState = node.claudeState === 'stuck' ? 'stopped' : node.claudeState
+      // 'working_background' (yellow) is backed by an in-memory ledger that a
+      // restart clears, so we can no longer know what background work was
+      // outstanding — reset it to 'stopped'.
+      node.claudeState = node.claudeState === 'working_background' ? 'stopped' : node.claudeState
       node.claudeStatusUnread = false
 
       const history = node.claudeSessionHistory ?? []

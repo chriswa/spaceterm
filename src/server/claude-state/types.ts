@@ -34,7 +34,7 @@ export interface QueuedTransition {
   surfaceId: string
   newState: ClaudeState
   /** Where this transition originated — determines logging and priority */
-  source: 'hook' | 'jsonl' | 'status-line'
+  source: 'hook' | 'jsonl' | 'status-line' | 'ledger'
   /** Human-readable event name for decision logs (e.g. 'hook:Stop', 'jsonl:assistant') */
   event: string
   /** Optional extra context for the decision log (e.g. tool name, notification type) */

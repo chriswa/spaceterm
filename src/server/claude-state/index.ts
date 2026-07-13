@@ -21,33 +21,32 @@ import type { StateMachineDeps, ClaudeState } from './types'
 import type { SessionFileEntry } from '../session-file-watcher'
 import { TransitionQueue } from './transition-queue'
 import { DecisionLogger } from './decision-logger'
+import { BackgroundLedger } from './background-ledger'
 import { localISOTimestamp } from '../timestamp'
 
 export { DecisionLogger } from './decision-logger'
 export type { DecisionLogEntry } from './decision-logger'
 export type { StateMachineDeps } from './types'
 
-// ─── Stale sweep constants ──────────────────────────────────────────────────
+// ─── Background reconciliation sweep ────────────────────────────────────────
 
 /**
- * How long (ms) a surface can stay in 'working' with no events before it's
- * considered stuck.
+ * How often (ms) to re-probe surfaces that are showing 'working_background'
+ * (yellow) to see whether their outstanding launches have actually finished.
  *
- * 2 minutes is long enough to avoid false positives from slow tool executions
- * (e.g. large file writes, long-running bash commands) while short enough to
- * catch genuinely stuck sessions. Claude Code's status-line events fire every
- * ~10s when active, so 2min means ~12 missed heartbeats.
+ * This is the self-correction backstop: when a background task completes
+ * without leaving a completion notification we can parse (e.g. it was killed,
+ * or finished while the session sat idle), the liveness probe drains it and the
+ * surface goes 'stopped'. 5s keeps the yellow→stopped latency small while the
+ * probes (which only run for yellow surfaces with un-acked launches) stay cheap.
+ *
+ * Note: unlike the old stale sweep this replaces, this does NOT guess from
+ * elapsed time — it verifies real OS/file state (lsof/pgrep/transcript tail).
  */
-const STALE_WORKING_TIMEOUT_MS = 2 * 60 * 1000
+const BACKGROUND_RECONCILE_INTERVAL_MS = 5_000
 
-/**
- * How often (ms) to check for stale working surfaces.
- *
- * 15s is a good balance: frequent enough that stuck detection is responsive
- * (worst case: 2min + 15s before the user sees "stuck"), but infrequent
- * enough to be negligible CPU cost.
- */
-const STALE_SWEEP_INTERVAL_MS = 15_000
+/** Drain-to-idle transitions carry this suffix so applyTransition can gate them (see the guard there). */
+const BG_DRAINED_SUFFIX = ':bg-drained'
 
 // ─── ClaudeStateMachine ─────────────────────────────────────────────────────
 
@@ -57,15 +56,12 @@ export class ClaudeStateMachine {
   private transitionQueue: TransitionQueue
 
   /**
-   * Last event timestamp per surface — updated by applyTransition and
-   * queueTransition. Used by the stale sweep to detect surfaces that have
-   * been in 'working' with no events for too long.
-   *
-   * Cleared on Stop, SessionEnd (the session is done, so there's nothing
-   * to go stale) and prevents false stuck transitions after a session restarts.
+   * Tracks work that outlives a turn (backgrounded subagents / bash / monitors
+   * / workflows). Non-empty at Stop ⇒ the surface shows 'working_background'
+   * (yellow) instead of 'stopped'. See background-ledger.ts.
    */
-  private lastActivityBySurface = new Map<string, number>()
-  private staleSweepTimer: ReturnType<typeof setInterval> | null = null
+  private backgroundLedger: BackgroundLedger
+  private reconcileSweepTimer: ReturnType<typeof setInterval> | null = null
 
   // ─── Permission tracking ────────────────────────────────────────────────
   //
@@ -92,23 +88,35 @@ export class ClaudeStateMachine {
   /** surfaceId → Set of tool_use_ids awaiting PostToolUse confirmation */
   private pendingPermissionIds = new Map<string, Set<string>>()
 
-  constructor(deps: StateMachineDeps) {
+  constructor(deps: StateMachineDeps, backgroundLedger: BackgroundLedger = new BackgroundLedger()) {
     this.deps = deps
     this.decisionLogger = new DecisionLogger()
+    this.backgroundLedger = backgroundLedger
     this.transitionQueue = new TransitionQueue(
       (surfaceId, newState, source, event, detail) =>
         this.applyTransition(surfaceId, newState, source, event, detail)
     )
-    this.staleSweepTimer = setInterval(() => this.sweepStaleSurfaces(), STALE_SWEEP_INTERVAL_MS)
+    // .catch keeps a probe failure from ever surfacing as an unhandled rejection
+    // that could crash the server process.
+    this.reconcileSweepTimer = setInterval(() => { this.reconcileBackgroundSurfaces().catch(() => {}) }, BACKGROUND_RECONCILE_INTERVAL_MS)
   }
 
   dispose(): void {
-    if (this.staleSweepTimer) {
-      clearInterval(this.staleSweepTimer)
-      this.staleSweepTimer = null
+    if (this.reconcileSweepTimer) {
+      clearInterval(this.reconcileSweepTimer)
+      this.reconcileSweepTimer = null
     }
     // TransitionQueue.dispose() flushes remaining transitions before stopping
     this.transitionQueue.dispose()
+  }
+
+  /**
+   * Test-only: apply all queued transitions immediately (bypassing the 500ms
+   * ordering delay) so unit tests can assert final state synchronously. Runs
+   * them in source-timestamp order, exactly as the real drain would.
+   */
+  flushForTest(): void {
+    this.transitionQueue.drain(true)
   }
 
   // ─── Public handlers ──────────────────────────────────────────────────────
@@ -121,26 +129,42 @@ export class ClaudeStateMachine {
    * The hookTime parameter uses msg.ts when available for accurate ordering.
    */
   handleHook(surfaceId: string, hookType: string, payload: Record<string, unknown>, hookTime: number): void {
-    // Any hook event proves the Claude process is alive — reset the stale timer.
-    // This must happen before any transition logic so that stuck recovery works
-    // even for hook types that don't explicitly queue a transition.
-    this.lastActivityBySurface.set(surfaceId, Date.now())
+    // Keep the background ledger's probe paths current: SubagentStart/Stop and
+    // Stop all carry transcript_path + session_id. Cheap and idempotent.
+    const transcriptPath = typeof payload?.transcript_path === 'string' ? payload.transcript_path : undefined
+    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : undefined
+    if (transcriptPath || sessionId) this.backgroundLedger.setContext(surfaceId, transcriptPath, sessionId)
 
-    // If the session was marked stuck, any hook event means it's actually working.
-    // We don't need to check which hook type — if hooks are flowing, Claude is alive.
-    if (this.deps.getClaudeState(surfaceId) === 'stuck') {
-      this.transitionQueue.enqueue(surfaceId, 'working', 'hook', `hook:unstuck:${hookType}`, hookTime)
-    }
-
-    // ── Stop: session ended by user or Claude ──
-    // Stop means the current Claude turn is finished. We transition to stopped
-    // and clear all permission tracking state (any pending permissions are moot).
+    // ── Stop: the main turn finished ──
+    // If backgrounded work (subagents / bash / monitors / workflows) is still
+    // outstanding, the session isn't truly idle — show 'working_background'
+    // (yellow) instead of 'stopped'. When that work drains (SubagentStop, a
+    // parsed completion, or a liveness probe) the surface goes 'stopped' and the
+    // completion tone fires then — at the real end, not this premature Stop.
+    // We still clear permission tracking (any pending permissions are moot) but
+    // NOT the ledger (its work continues past this turn).
     if (hookType === 'Stop') {
       this.deps.handleClaudeStop(surfaceId)
-      this.transitionQueue.enqueue(surfaceId, 'stopped', 'hook', 'hook:Stop', hookTime)
+      const outstanding = this.backgroundLedger.outstandingCount(surfaceId)
+      this.transitionQueue.enqueue(
+        surfaceId,
+        outstanding > 0 ? 'working_background' : 'stopped',
+        'hook',
+        'hook:Stop',
+        hookTime,
+        outstanding > 0 ? `bg:${outstanding}` : undefined
+      )
       this.pendingPermissionIds.delete(surfaceId)
       this.lastPreToolUseId.delete(surfaceId)
-      this.lastActivityBySurface.delete(surfaceId)
+    }
+
+    // ── SubagentStop: a backgrounded subagent finished ──
+    // Drop it from the ledger; if that empties the ledger, drain to 'stopped'
+    // (gated in applyTransition to only fire from 'working_background').
+    if (hookType === 'SubagentStop') {
+      const agentId = typeof payload?.agent_id === 'string' ? payload.agent_id : undefined
+      if (agentId) this.backgroundLedger.completeAgent(surfaceId, agentId)
+      this.drainBackgroundIfIdle(surfaceId, 'hook', `hook:SubagentStop${BG_DRAINED_SUFFIX}`, hookTime)
     }
 
     // ── PermissionRequest: Claude needs user approval or attention ──
@@ -198,12 +222,24 @@ export class ClaudeStateMachine {
           this.lastPreToolUseId.set(surfaceId, toolUseId)
         }
       }
+      if (hookType === 'SubagentStart') {
+        // Register the backgrounded subagent so a Stop while it's running shows
+        // yellow. Subagents are tracked via hooks (not transcript scraping)
+        // because the hook's agent_id is authoritative and pairs cleanly with
+        // SubagentStop.
+        const agentId = typeof payload?.agent_id === 'string' ? payload.agent_id : undefined
+        if (agentId) this.backgroundLedger.registerAgent(surfaceId, agentId)
+      }
       if (hookType === 'UserPromptSubmit') {
         // A new user prompt invalidates all pending permissions — the user
         // is starting a fresh turn, so any unresolved permission requests
         // from the previous turn are stale.
         this.pendingPermissionIds.delete(surfaceId)
         this.lastPreToolUseId.delete(surfaceId)
+        // A new turn also makes prior background context moot, and clearing the
+        // ledger here bounds any leak from a missed completion to "until the
+        // next prompt".
+        this.backgroundLedger.clear(surfaceId)
       }
       this.transitionQueue.enqueue(surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
     }
@@ -231,39 +267,32 @@ export class ClaudeStateMachine {
       this.transitionQueue.enqueue(surfaceId, 'stopped', 'hook', 'hook:SessionEnd', hookTime)
       this.pendingPermissionIds.delete(surfaceId)
       this.lastPreToolUseId.delete(surfaceId)
-      this.lastActivityBySurface.delete(surfaceId)
+      this.backgroundLedger.clear(surfaceId)
     }
 
-    // ── SessionStart(compact): compaction finished ──
-    // After compaction, Claude is idle waiting for input (it doesn't auto-resume).
-    // This is different from a normal SessionStart which may immediately begin
-    // processing a resumed conversation.
-    if (hookType === 'SessionStart' && payload && typeof payload === 'object') {
-      const source = 'source' in payload ? String(payload.source) : 'startup'
-      if (source === 'compact') {
-        this.transitionQueue.enqueue(surfaceId, 'stopped', 'hook', 'hook:SessionStart:compact', hookTime)
-      }
-    }
+    // ── SessionStart is intentionally NOT a state signal ──
+    // It was previously special-cased: source === 'compact' → stopped, on the
+    // assumption that after compaction Claude sits idle waiting for input. That
+    // assumption is wrong: auto-compaction fires mid-turn (when the context
+    // fills) and Claude resumes on its own a few seconds later. Across 42
+    // historical compact events, EVERY one fired while 'working' and EVERY one
+    // resumed to 'working' — the rule produced a spurious idle (tone + white
+    // flash) 100% of the time and was never once correct. So we ignore
+    // SessionStart entirely for state: a genuine idle is signalled by the Stop
+    // hook, and a resume by the transcript's next assistant entry. (Session
+    // lifecycle/history tracking still happens in the ingest handler.)
   }
 
   /**
    * Process a status-line event from Claude Code.
    *
-   * Status-line events are periodic heartbeats (~10s interval) that prove
-   * the Claude process is alive. They carry context window usage data but
-   * no state transition information — except as a recovery mechanism for
-   * stuck sessions.
+   * Status-line events are periodic heartbeats that carry context-window usage
+   * data (handled elsewhere). They no longer drive any state transition: with
+   * the stale-sweep/'stuck' heuristic removed, there's nothing here to recover
+   * from. Kept as a no-op so callers don't need to change.
    */
-  handleStatusLine(surfaceId: string): void {
-    // Reset the stale timer — this proves the session is alive
-    this.lastActivityBySurface.set(surfaceId, Date.now())
-
-    // If the session was marked stuck, a status-line event means it's
-    // actually working. Status-line events only fire when Claude's process
-    // is running, so this is a reliable recovery signal.
-    if (this.deps.getClaudeState(surfaceId) === 'stuck') {
-      this.transitionQueue.enqueue(surfaceId, 'working', 'status-line', 'status-line:unstuck', Date.now())
-    }
+  handleStatusLine(_surfaceId: string): void {
+    // intentionally empty — see doc comment
   }
 
   /**
@@ -280,6 +309,10 @@ export class ClaudeStateMachine {
     // from disk that have already been processed. State routing during backfill
     // would replay old transitions and could leave the indicator in a wrong state.
     if (isBackfill) return
+
+    // Feed the transcript to the background ledger first (launches, completions,
+    // queued markers) so outstandingCount is current before any drain check below.
+    this.backgroundLedger.ingestJsonl(surfaceId, entries)
 
     for (const entry of entries) {
       // Parse source timestamp from the JSONL entry (falls back to now if missing/invalid).
@@ -354,59 +387,61 @@ export class ClaudeStateMachine {
             continue
           }
 
-          // Non-interrupt, non-rejection tool results: don't change state.
+          // ── User responded to a permission / plan / question ──
+          // Claude Code writes a tool_result for every permission-gated tool
+          // (ExitPlanMode → "User has approved your plan…", AskUserQuestion, and
+          // ordinary tools), carrying the matching tool_use_id. This is the
+          // reliable, transcript-based "user responded" signal that replaces the
+          // old Enter-keypress (client:promptSubmit) path: many ExitPlanMode
+          // approvals never fire a PostToolUse hook, so the transcript is the
+          // only dependable clear for waiting_plan. It's checked AFTER the
+          // interrupt/rejected cases above so those still win (→ stopped).
+          const ids = this.pendingPermissionIds.get(surfaceId)
+          if (ids && ids.size > 0) {
+            for (const block of msg.content as Array<{ type?: string; tool_use_id?: unknown }>) {
+              if (block && block.type === 'tool_result' && typeof block.tool_use_id === 'string' && ids.delete(block.tool_use_id)) {
+                this.transitionQueue.enqueue(surfaceId, 'working', 'jsonl', 'jsonl:permission-resolved', entryTime)
+                break
+              }
+            }
+          }
+
+          // Other non-interrupt, non-rejection tool results: don't change state.
           // Hooks handle the working transition for normal tool completions
           // via PostToolUse. Changing state here would race with the hook.
         }
       }
     }
+
+    // A parsed completion notification may have drained the ledger — if the
+    // surface is showing yellow and nothing's left, go idle now (rather than
+    // waiting for the next reconciliation sweep).
+    this.drainBackgroundIfIdle(surfaceId, 'jsonl', `jsonl:background${BG_DRAINED_SUFFIX}`, Date.now())
   }
 
   /**
-   * Process a client write event (user typed something in the terminal).
+   * Process a client interaction (the user typed something in the terminal).
    *
-   * This handles Enter key presses (prompt submissions) and other interactions.
-   * The key insight is that Enter from any non-stopped state should transition
-   * to working, because the user is responding to Claude and Claude will
-   * process the response.
+   * This ONLY clears the unread flag — the user has looked at the surface, so
+   * it should stop glowing. It deliberately does NOT change claudeState.
+   *
+   * State is derived purely from hooks + transcript (like voiceop). The former
+   * optimistic "Enter ⇒ working" transition was removed: the reliable clear for
+   * a waiting state is now the tool_result written to the transcript when the
+   * user responds (jsonl:permission-resolved), and a real prompt raises the
+   * UserPromptSubmit hook. Mutating state from a raw keypress caused spurious
+   * transitions (e.g. a stray Enter while working, or Enter that wasn't
+   * actually a response).
    */
-  handleClientWrite(surfaceId: string, isPromptSubmit: boolean): void {
-    const wasUnread = this.deps.getClaudeStatusUnread(surfaceId)
-    const prevState = this.deps.getClaudeState(surfaceId) ?? 'stopped'
-
-    // Fast path: nothing to change.
-    // If the indicator is not unread AND we're either not submitting a prompt
-    // OR we're in stopped/stuck (where Enter is a no-op), skip all work.
-    // Stuck is treated the same as stopped here — the user can't "unstick"
-    // Claude by pressing Enter, they need to wait for Claude to recover or
-    // restart the session.
-    if (!wasUnread && (!isPromptSubmit || prevState === 'stopped' || prevState === 'stuck')) return
-
-    // Any interaction clears the unread flag — the user has seen the terminal
-    if (wasUnread) {
-      this.deps.setClaudeStatusUnread(surfaceId, false)
-    }
-
-    let newState = prevState
-    if (isPromptSubmit && prevState !== 'stopped' && prevState !== 'stuck') {
-      // Enter from waiting_plan: user approved/responded to the plan
-      // Enter from waiting_permission: user approved/denied the permission
-      // Enter from working: stray keypress — Claude ignores it because
-      //   Escape (not Enter) is the interrupt key. We still transition to
-      //   'working' because it's a harmless no-op (already working) and
-      //   the alternative (special-casing working) adds complexity for
-      //   no benefit. The Stop hook handles actual stops.
-      newState = 'working'
-      this.deps.setClaudeState(surfaceId, 'working')
-      this.deps.broadcastClaudeStateDecisionTime(surfaceId, Date.now())
-    }
-
+  handleClientInteract(surfaceId: string): void {
+    if (!this.deps.getClaudeStatusUnread(surfaceId)) return
+    this.deps.setClaudeStatusUnread(surfaceId, false)
     this.decisionLogger.log(surfaceId, {
       timestamp: localISOTimestamp(),
       source: 'client',
-      event: isPromptSubmit ? 'client:promptSubmit' : 'client:interact',
-      prevState,
-      newState,
+      event: 'client:interact',
+      prevState: this.deps.getClaudeState(surfaceId),
+      newState: this.deps.getClaudeState(surfaceId),
       unread: false
     })
   }
@@ -459,12 +494,27 @@ export class ClaudeStateMachine {
   private applyTransition(
     surfaceId: string,
     newState: ClaudeState,
-    source: 'hook' | 'jsonl' | 'status-line',
+    source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
     event: string,
     detail?: string
   ): void {
-    this.lastActivityBySurface.set(surfaceId, Date.now())
     const prevState = this.deps.getClaudeState(surfaceId) ?? 'stopped'
+
+    // ── Guard: background drain-to-idle only fires from 'working_background' ──
+    // A ':bg-drained' transition is enqueued whenever the ledger empties, from
+    // whichever event observed the last completion. It must only take effect
+    // when the surface is actually showing yellow — otherwise (e.g. the agent
+    // resumed to 'working', or a Stop already resolved to 'stopped') it would
+    // wrongly force 'stopped'. Gating here (rather than at enqueue time) makes
+    // it correct regardless of hook/queue ordering: the yellow-inducing Stop and
+    // the drain are ordered by source timestamp, so by the time a legitimate
+    // drain is applied, 'working_background' is the prevState.
+    if (event.endsWith(BG_DRAINED_SUFFIX) && prevState !== 'working_background') {
+      this.decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, detail, suppressed: true
+      })
+      return
+    }
 
     // ── Guard: only targeted signals can exit waiting states to working ──
     // Waiting states are "sticky" — most working signals are suppressed.
@@ -484,15 +534,18 @@ export class ClaudeStateMachine {
     // Only these targeted signals can clear waiting → working:
     // - hook:PostToolUse/PostToolUseFailure (ID-matched: permission resolved)
     // - hook:UserPromptSubmit (user started a new turn)
+    // - jsonl:permission-resolved (the transcript wrote the tool_result for the
+    //   pending permission tool_use_id — the reliable, hook-independent clear
+    //   that replaced the old client:promptSubmit Enter-keypress path)
     // Other exits from waiting states use newState !== 'working' (e.g.
     // Stop → stopped, jsonl:user:rejected → stopped) and bypass this guard.
-    // client:promptSubmit bypasses applyTransition entirely (handleClientWrite).
     const isWaitingState = prevState === 'waiting_permission' || prevState === 'waiting_question' || prevState === 'waiting_plan'
     if (isWaitingState && newState === 'working') {
       const canClearWaiting =
         event === 'hook:UserPromptSubmit' ||
         event === 'hook:PostToolUse' ||
-        event === 'hook:PostToolUseFailure'
+        event === 'hook:PostToolUseFailure' ||
+        event === 'jsonl:permission-resolved'
       if (!canClearWaiting) {
         this.decisionLogger.log(surfaceId, {
           timestamp: localISOTimestamp(),
@@ -536,39 +589,39 @@ export class ClaudeStateMachine {
     })
   }
 
-  // ─── Stale sweep ──────────────────────────────────────────────────────────
+  // ─── Background drain / reconciliation ──────────────────────────────────────
 
   /**
-   * Check for surfaces that have been in 'working' with no events for too long.
-   *
-   * Only transitions working → stuck (not other states like stopped or
-   * waiting_permission). The reasoning:
-   * - stopped/waiting_permission/waiting_question/waiting_plan: these are
-   *   terminal states that require user action, not Claude activity — no events expected
-   * - working: Claude should be producing events (hooks, JSONL entries,
-   *   status-line heartbeats). If none arrive for 2 minutes, something
-   *   is wrong — the process may have crashed, hung, or lost connectivity.
-   *
-   * We use 'stuck' instead of 'stopped' because stuck is recoverable:
-   * if a delayed event arrives, the state machine transitions back to
-   * working. Transitioning directly to stopped would be incorrect if
-   * Claude is actually still running (just slow or backlogged).
+   * If the surface is (or is about to be) showing 'working_background' and its
+   * ledger is now empty, enqueue a drain-to-idle transition. The transition is
+   * gated in applyTransition so it only takes effect from 'working_background'
+   * (see BG_DRAINED_SUFFIX there), which is why we can enqueue it unconditionally
+   * whenever the ledger empties without racing the yellow-inducing Stop.
    */
-  private sweepStaleSurfaces(): void {
-    const now = Date.now()
-    for (const [surfaceId, lastActivity] of this.lastActivityBySurface) {
-      if (now - lastActivity > STALE_WORKING_TIMEOUT_MS && this.deps.getClaudeState(surfaceId) === 'working') {
-        this.deps.setClaudeState(surfaceId, 'stuck')
-        this.deps.broadcastClaudeStateDecisionTime(surfaceId, now)
-        this.deps.setClaudeStatusUnread(surfaceId, true)
-        this.decisionLogger.log(surfaceId, {
-          timestamp: localISOTimestamp(),
-          source: 'stale',
-          event: 'stale:timeout',
-          prevState: 'working',
-          newState: 'stuck',
-          unread: true
-        })
+  private drainBackgroundIfIdle(
+    surfaceId: string,
+    source: 'hook' | 'jsonl' | 'ledger',
+    event: string,
+    time: number
+  ): void {
+    if (this.backgroundLedger.outstandingCount(surfaceId) === 0) {
+      this.transitionQueue.enqueue(surfaceId, 'stopped', source, event, time)
+    }
+  }
+
+  /**
+   * Periodic self-correction: re-probe each yellow surface's outstanding
+   * launches (lsof/pgrep/transcript-tail/state-file) and, if they've all
+   * actually finished, drain to 'stopped'. This is the backstop for completions
+   * we never see in the transcript (killed tasks, work that finished while the
+   * session sat idle). Only yellow surfaces are probed, so it's cheap otherwise.
+   */
+  private async reconcileBackgroundSurfaces(): Promise<void> {
+    for (const surfaceId of this.backgroundLedger.activeSurfaces()) {
+      if (this.deps.getClaudeState(surfaceId) !== 'working_background') continue
+      const pruned = await this.backgroundLedger.reconcile(surfaceId)
+      if (pruned) {
+        this.drainBackgroundIfIdle(surfaceId, 'ledger', `ledger:reconcile${BG_DRAINED_SUFFIX}`, Date.now())
       }
     }
   }

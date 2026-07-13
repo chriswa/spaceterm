@@ -193,9 +193,9 @@ html, body, #root {
   color: #44cc77;
 }
 
-.toolbar__crab--dim-orange {
-  background-color: #653e2f;
-  color: #653e2f;
+.toolbar__crab--yellow {
+  background-color: #e6c34d;
+  color: #e6c34d;
 }
 
 .toolbar__crab--asleep {

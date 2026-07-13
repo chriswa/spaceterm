@@ -41,38 +41,48 @@ General application log. Check for errors around the timestamps in question.
 
 ## State machine overview
 
-States: `stopped`, `working`, `waiting_permission`, `waiting_question`, `waiting_plan`, `stuck`
+States: `stopped`, `working`, `working_background`, `waiting_permission`, `waiting_question`, `waiting_plan`
+
+`working_background` (yellow) = the main turn's Stop fired but backgrounded work
+(subagents / bash / monitors / workflows) is still running. See the background
+ledger in `src/server/claude-state/background-ledger.ts`.
 
 ### Signals that set state
 
 | Signal | Source | New State |
 |--------|--------|-----------|
-| `UserPromptSubmit` hook | hook | working |
+| `UserPromptSubmit` hook | hook | working (also clears the background ledger) |
 | `PreToolUse` hook | hook | working (suppressed when in waiting state) |
-| `SubagentStart` hook | hook | working (suppressed when in waiting state) |
+| `SubagentStart` hook | hook | working (suppressed when in waiting state); registers a background subagent in the ledger |
 | `PreCompact` hook | hook | working (suppressed when in waiting state) |
 | `PostToolUse` hook (ID-matched) | hook | working |
 | `PostToolUseFailure` hook (ID-matched) | hook | working |
 | `PermissionRequest` hook (ExitPlanMode) | hook | waiting_plan |
 | `PermissionRequest` hook (AskUserQuestion) | hook | waiting_question |
 | `PermissionRequest` hook (other tools) | hook | waiting_permission |
-| `Stop` hook | hook | stopped |
-| `SessionEnd` hook | hook | stopped |
-| `SessionStart` hook (compact source) | hook | stopped |
+| `Stop` hook | hook | **working_background** if the ledger is non-empty, else stopped |
+| `SubagentStop` hook | hook | drops the subagent from the ledger; if it empties, drains working_background → stopped |
+| `SessionEnd` hook | hook | stopped (clears the ledger) |
+| `SessionStart` hook (any source, incl. compact) | hook | **no state change** — compaction fires mid-turn and Claude auto-resumes; treating it as idle caused a spurious tone/white flash (42/42 historical compacts were mid-turn resumes) |
 | JSONL `assistant` entry | jsonl | working (suppressed when in waiting state) |
 | JSONL `user` string entry | jsonl | working (suppressed when in waiting state) |
+| JSONL `user` array, tool_result for a pending permission id | jsonl | working (clears waiting states — `jsonl:permission-resolved`) |
 | JSONL `user` array with "interrupted by user" | jsonl | stopped |
 | JSONL `user` array with "rejected" | jsonl | stopped |
-| stale sweep (2min timeout) | stale | stuck (from working only) |
+| JSONL `<task-notification>` completion / queue-op | jsonl | updates the ledger; may drain working_background → stopped |
+| reconciliation sweep (5s, yellow surfaces only) | ledger | drains working_background → stopped when liveness probes say all launches finished |
 
 ### Signals that DON'T change state
 - `PostToolUse` / `PostToolUseFailure` with non-matching tool_use_id — ignored (prevents subagent events from clobbering main agent state)
 - `Notification` hooks — intentionally not handled (always redundant with PermissionRequest)
+- `Status-line` heartbeats — no longer drive state (the stale-sweep/`stuck` heuristic was removed)
+- `client:interact` (any terminal keystroke) — only clears the `unread` flag, never changes state
 - `client:markRead` / `client:markUnread` — only toggles the `unread` flag, never changes state
-- JSONL `user` array entries (tool results) without interruption or rejection — hooks handle this
+- JSONL `user` array entries (tool results) that aren't interrupts/rejections/pending-permission resolutions — hooks handle this
 
 ### Guard logic
-- Waiting states are sticky — only `hook:PostToolUse`/`hook:PostToolUseFailure` (ID-matched), `hook:UserPromptSubmit`, and `client:promptSubmit` can transition waiting → working. All other working signals are suppressed.
+- Waiting states are sticky — only `hook:PostToolUse`/`hook:PostToolUseFailure` (ID-matched), `hook:UserPromptSubmit`, and `jsonl:permission-resolved` can transition waiting → working. All other working signals are suppressed.
+- A `:bg-drained` transition (ledger emptied) only takes effect from `working_background` — gated in applyTransition so hook/queue ordering can't force a spurious stopped.
 
 ### Transition queue
 Events are held for 500ms then processed in source-timestamp order. This prevents race conditions between hook and JSONL events (e.g. a late JSONL assistant message overriding a Stop hook). The drain interval is 50ms.
@@ -80,13 +90,14 @@ Events are held for 500ms then processed in source-timestamp order. This prevent
 ## Key code locations
 
 State machine: `src/server/claude-state/index.ts` (single file for all transition logic):
-- `handleHook()` — maps hook types to state transitions, manages permission tracking (lastPreToolUseId, pendingPermissionIds)
-- `handleJsonlEntries()` — maps JSONL transcript entries to state transitions
-- `handleClientWrite()` — handles Enter key / prompt submit (bypasses applyTransition)
-- `applyTransition()` — guard logic, unread computation, decision logging. The sticky-waiting-states guard lives here.
-- `sweepStaleSurfaces()` — detects working → stuck after 2min inactivity
+- `handleHook()` — maps hook types to state transitions, manages permission tracking (lastPreToolUseId, pendingPermissionIds) and the background ledger (SubagentStart/Stop, Stop → yellow-or-stopped, UserPromptSubmit clears)
+- `handleJsonlEntries()` — maps JSONL transcript entries to state transitions; feeds the ledger; emits `jsonl:permission-resolved`
+- `handleClientInteract()` — clears the unread flag on a terminal keystroke; never changes claudeState
+- `applyTransition()` — guard logic (sticky-waiting-states + `:bg-drained` gate), unread computation, decision logging
+- `drainBackgroundIfIdle()` / `reconcileBackgroundSurfaces()` — drain working_background → stopped; the 5s reconciliation sweep re-probes yellow surfaces
 
 Supporting files:
+- `src/server/claude-state/background-ledger.ts` — outstanding-launch tracking + liveness probes (lsof/pgrep/subagent-tail/state-file)
 - `src/server/claude-state/transition-queue.ts` — 500ms delay queue, source-timestamp ordering
 - `src/server/claude-state/decision-logger.ts` — writes decision log entries
 - `src/server/claude-state/types.ts` — ClaudeState type, StateMachineDeps interface
@@ -168,3 +179,6 @@ This file contains user-reported observations — moments where the user told us
 
 ### Subagent events share the surface
 `PreToolUse` and `PostToolUse` from subagents fire on the same surface ID as the main agent. The sticky-waiting-states guard in `applyTransition` prevents subagent `PreToolUse` events from clobbering waiting states. `PostToolUse` is protected by tool_use_id matching (only the ID-matched permission-gated tool clears the state).
+
+### Background detection is regex-fragile but probe-backed
+bash/monitor/workflow launches are detected by regex-matching tool_result text (see `background-ledger.ts`); those ack strings are Claude-Code-version dependent and could drift. This only affects how *fast* a surface reaches yellow / drains — the liveness probes (lsof/pgrep/subagent-tail/state-file) are the correctness backstop, so a missed ack string self-corrects on the next 5s reconciliation sweep. Subagents avoid the regexes entirely (tracked via SubagentStart/Stop hooks). When debugging a stuck-yellow surface, check `background-ledger.ts` regexes against the current transcript ack wording first, then the probe paths (`<transcript-dir>/<sid>/subagents/agent-<id>.jsonl`, `.../workflows/<runId>.json`).

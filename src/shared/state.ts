@@ -3,7 +3,7 @@ import type { UndoEntry } from './undo-types'
 
 // --- Claude state enum ---
 
-export type ClaudeState = 'stopped' | 'working' | 'waiting_permission' | 'waiting_question' | 'waiting_plan' | 'stuck'
+export type ClaudeState = 'stopped' | 'working' | 'working_background' | 'waiting_permission' | 'waiting_question' | 'waiting_plan'
 
 // --- Terminal session tracking ---
 

@@ -804,14 +804,14 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
       const targetSessionId = node.sessionId
       const content = msg.data.replace(/\r?\n/g, '\r')
       sessionManager.write(targetSessionId, '\x1b[200~' + content + '\x1b[201~')
-      claudeStateMachine.handleClientWrite(targetSessionId, false)
+      // Mark read; the resulting UserPromptSubmit hook drives the working state.
+      claudeStateMachine.handleClientInteract(targetSessionId)
       autoContinueManager.cancelForSurface(targetSessionId)
 
       const submit = msg.submit !== false  // default true
       if (submit) {
         setTimeout(() => {
           sessionManager.write(targetSessionId, '\r')
-          claudeStateMachine.handleClientWrite(targetSessionId, true)
         }, 1000)
       }
 
@@ -1083,7 +1083,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'write': {
       sessionManager.write(msg.sessionId, msg.data)
-      claudeStateMachine.handleClientWrite(msg.sessionId, msg.data === '\r')
+      // Interacting with the terminal only marks it read — state is derived from
+      // hooks + transcript, not keystrokes.
+      claudeStateMachine.handleClientInteract(msg.sessionId)
       autoContinueManager.cancelForSurface(msg.sessionId)
       break
     }

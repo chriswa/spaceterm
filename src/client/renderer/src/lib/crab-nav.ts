@@ -1,4 +1,4 @@
-export type CrabColor = 'white' | 'red' | 'green' | 'purple' | 'orange' | 'dim-orange' | 'gray' | 'asleep'
+export type CrabColor = 'white' | 'red' | 'green' | 'purple' | 'orange' | 'yellow' | 'gray' | 'asleep'
 
 /** Hex colors for each crab color variant. Matches the toolbar CSS classes. */
 export const CRAB_COLORS: Record<CrabColor, string> = {
@@ -7,7 +7,9 @@ export const CRAB_COLORS: Record<CrabColor, string> = {
   green: '#44cc77',
   purple: '#bb55ff',
   orange: '#ca7c5e',
-  'dim-orange': '#653e2f',
+  // yellow = turn finished but background work (subagents / bash / monitors /
+  // workflows) still running. A passive "winding down" status, not attention.
+  yellow: '#e6c34d',
   gray: '#888888',
   asleep: '#555555',
 }
@@ -55,7 +57,8 @@ function deriveToolbarIndicatorInner(
   if (claudeState === 'waiting_question') return { kind: 'claude', color: 'green', unviewed: claudeStatusUnread }
   if (claudeState === 'waiting_plan') return { kind: 'claude', color: 'purple', unviewed: claudeStatusUnread }
   if (claudeState === 'working') return { kind: 'claude', color: 'orange', unviewed: false }
-  if (claudeState === 'stuck') return { kind: 'claude', color: 'dim-orange', unviewed: claudeStatusUnread }
+  // Turn ended but background work is still running — passive status, like working.
+  if (claudeState === 'working_background') return { kind: 'claude', color: 'yellow', unviewed: false }
   if (claudeState === 'stopped' && claudeStatusUnread && hasClaudeHistory) return { kind: 'claude', color: 'white', unviewed: true }
   if (hasClaudeHistory) return { kind: 'claude', color: 'gray', unviewed: false }
   // Plain terminal — no Claude history
@@ -124,13 +127,12 @@ export function adjacentCrab(
  *   0.5: green + unviewed      (waiting_question, unread)
  *   1:   purple + unviewed     (waiting_plan, unread)
  *   2:   white + unviewed      (stopped, unread)
- *   2.5: dim-orange + unviewed (stuck, unread)
  *   3:   red + !unviewed       (waiting_permission, viewed)
  *   3.5: green + !unviewed     (waiting_question, viewed)
  *   4:   purple + !unviewed    (waiting_plan, viewed)
  *   5:   gray                  (dormant)
- *   5.5: dim-orange + !unviewed (stuck, viewed)
  *   6:   orange                (working)
+ *   6.5: yellow                (working_background — finishing background work)
  *   99:  asleep                (user-hidden, lowest priority)
  *
  * Tiebreaker: prefer oldest (leftmost in toolbar). Since crabs are sorted
@@ -162,9 +164,9 @@ function crabTier(crab: CrabEntry): number {
     case 'green':  return crab.unviewed ? 0.5 : 3.5
     case 'purple': return crab.unviewed ? 1 : 4
     case 'white':      return 2 // white is always unviewed
-    case 'dim-orange': return crab.unviewed ? 2.5 : 5.5
     case 'gray':       return 5
     case 'orange':     return 6
+    case 'yellow':     return 6.5
     case 'asleep':     return 99
   }
 }
