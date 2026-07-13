@@ -838,17 +838,17 @@ function CopyCleanupToggle() {
 
 function formatResetTime(label: string, isoString: string): string | null {
   try {
-    const d = new Date(isoString)
-    if (isNaN(d.getTime())) return null
-    // Round to nearest hour
-    if (d.getMinutes() >= 30) d.setHours(d.getHours() + 1)
-    d.setMinutes(0, 0, 0)
-    const hour = d.toLocaleTimeString(undefined, { hour: 'numeric' })
+    const raw = new Date(isoString)
+    if (isNaN(raw.getTime())) return null
+    // Round to the nearest minute (Anthropic gives us second-level resolution;
+    // don't over-round to the hour, which was off by up to ~30 minutes).
+    const d = new Date(Math.round(raw.getTime() / 60_000) * 60_000)
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
     const now = new Date()
     const diffDays = Math.round((d.getTime() - now.getTime()) / 86_400_000)
-    if (diffDays <= 0) return `${label} resets at ${hour}`
+    if (diffDays <= 0) return `${label} resets at ${time}`
     const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    return `${label} resets ${dateStr} at ${hour}`
+    return `${label} resets ${dateStr} at ${time}`
   } catch {
     return null
   }
