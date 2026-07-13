@@ -100,6 +100,35 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'yellow stays yellow while a subagent runs tools (subagent PreToolUse ignored)',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      // The subagent keeps calling tools on the main surface — these carry
+      // agent_id and must NOT flip the idle main agent back to orange.
+      hook(sm, 'PreToolUse', { agent_id: 'a1', tool_use_id: 'sub-tool-1' })
+      hook(sm, 'PreToolUse', { agent_id: 'a1', tool_use_id: 'sub-tool-2' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+    },
+  },
+  {
+    name: 'yellow → working when the MAIN agent resumes (PreToolUse without agent_id)',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      hook(sm, 'PreToolUse', { tool_use_id: 'main-tool' }) // no agent_id → main agent
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
     name: 'yellow + assistant output → working (agent resumed on its own)',
     run: (sm, deps) => {
       hook(sm, 'UserPromptSubmit')

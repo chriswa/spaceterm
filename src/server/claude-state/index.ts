@@ -135,6 +135,14 @@ export class ClaudeStateMachine {
     const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : undefined
     if (transcriptPath || sessionId) this.backgroundLedger.setContext(surfaceId, transcriptPath, sessionId)
 
+    // Subagents fire their tool hooks (PreToolUse/PostToolUse/PreCompact) on the
+    // MAIN agent's surface, tagged with agent_id. Those events are background
+    // work, not the main agent — see the working-signals block, which ignores
+    // them so a subagent's tool calls can't flip working_background (yellow)
+    // back to working, or corrupt main-agent permission correlation. (Only
+    // SubagentStart/SubagentStop use this agent_id, to drive the ledger.)
+    const agentId = typeof payload?.agent_id === 'string' ? payload.agent_id : undefined
+
     // ── Stop: the main turn finished ──
     // If backgrounded work (subagents / bash / monitors / workflows) is still
     // outstanding, the session isn't truly idle — show 'working_background'
@@ -162,7 +170,6 @@ export class ClaudeStateMachine {
     // Drop it from the ledger; if that empties the ledger, drain to 'stopped'
     // (gated in applyTransition to only fire from 'working_background').
     if (hookType === 'SubagentStop') {
-      const agentId = typeof payload?.agent_id === 'string' ? payload.agent_id : undefined
       if (agentId) this.backgroundLedger.completeAgent(surfaceId, agentId)
       this.drainBackgroundIfIdle(surfaceId, 'hook', `hook:SubagentStop${BG_DRAINED_SUFFIX}`, hookTime)
     }
@@ -213,6 +220,16 @@ export class ClaudeStateMachine {
     // SubagentStart: Claude spawned a subagent
     // PreCompact: Claude is about to compact context
     if (hookType === 'UserPromptSubmit' || hookType === 'PreToolUse' || hookType === 'SubagentStart' || hookType === 'PreCompact') {
+      // A PreToolUse/PreCompact carrying an agent_id is a SUBAGENT's own event,
+      // fired on the main surface. It's background work — not the main agent —
+      // so it must not drive main-surface state (that's what would flip yellow
+      // back to orange while the main agent is idle), and it must not touch
+      // lastPreToolUseId (which correlates MAIN-agent permission prompts).
+      // SubagentStart also carries agent_id but legitimately means the main
+      // agent spawned a subagent, so it stays a working signal + registers.
+      if ((hookType === 'PreToolUse' || hookType === 'PreCompact') && agentId) {
+        return
+      }
       if (hookType === 'PreToolUse') {
         // Track the tool_use_id so PermissionRequest can associate it.
         // We overwrite any previous value because only the most recent
@@ -227,7 +244,6 @@ export class ClaudeStateMachine {
         // yellow. Subagents are tracked via hooks (not transcript scraping)
         // because the hook's agent_id is authoritative and pairs cleanly with
         // SubagentStop.
-        const agentId = typeof payload?.agent_id === 'string' ? payload.agent_id : undefined
         if (agentId) this.backgroundLedger.registerAgent(surfaceId, agentId)
       }
       if (hookType === 'UserPromptSubmit') {
