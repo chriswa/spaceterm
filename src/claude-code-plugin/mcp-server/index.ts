@@ -1,4 +1,6 @@
 import { emitMarkdownTool } from './emit-markdown.js'
+import { emitMarkdownOnParentTool } from './emit-markdown-on-parent.js'
+import { resolveHandoffContextTool } from './resolve-handoff-context.js'
 import { spawnClaudeSurfaceTool } from './spawn-claude-surface.js'
 import { forkClaudeSurfaceTool } from './fork-claude-surface.js'
 import { spacetermBroadcastTool } from './spaceterm-broadcast.js'
@@ -9,7 +11,7 @@ import { startStdioServer } from './stdio-mcp.js'
 startStdioServer({
   name: 'spaceterm-mcp',
   version: '0.1.0',
-  tools: [emitMarkdownTool, spawnClaudeSurfaceTool, forkClaudeSurfaceTool, spacetermBroadcastTool, playSoundTool, speakTool],
+  tools: [emitMarkdownTool, emitMarkdownOnParentTool, resolveHandoffContextTool, spawnClaudeSurfaceTool, forkClaudeSurfaceTool, spacetermBroadcastTool, playSoundTool, speakTool],
 }).catch((error: unknown) => {
   console.error('Fatal error:', error)
   process.exit(1)

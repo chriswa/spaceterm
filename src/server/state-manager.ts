@@ -329,6 +329,27 @@ export class StateManager {
   }
 
   /**
+   * Walk strictly upward from `nodeId` (starting at its parent) and return the
+   * id of the nearest ancestor whose type is 'terminal', skipping intermediate
+   * nodes such as title cards. Returns undefined if the chain reaches the root
+   * without hitting a terminal. Deterministic: every node has a single parent.
+   */
+  getNearestTerminalAncestor(nodeId: string): string | undefined {
+    const start = this.state.nodes[nodeId]
+    if (!start) return undefined
+    let currentId: string = start.parentId
+    const visited = new Set<string>()
+    while (currentId && currentId !== 'root' && !visited.has(currentId)) {
+      visited.add(currentId)
+      const node = this.state.nodes[currentId]
+      if (!node) return undefined
+      if (node.type === 'terminal') return node.id
+      currentId = node.parentId
+    }
+    return undefined
+  }
+
+  /**
    * Resolve a Claude session id to the terminal node hosting it, for external
    * focus requests that only know claude session ids (e.g. Voice Operator).
    *

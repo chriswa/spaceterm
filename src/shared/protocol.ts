@@ -95,6 +95,12 @@ export interface EmitMarkdownMessage {
   content: string
 }
 
+export interface EmitMarkdownOnParentMessage {
+  type: 'emit-markdown-on-parent'
+  surfaceId: string
+  content: string
+}
+
 export interface SpawnClaudeSurfaceMessage {
   type: 'spawn-claude-surface'
   surfaceId: string
@@ -449,6 +455,7 @@ export type IngestMessage =
   | HookMessage
   | StatusLineMessage
   | EmitMarkdownMessage
+  | EmitMarkdownOnParentMessage
   | SpawnClaudeSurfaceMessage
   | ForkClaudeSurfaceMessage
   | SpacetermBroadcastMessage
@@ -795,6 +802,23 @@ export interface ScriptUnreadMessage {
   nodeId: string
 }
 
+/**
+ * Resolve everything the fork-handoff command needs, in one round-trip: the
+ * caller surface's current transcript path, whether it is a fork (its transcript
+ * carries `forkedFrom` markers), and the nearest ancestor terminal surface to
+ * hand the summary off to (skipping intermediate nodes such as title cards).
+ *
+ * `surfaceId` is the caller's SPACETERM_SURFACE_ID — a *pty session id*, which is
+ * resolved to a node id server-side via `getNodeIdForSession`. It is NOT a node
+ * id: the two coincide only at a terminal's first launch and diverge after a
+ * restart/resume (which rebinds the node to a fresh pty session id).
+ */
+export interface ScriptResolveHandoffMessage {
+  type: 'script-resolve-handoff'
+  seq: number
+  surfaceId: string
+}
+
 export type ScriptMessage =
   | ScriptGetAncestorsMessage
   | ScriptGetNodeMessage
@@ -802,6 +826,7 @@ export type ScriptMessage =
   | ScriptSubscribeMessage
   | ScriptForkClaudeMessage
   | ScriptUnreadMessage
+  | ScriptResolveHandoffMessage
 
 // --- Script socket responses ---
 
@@ -839,12 +864,29 @@ export interface ScriptForkClaudeResult {
   error?: string
 }
 
+/** The parent surface a handoff can be shipped to. */
+export interface HandoffTargetSurface {
+  nodeId: string
+  title: string | null
+  alive: boolean
+}
+
+export interface ScriptResolveHandoffResult {
+  type: 'script-resolve-handoff-result'
+  seq: number
+  transcriptPath?: string                        // absent if no transcript found on disk
+  isFork?: boolean                               // true when the transcript carries `forkedFrom` markers
+  targetSurface?: HandoffTargetSurface | null    // null when there is no ancestor terminal to hand off to
+  error?: string
+}
+
 export type ScriptResponse =
   | ScriptGetAncestorsResult
   | ScriptGetNodeResult
   | ScriptShipItResult
   | ScriptSubscribeResult
   | ScriptForkClaudeResult
+  | ScriptResolveHandoffResult
 
 export type ServerMessage =
   | CreatedMessage

@@ -544,6 +544,26 @@ function handleIngestMessage(msg: IngestMessage): void {
       break
     }
 
+    case 'emit-markdown-on-parent': {
+      const callerNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!callerNodeId) {
+        console.error(`[emit-markdown-on-parent] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      const targetNodeId = stateManager.getNearestTerminalAncestor(callerNodeId)
+      if (!targetNodeId) {
+        console.error(`[emit-markdown-on-parent] No terminal ancestor for ${callerNodeId.slice(0, 8)}`)
+        break
+      }
+      const empPos = computePlacement(
+        stateManager.getState().nodes,
+        targetNodeId,
+        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT }
+      )
+      stateManager.createMarkdown(targetNodeId, empPos.x, empPos.y, msg.content)
+      break
+    }
+
     case 'spawn-claude-surface': {
       const spawnParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
       if (!spawnParentNodeId) {
@@ -796,6 +816,46 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
       }
 
       sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: true })
+      break
+    }
+
+    case 'script-resolve-handoff': {
+      // The caller supplies its pty-level surface id; resolve it to the stable
+      // node id (survives terminal restarts, which rebind the node to a new pty).
+      const nodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      const node = nodeId ? stateManager.getNode(nodeId) : undefined
+      if (!nodeId || !node || node.type !== 'terminal') {
+        sendAndClose({ type: 'script-resolve-handoff-result', seq: msg.seq, error: 'not-a-terminal' })
+        return
+      }
+
+      // Resolve this surface's current transcript (newest claude session on disk).
+      let transcriptPath: string | undefined
+      let isFork = false
+      const cwd = node.cwd
+      if (cwd) {
+        const history = node.claudeSessionHistory ?? []
+        for (let i = history.length - 1; i >= 0; i--) {
+          const candidate = sessionFilePath(cwd, history[i].claudeSessionId)
+          if (fs.existsSync(candidate)) { transcriptPath = candidate; break }
+        }
+        if (transcriptPath) {
+          try {
+            // fork stamps `forkedFrom` on every copied prefix entry; a non-forked
+            // (spawned or root) session's transcript never contains it.
+            isFork = fs.readFileSync(transcriptPath, 'utf8').includes('"forkedFrom"')
+          } catch { /* leave isFork=false when unreadable */ }
+        }
+      }
+
+      // Nearest ancestor terminal = the "parent surface" to hand the summary to.
+      const targetId = stateManager.getNearestTerminalAncestor(nodeId)
+      const targetNode = targetId ? stateManager.getNode(targetId) : undefined
+      const targetSurface = targetNode && targetNode.type === 'terminal'
+        ? { nodeId: targetNode.id, title: targetNode.name ?? null, alive: targetNode.alive }
+        : null
+
+      sendAndClose({ type: 'script-resolve-handoff-result', seq: msg.seq, transcriptPath, isFork, targetSurface })
       break
     }
 
