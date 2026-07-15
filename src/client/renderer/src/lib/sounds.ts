@@ -27,7 +27,7 @@ const ERROR_NOTES: Note[] = [
 ]
 
 const DONE_NOTES: Note[] = [
-  { freq: G5, start: 0, duration: 0.35, type: 'sine', gain: 1.0 },
+  { freq: G5, start: 0, duration: 0.35, type: 'sine', gain: 0.3 },
 ]
 
 // -- Synth engine --
