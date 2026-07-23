@@ -1,5 +1,4 @@
 import { useNodeStore } from '../stores/nodeStore'
-import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { usePeerStore } from '../stores/peerStore'
@@ -79,12 +78,6 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onFileContent((nodeId: string, content: string) => {
       useNodeStore.getState().applyFileContent(nodeId, content)
-    })
-  )
-
-  cleanupFns.push(
-    window.api.node.onClaudeUsage((usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes) => {
-      useUsageStore.getState().update(usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes)
     })
   )
 

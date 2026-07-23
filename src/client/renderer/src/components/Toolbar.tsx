@@ -7,7 +7,6 @@ import type { CrabEntry } from '../lib/crab-nav'
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useSpeakingStore } from '../stores/speakingStore'
-import { useUsageStore } from '../stores/usageStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useFontStore, FONT_THEMES } from '../stores/fontStore'
 import { useCameraLockStore } from '../stores/cameraLockStore'
@@ -81,7 +80,6 @@ export function Toolbar({
         <span className="toolbar__status-item toolbar__metric"><span ref={fpsRef}>0</span> <span className="toolbar__metric-label">fps</span></span>
         <span className="toolbar__status-item toolbar__metric">{(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span></span>
         <GhRateLimitIndicator />
-        <UsageIndicators />
       </span>
       {crabs.length > 0 && (
         <CrabGroup crabs={crabs} onCrabClick={onCrabClick} onCrabReorder={onCrabReorder} selectedNodeId={selectedNodeId} crabNavEvent={crabNavEvent} />
@@ -836,28 +834,6 @@ function CopyCleanupToggle() {
   )
 }
 
-function formatResetTime(label: string, isoString: string): string | null {
-  try {
-    const raw = new Date(isoString)
-    if (isNaN(raw.getTime())) return null
-    // Round to the nearest minute (Anthropic gives us second-level resolution;
-    // don't over-round to the hour, which was off by up to ~30 minutes).
-    const d = new Date(Math.round(raw.getTime() / 60_000) * 60_000)
-    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-    const now = new Date()
-    const diffDays = Math.round((d.getTime() - now.getTime()) / 86_400_000)
-    if (diffDays <= 0) return `${label} resets at ${time}`
-    const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    return `${label} resets ${dateStr} at ${time}`
-  } catch {
-    return null
-  }
-}
-
-function formatCredits(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`
-}
-
 // --- Delta sparkline (reusable for any minute-keyed monotonic history) ---
 
 const SPARKLINE_W = 60
@@ -934,8 +910,6 @@ function DeltaSparkline({ history, color, slotMinutes, formatPeak }: DeltaSparkl
 }
 
 const ONE_HOUR_MS = 60 * 60 * 1000
-const FIVE_HOUR_MS = 5 * 60 * 60 * 1000
-const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000
 /** Minimum elapsed time before showing a projection (avoids wild swings early). */
 const PROJECTION_MIN_ELAPSED_MS = 10 * 60 * 1000
 
@@ -1023,132 +997,4 @@ function GhRateLimitIndicator() {
   )
 }
 
-function UsageIndicators() {
-  const usage = useUsageStore(s => s.usage)
-  const subscriptionType = useUsageStore(s => s.subscriptionType)
-  const usageError = useUsageStore(s => s.usageError)
-  const creditHistory = useUsageStore(s => s.creditHistory)
-  const fiveHourHistory = useUsageStore(s => s.fiveHourHistory)
-  const sevenDayHistory = useUsageStore(s => s.sevenDayHistory)
-  const usageSlotMinutes = useUsageStore(s => s.slotMinutes)
-  const prevCreditsRef = useRef<number | null>(null)
-  const extraRef = useRef<HTMLSpanElement>(null)
-
-  const credits = usage?.extra_usage?.used_credits ?? null
-
-  // Floating combat text on credit increase
-  useEffect(() => {
-    const prev = prevCreditsRef.current
-    prevCreditsRef.current = credits
-    if (prev == null || credits == null || credits <= prev) return
-
-    const container = extraRef.current
-    if (!container) return
-
-    const diff = credits - prev
-    const el = document.createElement('span')
-    el.textContent = `+$${(diff / 100).toFixed(2)}`
-    el.style.cssText = 'position:absolute;left:50%;bottom:100%;pointer-events:none;font-size:28px;font-weight:700;color:#4ade80;white-space:nowrap;text-shadow:0 0 8px rgba(74,222,128,0.6);'
-    container.appendChild(el)
-    const anim = el.animate(
-      [
-        { transform: 'translate(-50%, 0)', opacity: 1, offset: 0 },
-        { transform: 'translate(-50%, -24px)', opacity: 1, offset: 0.35 },
-        { transform: 'translate(-50%, -54px)', opacity: 0, offset: 1 },
-      ],
-      { duration: 2800, easing: 'ease-out', fill: 'forwards' }
-    )
-    anim.onfinish = () => el.remove()
-  }, [credits])
-
-  // No data at all yet (not even a subscription type)
-  if (!subscriptionType) return null
-
-  // Loading state (subscriptionType set but no usage data yet and no error)
-  if (!usage && !usageError) {
-    return (
-      <span className="toolbar__usage">
-        <span className="toolbar__usage-tag">{subscriptionType}</span>
-        <span className="toolbar__status-item" style={{ color: '#888' }}>...</span>
-      </span>
-    )
-  }
-
-  // Error state with no cached data to fall back on
-  if (!usage && usageError) {
-    return (
-      <span className="toolbar__usage">
-        <span className="toolbar__usage-tag">{subscriptionType}</span>
-        <span className="toolbar__status-item" style={{ color: '#f87171' }} data-tooltip={usageError} data-tooltip-no-flip>
-          error
-        </span>
-      </span>
-    )
-  }
-
-  if (!usage) return null
-
-  const fiveHour = usage.five_hour
-  const sevenDay = usage.seven_day
-  const extra = usage.extra_usage
-  const isApi = subscriptionType === 'API'
-  const projected5h = fiveHour != null && typeof fiveHour.utilization === 'number'
-    ? projectUsage(fiveHour.utilization, fiveHour.resets_at, FIVE_HOUR_MS)
-    : null
-  const projected7d = sevenDay != null && typeof sevenDay.utilization === 'number'
-    ? projectUsage(sevenDay.utilization, sevenDay.resets_at, SEVEN_DAY_MS)
-    : null
-
-  return (
-    <span className="toolbar__usage">
-      <span className="toolbar__usage-tag">{subscriptionType}</span>
-      {fiveHour != null && typeof fiveHour.utilization === 'number' && (
-        <span
-          className="toolbar__status-item toolbar__metric"
-          style={{ position: 'relative' }}
-          data-tooltip={formatResetTime('5-hour usage', fiveHour.resets_at) ?? undefined}
-          data-tooltip-no-flip
-        >
-          <DeltaSparkline history={fiveHourHistory} color={utilizationColor(fiveHour.utilization)} slotMinutes={usageSlotMinutes} formatPeak={(v) => `${v.toFixed(1)}%`} />
-          <span className="toolbar__metric-label">5h </span>
-          <span style={{ color: utilizationColor(fiveHour.utilization) }}>{Math.round(fiveHour.utilization)}<span className="toolbar__metric-label">%</span></span>
-          {projected5h != null && (
-            <span style={{ color: '#888' }} data-tooltip="5-hour usage linear extrapolation">
-              {' '}({Math.round(projected5h)}<span className="toolbar__metric-label">%</span>)
-            </span>
-          )}
-        </span>
-      )}
-      {sevenDay != null && typeof sevenDay.utilization === 'number' && (
-        <span
-          className="toolbar__status-item toolbar__metric"
-          style={{ position: 'relative' }}
-          data-tooltip={formatResetTime('7-day usage', sevenDay.resets_at) ?? undefined}
-          data-tooltip-no-flip
-        >
-          <DeltaSparkline history={sevenDayHistory} color={utilizationColor(sevenDay.utilization)} slotMinutes={usageSlotMinutes} formatPeak={(v) => `${v.toFixed(1)}%`} />
-          <span className="toolbar__metric-label">7d </span>
-          <span style={{ color: utilizationColor(sevenDay.utilization) }}>{Math.round(sevenDay.utilization)}<span className="toolbar__metric-label">%</span></span>
-          {projected7d != null && (
-            <span style={{ color: '#888' }} data-tooltip="7-day usage linear extrapolation">
-              {' '}({Math.round(projected7d)}<span className="toolbar__metric-label">%</span>)
-            </span>
-          )}
-        </span>
-      )}
-      {extra != null && typeof extra.used_credits === 'number' && (
-        <span
-          ref={extraRef}
-          className="toolbar__status-item toolbar__metric"
-          style={{ position: 'relative' }}
-          data-tooltip={isApi ? 'Month-to-date API spend' : (extra.monthly_limit != null ? `Limit: ${formatCredits(extra.monthly_limit)}` : 'Limit: unlimited')}
-          data-tooltip-no-flip
-        >
-          <DeltaSparkline history={creditHistory} color="#4ade80" slotMinutes={usageSlotMinutes} formatPeak={formatCredits} />
-          {formatCredits(extra.used_credits)}
-        </span>
-      )}
-    </span>
-  )
-}
 

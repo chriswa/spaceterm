@@ -22,8 +22,6 @@ import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
-import { fetchClaudeUsage, NoOAuthCredentialsError, type ClaudeUsageData } from './claude-usage'
-import { fetchApiUsage } from './api-usage'
 import { parse as shellParse } from 'shell-quote'
 import { AutoContinueManager } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
@@ -33,7 +31,7 @@ import { SessionTitleSummarizer } from './session-title-summarizer'
  * The effective context window = context_window_size - this buffer.
  * UPDATE THIS when Claude Code changes its compaction threshold.
  */
-const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 33_000
+const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 0
 
 /** Spaceterm project root (two levels up from src/server/). */
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
@@ -197,17 +195,11 @@ const restartRecovery = new Map<string, {
 const clients = new Set<ClientConnection>()
 
 // --- Polling intervals (shared with ring buffer slot widths) ---
-const USAGE_POLL_TICK_MS = 15_000     // check conditions every 15s
-const USAGE_FETCH_COOLDOWN_MS = 5 * 60_000 // never fetch more than once per 5 minutes
 const GH_RATE_LIMIT_POLL_MS = 60_000 // every 1 minute
-// Slot widths in minutes — sent to the client so sparkline tooltips show correct per-minute rates
-const USAGE_SLOT_MINUTES = USAGE_FETCH_COOLDOWN_MS / 60_000
+// Slot width in minutes — sent to the client so sparkline tooltips show correct per-minute rates
 const GH_RATE_LIMIT_SLOT_MINUTES = GH_RATE_LIMIT_POLL_MS / 60_000
-const USAGE_IDLE_TIMEOUT_MS = 5 * 60_000 // stop fetching after 5 min of no client commands
-let lastClientCommandAt = 0
-let lastUsageFetchAt = 0
+// Directory holding the GitHub rate-limit history log (JSONL).
 const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
-const USAGE_CACHE_FILE = path.join(SOCKET_DIR, 'usage-cache.json')
 
 // --- Ring buffer keyed by time slots (reusable for any monotonic time-series) ---
 const HISTORY_SLOTS = 61
@@ -274,51 +266,7 @@ class RingBuffer {
   }
 }
 
-const creditHistory = new RingBuffer('claude-usage', USAGE_FETCH_COOLDOWN_MS)
-const fiveHourHistory = new RingBuffer('5h-usage', USAGE_FETCH_COOLDOWN_MS)
-const sevenDayHistory = new RingBuffer('7d-usage', USAGE_FETCH_COOLDOWN_MS)
 const ghRateLimitHistory = new RingBuffer('gh-rate-limit', GH_RATE_LIMIT_POLL_MS)
-
-// Cached last usage response — sent immediately to newly connected clients
-let cachedUsage: { usage: ClaudeUsageData | null; subscriptionType: string | null; rateLimitTier: string | null; usageError: string | null } | null = null
-
-function loadCachedUsage(): void {
-  try {
-    if (!fs.existsSync(USAGE_CACHE_FILE)) return
-    const data = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'))
-    if (data?.usage) {
-      cachedUsage = { ...data, usageError: data.usageError ?? null }
-      // Seed history buffers from the log; subscription type may be null for some account types
-      const logFile = path.join(USAGE_LOG_DIR, `usage_${data.subscriptionType ?? 'unknown'}.jsonl`)
-      creditHistory.seedFromLog(path.join(USAGE_LOG_DIR, 'usage_combined.jsonl'), 'combined_credits')
-      fiveHourHistory.seedFromLog(logFile, 'five_hour.utilization')
-      sevenDayHistory.seedFromLog(logFile, 'seven_day.utilization')
-      serverLog(`[claude-usage] Loaded cached usage (${data.subscriptionType})`)
-    }
-  } catch (err: any) {
-    serverLog(`[claude-usage] Failed to load usage cache: ${err.message}`)
-  }
-}
-
-// --- Cross-source MTD cost cache ---
-// When switching between "team" and "API", the toolbar should show the combined
-// total from both sources for the current month. Each source persists its last
-// known MTD cost here, and the poller adds the other source's value to the display.
-const CROSS_CACHE_PATH = path.join(SOCKET_DIR, 'usage-cross-cache.json')
-interface CrossCache { month: string; team: number; api: number }
-
-function loadCrossCache(): CrossCache {
-  const currentMonth = new Date().toISOString().slice(0, 7) // "2026-03"
-  try {
-    const data = JSON.parse(fs.readFileSync(CROSS_CACHE_PATH, 'utf8')) as CrossCache
-    if (data.month === currentMonth) return data
-  } catch { /* missing or corrupt */ }
-  return { month: currentMonth, team: 0, api: 0 }
-}
-
-function saveCrossCache(cache: CrossCache): void {
-  fs.writeFile(CROSS_CACHE_PATH, JSON.stringify(cache), () => {})
-}
 
 // --- Session names (Claude session id → assigned call-sign) ---
 // Sent by the external Voice Operator daemon on the hooks socket as a complete
@@ -342,14 +290,6 @@ function saveSessionNames(names: Record<string, string>): void {
 }
 
 let sessionNames: Record<string, string> = loadSessionNames()
-
-
-function saveCachedUsage(usage: ClaudeUsageData | null, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null = null): void {
-  cachedUsage = { usage, subscriptionType, rateLimitTier, usageError }
-  fs.writeFile(USAGE_CACHE_FILE, JSON.stringify(cachedUsage), (err) => {
-    if (err) serverLog(`[claude-usage] Failed to save usage cache: ${err.message}`)
-  })
-}
 
 // --- GitHub GraphQL rate limit polling ---
 const GH_RATE_LIMIT_LOG_FILE = path.join(USAGE_LOG_DIR, 'gh_rate_limit.jsonl')
@@ -984,7 +924,6 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
 }
 
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
-  lastClientCommandAt = Date.now()
   switch (msg.type) {
     case 'create': {
       const { sessionId, cols, rows } = sessionManager.create(msg.options)
@@ -2295,163 +2234,8 @@ async function startServer(): Promise<void> {
     (nodeId, gitStatus) => stateManager.updateDirectoryGitStatus(nodeId, gitStatus)
   )
 
-  // --- Claude usage: unified polling ---
-  // Each tick: try OAuth first (subscription accounts). If NoOAuthCredentialsError,
-  // fall back to the API usage scraper. This handles live switching between account
-  // types without requiring a restart.
-  loadCachedUsage()
-  let usageLogDirReady = false
-  let lastUsageSource: 'oauth' | 'api' | null = null
-  let lastOAuthSubscriptionType: string | null = null // remember sub type across 429s
-  let lastApiSeeded = false
-  const apiLogFile = path.join(USAGE_LOG_DIR, 'usage_API.jsonl')
-  const combinedCostLogFile = path.join(USAGE_LOG_DIR, 'usage_combined.jsonl')
-  setInterval(async () => {
-    const now = Date.now()
-    if (now - lastClientCommandAt > USAGE_IDLE_TIMEOUT_MS) return
-    if (now - lastUsageFetchAt < USAGE_FETCH_COOLDOWN_MS) return
-    lastUsageFetchAt = now
-
-    // --- Fetch OAuth usage (subscription accounts: Team, Pro, etc.) ---
-    let oauthUsage: ClaudeUsageData | null = null
-    let oauthSubType: string | null = null
-    let oauthRateLimitTier: string | null = null
-    let oauthOk = false
-    let oauthCredits: number | null = null
-    let apiCredits: number | null = null
-
-    try {
-      const result = await fetchClaudeUsage()
-      oauthUsage = result.usage
-      oauthSubType = result.subscriptionType
-      oauthRateLimitTier = result.rateLimitTier
-      lastOAuthSubscriptionType = oauthSubType
-      oauthOk = true
-
-      if (lastUsageSource !== 'oauth') {
-        serverLog(`[claude-usage] Using OAuth (${oauthSubType})`)
-        const seedLog = path.join(USAGE_LOG_DIR, `usage_${oauthSubType ?? 'unknown'}.jsonl`)
-        creditHistory.seedFromLog(combinedCostLogFile, 'combined_credits')
-        fiveHourHistory.seedFromLog(seedLog, 'five_hour.utilization')
-        sevenDayHistory.seedFromLog(seedLog, 'seven_day.utilization')
-        lastUsageSource = 'oauth'
-      }
-
-      if (oauthUsage.five_hour) fiveHourHistory.record(oauthUsage.five_hour.utilization, now)
-      if (oauthUsage.seven_day) sevenDayHistory.record(oauthUsage.seven_day.utilization, now)
-
-      // Track team credits for combining after both fetches
-      oauthCredits = oauthUsage.extra_usage?.used_credits ?? null
-
-      // Log OAuth data
-      if (!usageLogDirReady) { fs.mkdirSync(USAGE_LOG_DIR, { recursive: true }); usageLogDirReady = true }
-      const logEntry: Record<string, string | number | boolean | null> = { timestamp: new Date(now).toISOString() }
-      if (oauthUsage.five_hour) logEntry['five_hour.utilization'] = oauthUsage.five_hour.utilization
-      if (oauthUsage.seven_day) logEntry['seven_day.utilization'] = oauthUsage.seven_day.utilization
-      if (oauthUsage.extra_usage) logEntry['extra_usage.used_credits'] = oauthUsage.extra_usage.used_credits
-      const logFile = path.join(USAGE_LOG_DIR, `usage_${oauthSubType ?? 'unknown'}.jsonl`)
-      fs.appendFile(logFile, JSON.stringify(logEntry) + '\n', (err) => {
-        if (err) serverLog(`[claude-usage] Failed to write usage log: ${err.message}`)
-      })
-    } catch (oauthErr: any) {
-      if (!(oauthErr instanceof NoOAuthCredentialsError)) {
-        if (!lastOAuthSubscriptionType) lastOAuthSubscriptionType = cachedUsage?.subscriptionType ?? 'team'
-        serverLog(`[claude-usage] OAuth fetch failed: ${oauthErr.message}`)
-        const httpMatch = oauthErr.message.match(/returned (\d{3})/)
-        if (httpMatch) {
-          broadcastToAll({ type: 'server-error', message: `Claude usage: OAuth endpoint returned ${httpMatch[1]}` })
-        }
-      }
-    }
-
-    // --- Fetch API usage (Platform Console scraping) ---
-    // Skip for pro accounts (no API keys to track)
-    const isPro = (oauthSubType ?? lastOAuthSubscriptionType)?.toLowerCase() === 'pro'
-    if (!isPro) {
-      try {
-        if (!lastApiSeeded) {
-          creditHistory.seedFromLog(combinedCostLogFile, 'combined_credits')
-          lastApiSeeded = true
-        }
-
-        const result = await fetchApiUsage(serverLog)
-        const rawApiCredits = result.usage?.extra_usage?.used_credits ?? null
-
-        if (rawApiCredits != null) {
-          apiCredits = rawApiCredits
-          serverLog(`[api-usage] MTD cost: $${(rawApiCredits / 100).toFixed(2)}`)
-        }
-
-        // Log API data
-        if (!usageLogDirReady) { fs.mkdirSync(USAGE_LOG_DIR, { recursive: true }); usageLogDirReady = true }
-        const logEntry = { timestamp: new Date(now).toISOString(), 'extra_usage.used_credits': rawApiCredits }
-        fs.appendFile(apiLogFile, JSON.stringify(logEntry) + '\n', (writeErr) => {
-          if (writeErr) serverLog(`[api-usage] Failed to write usage log: ${writeErr.message}`)
-        })
-      } catch (apiErr: any) {
-        serverLog(`[api-usage] Fetch failed: ${apiErr.message}`)
-        const httpMatch = apiErr.message.match(/returned (\d{3})/)
-        if (httpMatch) {
-          broadcastToAll({ type: 'server-error', message: `Claude usage: Platform API returned ${httpMatch[1]}` })
-        }
-      }
-    }
-
-    // --- Combine and broadcast ---
-    // Merge fresh values with persisted cross-cache, then save
-    const crossCache = loadCrossCache()
-    if (oauthCredits != null) crossCache.team = oauthCredits
-    if (apiCredits != null) crossCache.api = apiCredits
-    saveCrossCache(crossCache)
-
-    const effectiveSubType = oauthSubType ?? lastOAuthSubscriptionType ?? 'API'
-    const combinedCredits = isPro
-      ? (oauthUsage?.extra_usage?.used_credits ?? null)
-      : (crossCache.team + crossCache.api) || null
-
-    if (combinedCredits != null) {
-      creditHistory.record(combinedCredits, now)
-      // Log combined cost so creditHistory seeds correctly after restart
-      if (!usageLogDirReady) { fs.mkdirSync(USAGE_LOG_DIR, { recursive: true }); usageLogDirReady = true }
-      const combinedLogEntry = { timestamp: new Date(now).toISOString(), combined_credits: combinedCredits }
-      fs.appendFile(combinedCostLogFile, JSON.stringify(combinedLogEntry) + '\n', () => {})
-    }
-
-    const baseUsage = oauthUsage ?? cachedUsage?.usage ?? null
-    const broadcastUsage = baseUsage && combinedCredits != null && baseUsage.extra_usage
-      ? { ...baseUsage, extra_usage: { ...baseUsage.extra_usage, used_credits: combinedCredits } }
-      : baseUsage
-
-    if (broadcastUsage || oauthOk) {
-      broadcastToAll({
-        type: 'claude-usage',
-        usage: broadcastUsage,
-        subscriptionType: effectiveSubType,
-        rateLimitTier: oauthRateLimitTier ?? cachedUsage?.rateLimitTier ?? null,
-        usageError: null,
-        creditHistory: creditHistory.build(),
-        fiveHourHistory: fiveHourHistory.build(),
-        sevenDayHistory: sevenDayHistory.build(),
-        slotMinutes: USAGE_SLOT_MINUTES,
-      })
-      saveCachedUsage(broadcastUsage, effectiveSubType, oauthRateLimitTier)
-    } else if (!oauthOk) {
-      const errorSubType = lastOAuthSubscriptionType ?? 'API'
-      broadcastToAll({
-        type: 'claude-usage',
-        usage: null,
-        subscriptionType: errorSubType,
-        rateLimitTier: null,
-        usageError: 'Both OAuth and API usage fetches failed',
-        creditHistory: creditHistory.build(),
-        fiveHourHistory: fiveHourHistory.build(),
-        sevenDayHistory: sevenDayHistory.build(),
-        slotMinutes: USAGE_SLOT_MINUTES,
-      })
-    }
-  }, USAGE_POLL_TICK_MS)
-
   // --- GitHub GraphQL rate limit polling ---
+  let usageLogDirReady = false
   loadCachedGhRateLimit()
   const pollGhRateLimit = async () => {
     const now = Date.now()
@@ -2526,17 +2310,7 @@ async function startServer(): Promise<void> {
     // Push the current session-name map so a (re)connecting client re-hydrates
     send(socket, { type: 'session-names', names: sessionNames })
 
-    // Send cached usage data immediately so the client doesn't wait for the next poll
-    if (cachedUsage) {
-      send(socket, {
-        type: 'claude-usage',
-        ...cachedUsage,
-        creditHistory: creditHistory.build(),
-        fiveHourHistory: fiveHourHistory.build(),
-        sevenDayHistory: sevenDayHistory.build(),
-        slotMinutes: USAGE_SLOT_MINUTES,
-      })
-    }
+    // Send cached GitHub rate-limit data immediately so the client doesn't wait for the next poll
     if (cachedGhRateLimit) {
       send(socket, { type: 'gh-rate-limit', data: cachedGhRateLimit, usedHistory: ghRateLimitHistory.build(), slotMinutes: GH_RATE_LIMIT_SLOT_MINUTES })
     }

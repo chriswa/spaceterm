@@ -531,12 +531,6 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('claude-usage', (usage: Record<string, unknown> | null, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[], slotMinutes: number) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('claude-usage', usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes)
-    }
-  })
-
   client!.on('gh-rate-limit', (data: Record<string, unknown>, usedHistory: (number | null)[], slotMinutes: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('gh-rate-limit', data, usedHistory, slotMinutes)

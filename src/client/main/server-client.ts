@@ -148,11 +148,6 @@ export class ServerClient extends EventEmitter {
       return
     }
 
-    if (msg.type === 'claude-usage') {
-      this.emit('claude-usage', msg.usage, msg.subscriptionType, msg.rateLimitTier, msg.usageError, msg.creditHistory, msg.fiveHourHistory, msg.sevenDayHistory, msg.slotMinutes)
-      return
-    }
-
     if (msg.type === 'gh-rate-limit') {
       this.emit('gh-rate-limit', msg.data, msg.usedHistory, msg.slotMinutes)
       return

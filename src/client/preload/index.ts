@@ -216,11 +216,6 @@ const nodeApi: NodeApi = {
     ipcRenderer.on('server:error', listener)
     return () => ipcRenderer.removeListener('server:error', listener)
   },
-  onClaudeUsage: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, usage: any, subscriptionType: string | null, rateLimitTier: string | null, usageError: string | null, creditHistory: (number | null)[], fiveHourHistory: (number | null)[], sevenDayHistory: (number | null)[], slotMinutes: number) => callback(usage, subscriptionType, rateLimitTier, usageError, creditHistory, fiveHourHistory, sevenDayHistory, slotMinutes)
-    ipcRenderer.on('claude-usage', listener)
-    return () => ipcRenderer.removeListener('claude-usage', listener)
-  },
   onGhRateLimit: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, data: any, usedHistory: (number | null)[], slotMinutes: number) => callback(data, usedHistory, slotMinutes)
     ipcRenderer.on('gh-rate-limit', listener)

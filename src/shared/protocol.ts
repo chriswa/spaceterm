@@ -661,19 +661,6 @@ export interface ServerErrorMessage {
   message: string
 }
 
-export interface ClaudeUsageMessage {
-  type: 'claude-usage'
-  usage: import('../server/claude-usage').ClaudeUsageData | null
-  subscriptionType: string | null
-  rateLimitTier: string | null
-  usageError: string | null
-  creditHistory: (number | null)[]
-  fiveHourHistory: (number | null)[]
-  sevenDayHistory: (number | null)[]
-  /** Minutes per history slot (matches the server's polling interval). */
-  slotMinutes: number
-}
-
 export interface GhRateLimitData {
   limit: number
   used: number
@@ -910,7 +897,6 @@ export type ServerMessage =
   | FileContentMessage
   | PlanCacheUpdateMessage
   | ServerErrorMessage
-  | ClaudeUsageMessage
   | GhRateLimitMessage
   | PlaySoundServerMessage
   | SpeakServerMessage
