@@ -50,6 +50,8 @@ export interface TerminalNodeData extends BaseNodeData {
   exitCode?: number // set when alive → false
   cwd?: string
   extraCliArgs?: string
+  /** Which agent CLI this surface runs. Absent = plain terminal or legacy Claude (inferred from session history). */
+  agentType?: 'claude' | 'cursor' | 'codex'
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean

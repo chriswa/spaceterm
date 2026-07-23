@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { z } from 'zod'
 import { defineTool } from './stdio-mcp.js'
+import { requireSurfaceId } from './surface-env.js'
 
 // Queries go to the request/response scripts socket, not the fire-and-forget hooks socket.
 const SCRIPTS_SOCKET_PATH = process.env.SPACETERM_HOME
@@ -29,13 +30,7 @@ export const resolveHandoffContextTool = defineTool({
     'Call this first from the fork-handoff distiller; abort if isFork is false or targetSurface is null.',
   inputSchema: z.object({}),
   async handler() {
-    const surfaceId = process.env.SPACETERM_SURFACE_ID
-    if (!surfaceId) {
-      return {
-        content: [{ type: 'text' as const, text: 'Error: SPACETERM_SURFACE_ID environment variable is not set. This tool only works inside a spaceterm terminal.' }],
-        isError: true,
-      }
-    }
+    const surfaceId = requireSurfaceId()
 
     // Pass our pty-level surface id; the server resolves it to a node id (it is
     // NOT itself a node id after a terminal restart).

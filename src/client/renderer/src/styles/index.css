@@ -150,6 +150,13 @@ html, body, #root {
   transition: transform 0.2s ease;
 }
 
+/* Cursor/Codex marks fill their square canvas more than the crab/terminal marks — shrink in the toolbar only. */
+.toolbar__crab--cursor,
+.toolbar__crab--codex {
+  -webkit-mask-size: 80%;
+  mask-size: 80%;
+}
+
 .toolbar__crab:hover,
 .toolbar__crab--card-hovered {
   transform: scale(1.3);
@@ -2193,6 +2200,14 @@ html, body, #root {
   -webkit-mask-position: center;
 }
 
+/* Cursor/Codex marks are square and read smaller than the wide crab mark at the same height. */
+.terminal-card__crab-behind--cursor,
+.terminal-card__crab-behind--codex {
+  height: calc(62px * var(--zoom-boost, 1));
+  aspect-ratio: 1;
+  translate: -50% -55%;
+}
+
 /* Terminal Search Bar */
 .terminal-search-bar {
   position: absolute;
@@ -2775,6 +2790,18 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  width: 14px;
+}
+
+.add-node-body__mask-icon {
+  display: block;
+  background-color: currentColor;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
 }
 
 .add-node-body__label {

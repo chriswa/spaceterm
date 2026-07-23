@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { z } from 'zod'
 import { defineTool } from './stdio-mcp.js'
+import { requireSurfaceId } from './surface-env.js'
 
 const SOCKET_PATH = process.env.SPACETERM_HOME
   ? path.join(process.env.SPACETERM_HOME, 'hooks.sock')
@@ -17,13 +18,7 @@ export const emitMarkdownTool = defineTool({
     content: z.string().describe('Markdown content to display on the card'),
   }),
   async handler({ content }) {
-    const surfaceId = process.env.SPACETERM_SURFACE_ID
-    if (!surfaceId) {
-      return {
-        content: [{ type: 'text' as const, text: 'Error: SPACETERM_SURFACE_ID environment variable is not set. This tool only works inside a spaceterm terminal.' }],
-        isError: true,
-      }
-    }
+    const surfaceId = requireSurfaceId()
 
     const message = JSON.stringify({ type: 'emit-markdown', surfaceId, content }) + '\n'
 

@@ -198,7 +198,7 @@ export function App() {
 
     for (const node of Object.values(nodes)) {
       if (node.type !== 'terminal') continue
-      const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0)
+      const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0, node.agentType)
       const createdAt = node.terminalSessions[0]?.startedAt ?? ''
       entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
     }
@@ -815,7 +815,10 @@ export function App() {
     initServerSync((nodeId, fields, prevNode) => {
       // Fork detection: when claudeSessionHistory grows with a 'fork' entry,
       // spawn a new terminal that resumes the previous Claude session.
+      // Cursor has no fork — skip.
       if (!('claudeSessionHistory' in fields) || !prevNode || prevNode.type !== 'terminal') return
+      // Cursor/Codex: no Claude-style in-TUI fork detection (Codex forks via native CLI + Spaceterm UI).
+      if (prevNode.agentType === 'cursor' || prevNode.agentType === 'codex') return
       const history = (fields as { claudeSessionHistory: ClaudeSessionEntry[] }).claudeSessionHistory
       if (history.length <= prevNode.claudeSessionHistory.length || history.length < 2) return
       const latestEntry = history[history.length - 1]
@@ -992,11 +995,13 @@ export function App() {
   const handleSessionRevive = useCallback(async (nodeId: string, session: import('../../../shared/state').TerminalSessionEntry) => {
     if (!session.claudeSessionId) return
     const cwd = getParentCwd(nodeId)
-    const result = await sendTerminalCreate(
-      nodeId,
-      { cwd, claude: { resumeSessionId: session.claudeSessionId } },
-      session.shellTitleHistory
-    )
+    const node = useNodeStore.getState().nodes[nodeId]
+    const resumeOpts = node?.type === 'terminal' && node.agentType === 'cursor'
+      ? { cwd, cursor: { resumeSessionId: session.claudeSessionId } }
+      : node?.type === 'terminal' && node.agentType === 'codex'
+        ? { cwd, codex: { resumeSessionId: session.claudeSessionId } }
+        : { cwd, claude: { resumeSessionId: session.claudeSessionId } }
+    const result = await sendTerminalCreate(nodeId, resumeOpts, session.shellTitleHistory)
     if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
     navigateToNode(result.sessionId)
   }, [getParentCwd, navigateToNode])
@@ -1537,6 +1542,8 @@ export function App() {
     let nodeId: string
     switch (type) {
       case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: false } }, undefined, undefined, hint?.x, hint?.y); nodeId = r.sessionId; break }
+      case 'cursor': { const r = await sendTerminalCreate(parentNodeId, { cwd, cursor: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = r.sessionId; break }
+      case 'codex': { const r = await sendTerminalCreate(parentNodeId, { cwd, codex: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = r.sessionId; break }
       case 'terminal': {
         const parentNode = useNodeStore.getState().nodes[parentNodeId]
         const { initialInput, initialName: mdName, x, y } = getMarkdownSpawnInfo(parentNode)
@@ -2181,6 +2188,7 @@ export function App() {
             onArchiveDelete={handleArchiveDelete}
             onOpenArchiveSearch={handleOpenArchiveSearch}
             claudeSessionHistory={t.claudeSessionHistory}
+            agentType={t.agentType}
             claudeState={t.claudeState}
             claudeModel={t.claudeModel}
             onNodeReady={handleNodeReady}

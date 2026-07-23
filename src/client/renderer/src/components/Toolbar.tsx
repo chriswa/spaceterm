@@ -2,8 +2,23 @@ import { useRef, useEffect, useLayoutEffect, useState } from 'react'
 import { useFps } from '../hooks/useFps'
 import { usePerfStore } from '../stores/perfStore'
 import crabIcon from '../assets/crab.png'
+import cursorAgentIcon from '../assets/cursor-agent.png'
+import codexAgentIcon from '../assets/codex-agent.png'
 import terminalIcon from '../assets/terminal.png'
-import type { CrabEntry } from '../lib/crab-nav'
+import type { AgentIndicatorKind, CrabEntry } from '../lib/crab-nav'
+
+function indicatorIconUrl(kind: AgentIndicatorKind): string {
+  if (kind === 'terminal') return terminalIcon
+  if (kind === 'cursor') return cursorAgentIcon
+  if (kind === 'codex') return codexAgentIcon
+  return crabIcon
+}
+
+function indicatorKindClass(kind: AgentIndicatorKind): string {
+  if (kind === 'cursor') return ' toolbar__crab--cursor'
+  if (kind === 'codex') return ' toolbar__crab--codex'
+  return ''
+}
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useSpeakingStore } from '../stores/speakingStore'
@@ -415,9 +430,10 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
         // Convert right-relative offset to left position within current container
         const phantomLeft = containerWidth - oldRightOffset
         const phantom = document.createElement('button')
-        phantom.className = `toolbar__crab toolbar__crab--${prev.color}`
-        const maskUrl = prev.kind === 'terminal' ? terminalIcon : crabIcon
-        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;-webkit-mask-image:url(${maskUrl});mask-image:url(${maskUrl});-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;`
+        phantom.className = `toolbar__crab toolbar__crab--${prev.color}${indicatorKindClass(prev.kind)}`
+        const maskUrl = indicatorIconUrl(prev.kind)
+        const maskSize = prev.kind === 'cursor' || prev.kind === 'codex' ? '80%' : 'contain'
+        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;-webkit-mask-image:url(${maskUrl});mask-image:url(${maskUrl});-webkit-mask-size:${maskSize};mask-size:${maskSize};-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;`
         el.appendChild(phantom)
 
         const anim = phantom.animate(
@@ -736,11 +752,8 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
             }}
           >
             <button
-              className={`toolbar__crab toolbar__crab--${crab.color}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
-              style={crab.kind === 'terminal'
-                ? { WebkitMaskImage: `url(${terminalIcon})`, maskImage: `url(${terminalIcon})` }
-                : { WebkitMaskImage: `url(${crabIcon})`, maskImage: `url(${crabIcon})` }
-              }
+              className={`toolbar__crab toolbar__crab--${crab.color}${indicatorKindClass(crab.kind)}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
+              style={{ WebkitMaskImage: `url(${indicatorIconUrl(crab.kind)})`, maskImage: `url(${indicatorIconUrl(crab.kind)})` }}
               onMouseDown={(e) => handleCrabMouseDown(e, i)}
               onMouseEnter={() => {
                 if (!isDraggingRef.current) {

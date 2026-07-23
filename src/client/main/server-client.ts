@@ -145,6 +145,15 @@ export class ServerClient extends EventEmitter {
 
     if (msg.type === 'server-error') {
       this.emit('server-error', msg.message)
+      // Prefer rejecting the matching pending request so callers don't hang.
+      if ('seq' in msg && typeof msg.seq === 'number') {
+        const pending = this.pending.get(msg.seq)
+        if (pending) {
+          this.pending.delete(msg.seq)
+          pending.reject(new Error(msg.message))
+          return
+        }
+      }
       return
     }
 

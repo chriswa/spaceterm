@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "command": "scripts/hook-handler.sh", "timeout": 5 }
+    ],
+    "beforeSubmitPrompt": [
+      { "command": "scripts/hook-handler.sh", "timeout": 5 }
+    ],
+    "preToolUse": [
+      { "command": "scripts/hook-handler.sh", "timeout": 5 }
+    ],
+    "stop": [
+      { "command": "scripts/hook-handler.sh", "timeout": 5 }
+    ],
+    "sessionEnd": [
+      { "command": "scripts/hook-handler.sh", "timeout": 5 }
+    ],
+    "subagentStart": [
+      { "command": "scripts/hook-handler.sh", "timeout": 5 }
+    ],
+    "subagentStop": [
+      { "command": "scripts/hook-handler.sh", "timeout": 5 }
+    ]
+  }
+}

@@ -255,7 +255,8 @@ export class StateManager {
     cwd?: string,
     initialTitleHistory?: string[],
     name?: string,
-    insertAfterNodeId?: string
+    insertAfterNodeId?: string,
+    agentType?: 'claude' | 'cursor' | 'codex'
   ): TerminalNodeData {
     const zIndex = this.state.nextZIndex++
     const now = new Date().toISOString()
@@ -307,7 +308,8 @@ export class StateManager {
       shellTitleHistory: [...seedHistory],
       archivedChildren: [],
       colorPresetId: 'inherit',
-      ...(name ? { name } : {})
+      ...(name ? { name } : {}),
+      ...(agentType ? { agentType } : {})
     }
 
     this.state.nodes[sessionId] = node

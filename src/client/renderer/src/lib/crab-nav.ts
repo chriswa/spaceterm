@@ -14,11 +14,13 @@ export const CRAB_COLORS: Record<CrabColor, string> = {
   asleep: '#555555',
 }
 
+export type AgentIndicatorKind = 'claude' | 'cursor' | 'codex' | 'terminal'
+
 export interface CrabEntry {
   nodeId: string
   /** All Claude session ids this crab has hosted — used to match TTS speaking events. */
   claudeSessionIds: string[]
-  kind: 'claude' | 'terminal'
+  kind: AgentIndicatorKind
   color: CrabColor
   unviewed: boolean
   asleep: boolean
@@ -30,8 +32,7 @@ export interface CrabEntry {
 
 /**
  * Derive the toolbar indicator color and unviewed status from a terminal node's
- * state. Every terminal node produces an indicator — Claude surfaces use
- * claude-state-driven colors, plain terminals default to gray/white.
+ * state. Agent surfaces use state-driven colors; plain terminals default to gray/white.
  *
  * When asleep, the indicator is forced to a very dark grey regardless of underlying state.
  */
@@ -39,9 +40,10 @@ export function deriveToolbarIndicator(
   claudeState: string | undefined,
   claudeStatusUnread: boolean,
   claudeStatusAsleep: boolean,
-  hasClaudeHistory: boolean
-): { kind: 'claude' | 'terminal'; color: CrabColor; unviewed: boolean; asleep: boolean } {
-  const base = deriveToolbarIndicatorInner(claudeState, claudeStatusUnread, hasClaudeHistory)
+  hasSessionHistory: boolean,
+  agentType?: 'claude' | 'cursor' | 'codex'
+): { kind: AgentIndicatorKind; color: CrabColor; unviewed: boolean; asleep: boolean } {
+  const base = deriveToolbarIndicatorInner(claudeState, claudeStatusUnread, hasSessionHistory, agentType)
   if (claudeStatusAsleep) {
     return { kind: base.kind, color: 'asleep', unviewed: false, asleep: true }
   }
@@ -51,17 +53,28 @@ export function deriveToolbarIndicator(
 function deriveToolbarIndicatorInner(
   claudeState: string | undefined,
   claudeStatusUnread: boolean,
-  hasClaudeHistory: boolean
-): { kind: 'claude' | 'terminal'; color: CrabColor; unviewed: boolean } {
-  if (claudeState === 'waiting_permission') return { kind: 'claude', color: 'red', unviewed: claudeStatusUnread }
-  if (claudeState === 'waiting_question') return { kind: 'claude', color: 'green', unviewed: claudeStatusUnread }
-  if (claudeState === 'waiting_plan') return { kind: 'claude', color: 'purple', unviewed: claudeStatusUnread }
-  if (claudeState === 'working') return { kind: 'claude', color: 'orange', unviewed: false }
+  hasSessionHistory: boolean,
+  agentType?: 'claude' | 'cursor' | 'codex'
+): { kind: AgentIndicatorKind; color: CrabColor; unviewed: boolean } {
+  const agentKind: AgentIndicatorKind =
+    agentType === 'cursor' ? 'cursor'
+      : agentType === 'codex' ? 'codex'
+        : agentType === 'claude' || hasSessionHistory ? 'claude'
+          : 'terminal'
+
+  if (agentKind === 'terminal') {
+    return { kind: 'terminal', color: claudeStatusUnread ? 'white' : 'gray', unviewed: claudeStatusUnread }
+  }
+
+  if (claudeState === 'waiting_permission') return { kind: agentKind, color: 'red', unviewed: claudeStatusUnread }
+  if (claudeState === 'waiting_question') return { kind: agentKind, color: 'green', unviewed: claudeStatusUnread }
+  if (claudeState === 'waiting_plan') return { kind: agentKind, color: 'purple', unviewed: claudeStatusUnread }
+  if (claudeState === 'working') return { kind: agentKind, color: 'orange', unviewed: false }
   // Turn ended but background work is still running — passive status, like working.
-  if (claudeState === 'working_background') return { kind: 'claude', color: 'yellow', unviewed: false }
-  if (claudeState === 'stopped' && claudeStatusUnread && hasClaudeHistory) return { kind: 'claude', color: 'white', unviewed: true }
-  if (hasClaudeHistory) return { kind: 'claude', color: 'gray', unviewed: false }
-  // Plain terminal — no Claude history
+  if (claudeState === 'working_background') return { kind: agentKind, color: 'yellow', unviewed: false }
+  if (claudeState === 'stopped' && claudeStatusUnread && hasSessionHistory) return { kind: agentKind, color: 'white', unviewed: true }
+  // Fresh agent surface (agentType set, no session history yet) still shows the agent icon.
+  if (hasSessionHistory || agentType) return { kind: agentKind, color: 'gray', unviewed: false }
   return { kind: 'terminal', color: claudeStatusUnread ? 'white' : 'gray', unviewed: claudeStatusUnread }
 }
 
@@ -145,6 +158,7 @@ export function highestPriorityClaudeCrab(crabs: CrabEntry[]): CrabEntry | null 
   let bestTier = Infinity
 
   for (const crab of crabs) {
+    // Cmd+Down jumps to agent surfaces (Claude or Cursor), not plain terminals.
     if (crab.kind === 'terminal') continue
     const tier = crabTier(crab)
     if (tier < bestTier) {

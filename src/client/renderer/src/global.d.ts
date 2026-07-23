@@ -9,6 +9,8 @@ interface CreateOptions {
   command?: string
   args?: string[]
   claude?: { prompt?: string; resumeSessionId?: string; appendSystemPrompt?: boolean }
+  cursor?: { prompt?: string; resumeSessionId?: string }
+  codex?: { prompt?: string; resumeSessionId?: string; forkSessionId?: string }
 }
 
 interface CreateResult extends SessionInfo {

@@ -30,6 +30,10 @@ export interface CreateOptions {
   command?: string
   args?: string[]
   claude?: { prompt?: string; resumeSessionId?: string; appendSystemPrompt?: boolean }
+  /** Cursor Agent CLI surface (binary: `agent`). Mutually exclusive with `claude`/`codex` in practice. */
+  cursor?: { prompt?: string; resumeSessionId?: string }
+  /** Codex CLI surface (binary: `codex`). Mutually exclusive with `claude`/`cursor` in practice. */
+  codex?: { prompt?: string; resumeSessionId?: string; forkSessionId?: string }
   /** Stable node ID for SPACETERM_NODE_ID env var. Used during reincarnation when nodeId !== sessionId. */
   nodeId?: string
 }
@@ -659,6 +663,8 @@ export interface PlanCacheUpdateMessage {
 export interface ServerErrorMessage {
   type: 'server-error'
   message: string
+  /** When set, correlates with a pending client request so it can reject. */
+  seq?: number
 }
 
 export interface GhRateLimitData {

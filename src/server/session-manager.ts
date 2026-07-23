@@ -4,6 +4,8 @@ import { randomUUID } from 'crypto'
 import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
+import { serverLog } from './server-log'
+import { expandTilde } from './cwd'
 import { TitleParser } from './title-parser'
 import type { DaemonClient } from './daemon-client'
 import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
@@ -88,10 +90,7 @@ export class SessionManager {
     const home = process.env.HOME || '/'
 
     // Resolve working directory: expand ~ and use if it exists on disk, else $HOME
-    let resolvedCwd = options?.cwd
-    if (resolvedCwd?.startsWith('~')) {
-      resolvedCwd = join(home, resolvedCwd.slice(1))
-    }
+    const resolvedCwd = expandTilde(options?.cwd)
     const cwd = resolvedCwd && existsSync(resolvedCwd) ? resolvedCwd : home
 
     const baseEnv = process.env as Record<string, string>
@@ -112,6 +111,13 @@ export class SessionManager {
     env.SPACETERM_CLI = join(projectRoot, 'node_modules', '.bin', 'tsx') + ' ' + join(projectRoot, 'src', 'cli', 'spaceterm-cli.ts')
     // TERM must be explicit (the daemon does not inherit it from the server).
     env.TERM = 'xterm-256color'
+
+    // Log exactly what we ask the daemon to spawn. Command surfaces (Claude /
+    // Cursor / Codex) that die on startup leave no other trace of their argv,
+    // so this is the first thing to check when a surface "dies immediately".
+    if (isCommand) {
+      serverLog(`[spawn] ${sessionId.slice(0, 8)} cwd=${cwd} exec=${executable} args=${JSON.stringify(args)}`)
+    }
 
     // Ask daemon to spawn the PTY.
     this.daemon.send({
@@ -231,6 +237,10 @@ export class SessionManager {
     const session = this.sessions.get(surfaceId)
     if (!session) return
 
+    // Same session already current — do not append a duplicate (Cursor status-line
+    // and Stop hooks can re-announce the id frequently).
+    if (session.lastClaudeSessionId === claudeSessionId) return
+
     let reason: ClaudeSessionEntry['reason']
     if (source === 'resume' && session.pendingStop && session.lastClaudeSessionId !== null && session.lastClaudeSessionId !== claudeSessionId) {
       reason = 'fork'
@@ -259,6 +269,23 @@ export class SessionManager {
     }
 
     this.onClaudeSessionHistory(surfaceId, session.claudeSessionHistory)
+  }
+
+  /**
+   * After PTY reincarnation, copy the node's persisted agent-session history into
+   * the new in-memory session. Without this, the first SessionStart/status-line on
+   * the new PTY replaces node history with a one-entry list and drops prior ids
+   * needed for --resume.
+   */
+  seedClaudeSessionHistory(surfaceId: string, history: ClaudeSessionEntry[]): void {
+    const session = this.sessions.get(surfaceId)
+    if (!session || history.length === 0) return
+    session.claudeSessionHistory = history.map((e) => ({ ...e }))
+    if (session.claudeSessionHistory.length > MAX_CLAUDE_SESSION_HISTORY) {
+      session.claudeSessionHistory = session.claudeSessionHistory.slice(-MAX_CLAUDE_SESSION_HISTORY)
+    }
+    const latest = session.claudeSessionHistory[session.claudeSessionHistory.length - 1]
+    session.lastClaudeSessionId = latest?.claudeSessionId ?? null
   }
 
   handleClaudeStop(surfaceId: string): void {

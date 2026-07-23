@@ -1,0 +1,5 @@
+{
+  "name": "spaceterm",
+  "version": "0.1.0",
+  "description": "Streams Cursor Agent lifecycle hooks to the Spaceterm server"
+}

@@ -28,18 +28,14 @@ result.
    learned and decided since it forked, and emit that summary as a card on its
    parent surface. Your final message is not shown to a human — keep it to one line.
 
-   **Step 1 — Load the spaceterm tools.** They are deferred, so run ToolSearch with
-   this query before calling them:
-   `select:mcp__plugin_spaceterm-hooks_spaceterm__resolve_handoff_context,mcp__plugin_spaceterm-hooks_spaceterm__emit_markdown_on_parent`
-
-   **Step 2 — Resolve context.** Call `resolve_handoff_context`. It returns
+   **Step 1 — Resolve context.** Call `resolve_handoff_context`. It returns
    `{ transcriptPath, isFork, targetSurface }`.
    - If `isFork` is false, STOP. Return: "Not a fork — nothing to hand off."
    - If `targetSurface` is null, STOP. Return: "No parent surface to hand off to."
    - If `targetSurface.alive` is false, continue but note it in your final line
      (the card will land on a dead surface and can't be shipped until it's live).
 
-   **Step 3 — Extract the post-fork messages.** The fork stamps `forkedFrom` on
+   **Step 2 — Extract the post-fork messages.** The fork stamps `forkedFrom` on
    every entry copied from before the fork; entries written after the fork lack it.
    Take only real user/assistant prose (no tool calls, no tool results). Run,
    substituting the real `transcriptPath`, and writing to a temp file:
@@ -61,19 +57,19 @@ result.
    Then Read that file. If it is empty, STOP and return: "No post-fork activity to
    hand off."
 
-   **Step 4 — Distill.** Write a handoff (a few short sections, markdown). Capture
+   **Step 3 — Distill.** Write a handoff (a few short sections, markdown). Capture
    only what the parent needs: **decisions made**, **facts/knowledge established**,
    and the **current state / open threads**. Do NOT include tool mechanics,
    step-by-step narration, or alternatives that were considered and dropped. Be
    concise and information-dense.
 
-   **Step 5 — Wrap.** Prepend exactly this line, then a blank line, then your
+   **Step 4 — Wrap.** Prepend exactly this line, then a blank line, then your
    handoff body:
    `The following is a summary of information from a sub-agent.`
    After the body, add a blank line then exactly:
    `That's the end of the summary — let me know if you have any questions or concerns before I continue.`
 
-   **Step 6 — Emit.** Call `emit_markdown_on_parent` with the wrapped text as
+   **Step 5 — Emit.** Call `emit_markdown_on_parent` with the wrapped text as
    `content`. Then return one line, e.g. "Handoff card placed on parent surface
    \"<title>\"." (or the STOP reason from an earlier step).
    ---

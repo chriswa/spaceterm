@@ -54,9 +54,12 @@ export class SessionFileWatcher {
   }
 
   watch(surfaceId: string, claudeSessionId: string, cwd: string): void {
-    this.unwatch(surfaceId)
+    this.watchPath(surfaceId, sessionFilePath(cwd, claudeSessionId))
+  }
 
-    const filePath = sessionFilePath(cwd, claudeSessionId)
+  /** Watch an already-resolved JSONL file. */
+  watchPath(surfaceId: string, filePath: string): void {
+    this.unwatch(surfaceId)
     const entry: WatchedFile = {
       surfaceId,
       filePath,

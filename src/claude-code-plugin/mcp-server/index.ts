@@ -7,6 +7,9 @@ import { spacetermBroadcastTool } from './spaceterm-broadcast.js'
 import { playSoundTool } from './play-sound.js'
 import { speakTool } from './speak.js'
 import { startStdioServer } from './stdio-mcp.js'
+import { recoverSpacetermEnvFromAncestors } from './surface-env.js'
+
+recoverSpacetermEnvFromAncestors()
 
 startStdioServer({
   name: 'spaceterm-mcp',

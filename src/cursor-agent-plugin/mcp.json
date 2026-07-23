@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "spaceterm": {
+      "type": "stdio",
+      "command": "../claude-code-plugin/mcp-server/run.sh",
+      "args": []
+    }
+  }
+}

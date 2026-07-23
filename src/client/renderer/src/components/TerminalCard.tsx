@@ -21,6 +21,8 @@ import { useSessionNamesStore } from '../stores/sessionNamesStore'
 import { showToast } from '../lib/toast'
 import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScrollRestore } from '../lib/focus-storage'
 import crabIcon from '../assets/crab.png'
+import cursorAgentIcon from '../assets/cursor-agent.png'
+import codexAgentIcon from '../assets/codex-agent.png'
 import { deriveToolbarIndicator, CRAB_COLORS } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { angleBorderColor } from '../lib/angle-color'
@@ -92,6 +94,7 @@ interface TerminalCardProps {
   onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
   onOpenArchiveSearch: (nodeId: string) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
+  agentType?: 'claude' | 'cursor' | 'codex'
   claudeState?: string
   claudeModel?: string
   onExit?: (id: string, exitCode: number) => void
@@ -115,7 +118,7 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
-  claudeSessionHistory, claudeState, claudeModel, onExit, onNodeReady,
+  claudeSessionHistory, agentType, claudeState, claudeModel, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
@@ -1023,21 +1026,30 @@ export function TerminalCard({
     : selected ? 'terminal-card--selected' : ''
   const rtsSelectActive = useRtsSelectStore(s => s.active)
   const focusGlowColor = focused && !rtsSelectActive ? angleBorderColor(x, y, scrollMode ? 1.3 : 1) : undefined
-  const crabAppearance = deriveToolbarIndicator(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0)
+  const crabAppearance = deriveToolbarIndicator(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0, agentType)
   useCrabDance(behindCrabRef, crabAppearance.unviewed, 2.5)
   const anyToolbarHover = useHoveredCardStore(s => s.toolbarHoveredNodeId) != null
   const toolbarHovered = useHoveredCardStore(s => s.toolbarHoveredNodeId) === id
   useUnreadGlow(cardRef, CRAB_COLORS[crabAppearance.color], cameraRef, crabAppearance.unviewed && !focused && !anyToolbarHover && !rtsSelectActive)
   useToolbarHoverGlow(cardRef, x, y, cameraRef, toolbarHovered && !focused && !rtsSelectActive)
 
+  const agentLabel = agentType === 'cursor' ? 'Cursor' : agentType === 'codex' ? 'Codex' : 'Claude'
+  const agentIconUrl =
+    crabAppearance.kind === 'cursor' ? cursorAgentIcon
+      : crabAppearance.kind === 'codex' ? codexAgentIcon
+        : crabIcon
+  const agentBehindClass =
+    crabAppearance.kind === 'cursor' ? ' terminal-card__crab-behind--cursor'
+      : crabAppearance.kind === 'codex' ? ' terminal-card__crab-behind--codex'
+        : ''
   const claudeStateLabel = (state?: string): string => {
     switch (state) {
-      case 'working': return 'Claude is working'
-      case 'working_background': return 'Claude is finishing background work'
-      case 'waiting_permission': return 'Claude is awaiting permission'
-      case 'waiting_question': return 'Claude is asking a question'
-      case 'waiting_plan': return 'Claude is awaiting plan approval'
-      default: return 'Claude is stopped'
+      case 'working': return `${agentLabel} is working`
+      case 'working_background': return `${agentLabel} is finishing background work`
+      case 'waiting_permission': return `${agentLabel} is awaiting permission`
+      case 'waiting_question': return `${agentLabel} is asking a question`
+      case 'waiting_plan': return `${agentLabel} is awaiting plan approval`
+      default: return `${agentLabel} is stopped`
     }
   }
 
@@ -1100,8 +1112,14 @@ export function TerminalCard({
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
-      onFork={claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
-      onExtraCliArgs={claudeSessionHistory && claudeSessionHistory.length > 0 ? onExtraCliArgs : undefined}
+      onFork={agentType !== 'cursor' && agentType !== 'codex' && claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
+      // Cursor/Codex often lack SessionStart history; gate on agentType so restart stays available.
+      onExtraCliArgs={
+        agentType === 'claude' || agentType === 'cursor' || agentType === 'codex'
+          || (claudeSessionHistory && claudeSessionHistory.length > 0)
+          ? onExtraCliArgs
+          : undefined
+      }
       extraCliArgs={extraCliArgs}
       onDiffPlans={handleDiffPlans}
       onAddNode={onAddNode}
@@ -1120,13 +1138,13 @@ export function TerminalCard({
         onHoverUnfocus?.()
       }}
       behindContent={
-        crabAppearance.kind === 'claude' ? (
+        crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex' ? (
           <div
             ref={behindCrabRef}
-            className="terminal-card__crab-behind"
+            className={`terminal-card__crab-behind${agentBehindClass}`}
             style={{
-              maskImage: `url(${crabIcon})`,
-              WebkitMaskImage: `url(${crabIcon})`,
+              maskImage: `url(${agentIconUrl})`,
+              WebkitMaskImage: `url(${agentIconUrl})`,
               backgroundColor: CRAB_COLORS[crabAppearance.color],
               ...(crabAppearance.asleep ? { transform: 'rotate(180deg)' } : {}),
             }}
