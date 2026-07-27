@@ -433,7 +433,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
         phantom.className = `toolbar__crab toolbar__crab--${prev.color}${indicatorKindClass(prev.kind)}`
         const maskUrl = indicatorIconUrl(prev.kind)
         const maskSize = prev.kind === 'codex' ? '97%' : prev.kind === 'cursor' ? '80%' : 'contain'
-        const maskPosition = prev.kind === 'codex' ? 'center calc(50% - 2px)' : 'center'
+        const maskPosition = prev.kind === 'codex' ? 'center calc(50% - 1px)' : prev.kind === 'cursor' ? 'center calc(50% - 1px)' : 'center'
         phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;-webkit-mask-image:url(${maskUrl});mask-image:url(${maskUrl});-webkit-mask-size:${maskSize};mask-size:${maskSize};-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:${maskPosition};mask-position:${maskPosition};`
         el.appendChild(phantom)
 

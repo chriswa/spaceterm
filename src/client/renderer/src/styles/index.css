@@ -159,9 +159,14 @@ html, body, #root {
 
 .toolbar__crab--codex {
   -webkit-mask-size: 97%;
-  -webkit-mask-position: center calc(50% - 2px);
+  -webkit-mask-position: center calc(50% - 1px);
   mask-size: 97%;
-  mask-position: center calc(50% - 2px);
+  mask-position: center calc(50% - 1px);
+}
+
+.toolbar__crab--cursor {
+  -webkit-mask-position: center calc(50% - 1px);
+  mask-position: center calc(50% - 1px);
 }
 
 .toolbar__crab:hover,
