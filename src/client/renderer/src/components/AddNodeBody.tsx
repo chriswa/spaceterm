@@ -44,6 +44,8 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
         style={{
           maskImage: `url(${codexAgentIcon})`,
           WebkitMaskImage: `url(${codexAgentIcon})`,
+          maskSize: '110%',
+          WebkitMaskSize: '110%',
           width: 14,
           height: 14,
         }}
