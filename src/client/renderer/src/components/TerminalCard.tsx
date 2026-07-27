@@ -1049,6 +1049,7 @@ export function TerminalCard({
       case 'waiting_permission': return `${agentLabel} is awaiting permission`
       case 'waiting_question': return `${agentLabel} is asking a question`
       case 'waiting_plan': return `${agentLabel} is awaiting plan approval`
+      case 'potential_error': return `${agentLabel} may be stuck after an API error`
       default: return `${agentLabel} is stopped`
     }
   }
@@ -1193,8 +1194,8 @@ export function TerminalCard({
         const copySurfaceInfo = (e: React.MouseEvent) => {
           e.stopPropagation()
           let text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id}`
-          if (lastClaudeSession) text += ` Claude session ID: ${lastClaudeSession.claudeSessionId}`
-          text += ` Claude State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+          if (lastClaudeSession) text += ` ${agentLabel} session ID: ${lastClaudeSession.claudeSessionId}`
+          text += ` ${agentLabel} State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
           navigator.clipboard.writeText(text)
           showToast(`Copied to clipboard: ${text}`)
         }
@@ -1205,7 +1206,7 @@ export function TerminalCard({
             <span>&nbsp;|&nbsp;</span><span className="terminal-card__footer-id" onClick={copySurfaceInfo} onMouseDown={(e) => e.stopPropagation()}>Surface ID:&nbsp;{id.slice(0, 8)}</span>
             {lastClaudeSession && (
               <>
-                <span>&nbsp;|&nbsp;Claude session ID:&nbsp;</span>
+                <span>&nbsp;|&nbsp;{agentLabel} session ID:&nbsp;</span>
                 <span className="terminal-card__footer-id" onClick={(e) => {
                   e.stopPropagation()
                   navigator.clipboard.writeText(lastClaudeSession.claudeSessionId)

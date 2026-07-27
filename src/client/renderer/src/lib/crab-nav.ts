@@ -69,6 +69,9 @@ function deriveToolbarIndicatorInner(
   if (claudeState === 'waiting_permission') return { kind: agentKind, color: 'red', unviewed: claudeStatusUnread }
   if (claudeState === 'waiting_question') return { kind: agentKind, color: 'green', unviewed: claudeStatusUnread }
   if (claudeState === 'waiting_plan') return { kind: agentKind, color: 'purple', unviewed: claudeStatusUnread }
+  // A suspected API error remains visible after acknowledgement, but becomes
+  // white once read so acknowledged issues do not look like active prompts.
+  if (claudeState === 'potential_error') return { kind: agentKind, color: claudeStatusUnread ? 'red' : 'white', unviewed: claudeStatusUnread }
   if (claudeState === 'working') return { kind: agentKind, color: 'orange', unviewed: false }
   // Turn ended but background work is still running — passive status, like working.
   if (claudeState === 'working_background') return { kind: agentKind, color: 'yellow', unviewed: false }
@@ -139,10 +142,12 @@ export function adjacentCrab(
  *   0:   red + unviewed        (waiting_permission, unread)
  *   0.5: green + unviewed      (waiting_question, unread)
  *   1:   purple + unviewed     (waiting_plan, unread)
+ *        potential_error shares the red attention tier while unread.
  *   2:   white + unviewed      (stopped, unread)
  *   3:   red + !unviewed       (waiting_permission, viewed)
  *   3.5: green + !unviewed     (waiting_question, viewed)
  *   4:   purple + !unviewed    (waiting_plan, viewed)
+ *        potential_error is white after acknowledgement and uses the white tier.
  *   5:   gray                  (dormant)
  *   6:   orange                (working)
  *   6.5: yellow                (working_background — finishing background work)
@@ -177,7 +182,7 @@ function crabTier(crab: CrabEntry): number {
     case 'red':    return crab.unviewed ? 0 : 3
     case 'green':  return crab.unviewed ? 0.5 : 3.5
     case 'purple': return crab.unviewed ? 1 : 4
-    case 'white':      return 2 // white is always unviewed
+    case 'white':      return 2 // stopped-unread or an acknowledged potential error
     case 'gray':       return 5
     case 'orange':     return 6
     case 'yellow':     return 6.5

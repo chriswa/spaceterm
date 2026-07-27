@@ -463,6 +463,34 @@ export class ClaudeStateMachine {
   }
 
   /**
+   * Cursor writes explicit tool calls to its conversation transcript. These are
+   * the durable attention signals Cursor's hook API omits: AskQuestion blocks
+   * for an answer, while SwitchMode(plan) and CreatePlan block for plan review.
+   */
+  handleCursorTranscriptEntries(surfaceId: string, entries: SessionFileEntry[]): void {
+    for (const entry of entries) {
+      if (entry.role !== 'assistant') continue
+      const message = entry.message as { content?: unknown } | undefined
+      if (!Array.isArray(message?.content)) continue
+      for (const block of message.content as Array<{ type?: unknown, name?: unknown, input?: unknown }>) {
+        if (block?.type !== 'tool_use' || typeof block.name !== 'string') continue
+        const input = block.input && typeof block.input === 'object' ? block.input as Record<string, unknown> : {}
+        const dynamicArgs = input.arguments && typeof input.arguments === 'object' ? input.arguments as Record<string, unknown> : {}
+        const dynamicTool = input.toolName
+        const mode = input.target_mode_id ?? dynamicArgs.target_mode_id
+        const isPlanMode = block.name === 'CreatePlan' ||
+          (block.name === 'CallDynamicTool' && dynamicTool === 'SwitchMode' && mode === 'plan')
+        const state: ClaudeState | undefined = block.name === 'AskQuestion'
+          ? 'waiting_question'
+          : isPlanMode ? 'waiting_plan' : undefined
+        if (state) {
+          this.transitionQueue.enqueue(surfaceId, state, 'jsonl', `cursor:${block.name}`, Date.now())
+        }
+      }
+    }
+  }
+
+  /**
    * Process a client request to mark/unmark a surface as read/unread.
    *
    * This is a direct user action (e.g. clicking the unread indicator)

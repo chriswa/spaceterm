@@ -18,6 +18,7 @@ import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
 import { CodexSessionFileWatcher } from './codex-session-file-watcher'
+import { CursorSessionFileWatcher } from './cursor-session-file-watcher'
 import { ClaudeStateMachine } from './claude-state'
 import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
@@ -26,7 +27,7 @@ import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
-import { AutoContinueManager } from './auto-continue'
+import { PotentialErrorDetector } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
 
 /**
@@ -741,11 +742,12 @@ let stateManager: StateManager
 let snapshotManager: SnapshotManager
 let sessionFileWatcher: SessionFileWatcher
 let codexSessionFileWatcher: CodexSessionFileWatcher
+let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
 let gitStatusPoller: GitStatusPoller
 let planCacheManager: PlanCacheManager
 let claudeStateMachine: ClaudeStateMachine
-let autoContinueManager: AutoContinueManager
+let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
 
 function surfaceAgentType(surfaceId: string): 'claude' | 'cursor' | 'codex' | undefined {
@@ -770,6 +772,7 @@ function ensureNonClaudeSessionRecorded(
   if (!sid) return
   if (sessionManager.getLastClaudeSessionId(surfaceId) === sid) return
   sessionManager.handleClaudeSessionStart(surfaceId, sid, source)
+  if (surfaceAgentType(surfaceId) === 'cursor') cursorSessionFileWatcher.watch(surfaceId, sid)
 }
 
 /** After reincarnating a PTY, keep in-memory session history aligned with the node. */
@@ -1213,7 +1216,6 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
       sessionManager.write(targetSessionId, '\x1b[200~' + content + '\x1b[201~')
       // Mark read; the resulting UserPromptSubmit hook drives the working state.
       claudeStateMachine.handleClientInteract(targetSessionId)
-      autoContinueManager.cancelForSurface(targetSessionId)
 
       const submit = msg.submit !== false  // default true
       if (submit) {
@@ -1477,7 +1479,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'destroy': {
-      autoContinueManager.cancelForSurface(msg.sessionId)
       sessionManager.destroy(msg.sessionId)
       // Remove from all clients' attached sets
       clients.forEach((c) => {
@@ -1492,7 +1493,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Interacting with the terminal only marks it read — state is derived from
       // hooks + transcript, not keystrokes.
       claudeStateMachine.handleClientInteract(msg.sessionId)
-      autoContinueManager.cancelForSurface(msg.sessionId)
       break
     }
 
@@ -2108,11 +2108,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'set-claude-status-unread': {
       claudeStateMachine.handleClientMarkUnread(msg.sessionId, msg.unread)
-      // NOTE: We intentionally do NOT cancel auto-continue here. The client
-      // auto-clears the unread flag via useEffect whenever a surface is already
-      // focused (235ms round-trip), which would kill the recovery timer before
-      // the user has a chance to act. Real user intervention (typing into the
-      // terminal) cancels via the 'write' handler instead.
       break
     }
 
@@ -2262,6 +2257,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           snapshotManager.removeSession(oldSessionId)
           sessionFileWatcher.unwatch(oldSessionId)
           codexSessionFileWatcher.unwatch(oldSessionId)
+          cursorSessionFileWatcher.unwatch(oldSessionId)
           sessionManager.destroy(oldSessionId)
           clients.forEach((c) => {
             c.attachedSessions.delete(oldSessionId)
@@ -2484,7 +2480,7 @@ async function startServer(): Promise<void> {
 
       sessionFileWatcher.unwatch(sessionId)
       codexSessionFileWatcher.unwatch(sessionId)
-      autoContinueManager.cancelForSurface(sessionId)
+      cursorSessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
 
       // Check restart recovery — if this PTY was spawned by a manual restart
@@ -2602,16 +2598,17 @@ async function startServer(): Promise<void> {
     (sessionId, history) => {
       stateManager.updateClaudeSessionHistory(sessionId, history)
     },
-    // onClaudeState: update state + trigger auto-continue on API error stops
+    // onClaudeState: update state + flag stopped API errors for human review
     (sessionId, state) => {
-      stateManager.updateClaudeState(sessionId, state)
-      if (state === 'stopped') {
-        autoContinueManager.onStopped(sessionId)
-      } else {
-        // Any non-stopped state (e.g. working after user manually typed continue)
-        // should cancel a pending auto-continue to avoid double-sending.
-        autoContinueManager.cancelForSurface(sessionId)
+      if (state === 'stopped' && potentialErrorDetector.hasPotentialError(sessionId)) {
+        // Keep the session model and the persisted/UI model in sync. Calling
+        // setClaudeState emits a second callback for potential_error, which
+        // performs the state-manager update below.
+        sessionManager.setClaudeStatusUnread(sessionId, true)
+        sessionManager.setClaudeState(sessionId, 'potential_error')
+        return
       }
+      stateManager.updateClaudeState(sessionId, state)
     },
     // onClaudeContext: broadcast context remaining % to all attached clients
     (sessionId, contextRemainingPercent) => {
@@ -2643,10 +2640,9 @@ async function startServer(): Promise<void> {
     injectTitle: (sessionId, title) => sessionManager.injectTitle(sessionId, title),
   })
 
-  // Initialize AutoContinueManager — auto-sends "continue" after API error stops
-  autoContinueManager = new AutoContinueManager({
+  // Initialize PotentialErrorDetector — identifies stopped API errors without writing to the PTY.
+  potentialErrorDetector = new PotentialErrorDetector({
     getScrollback: (id) => sessionManager.getScrollback(id),
-    writeToPty: (id, data) => sessionManager.write(id, data),
     getNodeTitle: (id) => {
       const nodeId = stateManager.getNodeIdForSession(id)
       if (!nodeId) return null
@@ -2655,7 +2651,6 @@ async function startServer(): Promise<void> {
       // Prefer user-set name, fall back to first shell title
       return node.name || node.shellTitleHistory?.[0] || null
     },
-    broadcastToast: (message) => broadcastToAll({ type: 'server-error', message }),
   })
 
   // Initialize ClaudeStateMachine — manages state indicator transitions, queue, stale sweep
@@ -2734,6 +2729,10 @@ async function startServer(): Promise<void> {
     }
   })
 
+  cursorSessionFileWatcher = new CursorSessionFileWatcher((surfaceId, newEntries) => {
+    claudeStateMachine.handleCursorTranscriptEntries(surfaceId, newEntries)
+  })
+
   // --- Startup: reconcile with daemon sessions, then revive remaining terminals ---
 
   // Step 1: Ask daemon for all surviving sessions.
@@ -2800,6 +2799,8 @@ async function startServer(): Promise<void> {
         const reattachedAgentType = node?.type === 'terminal' ? node.agentType : undefined
         if (claudeSessionId && cwd && !isNonClaudeAgent(reattachedAgentType)) {
           sessionFileWatcher.watch(ptySessionId!, claudeSessionId, cwd)
+        } else if (claudeSessionId && reattachedAgentType === 'cursor') {
+          cursorSessionFileWatcher.watch(ptySessionId!, claudeSessionId)
         } else if (claudeSessionId && reattachedAgentType === 'codex') {
           codexSessionFileWatcher.watch(ptySessionId!, claudeSessionId)
         }
@@ -2858,6 +2859,8 @@ async function startServer(): Promise<void> {
         }
       } else if (isCodex && validSessionId) {
         codexSessionFileWatcher.watch(sessionId, validSessionId)
+      } else if (isCursor && validSessionId) {
+        cursorSessionFileWatcher.watch(sessionId, validSessionId)
       }
       revivedNodeIds.push(nodeId)
       const reviveLabel = isCursor ? 'Cursor' : isCodex ? 'Codex' : 'Claude'
@@ -3052,12 +3055,12 @@ async function startServer(): Promise<void> {
     console.log('\nShutting down...')
     if (socketWatchdog) clearInterval(socketWatchdog)
     // Flush queued transitions and stop timers before persisting state
-    autoContinueManager.dispose()
     claudeStateMachine.dispose()
     gitStatusPoller.dispose()
     fileContentManager.dispose()
     sessionFileWatcher.dispose()
     codexSessionFileWatcher.dispose()
+    cursorSessionFileWatcher.dispose()
     snapshotManager.dispose()
     stateManager.persistImmediate()
     sessionManager.destroyAll() // Cleans local state only — daemon PTYs persist
