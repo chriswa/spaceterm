@@ -14,6 +14,7 @@ const HAIKU_URL = 'https://api.anthropic.com/v1/messages'
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_HAIKU_HISTORY_MESSAGES = 12
 const BLOCKED_VOICE_IDS = new Set(['af_nicole'])
+const SPEECH_LONG_POLL_TIMEOUT_MS = 5 * 60_000
 const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Speak in two to four concise sentences of plain English. Later messages supersede earlier ones. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words to speak.`
 
 type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
@@ -230,7 +231,14 @@ export class SummaryChat {
       // therefore tied to the job, not fragile per-sentence playback events.
       const wait = firstPoll ? 0 : 30
       firstPoll = false
-      const status = await this.speechRequest<SpeechStatus>(`/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}`)
+      // The default request timeout is intentionally short for one-shot
+      // operations. A speech monitor, however, must tolerate a stalled local
+      // service without falsely declaring the job finished.
+      const status = await this.speechRequest<SpeechStatus>(
+        `/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}`,
+        undefined,
+        wait === 0 ? 3_000 : SPEECH_LONG_POLL_TIMEOUT_MS,
+      )
       if (!status) {
         if (conversation.speechId === speechId) {
           conversation.speechId = undefined
@@ -281,7 +289,7 @@ export class SummaryChat {
     })
   }
 
-  private async speechRequest<T>(endpoint: string, init?: RequestInit): Promise<T | undefined> {
+  private async speechRequest<T>(endpoint: string, init?: RequestInit, timeoutMs = 3_000): Promise<T | undefined> {
     let port: number | undefined
     try {
       const discovery = JSON.parse(fs.readFileSync(DISCOVERY_PATH, 'utf8')) as { port?: unknown }
@@ -293,7 +301,7 @@ export class SummaryChat {
       const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, {
         ...init,
         headers: { 'content-type': 'application/json', ...init?.headers },
-        signal: AbortSignal.timeout(3_000),
+        signal: AbortSignal.timeout(timeoutMs),
       })
       if (!response.ok && response.status !== 202 && response.status !== 409) return undefined
       return await response.json() as T
