@@ -36,6 +36,12 @@ This starts two processes concurrently:
 - The spaceterm server (`tsx src/server/index.ts`) — auto-starts the PTY daemon if not already running
 - The Electron client (`electron-vite dev`)
 
+The toolbar's ↻ button restarts both processes. The `server:dev` and
+`client:dev` commands each supervise their process and relaunch only when it
+exits with Spaceterm's dedicated restart code, so this works equally well when
+they run in separate terminal tabs. Ctrl+C still stops either command normally.
+PTY sessions remain alive in the daemon across this restart.
+
 The PTY daemon is a separate long-lived process that manages terminal sessions. It starts automatically and persists across server restarts so terminal sessions are never lost. If you modify the Go code in `pty-daemon/`, use `npm run daemon:dev` to rebuild and restart the daemon.
 
 App data lives in `~/.spaceterm/` (state, logs, hooks). The PTY daemon socket, PID file, and log are also in `~/.spaceterm/`.

@@ -45,6 +45,8 @@ interface ToolbarProps {
   onInertiaLogDump: () => void
   goodGfx: boolean
   onGoodGfxToggle: () => void
+  restartingSpaceterm: boolean
+  onRestartSpaceterm: () => void
 }
 
 export function Toolbar({
@@ -53,7 +55,8 @@ export function Toolbar({
   keycastEnabled, onKeycastToggle,
   onDebugCapture,
   onInertiaLogDump,
-  goodGfx, onGoodGfxToggle
+  goodGfx, onGoodGfxToggle,
+  restartingSpaceterm, onRestartSpaceterm
 }: ToolbarProps) {
   const fpsRef = useRef<HTMLSpanElement>(null)
   useFps(fpsRef)
@@ -71,6 +74,15 @@ export function Toolbar({
         ?
       </button>
       <FullscreenToggle />
+      <button
+        className={'toolbar__btn' + (restartingSpaceterm ? ' toolbar__btn--active' : '')}
+        onClick={onRestartSpaceterm}
+        disabled={restartingSpaceterm}
+        data-tooltip={restartingSpaceterm ? 'Restarting Spaceterm…' : 'Restart Spaceterm server'}
+        data-tooltip-no-flip
+      >
+        ↻
+      </button>
       <CameraLockToggle />
       <DebugDropdown tracing={tracing} startTrace={startTrace} onDebugCapture={onDebugCapture} onInertiaLogDump={onInertiaLogDump} />
       <button

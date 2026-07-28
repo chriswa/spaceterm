@@ -10,7 +10,8 @@ import type {
 } from '../../shared/protocol'
 import { LineParser } from '../../server/line-parser'
 
-const RECONNECT_DELAY = 2000
+const INITIAL_RECONNECT_DELAY = 200
+const MAX_RECONNECT_DELAY = 1000
 
 interface PendingRequest {
   resolve: (msg: ServerMessage) => void
@@ -19,68 +20,68 @@ interface PendingRequest {
 
 export class ServerClient extends EventEmitter {
   private socket: net.Socket | null = null
-  private parser: LineParser | null = null
   private seq = 0
   private pending = new Map<number, PendingRequest>()
   private connected = false
   private shouldReconnect = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectDelay = INITIAL_RECONNECT_DELAY
+  private connectionWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = []
 
   connect(): Promise<void> {
+    if (this.connected) return Promise.resolve()
+    this.shouldReconnect = true
+    this.beginConnection()
     return new Promise((resolve, reject) => {
-      if (this.connected) {
-        resolve()
-        return
-      }
-
-      const socket = net.createConnection(SOCKET_PATH)
-      socket.setEncoding('utf8')
-      this.socket = socket
-
-      this.parser = new LineParser((msg) => {
-        this.handleMessage(msg as ServerMessage)
-      })
-
-      socket.on('connect', () => {
-        this.connected = true
-        this.emit('connect')
-        resolve()
-      })
-
-      socket.on('data', (data) => {
-        this.parser!.feed(data as string)
-      })
-
-      socket.on('close', () => {
-        const wasConnected = this.connected
-        this.connected = false
-        this.rejectAllPending()
-
-        if (wasConnected) {
-          this.emit('disconnect')
-        }
-
-        if (this.shouldReconnect) {
-          this.scheduleReconnect()
-        }
-      })
-
-      socket.on('error', (err) => {
-        if (!this.connected) {
-          reject(err)
-        }
-      })
+      this.connectionWaiters.push({ resolve, reject })
     })
+  }
+
+  private beginConnection(): void {
+    // A failed Unix-socket connection fires both error and close. Keeping one
+    // attempt in flight prevents those paired events from becoming a storm of
+    // overlapping reconnects during server startup.
+    if (this.connected || this.socket) return
+
+    const socket = net.createConnection(SOCKET_PATH)
+    socket.setEncoding('utf8')
+    this.socket = socket
+    const parser = new LineParser((msg) => this.handleMessage(msg as ServerMessage))
+
+    socket.on('connect', () => {
+      if (this.socket !== socket) return
+      this.connected = true
+      this.reconnectDelay = INITIAL_RECONNECT_DELAY
+      const waiters = this.connectionWaiters.splice(0)
+      waiters.forEach(({ resolve }) => resolve())
+      this.emit('connect')
+    })
+
+    socket.on('data', (data) => parser.feed(data as string))
+
+    socket.on('close', () => {
+      if (this.socket !== socket) return
+      const wasConnected = this.connected
+      this.socket = null
+      this.connected = false
+      this.rejectAllPending()
+
+      if (wasConnected) this.emit('disconnect')
+      if (this.shouldReconnect) this.scheduleReconnect()
+    })
+
+    // `close` owns retry scheduling. An early connection refusal is expected
+    // while the server is settling, so deliberately do not log it here.
+    socket.on('error', () => undefined)
   }
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      this.connect().catch(() => {
-        // Will retry via close handler
-      })
-    }, RECONNECT_DELAY)
+      this.beginConnection()
+    }, this.reconnectDelay)
+    this.reconnectDelay = Math.min(MAX_RECONNECT_DELAY, Math.ceil(this.reconnectDelay * 1.5))
   }
 
   private rejectAllPending(): void {
@@ -246,6 +247,11 @@ export class ServerClient extends EventEmitter {
     const resp = await this.sendRequest({ type: 'list' })
     if (resp.type === 'listed') return resp.sessions
     throw new Error('Unexpected response')
+  }
+
+  async restartServer(): Promise<void> {
+    const resp = await this.sendRequest({ type: 'server-restart' })
+    if (resp.type !== 'server-restarted') throw new Error('Unexpected response')
   }
 
   async attach(sessionId: string): Promise<{ scrollback: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
@@ -451,5 +457,7 @@ export class ServerClient extends EventEmitter {
       this.socket = null
     }
     this.connected = false
+    const waiters = this.connectionWaiters.splice(0)
+    waiters.forEach(({ reject }) => reject(new Error('Server connection stopped')))
   }
 }

@@ -117,6 +117,7 @@ interface Api {
   node: NodeApi
   log(message: string): void
   startSummaryChat(nodeId: string): void
+  restartSpaceterm(): Promise<void>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
   diffFiles(fileA: string, fileB: string): Promise<void>

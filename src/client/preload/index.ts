@@ -269,6 +269,7 @@ contextBridge.exposeInMainWorld('api', {
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
   startSummaryChat: (nodeId: string) => ipcRenderer.send('summary-chat:start', nodeId),
+  restartSpaceterm: (): Promise<void> => ipcRenderer.invoke('app:restart-spaceterm'),
   writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   diffFiles: (fileA: string, fileB: string) => ipcRenderer.invoke('shell:diffFiles', fileA, fileB),

@@ -83,6 +83,7 @@ export function App() {
   helpVisibleRef.current = helpVisible
   const [keycastEnabled, setKeycastEnabled] = useState(() => localStorage.getItem('toolbar.keycast') === 'true')
   const [goodGfx, setGoodGfx] = useState(() => localStorage.getItem('toolbar.goodGfx') === 'true')
+  const [restartingSpaceterm, setRestartingSpaceterm] = useState(false)
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
   const focusRef = useRef<string | null>(focusedId)
@@ -895,6 +896,19 @@ export function App() {
       () => showToast('Failed to write inertia log')
     )
   }, [])
+
+  const handleRestartSpaceterm = useCallback(async () => {
+    if (restartingSpaceterm) return
+    setRestartingSpaceterm(true)
+    showToast('Restarting server…')
+    try {
+      await window.api.restartSpaceterm()
+    } catch (err) {
+      setRestartingSpaceterm(false)
+      const message = err instanceof Error ? err.message : String(err)
+      showToast(`Could not restart Spaceterm: ${message}`)
+    }
+  }, [restartingSpaceterm])
 
   const handleReparentTarget = useCallback((targetId: string) => {
     const srcId = useReparentStore.getState().reparentingNodeId
@@ -2388,6 +2402,8 @@ export function App() {
         onInertiaLogDump={handleInertiaLogDump}
         goodGfx={goodGfx}
         onGoodGfxToggle={() => setGoodGfx(v => { const next = !v; localStorage.setItem('toolbar.goodGfx', String(next)); return next })}
+        restartingSpaceterm={restartingSpaceterm}
+        onRestartSpaceterm={handleRestartSpaceterm}
       />
       {quickActions && resolvedPresets[quickActions.nodeId] && (
         <FloatingToolbar

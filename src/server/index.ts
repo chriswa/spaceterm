@@ -588,6 +588,13 @@ const restartRecovery = new Map<string, {
   isRetry: boolean
 }>()
 
+// `concurrently --restart-tries` restarts non-zero exits in development. Keep
+// this distinct from an ordinary shutdown for the current launcher and any
+// future dedicated supervisor.
+const SERVER_RESTART_EXIT_CODE = 75
+let shutdownServer: ((exitCode?: number) => void) | null = null
+let serverRestartScheduled = false
+
 const clients = new Set<ClientConnection>()
 
 // --- Polling intervals (shared with ring buffer slot widths) ---
@@ -1369,6 +1376,24 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
 
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   switch (msg.type) {
+    case 'server-restart': {
+      if (serverRestartScheduled) {
+        send(client.socket, { type: 'server-error', seq: msg.seq, message: 'Server restart is already in progress' })
+        break
+      }
+      if (!shutdownServer) {
+        send(client.socket, { type: 'server-error', seq: msg.seq, message: 'Server restart is unavailable during startup' })
+        break
+      }
+      serverRestartScheduled = true
+      serverLog('[restart] Restart requested by client')
+      send(client.socket, { type: 'server-restarted', seq: msg.seq })
+      // Give the acknowledgement a chance to leave the Unix socket before the
+      // graceful shutdown closes all client connections.
+      setTimeout(() => shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+      break
+    }
+
     case 'summary-chat-start': {
       const node = stateManager.getNode(msg.nodeId)
       if (!node || node.type !== 'terminal') {
@@ -3051,7 +3076,10 @@ async function startServer(): Promise<void> {
 
   // Graceful shutdown
   let socketWatchdog: ReturnType<typeof setInterval> | null = null
-  const shutdown = () => {
+  let shuttingDown = false
+  const shutdown = (exitCode = 0) => {
+    if (shuttingDown) return
+    shuttingDown = true
     console.log('\nShutting down...')
     if (socketWatchdog) clearInterval(socketWatchdog)
     // Flush queued transitions and stop timers before persisting state
@@ -3072,11 +3100,14 @@ async function startServer(): Promise<void> {
     try { fs.unlinkSync(SOCKET_PATH) } catch { /* ignore */ }
     try { fs.unlinkSync(HOOKS_SOCKET_PATH) } catch { /* ignore */ }
     try { fs.unlinkSync(SCRIPTS_SOCKET_PATH) } catch { /* ignore */ }
-    process.exit(0)
+    process.exit(exitCode)
   }
+  shutdownServer = shutdown
 
-  process.on('SIGTERM', shutdown)
-  process.on('SIGINT', shutdown)
+  // Node passes the signal name to listeners; keep it out of shutdown's
+  // numeric exit-code parameter so Ctrl+C exits cleanly with code 0.
+  process.on('SIGTERM', () => shutdown())
+  process.on('SIGINT', () => shutdown())
 
   // Socket watchdog — detect if our socket files disappear (e.g. another server
   // stole them, accidental rm). Without the files on disk, hook-handler.sh can't

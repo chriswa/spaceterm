@@ -12,6 +12,9 @@ import { loadWindowState, saveWindowState, findTargetDisplay } from './window-st
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
+// Matched by client:dev's supervisor. A normal quit remains exit code 0 so
+// Ctrl+C returns control to the terminal instead of relaunching Electron.
+const CLIENT_RESTART_EXIT_CODE = 75
 
 // Surface id from a `spaceterm-surface://` link that arrived before the server
 // connection was ready (cold launch). Flushed once the client connects.
@@ -213,6 +216,16 @@ function setupIPC(): void {
 
   ipcMain.handle('server:status', () => {
     return client!.isConnected()
+  })
+
+  ipcMain.handle('app:restart-spaceterm', async () => {
+    logger.log('[restart] Restart Spaceterm requested')
+    await client!.restartServer()
+    // app.relaunch() detaches a bare Electron process from electron-vite. Exit
+    // with the supervisor's explicit restart code instead, so client:dev starts
+    // a complete new Electron/Vite process in the same terminal tab.
+    logger.log('[restart] Server accepted restart; exiting for supervised client restart')
+    setTimeout(() => app.exit(CLIENT_RESTART_EXIT_CODE), 50)
   })
 
   ipcMain.on('summary-chat:start', (_event, nodeId: string) => {
@@ -462,6 +475,10 @@ function setupIPC(): void {
 }
 
 function wireClientEvents(): void {
+  // A reconnect has missed server broadcasts and invalidated all terminal
+  // attachments. Reloading the renderer makes its existing initial-sync path
+  // rebuild from the server's authoritative state.
+  let needsRendererResync = false
   client!.on('focus-surface', (nodeId: string) => {
     raiseAndFocusNode(nodeId)
   })
@@ -588,14 +605,22 @@ function wireClientEvents(): void {
 
   client!.on('connect', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
+      if (needsRendererResync) {
+        needsRendererResync = false
+        logger.log('Server reconnected; reloading renderer for authoritative resync')
+        mainWindow.webContents.reload()
+        return
+      }
       mainWindow.webContents.send('server:status', true)
     }
   })
 
   client!.on('disconnect', () => {
-    console.error('Lost connection to the spaceterm server. Exiting.')
-    client!.disconnect() // stop auto-reconnect
-    app.quit()
+    needsRendererResync = true
+    logger.log('Lost connection to the spaceterm server; reconnecting')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('server:status', false)
+    }
   })
 }
 
@@ -626,28 +651,8 @@ app.whenReady().then(async () => {
   setupTTSHandlers()
   wireClientEvents()
 
-  {
-    const maxRetries = 3
-    let connected = false
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        await client.connect()
-        connected = true
-        logger.log('Server connection established')
-        break
-      } catch {
-        if (attempt < maxRetries) {
-          logger.log(`Server connection attempt ${attempt}/${maxRetries} failed, retrying in 1s...`)
-          await new Promise((r) => setTimeout(r, 1000))
-        }
-      }
-    }
-    if (!connected) {
-      logger.log('Failed to connect to terminal server after 3 attempts. Is it running? (npm run server)')
-      app.quit()
-      return
-    }
-  }
+  await client.connect()
+  logger.log('Server connection established')
 
   // Flush a deep-link focus request that arrived before the server connection.
   if (pendingFocusSurfaceId) {

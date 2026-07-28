@@ -49,6 +49,12 @@ export interface ListMessage {
   seq: number
 }
 
+/** Request a graceful server process restart. The persistent PTY daemon is left running. */
+export interface ServerRestartMessage {
+  type: 'server-restart'
+  seq: number
+}
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -470,6 +476,7 @@ export type IngestMessage =
 export type ClientMessage =
   | CreateMessage
   | ListMessage
+  | ServerRestartMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage
@@ -526,6 +533,12 @@ export interface CreatedMessage {
   sessionId: string
   cols: number
   rows: number
+}
+
+/** Acknowledges that the server has begun its graceful restart sequence. */
+export interface ServerRestartedMessage {
+  type: 'server-restarted'
+  seq: number
 }
 
 export interface ListedMessage {
@@ -868,6 +881,7 @@ export type ScriptResponse =
 
 export type ServerMessage =
   | CreatedMessage
+  | ServerRestartedMessage
   | ListedMessage
   | AttachedMessage
   | DetachedMessage
