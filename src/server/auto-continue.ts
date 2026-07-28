@@ -19,12 +19,16 @@ const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][0-2]/g
  * Patterns that indicate Claude Code stopped due to an API error rather than
  * a normal completion. Matched against the ANSI-stripped tail of the scrollback.
  *
- * Covers:
- * - HTTP status codes returned by the Anthropic API (500, 502, 503, 529)
- * - Error class names and messages from Claude Code's error handling
- * - Rate limit / overload signals
+ * Requires Claude Code's "API Error:" framing so bare status codes in assistant
+ * prose (e.g. "yields a 500") do not false-positive. Canonical forms from
+ * https://code.claude.com/docs/en/errors:
+ *   API Error: 500 Internal server error...
+ *   API Error: 500 {"type":"error","error":{"type":"api_error",...}}
+ *   API Error: Repeated 529 Overloaded errors...
+ *   API Error: Server error mid-response...
  */
-const API_ERROR_RE = /\b(500|502|503|529|overloaded|Internal Server Error|APIError|api_error|rate.?limit)\b/i
+const API_ERROR_RE =
+  /API Error:\s*(?:(?:Repeated\s+)?(?:500|502|503|529)\b|Server error mid-response|Connection closed mid-response|Response stalled mid-stream|.*\b(?:overloaded_error|Internal server error)\b)/i
 
 /** How many characters from the end of the scrollback to check for error patterns. */
 const SCROLLBACK_TAIL_LENGTH = 2000
@@ -38,6 +42,11 @@ function matchContext(text: string, index: number, length: number): string {
   const prefix = start > 0 ? '…' : ''
   const suffix = end < text.length ? '…' : ''
   return `${prefix}${text.slice(start, end).replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim()}${suffix}`
+}
+
+/** Pure matcher for tests and hasPotentialError. Operates on ANSI-stripped text. */
+export function findApiErrorMatch(strippedScrollbackTail: string): RegExpExecArray | null {
+  return API_ERROR_RE.exec(strippedScrollbackTail)
 }
 
 export interface PotentialErrorDetectorDeps {
@@ -63,7 +72,7 @@ export class PotentialErrorDetector {
     const tail = scrollback.slice(-SCROLLBACK_TAIL_LENGTH)
     const stripped = tail.replace(ANSI_ESCAPE_RE, '')
 
-    const match = API_ERROR_RE.exec(stripped)
+    const match = findApiErrorMatch(stripped)
     if (!match || match.index === undefined) return false
 
     const title = this.deps.getNodeTitle(surfaceId)
