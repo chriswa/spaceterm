@@ -35,6 +35,10 @@ export class CursorSessionFileWatcher {
     this.watcher.dispose()
   }
 
+  getFilePath(surfaceId: string): string | undefined {
+    return this.watcher.getFilePath(surfaceId)
+  }
+
   private resolveAndWatch(surfaceId: string, conversationId: string, attempt: number): void {
     const filePath = findCursorTranscript(conversationId)
     if (filePath) {

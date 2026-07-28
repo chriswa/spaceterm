@@ -265,6 +265,36 @@ html, body, #root {
   animation-delay: 0.85s;
 }
 
+.toolbar__summary-bubble {
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  width: 16px;
+  height: 13px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toolbar__summary-bubble path {
+  stroke: #11131a;
+  stroke-width: 1.4px;
+  stroke-linejoin: round;
+}
+
+.toolbar__summary-bubble--idle path {
+  fill: #6d7280;
+}
+
+.toolbar__summary-bubble--thinking path {
+  fill: #59d7ed;
+  filter: drop-shadow(0 0 4px rgba(89, 215, 237, 0.9));
+}
+
+.toolbar__summary-bubble--talking path {
+  fill: #f5d75a;
+  filter: drop-shadow(0 0 4px rgba(245, 215, 90, 0.9));
+}
+
 @keyframes crab-sonar-ping {
   0%   { transform: scale(1); opacity: 0; }
   20%  { opacity: 0.9; }
@@ -669,30 +699,6 @@ html, body, #root {
   font-weight: 700;
   color: #5d616f;
   flex-shrink: 0;
-}
-
-/* Assigned call-sign badge — extra-bold black pill shown before the custom title.
-   Vertical padding makes the pill taller (extends toward the bar edges) while the
-   equal negative vertical margin keeps its layout height — and thus the title-bar
-   height — unchanged. Text color is set inline to the surface's title-bar color. */
-.terminal-card__session-name {
-  font-weight: 900;
-  font-size: 15px;
-  line-height: 1.1;
-  flex-shrink: 0;
-  padding: 4px 8px;
-  margin: -4px 0;
-  border-radius: 6px;
-  letter-spacing: 0.2px;
-  background: #000;
-  /* Fallback text color for the no-preset case; overridden inline with a preset. */
-  color: #cdd6f4;
-}
-
-.terminal-card__session-name-dash {
-  flex-shrink: 0;
-  opacity: 0.6;
-  margin: 0 2px;
 }
 
 .terminal-card__separator {

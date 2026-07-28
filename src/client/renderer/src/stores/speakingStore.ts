@@ -1,10 +1,7 @@
 import { create } from 'zustand'
 
 /**
- * Tracks which Claude sessions are currently "speaking" via the external TTS
- * daemon. Keyed by `claudeSessionId` (NOT surfaceId/nodeId) — the daemon and the
- * server both speak in terms of Claude session ids, and the renderer resolves
- * a session id to a crab at render time against each node's `claudeSessionHistory`.
+ * Tracks which terminal nodes are currently speaking through Summary Chat.
  *
  * Modeled as a map rather than a single id because in `--all` mode any number of
  * Claude sessions can speak concurrently.
@@ -22,42 +19,42 @@ interface SpeakingEntry {
 }
 
 interface SpeakingState {
-  /** claudeSessionId -> speaking metadata. Presence of the key means "speaking". */
+  /** nodeId -> speaking metadata. Presence of the key means "speaking". */
   speaking: Record<string, SpeakingEntry>
-  setSpeaking: (claudeSessionId: string, speaking: boolean, voice?: string) => void
+  setSpeaking: (nodeId: string, speaking: boolean, voice?: string) => void
 }
 
 /** Per-session safety timers, kept outside zustand state (not render-relevant). */
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function clearTimer(claudeSessionId: string): void {
-  const t = timers.get(claudeSessionId)
+function clearTimer(nodeId: string): void {
+  const t = timers.get(nodeId)
   if (t) {
     clearTimeout(t)
-    timers.delete(claudeSessionId)
+    timers.delete(nodeId)
   }
 }
 
 export const useSpeakingStore = create<SpeakingState>((set) => ({
   speaking: {},
-  setSpeaking: (claudeSessionId, speaking, voice) => {
-    clearTimer(claudeSessionId)
+  setSpeaking: (nodeId, speaking, voice) => {
+    clearTimer(nodeId)
     if (speaking) {
-      timers.set(claudeSessionId, setTimeout(() => {
-        timers.delete(claudeSessionId)
+      timers.set(nodeId, setTimeout(() => {
+        timers.delete(nodeId)
         set((state) => {
-          if (!(claudeSessionId in state.speaking)) return state
+          if (!(nodeId in state.speaking)) return state
           const next = { ...state.speaking }
-          delete next[claudeSessionId]
+          delete next[nodeId]
           return { speaking: next }
         })
       }, MAX_SPEAK_MS))
-      set((state) => ({ speaking: { ...state.speaking, [claudeSessionId]: { voice } } }))
+      set((state) => ({ speaking: { ...state.speaking, [nodeId]: { voice } } }))
     } else {
       set((state) => {
-        if (!(claudeSessionId in state.speaking)) return state
+        if (!(nodeId in state.speaking)) return state
         const next = { ...state.speaking }
-        delete next[claudeSessionId]
+        delete next[nodeId]
         return { speaking: next }
       })
     }

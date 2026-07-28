@@ -436,22 +436,21 @@ export interface FocusClaudeSessionMessage {
   claudeSessionId: string
 }
 
+export interface SummaryChatStartMessage {
+  type: 'summary-chat-start'
+  nodeId: string
+}
+
+export interface VoiceCommandMessage {
+  type: 'voice-command'
+  text: string
+}
+
 /** Store the camera bounds for a numbered viewport slot ('0'..'9'), shared across all clients. */
 export interface SaveViewportMessage {
   type: 'save-viewport'
   slot: string
   bounds: CameraBounds
-}
-
-/**
- * Complete Claude-session-id → assigned display-name map, sent by the external
- * Voice Operator daemon. This is NOT a diff — the receiver must replace any stored
- * copy wholesale. An empty map means "no named sessions". Used both as an ingest
- * message (hooks socket) and, re-broadcast verbatim, as a server→client message.
- */
-export interface SessionNamesMessage {
-  type: 'session-names'
-  names: Record<string, string>
 }
 
 /** Fire-and-forget messages received on the hooks socket (no response sent). */
@@ -465,8 +464,7 @@ export type IngestMessage =
   | SpacetermBroadcastMessage
   | PlaySoundMessage
   | SpeakMessage
-  | TtsSpeakingMessage
-  | SessionNamesMessage
+  | VoiceCommandMessage
 
 /** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
 export type ClientMessage =
@@ -517,6 +515,7 @@ export type ClientMessage =
   | CameraBoundsMessage
   | FocusSurfaceRequestMessage
   | FocusClaudeSessionMessage
+  | SummaryChatStartMessage
   | SaveViewportMessage
 
 // --- Server → Client messages ---
@@ -697,33 +696,19 @@ export interface SpeakServerMessage {
   text: string
 }
 
-/**
- * Fire-and-forget event from an external TTS daemon (e.g. transcript-reader.py),
- * received on the hooks socket. Keyed by `claudeSessionId` because the daemon
- * runs outside any surface and does not know surface ids. `speaking: false` is
- * always sent when speech ends (even on error), but spaceterm must not rely on
- * it always arriving — see `speaking-changed` handling for the safety timeout.
- */
-export interface TtsSpeakingMessage {
-  type: 'tts-speaking'
-  speaking: boolean
-  claudeSessionId: string
-  voice?: string
-  text?: string
-}
-
-/**
- * Server → client: a Claude session started or stopped "speaking" (external TTS).
- * This is a straight forward of the ingest `TtsSpeakingMessage` — the server does
- * NOT resolve it to a surface. Matching `claudeSessionId` to a crab happens in the
- * renderer against each node's persisted `claudeSessionHistory`, which (unlike the
- * server's in-memory session map) survives a server restart.
- */
 export interface SpeakingChangedMessage {
   type: 'speaking-changed'
-  claudeSessionId: string
+  nodeId: string
   speaking: boolean
   voice?: string
+}
+
+/** Summary Chat lifecycle for the toolbar's thinking and target indicators. */
+export interface SummaryChatStatusMessage {
+  type: 'summary-chat-status'
+  nodeId: string
+  state: 'thinking' | 'ready' | 'target' | 'error'
+  message?: string
 }
 
 export interface PeerConnectedMessage {
@@ -907,7 +892,7 @@ export type ServerMessage =
   | PlaySoundServerMessage
   | SpeakServerMessage
   | SpeakingChangedMessage
-  | SessionNamesMessage
+  | SummaryChatStatusMessage
   | PeerConnectedMessage
   | PeerDisconnectedMessage
   | PeerCameraBoundsMessage

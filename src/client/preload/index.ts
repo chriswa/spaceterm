@@ -141,9 +141,8 @@ interface NodeApi {
   onServerError(callback: (message: string) => void): () => void
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
-  onSpeakingChanged(callback: (claudeSessionId: string, speaking: boolean, voice: string | undefined) => void): () => void
-  onSessionNames(callback: (names: Record<string, string>) => void): () => void
-  getSessionNames(): Promise<Record<string, string>>
+  onSpeakingChanged(callback: (nodeId: string, speaking: boolean, voice: string | undefined) => void): () => void
+  onSummaryChatStatus(callback: (nodeId: string, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => void): () => void
 }
 
 const nodeApi: NodeApi = {
@@ -234,16 +233,15 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener('speak', listener)
   },
   onSpeakingChanged: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, claudeSessionId: string, speaking: boolean, voice: string | undefined) => callback(claudeSessionId, speaking, voice)
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, speaking: boolean, voice: string | undefined) => callback(nodeId, speaking, voice)
     ipcRenderer.on('speaking-changed', listener)
     return () => ipcRenderer.removeListener('speaking-changed', listener)
   },
-  onSessionNames: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, names: Record<string, string>) => callback(names)
-    ipcRenderer.on('session-names', listener)
-    return () => ipcRenderer.removeListener('session-names', listener)
+  onSummaryChatStatus: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => callback(nodeId, state, message)
+    ipcRenderer.on('summary-chat-status', listener)
+    return () => ipcRenderer.removeListener('summary-chat-status', listener)
   },
-  getSessionNames: () => ipcRenderer.invoke('node:get-session-names'),
   onPeerConnected: (callback: (clientId: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, clientId: string) => callback(clientId)
     ipcRenderer.on('peer:connected', listener)
@@ -270,6 +268,7 @@ contextBridge.exposeInMainWorld('api', {
   pty: ptyApi,
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
+  startSummaryChat: (nodeId: string) => ipcRenderer.send('summary-chat:start', nodeId),
   writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   diffFiles: (fileA: string, fileB: string) => ipcRenderer.invoke('shell:diffFiles', fileA, fileB),

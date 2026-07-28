@@ -87,7 +87,7 @@ export const helpGroups: HelpGroup[] = [
     entries: [
       { keys: `${MAC_CMD} K`, name: 'Node search' },
       { keys: `${MAC_CMD} F`,            name: 'Find in terminal' },
-      { keys: `${MAC_CMD} P`,            name: "Jump to Claude's plan", notes: 'Also happens automatically on focus' },
+      { keys: `${MAC_CMD} P`,            name: 'Summarize focused agent chat aloud', notes: 'Starts a voice follow-up conversation' },
     ],
   },
 

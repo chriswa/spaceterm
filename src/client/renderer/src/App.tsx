@@ -3,7 +3,7 @@ import { Canvas } from './components/Canvas'
 import { Toast } from './components/Toast'
 import { onToast, showToast } from './lib/toast'
 import { RootNode } from './components/RootNode'
-import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers, terminalPlanJumpers } from './components/TerminalCard'
+import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers } from './components/TerminalCard'
 import { MarkdownCard } from './components/MarkdownCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
@@ -1641,15 +1641,19 @@ export function App() {
         }
       }
 
-      // Cmd+P: jump to "Here is Claude's plan:" in focused terminal
+      // Cmd+P: start a spoken summary chat for the focused agent transcript.
       if (e.metaKey && e.key === 'p') {
-        const jumper = terminalPlanJumpers.get(focusRef.current!)
-        if (jumper) {
+        const focusedNode = focusRef.current ? useNodeStore.getState().nodes[focusRef.current] : undefined
+        if (focusedNode?.type === 'terminal') {
           e.preventDefault()
           e.stopPropagation()
-          if (!jumper()) shakeCamera()
+          window.api.startSummaryChat(focusedNode.id)
           return
         }
+        e.preventDefault()
+        e.stopPropagation()
+        shakeCamera()
+        showToast('Focus an agent terminal to start Summary Chat.')
       }
 
       // Don't steal keys from real text-editing controls (inputs, CodeMirror, etc.)

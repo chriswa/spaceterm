@@ -17,7 +17,6 @@ import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useSpeakingStore } from '../stores/speakingStore'
-import { useSessionNamesStore } from '../stores/sessionNamesStore'
 import { showToast } from '../lib/toast'
 import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScrollRestore } from '../lib/focus-storage'
 import crabIcon from '../assets/crab.png'
@@ -140,17 +139,7 @@ export function TerminalCard({
   const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady })
   propsRef.current = { x, y, zoom, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady }
 
-  // Resolve this surface against the claudeSessionId-keyed speaking + name maps.
-  // A surface owns every Claude session id in its history, so we match on any of
-  // them — mirroring the toolbar crab logic (Toolbar.tsx).
-  const claudeSessionIds = claudeSessionHistory?.map((e) => e.claudeSessionId) ?? []
-  const isSpeaking = useSpeakingStore((s) => claudeSessionIds.some((id) => id in s.speaking))
-  const sessionName = useSessionNamesStore((s) => {
-    for (const id of claudeSessionIds) {
-      if (s.names[id]) return s.names[id]
-    }
-    return undefined
-  })
+  const isSpeaking = useSpeakingStore((s) => id in s.speaking)
 
   const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
   const [claudeSessionLineCount, setClaudeSessionLineCount] = useState<number | undefined>(undefined)
@@ -1081,7 +1070,6 @@ export function TerminalCard({
       titleContent={
         <TerminalTitleBarContent
           name={name}
-          sessionName={sessionName}
           shellTitleHistory={shellTitleHistory}
           preset={preset}
           id={id}

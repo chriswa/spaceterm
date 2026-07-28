@@ -29,6 +29,7 @@ import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
+import { SummaryChat } from './summary-chat'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -663,29 +664,6 @@ class RingBuffer {
 
 const ghRateLimitHistory = new RingBuffer('gh-rate-limit', GH_RATE_LIMIT_POLL_MS)
 
-// --- Session names (Claude session id → assigned call-sign) ---
-// Sent by the external Voice Operator daemon on the hooks socket as a complete
-// map (replace wholesale, never merge). Persisted here so the names survive a
-// spaceterm restart even while Voice Operator keeps running, and pushed to every
-// client on connect so a client reconnect immediately re-hydrates.
-const SESSION_NAMES_PATH = path.join(SOCKET_DIR, 'session-names.json')
-
-function loadSessionNames(): Record<string, string> {
-  try {
-    const data = JSON.parse(fs.readFileSync(SESSION_NAMES_PATH, 'utf8'))
-    if (data && typeof data === 'object') return data as Record<string, string>
-  } catch { /* missing or corrupt */ }
-  return {}
-}
-
-function saveSessionNames(names: Record<string, string>): void {
-  fs.writeFile(SESSION_NAMES_PATH, JSON.stringify(names), (err) => {
-    if (err) serverLog(`[session-names] Failed to save: ${err.message}`)
-  })
-}
-
-let sessionNames: Record<string, string> = loadSessionNames()
-
 // --- GitHub GraphQL rate limit polling ---
 const GH_RATE_LIMIT_LOG_FILE = path.join(USAGE_LOG_DIR, 'gh_rate_limit.jsonl')
 const GH_RATE_LIMIT_CACHE_FILE = path.join(SOCKET_DIR, 'gh-rate-limit-cache.json')
@@ -749,12 +727,24 @@ let planCacheManager: PlanCacheManager
 let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
+let summaryChat: SummaryChat
 
 function surfaceAgentType(surfaceId: string): 'claude' | 'cursor' | 'codex' | undefined {
   const nodeId = stateManager.getNodeIdForSession(surfaceId) ?? surfaceId
   const node = stateManager.getNode(nodeId)
   if (node && node.type === 'terminal') return node.agentType
   return undefined
+}
+
+function transcriptPathForNode(nodeId: string): string | undefined {
+  const node = stateManager.getNode(nodeId)
+  if (!node || node.type !== 'terminal') return undefined
+  switch (node.agentType) {
+    case 'codex': return codexSessionFileWatcher.getFilePath(node.sessionId)
+    case 'cursor': return cursorSessionFileWatcher.getFilePath(node.sessionId)
+    case 'claude':
+    default: return sessionFileWatcher.getFilePath(node.sessionId)
+  }
 }
 
 /**
@@ -921,6 +911,12 @@ function handleIngestMessage(msg: IngestMessage): void {
       break
     }
 
+    case 'voice-command': {
+      const text = msg.text.trim()
+      if (text) void summaryChat.followUp(text)
+      break
+    }
+
     case 'emit-markdown': {
       const parentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
       if (!parentNodeId) {
@@ -1052,27 +1048,6 @@ function handleIngestMessage(msg: IngestMessage): void {
 
     case 'speak': {
       broadcastToAll({ type: 'speak', text: msg.text })
-      break
-    }
-
-    case 'tts-speaking': {
-      // Pure forward: the renderer resolves claudeSessionId → crab against the
-      // persisted node history (which survives server restarts; this process's
-      // in-memory session map does not).
-      broadcastToAll({
-        type: 'speaking-changed',
-        claudeSessionId: msg.claudeSessionId,
-        speaking: msg.speaking,
-        voice: msg.voice
-      })
-      break
-    }
-
-    case 'session-names': {
-      // Authoritative full map — replace wholesale, persist, and fan out to clients.
-      sessionNames = msg.names
-      saveSessionNames(sessionNames)
-      broadcastToAll({ type: 'session-names', names: sessionNames })
       break
     }
 
@@ -1394,6 +1369,20 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
 
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   switch (msg.type) {
+    case 'summary-chat-start': {
+      const node = stateManager.getNode(msg.nodeId)
+      if (!node || node.type !== 'terminal') {
+        serverLog(`[summary-chat] rejected node=${msg.nodeId.slice(0, 8)} (not a terminal)`)
+        broadcastToAll({ type: 'summary-chat-status', nodeId: msg.nodeId, state: 'error', message: 'Focus an agent terminal before starting Summary Chat.' })
+        break
+      }
+      void summaryChat.start(
+        node.id,
+        transcriptPathForNode(node.id),
+        node.claudeSessionHistory.at(-1)?.claudeSessionId,
+      )
+      break
+    }
     case 'create': {
       const { sessionId, cols, rows } = sessionManager.create(msg.options)
       send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
@@ -2733,6 +2722,15 @@ async function startServer(): Promise<void> {
     claudeStateMachine.handleCursorTranscriptEntries(surfaceId, newEntries)
   })
 
+  summaryChat = new SummaryChat(
+    (nodeId, speaking, voice) => {
+      broadcastToAll({ type: 'speaking-changed', nodeId, speaking, voice })
+    },
+    (nodeId, state, message) => {
+      broadcastToAll({ type: 'summary-chat-status', nodeId, state, message })
+    },
+  )
+
   // --- Startup: reconcile with daemon sessions, then revive remaining terminals ---
 
   // Step 1: Ask daemon for all surviving sessions.
@@ -2969,8 +2967,10 @@ async function startServer(): Promise<void> {
     // Send the shared saved viewport slots to the new client
     send(socket, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
 
-    // Push the current session-name map so a (re)connecting client re-hydrates
-    send(socket, { type: 'session-names', names: sessionNames })
+    const summaryTargetNodeId = summaryChat.getTargetNodeId()
+    if (summaryTargetNodeId) {
+      send(socket, { type: 'summary-chat-status', nodeId: summaryTargetNodeId, state: 'target' })
+    }
 
     // Send cached GitHub rate-limit data immediately so the client doesn't wait for the next poll
     if (cachedGhRateLimit) {
@@ -3061,6 +3061,7 @@ async function startServer(): Promise<void> {
     sessionFileWatcher.dispose()
     codexSessionFileWatcher.dispose()
     cursorSessionFileWatcher.dispose()
+    summaryChat.dispose()
     snapshotManager.dispose()
     stateManager.persistImmediate()
     sessionManager.destroyAll() // Cleans local state only — daemon PTYs persist

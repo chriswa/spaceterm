@@ -103,6 +103,10 @@ export class SessionFileWatcher {
     return entry ? entry.lineCount : null
   }
 
+  getFilePath(surfaceId: string): string | undefined {
+    return this.watched.get(surfaceId)?.filePath
+  }
+
   private initialRead(entry: WatchedFile): void {
     try {
       const content = fs.readFileSync(entry.filePath, 'utf-8')

@@ -173,12 +173,12 @@ export class ServerClient extends EventEmitter {
     }
 
     if (msg.type === 'speaking-changed') {
-      this.emit('speaking-changed', msg.claudeSessionId, msg.speaking, msg.voice)
+      this.emit('speaking-changed', msg.nodeId, msg.speaking, msg.voice)
       return
     }
 
-    if (msg.type === 'session-names') {
-      this.emit('session-names', msg.names)
+    if (msg.type === 'summary-chat-status') {
+      this.emit('summary-chat-status', msg.nodeId, msg.state, msg.message)
       return
     }
 
@@ -430,6 +430,10 @@ export class ServerClient extends EventEmitter {
 
   focusSurface(surfaceId: string): void {
     this.sendFireAndForget({ type: 'focus-surface-request', surfaceId })
+  }
+
+  startSummaryChat(nodeId: string): void {
+    this.sendFireAndForget({ type: 'summary-chat-start', nodeId })
   }
 
   isConnected(): boolean {

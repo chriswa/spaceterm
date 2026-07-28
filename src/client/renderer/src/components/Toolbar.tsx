@@ -22,6 +22,7 @@ function indicatorKindClass(kind: AgentIndicatorKind): string {
 import { CrabDance } from '../lib/crab-dance'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useSpeakingStore } from '../stores/speakingStore'
+import { useSummaryChatStore } from '../stores/summaryChatStore'
 import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useFontStore, FONT_THEMES } from '../stores/fontStore'
 import { useCameraLockStore } from '../stores/cameraLockStore'
@@ -375,6 +376,8 @@ function ProportionalFontToggle() {
 function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string, metaKey: boolean) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null; crabNavEvent: CrabNavEvent }) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const speakingSessions = useSpeakingStore(s => s.speaking)
+  const summaryTargetNodeId = useSummaryChatStore(s => s.targetNodeId)
+  const summaryThinking = useSummaryChatStore(s => s.thinking)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
   const positionsRef = useRef<Map<string, number>>(new Map())
@@ -737,8 +740,10 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
   return (
     <div className="toolbar__crabs" ref={containerRef}>
       {crabs.map((crab, i) => {
-          const speakingId = crab.claudeSessionIds.find(id => speakingSessions[id])
-          const speaking = speakingId ? speakingSessions[speakingId] : undefined
+          const speaking = speakingSessions[crab.nodeId]
+          const thinking = crab.nodeId in summaryThinking
+          const summaryTarget = crab.nodeId === summaryTargetNodeId
+          const summaryState = speaking ? 'talking' : thinking ? 'thinking' : 'idle'
           return (
           <div
             key={crab.nodeId}
@@ -767,22 +772,14 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
               data-tooltip={crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title}
               data-tooltip-no-flip
             />
-            {speaking && (
+            {summaryTarget && (
               <svg
-                className="toolbar__crab-sonar"
-                viewBox="0 0 60 60"
+                className={`toolbar__summary-bubble toolbar__summary-bubble--${summaryState}`}
+                viewBox="0 0 20 16"
                 role="img"
-                aria-label={speaking.voice ? `Speaking (${speaking.voice})` : 'Speaking'}
+                aria-label={summaryState === 'talking' ? 'Summary Chat is speaking' : summaryState === 'thinking' ? 'Summary Chat is thinking' : 'Voice follow-ups target this surface'}
               >
-                {/* Two staggered waves; each draws a 60\u00b0 arc above and below the crab. */}
-                <g className="toolbar__crab-sonar-wave">
-                  <path className="toolbar__crab-sonar-arc" d="M 23.5 18.742 A 13 13 0 0 1 36.5 18.742" />
-                  <path className="toolbar__crab-sonar-arc" d="M 36.5 41.258 A 13 13 0 0 1 23.5 41.258" />
-                </g>
-                <g className="toolbar__crab-sonar-wave toolbar__crab-sonar-wave--2">
-                  <path className="toolbar__crab-sonar-arc" d="M 23.5 18.742 A 13 13 0 0 1 36.5 18.742" />
-                  <path className="toolbar__crab-sonar-arc" d="M 36.5 41.258 A 13 13 0 0 1 23.5 41.258" />
-                </g>
+                <path d="M2.5 1.5h15v9h-8l-4.5 4v-4h-2.5z" />
               </svg>
             )}
           </div>

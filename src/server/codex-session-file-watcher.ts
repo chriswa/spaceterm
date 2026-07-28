@@ -39,6 +39,10 @@ export class CodexSessionFileWatcher {
     this.watcher.dispose()
   }
 
+  getFilePath(surfaceId: string): string | undefined {
+    return this.watcher.getFilePath(surfaceId)
+  }
+
   private resolveAndWatch(surfaceId: string, sessionId: string, attempt: number): void {
     const filePath = findCodexSessionFile(sessionId)
     if (filePath) {
