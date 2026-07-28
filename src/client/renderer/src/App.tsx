@@ -44,6 +44,7 @@ import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
 import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
+import { playSummaryChatStartedCue } from './lib/summary-chat-wait-cue'
 
 function tieredZIndex(type: import('../../../../shared/state').NodeData['type'], z: number): number {
   if (type === 'title') return z + 2_000_000
@@ -1647,6 +1648,7 @@ export function App() {
         if (focusedNode?.type === 'terminal') {
           e.preventDefault()
           e.stopPropagation()
+          playSummaryChatStartedCue()
           window.api.startSummaryChat(focusedNode.id)
           return
         }

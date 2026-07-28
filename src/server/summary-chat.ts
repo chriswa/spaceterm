@@ -114,6 +114,7 @@ export class SummaryChat {
   private async ask(conversation: Conversation, prompt: string, kind: 'initial' | 'follow-up'): Promise<void> {
     conversation.lastUsedAt = Date.now()
     this.onStatusChanged(conversation.nodeId, 'thinking')
+    let waitingForSpeech = false
     try {
       const text = await this.askHaiku(conversation, prompt)
       this.appendAudit({
@@ -127,6 +128,10 @@ export class SummaryChat {
       const speech = await this.speak(text, conversation.voice)
       conversation.speechId = speech?.id
       if (speech?.id) {
+        // Keep the cyan waiting indicator until Voice Operator confirms that
+        // audio is actually speaking; a successful POST only means it accepted
+        // the job, which may still be queued.
+        waitingForSpeech = true
         void this.monitorSpeech(conversation, speech.id)
       }
       serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} spoke ${text.length} chars`)
@@ -134,7 +139,7 @@ export class SummaryChat {
       serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} Haiku failed: ${err instanceof Error ? err.message : String(err)}`)
       this.onStatusChanged(conversation.nodeId, 'error', 'Summary Chat could not reach Haiku.')
     } finally {
-      this.onStatusChanged(conversation.nodeId, 'ready')
+      if (!waitingForSpeech) this.onStatusChanged(conversation.nodeId, 'ready')
     }
   }
 
@@ -246,13 +251,23 @@ export class SummaryChat {
             conversation.isSpeaking = false
             this.onSpeakingChanged(conversation.nodeId, false)
           }
+          this.onStatusChanged(conversation.nodeId, 'ready')
         }
         return
       }
       if (status.state === 'in_progress') {
-        if (!conversation.isSpeaking) {
+        // `in_progress` is the lifecycle of the whole Voice Operator job. Its
+        // playback state is the precise distinction between an accepted/queued
+        // job (cyan) and audible output (yellow). Older services did not send
+        // playback_state, so treat that as speaking for compatibility.
+        const isAudiblySpeaking = status.playback_state === undefined || status.playback_state === 'speaking'
+        if (isAudiblySpeaking && !conversation.isSpeaking) {
           conversation.isSpeaking = true
           this.onSpeakingChanged(conversation.nodeId, true, conversation.voice)
+        }
+        if (!isAudiblySpeaking && conversation.isSpeaking) {
+          conversation.isSpeaking = false
+          this.onSpeakingChanged(conversation.nodeId, false)
         }
         continue
       }
@@ -262,6 +277,7 @@ export class SummaryChat {
           conversation.isSpeaking = false
           this.onSpeakingChanged(conversation.nodeId, false)
         }
+        this.onStatusChanged(conversation.nodeId, 'ready')
       }
       return
     }

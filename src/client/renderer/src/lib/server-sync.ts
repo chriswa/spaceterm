@@ -10,6 +10,7 @@ import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
 import { speakText } from './tts-player'
+import { setSummaryChatWaiting } from './summary-chat-wait-cue'
 import type { SoundName } from '../../../../shared/protocol'
 
 /** Play notification sound if enabled. */
@@ -114,6 +115,10 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onSummaryChatStatus((nodeId, state, message) => {
       useSummaryChatStore.getState().setStatus(nodeId, state)
+      // The cue is intentionally driven by the same state as the cyan bubble,
+      // rather than by request timing. In particular, this hard-stops any
+      // active echo before the yellow speaking indicator can appear.
+      setSummaryChatWaiting(nodeId, state === 'thinking')
       if (state === 'error') showToast(message ?? 'Summary Chat could not start.')
     })
   )
