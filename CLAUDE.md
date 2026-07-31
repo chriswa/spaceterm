@@ -12,6 +12,32 @@ Vitest and are discovered by glob (`src/**/*.test.ts`), so a new test file needs
 registration — just put it next to the module it covers. `npm run test:watch` reruns
 on save, and `npm test -- <substring>` runs a single file.
 
+## Testing
+
+Prefer a dependency seam over module mocking. The pattern the codebase already
+uses: a narrow deps interface passed to the constructor, with the real
+implementation as the default — `BackgroundLedger(probes = REAL_PROBES)`,
+`DaemonClient(onMessage, { transport = REAL_DAEMON_TRANSPORT })`,
+`SessionManager(daemon, deps)`. A test then supplies a small fake rather than
+intercepting `fs` or `child_process`, so the test exercises behaviour instead of
+implementation.
+
+- **Don't inject wall-clock time.** Take an optional `now` parameter
+  (`RingBuffer.record/build`) or expose a flush hook (`ClaudeStateMachine.flushForTest`).
+- **The PTY daemon is fakeable.** It's a separate Go process, but it speaks a
+  stable JSON-lines protocol, so `src/server/testing/fake-daemon.ts` stands in
+  for the socket. That's what makes the whole session lifecycle testable
+  in-process — see `session-manager.test.ts`.
+- **Hook events and transcript JSONL are data, not collaborators.** Use fixtures
+  (`.claude/skills/claude-state-transition-research/canonical-observations.jsonl`),
+  not mocks.
+- **Assert properties, not coordinates**, where the code is a heuristic — see
+  `node-placement.test.ts`. Pinning exact output makes every legitimate retune
+  look like a regression.
+
+If a module can't be tested without reaching into `fs`, `child_process`, or a
+timer, add the seam rather than the mock. That refactor is the deliverable.
+
 ## Parallel agents
 
 Multiple Claude Code agents may be running on this repo at the same time. Files can be modified by other agents mid-conversation. Never assume a file's contents are stable between reads. To revert your own changes, use surgical `Edit` calls (replacing your new text with the original) rather than `git restore` or full-file `Write`, which would clobber work done by other agents.
