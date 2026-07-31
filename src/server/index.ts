@@ -16,6 +16,7 @@ import { canFitAt, computePlacement } from './node-placement'
 import { nodePixelSize, terminalPixelSize, directoryFolderWidth, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
+import { RingBuffer } from './ring-buffer'
 import { SessionFileWatcher } from './session-file-watcher'
 import { CodexSessionFileWatcher } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher } from './cursor-session-file-watcher'
@@ -603,71 +604,6 @@ const GH_RATE_LIMIT_POLL_MS = 60_000 // every 1 minute
 const GH_RATE_LIMIT_SLOT_MINUTES = GH_RATE_LIMIT_POLL_MS / 60_000
 // Directory holding the GitHub rate-limit history log (JSONL).
 const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
-
-// --- Ring buffer keyed by time slots (reusable for any monotonic time-series) ---
-const HISTORY_SLOTS = 61
-
-class RingBuffer {
-  private slots: ({ slotKey: number; value: number } | null)[]
-  private seeded = false
-  private label: string
-  private slotMs: number
-
-  constructor(label: string, slotMs: number) {
-    this.label = label
-    this.slotMs = slotMs
-    this.slots = new Array(HISTORY_SLOTS).fill(null)
-  }
-
-  record(value: number, now = Date.now()): void {
-    const slotKey = Math.floor(now / this.slotMs)
-    const slotIndex = ((slotKey % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
-    this.slots[slotIndex] = { slotKey, value }
-  }
-
-  build(): (number | null)[] {
-    const nowSlot = Math.floor(Date.now() / this.slotMs)
-    const result: (number | null)[] = []
-    for (let i = HISTORY_SLOTS - 1; i >= 0; i--) {
-      const targetSlot = nowSlot - i
-      const slotIndex = ((targetSlot % HISTORY_SLOTS) + HISTORY_SLOTS) % HISTORY_SLOTS
-      const slot = this.slots[slotIndex]
-      result.push(slot && slot.slotKey === targetSlot ? slot.value : null)
-    }
-    return result
-  }
-
-  seedFromLog(logFile: string, valueKey: string): void {
-    if (this.seeded) return
-    this.seeded = true
-    try {
-      if (!fs.existsSync(logFile)) return
-      const fd = fs.openSync(logFile, 'r')
-      const stat = fs.fstatSync(fd)
-      const readSize = Math.min(stat.size, Math.ceil(this.slotMs / 60_000) * 4096)
-      const buf = Buffer.alloc(readSize)
-      fs.readSync(fd, buf, 0, readSize, stat.size - readSize)
-      fs.closeSync(fd)
-
-      const cutoffSlot = Math.floor(Date.now() / this.slotMs) - HISTORY_SLOTS
-      const lines = buf.toString('utf8').split('\n').filter(Boolean)
-      const startIdx = stat.size > readSize ? 1 : 0
-      for (let i = startIdx; i < lines.length; i++) {
-        try {
-          const entry = JSON.parse(lines[i])
-          const value = entry[valueKey]
-          if (typeof value !== 'number' || !entry.timestamp) continue
-          const slotKey = Math.floor(new Date(entry.timestamp).getTime() / this.slotMs)
-          if (slotKey <= cutoffSlot) continue
-          this.record(value, slotKey * this.slotMs)
-        } catch { /* skip malformed line */ }
-      }
-      console.log(`[${this.label}] Seeded history from log (${lines.length - startIdx} entries scanned)`)
-    } catch (err: any) {
-      console.error(`[${this.label}] Failed to seed history: ${err.message}`)
-    }
-  }
-}
 
 const ghRateLimitHistory = new RingBuffer('gh-rate-limit', GH_RATE_LIMIT_POLL_MS)
 
