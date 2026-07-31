@@ -4,6 +4,14 @@ const enum State {
   GotBracket,
   CollectDigit,
   CollectPayload,
+  /**
+   * Saw ESC as the last byte of a chunk while collecting an OSC payload. The
+   * byte that decides whether it was the ST terminator (ESC \) or the start of
+   * an unrelated sequence is in the *next* chunk, so it has to be a state — the
+   * in-chunk path can just look at data[i + 1], but at a chunk boundary there is
+   * nothing to look at.
+   */
+  PayloadEsc,
 }
 
 /**
@@ -87,13 +95,28 @@ export class TitleParser {
               // Not ST — abort this OSC and re-process as new ESC
               this.state = State.GotEsc
             } else {
-              // ESC at end of chunk — we'll see the next char in the next write.
-              // Buffer it and stay in CollectPayload; if next char is '\' it's ST.
-              // Handle this by peeking in the next write call.
-              this.buf += ch
+              // ESC at end of chunk. Do NOT append it to the payload: if the
+              // next chunk starts with '\' this is the ST terminator, and a
+              // buffered ESC would both corrupt the title and leave the parser
+              // stuck in CollectPayload so the title never emits at all.
+              this.state = State.PayloadEsc
             }
           } else {
             this.buf += ch
+          }
+          break
+
+        case State.PayloadEsc:
+          if (ch === '\\') {
+            // The held ESC plus this byte form ST — the OSC is complete.
+            this.emitTitle()
+            this.state = State.Idle
+          } else {
+            // Not ST: the held ESC aborts this OSC and starts a new sequence.
+            // Rewind so this byte is re-read as the one following that ESC,
+            // matching what the in-chunk branch above does.
+            this.state = State.GotEsc
+            i--
           }
           break
       }
