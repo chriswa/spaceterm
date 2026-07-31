@@ -1,5 +1,29 @@
 # ANSI Preservation Bug
 
+## Status: fixed (state loss), with one related issue outstanding
+
+`ScrollbackBuffer` now folds the ANSI state of the evicted prefix into a carried
+state record on every trim, and `getContents()` re-emits that state ahead of the
+surviving tail. See `src/server/ansi-state.ts` (pure state tracker, 29 tests) and
+`src/server/scrollback-buffer.test.ts`.
+
+This is a variant of Option A below, but reconstructing the state rather than
+resetting it — so it avoids A's downside (discarding state that was still
+correct) without needing anything from the headless xterm, as B/C/D would.
+
+Tracked: SGR attributes and both colours (including 256-colour and truecolor),
+the DEC private modes that visibly corrupt a session when lost (alternate screen,
+scroll region, cursor visibility, charset, bracketed paste, mouse reporting,
+autowrap, application cursor keys), and RIS. Cursor *position* is deliberately
+not carried — the replayed tail repositions the cursor itself, and a stale
+absolute position would be worse than none.
+
+Still outstanding: the separate race condition described at the end of this
+document, where live data reaches the client xterm before the scrollback replay.
+
+The analysis below is retained because it explains what each category of lost
+state corrupts, which is what the tests assert.
+
 ## Symptom
 
 The snapshot (rendered from the server's headless xterm) displays correctly, but the client-side xterm has elements in wrong positions, wrong colors, or garbled layout. The divergence is intermittent and gets worse over time, especially with react-ink applications that do frequent full-screen redraws.
