@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --ignore-scripts skips the electron-rebuild postinstall and Electron's
+      # binary download. The repo has no native dependencies (the PTY layer is a
+      # separate Go daemon; the macOS TTS module is optional and platform-gated),
+      # and none of the checks below launch the GUI.
+      #
+      # `npm ci` here rather than the `npm install` the session-start hook uses:
+      # CI wants the lockfile resolution exactly, with no cached tree to reuse.
+      - run: npm ci --ignore-scripts
+
+      # Typecheck first — it catches the contract drift between src/shared, the
+      # preload bridge, and the renderer that nothing else checks, since tsx and
+      # electron-vite both strip types without verifying them.
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      - run: npm test
