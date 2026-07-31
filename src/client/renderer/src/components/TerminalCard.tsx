@@ -111,7 +111,7 @@ interface TerminalCardProps {
   onHoverFocus?: (id: string) => void
   onHoverUnfocus?: () => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
-  cameraRef: React.RefObject<Camera>
+  cameraRef: React.MutableRefObject<Camera>
 }
 
 export function TerminalCard({

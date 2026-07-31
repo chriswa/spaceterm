@@ -25,9 +25,9 @@ export interface ReparentEdge {
 
 interface CanvasBackgroundProps {
   camera: Camera
-  cameraRef: React.RefObject<Camera>
-  edgesRef: React.RefObject<TreeLineNode[]>
-  maskRectsRef: React.RefObject<MaskRect[]>
+  cameraRef: React.MutableRefObject<Camera>
+  edgesRef: React.MutableRefObject<TreeLineNode[]>
+  maskRectsRef: React.MutableRefObject<MaskRect[]>
   selectionRef: React.RefObject<string | null>
   reparentEdgeRef: React.RefObject<ReparentEdge | null>
   goodGfx: boolean

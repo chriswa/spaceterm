@@ -830,7 +830,7 @@ export function App() {
       const cwd = getParentCwd(nodeId)
       const parentNode = useNodeStore.getState().nodes[nodeId]
       const titleHistory = parentNode?.type === 'terminal' ? parentNode.shellTitleHistory : undefined
-      const parentName = parentNode?.name
+      const parentName = parentNode?.name ?? undefined
       sendTerminalCreate(nodeId, { cwd, claude: { resumeSessionId } }, titleHistory, parentName).then((result) => {
         if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
         navigateToNode(result.sessionId)
@@ -1877,7 +1877,7 @@ export function App() {
         const focusedId = focusRef.current
         if (focusedId) {
           const node = useNodeStore.getState().nodes[focusedId]
-          if (node?.claudeSessionHistory && node.claudeSessionHistory.length > 0) {
+          if (node?.type === 'terminal' && node.claudeSessionHistory && node.claudeSessionHistory.length > 0) {
             handleForkSession(focusedId)
           } else {
             shakeCamera()
@@ -2184,7 +2184,7 @@ export function App() {
             rows={t.rows}
             zIndex={t.zIndex}
             zoom={camera.z}
-            name={t.name}
+            name={t.name ?? undefined}
             colorPresetId={t.colorPresetId}
             resolvedPreset={resolvedPresets[t.id]}
             shellTitleHistory={t.shellTitleHistory}
@@ -2246,7 +2246,7 @@ export function App() {
               zoom={camera.z}
               content={effectiveContent}
               maxWidth={m.maxWidth}
-              name={m.name}
+              name={m.name ?? undefined}
               colorPresetId={m.colorPresetId}
               resolvedPreset={resolvedPresets[m.id]}
               archivedChildren={m.archivedChildren}

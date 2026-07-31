@@ -50,7 +50,7 @@ interface CardShellProps {
   extraCliArgs?: string
   className?: string
   style?: CSSProperties
-  cardRef?: RefObject<HTMLDivElement | null>
+  cardRef?: RefObject<HTMLDivElement>
   onMouseEnter?: (e: React.MouseEvent) => void
   onMouseLeave?: (e: React.MouseEvent) => void
   behindContent?: ReactNode

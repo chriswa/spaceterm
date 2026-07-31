@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, createElement } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import type { MutableRefObject, ReactNode } from 'react'
 import { screenToCanvas } from '../lib/camera'
 import type { Camera } from '../lib/camera'
 import { useNodeStore, nodePixelSize } from '../stores/nodeStore'
@@ -15,7 +15,7 @@ function findCardElement(nodeId: string): HTMLElement | null {
 }
 
 export function useRtsSelect(
-  cameraRef: RefObject<Camera>,
+  cameraRef: MutableRefObject<Camera>,
   onComplete: (nodeIds: string[]) => void
 ): {
   startDrag: (e: MouseEvent) => void

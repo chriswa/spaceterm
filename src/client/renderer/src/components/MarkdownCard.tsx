@@ -56,7 +56,7 @@ interface MarkdownCardProps {
   fileBacked?: boolean
   fileError?: boolean
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
-  cameraRef: React.RefObject<Camera>
+  cameraRef: React.MutableRefObject<Camera>
 }
 
 // CodeMirror theme — colors use CSS custom properties so presets can override them

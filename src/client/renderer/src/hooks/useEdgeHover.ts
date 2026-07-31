@@ -106,8 +106,8 @@ function findClosestEdge(
  * Ignores mouse events over .canvas-node elements.
  */
 export function useEdgeHover(
-  cameraRef: React.RefObject<Camera>,
-  edgesRef: React.RefObject<TreeLineNode[]>,
+  cameraRef: React.MutableRefObject<Camera>,
+  edgesRef: React.MutableRefObject<TreeLineNode[]>,
   reparentActive: boolean
 ) {
   const [hoveredEdge, setHoveredEdge] = useState<HoveredEdge | null>(null)

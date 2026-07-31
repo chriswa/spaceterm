@@ -278,7 +278,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
         if (suppressedIncoming.length > 0) {
           // Check if server echo confirms our optimistic values
           const allMatch = suppressedIncoming.every(f =>
-            (updatedServer as Record<string, unknown>)[f] === (override.fields as Record<string, unknown>)[f]
+            (updatedServer as unknown as Record<string, unknown>)[f] === (override.fields as Record<string, unknown>)[f]
           )
           if (allMatch) {
             // Server confirmed — clear override for these fields

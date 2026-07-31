@@ -4,7 +4,7 @@ import type { Camera } from '../lib/camera'
 
 interface CanvasProps {
   camera: Camera
-  surfaceRef?: React.RefObject<HTMLDivElement | null>
+  surfaceRef?: React.RefObject<HTMLDivElement>
   onWheel: (e: WheelEvent) => void
   onPanStart: (e: MouseEvent) => void
   onRtsSelectStart?: (e: MouseEvent) => void

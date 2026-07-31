@@ -94,7 +94,7 @@ export function useCrabDance(
 export function useUnreadGlow(
   ref: React.RefObject<HTMLElement | null>,
   color: string,
-  cameraRef: React.RefObject<{ z: number }>,
+  cameraRef: React.MutableRefObject<{ z: number }>,
   active: boolean
 ): void {
   const colorRef = useRef(color)
@@ -151,7 +151,7 @@ export function useToolbarHoverGlow(
   ref: React.RefObject<HTMLElement | null>,
   x: number,
   y: number,
-  cameraRef: React.RefObject<{ z: number }>,
+  cameraRef: React.MutableRefObject<{ z: number }>,
   active: boolean
 ): void {
   const coordsRef = useRef({ x, y })

@@ -346,7 +346,10 @@ export function KeycastOverlay() {
     let currIdx = 1  // t-1
     let nextIdx = 2  // write target
 
-    function createSimResources(w: number, h: number) {
+    // Arrow rather than a function declaration: a hoisted declaration is not covered
+    // by the `if (!gl) return` guard above (TypeScript cannot know it is not called
+    // before the guard runs), which made every gl access inside it a nullable error.
+    const createSimResources = (w: number, h: number) => {
       simW = w
       simH = h
       for (let i = 0; i < 3; i++) {

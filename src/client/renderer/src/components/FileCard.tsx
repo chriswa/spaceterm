@@ -59,7 +59,7 @@ interface FileCardProps {
   onStartReparent?: (id: string) => void
   onReparentTarget?: (id: string) => void
   onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
-  cameraRef: React.RefObject<Camera>
+  cameraRef: React.MutableRefObject<Camera>
 }
 
 export function FileCard({
