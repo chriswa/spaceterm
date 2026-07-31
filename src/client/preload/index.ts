@@ -1,53 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
-
-export interface SessionInfo {
-  sessionId: string
-  cols: number
-  rows: number
-}
-
-export interface CreateOptions {
-  cwd?: string
-  command?: string
-  args?: string[]
-  claude?: { prompt?: string; resumeSessionId?: string; appendSystemPrompt?: boolean }
-  cursor?: { prompt?: string; resumeSessionId?: string }
-  codex?: { prompt?: string; resumeSessionId?: string; forkSessionId?: string }
-}
-
-export interface CreateResult extends SessionInfo {
-  cwd?: string
-}
-
-export interface ClaudeSessionEntry {
-  claudeSessionId: string
-  reason: 'startup' | 'fork' | 'clear' | 'compact' | 'resume'
-  timestamp: string
-}
-
-export interface AttachResult {
-  scrollback: string
-  shellTitleHistory?: string[]
-  cwd?: string
-  claudeSessionHistory?: ClaudeSessionEntry[]
-  claudeState?: string
-  claudeContextPercent?: number
-  claudeSessionLineCount?: number
-}
-
-export interface PtyApi {
-  create(options?: CreateOptions): Promise<CreateResult>
-  list(): Promise<SessionInfo[]>
-  attach(sessionId: string): Promise<AttachResult>
-  write(sessionId: string, data: string): void
-  resize(sessionId: string, cols: number, rows: number): void
-  destroy(sessionId: string): Promise<void>
-  onData(sessionId: string, callback: (data: string) => void): () => void
-  onExit(sessionId: string, callback: (exitCode: number) => void): () => void
-  onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
-  onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
-  onPlanCacheUpdate(sessionId: string, callback: (count: number, files: string[]) => void): () => void
-}
+// The bridge contract lives in src/shared/api.ts so the renderer type-checks
+// against the same declaration this file implements. Do not restate it here.
+import type { Api, NodeApi, PtyApi } from '../../shared/api'
 
 const ptyApi: PtyApi = {
   create: (options?) => ipcRenderer.invoke('pty:create', options),
@@ -97,52 +51,6 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
-}
-
-interface NodeApi {
-  syncRequest(): Promise<any>
-  move(nodeId: string, x: number, y: number): Promise<void>
-  batchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void>
-  rename(nodeId: string, name: string): Promise<void>
-  setColor(nodeId: string, colorPresetId: string): Promise<void>
-  archive(nodeId: string): Promise<void>
-  unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
-  archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
-  undoPush(entry: any): Promise<void>
-  undoSetCursor(cursor: number): Promise<void>
-  bringToFront(nodeId: string): Promise<void>
-  reparent(nodeId: string, newParentId: string): Promise<void>
-  swapParentChild(nodeId: string, childId: string): Promise<void>
-  terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<{ sessionId: string; cols: number; rows: number }>
-  terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
-  terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<{ sessionId: string; cols: number; rows: number }>
-  terminalRestart(nodeId: string, extraCliArgs: string): Promise<{ sessionId: string; cols: number; rows: number }>
-  crabReorder(order: string[]): Promise<void>
-  setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
-  onSnapshot(sessionId: string, callback: (snapshot: any) => void): () => void
-  directoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  directoryCwd(nodeId: string, cwd: string): Promise<void>
-  directoryGitFetch(nodeId: string): Promise<void>
-  directoryWtSpawn(nodeId: string, branchName: string): Promise<{ nodeId: string }>
-  validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
-  fileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  filePath(nodeId: string, filePath: string): Promise<void>
-  validateFile(path: string, cwd?: string): Promise<{ valid: boolean; error?: string }>
-  markdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  markdownResize(nodeId: string, width: number, height: number): Promise<void>
-  markdownContent(nodeId: string, content: string): Promise<void>
-  markdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<void>
-  titleAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  titleText(nodeId: string, text: string): Promise<void>
-  onUpdated(callback: (nodeId: string, fields: any) => void): () => void
-  onAdded(callback: (node: any) => void): () => void
-  onRemoved(callback: (nodeId: string) => void): () => void
-  onFileContent(callback: (nodeId: string, content: string) => void): () => void
-  onServerError(callback: (message: string) => void): () => void
-  onPlaySound(callback: (sound: string) => void): () => void
-  onSpeak(callback: (text: string) => void): () => void
-  onSpeakingChanged(callback: (nodeId: string, speaking: boolean, voice: string | undefined) => void): () => void
-  onSummaryChatStatus(callback: (nodeId: string, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => void): () => void
 }
 
 const nodeApi: NodeApi = {
@@ -264,7 +172,9 @@ const nodeApi: NodeApi = {
   }
 }
 
-contextBridge.exposeInMainWorld('api', {
+// Annotated rather than passed inline so the object literal is checked against
+// the contract: a missing member and an unknown member are both compile errors.
+const api: Api = {
   pty: ptyApi,
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
@@ -295,4 +205,6 @@ contextBridge.exposeInMainWorld('api', {
     startTrace: () => ipcRenderer.invoke('perf:trace-start'),
     stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
   },
-})
+}
+
+contextBridge.exposeInMainWorld('api', api)

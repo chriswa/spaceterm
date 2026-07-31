@@ -3003,7 +3003,7 @@ async function startServer(): Promise<void> {
     }
 
     socket.on('data', (data) => {
-      client.parser.feed(data as string)
+      client.parser.feed(data)
     })
 
     socket.on('close', () => {
@@ -3036,7 +3036,7 @@ async function startServer(): Promise<void> {
       handleIngestMessage(msg as IngestMessage)
     })
 
-    socket.on('data', (data) => parser.feed(data as string))
+    socket.on('data', (data) => parser.feed(data))
     socket.on('error', (err) => {
       console.error('Hooks socket error:', err.message)
     })
@@ -3059,7 +3059,7 @@ async function startServer(): Promise<void> {
       handleScriptMessage(socket, msg as ScriptMessage)
     })
 
-    socket.on('data', (data) => parser.feed(data as string))
+    socket.on('data', (data) => parser.feed(data))
     socket.on('error', (err) => {
       console.error('Scripts socket error:', err.message)
     })

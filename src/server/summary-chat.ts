@@ -287,7 +287,7 @@ export class SummaryChat {
     const response = await this.speechRequest<{ voices?: Array<{ id?: string }> }>('/v1/voices')
     const voices = response?.voices
       ?.map(voice => voice.id)
-      .filter((id): id is string => Boolean(id) && !BLOCKED_VOICE_IDS.has(id))
+      .filter((id): id is string => id !== undefined && id !== '' && !BLOCKED_VOICE_IDS.has(id))
       .sort() ?? []
     if (voices.length) this.voices = voices
   }

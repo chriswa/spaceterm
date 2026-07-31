@@ -57,7 +57,7 @@ export class ServerClient extends EventEmitter {
       this.emit('connect')
     })
 
-    socket.on('data', (data) => parser.feed(data as string))
+    socket.on('data', (data) => parser.feed(data))
 
     socket.on('close', () => {
       if (this.socket !== socket) return

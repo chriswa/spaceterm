@@ -159,9 +159,13 @@ function setupVisibilityTracking(): void {
 function setupIPC(): void {
   ipcMain.handle('pty:create', async (_event, options?: Record<string, unknown>) => {
     const session = await client!.create(options as any)
-    // Auto-attach so we receive data events for this session
-    const { shellTitleHistory, cwd, claudeSessionHistory } = await client!.attach(session.sessionId)
-    return { ...session, shellTitleHistory, cwd, claudeSessionHistory }
+    // Auto-attach so we receive data events for this session. The `attached`
+    // message carries only scrollback + claude context/line count (see
+    // AttachedMessage in shared/protocol); shellTitleHistory, cwd and
+    // claudeSessionHistory reach the renderer via node-updated broadcasts, so
+    // there is nothing here to forward.
+    await client!.attach(session.sessionId)
+    return session
   })
 
   ipcMain.handle('pty:list', async () => {
