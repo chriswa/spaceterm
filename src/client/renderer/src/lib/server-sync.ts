@@ -11,6 +11,7 @@ import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
 import { speakText } from './tts-player'
 import { setSummaryChatWaiting } from './summary-chat-wait-cue'
+import { showToast } from './toast'
 import type { SoundName } from '../../../../shared/protocol'
 
 /** Play notification sound if enabled. */

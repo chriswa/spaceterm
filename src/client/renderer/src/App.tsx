@@ -46,13 +46,13 @@ import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 import { playSummaryChatStartedCue } from './lib/summary-chat-wait-cue'
 
-function tieredZIndex(type: import('../../../../shared/state').NodeData['type'], z: number): number {
+function tieredZIndex(type: import('../../../shared/state').NodeData['type'], z: number): number {
   if (type === 'title') return z + 2_000_000
   if (type === 'directory') return z + 1_000_000
   return z
 }
 
-function getMarkdownSpawnInfo(parentNode: import('../../../../shared/state').NodeData | undefined): {
+function getMarkdownSpawnInfo(parentNode: import('../../../shared/state').NodeData | undefined): {
   initialInput?: string; initialName?: string; x?: number; y?: number
 } {
   if (!parentNode || parentNode.type !== 'markdown' || !parentNode.content.trim()) return {}
@@ -439,7 +439,7 @@ export function App() {
           // Clean up stale scroll entries for sessions that no longer exist
           const validSessionIds = new Set(
             allNodes
-              .filter((n): n is import('../../../../shared/state').TerminalNodeData => n.type === 'terminal')
+              .filter((n): n is import('../../../shared/state').TerminalNodeData => n.type === 'terminal')
               .map(n => n.sessionId)
           )
           cleanupStaleScrollEntries(validSessionIds)

@@ -2,7 +2,12 @@
 
 ## After making changes
 
-Run `npm run lint` after editing files in `src/` to catch use-before-define errors (temporal dead zone bugs with `const`/`useCallback` ordering).
+Run `npm run typecheck && npm run lint` after editing files in `src/`.
+
+- `npm run typecheck` is the important one. Neither `tsx` (server) nor `electron-vite` (client) checks types — they strip them — so nothing else catches contract drift between `src/shared/`, `src/client/preload/`, and the renderer.
+- `npm run lint` catches use-before-define errors (temporal dead zone bugs with `const`/`useCallback` ordering).
+
+Run `npm test` when changing a module that has a `.test.ts` beside it.
 
 ## Parallel agents
 
