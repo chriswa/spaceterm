@@ -2396,15 +2396,14 @@ async function startServer(): Promise<void> {
   await daemonClient.connect()
   console.log('[startup] Connected to PTY daemon')
 
-  sessionManager = new SessionManager(
-    daemonClient,
-    // onData: broadcast to attached clients + feed snapshot manager
-    (sessionId, data) => {
+  sessionManager = new SessionManager(daemonClient, {
+    // broadcast to attached clients + feed snapshot manager
+    onData: (sessionId, data) => {
       snapshotManager.write(sessionId, data)
       broadcastToAttached(sessionId, { type: 'data', sessionId, data })
     },
-    // onExit: broadcast to all attached clients + update state
-    (sessionId, exitCode) => {
+    // broadcast to all attached clients + update state
+    onExit: (sessionId, exitCode) => {
       // Log every PTY exit with its final output. A surface that "dies
       // immediately" (bad CLI flag, failed MCP, startup crash) leaves its
       // reason in the last lines of scrollback — captured here before the
@@ -2536,20 +2535,20 @@ async function startServer(): Promise<void> {
         client.snapshotSessions.delete(sessionId)
       })
     },
-    // onTitleHistory: update state (node-updated broadcast handles client sync)
-    (sessionId, history) => {
+    // update state (node-updated broadcast handles client sync)
+    onTitleHistory: (sessionId, history) => {
       stateManager.updateShellTitleHistory(sessionId, history)
     },
-    // onCwd: update state (node-updated broadcast handles client sync)
-    (sessionId, cwd) => {
+    // update state (node-updated broadcast handles client sync)
+    onCwd: (sessionId, cwd) => {
       stateManager.updateCwd(sessionId, cwd)
     },
-    // onClaudeSessionHistory: update state (node-updated broadcast handles client sync)
-    (sessionId, history) => {
+    // update state (node-updated broadcast handles client sync)
+    onClaudeSessionHistory: (sessionId, history) => {
       stateManager.updateClaudeSessionHistory(sessionId, history)
     },
-    // onClaudeState: update state + flag stopped API errors for human review
-    (sessionId, state) => {
+    // update state + flag stopped API errors for human review
+    onClaudeState: (sessionId, state) => {
       if (state === 'stopped' && potentialErrorDetector.hasPotentialError(sessionId)) {
         // Keep the session model and the persisted/UI model in sync. Calling
         // setClaudeState emits a second callback for potential_error, which
@@ -2560,27 +2559,27 @@ async function startServer(): Promise<void> {
       }
       stateManager.updateClaudeState(sessionId, state)
     },
-    // onClaudeContext: broadcast context remaining % to all attached clients
-    (sessionId, contextRemainingPercent) => {
+    // broadcast context remaining % to all attached clients
+    onClaudeContext: (sessionId, contextRemainingPercent) => {
       broadcastToAttached(sessionId, { type: 'claude-context', sessionId, contextRemainingPercent })
     },
-    // onClaudeSessionLineCount: broadcast JSONL line count to all attached clients
-    (sessionId, lineCount) => {
+    // broadcast JSONL line count to all attached clients
+    onClaudeSessionLineCount: (sessionId, lineCount) => {
       broadcastToAttached(sessionId, { type: 'claude-session-line-count', sessionId, lineCount })
     },
-    // onClaudeStatusUnread: update state manager (node-updated broadcast handles client sync)
-    (sessionId, unread) => {
+    // update state manager (node-updated broadcast handles client sync)
+    onClaudeStatusUnread: (sessionId, unread) => {
       stateManager.updateClaudeStatusUnread(sessionId, unread)
     },
-    // onClaudeStatusAsleep: update state manager (node-updated broadcast handles client sync)
-    (sessionId, asleep) => {
+    // update state manager (node-updated broadcast handles client sync)
+    onClaudeStatusAsleep: (sessionId, asleep) => {
       stateManager.updateClaudeStatusAsleep(sessionId, asleep)
     },
-    // onActivity: track last interaction timestamp for footer display
-    (sessionId) => {
+    // track last interaction timestamp for footer display
+    onActivity: (sessionId) => {
       stateManager.updateLastInteracted(sessionId, Date.now())
     }
-  )
+  })
 
   // Initialize PlanCacheManager — caches plan file revisions for diffing
   planCacheManager = new PlanCacheManager()

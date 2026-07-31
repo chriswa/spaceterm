@@ -52,6 +52,27 @@ export type ClaudeStatusUnreadCallback = (sessionId: string, unread: boolean) =>
 export type ClaudeStatusAsleepCallback = (sessionId: string, asleep: boolean) => void
 export type ActivityCallback = (sessionId: string) => void
 
+/**
+ * Everything SessionManager pushes back out to the rest of the server. Named
+ * rather than positional: there were twelve of these as ordered arguments, so
+ * the construction site in index.ts was a 184-line call in which two adjacent
+ * callbacks with the same `(sessionId, x) => void` shape could be swapped
+ * without the compiler noticing.
+ */
+export interface SessionManagerDeps {
+  onData: DataCallback
+  onExit: ExitCallback
+  onTitleHistory: TitleHistoryCallback
+  onCwd: CwdCallback
+  onClaudeSessionHistory: ClaudeSessionHistoryCallback
+  onClaudeState: ClaudeStateCallback
+  onClaudeContext: ClaudeContextCallback
+  onClaudeSessionLineCount: ClaudeSessionLineCountCallback
+  onClaudeStatusUnread: ClaudeStatusUnreadCallback
+  onClaudeStatusAsleep: ClaudeStatusAsleepCallback
+  onActivity: ActivityCallback
+}
+
 export class SessionManager {
   private sessions = new Map<string, Session>()
   private daemon: DaemonClient
@@ -67,19 +88,19 @@ export class SessionManager {
   private onClaudeStatusAsleep: ClaudeStatusAsleepCallback
   private onActivity: ActivityCallback
 
-  constructor(daemon: DaemonClient, onData: DataCallback, onExit: ExitCallback, onTitleHistory: TitleHistoryCallback, onCwd: CwdCallback, onClaudeSessionHistory: ClaudeSessionHistoryCallback, onClaudeState: ClaudeStateCallback, onClaudeContext: ClaudeContextCallback, onClaudeSessionLineCount: ClaudeSessionLineCountCallback, onClaudeStatusUnread: ClaudeStatusUnreadCallback, onClaudeStatusAsleep: ClaudeStatusAsleepCallback, onActivity: ActivityCallback) {
+  constructor(daemon: DaemonClient, deps: SessionManagerDeps) {
     this.daemon = daemon
-    this.onData = onData
-    this.onExit = onExit
-    this.onTitleHistory = onTitleHistory
-    this.onCwd = onCwd
-    this.onClaudeSessionHistory = onClaudeSessionHistory
-    this.onClaudeState = onClaudeState
-    this.onClaudeContext = onClaudeContext
-    this.onClaudeSessionLineCount = onClaudeSessionLineCount
-    this.onClaudeStatusUnread = onClaudeStatusUnread
-    this.onClaudeStatusAsleep = onClaudeStatusAsleep
-    this.onActivity = onActivity
+    this.onData = deps.onData
+    this.onExit = deps.onExit
+    this.onTitleHistory = deps.onTitleHistory
+    this.onCwd = deps.onCwd
+    this.onClaudeSessionHistory = deps.onClaudeSessionHistory
+    this.onClaudeState = deps.onClaudeState
+    this.onClaudeContext = deps.onClaudeContext
+    this.onClaudeSessionLineCount = deps.onClaudeSessionLineCount
+    this.onClaudeStatusUnread = deps.onClaudeStatusUnread
+    this.onClaudeStatusAsleep = deps.onClaudeStatusAsleep
+    this.onActivity = deps.onActivity
   }
 
   create(options?: CreateOptions): SessionInfo {
