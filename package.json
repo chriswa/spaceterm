@@ -20,7 +20,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test": "tsx src/client/renderer/src/lib/cleanTerminalCopy.test.ts && tsx src/client/renderer/src/lib/cartesiaFixup.test.ts && tsx src/server/claude-state/background-ledger.test.ts && tsx src/server/claude-state/state-machine.test.ts && tsx src/server/auto-continue.test.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "npm run client:build",
     "postinstall": "electron-rebuild"
   },
@@ -62,6 +63,7 @@
     "electron-vite": "^2.3.0",
     "eslint": "^9.0.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
   }
 }

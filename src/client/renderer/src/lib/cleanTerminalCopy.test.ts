@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest'
 import { cleanTerminalCopy } from './cleanTerminalCopy'
 
 /**
@@ -99,31 +100,10 @@ Both call sites of speakText (the useTTS hook for selection and server-sync.ts f
   },
 ]
 
-let failed = 0
-for (const c of cases) {
-  const actual = cleanTerminalCopy(c.input)
-  if (actual === c.expected) {
-    console.log(`✓ ${c.name}`)
-    continue
+describe('cleanTerminalCopy', () => {
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(cleanTerminalCopy(c.input)).toBe(c.expected)
+    })
   }
-  failed++
-  console.log(`✗ ${c.name}`)
-  const aLines = actual.split('\n')
-  const eLines = c.expected.split('\n')
-  const max = Math.max(aLines.length, eLines.length)
-  console.log(`  diff (actual vs expected), line by line:`)
-  for (let i = 0; i < max; i++) {
-    const a = i < aLines.length ? aLines[i] : '<missing>'
-    const e = i < eLines.length ? eLines[i] : '<missing>'
-    const mark = a === e ? ' ' : '!'
-    console.log(`  ${mark} L${i + 1} got: ${JSON.stringify(a)}`)
-    console.log(`  ${mark} L${i + 1} exp: ${JSON.stringify(e)}`)
-  }
-  console.log('')
-}
-
-if (failed > 0) {
-  console.log(`\n${failed}/${cases.length} cases failed`)
-  process.exit(1)
-}
-console.log(`\nall ${cases.length} cases passed`)
+})

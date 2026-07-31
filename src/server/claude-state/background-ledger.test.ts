@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { BackgroundLedger, type LivenessProbes } from './background-ledger'
 import type { SessionFileEntry } from '../session-file-watcher'
 
@@ -164,31 +165,14 @@ const cases: Case[] = [
   },
 ]
 
-// ─── runner ─────────────────────────────────────────────────────────────────
-
-let failed = 0
 function assertEq(actual: unknown, expected: unknown): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
   }
 }
 
-async function main(): Promise<void> {
+describe('BackgroundLedger', () => {
   for (const c of cases) {
-    try {
-      await c.run()
-      console.log(`✓ ${c.name}`)
-    } catch (e) {
-      failed++
-      console.log(`✗ ${c.name}`)
-      console.log(`  ${(e as Error).message}`)
-    }
+    it(c.name, async () => { await c.run() })
   }
-  if (failed > 0) {
-    console.log(`\n${failed}/${cases.length} cases failed`)
-    process.exit(1)
-  }
-  console.log(`\nall ${cases.length} background-ledger cases passed`)
-}
-
-void main()
+})

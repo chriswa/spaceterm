@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { findApiErrorMatch } from './auto-continue'
 
 /**
@@ -102,24 +103,8 @@ const cases: Case[] = [
   },
 ]
 
-let failed = 0
-
-function main(): void {
+describe('potential-error API error matching', () => {
   for (const c of cases) {
-    try {
-      c.run()
-      console.log(`✓ ${c.name}`)
-    } catch (e) {
-      failed++
-      console.log(`✗ ${c.name}`)
-      console.log(`  ${(e as Error).message}`)
-    }
+    it(c.name, () => { c.run() })
   }
-  if (failed > 0) {
-    console.log(`\n${failed}/${cases.length} cases failed`)
-    process.exit(1)
-  }
-  console.log(`\nall ${cases.length} auto-continue cases passed`)
-}
-
-main()
+})

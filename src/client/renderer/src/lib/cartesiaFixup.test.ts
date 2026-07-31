@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest'
 import { cartesiaFixup } from './cartesiaFixup'
 
 /**
@@ -317,22 +318,10 @@ const cases: Case[] = [
   },
 ]
 
-let failed = 0
-for (const c of cases) {
-  const actual = cartesiaFixup(c.input)
-  if (actual === c.expected) {
-    console.log(`✓ ${c.name}`)
-    continue
+describe('cartesiaFixup', () => {
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(cartesiaFixup(c.input)).toBe(c.expected)
+    })
   }
-  failed++
-  console.log(`✗ ${c.name}`)
-  console.log(`  got: ${JSON.stringify(actual)}`)
-  console.log(`  exp: ${JSON.stringify(c.expected)}`)
-  console.log('')
-}
-
-if (failed > 0) {
-  console.log(`\n${failed}/${cases.length} cases failed`)
-  process.exit(1)
-}
-console.log(`\nall ${cases.length} cases passed`)
+})

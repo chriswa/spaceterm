@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { ClaudeStateMachine } from './index'
 import { BackgroundLedger } from './background-ledger'
 import type { StateMachineDeps, ClaudeState } from './types'
@@ -222,35 +223,25 @@ const cases: Case[] = [
   },
 ]
 
-// ─── runner ─────────────────────────────────────────────────────────────────
-
-let failed = 0
 function assertEq(actual: unknown, expected: unknown): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
   }
 }
 
-for (const c of cases) {
-  clock = 0
-  const deps = new FakeDeps()
-  // Inject a ledger with default (real) probes — no probe runs in these tests
-  // because every drain is driven by a hook/transcript completion, not a sweep.
-  const sm = new ClaudeStateMachine(deps, new BackgroundLedger())
-  try {
-    c.run(sm, deps)
-    console.log(`✓ ${c.name}`)
-  } catch (e) {
-    failed++
-    console.log(`✗ ${c.name}`)
-    console.log(`  ${(e as Error).message}`)
-  } finally {
-    sm.dispose()
+describe('ClaudeStateMachine transitions', () => {
+  for (const c of cases) {
+    it(c.name, () => {
+      // Each case gets a fresh machine + monotonic clock so queued transitions
+      // apply in the order the case fired them, independent of other cases.
+      clock = 0
+      const deps = new FakeDeps()
+      const sm = new ClaudeStateMachine(deps, new BackgroundLedger())
+      try {
+        c.run(sm, deps)
+      } finally {
+        sm.dispose()
+      }
+    })
   }
-}
-
-if (failed > 0) {
-  console.log(`\n${failed}/${cases.length} cases failed`)
-  process.exit(1)
-}
-console.log(`\nall ${cases.length} state-machine cases passed`)
+})

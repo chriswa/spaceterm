@@ -7,7 +7,10 @@ Run `npm run typecheck && npm run lint` after editing files in `src/`.
 - `npm run typecheck` is the important one. Neither `tsx` (server) nor `electron-vite` (client) checks types — they strip them — so nothing else catches contract drift between `src/shared/`, `src/client/preload/`, and the renderer.
 - `npm run lint` catches use-before-define errors (temporal dead zone bugs with `const`/`useCallback` ordering).
 
-Run `npm test` when changing a module that has a `.test.ts` beside it.
+Run `npm test` when changing a module that has a `.test.ts` beside it. Tests run on
+Vitest and are discovered by glob (`src/**/*.test.ts`), so a new test file needs no
+registration — just put it next to the module it covers. `npm run test:watch` reruns
+on save, and `npm test -- <substring>` runs a single file.
 
 ## Parallel agents
 
