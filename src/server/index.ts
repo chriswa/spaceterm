@@ -7,6 +7,12 @@ import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_L
 import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
+import {
+  agentSessionIdFromPayload,
+  findValidClaudeSession,
+  lastAgentSessionId,
+  resolveNonClaudeResumeId
+} from './resume-target'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import type { AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
@@ -171,91 +177,6 @@ function isNonClaudeAgent(agentType: AgentType | undefined): boolean {
   return !agentDriver(agentType).capabilities.claudeTranscript
 }
 
-/** Pull agent chat id from a hook/status-line payload (Cursor: conversation_id). */
-function agentSessionIdFromPayload(payload: Record<string, unknown> | undefined): ClaudeSessionId | '' {
-  if (!payload) return ''
-  if (typeof payload.session_id === 'string' && payload.session_id) return asClaudeSessionId(payload.session_id)
-  if (typeof payload.conversation_id === 'string' && payload.conversation_id) return asClaudeSessionId(payload.conversation_id)
-  return ''
-}
-
-/** Last-resort: read the most recent main-session id from this surface's hook log. */
-function peekAgentSessionIdFromHookLog(surfaceId: PtySessionId): ClaudeSessionId | undefined {
-  const logPath = path.join(HOOK_LOG_DIR, `${surfaceId}.jsonl`)
-  if (!fs.existsSync(logPath)) return undefined
-  try {
-    const lines = fs.readFileSync(logPath, 'utf8').split('\n')
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i].trim()
-      if (!line) continue
-      let o: { hookType?: string; type?: string; payload?: Record<string, unknown> }
-      try { o = JSON.parse(line) } catch { continue }
-      const kind = o.hookType || o.type || ''
-      // Prefer turn-level signals; avoid PreToolUse (subagent conversation ids).
-      if (kind !== 'UserPromptSubmit' && kind !== 'Stop' && kind !== 'status-line' && kind !== 'SessionStart') continue
-      const sid = agentSessionIdFromPayload(o.payload)
-      if (sid) return sid
-    }
-  } catch (err: any) {
-    serverLog(`[hooks] peekAgentSessionIdFromHookLog failed for ${surfaceId.slice(0, 8)}: ${err.message}`)
-  }
-  return undefined
-}
-
-/**
- * Resolve a Cursor/Codex chat id for resume across restart / unarchive / revive.
- * Prefer live/hook-log signals over claudeSessionHistory: a botched restart can
- * leave a ghost id in history while the hook log still has the real chat id.
- */
-function resolveNonClaudeResumeId(
-  node: {
-    id: NodeId
-    sessionId: PtySessionId
-    claudeSessionHistory?: Array<{ claudeSessionId: ClaudeSessionId }>
-    terminalSessions?: Array<{ claudeSessionId?: ClaudeSessionId }>
-  },
-  liveAgentSessionId?: ClaudeSessionId | null,
-): ClaudeSessionId | undefined {
-  if (liveAgentSessionId) return liveAgentSessionId
-  const fromHook =
-    peekAgentSessionIdFromHookLog(node.sessionId)
-    // Deliberate: hook logs are named after the surface (pty session) that wrote
-    // them, and a terminal's first pty session id *is* its node id. So this
-    // second probe reaches the log from before the terminal was ever restarted,
-    // which a botched restart may be the only place the real chat id survives.
-    ?? peekAgentSessionIdFromHookLog(asPtySessionId(node.id))
-  if (fromHook) return fromHook
-  const fromHistory = lastAgentSessionId(node.claudeSessionHistory ?? [])
-  if (fromHistory) return fromHistory
-  const sessions = node.terminalSessions ?? []
-  for (let i = sessions.length - 1; i >= 0; i--) {
-    const id = sessions[i].claudeSessionId
-    if (id) return id
-  }
-  return undefined
-}
-
-/**
- * Walk backwards through a terminal's claude session history to find the most
- * recent session whose JSONL file still exists on disk.  Returns `undefined`
- * if no valid session can be found (or if cwd is missing so we can't check).
- *
- * Ghost session IDs accumulate when a previous revival starts Claude Code,
- * Claude fires a SessionStart hook (registering a new session), but then
- * crashes before writing the JSONL.  Without this check the revival enters a
- * cascading failure: every restart picks the ghost and fails again.
- */
-function findValidClaudeSession(history: Array<{ claudeSessionId: ClaudeSessionId }>, cwd: string | undefined): ClaudeSessionId | undefined {
-  if (!cwd || history.length === 0) {
-    return history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
-  }
-  for (let i = history.length - 1; i >= 0; i--) {
-    const id = history[i].claudeSessionId
-    if (fs.existsSync(sessionFilePath(cwd, id))) return id
-  }
-  return undefined
-}
-
 interface ClientConnection {
   id: string
   socket: net.Socket
@@ -335,11 +256,6 @@ function watchAgentTranscript(
     default:
       assertNever(driver.type, 'watchAgentTranscript')
   }
-}
-
-/** Most recent agent chat id recorded for a surface, whichever agent it runs. */
-function lastAgentSessionId(history: Array<{ claudeSessionId: ClaudeSessionId }>): ClaudeSessionId | undefined {
-  return history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
 }
 
 function surfaceAgentType(surfaceId: PtySessionId): AgentType | undefined {
