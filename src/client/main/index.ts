@@ -480,11 +480,22 @@ function setupIPC(): void {
 
 }
 
+/**
+ * The renderer is showing state it built without a live server, so the next
+ * successful connect must rebuild it.
+ *
+ * Set on a disconnect (the reconnect missed broadcasts and invalidated every
+ * terminal attachment) and on a startup that opened the window before the
+ * server was up. Module-scoped rather than local to `wireClientEvents` because
+ * startup arms it too.
+ */
+let needsRendererResync = false
+
+function markRendererResyncNeeded(): void {
+  needsRendererResync = true
+}
+
 function wireClientEvents(): void {
-  // A reconnect has missed server broadcasts and invalidated all terminal
-  // attachments. Reloading the renderer makes its existing initial-sync path
-  // rebuild from the server's authoritative state.
-  let needsRendererResync = false
   client!.on('focus-surface', (nodeId: NodeId) => {
     raiseAndFocusNode(nodeId)
   })
@@ -638,6 +649,30 @@ app.commandLine.appendSwitch('enable-gpu-rasterization')
 app.commandLine.appendSwitch('enable-zero-copy')
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
 
+/**
+ * How long startup waits for the server before opening the window anyway.
+ *
+ * Long enough that the ordinary case — server already up, or coming up
+ * alongside us — never sees a resync reload, short enough that a broken server
+ * does not look like a hung app.
+ */
+const STARTUP_CONNECT_GRACE_MS = 8_000
+
+/**
+ * Resolve true once connected, or false once `graceMs` has passed.
+ *
+ * `ServerClient.connect()` never rejects — it retries with backoff forever —
+ * so a race against a timer is the only way to ask "is it up *yet*". The
+ * connection attempt continues either way; this only decides whether to keep
+ * waiting before showing a window.
+ */
+function connectWithinGrace(serverClient: ServerClient, graceMs: number): Promise<boolean> {
+  return Promise.race([
+    serverClient.connect().then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), graceMs))
+  ])
+}
+
 app.whenReady().then(async () => {
   logger.init()
   logger.log('Electron app starting')
@@ -657,11 +692,28 @@ app.whenReady().then(async () => {
   setupTTSHandlers()
   wireClientEvents()
 
-  await client.connect()
-  logger.log('Server connection established')
+  // Wait for the server, but not forever.
+  //
+  // This used to be a bare `await client.connect()`, and `connect()` retries
+  // indefinitely rather than rejecting — so a server that could not start meant
+  // no window at all, permanently, with no error. A first-run user saw a dock
+  // icon and nothing else. Showing an empty canvas is worse than a working one
+  // and far better than showing nothing.
+  const connected = await connectWithinGrace(client, STARTUP_CONNECT_GRACE_MS)
+  if (connected) {
+    logger.log('Server connection established')
+  } else {
+    // The window is about to be created against no server, so the renderer's
+    // initial sync will come back empty. Arm the resync that the reconnect
+    // path already implements, so the first successful connect rebuilds it.
+    markRendererResyncNeeded()
+    logger.log(
+      `Server not up after ${STARTUP_CONNECT_GRACE_MS}ms; opening the window anyway and retrying in the background`
+    )
+  }
 
   // Flush a deep-link focus request that arrived before the server connection.
-  if (pendingFocusSurfaceId) {
+  if (connected && pendingFocusSurfaceId) {
     client.focusSurface(pendingFocusSurfaceId)
     pendingFocusSurfaceId = null
   }

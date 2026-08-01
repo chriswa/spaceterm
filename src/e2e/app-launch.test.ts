@@ -149,3 +149,30 @@ describeE2E('the main process', () => {
     expect(count).toBe(1)
   })
 })
+
+describeE2E('when the server cannot start', () => {
+  it('still opens a window instead of showing nothing at all', async () => {
+    // `app.whenReady()` used to `await client.connect()` before creating the
+    // window, and `connect()` retries forever rather than rejecting — so a
+    // server that could not start meant no window, permanently, with no error.
+    // A first-run user saw a dock icon and nothing else. Startup now waits a
+    // bounded grace period and opens the window regardless.
+    launched = await launchApp({ withServer: false })
+    await launched.window.waitForSelector('.canvas-viewport', { timeout: 60_000 })
+    expect(await launched.window.locator('.toolbar').count()).toBe(1)
+  })
+
+  it('renders an empty canvas rather than crashing on the failed sync', async () => {
+    // The renderer's initial `syncRequest` rejects with no server. It has
+    // always tolerated that; this proves it end to end rather than against a
+    // fake bridge.
+    const errors: string[] = []
+    launched = await launchApp({ withServer: false })
+    launched.window.on('pageerror', (err) => errors.push(err.message))
+
+    await launched.window.waitForSelector('.canvas-viewport', { timeout: 60_000 })
+    await launched.window.waitForTimeout(1000)
+
+    expect(errors, `page errors with no server:\n  ${errors.join('\n  ')}`).toEqual([])
+  })
+})

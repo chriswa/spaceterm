@@ -134,13 +134,16 @@ function stop(proc: ChildProcess): Promise<void> {
  * a test run gets its own sockets, its own state file and its own daemon rather
  * than adopting — and then destroying — the developer's live session.
  */
-export async function launchApp(options: { timeoutMs?: number } = {}): Promise<LaunchedApp> {
+export async function launchApp(
+  options: { timeoutMs?: number; withServer?: boolean } = {}
+): Promise<LaunchedApp> {
   const blocker = e2eBlocker()
   if (blocker) throw new Error(`Cannot launch: ${blocker}`)
 
   const home = mkdtempSync(join(tmpdir(), 'spaceterm-e2e-'))
   // The server auto-starts the Go daemon, so this brings up the whole stack.
-  const server = await startServer(home)
+  // `withServer: false` is for testing what a user sees when it cannot start.
+  const server = options.withServer === false ? null : await startServer(home)
 
   const app = await _electron.launch({
     executablePath: electronBinary()!,
@@ -171,7 +174,7 @@ export async function launchApp(options: { timeoutMs?: number } = {}): Promise<L
     home,
     async close() {
       await app.close().catch(() => {})
-      await stop(server)
+      if (server) await stop(server)
       // The daemon outlives the server on purpose (that is how sessions survive
       // a server restart), so it has to be told to go.
       await stopDaemon(home)
