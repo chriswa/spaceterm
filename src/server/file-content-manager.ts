@@ -2,13 +2,80 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { NodeId } from '../shared/ids'
 
+const WATCH_DEBOUNCE_MS = 100
+
+/** Cancels a scheduled callback. Calling it after the callback ran is a no-op. */
+export type CancelScheduled = () => void
+
+/** A live file watch. Closing it stops further change callbacks. */
+export interface FileWatchHandle {
+  close(): void
+}
+
+/**
+ * The filesystem, narrowed to what file-backed markdown sync needs. Injecting
+ * it makes the interesting part testable — echo suppression, debounce, and what
+ * happens when a file is swapped or deleted underneath a watch — without
+ * depending on `fs.watch`'s platform-specific event timing.
+ */
+export interface FileContentIO {
+  /** Read a file, or undefined when it does not exist / cannot be read. */
+  readFile(filePath: string): string | undefined
+  /** Write a file, creating parent directories as needed. May throw. */
+  writeFile(filePath: string, content: string): void
+  /**
+   * Watch a file. `onChange` fires on every filesystem event; `onError` fires
+   * when the watch itself dies (the usual cause is the file being deleted).
+   * Returns null when the path cannot be watched at all.
+   */
+  watch(filePath: string, onChange: () => void, onError: () => void): FileWatchHandle | null
+  scheduleTimeout(fn: () => void, ms: number): CancelScheduled
+}
+
+export const REAL_FILE_CONTENT_IO: FileContentIO = {
+  readFile(filePath) {
+    try {
+      return fs.readFileSync(filePath, 'utf-8')
+    } catch {
+      return undefined
+    }
+  },
+  writeFile(filePath, content) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.writeFileSync(filePath, content, 'utf-8')
+  },
+  watch(filePath, onChange, onError) {
+    try {
+      const watcher = fs.watch(filePath, () => onChange())
+      watcher.on('error', () => onError())
+      return { close: () => watcher.close() }
+    } catch {
+      return null
+    }
+  },
+  scheduleTimeout(fn, ms) {
+    const timer = setTimeout(fn, ms)
+    return () => clearTimeout(timer)
+  }
+}
+
 interface WatchedEntry {
   markdownNodeId: NodeId
   fileNodeId: NodeId
   resolvedPath: string
   lastWrittenContent: string | null
-  watcher: fs.FSWatcher | null
-  debounceTimer: ReturnType<typeof setTimeout> | null
+  watcher: FileWatchHandle | null
+  /**
+   * Cancels the pending debounced read.
+   *
+   * This used to be declared on the entry, cleared by stopWatching, and never
+   * actually assigned — the real timer was a local inside startFsWatcher, out
+   * of reach. So a debounce already in flight survived stopWatching and fired
+   * against a removed entry. The visible symptom was in updatePath, which is
+   * stop-then-start: repointing a file card while its old file was being edited
+   * broadcast the *old* file's content moments after the switch.
+   */
+  cancelDebounce: CancelScheduled | null
 }
 
 /**
@@ -18,30 +85,33 @@ interface WatchedEntry {
 export class FileContentManager {
   private entries = new Map<NodeId, WatchedEntry>()
   private onContent: (nodeId: NodeId, content: string) => void
+  private io: FileContentIO
 
-  constructor(onContent: (nodeId: NodeId, content: string) => void) {
+  constructor(
+    onContent: (nodeId: NodeId, content: string) => void,
+    io: FileContentIO = REAL_FILE_CONTENT_IO
+  ) {
     this.onContent = onContent
+    this.io = io
   }
 
   /**
    * Start watching a file for a markdown node.
-   * Reads the file (creating it if missing), broadcasts content, and starts fs.watch.
+   * Reads the file (creating it if missing), broadcasts content, and starts the watch.
    */
   startWatching(markdownNodeId: NodeId, fileNodeId: NodeId, resolvedPath: string): void {
     // Stop any existing watcher for this node
     this.stopWatching(markdownNodeId)
 
-    // Ensure parent directory exists
-    const dir = path.dirname(resolvedPath)
-    fs.mkdirSync(dir, { recursive: true })
-
-    // Read or create file
-    let content: string
-    try {
-      content = fs.readFileSync(resolvedPath, 'utf-8')
-    } catch {
+    let content = this.io.readFile(resolvedPath)
+    if (content === undefined) {
       // File doesn't exist — create it empty
-      fs.writeFileSync(resolvedPath, '', 'utf-8')
+      try {
+        this.io.writeFile(resolvedPath, '')
+      } catch (err) {
+        console.error(`[file-content] Failed to create ${resolvedPath}: ${(err as Error).message}`)
+        return
+      }
       content = ''
     }
 
@@ -51,7 +121,7 @@ export class FileContentManager {
       resolvedPath,
       lastWrittenContent: null,
       watcher: null,
-      debounceTimer: null
+      cancelDebounce: null
     }
 
     this.entries.set(markdownNodeId, entry)
@@ -64,31 +134,28 @@ export class FileContentManager {
   }
 
   private startFsWatcher(entry: WatchedEntry): void {
-    try {
-      let watchDebounce: ReturnType<typeof setTimeout> | null = null
-      entry.watcher = fs.watch(entry.resolvedPath, () => {
-        if (watchDebounce) clearTimeout(watchDebounce)
-        watchDebounce = setTimeout(() => {
-          watchDebounce = null
+    entry.watcher = this.io.watch(
+      entry.resolvedPath,
+      () => {
+        // Editors often produce several events per save. Coalesce them, and
+        // keep the cancel on the entry so stopWatching can reach it.
+        entry.cancelDebounce?.()
+        entry.cancelDebounce = this.io.scheduleTimeout(() => {
+          entry.cancelDebounce = null
           this.handleFileChange(entry)
-        }, 100)
-      })
-      entry.watcher.on('error', () => {
+        }, WATCH_DEBOUNCE_MS)
+      },
+      () => {
         // File may have been deleted — stop watching
         entry.watcher?.close()
         entry.watcher = null
-      })
-    } catch {
-      // File doesn't exist or can't be watched
-      entry.watcher = null
-    }
+      }
+    )
   }
 
   private handleFileChange(entry: WatchedEntry): void {
-    let content: string
-    try {
-      content = fs.readFileSync(entry.resolvedPath, 'utf-8')
-    } catch {
+    const content = this.io.readFile(entry.resolvedPath)
+    if (content === undefined) {
       // File was deleted or unreadable
       return
     }
@@ -113,10 +180,8 @@ export class FileContentManager {
       entry.watcher.close()
       entry.watcher = null
     }
-    if (entry.debounceTimer) {
-      clearTimeout(entry.debounceTimer)
-      entry.debounceTimer = null
-    }
+    entry.cancelDebounce?.()
+    entry.cancelDebounce = null
     this.entries.delete(markdownNodeId)
   }
 
@@ -128,7 +193,7 @@ export class FileContentManager {
     if (!entry) return
     entry.lastWrittenContent = content
     try {
-      fs.writeFileSync(entry.resolvedPath, content, 'utf-8')
+      this.io.writeFile(entry.resolvedPath, content)
     } catch (err) {
       console.error(`[file-content] Failed to write ${entry.resolvedPath}: ${(err as Error).message}`)
       entry.lastWrittenContent = null
@@ -143,11 +208,7 @@ export class FileContentManager {
   getContent(markdownNodeId: NodeId): string | null {
     const entry = this.entries.get(markdownNodeId)
     if (!entry) return null
-    try {
-      return fs.readFileSync(entry.resolvedPath, 'utf-8')
-    } catch {
-      return null
-    }
+    return this.io.readFile(entry.resolvedPath) ?? null
   }
 
   /**
@@ -161,8 +222,7 @@ export class FileContentManager {
    * Update the file path for a watched node (stop old watcher, start new one).
    */
   updatePath(markdownNodeId: NodeId, fileNodeId: NodeId, newResolvedPath: string): void {
-    const entry = this.entries.get(markdownNodeId)
-    if (!entry) return
+    if (!this.entries.has(markdownNodeId)) return
     this.stopWatching(markdownNodeId)
     this.startWatching(markdownNodeId, fileNodeId, newResolvedPath)
   }
@@ -178,7 +238,8 @@ export class FileContentManager {
    * Cleanup all watchers.
    */
   dispose(): void {
-    for (const [id] of this.entries) {
+    // Snapshot the ids: stopWatching deletes from the map we would be iterating.
+    for (const id of this.getWatchedNodeIds()) {
       this.stopWatching(id)
     }
   }

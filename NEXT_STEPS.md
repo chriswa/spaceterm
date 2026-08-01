@@ -8,8 +8,8 @@ question of turning features into mods.
 | | Two sessions ago | Last session | Now |
 |---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, and now covers `src/cli` and `src/claude-code-plugin` too |
-| Tests | 89, hand-rolled | 331 | 554 |
-| Test files | 5 | 18 | 28 |
+| Tests | 89, hand-rolled | 331 | 597 |
+| Test files | 5 | 18 | 30 |
 | Exhaustiveness checks | none | none | all four message switches |
 | State migrations | none | none | versioned pipeline |
 | Identifier types | plain `string` | plain `string` | branded |
@@ -20,7 +20,7 @@ clean; nothing had been checking them.
 
 ## What the last session did, and what it found
 
-Eight commits, each self-contained. `git log` carries the reasoning; the short
+Ten commits, each self-contained. `git log` carries the reasoning; the short
 version is that **every seam added turned up a real defect**, which is the
 argument for adding the rest.
 
@@ -47,6 +47,11 @@ argument for adding the rest.
   **`SnapshotManager`** had the same `Date.now()` tie in its fairness ordering.
   **`PlanCacheManager`** could overwrite a cached plan version with another
   captured in the same millisecond.
+- **`FileContentManager`** declared a `debounceTimer` on each entry, cleared it
+  in `stopWatching`, and never assigned it — the real timer was a local, out of
+  reach. A debounce in flight survived `stopWatching`, so repointing a file card
+  while its old file was being edited flashed the old file's content back a
+  moment later.
 - **`AgentDriver` registry** — see `MODDING.md`. Verified by differential test:
   1152 launch specs produce byte-identical command lines to the code it
   replaced.
@@ -62,17 +67,13 @@ timer, **adding the seam is the deliverable**. Not a mock. Written up in
 CLAUDE.md under "Testing", and every module below follows the same shape:
 a narrow deps interface with the real implementation as the default.
 
-## Tier B — remaining
+## Tier B — cleared
 
-Almost cleared. What is left:
+Every module on the original list now has a seam and tests, except one:
 
-- **`file-content-manager.ts`** (185 LOC). `fs.watch` with debounce timers. The
-  only Tier B module still untested. Its `fs.watch` semantics (rename vs change,
-  editors that replace rather than write in place) are the interesting part, and
-  the reason it is worth a seam rather than being left alone.
 - **`session-title-summarizer.ts`** — deliberately skipped. It is hard-disabled
   at `const ENABLED = Boolean(false)`, so a seam buys nothing until it is turned
-  back on.
+  back on. Do it then, not before.
 
 ## Tier C — extract before testing
 
