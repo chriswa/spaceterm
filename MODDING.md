@@ -294,7 +294,11 @@ A mod API is a public contract. These were load-bearing before one could exist:
   unversioned — it does not need to be, since the Electron client ships with
   the server, but say so out loud if that ever stops being true.
 
-**All four preconditions are met, and Tier 0 is complete.** What remains for
+**All four preconditions are met, and Tier 0 is complete.** A fifth thing has
+quietly arrived too: **a mod is now testable**. The renderer runs under jsdom
+against a fake preload bridge, and the whole app runs headlessly under Electron
+— so "how would anyone verify a third-party widget" has an answer, which it did
+not when this document was written. What remains for
 Tier 1 is the mod *lifecycle*, not the contract: a manifest (name, version,
 protocol range, command, subscriptions, permitted calls),
 spawn/health/restart-on-crash, and a way to disable a mod without editing
@@ -342,10 +346,11 @@ Two consequences worth stating now rather than discovering later:
 - **Do not build a plugin loader first.** Tier 0 with no dynamic loading is most of
   the benefit at a fraction of the risk, and it is a prerequisite anyway.
 - **Do not make the first mod a UI widget.** `ToolbarWidget` makes this less true
-  than it was — nine standalone widgets satisfy a real contract — but the
-  rendering path is still the least ready part of the codebase (`App.tsx` prop-
-  drills 53 props into `TerminalCard`), and a data-only mod feeding an existing
-  surface still gets most of the value.
+  than it was — nine standalone widgets satisfy a real contract, and the
+  renderer now has 211 tests plus an Electron E2E suite, so a widget is no
+  longer unverifiable. But `App.tsx` still prop-drills 53 props into
+  `TerminalCard`, and a data-only mod feeding an existing surface still gets
+  most of the value for a fraction of the work.
 - **Do not turn the three registries into dynamic registries yet.** `AGENT_TYPES`,
   `CARD_TYPES` and `TOOLBAR_WIDGETS` are const arrays, and a registry nobody
   registers into is just a slower array. Make each mutable when the first mod

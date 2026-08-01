@@ -8,77 +8,99 @@ question of turning features into mods.
 | | Three sessions ago | Two ago | Last | Now |
 |---|---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, all of `src/` | 0 errors |
-| Tests | 89, hand-rolled | 331 | 641 | **1002** |
-| Test files | 5 | 18 | 31 | **47** |
-| Vitest projects | 1 (node) | 1 | 1 | **2 (node + jsdom)** |
+| Tests | 89, hand-rolled | 331 | 641 | **1117 + 12 E2E** |
+| Test files | 5 | 18 | 31 | **52** |
+| Vitest projects | 1 (node) | 1 | 1 | **3 (node + jsdom + Electron E2E)** |
+| Renderer tests | 0 | 0 | 0 | **211** |
+| Can launch the GUI headlessly | assumed impossible | assumed impossible | assumed impossible | **yes** |
 | Tier 0 registries | none | none | 1 of 3 | **3 of 3** |
 | Versioned sockets | 0 | 0 | 1 of 2 | **2 of 2** |
-| `server/index.ts` | 3061 | 3087 | 3007 | **2490** |
+| `server/index.ts` | 3061 | 3087 | 3007 | **2466** |
 | `Toolbar.tsx` | 1021 | 1021 | 1021 | **40** |
 
 All three of MODDING.md's Tier 0 registries now exist — `AgentDriver`,
 `CardType`, `ToolbarWidget` — and every first-party feature goes through them.
 All four preconditions for a mod API are met.
 
+## The premise that was wrong
+
+Every previous session's notes said a headless agent cannot launch the GUI, and
+deferred all client-side work on that basis. **It was wrong, by one line.**
+
+`npm install --ignore-scripts` skips two postinstalls that have nothing to do
+with each other: `electron-rebuild`, which compiles native modules and does need
+a toolchain we lack, and *electron's own*, which downloads a zip. Skipping the
+second was never necessary. The binary downloads here in about three seconds
+warm, `Xvfb` is present, and the app runs.
+
+`npm run test:e2e` now builds the app and the Go daemon, fetches the binary if
+missing, and drives the real thing: 12 tests, ~40 seconds, all passing. Real
+Electron, real server, real pty daemon, all three talking to each other. The
+session hook fetches the binary automatically, so this is the default rather
+than something to remember.
+
+**Do not defer work to "do this at a keyboard" without first checking whether an
+E2E or jsdom test would cover it.**
+
 ## What the last session did
 
-Fourteen commits, each self-contained. `git log` carries the reasoning.
+Twenty commits. `git log` carries the reasoning.
 
-**Extractions from `index.ts`** (3007 → 2490): `gh-rate-limit.ts` (the sparkline
-poller, 24 tests), `script-api.ts` (the mod API, 45 tests), `resume-target.ts`
-(which agent session to resume, 31 tests), `terminal-respawn.ts` (six
-hand-written copies of an order-sensitive sequence collapsed to one),
-`restart-recovery.ts` (the last lifecycle state outside a tested module),
-`startup-reconciliation.ts` (the reattach/revive/archive decision, 18 tests).
+**Testing infrastructure — the headline.** Three vitest projects (`node`,
+`renderer`, `e2e`). `FakeBridge` implements the `Api` interface explicitly, so
+faking `window.api` is the entire cost of running the real renderer without
+Electron. `renderer-purity.test.ts` walks the value-import graph from the
+renderer entry and fails if anything reachable needs Node — the invariant that
+keeps that possible, previously unguarded. 211 renderer tests where there were
+zero.
+
+**Extractions from `index.ts`** (3007 → 2466): `gh-rate-limit.ts`,
+`script-api.ts`, `resume-target.ts`, `terminal-respawn.ts`,
+`restart-recovery.ts`, `startup-reconciliation.ts`, `startup-recovery.ts`. The
+last of those is driven end to end against an in-memory daemon — real
+StateManager, real SessionManager, real DaemonClient, 32 tests.
 
 **`ToolbarWidget` registry** — the last of MODDING.md's Tier 0. `Toolbar.tsx`
-went from 1021 lines to 40 and its four unrelated tenants became four files.
+went from 1021 lines to 40.
 
-**Contracts.** The client socket is now versioned (`client-hello`), and both
-sockets share one `checkProtocolVersion`. `NodeAlert.type` is a closed union.
-`StateManager.createTerminal` takes a named spec instead of eleven positional
-parameters. Parent-chain walking has one cycle-guarded implementation instead
-of four.
+**Contracts.** The client socket is versioned (`client-hello`), and both sockets
+share one `checkProtocolVersion`. `NodeAlert.type` is a closed union.
+`createTerminal` takes a named spec. Parent-chain walking has one cycle-guarded
+implementation instead of four.
 
-**Productization.** `capabilities.ts` probes optional integrations at startup
-and says what each missing one costs; `spaceterm-cli capabilities` makes the
-same report reachable without a running server. The README now says what
-Spaceterm is *for*, and documents the four platform dependencies rather than
-just saying "macOS".
+**Productization.** `capabilities.ts` plus `spaceterm-cli capabilities`. The
+README says what Spaceterm is for and documents the four platform dependencies.
 
-**Reliability.** A generated-graph round-trip test for `state.json`. Launch
-failures now leave a `launch-failed` alert on the surface rather than a toast
-that disappears.
+### The bugs the new coverage found
 
-### What the seams found this time
+Every layer added turned up a defect the layer below could not see.
 
-The pattern from previous sessions held: **every seam added turned up a
-defect.**
-
-- The capability probe ran `pgrep` with a non-matching pattern and read its exit
-  code. pgrep exits 1 when nothing matches, so it reported a working pgrep as
-  missing — **wrong on the very first machine it ran on**. Presence and exit
-  code are different questions and the deps interface now offers both.
-- Walking node ancestors for a script did not seed its cycle-guard with the
-  starting node, so a `parentId` cycle back through the start listed that node
-  as its own ancestor. It terminated; it just answered wrong.
-- `checkProtocolVersion` inlined in two places let **NaN through**. A naive
+- **No server means no window, ever.** `app.whenReady()` awaited
+  `client.connect()` before `createWindow()`, and `connect()` retries forever
+  rather than rejecting. A first-run user whose server failed got a dock icon
+  and nothing else. Found because the E2E harness's first launch hung — the
+  reason turned out to be a product bug, not a harness one.
+- **A notification sound could stop node updates.** `playUnreadSound()` runs
+  *inside* the node-updated handler, before the patch is applied, and
+  `playSound` constructed an AudioContext with no guard. Autoplay policy, no
+  audio device, or no API at all, and a surface going unread would silently
+  stop updating on screen.
+- The capability probe read `pgrep`'s exit code; pgrep exits 1 on no match, so
+  it reported a working pgrep as missing — **wrong on the very first machine it
+  ran on**.
+- `checkProtocolVersion` inlined in two places let **NaN through**: a naive
   `theirs >= min && theirs <= max` is false for NaN, so `!(too old) && !(too
-  new)` reads as compatible — and the number arrives over a socket from code we
-  did not write.
-- `script-api.test.ts` typechecked only because vitest strips types — `id`
-  appeared twice in the same object literal. **`npm test` passing is not
-  evidence that a test file typechecks.** Run both.
-- The toolbar registry's first draft keyed mapped widgets with a
-  `display: contents` wrapper span. `.toolbar__zoom > :last-child` selects the
-  last *element*, and a wrapper wins that match even at `display: contents` —
-  and would match even when the widget inside renders nothing, which the
-  rate-limit meter does whenever `gh` is unavailable. A keyed `Fragment` adds
-  no element.
-- `spaceterm-cli capabilities` exited non-zero on any missing capability, which
-  reports a healthy machine as broken: "PTY daemon socket — not yet started,
-  normal on a cold boot" is an *expected* absence. Same cry-wolf mistake as the
-  pgrep probe, caught this time before it shipped.
+  new)` reads as compatible.
+- The script API's ancestor walk listed a node as its own ancestor on a
+  `parentId` cycle.
+- `script-api.test.ts` typechecked only because vitest strips types. **`npm
+  test` passing is not evidence a test file typechecks.**
+- The toolbar registry's first draft keyed widgets with a `display: contents`
+  wrapper, which wins `.toolbar__zoom > :last-child` and matches even when the
+  widget inside renders nothing.
+- `spaceterm-cli capabilities` exited non-zero on an *expected* cold-boot
+  absence — the same cry-wolf mistake as the pgrep probe, caught before it
+  shipped.
 
 ## The rule that produced all of the above
 
@@ -139,12 +161,29 @@ Three corollaries worth stating, all learned the hard way:
   **There is now a jsdom vitest project**, so a renderer test needs no config
   work first.
 
-### Card component unification — deliberately deferred
+### Card component unification — now unblocked
 
-`App.tsx` maps five near-identical card lists. `CardType` made the *data* side
-one registry, but the components take ~30 differing props each and cannot be
-verified without running the GUI, which an agent cannot do here (see "Things
-deliberately not done"). Do this one at a keyboard, with the app running.
+`App.tsx` renders five near-identical card blocks, each threading ~20 identical
+props into a different component. This was deferred three sessions running with
+the same reason: "cannot be verified without running the GUI".
+
+That reason is gone, and the evidence the refactor needs now exists.
+`card-contract.test.tsx` renders all four non-terminal cards through their real
+components against the shared props and asserts what they have in common. What
+it established:
+
+- **`CardShell`'s root is byte-identical for every card** — `card-shell
+  canvas-node` plus positioning. The shared half is already shared; the
+  divergence is all inside.
+- **`x` and `y` are the card's CENTRE, not its top-left.** Every card subtracts
+  half its own size. A hoisted wrapper that got this wrong would misplace cards
+  by half their size, silently.
+- **`cameraRef` and the focus/selected split are part of the contract**, not
+  incidental props. Typecheck found both — the runtime test passed without them.
+
+The remaining work is hoisting App.tsx's shared prop bundle, with this test as
+the regression net. TerminalCard stays separate: its shell genuinely differs and
+its 466-line xterm mount effect deserves its own test.
 
 ## Ideas for the next sessions
 
@@ -156,19 +195,19 @@ done last session; kept so the reasoning is not lost.
 
 1. ~~**The client socket is unversioned.**~~ Done. `client-hello` mirrors
    `script-hello`, and both now share one `checkProtocolVersion`.
-2. **No integration test spans the whole server.** `session-manager.test.ts`
-   drives the fake daemon, but nothing exercises `startServer` →
-   reconciliation → a client connecting → a terminal spawning. Every piece
-   needed now exists (`fake-daemon.ts`, `FakePersistenceIO`, `ScriptApi` with a
-   fake connection, `respawnTerminal` with injectable deps); what is missing is
-   `startServer` being callable with injected collaborators rather than
-   constructing its own. **This is the single highest-value remaining item.**
-3. **Startup reconciliation** — the *decision* is now
-   `startup-reconciliation.ts` with 18 tests (reattach / revive / archive, plus
-   orphaned-daemon-session cleanup). What is still untested is the **sequence**:
-   the daemon round-trip, the reattach-fails-fall-through-to-revive path, and
-   the 30-second revival-protection window. That needs item 2 rather than
-   another pure function.
+2. ~~**No integration test spans the whole server.**~~ Largely done from two
+   directions: `startup-recovery.test.ts` drives the recovery sequence against
+   an in-memory daemon with real managers, and the E2E suite launches all three
+   processes for real. What is still uncovered is the middle — a client
+   connecting over the socket and driving a terminal through `handleMessage`.
+   The E2E layer *could* cover that; keeping it there rather than building
+   another in-process harness is probably the right call.
+3. ~~**Startup reconciliation**~~ — done at both levels. The decision is
+   `startup-reconciliation.ts` (18 tests); the sequence is
+   `startup-recovery.ts`, driven end to end against an in-memory daemon (32
+   tests) including the reattach-fails-fall-through path and the orphan sweep.
+   The only piece left outside a test is the 30-second revival-protection
+   window, which is a `setTimeout` in `index.ts`.
 4. ~~**Nothing verifies that a persisted state file round-trips.**~~ Done, over
    generated graphs. It also turned the ephemeral-field strip from a magic
    string into `EPHEMERAL_STATE_FIELDS`.
@@ -250,11 +289,20 @@ done last session; kept so the reasoning is not lost.
   bytes rather than assumed. See the rewritten `Potential UTF Bug Fix.md`. The
   investigation found a real bug next door instead (Unicode 6.0 vs 11.0 width
   tables between the snapshot and visible terminals), which is fixed.
-- **`--ignore-scripts`** in the hook and CI still skips `electron-rebuild` and
-  Electron's binary download. Fine for typecheck/lint/test; an agent cannot
-  launch the GUI without a full `npm install`. This is why anything requiring
-  visual verification is deferred rather than attempted.
-- **xterm / WebGL / canvas rendering** will not test meaningfully in jsdom.
-  `snapshot-manager.test.ts` shows the workable middle ground: `@xterm/headless`
-  runs fine in node, so the serialization path *is* tested; only pixels are left
-  to manual verification.
+- **`--ignore-scripts` still skips `electron-rebuild`**, and should: it compiles
+  native modules against Electron's headers and the repo has no native
+  dependencies of its own. Electron's *binary* download is no longer skipped —
+  see "The premise that was wrong".
+- **Playwright is pinned to `playwright-core@1.56.0`** and must stay there. The
+  Playwright browser CDN is firewalled in this container, so the only usable
+  Chromium is the preinstalled one at `/opt/pw-browsers` (revision 1194, which
+  is exactly 1.56.0). A routine `npm update` would silently break browser
+  launching. The Electron E2E path does not depend on that Chromium — it uses
+  Electron's own — but any future `@vitest/browser` work would.
+- **Pixel rendering is still not asserted.** The E2E suite proves the app comes
+  up and the DOM is right; it does not compare screenshots. Visual regression
+  would need a stable rendering environment and a baseline story, and is a
+  bigger commitment than it looks.
+- **No test drives a terminal through a full agent session.** The E2E harness
+  can type into an xterm and read output back, so this is reachable — it just
+  needs an agent CLI present, which CI will not have.
