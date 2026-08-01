@@ -9,6 +9,7 @@ import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import type { AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
+import { GhRateLimitPoller } from './gh-rate-limit'
 import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
@@ -271,65 +272,6 @@ let serverRestartScheduled = false
 
 const clients = new Set<ClientConnection>()
 
-// --- Polling intervals (shared with ring buffer slot widths) ---
-const GH_RATE_LIMIT_POLL_MS = 60_000 // every 1 minute
-// Slot width in minutes — sent to the client so sparkline tooltips show correct per-minute rates
-const GH_RATE_LIMIT_SLOT_MINUTES = GH_RATE_LIMIT_POLL_MS / 60_000
-// Directory holding the GitHub rate-limit history log (JSONL).
-const USAGE_LOG_DIR = path.join(SOCKET_DIR, 'usage-logs')
-
-const ghRateLimitHistory = new RingBuffer('gh-rate-limit', GH_RATE_LIMIT_POLL_MS)
-
-// --- GitHub GraphQL rate limit polling ---
-const GH_RATE_LIMIT_LOG_FILE = path.join(USAGE_LOG_DIR, 'gh_rate_limit.jsonl')
-const GH_RATE_LIMIT_CACHE_FILE = path.join(SOCKET_DIR, 'gh-rate-limit-cache.json')
-let cachedGhRateLimit: GhRateLimitData | null = null
-
-function loadCachedGhRateLimit(): void {
-  try {
-    if (fs.existsSync(GH_RATE_LIMIT_CACHE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(GH_RATE_LIMIT_CACHE_FILE, 'utf8'))
-      if (data && typeof data.limit === 'number' && typeof data.used === 'number' && typeof data.resetAt === 'string') {
-        cachedGhRateLimit = data
-        console.log(`[gh-rate-limit] Loaded cached data (${data.used}/${data.limit})`)
-      }
-    }
-  } catch (err: any) {
-    console.error(`[gh-rate-limit] Failed to load cache: ${err.message}`)
-  }
-  ghRateLimitHistory.seedFromLog(GH_RATE_LIMIT_LOG_FILE, 'used')
-}
-
-function saveCachedGhRateLimit(data: GhRateLimitData): void {
-  cachedGhRateLimit = data
-  fs.writeFile(GH_RATE_LIMIT_CACHE_FILE, JSON.stringify(data), (err) => {
-    if (err) console.error(`[gh-rate-limit] Failed to save cache: ${err.message}`)
-  })
-}
-
-function fetchGhRateLimit(): Promise<GhRateLimitData> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'gh',
-      ['api', 'graphql', '-f', 'query={ rateLimit { limit remaining resetAt } }'],
-      { timeout: 10_000 },
-      (err, stdout) => {
-        if (err) return reject(new Error(`gh api failed: ${err.message}`))
-        try {
-          const parsed = JSON.parse(stdout)
-          const rl = parsed?.data?.rateLimit
-          if (!rl || typeof rl.limit !== 'number' || typeof rl.remaining !== 'number' || typeof rl.resetAt !== 'string') {
-            return reject(new Error('Unexpected gh rate limit response shape'))
-          }
-          resolve({ limit: rl.limit, used: rl.limit - rl.remaining, resetAt: rl.resetAt })
-        } catch (e: any) {
-          reject(new Error(`Failed to parse gh response: ${e.message}`))
-        }
-      }
-    )
-  })
-}
-
 let daemonClient: DaemonClient
 let sessionManager: SessionManager
 let stateManager: StateManager
@@ -344,6 +286,7 @@ let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
 let summaryChat: SummaryChat
+let ghRateLimitPoller: GhRateLimitPoller | undefined
 
 /**
  * Point the right transcript watcher at a surface's agent session.
@@ -2546,32 +2489,10 @@ async function startServer(): Promise<void> {
   )
 
   // --- GitHub GraphQL rate limit polling ---
-  let usageLogDirReady = false
-  loadCachedGhRateLimit()
-  const pollGhRateLimit = async () => {
-    const now = Date.now()
-    try {
-      const data = await fetchGhRateLimit()
-      saveCachedGhRateLimit(data)
-      ghRateLimitHistory.record(data.used, now)
-      broadcastToAll({ type: 'gh-rate-limit', data, usedHistory: ghRateLimitHistory.build(), slotMinutes: GH_RATE_LIMIT_SLOT_MINUTES })
-      console.log(`[gh-rate-limit] ${data.used}/${data.limit}, resets ${data.resetAt}`)
-
-      // Log to JSONL
-      if (!usageLogDirReady) {
-        fs.mkdirSync(USAGE_LOG_DIR, { recursive: true })
-        usageLogDirReady = true
-      }
-      const logEntry = { timestamp: new Date(now).toISOString(), used: data.used, limit: data.limit, resetAt: data.resetAt }
-      fs.appendFile(GH_RATE_LIMIT_LOG_FILE, JSON.stringify(logEntry) + '\n', (err) => {
-        if (err) console.error(`[gh-rate-limit] Failed to write log: ${err.message}`)
-      })
-    } catch (err: any) {
-      console.error(`[gh-rate-limit] Fetch failed: ${err.message}`)
-    }
-  }
-  pollGhRateLimit() // initial fetch on startup
-  setInterval(pollGhRateLimit, GH_RATE_LIMIT_POLL_MS)
+  ghRateLimitPoller = new GhRateLimitPoller((report) => {
+    broadcastToAll({ type: 'gh-rate-limit', ...report })
+  })
+  void ghRateLimitPoller.start()
 
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes
@@ -2623,9 +2544,11 @@ async function startServer(): Promise<void> {
       send(socket, { type: 'summary-chat-status', nodeId: summaryTargetNodeId, state: 'target' })
     }
 
-    // Send cached GitHub rate-limit data immediately so the client doesn't wait for the next poll
-    if (cachedGhRateLimit) {
-      send(socket, { type: 'gh-rate-limit', data: cachedGhRateLimit, usedHistory: ghRateLimitHistory.build(), slotMinutes: GH_RATE_LIMIT_SLOT_MINUTES })
+    // Send the latest GitHub rate-limit reading immediately so the client
+    // doesn't wait a full poll interval for a sparkline.
+    const ghReport = ghRateLimitPoller?.current()
+    if (ghReport) {
+      send(socket, { type: 'gh-rate-limit', ...ghReport })
     }
 
     socket.on('data', (data) => {
