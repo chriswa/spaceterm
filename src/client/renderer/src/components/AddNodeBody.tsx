@@ -1,8 +1,13 @@
 import crabIcon from '../assets/crab.png'
 import codexAgentIcon from '../assets/codex-agent.png'
 import type { AgentType } from '../../../../shared/agent-type'
+import type { CardType } from '../../../../shared/card-types'
 
-export type AddNodeType = AgentType | 'title' | 'markdown' | 'directory' | 'file' | 'terminal'
+/**
+ * What the add menu can create: a card of any registered type, plus one entry
+ * per agent (all of which produce a terminal card, pre-launched with that CLI).
+ */
+export type AddNodeType = AgentType | CardType
 
 interface AddNodeBodyProps {
   onSelect: (type: AddNodeType) => void

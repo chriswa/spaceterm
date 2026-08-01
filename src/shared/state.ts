@@ -1,6 +1,7 @@
 import type { ClaudeSessionEntry, CameraBounds } from './protocol'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { AgentType } from './agent-type'
+import type { CardType } from './card-types'
 import type { UndoEntry } from './undo-types'
 
 // --- Claude state enum ---
@@ -109,6 +110,21 @@ export interface TitleNodeData extends BaseNodeData {
 }
 
 export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData | TitleNodeData
+
+/**
+ * Compile-time check that the node union and the CardType registry describe the
+ * same set of cards, in both directions. Adding a node type here without adding
+ * it to `CARD_TYPES` — or the reverse — is a type error, rather than a card
+ * that places at `undefined × undefined` or a menu entry that creates nothing.
+ *
+ * The constraint has to sit on a type *parameter* to bite: a conditional type
+ * that evaluates to `never` is still a perfectly legal type and reports
+ * nothing. Two one-way assertions rather than one mutual constraint, which
+ * TypeScript rejects as circular.
+ */
+type Assignable<Sub extends Super, Super> = Sub
+type _EveryNodeTypeIsACardType = Assignable<NodeData['type'], CardType>
+type _EveryCardTypeIsANodeType = Assignable<CardType, NodeData['type']>
 
 // --- Archived nodes ---
 

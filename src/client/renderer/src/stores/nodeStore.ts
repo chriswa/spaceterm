@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, ArchivedNode } from '../../../../shared/state'
-import { nodePixelSize } from '../../../../shared/node-size'
+import { measureCard as nodePixelSize } from '../../../../shared/card-types'
 import { type NodeId } from '../../../../shared/ids'
 
 export { nodePixelSize }

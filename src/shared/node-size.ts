@@ -95,23 +95,8 @@ export function directoryFolderWidth(cwd: string, gitStatus?: { branch: string |
   return Math.max(DIR_MIN_FOLDER_WIDTH, Math.max(cwdWidth, gitWidth) + DIR_FOLDER_H_PADDING)
 }
 
-export function nodePixelSize(node: NodeLike): { width: number; height: number } {
-  if (node.type === 'terminal') {
-    return terminalPixelSize(node.cols, node.rows)
-  }
-  if (node.type === 'directory') {
-    return { width: directoryFolderWidth(node.cwd, node.gitStatus), height: DIRECTORY_HEIGHT }
-  }
-  if (node.type === 'file') {
-    return { width: FILE_WIDTH, height: FILE_HEIGHT }
-  }
-  if (node.type === 'title') {
-    const lines = node.text ? node.text.split('\n') : ['']
-    const lineCount = lines.length
-    const longestLen = Math.max(...lines.map(l => l.length), 0)
-    const width = Math.max(TITLE_MIN_WIDTH, longestLen * TITLE_CHAR_WIDTH + TITLE_H_PADDING)
-    const height = TITLE_HEIGHT + (lineCount - 1) * TITLE_LINE_HEIGHT
-    return { width, height }
-  }
-  return { width: node.width, height: node.height }
-}
+// The pixel footprint of a card is computed in card-types.ts, which imports
+// the constants above. Deliberately not re-exported from here: card-types
+// already depends on this module, and a re-export would close the cycle — the
+// constants would then be in their temporal dead zone while card-types
+// evaluated its module-level default sizes.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { canFitAt, computePlacement } from './node-placement'
-import { PLACEMENT_MARGIN, nodePixelSize } from '../shared/node-size'
+import { PLACEMENT_MARGIN } from '../shared/node-size'
+import { measureCard as nodePixelSize } from '../shared/card-types'
 import type { NodeData } from '../shared/state'
 
 /**

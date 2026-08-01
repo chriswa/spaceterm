@@ -1,6 +1,6 @@
 import type { NodeData } from '../shared/state'
+import { measureCard as nodePixelSize } from '../shared/card-types'
 import {
-  nodePixelSize,
   terminalPixelSize,
   ROOT_NODE_RADIUS,
   PLACEMENT_MARGIN,
