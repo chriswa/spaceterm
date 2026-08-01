@@ -20,10 +20,13 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test": "vitest run",
+    "test": "vitest run --project node --project renderer",
     "test:watch": "vitest",
     "build": "npm run client:build",
-    "postinstall": "electron-rebuild"
+    "postinstall": "electron-rebuild",
+    "electron:install": "node scripts/ensure-electron-binary.mjs",
+    "test:e2e": "npm run client:build && npm run daemon:build && node scripts/ensure-electron-binary.mjs && node scripts/run-e2e.mjs",
+    "test:all": "npm test && npm run test:e2e"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.2",
@@ -52,6 +55,8 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/shell-quote": "^1.7.5",
@@ -63,6 +68,7 @@
     "electron-vite": "^2.3.0",
     "eslint": "^9.0.0",
     "jsdom": "^30.0.1",
+    "playwright-core": "^1.56.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vitest": "^4.1.10"

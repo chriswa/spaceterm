@@ -141,13 +141,46 @@ Standalone server (src/server/)
 | `npm run dev` | Start server + Electron in dev mode |
 | `npm run client:package` | Build + package as .dmg |
 | `npm run typecheck` | Type-check both projects — nothing else checks contracts between server, preload and renderer |
-| `npm test` | Vitest (node + jsdom projects, discovered by glob) |
+| `npm test` | Unit and component tests — node + jsdom projects, ~6s |
+| `npm run test:e2e` | Launches the real app (Electron + server + Go daemon) and drives it, ~40s |
+| `npm run test:all` | Both of the above |
 | `npm run lint` | ESLint check (catches use-before-define bugs) |
 | `npm run cli -- <cmd>` | The scripts CLI — see `npm run cli -- --help` |
 | `npm run daemon:build` | Build the PTY daemon binary |
 | `npm run daemon:dev` | Build + restart the daemon (use after modifying Go code) |
 | `npm run et` | Emergency terminal (tmux-based fallback CLI) |
 | `npm run et -- --daemon` | Emergency terminal direct to daemon (works without server) |
+
+## Testing
+
+Three layers, split by what they need rather than by where the files live:
+
+| Project | Environment | Covers |
+|---|---|---|
+| `node` | node | Server, shared logic, the CLI. Dependency-injected classes and pure functions. |
+| `renderer` | jsdom | React components and renderer libraries, against a fake preload bridge. |
+| `e2e` | real Electron | The three processes actually talking to each other. |
+
+`npm test` runs the first two. The third needs Electron's ~100 MB binary and a
+display, so it is a separate command:
+
+```bash
+npm run test:e2e     # builds, fetches the binary if needed, runs under Xvfb on Linux
+```
+
+**On the Electron binary.** `npm install --ignore-scripts` — which CI and cloud
+agent sessions use to skip the `electron-rebuild` postinstall — also skips
+*electron's own* postinstall, which is unrelated: one compiles native modules,
+the other downloads a zip. `npm run electron:install` fetches it, is idempotent,
+and is cached in `~/.cache/electron` (about three seconds warm). The session
+hook runs it automatically.
+
+Writing a renderer test needs no Electron at all. The renderer's only
+Electron-specific dependency is `window.api`, so
+`src/client/renderer/src/testing/fake-bridge.ts` stands in for it —
+`installFakeBridge()` and you can render any component. A test
+(`renderer-purity.test.ts`) keeps that true by failing if anything reachable
+from the renderer entry point imports a Node builtin.
 
 ## Contributing
 

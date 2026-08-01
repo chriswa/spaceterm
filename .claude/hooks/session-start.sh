@@ -19,11 +19,11 @@ fi
 # (`.claude/hooks/session-start.sh`) to verify it still works.
 cd "${CLAUDE_PROJECT_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"}"
 
-# --ignore-scripts skips the `electron-rebuild` postinstall and Electron's
-# ~100MB binary download. Neither is needed to typecheck, lint, or test:
-# the repo has no native dependencies (the PTY layer is a separate Go daemon,
-# and @echogarden/macos-native-tts is an optional macOS-only module).
-# A headless agent cannot launch the GUI anyway.
+# --ignore-scripts skips the `electron-rebuild` postinstall, which compiles
+# native modules against Electron's headers and needs a toolchain we do not
+# have. The repo has no native dependencies of its own (the PTY layer is a
+# separate Go daemon, and @echogarden/macos-native-tts is an optional
+# macOS-only module), so skipping it costs nothing.
 #
 # `npm install` rather than `npm ci` on purpose: the container image is cached
 # after this hook completes, so a resumed session finds node_modules already
@@ -31,4 +31,14 @@ cd "${CLAUDE_PROJECT_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"}
 # time.
 npm install --ignore-scripts --no-audit --no-fund
 
+# --ignore-scripts ALSO skips electron's own postinstall, which is unrelated to
+# electron-rebuild: it is a zip download, not a native compile. Skipping both
+# together is what made "a headless agent cannot launch the GUI" true, and it
+# was never actually necessary — the binary downloads fine here, Xvfb is
+# present, and `npm run test:e2e` drives the real app. Idempotent, cached in
+# ~/.cache/electron (~3s warm), and never fatal: a machine without network
+# still typechecks, lints and runs every unit test.
+node scripts/ensure-electron-binary.mjs || true
+
 echo "[session-start] dependencies ready — npm run typecheck / lint / test are available"
+echo "[session-start] GUI tests: npm run test:e2e (needs xvfb-run on Linux)"

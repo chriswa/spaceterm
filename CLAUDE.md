@@ -15,9 +15,29 @@ Run `npm run typecheck && npm run lint` after editing files in `src/`.
 - `npm run lint` catches use-before-define errors (temporal dead zone bugs with `const`/`useCallback` ordering).
 
 Run `npm test` when changing a module that has a `.test.ts` beside it. Tests run on
-Vitest and are discovered by glob (`src/**/*.test.ts`), so a new test file needs no
-registration — just put it next to the module it covers. `npm run test:watch` reruns
-on save, and `npm test -- <substring>` runs a single file.
+Vitest and are discovered by glob, so a new test file needs no registration — just
+put it next to the module it covers. `npm run test:watch` reruns on save, and
+`npm test -- <substring>` runs a single file.
+
+Three vitest projects, split by what a suite needs:
+
+- **`node`** — server, shared, CLI. Default for anything not under
+  `src/client/renderer/`.
+- **`renderer`** — jsdom. React components and renderer libraries. Use
+  `installFakeBridge()` from `src/client/renderer/src/testing/fake-bridge.ts`
+  instead of Electron; it implements the `Api` interface explicitly, so a bridge
+  change that the fake has not caught up with is a compile error.
+- **`e2e`** — the real app. `npm run test:e2e` builds, fetches Electron's binary
+  if missing, and runs under Xvfb on Linux. Keep this layer to smoke tests:
+  it is seconds per test and the most brittle thing in the repo. Behaviour
+  belongs in `renderer`.
+
+**The GUI *can* be launched headlessly.** Earlier notes in this repo said
+otherwise; they were wrong. `npm install --ignore-scripts` skips *electron's*
+postinstall (a zip download) alongside `electron-rebuild`'s (a native compile),
+and the two are unrelated. `npm run electron:install` fixes it and the session
+hook runs it automatically. Do not defer work to "do this at a keyboard" without
+checking whether an e2e or jsdom test would cover it.
 
 ## Testing
 
