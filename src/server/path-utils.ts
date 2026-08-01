@@ -2,6 +2,7 @@ import * as path from 'path'
 import { homedir } from 'os'
 import type { NodeData } from '../shared/state'
 import type { NodeId } from '../shared/ids'
+import { findAncestor, lookupIn } from '../shared/node-ancestry'
 
 /**
  * Expand `~` and resolve relative paths against an optional cwd.
@@ -27,16 +28,11 @@ export function resolveFilePath(rawPath: string, cwd?: string): string {
  * (terminal or directory node). Mirrors client-side `getAncestorCwd`.
  */
 export function getAncestorCwd(nodes: Record<string, NodeData>, nodeId: NodeId): string | undefined {
-  let currentId = nodeId
-  const visited = new Set<string>()
-  while (currentId && currentId !== 'root') {
-    if (visited.has(currentId)) break
-    visited.add(currentId)
-    const node = nodes[currentId]
-    if (!node) break
-    if (node.type === 'terminal' && node.cwd) return node.cwd
-    if (node.type === 'directory' && node.cwd) return node.cwd
-    currentId = node.parentId
-  }
-  return undefined
+  const withCwd = findAncestor(
+    lookupIn(nodes),
+    nodeId,
+    (node) => (node.type === 'terminal' || node.type === 'directory') && !!node.cwd,
+    { includeSelf: true }
+  )
+  return withCwd && 'cwd' in withCwd ? withCwd.cwd : undefined
 }

@@ -8,7 +8,7 @@ import {
 } from '../shared/protocol'
 import type { NodeData, TerminalNodeData } from '../shared/state'
 import type { NodeId, PtySessionId } from '../shared/ids'
-import { ROOT_NODE_ID } from '../shared/ids'
+import { ancestorsOf } from '../shared/node-ancestry'
 import { unhandledVariant } from '../shared/exhaustive'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 
@@ -147,7 +147,7 @@ export class ScriptApi {
           reply({ type: 'script-get-ancestors-result', seq: msg.seq, ancestors: [], error: 'unknown-node' })
           return
         }
-        reply({ type: 'script-get-ancestors-result', seq: msg.seq, ancestors: this.ancestorsOf(node) })
+        reply({ type: 'script-get-ancestors-result', seq: msg.seq, ancestors: this.chainFrom(node) })
         return
       }
 
@@ -248,23 +248,18 @@ export class ScriptApi {
     }
   }
 
-  /** [self, parent, grandparent, ...], stopping at the root or a broken link. */
-  private ancestorsOf(node: NodeData): NodeId[] {
-    const ancestors: NodeId[] = [node.id]
-    // A parentId cycle would otherwise hang the server on a malformed state
-    // file; a script is not a trusted enough caller to risk that. The starting
-    // node is seeded so a cycle back through it stops there rather than listing
-    // it as its own ancestor.
-    const visited = new Set<NodeId>([node.id])
-    let currentId = node.parentId
-    while (currentId && currentId !== ROOT_NODE_ID && !visited.has(currentId)) {
-      visited.add(currentId)
-      const ancestor = this.host.getNode(currentId)
-      if (!ancestor) break
-      ancestors.push(ancestor.id)
-      currentId = ancestor.parentId
-    }
-    return ancestors
+  /**
+   * [self, parent, grandparent, ...], stopping at the root or a broken link.
+   *
+   * The shared walk is cycle-guarded, which matters more here than anywhere
+   * else: a script is not a trusted caller, and an unguarded walk on a
+   * malformed graph hangs the server rather than returning a wrong answer.
+   */
+  private chainFrom(node: NodeData): NodeId[] {
+    return [
+      node.id,
+      ...[...ancestorsOf((id) => this.host.getNode(id), node.id)].map((n) => n.id)
+    ]
   }
 
   /**

@@ -44,6 +44,8 @@ import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
+import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
+import type { NodeData } from '../shared/state'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
@@ -89,23 +91,15 @@ const FORK_SETTLE_TIMEOUT_MS = 30_000
  * markdown nodes (non-file-backed content) and file nodes (resolved paths).
  * Returns the accumulated pieces joined with newlines, or undefined if none found.
  */
-function gatherAncestorPrompt(nodes: Record<string, import('../shared/state').NodeData>, startNodeId: string): string | undefined {
+function gatherAncestorPrompt(nodes: Record<string, NodeData>, startNodeId: NodeId): string | undefined {
   const parts: string[] = []
-  let currentId = startNodeId
-  const visited = new Set<string>()
-  while (currentId && currentId !== 'root') {
-    if (visited.has(currentId)) break
-    visited.add(currentId)
-    const node = nodes[currentId]
-    if (!node) break
+  for (const node of ancestorsOf(lookupIn(nodes), startNodeId, { includeSelf: true })) {
     if (node.type === 'markdown' && !node.fileBacked && node.content.trim()) {
       parts.push(node.content)
     }
     if (node.type === 'file' && node.filePath) {
-      const cwd = getAncestorCwd(nodes, node.parentId)
-      parts.push(resolveFilePath(node.filePath, cwd))
+      parts.push(resolveFilePath(node.filePath, getAncestorCwd(nodes, node.parentId)))
     }
-    currentId = node.parentId
   }
   // Reverse so outermost ancestors come first
   parts.reverse()

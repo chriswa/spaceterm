@@ -17,6 +17,7 @@ import { abbreviateCwd, scanCwdMismatches, scanDescendantCwdMismatches } from '.
 import { asNodeId, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import type { AgentType } from '../shared/agent-type'
 import { isDisposable } from '../shared/node-utils'
+import { findAncestor, lookupIn } from '../shared/node-ancestry'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
 
 export type NodeUpdateCallback = (nodeId: NodeId, fields: Partial<NodeData>) => void
@@ -340,18 +341,7 @@ export class StateManager {
    * without hitting a terminal. Deterministic: every node has a single parent.
    */
   getNearestTerminalAncestor(nodeId: NodeId): NodeId | undefined {
-    const start = this.state.nodes[nodeId]
-    if (!start) return undefined
-    let currentId: string = start.parentId
-    const visited = new Set<string>()
-    while (currentId && currentId !== 'root' && !visited.has(currentId)) {
-      visited.add(currentId)
-      const node = this.state.nodes[currentId]
-      if (!node) return undefined
-      if (node.type === 'terminal') return node.id
-      currentId = node.parentId
-    }
-    return undefined
+    return findAncestor(lookupIn(this.state.nodes), nodeId, (node) => node.type === 'terminal')?.id
   }
 
   /**
