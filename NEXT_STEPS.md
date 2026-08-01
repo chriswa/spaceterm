@@ -8,10 +8,10 @@ question of turning features into mods.
 | | Three sessions ago | Two ago | Last | Now |
 |---|---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, all of `src/` | 0 errors |
-| Tests | 89, hand-rolled | 331 | 641 | **1117 + 12 E2E** |
-| Test files | 5 | 18 | 31 | **52** |
+| Tests | 89, hand-rolled | 331 | 641 | **1138 + 16 E2E** |
+| Test files | 5 | 18 | 31 | **54** |
 | Vitest projects | 1 (node) | 1 | 1 | **3 (node + jsdom + Electron E2E)** |
-| Renderer tests | 0 | 0 | 0 | **211** |
+| Renderer tests | 0 | 0 | 0 | **226** |
 | Can launch the GUI headlessly | assumed impossible | assumed impossible | assumed impossible | **yes** |
 | Tier 0 registries | none | none | 1 of 3 | **3 of 3** |
 | Versioned sockets | 0 | 0 | 1 of 2 | **2 of 2** |
@@ -176,11 +176,17 @@ Two things that emerged and are worth carrying forward:
   root marker. The shared half was already shared; the divergence was all
   inside.
 
-`TerminalCard` stays separate — its shell genuinely differs and its 466-line
-xterm mount effect deserves its own test. That effect is now reachable:
-`@xterm/headless` runs in node, xterm proper mounts in jsdom given the
-`matchMedia` stub the renderer setup file already provides, and the E2E layer
-can drive a real terminal. **This is the next obvious piece of work.**
+`TerminalCard` stays separate — its shell genuinely differs — and its mount
+effect now has lifecycle coverage
+(`TerminalCard.lifecycle.test.tsx`, 15 tests): the focus gate, registration
+under node id rather than session id, and the cleanup of the four module-level
+Maps `App.tsx` uses as a keyboard side-channel. Those Maps had been flagged as
+an escape hatch for three sessions with nothing checking they empty out.
+
+What is still uncovered inside that effect is terminal *behaviour* — the
+custom wheel handler, selection, the search addon, WebGL fallback. jsdom mounts
+xterm fine (given the setup file's `matchMedia` and canvas stubs), so most of it
+is reachable; it is a question of appetite rather than of infrastructure.
 
 ## Ideas for the next sessions
 
