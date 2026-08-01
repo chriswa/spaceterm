@@ -71,18 +71,17 @@ integrations.
 Each of these is a place where adding a variant means editing many files. That is the
 signature of a missing registry.
 
-**Agent types** (`claude` | `cursor` | `codex`) — the strongest candidate.
-The literal `'claude' | 'cursor' | 'codex'` appears **ten times** across the codebase
-rather than being exported once as an `AgentType`. Adding an agent
-today means editing six spawn-dispatch sites, five watcher-wiring sites, three label
-ternaries, two icon dispatches, plus capability gates mirrored on the client. Two
-functions (`lastCursorSessionId`, `lastCodexSessionId`) are byte-for-byte identical.
-Commit `bffb2e3` ("Add Cursor and Codex agent surfaces") touched **37 files**.
+**Agent types** (`claude` | `cursor` | `codex`) — ~~the strongest candidate~~ **done**,
+see Tier 0 below. It was the clearest case: the literal appeared **ten times**
+rather than being exported once as an `AgentType`, adding an agent meant editing
+six spawn-dispatch sites, five watcher-wiring sites, three label ternaries and
+two icon dispatches, and two functions (`lastCursorSessionId`,
+`lastCodexSessionId`) were byte-for-byte identical. Commit `bffb2e3` ("Add Cursor
+and Codex agent surfaces") touched **37 files**.
 
-An `AgentDriver` registry — `Record<AgentType, AgentDriver>` with `label`, `icon`,
-`buildCreateOptions`, `provision`, `resolveResumeId`, `createWatcher`, and a
-`capabilities` block — absorbs essentially all of it. This is both the review's #1
-recommendation and the single most mod-shaped thing in the codebase.
+Left here because it is the worked example for the two registries that follow:
+the signature that mattered was *the same edit appearing in many files*, and
+both of the remaining candidates have it.
 
 **Node / card types** (`terminal` | `markdown` | `directory` | `file` | `title`).
 Adding one touches `state.ts`, `protocol.ts`, `node-size.ts`, `node-placement`,
@@ -108,6 +107,25 @@ already have, they cannot express a mod's either, and you will find that out che
 
 This tier is worth doing on its own merits even if mods never happen. It is the same
 work as breaking up `index.ts` and `Toolbar.tsx`.
+
+**`AgentDriver` is done** (`src/server/agent-drivers.ts`, `src/shared/agent-type.ts`).
+It absorbed seven spawn-dispatch chains, three label ternaries, five capability
+checks and three watcher wirings; all three first-party agents go through it,
+with none special-cased. Two things are worth knowing before the next registry:
+
+- **The capability block is where the value was.** Writing it forced a question
+  the name tests had been fudging: `canForkSession` turned out to be three
+  distinct answers (`'none' | 'native' | 'transcript-clone'`), because Cursor
+  cannot fork, Codex forks itself, and Claude forks by spaceterm cloning the
+  transcript. Two call sites had quietly disagreed about which they meant.
+- **The one spec, many drivers contract holds.** A single `AgentLaunchSpec`
+  (cwd, prompt, resume, fork, appendSystemPrompt, extraArgs) covers all three
+  CLIs; each ignores what it does not use. That is exactly the shape a mod's
+  driver would need, and it survived contact with three genuinely different
+  command-line grammars — including one with load-bearing argument order.
+
+`CardType` and `ToolbarWidget` remain. `CardType` is the better next one: it is
+the same shape, and `App.tsx`'s five near-identical card maps are the payoff.
 
 ### Tier 1 — out-of-process mods over a versioned scripts socket
 
@@ -146,32 +164,42 @@ and one widget — small enough to finish, complete enough to prove the API incl
 the awkward widget half.
 
 **2. `git-status-poller`.** Data-only; it feeds `DirectoryCard` rather than owning a
-widget. Easier than the sparkline but proves less.
+widget. Easier than the sparkline but proves less. Note it now has a deps seam
+and 22 tests, so the "don't extract before it has tests" rule below is satisfied
+— this is the readiest of the four.
 
 **3. Voice / summary chat.** Already talks HTTP to an external service (Voice Operator
 on `127.0.0.1`), already ~450 lines with its own lifecycle. The most natural
-out-of-process citizen in the codebase.
+out-of-process citizen in the codebase. Also now has a deps seam and 37 tests.
 
-**4. Agent types**, once `AgentDriver` exists — a mod that adds an agent is the most
-compelling demo, and the per-agent shell hook handlers are already separate files.
+**4. Agent types.** `AgentDriver` exists, so this is unblocked: a mod that adds an
+agent is the most compelling demo, and the per-agent shell hook handlers are
+already separate files. What a mod cannot yet supply is the *provisioning* half
+— plugin directories and config merges are still first-party code in `index.ts`,
+injected into the registry rather than owned by it. Moving that behind the
+`AgentProvisioning` interface is the remaining step.
 
-## Preconditions — be honest about these
+## Preconditions — three of four are now met
 
-A mod API is a public contract. These are load-bearing before one exists:
+A mod API is a public contract. These were load-bearing before one could exist:
 
-- **Protocol versioning.** None today.
-- **State migrations.** `STATE_VERSION` is written into the persisted state
-  (`state-manager.ts:21`, `:90`) and **never read back**. Mods will read and write
-  node state; without a migration path the first schema change breaks every mod.
-- **Exhaustiveness checks.** Zero in the codebase. `handleIngestMessage` has no
-  `default`, so unknown messages vanish silently — a terrible property for an API
-  whose whole job is receiving messages from code you did not write.
-- **Stable identifiers.** `surfaceId` vs `nodeId` is currently a documented trap
-  (`protocol.ts:802`) that the code itself falls into (`index.ts:740`). Do not export
-  that ambiguity to mod authors.
-
-Items 1, 2 and 3 are also on the "make it more serious" list in `NEXT_STEPS.md` —
-they are worth doing regardless, which is a good sign this is the right direction.
+- ~~**State migrations.**~~ Done. `state-migrations.ts` runs an ordered pipeline
+  and stamps the version; corrupt or newer-than-us documents are preserved
+  rather than overwritten. A mod's first schema change is now survivable.
+- ~~**Exhaustiveness checks.**~~ Done, and the split matters for mods
+  specifically: `assertNever` throws for unions this process owns end to end,
+  while `unhandledVariant` gives the same compile-time guarantee at a socket
+  boundary but logs instead of throwing. That is the right posture for an API
+  whose job is receiving messages from code you did not write — strict about our
+  own drift, forgiving of theirs.
+- ~~**Stable identifiers.**~~ Done. `NodeId`, `PtySessionId` and
+  `ClaudeSessionId` are branded, so the `surfaceId`-vs-`nodeId` trap is a
+  compile error rather than a comment. Branding found the code falling into it
+  in two places. Mod authors will not inherit that ambiguity.
+- **Protocol versioning.** **Still missing** — no version field in any of the 105
+  message variants. This is now the only precondition left, and therefore the
+  gate on Tier 1. The first mod written against the socket freezes the protocol
+  by accident until it exists.
 
 ## Security: say the true thing
 

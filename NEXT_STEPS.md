@@ -1,126 +1,127 @@
 # Next Steps
 
-Working notes for whoever picks this up next. Written at the end of the session that
-added the typecheck gate and the test suite; see `MODDING.md` for the separate
+Working notes for whoever picks this up next. See `MODDING.md` for the separate
 question of turning features into mods.
 
 ## Where things stand
 
-| | Before | Now |
-|---|---|---|
-| `npm run typecheck` | did not exist | 0 errors, both projects |
-| Tests | 89, hand-rolled `&&` chain | 331, Vitest, glob-discovered |
-| Test files | 5 | 18 |
-| CI | none | typecheck + lint + test on PR |
-| Cloud session setup | none | SessionStart hook, `npm ci` in ~45s |
+| | Two sessions ago | Last session | Now |
+|---|---|---|---|
+| `npm run typecheck` | did not exist | 0 errors | 0 errors, and now covers `src/cli` and `src/claude-code-plugin` too |
+| Tests | 89, hand-rolled | 331 | 554 |
+| Test files | 5 | 18 | 28 |
+| Exhaustiveness checks | none | none | all four message switches |
+| State migrations | none | none | versioned pipeline |
+| Identifier types | plain `string` | plain `string` | branded |
 
-Nine real bugs surfaced along the way (Summary Chat's error path threw
-`ReferenceError`; OSC titles were dropped when the ST terminator split across PTY
-chunks; `DaemonClient` reconnected after `dispose()`; ANSI state was lost on
-scrollback truncation; etc.). Each is described in the commit that fixed it —
-`git log` on this branch is the record, and the messages carry the reasoning.
+Every `.ts` file under `src/` is now typechecked. Both prior gaps — the CLI and
+the MCP server that `MODDING.md` calls spaceterm's first mod — were already
+clean; nothing had been checking them.
 
-**Do this first:** the SessionStart hook only takes effect once it is on the default
-branch. Until this branch merges, every new cloud session still starts with no
-`node_modules` and no way to verify its own work.
+## What the last session did, and what it found
+
+Eight commits, each self-contained. `git log` carries the reasoning; the short
+version is that **every seam added turned up a real defect**, which is the
+argument for adding the rest.
+
+- **`persistence.ts` → `StatePersister`.** The debounce timer was module-scoped,
+  so two `StateManager`s cancelled each other's writes — and no test could
+  construct one without writing to the developer's real `state.json`. This was
+  the blocker for all of Tier C.
+- **Exhaustiveness.** `handleIngestMessage` had no `default` at all; the two
+  switches that did reached their discriminant through `(msg as any).type`,
+  which defeats narrowing. `ServerClient.handleMessage` was a 20-branch if-chain
+  ending in `'seq' in msg`, so a new broadcast would have silently taken the
+  response path and been dropped.
+- **State migrations.** `STATE_VERSION` was written and never read. The gap
+  showed as accumulation: seven ad-hoc backfills, and a `// TEMPORARY:` alert
+  wipe that ran on *every* boot because there was no way to say "once".
+- **Branded ids.** Caught two live bugs (`surfaceAgentType` and
+  `terminal-resize` each using one kind of id as the other) and two mis-typed
+  parameters that read as the wrong thing.
+- **`SummaryChat`.** Found three: an unbounded poll loop that pinned a CPU
+  against a fast-responding service (it OOM'd the test runner on the first run),
+  a dead interruption-context feature, and target selection that broke on a
+  `Date.now()` tie.
+- **`GitStatusPoller`** leaked up to a minute of queued polls past `dispose()`.
+  **`SnapshotManager`** had the same `Date.now()` tie in its fairness ordering.
+  **`PlanCacheManager`** could overwrite a cached plan version with another
+  captured in the same millisecond.
+- **`AgentDriver` registry** — see `MODDING.md`. Verified by differential test:
+  1152 launch specs produce byte-identical command lines to the code it
+  replaced.
+
+Three of those bugs were the same shape — **a `Date.now()` tie deciding
+something that is really a sequence**. If you find another `sort` on a
+timestamp, look at it.
 
 ## The rule that produced the above
 
-Every module that was testable had a **dependency seam**: a narrow interface with the
-real implementation as a default (`BackgroundLedger(probes = REAL_PROBES)`,
-`DaemonClient(onMessage, { transport = REAL_DAEMON_TRANSPORT })`). Every module that
-was not, wasn't. It had nothing to do with the code being complicated —
-`node-placement` is 315 lines of dense geometry and needed zero refactoring to test.
+If a module cannot be tested without reaching into `fs`, `child_process`, or a
+timer, **adding the seam is the deliverable**. Not a mock. Written up in
+CLAUDE.md under "Testing", and every module below follows the same shape:
+a narrow deps interface with the real implementation as the default.
 
-So: **if a module cannot be tested without reaching into `fs`, `child_process`, or a
-timer, adding the seam is the deliverable.** Not a mock. This is written up in
-CLAUDE.md under "Testing".
+## Tier B — remaining
 
-## Tier B — modules that need a small seam (do next)
+Almost cleared. What is left:
 
-Each of these is one or two collaborators away from testable. Roughly ordered by
-value per unit of work.
-
-- **`summary-chat.ts`** (448 LOC). Injectable `fetch` and discovery-file read. This
-  is the highest-value one: it took two follow-up bug fixes (`c4c5d64` long-poll
-  timeout, `9c48644` wait cues), both of which a test would have caught.
-- **`session-title-summarizer.ts`**, **`git-status-poller.ts`**. Both shell out
-  inline. Inject `execFile`.
-- **`persistence.ts`**. The debounce timer is *module-scoped* (`persistence.ts:10`),
-  so two `StateManager`s cannot exist in one process. That makes this a **blocker for
-  all of Tier C** — you cannot write a `StateManager` test until it is fixed. Make it
-  a class or inject the scheduler.
-- **`snapshot-manager.ts`**. Starts a timer in its constructor with no injection
-  point.
-- **`plan-cache.ts`**, **`file-content-manager.ts`**. Same shape, less traffic.
+- **`file-content-manager.ts`** (185 LOC). `fs.watch` with debounce timers. The
+  only Tier B module still untested. Its `fs.watch` semantics (rename vs change,
+  editors that replace rather than write in place) are the interesting part, and
+  the reason it is worth a seam rather than being left alone.
+- **`session-title-summarizer.ts`** — deliberately skipped. It is hard-disabled
+  at `const ENABLED = Boolean(false)`, so a seam buys nothing until it is turned
+  back on.
 
 ## Tier C — extract before testing
 
-Do **not** try to test these in place; you would cement the shape you are trying to
-change. Each extraction lands with its own tests.
+Unchanged in shape, but `persistence.ts` no longer blocks it and `state-manager`
+now has 34 tests to refactor against.
 
-- **`state-manager.ts`** (1180 LOC). Needs a deps interface for `{persist, broadcast}`
-  and one private helper to replace the ~40 hand-written
-  mutate → `onNodeUpdate` → `schedulePersist` triples. Those triples each carry an
-  `as Partial<X>` cast, so a typo'd field name compiles today. Also move the
-  cwd-mismatch alert engine (`:1079-1157`) and the constructor migrations (`:53-87`)
-  out — the latter includes a `// TEMPORARY:` block that wipes all alerts on every
-  boot.
-- **`server/index.ts`** (3061 LOC). Nothing is exported, so nothing is reachable.
-  Highest-value extraction is the spawn sequence duplicated at seven sites
-  (`resolve resume id → build options → sessionManager.create → snapshotManager.addSession`).
-  See `MODDING.md` — this is the same work as the `AgentDriver` registry.
-- **`App.tsx`** (2429 LOC), **`TerminalCard.tsx`** (1246), **`Toolbar.tsx`** (1021).
-  The obvious seams: App's 380-line keyboard handler (`:1629-2008`), TerminalCard's
-  466-line xterm mount effect (`:182-647`), Toolbar's 416-line `CrabGroup`. Note
-  `TerminalCard` exports four module-level `Map`s as an imperative side-channel so
-  App's keyboard handler can reach into a card instance — extract the handler and
-  that escape hatch disappears on its own.
+- **`state-manager.ts`** (1141 LOC, down from 1180). Still needs the ~40
+  hand-written mutate → `onNodeUpdate` → `schedulePersist` triples collapsed
+  into one private helper. Each carries an `as Partial<X>` cast, so a typo'd
+  field name still compiles. The constructor is now three lines; the
+  cwd-mismatch alert engine (`:1030-1108`) is the remaining tenant to move out.
+- **`server/index.ts`** (3007 LOC, down from 3087). The seven duplicated spawn
+  sequences are now one registry call each, so the next target is different:
+  the file is now mostly `handleMessage` (a ~900-line switch) plus socket setup
+  plus startup reconciliation. Those are three files, not one.
+- **`App.tsx`** (2436), **`TerminalCard.tsx`** (1246), **`Toolbar.tsx`** (1021).
+  Unchanged. App's 380-line keyboard handler, TerminalCard's 466-line xterm
+  mount effect, Toolbar's 416-line `CrabGroup`. `TerminalCard` still exports
+  four module-level `Map`s as an imperative side-channel for App's keyboard
+  handler; extract the handler and that escape hatch disappears on its own.
 
-## Making it more serious (independent of mods)
+## Making it more serious
 
-These are the things that would matter if other people depended on this.
+The original four are done. What is left from that list, and what replaced it:
 
-1. **Protocol versioning and exhaustiveness.** 105 message variants across five
-   unions, no version field anywhere, and **zero** exhaustiveness checks in the whole
-   codebase (`grep` for `assertNever` returns nothing). `handleIngestMessage`
-   (`index.ts:842`) has no `default` at all, so an unhandled ingest message is
-   silently dropped. Adding `const _: never = msg` to the three server switches and
-   `server-client.ts` is a few lines and prevents a whole defect class.
-2. **State migrations.** `STATE_VERSION` is written into the persisted file
-   (`state-manager.ts:21`, `:90`) and **never read back**. There is no migration path,
-   which is why the constructor accumulates ad-hoc backfills. If the node schema is
-   ever going to be a public contract (it must be, for mods), this needs to exist
-   first.
-3. **Branded identifiers.** `surfaceId`, `nodeId`, `sessionId`, `ptySessionId`,
-   `claudeSessionId` are all plain `string`. `protocol.ts:802-805` documents that
-   `surfaceId` is a *pty session id* and "is NOT a node id: the two coincide only at a
-   terminal's first launch and diverge after a restart/resume" — and then
-   `index.ts:740` does `getNodeIdForSession(surfaceId) ?? surfaceId`, falling back to
-   the thing the comment says is wrong. Branded types make that a compile error and
-   cost nothing at runtime.
-4. **One owner for surface state.** `claudeState`, `claudeStatusUnread`,
-   `claudeStatusAsleep`, `claudeContextPercent`, `claudeSessionLineCount` live in
-   *both* `SessionManager`'s in-memory session and `StateManager`'s persisted node,
-   hand-synced through `index.ts`. Related: `potential_error` is decided outside the
-   state machine (`index.ts:2617`) by re-entering `setClaudeState`, so one of seven
-   `ClaudeState` values never appears in the decision log — the artifact that made
-   every other state bug solvable.
-5. **One owner for the PTY byte stream.** Three post-mortems in this repo
-   (`ANSI_PRESERVATION_BUG.md`, `Potential UTF Bug Fix.md`, and the `potential_error`
-   regex false positives) all trace to the same shape: a consumer slicing the raw
-   stream at an arbitrary boundary without owning its state. The ANSI one is now
-   fixed; the UTF-8 one is not. `title-parser.ts` is the model — a proper stateful
-   parser that survives chunk boundaries.
+1. ~~Protocol versioning and exhaustiveness~~ — exhaustiveness done. **Protocol
+   *versioning* is still missing**: there is no version field in any of the 105
+   message variants. Now the last blocker on `MODDING.md`'s Tier 1.
+2. ~~State migrations~~ — done. `state-migrations.ts`, currently at version 2.
+3. ~~Branded identifiers~~ — done.
+4. **One owner for surface state.** Untouched. `claudeState`,
+   `claudeStatusUnread`, `claudeStatusAsleep`, `claudeContextPercent`,
+   `claudeSessionLineCount` still live in *both* `SessionManager`'s in-memory
+   session and `StateManager`'s persisted node, hand-synced through `index.ts`.
+   Related: `potential_error` is still decided outside the state machine by
+   re-entering `setClaudeState`, so one of seven `ClaudeState` values never
+   appears in the decision log.
+5. **One owner for the PTY byte stream.** Untouched. The ANSI case is fixed; the
+   UTF-8 one (`Potential UTF Bug Fix.md`) is not. `title-parser.ts` is the model.
 
 ## Things deliberately not done
 
-- **`--ignore-scripts`** in the hook and CI skips `electron-rebuild` and Electron's
-  binary download. Fine for typecheck/lint/test; it does mean an agent cannot launch
-  the GUI. If you need that, a full `npm install` is required.
-- **No jsdom project in the Vitest config.** Everything tested today is pure logic or
-  a deps-injected class. When component tests arrive, add a second project rather
-  than making jsdom the default for the server suites that outnumber them.
-- **xterm / WebGL / canvas rendering** will not test meaningfully in jsdom. Extract
-  the logic (e.g. `renderSnapshotToCanvas(ctx, snapshot, theme)` against a fake 2D
-  context that records calls) and leave the pixels to manual verification.
+- **`--ignore-scripts`** in the hook and CI still skips `electron-rebuild` and
+  Electron's binary download. Fine for typecheck/lint/test; an agent cannot
+  launch the GUI without a full `npm install`.
+- **No jsdom project in the Vitest config.** Everything tested today is pure
+  logic or a deps-injected class. Add a second project when component tests
+  arrive rather than making jsdom the default for the server suites.
+- **xterm / WebGL / canvas rendering** will not test meaningfully in jsdom.
+  `snapshot-manager.test.ts` shows the workable middle ground: `@xterm/headless`
+  runs fine in node, so the serialization path *is* tested; only the pixels are
+  left to manual verification.
