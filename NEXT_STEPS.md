@@ -8,7 +8,7 @@ question of turning features into mods.
 | | Two sessions ago | Last session | Now |
 |---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, and now covers `src/cli` and `src/claude-code-plugin` too |
-| Tests | 89, hand-rolled | 331 | 635 |
+| Tests | 89, hand-rolled | 331 | 638 |
 | Test files | 5 | 18 | 31 |
 | Exhaustiveness checks | none | none | all four message switches |
 | State migrations | none | none | versioned pipeline |
@@ -20,7 +20,7 @@ clean; nothing had been checking them.
 
 ## What the last session did, and what it found
 
-Twelve commits, each self-contained. `git log` carries the reasoning; the short
+Thirteen commits, each self-contained. `git log` carries the reasoning; the short
 version is that **every seam added turned up a real defect**, which is the
 argument for adding the rest.
 
@@ -116,8 +116,19 @@ The original four are done. What is left from that list, and what replaced it:
    Related: `potential_error` is still decided outside the state machine by
    re-entering `setClaudeState`, so one of seven `ClaudeState` values never
    appears in the decision log.
-5. **One owner for the PTY byte stream.** Untouched. The ANSI case is fixed; the
-   UTF-8 one (`Potential UTF Bug Fix.md`) is not. `title-parser.ts` is the model.
+5. **One owner for the PTY byte stream.** The ANSI case was already fixed. The
+   UTF-8 one turned out to be two separate things — see the rewritten
+   `Potential UTF Bug Fix.md`. The chunk-splitting half is handled in the
+   daemon (`incompleteUTF8Tail`); the ESC-eats-the-escape half does not
+   reproduce against current xterm.js, tested directly rather than assumed. The
+   investigation did find a real desync next door: the headless terminal used
+   for snapshots was on Unicode 6.0 width tables while the visible one is on
+   11, so every emoji was one cell narrower in a snapshot than on screen. Fixed.
+
+   What remains of this item is the *structural* point rather than a specific
+   bug: three post-mortems traced to a consumer slicing the raw stream without
+   owning its state, and `title-parser.ts` is still the model for doing it
+   properly.
 
 ## Things deliberately not done
 

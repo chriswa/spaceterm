@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import type { AttrSpan, SnapshotRow, SnapshotMessage } from '../shared/protocol'
 import { DEFAULT_FG, DEFAULT_BG } from '../shared/theme'
 import { resolveFg, resolveBg } from '../shared/terminal-colors'
@@ -92,6 +93,12 @@ export class SnapshotManager {
 
   addSession(sessionId: PtySessionId, cols: number, rows: number): void {
     const terminal = new Terminal({ cols, rows, scrollback: SCROLLBACK_LINES, allowProposedApi: true })
+    // Match the visible terminal's width tables. Without this the headless
+    // emulator defaults to Unicode 6.0, where an emoji is one cell wide instead
+    // of two — so every line containing one laid out differently in the
+    // snapshot than on screen, and everything after it was shifted.
+    terminal.loadAddon(new Unicode11Addon() as unknown as Parameters<typeof terminal.loadAddon>[0])
+    terminal.unicode.activeVersion = '11'
     const serialize = new SerializeAddon()
     // SerializeAddon is typed against @xterm/xterm's Terminal, but the runtime
     // API is identical for @xterm/headless (verified by round-trip test).

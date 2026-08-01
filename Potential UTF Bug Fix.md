@@ -1,35 +1,64 @@
-# Potential UTF-8 Bug Fix
+# Potential UTF-8 Bug Fix — investigated, mostly already fixed
 
-## Problem
+**Status: the sanitizer proposed here is not needed. One real defect was found
+next door and is fixed. Kept for the reasoning.**
 
-xterm.js decodes UTF-8 before parsing escape sequences. When Claude Code (or any application) sends a broken multi-byte sequence with an ANSI escape code in the middle, xterm.js can misinterpret the ESC byte (0x1B) as a UTF-8 continuation byte. This corrupts the character, the escape sequence never reaches the parser, and cursor position tracking gets thrown off for the rest of the line.
+## What was proposed
 
-Native terminals like Ghostty handle this by decoding UTF-8 and detecting control characters simultaneously — ESC always stops UTF-8 decoding immediately. xterm.js can't do this architecturally.
+That xterm.js decodes UTF-8 before parsing escape sequences, so a broken
+multi-byte sequence with an ESC (0x1B) in the middle could have the ESC consumed
+as a continuation byte — corrupting the character, swallowing the escape, and
+throwing off cursor tracking for the rest of the line. The fix was to be a
+preprocessing sanitizer before `term.write()` that (1) buffers incomplete
+trailing bytes across chunks and (2) flushes a partial sequence as U+FFFD when
+an ESC arrives where a continuation byte was expected.
 
-## Solution: Pre-processing UTF-8 Sanitizer
+## What is actually true
 
-Add a thin layer before `term.write()` that:
+**(1) is already done, in the daemon.** `pty-daemon/session.go` holds back an
+incomplete trailing sequence via `incompleteUTF8Tail` and prepends it to the
+next read, so a multi-byte character is never split across a JSON message. That
+landed after this note was written. `ringbuf.go` also skips orphaned leading
+continuation bytes when the scrollback ring wraps mid-character.
 
-1. **Buffers incomplete trailing bytes** — If a data chunk ends mid-multi-byte-sequence, hold those bytes and prepend them to the next chunk instead of letting xterm.js see a partial sequence.
+**(2) does not reproduce.** Driving `@xterm/headless` directly with the exact
+byte sequence — `e2 94` followed immediately by `1b 5b 33 31 6d` — the SGR is
+parsed and applied normally. Same result when the bytes are split across two
+writes at the worst possible point, and same result on the string path with the
+invalid bytes already replaced by U+FFFD (which is what spaceterm actually
+delivers, since Go's `json.Marshal` substitutes them). ESC terminates the
+partial sequence correctly in every case. Either the premise was wrong or
+xterm.js fixed it upstream; either way there is nothing to sanitize, and adding
+a preprocessing layer would be speculative complexity in the hottest path in
+the app.
 
-2. **Detects ESC bytes inside expected UTF-8 continuation ranges** — If we're expecting continuation bytes (0x80-0xBF) for an in-progress multi-byte character and instead get an ESC (0x1B), flush the partial sequence as U+FFFD replacement character(s), then let the ESC byte through cleanly so the escape sequence parser can handle it.
+## The real defect this turned up
 
-This is essentially what Ghostty does at the SIMD level (`utf8DecodeUntilControlSeq()`), but implemented in JS as a preprocessing step.
+The note's closing line — "ensure the `@xterm/addon-unicode11` is loaded
+(currently missing)" — was half right. `TerminalCard.tsx` does load it. The
+*headless* terminal in `snapshot-manager.ts` did not, so it was still on
+Unicode 6.0 width tables.
 
-### Where to Hook In
+That is a genuine desync, measured rather than assumed:
 
-In `TerminalCard.tsx`, the data handler currently does:
+| | Unicode 6 (headless) | Unicode 11 (visible) |
+|---|---|---|
+| 😀 | 1 cell | 2 cells |
+| ✅ | 1 cell | 2 cells |
+| 🎉 | 1 cell | 2 cells |
+| → | 1 cell | 1 cell |
 
-```ts
-const cleanupData = window.api.pty.onData(sessionId, (data) => {
-  term.write(data)
-})
-```
+Any line containing an emoji laid out differently in the snapshot than on
+screen, and everything after it on that line was shifted by one column per
+emoji. Since snapshots are what a client in snapshot mode renders — and what a
+re-attaching client sees first — the terminal visibly jumped when it switched
+back to live. Fixed by loading `Unicode11Addon` and setting
+`unicode.activeVersion = '11'` on the headless terminal too, with tests.
 
-The sanitizer would sit between `onData` and `term.write()`. Also worth switching to `Uint8Array` writes at the same time, since the binary path uses `Utf8ToUtf32` which handles split multi-byte sequences across chunk boundaries better (~44% throughput improvement).
+## Still open
 
-## Note: Grapheme Cluster Addon
-
-There's an experimental `@xterm/addon-unicode-graphemes` that adds grapheme cluster support and mode 2027 negotiation. As of late 2024 it wasn't published to npm — check if that's changed. This would improve width calculation for compound emoji and other complex grapheme clusters, reducing cursor desync with programs that use Unicode-aware width calculation.
-
-Also ensure the `@xterm/addon-unicode11` is loaded (currently missing) — without it, xterm.js defaults to Unicode 6.0 width tables.
+`@xterm/addon-unicode-graphemes` (grapheme clusters, mode 2027) would improve
+width calculation for compound emoji — ZWJ sequences like 👨‍👩‍👧 are still
+measured per-component. Check whether it has been published to npm since; it had
+not as of late 2024. Lower priority than the above, since the two emulators now
+at least agree with each other.

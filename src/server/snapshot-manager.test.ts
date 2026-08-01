@@ -298,3 +298,40 @@ describe('dispose', () => {
     expect(h.snapshots).toEqual([])
   })
 })
+
+describe('unicode width', () => {
+  // The headless emulator must use the same width tables as the visible one.
+  // It defaulted to Unicode 6.0, where an emoji is one cell instead of two — so
+  // any line containing one laid out differently in the snapshot than on
+  // screen, and everything after it on that line was shifted.
+  it('treats an emoji as two cells, matching the renderer', async () => {
+    const h = harness()
+    h.manager.addSession(sid('s1'), 80, 24)
+    h.manager.write(sid('s1'), '😀')
+    await h.manager.flushForTest()
+    h.ticker.tick()
+
+    expect(h.snapshots[0].cursorX).toBe(2)
+  })
+
+  it('keeps text after an emoji at the right column', async () => {
+    const h = harness()
+    h.manager.addSession(sid('s1'), 80, 24)
+    h.manager.write(sid('s1'), '😀ok')
+    await h.manager.flushForTest()
+    h.ticker.tick()
+
+    expect(h.snapshots[0].cursorX).toBe(4)
+    expect(text(h.snapshots[0])).toContain('ok')
+  })
+
+  it('still treats a narrow character as one cell', async () => {
+    const h = harness()
+    h.manager.addSession(sid('s1'), 80, 24)
+    h.manager.write(sid('s1'), '→')
+    await h.manager.flushForTest()
+    h.ticker.tick()
+
+    expect(h.snapshots[0].cursorX).toBe(1)
+  })
+})
