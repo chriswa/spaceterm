@@ -29,6 +29,10 @@ export default defineConfig({
           environment: 'jsdom',
           include: ['src/client/renderer/**/*.test.{ts,tsx}'],
           exclude: ['**/node_modules/**'],
+          // Stubs for the browser APIs jsdom lacks but the renderer imports —
+          // AudioContext, ResizeObserver, matchMedia. Each is there because a
+          // real module reaches for it at construction time.
+          setupFiles: ['src/client/renderer/src/testing/jsdom-setup.ts'],
         },
       },
     ],

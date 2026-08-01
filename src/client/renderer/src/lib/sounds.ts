@@ -6,6 +6,13 @@ function getCtx(): AudioContext {
   return ctx
 }
 
+/**
+ * True once audio has failed, so a broken AudioContext is not retried on every
+ * notification. Cleared by nothing — if audio is unavailable it stays that way
+ * for the life of the page.
+ */
+let audioUnavailable = false
+
 // -- Note definitions (single source of truth) --
 
 type Note = { freq: number; start: number; duration: number; type: OscillatorType; gain: number }
@@ -55,7 +62,33 @@ const synths: Record<SoundName, () => void> = {
 }
 
 /** Play a named sound using Web Audio synthesis. */
+/**
+ * Play a notification sound. Never throws.
+ *
+ * Sound is decorative and every caller is not. `playUnreadSound` in
+ * server-sync.ts runs *inside* the node-updated handler, before the patch is
+ * applied — so an AudioContext that cannot be constructed (autoplay policy, no
+ * audio device, a browser context without the API at all) used to take the
+ * node update down with it, and a surface going unread would silently stop
+ * updating on screen.
+ *
+ * The first failure is reported once and then suppressed, because a
+ * notification that fails is a notification that will fail again.
+ */
 export function playSound(name: SoundName): void {
+  if (audioUnavailable) return
   const fn = synths[name]
-  if (fn) fn()
+  if (!fn) return
+  try {
+    fn()
+  } catch (err) {
+    audioUnavailable = true
+    console.warn(`[sounds] Audio unavailable, notification sounds disabled: ${String(err)}`)
+  }
+}
+
+/** Testing seam: re-enable after a simulated failure. */
+export function resetAudioAvailabilityForTest(): void {
+  audioUnavailable = false
+  ctx = null
 }
