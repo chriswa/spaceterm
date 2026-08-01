@@ -5,6 +5,48 @@ import { homedir } from 'os'
 export const SOUND_NAMES = ['done', 'error', 'success'] as const
 export type SoundName = (typeof SOUND_NAMES)[number]
 
+/**
+ * Version of the scripts-socket contract this build speaks.
+ *
+ * Bump on any change a script written against an older version could notice:
+ * a removed or renamed message or event, a field that stops being sent, a
+ * changed meaning. Adding a new message type or an optional field does not
+ * need a bump — an older script simply will not use it.
+ *
+ * Until this existed, the first tool written against `scripts.sock` froze the
+ * protocol by accident, because there was no way for either side to say what it
+ * expected. Nine tools already speak it (`src/claude-code-plugin/mcp-server/`).
+ */
+export const SCRIPT_PROTOCOL_VERSION = 1
+
+/**
+ * Oldest version this build still serves. Kept separate from the current
+ * version so a script can be told "too old" rather than silently misbehaving.
+ */
+export const MIN_SCRIPT_PROTOCOL_VERSION = 1
+
+/**
+ * The events a script may subscribe to.
+ *
+ * Documented as a closed set rather than "whatever the server happens to
+ * broadcast" — a subscriber cannot discover events by reading server source it
+ * does not have, and `broadcastToScriptSubscribers` is typed against this so
+ * emitting an undocumented event is a compile error.
+ */
+export const SCRIPT_EVENTS = [
+  /** A node's fields changed. Payload: `node-updated`. */
+  'node-updated',
+  /** A node was created. Payload: `node-added`. */
+  'node-added',
+  /** A node was archived or deleted. Payload: `node-removed`. */
+  'node-removed',
+  /** A terminal's PTY exited. Payload: `{ nodeId, sessionId, exitCode }`. */
+  'exit',
+  /** Another script called spaceterm-broadcast. Payload: the broadcast body. */
+  'broadcast',
+] as const
+export type ScriptEvent = (typeof SCRIPT_EVENTS)[number]
+
 export const SOCKET_DIR = process.env.SPACETERM_HOME ?? join(homedir(), '.spaceterm')
 /** Bidirectional socket for Electron client ↔ server communication. */
 export const SOCKET_PATH = join(SOCKET_DIR, 'bidirectional.sock')
@@ -778,8 +820,39 @@ export interface ScriptShipItMessage {
 export interface ScriptSubscribeMessage {
   type: 'script-subscribe'
   seq: number
-  events?: string[]   // event types to receive; omit for all
-  nodeIds?: string[]  // node IDs to filter on; omit for all
+  events?: ScriptEvent[]  // event types to receive; omit for all
+  nodeIds?: NodeId[]      // node IDs to filter on; omit for all
+}
+
+/**
+ * Version handshake. A script sends this first; the reply says what this build
+ * speaks and what it offers, so a script can fail loudly on a mismatch instead
+ * of misreading a message it half-understands.
+ *
+ * Optional — every existing tool works without it — but a mod should send it.
+ */
+export interface ScriptHelloMessage {
+  type: 'script-hello'
+  seq: number
+  /** The version the script was written against. */
+  protocolVersion: number
+  /** Free-form identifier for logs, e.g. "spaceterm-mcp/1.2.0". */
+  client?: string
+}
+
+export interface ScriptHelloResult {
+  type: 'script-hello-result'
+  seq: number
+  /** True when `protocolVersion` is within this build's supported range. */
+  compatible: boolean
+  /** What this build speaks. */
+  protocolVersion: number
+  /** Oldest version this build still serves. */
+  minProtocolVersion: number
+  /** The complete set of subscribable events. */
+  events: ScriptEvent[]
+  /** Present when `compatible` is false. */
+  error?: string
 }
 
 export interface ScriptForkClaudeMessage {
@@ -812,6 +885,7 @@ export interface ScriptResolveHandoffMessage {
 }
 
 export type ScriptMessage =
+  | ScriptHelloMessage
   | ScriptGetAncestorsMessage
   | ScriptGetNodeMessage
   | ScriptShipItMessage
@@ -873,6 +947,7 @@ export interface ScriptResolveHandoffResult {
 }
 
 export type ScriptResponse =
+  | ScriptHelloResult
   | ScriptGetAncestorsResult
   | ScriptGetNodeResult
   | ScriptShipItResult

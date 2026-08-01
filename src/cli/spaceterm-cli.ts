@@ -8,6 +8,7 @@
  *   spaceterm-cli ship-it <node-id> <text>               # send keystrokes to a terminal
  *   spaceterm-cli fork-claude <node-id> <parent-id>      # fork a Claude session, wait for settle
  *   spaceterm-cli subscribe [--events ...] [--nodes ...]  # stream events as JSON lines
+ *   spaceterm-cli protocol                               # version + event set, as JSON
  *
  * Environment:
  *   SPACETERM_NODE_ID   — set automatically in PTY sessions
@@ -15,7 +16,12 @@
  */
 
 import * as net from 'net'
-import { SCRIPTS_SOCKET_PATH } from '../shared/protocol'
+import {
+  SCRIPTS_SOCKET_PATH,
+  SCRIPT_EVENTS,
+  SCRIPT_PROTOCOL_VERSION,
+  type ScriptEvent,
+} from '../shared/protocol'
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -120,7 +126,27 @@ function unread(nodeId: string): void {
   fireAndForget({ type: 'script-unread', nodeId })
 }
 
-function subscribe(events: string[] | undefined, nodeIds: string[] | undefined): void {
+/**
+ * Ask the server what it speaks.
+ *
+ * This is the handshake a script should perform before relying on anything
+ * else: it reports whether the server serves the version this CLI was built
+ * against, and lists every subscribable event, so a script does not have to
+ * discover the event set by reading server source it does not have.
+ */
+async function protocol(): Promise<void> {
+  const reply = await oneshot(
+    { type: 'script-hello', seq: 1, protocolVersion: SCRIPT_PROTOCOL_VERSION, client: 'spaceterm-cli' },
+    'script-hello-result',
+  )
+  process.stdout.write(JSON.stringify(reply, null, 2) + '\n')
+  if (reply.compatible === false) {
+    process.stderr.write(`Incompatible: ${reply.error ?? 'server does not serve this protocol version'}\n`)
+    process.exit(1)
+  }
+}
+
+function subscribe(events: ScriptEvent[] | undefined, nodeIds: string[] | undefined): void {
   const socket = net.createConnection(SCRIPTS_SOCKET_PATH)
   socket.setEncoding('utf8')
 
@@ -175,6 +201,9 @@ function printUsage(): void {
   spaceterm-cli fork-claude <node-id> <parent-id>          Fork a Claude session
   spaceterm-cli unread <node-id>                           Mark a terminal as unread
   spaceterm-cli subscribe [--events e1,e2] [--nodes n1,n2] Stream events
+  spaceterm-cli protocol                                   Protocol version and event set
+
+Events: ${SCRIPT_EVENTS.join(', ')}
 `)
 }
 
@@ -206,12 +235,23 @@ switch (command) {
     unread(args[1])
     break
 
+  case 'protocol':
+    protocol().catch((err) => fatal(err.message))
+    break
+
   case 'subscribe': {
-    let events: string[] | undefined
+    let events: ScriptEvent[] | undefined
     let nodeIds: string[] | undefined
     for (let i = 1; i < args.length; i++) {
       if (args[i] === '--events' && args[i + 1]) {
-        events = args[++i].split(',')
+        const requested = args[++i].split(',')
+        // Reject an unknown event here rather than subscribing to nothing and
+        // leaving the caller waiting on a stream that will never produce.
+        const unknown = requested.filter((e) => !(SCRIPT_EVENTS as readonly string[]).includes(e))
+        if (unknown.length > 0) {
+          fatal(`Unknown event(s): ${unknown.join(', ')}. Known events: ${SCRIPT_EVENTS.join(', ')}`)
+        }
+        events = requested as ScriptEvent[]
       } else if (args[i] === '--nodes' && args[i + 1]) {
         nodeIds = args[++i].split(',')
       }

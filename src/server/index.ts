@@ -3,8 +3,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
-import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
-import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
+import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, SCRIPT_EVENTS, SCRIPT_PROTOCOL_VERSION, MIN_SCRIPT_PROTOCOL_VERSION } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptEvent, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import type { AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
@@ -1034,12 +1034,19 @@ function handleIngestMessage(msg: IngestMessage): void {
 
 interface ScriptSubscriber {
   socket: net.Socket
-  events: Set<string> | null   // null = all events
-  nodeIds: Set<string> | null  // null = all nodes
+  events: Set<ScriptEvent> | null   // null = all events
+  nodeIds: Set<NodeId> | null  // null = all nodes
 }
 const scriptSubscribers = new Set<ScriptSubscriber>()
 
-function broadcastToScriptSubscribers(eventType: string, nodeId: NodeId | undefined, msg: Record<string, unknown>): void {
+/**
+ * Fan an event out to subscribed scripts.
+ *
+ * `eventType` is typed against SCRIPT_EVENTS rather than `string`, so emitting
+ * an event the protocol does not document is a compile error — a subscriber
+ * cannot discover events by reading source it does not have.
+ */
+function broadcastToScriptSubscribers(eventType: ScriptEvent, nodeId: NodeId | undefined, msg: Record<string, unknown>): void {
   scriptSubscribers.forEach((sub) => {
     if (sub.events && !sub.events.has(eventType)) return
     if (sub.nodeIds && nodeId && !sub.nodeIds.has(nodeId)) return
@@ -1161,6 +1168,25 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
 
       sendAndClose({ type: 'script-resolve-handoff-result', seq: msg.seq, transcriptPath, isFork, targetSurface })
       break
+    }
+
+    case 'script-hello': {
+      const compatible =
+        msg.protocolVersion >= MIN_SCRIPT_PROTOCOL_VERSION &&
+        msg.protocolVersion <= SCRIPT_PROTOCOL_VERSION
+      if (!compatible) {
+        serverLog(`[scripts] Rejected ${msg.client ?? 'unknown client'}: protocol v${msg.protocolVersion}, this build serves v${MIN_SCRIPT_PROTOCOL_VERSION}-v${SCRIPT_PROTOCOL_VERSION}`)
+      }
+      sendAndClose({
+        type: 'script-hello-result',
+        seq: msg.seq,
+        compatible,
+        protocolVersion: SCRIPT_PROTOCOL_VERSION,
+        minProtocolVersion: MIN_SCRIPT_PROTOCOL_VERSION,
+        events: [...SCRIPT_EVENTS],
+        ...(compatible ? {} : { error: `Protocol v${msg.protocolVersion} is not served by this build (v${MIN_SCRIPT_PROTOCOL_VERSION}-v${SCRIPT_PROTOCOL_VERSION})` }),
+      })
+      return
     }
 
     case 'script-subscribe': {

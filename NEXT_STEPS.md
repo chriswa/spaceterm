@@ -98,9 +98,11 @@ now has 34 tests to refactor against.
 
 The original four are done. What is left from that list, and what replaced it:
 
-1. ~~Protocol versioning and exhaustiveness~~ — exhaustiveness done. **Protocol
-   *versioning* is still missing**: there is no version field in any of the 105
-   message variants. Now the last blocker on `MODDING.md`'s Tier 1.
+1. ~~Protocol versioning and exhaustiveness~~ — both done. The scripts socket
+   now has `SCRIPT_PROTOCOL_VERSION`, a `script-hello` handshake, and a
+   documented `SCRIPT_EVENTS` set that the broadcast helper is typed against.
+   The client socket is still unversioned, which is fine while the Electron
+   client ships with the server — but that is an assumption, not a guarantee.
 2. ~~State migrations~~ — done. `state-migrations.ts`, currently at version 2.
 3. ~~Branded identifiers~~ — done.
 4. **One owner for surface state.** Untouched. `claudeState`,

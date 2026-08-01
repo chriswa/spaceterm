@@ -196,10 +196,21 @@ A mod API is a public contract. These were load-bearing before one could exist:
   `ClaudeSessionId` are branded, so the `surfaceId`-vs-`nodeId` trap is a
   compile error rather than a comment. Branding found the code falling into it
   in two places. Mod authors will not inherit that ambiguity.
-- **Protocol versioning.** **Still missing** — no version field in any of the 105
-  message variants. This is now the only precondition left, and therefore the
-  gate on Tier 1. The first mod written against the socket freezes the protocol
-  by accident until it exists.
+- ~~**Protocol versioning.**~~ Done for the surface that matters.
+  `SCRIPT_PROTOCOL_VERSION` / `MIN_SCRIPT_PROTOCOL_VERSION` and a
+  `script-hello` handshake mean a script can be told "too old" or "too new"
+  instead of half-understanding a reply. `SCRIPT_EVENTS` closes the other
+  Tier 1 gap: the event set is now a documented constant that
+  `broadcastToScriptSubscribers` is typed against, so emitting an undocumented
+  event is a compile error and `spaceterm-cli protocol` reports the whole
+  contract. The *client* socket (`ClientMessage`/`ServerMessage`) is still
+  unversioned — it does not need to be, since the Electron client ships with
+  the server, but say so out loud if that ever stops being true.
+
+**All four preconditions are now met.** What remains for Tier 1 is the mod
+*lifecycle*, not the contract: a manifest (name, version, protocol range,
+command, subscriptions, permitted calls), spawn/health/restart-on-crash, and a
+way to disable a mod without editing spaceterm.
 
 ## Security: say the true thing
 
