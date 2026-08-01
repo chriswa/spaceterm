@@ -46,6 +46,7 @@ import type { CrabEntry } from './lib/crab-nav'
 import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 import { playSummaryChatStartedCue } from './lib/summary-chat-wait-cue'
+import { shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
 
 function tieredZIndex(type: import('../../../shared/state').NodeData['type'], z: number): number {
   if (type === 'title') return z + 2_000_000
@@ -1679,33 +1680,22 @@ export function App() {
         showToast('Focus an agent terminal to start Summary Chat.')
       }
 
-      // Don't steal keys from real text-editing controls (inputs, CodeMirror, etc.)
-      // Exclude xterm's hidden textarea — it's not a visible editing surface.
-      const active = document.activeElement as HTMLElement | null
-      if (active) {
-        const isXterm = !!active.closest('.xterm')
-        const isEditable = !isXterm && (
-          active.tagName === 'INPUT' ||
-          active.tagName === 'TEXTAREA' ||
-          active.isContentEditable
-        )
-        if (isEditable) {
-          // Allow Cmd+Arrow (word/line navigation), Escape (exit editing),
-          // and Cmd+Z (native undo) to reach the control
-          if (e.key === 'Escape' || (e.metaKey && (e.key.startsWith('Arrow') || e.key === 'z'))) return
-        }
-      }
+      // Don't steal keys a focused text-editing control needs. See
+      // lib/keyboard.ts for which keys those are and why xterm does not count
+      // as one even though it focuses a hidden textarea.
+      if (shouldYieldToFocusedEditor(document.activeElement, e)) return
 
-      // Cmd+Option+0..9: save current viewport to a numbered slot (shared across all clients).
-      // Cmd+0..9: restore that slot. Use e.code (not e.key) — Option/Shift+digit yields symbols on
-      // macOS. Option (not Shift) for save because Cmd+Shift+3/4/5 are reserved by macOS screenshots.
-      if (e.metaKey && !e.shiftKey && /^Digit[0-9]$/.test(e.code)) {
-        const slot = e.code.slice(5) // 'Digit3' -> '3'
+      // Cmd+Option+0..9 saves the current viewport to a numbered slot (shared
+      // across all clients); Cmd+0..9 restores it. See lib/keyboard.ts for why
+      // this reads e.code and why save is Option rather than Shift.
+      const viewportSlot = viewportSlotFor(e)
+      if (viewportSlot) {
+        const { slot } = viewportSlot
         const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
         const vw = viewport?.clientWidth ?? window.innerWidth
         const vh = viewport?.clientHeight ?? window.innerHeight
 
-        if (e.altKey) {
+        if (viewportSlot.action === 'save') {
           // Save: store the current visible region as canvas-space bounds (window-independent)
           e.preventDefault()
           e.stopPropagation()
