@@ -1,6 +1,6 @@
 import * as net from 'net'
 import { EventEmitter } from 'events'
-import { SOCKET_PATH } from '../../shared/protocol'
+import { SOCKET_PATH, CLIENT_PROTOCOL_VERSION } from '../../shared/protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -11,6 +11,7 @@ import type {
 import { LineParser } from '../../server/line-parser'
 import { unhandledVariant } from '../../shared/exhaustive'
 import type { NodeId, PtySessionId } from '../../shared/ids'
+import { log } from './logger'
 
 const INITIAL_RECONNECT_DELAY = 200
 const MAX_RECONNECT_DELAY = 1000
@@ -57,6 +58,10 @@ export class ServerClient extends EventEmitter {
       const waiters = this.connectionWaiters.splice(0)
       waiters.forEach(({ resolve }) => resolve())
       this.emit('connect')
+      // Announce our protocol version. Deliberately after resolving the
+      // waiters: the handshake is diagnostic, and blocking startup on it would
+      // turn a reporting mechanism into a new way to fail to start.
+      void this.handshake()
     })
 
     socket.on('data', (data) => parser.feed(data))
@@ -191,6 +196,7 @@ export class ServerClient extends EventEmitter {
       case 'node-add-ack':
       case 'validate-directory-result':
       case 'validate-file-result':
+      case 'client-hello-result':
         this.resolvePending(msg.seq, msg)
         return
 
@@ -205,6 +211,45 @@ export class ServerClient extends EventEmitter {
     if (!pending) return
     this.pending.delete(seq)
     pending.resolve(msg)
+  }
+
+  /**
+   * Tell the server which protocol version this build speaks, and report a
+   * mismatch to `~/.spaceterm/electron.log`.
+   *
+   * Best-effort by design. The Electron client normally ships with its server,
+   * so this is silent in the ordinary case — it exists for the cases where
+   * that assumption fails: a stale server left running from a previous build,
+   * or a socket in `~/.spaceterm/` owned by another checkout. Without it, the
+   * symptom is a message that does not parse, several layers away from the
+   * cause.
+   */
+  private async handshake(): Promise<void> {
+    try {
+      const reply = await this.sendRequest({
+        type: 'client-hello',
+        protocolVersion: CLIENT_PROTOCOL_VERSION,
+        client: 'spaceterm-electron'
+      })
+      if (reply.type !== 'client-hello-result') return
+      if (reply.compatible) {
+        log(`[server-client] Protocol v${CLIENT_PROTOCOL_VERSION} accepted`)
+      } else {
+        log(
+          `[server-client] PROTOCOL MISMATCH: ${reply.error ?? 'incompatible'}. ` +
+          `This client speaks v${CLIENT_PROTOCOL_VERSION}; the server serves ` +
+          `v${reply.minProtocolVersion}-v${reply.protocolVersion}. ` +
+          'A stale server may be running — restart Spaceterm.'
+        )
+        this.emit('protocol-mismatch', reply.error ?? 'incompatible protocol version')
+      }
+    } catch {
+      // A server old enough not to know `client-hello` replies with nothing and
+      // the request rejects on disconnect. That is exactly the case this is for,
+      // but there is nobody to tell — and taking the connection down over a
+      // diagnostic would be worse than the mismatch it reports.
+      log('[server-client] Server did not answer the protocol handshake (pre-v1 server?)')
+    }
   }
 
   private sendRequest(msg: Record<string, unknown>): Promise<ServerMessage> {

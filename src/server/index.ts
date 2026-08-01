@@ -3,7 +3,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
-import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
+import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
+import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
@@ -814,8 +815,30 @@ function handleIngestMessage(msg: IngestMessage): void {
   }
 }
 
+/** What this build serves on the client socket. */
+const CLIENT_PROTOCOL_RANGE = { min: MIN_CLIENT_PROTOCOL_VERSION, current: CLIENT_PROTOCOL_VERSION }
+
 function handleMessage(client: ClientConnection, msg: ClientMessage): void {
   switch (msg.type) {
+    case 'client-hello': {
+      const { compatible, error } = checkProtocolVersion(msg.protocolVersion, CLIENT_PROTOCOL_RANGE)
+      const who = msg.client ?? 'unknown client'
+      serverLog(
+        compatible
+          ? `[client] ${who} connected on protocol v${msg.protocolVersion}`
+          : `[client] ${who} rejected: ${error}`
+      )
+      send(client.socket, {
+        type: 'client-hello-result',
+        seq: msg.seq,
+        compatible,
+        protocolVersion: CLIENT_PROTOCOL_VERSION,
+        minProtocolVersion: MIN_CLIENT_PROTOCOL_VERSION,
+        ...(compatible ? {} : { error })
+      })
+      break
+    }
+
     case 'server-restart': {
       if (serverRestartScheduled) {
         send(client.socket, { type: 'server-error', seq: msg.seq, message: 'Server restart is already in progress' })

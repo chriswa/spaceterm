@@ -10,6 +10,10 @@ import type { NodeData, TerminalNodeData } from '../shared/state'
 import type { NodeId, PtySessionId } from '../shared/ids'
 import { ROOT_NODE_ID } from '../shared/ids'
 import { unhandledVariant } from '../shared/exhaustive'
+import { checkProtocolVersion } from '../shared/protocol-handshake'
+
+/** What this build serves on the scripts socket. */
+const SCRIPT_PROTOCOL_RANGE = { min: MIN_SCRIPT_PROTOCOL_VERSION, current: SCRIPT_PROTOCOL_VERSION }
 
 /**
  * The scripts socket — which MODDING.md calls "already most of an extension
@@ -121,14 +125,9 @@ export class ScriptApi {
 
     switch (msg.type) {
       case 'script-hello': {
-        const compatible =
-          msg.protocolVersion >= MIN_SCRIPT_PROTOCOL_VERSION &&
-          msg.protocolVersion <= SCRIPT_PROTOCOL_VERSION
-        const range = `v${MIN_SCRIPT_PROTOCOL_VERSION}-v${SCRIPT_PROTOCOL_VERSION}`
+        const { compatible, error } = checkProtocolVersion(msg.protocolVersion, SCRIPT_PROTOCOL_RANGE)
         if (!compatible) {
-          this.host.log(
-            `[scripts] Rejected ${msg.client ?? 'unknown client'}: protocol v${msg.protocolVersion}, this build serves ${range}`
-          )
+          this.host.log(`[scripts] Rejected ${msg.client ?? 'unknown client'}: ${error}`)
         }
         reply({
           type: 'script-hello-result',
@@ -137,7 +136,7 @@ export class ScriptApi {
           protocolVersion: SCRIPT_PROTOCOL_VERSION,
           minProtocolVersion: MIN_SCRIPT_PROTOCOL_VERSION,
           events: [...SCRIPT_EVENTS],
-          ...(compatible ? {} : { error: `Protocol v${msg.protocolVersion} is not served by this build (${range})` })
+          ...(compatible ? {} : { error })
         })
         return
       }

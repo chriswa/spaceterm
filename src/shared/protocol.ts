@@ -26,6 +26,25 @@ export const SCRIPT_PROTOCOL_VERSION = 1
 export const MIN_SCRIPT_PROTOCOL_VERSION = 1
 
 /**
+ * Version of the *client* socket contract (`ClientMessage`/`ServerMessage`).
+ *
+ * Until this existed the client socket was unversioned, on the reasoning that
+ * the Electron client ships with the server so the two can never disagree.
+ * That is an assumption, not a guarantee: a stale server left running from a
+ * previous build, a client launched against a `~/.spaceterm/` socket owned by
+ * another checkout, or a future headless client all break it — and the failure
+ * mode without a handshake is a client half-understanding a reply and acting
+ * as though it understood.
+ *
+ * Same bump rule as the scripts socket: bump on any change an older peer could
+ * notice.
+ */
+export const CLIENT_PROTOCOL_VERSION = 1
+
+/** Oldest client protocol this build still serves. */
+export const MIN_CLIENT_PROTOCOL_VERSION = 1
+
+/**
  * The events a script may subscribe to.
  *
  * Documented as a closed set rather than "whatever the server happens to
@@ -514,8 +533,38 @@ export type IngestMessage =
   | SpeakMessage
   | VoiceCommandMessage
 
+/**
+ * Version handshake, sent by a client immediately on connect.
+ *
+ * Optional in the sense that the server serves a client that never sends it —
+ * but the Electron client does send it, and a mismatch is reported rather than
+ * discovered later as a message that does not parse.
+ */
+export interface ClientHelloMessage {
+  type: 'client-hello'
+  seq: number
+  /** The version the client was built against. */
+  protocolVersion: number
+  /** Free-form identifier for the server log, e.g. "spaceterm-electron/0.1.0". */
+  client?: string
+}
+
+export interface ClientHelloResult {
+  type: 'client-hello-result'
+  seq: number
+  /** True when `protocolVersion` is within this build's supported range. */
+  compatible: boolean
+  /** What this build speaks. */
+  protocolVersion: number
+  /** Oldest version this build still serves. */
+  minProtocolVersion: number
+  /** Present when `compatible` is false. Safe to show a user. */
+  error?: string
+}
+
 /** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
 export type ClientMessage =
+  | ClientHelloMessage
   | CreateMessage
   | ListMessage
   | ServerRestartMessage
@@ -956,6 +1005,7 @@ export type ScriptResponse =
   | ScriptResolveHandoffResult
 
 export type ServerMessage =
+  | ClientHelloResult
   | CreatedMessage
   | ServerRestartedMessage
   | ListedMessage
