@@ -1,12 +1,36 @@
 import { defineConfig } from 'vitest/config'
 
+/**
+ * Two projects, split by what a suite needs rather than by where it lives.
+ *
+ * The server and shared suites are pure logic or dependency-injected classes
+ * and run in `node`, which is what keeps a 700-test run under four seconds.
+ * Renderer suites need a DOM before their first import, not because they
+ * render anything, but because zustand stores read `localStorage` at module
+ * scope — so importing a component at all requires a window.
+ *
+ * `.test.ts` and `.test.tsx` are both discovered. A test next to the module it
+ * covers still needs no registration.
+ */
 export default defineConfig({
   test: {
-    // Everything currently under test is pure logic or a dependency-injected
-    // class — no DOM. When component tests arrive they should go in a second
-    // project with environment: 'jsdom' rather than making jsdom the default,
-    // since the server suites far outnumber the renderer ones.
-    environment: 'node',
-    include: ['src/**/*.test.ts'],
+    projects: [
+      {
+        test: {
+          name: 'node',
+          environment: 'node',
+          include: ['src/**/*.test.{ts,tsx}'],
+          exclude: ['**/node_modules/**', 'src/client/renderer/**'],
+        },
+      },
+      {
+        test: {
+          name: 'renderer',
+          environment: 'jsdom',
+          include: ['src/client/renderer/**/*.test.{ts,tsx}'],
+          exclude: ['**/node_modules/**'],
+        },
+      },
+    ],
   },
 })
