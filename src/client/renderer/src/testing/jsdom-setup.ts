@@ -51,6 +51,18 @@ function define(name: string, value: unknown): void {
   Object.defineProperty(globalThis, name, { value, writable: true, configurable: true })
 }
 
+/**
+ * jsdom has no 2D canvas, and xterm asks for one during measurement.
+ *
+ * It falls back to DOM rendering without it, so the only cost of the missing
+ * API is a "Not implemented" line printed on every terminal test. A stub that
+ * returns null lets xterm take its own fallback path quietly, which is the same
+ * path it takes in a browser where canvas is unavailable.
+ */
+if (typeof HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = (() => null) as never
+}
+
 define('AudioContext', StubAudioContext)
 define('webkitAudioContext', StubAudioContext)
 define('ResizeObserver', StubObserver)
