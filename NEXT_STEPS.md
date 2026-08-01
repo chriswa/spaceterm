@@ -161,29 +161,26 @@ Three corollaries worth stating, all learned the hard way:
   **There is now a jsdom vitest project**, so a renderer test needs no config
   work first.
 
-### Card component unification — now unblocked
+### Card component unification — done
 
-`App.tsx` renders five near-identical card blocks, each threading ~20 identical
-props into a different component. This was deferred three sessions running with
-the same reason: "cannot be verified without running the GUI".
+`App.tsx`'s four non-terminal card blocks now share one prop bundle
+(`cardProps`), and the file lost 49 net lines. `tieredZIndex` moved into the
+CardType registry as `zIndexTier`, so a new card type declares its stacking
+rather than being remembered in an if-chain elsewhere.
 
-That reason is gone, and the evidence the refactor needs now exists.
-`card-contract.test.tsx` renders all four non-terminal cards through their real
-components against the shared props and asserts what they have in common. What
-it established:
+Two things that emerged and are worth carrying forward:
 
-- **`CardShell`'s root is byte-identical for every card** — `card-shell
-  canvas-node` plus positioning. The shared half is already shared; the
-  divergence is all inside.
-- **`x` and `y` are the card's CENTRE, not its top-left.** Every card subtracts
-  half its own size. A hoisted wrapper that got this wrong would misplace cards
-  by half their size, silently.
-- **`cameraRef` and the focus/selected split are part of the contract**, not
-  incidental props. Typecheck found both — the runtime test passed without them.
+- **`x` and `y` are a card's centre, not its top-left.** Every card subtracts
+  half its own size. Nothing said so anywhere before `card-contract.test.tsx`.
+- **`CardShell`'s root is byte-identical for every card**, including the canvas
+  root marker. The shared half was already shared; the divergence was all
+  inside.
 
-The remaining work is hoisting App.tsx's shared prop bundle, with this test as
-the regression net. TerminalCard stays separate: its shell genuinely differs and
-its 466-line xterm mount effect deserves its own test.
+`TerminalCard` stays separate — its shell genuinely differs and its 466-line
+xterm mount effect deserves its own test. That effect is now reachable:
+`@xterm/headless` runs in node, xterm proper mounts in jsdom given the
+`matchMedia` stub the renderer setup file already provides, and the E2E layer
+can drive a real terminal. **This is the next obvious piece of work.**
 
 ## Ideas for the next sessions
 
