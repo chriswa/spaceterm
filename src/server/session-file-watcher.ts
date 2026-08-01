@@ -1,16 +1,17 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { homedir } from 'os'
+import type { ClaudeSessionId, PtySessionId } from '../shared/ids'
 
 export interface SessionFileEntry {
   type: string
   [key: string]: unknown
 }
 
-type EntriesCallback = (surfaceId: string, newEntries: SessionFileEntry[], totalLineCount: number, isBackfill: boolean) => void
+type EntriesCallback = (surfaceId: PtySessionId, newEntries: SessionFileEntry[], totalLineCount: number, isBackfill: boolean) => void
 
 interface WatchedFile {
-  surfaceId: string
+  surfaceId: PtySessionId
   filePath: string
   lineCount: number
   byteOffset: number
@@ -25,7 +26,7 @@ function cwdToSlug(cwd: string): string {
   return cwd.replaceAll('/', '-')
 }
 
-function sessionFilePath(cwd: string, claudeSessionId: string): string {
+function sessionFilePath(cwd: string, claudeSessionId: ClaudeSessionId): string {
   return path.join(CLAUDE_PROJECTS_DIR, cwdToSlug(cwd), `${claudeSessionId}.jsonl`)
 }
 
@@ -46,19 +47,19 @@ function parseJsonlLines(text: string): SessionFileEntry[] {
 }
 
 export class SessionFileWatcher {
-  private watched = new Map<string, WatchedFile>()
+  private watched = new Map<PtySessionId, WatchedFile>()
   private onEntries: EntriesCallback
 
   constructor(onEntries: EntriesCallback) {
     this.onEntries = onEntries
   }
 
-  watch(surfaceId: string, claudeSessionId: string, cwd: string): void {
+  watch(surfaceId: PtySessionId, claudeSessionId: ClaudeSessionId, cwd: string): void {
     this.watchPath(surfaceId, sessionFilePath(cwd, claudeSessionId))
   }
 
   /** Watch an already-resolved JSONL file. */
-  watchPath(surfaceId: string, filePath: string): void {
+  watchPath(surfaceId: PtySessionId, filePath: string): void {
     this.unwatch(surfaceId)
     const entry: WatchedFile = {
       surfaceId,
@@ -78,7 +79,7 @@ export class SessionFileWatcher {
     }
   }
 
-  unwatch(surfaceId: string): void {
+  unwatch(surfaceId: PtySessionId): void {
     const entry = this.watched.get(surfaceId)
     if (!entry) return
     if (entry.watcher) {
@@ -98,12 +99,12 @@ export class SessionFileWatcher {
     }
   }
 
-  getLineCount(surfaceId: string): number | null {
+  getLineCount(surfaceId: PtySessionId): number | null {
     const entry = this.watched.get(surfaceId)
     return entry ? entry.lineCount : null
   }
 
-  getFilePath(surfaceId: string): string | undefined {
+  getFilePath(surfaceId: PtySessionId): string | undefined {
     return this.watched.get(surfaceId)?.filePath
   }
 

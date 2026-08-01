@@ -4,6 +4,7 @@ import { StatePersister } from './persistence'
 import { CURRENT_STATE_VERSION } from './state-migrations'
 import { FakePersistenceIO } from './testing/fake-persistence'
 import type { NodeData, ServerState, TerminalNodeData } from '../shared/state'
+import { asNodeId as nid, asPtySessionId as pid, ROOT_NODE_ID } from '../shared/ids'
 
 const DEBOUNCE = 1000
 
@@ -40,8 +41,8 @@ function harness(seed?: unknown): Harness {
   return { sm, io, updates, adds, removes }
 }
 
-function createTerminal(sm: StateManager, sessionId: string, parentId = 'root'): TerminalNodeData {
-  return sm.createTerminal(sessionId, parentId, 0, 0, 80, 24)
+function createTerminal(sm: StateManager, sessionId: string, parentId = ROOT_NODE_ID): TerminalNodeData {
+  return sm.createTerminal(pid(sessionId), parentId, 0, 0, 80, 24)
 }
 
 describe('StateManager construction', () => {
@@ -86,12 +87,12 @@ describe('StateManager construction', () => {
           shellTitleHistory: [],
           archivedChildren: [],
           colorPresetId: 'inherit'
-        } as TerminalNodeData
+        } as unknown as TerminalNodeData
       }
     }
 
     const { sm } = harness(persisted)
-    expect(sm.getNode('t1')?.type).toBe('terminal')
+    expect(sm.getNode(nid('t1'))?.type).toBe('terminal')
     expect(sm.getState().nextZIndex).toBe(5)
   })
 
@@ -129,8 +130,8 @@ describe('StateManager persistence', () => {
     const { sm, io } = harness()
 
     createTerminal(sm, 't1')
-    sm.moveNode('t1', 5, 5)
-    sm.moveNode('t1', 6, 6)
+    sm.moveNode(nid('t1'), 5, 5)
+    sm.moveNode(nid('t1'), 6, 6)
     expect(io.writes).toHaveLength(0)
 
     io.advance(DEBOUNCE)
@@ -150,7 +151,7 @@ describe('StateManager persistence', () => {
   it('persists what a reload would see', () => {
     const { sm, io } = harness()
     createTerminal(sm, 't1')
-    sm.renameNode('t1', 'my terminal')
+    sm.renameNode(nid('t1'), 'my terminal')
     sm.persistImmediate()
 
     // Reload from the same store, as a server restart would.
@@ -158,7 +159,7 @@ describe('StateManager persistence', () => {
       { onNodeUpdate: () => {}, onNodeAdd: () => {}, onNodeRemove: () => {} },
       { persister: new StatePersister(io, DEBOUNCE) }
     )
-    expect(reloaded.getNode('t1')?.name).toBe('my terminal')
+    expect(reloaded.getNode(nid('t1'))?.name).toBe('my terminal')
   })
 })
 
@@ -187,8 +188,8 @@ describe('two StateManagers in one process', () => {
     createTerminal(a.sm, 'a1')
     createTerminal(b.sm, 'b1')
 
-    expect(a.sm.getNode('b1')).toBeUndefined()
-    expect(b.sm.getNode('a1')).toBeUndefined()
+    expect(a.sm.getNode(nid('b1'))).toBeUndefined()
+    expect(b.sm.getNode(nid('a1'))).toBeUndefined()
   })
 })
 
@@ -200,7 +201,7 @@ describe('createTerminal', () => {
     expect(adds).toHaveLength(1)
     expect(adds[0].id).toBe('t1')
     expect(node.alive).toBe(true)
-    expect(sm.getNodeIdForSession('t1')).toBe('t1')
+    expect(sm.getNodeIdForSession(pid('t1'))).toBe('t1')
   })
 
   it('assigns increasing sortOrder to successive terminals', () => {
@@ -218,9 +219,9 @@ describe('createTerminal', () => {
     const a = createTerminal(sm, 't1')
     const cSortOrderBefore = createTerminal(sm, 't3').sortOrder
 
-    const b = sm.createTerminal('t2', 'root', 0, 0, 80, 24, undefined, undefined, undefined, 't1')
+    const b = sm.createTerminal(pid('t2'), nid('root'), 0, 0, 80, 24, undefined, undefined, undefined, nid('t1'))
 
-    const after = sm.getNode('t3') as TerminalNodeData
+    const after = sm.getNode(nid('t3')) as TerminalNodeData
     expect(b.sortOrder).toBe(a.sortOrder + 1)
     expect(after.sortOrder).toBeGreaterThan(b.sortOrder)
     expect(after.sortOrder).toBe(cSortOrderBefore + 1)
@@ -233,21 +234,21 @@ describe('session id vs node id', () => {
   it('coincide at first launch', () => {
     const { sm } = harness()
     createTerminal(sm, 't1')
-    expect(sm.getNodeIdForSession('t1')).toBe('t1')
+    expect(sm.getNodeIdForSession(pid('t1'))).toBe('t1')
   })
 
   it('diverge after reincarnation, and the old session id stops resolving', () => {
     const { sm } = harness()
     createTerminal(sm, 't1')
 
-    sm.markReviving('t1')
-    sm.terminalExited('t1', 1)
-    sm.reincarnateTerminal('t1', 'pty-2', 100, 40)
+    sm.markReviving(nid('t1'))
+    sm.terminalExited(pid('t1'), 1)
+    sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 100, 40)
 
-    expect(sm.getNodeIdForSession('pty-2')).toBe('t1')
-    expect(sm.getNodeIdForSession('t1')).toBeUndefined()
+    expect(sm.getNodeIdForSession(pid('pty-2'))).toBe('t1')
+    expect(sm.getNodeIdForSession(pid('t1'))).toBeUndefined()
 
-    const node = sm.getNode('t1') as TerminalNodeData
+    const node = sm.getNode(nid('t1')) as TerminalNodeData
     expect(node.alive).toBe(true)
     expect(node.sessionId).toBe('pty-2')
     expect(node.cols).toBe(100)
@@ -258,15 +259,53 @@ describe('session id vs node id', () => {
   it('routes updates addressed by session id to the node id', () => {
     const { sm, updates } = harness()
     createTerminal(sm, 't1')
-    sm.markReviving('t1')
-    sm.terminalExited('t1', 0)
-    sm.reincarnateTerminal('t1', 'pty-2', 80, 24)
+    sm.markReviving(nid('t1'))
+    sm.terminalExited(pid('t1'), 0)
+    sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
 
     updates.length = 0
-    sm.updateCwd('pty-2', '/tmp/work')
+    sm.updateCwd(pid('pty-2'), '/tmp/work')
 
     expect(updates.map((u) => u.nodeId)).toContain('t1')
-    expect((sm.getNode('t1') as TerminalNodeData).cwd).toBe('/tmp/work')
+    expect((sm.getNode(nid('t1')) as TerminalNodeData).cwd).toBe('/tmp/work')
+  })
+})
+
+describe('resolveNodeIdForPtySession', () => {
+  // The map-miss path. Callers used to write `getNodeIdForSession(id) ?? id`,
+  // which resolves only while node id and pty session id still coincide.
+  it('uses the session map when it has the answer', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    expect(sm.resolveNodeIdForPtySession(pid('t1'))).toBe('t1')
+  })
+
+  it('falls back to node data for a restarted terminal the map has forgotten', () => {
+    const { sm, io } = harness()
+    createTerminal(sm, 't1')
+    sm.markReviving(nid('t1'))
+    sm.terminalExited(pid('t1'), 0)
+    sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
+    sm.persistImmediate()
+
+    // A fresh StateManager, as after a server restart: node data is loaded from
+    // disk but the session map is empty until ptys re-register.
+    const restarted = new StateManager(
+      { onNodeUpdate: () => {}, onNodeAdd: () => {}, onNodeRemove: () => {} },
+      { persister: new StatePersister(io, DEBOUNCE) }
+    )
+
+    expect(restarted.getNodeIdForSession(pid('pty-2'))).toBeUndefined()
+    expect(restarted.resolveNodeIdForPtySession(pid('pty-2'))).toBe('t1')
+    // The old `?? surfaceId` fallback would have answered 't1' here only by
+    // accident, and nothing at all for the reincarnated session id above.
+    expect(restarted.resolveNodeIdForPtySession(pid('t1'))).toBeUndefined()
+  })
+
+  it('returns undefined for a session no node claims', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    expect(sm.resolveNodeIdForPtySession(pid('nobody'))).toBeUndefined()
   })
 })
 
@@ -275,21 +314,21 @@ describe('terminalExited', () => {
     const { sm, removes } = harness()
     createTerminal(sm, 't1')
 
-    sm.terminalExited('t1', 0)
+    sm.terminalExited(pid('t1'), 0)
 
     expect(removes).toContain('t1')
-    expect(sm.getNode('t1')).toBeUndefined()
+    expect(sm.getNode(nid('t1'))).toBeUndefined()
   })
 
   it('keeps a revived terminal as a dead remnant instead of archiving it', () => {
     const { sm, removes } = harness()
     createTerminal(sm, 't1')
-    sm.markReviving('t1')
+    sm.markReviving(nid('t1'))
 
-    sm.terminalExited('t1', 127)
+    sm.terminalExited(pid('t1'), 127)
 
     expect(removes).not.toContain('t1')
-    const node = sm.getNode('t1') as TerminalNodeData
+    const node = sm.getNode(nid('t1')) as TerminalNodeData
     expect(node.alive).toBe(false)
     expect(node.exitCode).toBe(127)
   })
@@ -297,21 +336,21 @@ describe('terminalExited', () => {
   it('skips archival while a node is mid-restart', () => {
     const { sm, removes } = harness()
     createTerminal(sm, 't1')
-    sm.markRestarting('t1')
+    sm.markRestarting(nid('t1'))
 
-    sm.terminalExited('t1', 0)
+    sm.terminalExited(pid('t1'), 0)
 
     expect(removes).not.toContain('t1')
-    expect(sm.getNode('t1')).toBeDefined()
+    expect(sm.getNode(nid('t1'))).toBeDefined()
     // The mid-restart flag is one-shot: the next exit archives normally.
-    sm.reincarnateTerminal('t1', 'pty-2', 80, 24)
-    sm.terminalExited('pty-2', 0)
+    sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
+    sm.terminalExited(pid('pty-2'), 0)
     expect(removes).toContain('t1')
   })
 
   it('ignores an unknown session id', () => {
     const { sm, removes } = harness()
-    expect(() => sm.terminalExited('nope', 0)).not.toThrow()
+    expect(() => sm.terminalExited(pid('nope'), 0)).not.toThrow()
     expect(removes).toHaveLength(0)
   })
 })
@@ -330,13 +369,13 @@ describe('processDeadTerminals', () => {
     const dead = revived.processDeadTerminals()
 
     expect(dead.map((d) => d.nodeId).sort()).toEqual(['t1', 't2'])
-    expect((revived.getNode('t1') as TerminalNodeData).alive).toBe(false)
+    expect((revived.getNode(nid('t1')) as TerminalNodeData).alive).toBe(false)
   })
 
   it('downgrades working_background to stopped, since the ledger backing it is gone', () => {
     const { sm, io } = harness()
     createTerminal(sm, 't1')
-    sm.updateClaudeState('t1', 'working_background')
+    sm.updateClaudeState(pid('t1'), 'working_background')
     sm.persistImmediate()
 
     const revived = new StateManager(
@@ -345,13 +384,13 @@ describe('processDeadTerminals', () => {
     )
     revived.processDeadTerminals()
 
-    expect((revived.getNode('t1') as TerminalNodeData).claudeState).toBe('stopped')
+    expect((revived.getNode(nid('t1')) as TerminalNodeData).claudeState).toBe('stopped')
   })
 
   it('preserves other claude states across a restart', () => {
     const { sm, io } = harness()
     createTerminal(sm, 't1')
-    sm.updateClaudeState('t1', 'waiting_permission')
+    sm.updateClaudeState(pid('t1'), 'waiting_permission')
     sm.persistImmediate()
 
     const revived = new StateManager(
@@ -360,7 +399,7 @@ describe('processDeadTerminals', () => {
     )
     revived.processDeadTerminals()
 
-    expect((revived.getNode('t1') as TerminalNodeData).claudeState).toBe('waiting_permission')
+    expect((revived.getNode(nid('t1')) as TerminalNodeData).claudeState).toBe('waiting_permission')
   })
 })
 
@@ -368,24 +407,24 @@ describe('archive and unarchive', () => {
   it('round-trips a node through its parent archive', () => {
     const { sm } = harness()
     createTerminal(sm, 'parent')
-    const child = sm.createMarkdown('parent', 10, 10, 'hello')
+    const child = sm.createMarkdown(nid('parent'), 10, 10, 'hello')
 
     sm.archiveNode(child.id)
     expect(sm.getNode(child.id)).toBeUndefined()
-    expect(sm.peekArchivedNode('parent', child.id)?.id).toBe(child.id)
+    expect(sm.peekArchivedNode(nid('parent'), child.id)?.id).toBe(child.id)
 
-    sm.unarchiveNode('parent', child.id)
+    sm.unarchiveNode(nid('parent'), child.id)
     expect(sm.getNode(child.id)?.id).toBe(child.id)
-    expect(sm.peekArchivedNode('parent', child.id)).toBeUndefined()
+    expect(sm.peekArchivedNode(nid('parent'), child.id)).toBeUndefined()
   })
 
   it('restores at an override position when one is given', () => {
     const { sm } = harness()
     createTerminal(sm, 'parent')
-    const child = sm.createMarkdown('parent', 10, 10, 'hello')
+    const child = sm.createMarkdown(nid('parent'), 10, 10, 'hello')
 
     sm.archiveNode(child.id)
-    sm.unarchiveNode('parent', child.id, { x: 77, y: 88 })
+    sm.unarchiveNode(nid('parent'), child.id, { x: 77, y: 88 })
 
     const restored = sm.getNode(child.id)
     expect(restored?.x).toBe(77)
@@ -395,13 +434,13 @@ describe('archive and unarchive', () => {
   it('deleteArchivedNode removes it permanently', () => {
     const { sm } = harness()
     createTerminal(sm, 'parent')
-    const child = sm.createMarkdown('parent', 10, 10, 'hello')
+    const child = sm.createMarkdown(nid('parent'), 10, 10, 'hello')
 
     sm.archiveNode(child.id)
-    sm.deleteArchivedNode('parent', child.id)
+    sm.deleteArchivedNode(nid('parent'), child.id)
 
-    expect(sm.peekArchivedNode('parent', child.id)).toBeUndefined()
-    sm.unarchiveNode('parent', child.id)
+    expect(sm.peekArchivedNode(nid('parent'), child.id)).toBeUndefined()
+    sm.unarchiveNode(nid('parent'), child.id)
     expect(sm.getNode(child.id)).toBeUndefined()
   })
 })
@@ -412,7 +451,7 @@ describe('node mutations broadcast their change', () => {
     createTerminal(sm, 't1')
     updates.length = 0
 
-    sm.moveNode('t1', 42, 43)
+    sm.moveNode(nid('t1'), 42, 43)
 
     expect(updates).toEqual([{ nodeId: 't1', fields: { x: 42, y: 43 } }])
   })
@@ -424,19 +463,19 @@ describe('node mutations broadcast their change', () => {
     updates.length = 0
 
     sm.batchMoveNodes([
-      { nodeId: 't1', x: 1, y: 2 },
-      { nodeId: 't2', x: 3, y: 4 }
+      { nodeId: nid('t1'), x: 1, y: 2 },
+      { nodeId: nid('t2'), x: 3, y: 4 }
     ])
 
     expect(updates).toHaveLength(2)
-    expect(sm.getNode('t2')).toMatchObject({ x: 3, y: 4 })
+    expect(sm.getNode(nid('t2'))).toMatchObject({ x: 3, y: 4 })
   })
 
   it('mutations on an unknown node are silently ignored', () => {
     const { sm, updates } = harness()
-    sm.moveNode('ghost', 1, 1)
-    sm.renameNode('ghost', 'x')
-    sm.setNodeColor('ghost', 'red')
+    sm.moveNode(nid('ghost'), 1, 1)
+    sm.renameNode(nid('ghost'), 'x')
+    sm.setNodeColor(nid('ghost'), 'red')
 
     expect(updates).toHaveLength(0)
   })
@@ -446,7 +485,7 @@ describe('getNearestTerminalAncestor', () => {
   it('skips intermediate non-terminal nodes', () => {
     const { sm } = harness()
     createTerminal(sm, 'term')
-    const title = sm.createTitle('term', 0, 0, 'a title')
+    const title = sm.createTitle(nid('term'), 0, 0, 'a title')
     const md = sm.createMarkdown(title.id, 0, 0, 'body')
 
     expect(sm.getNearestTerminalAncestor(md.id)).toBe('term')
@@ -454,13 +493,13 @@ describe('getNearestTerminalAncestor', () => {
 
   it('returns undefined when the chain reaches the root without a terminal', () => {
     const { sm } = harness()
-    const md = sm.createMarkdown('root', 0, 0, 'body')
+    const md = sm.createMarkdown(nid('root'), 0, 0, 'body')
     expect(sm.getNearestTerminalAncestor(md.id)).toBeUndefined()
   })
 
   it('does not count the node itself', () => {
     const { sm } = harness()
     createTerminal(sm, 'term')
-    expect(sm.getNearestTerminalAncestor('term')).toBeUndefined()
+    expect(sm.getNearestTerminalAncestor(nid('term'))).toBeUndefined()
   })
 })

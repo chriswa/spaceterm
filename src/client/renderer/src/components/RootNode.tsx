@@ -4,6 +4,7 @@ import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import type { AddNodeType } from './AddNodeBody'
 import { useReparentStore } from '../stores/reparentStore'
+import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 const noop = () => {}
 
 interface RootNodeProps {
@@ -11,11 +12,11 @@ interface RootNodeProps {
   selected: boolean
   onClick: () => void
   archivedChildren: ArchivedNode[]
-  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onOpenArchiveSearch: (nodeId: string) => void
-  onAddNode?: (parentNodeId: string, type: AddNodeType) => void
-  onReparentTarget?: (id: string) => void
+  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onOpenArchiveSearch: (nodeId: NodeId) => void
+  onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
+  onReparentTarget?: (id: NodeId) => void
 }
 
 /**
@@ -35,7 +36,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
     (e: React.MouseEvent) => {
       e.stopPropagation()
       if (reparentingNodeId) {
-        onReparentTarget?.('root')
+        onReparentTarget?.(ROOT_NODE_ID)
       } else {
         onClick()
       }
@@ -45,7 +46,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
 
   return (
     <CardShell
-      nodeId="root"
+      nodeId={ROOT_NODE_ID}
       x={-ROOT_NODE_RADIUS}
       y={-ROOT_NODE_RADIUS}
       width={size}
@@ -63,7 +64,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       onOpenArchiveSearch={onOpenArchiveSearch}
       onAddNode={onAddNode}
       onMouseDown={handleMouseDown}
-      onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode('root') }}
+      onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(ROOT_NODE_ID) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
       className={`root-node${focused ? ' root-node--focused' : ''}`}
       style={{ background: 'transparent', border: 'none' }}

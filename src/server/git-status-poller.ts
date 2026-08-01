@@ -3,12 +3,13 @@ import { stat } from 'fs'
 import { join, resolve as pathResolve } from 'path'
 import { homedir } from 'os'
 import type { GitStatus, DirectoryNodeData } from '../shared/state'
+import type { NodeId } from '../shared/ids'
 
 const POLL_INTERVAL_MS = 60_000
 const EXEC_TIMEOUT_MS = 5_000
 
 type GetDirectoryNodes = () => DirectoryNodeData[]
-type OnGitStatus = (nodeId: string, gitStatus: GitStatus | null) => void
+type OnGitStatus = (nodeId: NodeId, gitStatus: GitStatus | null) => void
 
 /**
  * Parse `git status --porcelain=v2 --branch` output into a GitStatus object.
@@ -119,7 +120,7 @@ function runGitStatus(cwd: string): Promise<GitStatus | null> {
 
 export class GitStatusPoller {
   private timer: ReturnType<typeof setInterval> | null = null
-  private cache = new Map<string, string>() // nodeId → JSON.stringify(GitStatus)
+  private cache = new Map<NodeId, string>() // nodeId → JSON.stringify(GitStatus)
   private getDirectoryNodes: GetDirectoryNodes
   private onGitStatus: OnGitStatus
 
@@ -131,7 +132,7 @@ export class GitStatusPoller {
     this.pollAll()
   }
 
-  removeNode(nodeId: string): void {
+  removeNode(nodeId: NodeId): void {
     this.cache.delete(nodeId)
   }
 
@@ -139,7 +140,7 @@ export class GitStatusPoller {
    * Immediately poll a specific node (e.g. after its cwd changes).
    * Invalidates the cache so the result always fires the callback.
    */
-  pollNode(nodeId: string): void {
+  pollNode(nodeId: NodeId): void {
     const nodes = this.getDirectoryNodes()
     const node = nodes.find(n => n.id === nodeId)
     if (!node) return
@@ -165,7 +166,7 @@ export class GitStatusPoller {
     if (nodes.length === 0) return
 
     // Group node IDs by resolved cwd to deduplicate
-    const cwdToNodeIds = new Map<string, string[]>()
+    const cwdToNodeIds = new Map<string, NodeId[]>()
     for (const node of nodes) {
       const resolved = expandTilde(node.cwd)
       const existing = cwdToNodeIds.get(resolved)

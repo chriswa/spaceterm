@@ -3,12 +3,15 @@ import { homedir } from 'os'
 import * as path from 'path'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import type { NodeData } from '../shared/state'
+import { asNodeId as nid } from '../shared/ids'
 
 /**
  * getAncestorCwd walks the parent chain, so tests only need the fields it reads.
  * Building complete node records would obscure what each case is actually about.
  */
-function nodes(...entries: Array<[string, Partial<NodeData> & { type: string; parentId: string }]>): Record<string, NodeData> {
+/** Minimal node fixtures. Ids stay plain strings here — the cast at the end is
+ *  what asserts the whole map is NodeData, so branding each literal buys nothing. */
+function nodes(...entries: Array<[string, { type: string; parentId: string; cwd?: string }]>): Record<string, NodeData> {
   return Object.fromEntries(entries) as unknown as Record<string, NodeData>
 }
 
@@ -50,7 +53,7 @@ describe('resolveFilePath', () => {
 describe('getAncestorCwd', () => {
   it('returns the cwd of the node itself when it has one', () => {
     const map = nodes(['a', { type: 'terminal', parentId: 'root', cwd: '/here' }])
-    expect(getAncestorCwd(map, 'a')).toBe('/here')
+    expect(getAncestorCwd(map, nid('a'))).toBe('/here')
   })
 
   it('walks up to the nearest ancestor with a cwd', () => {
@@ -59,7 +62,7 @@ describe('getAncestorCwd', () => {
       ['mid', { type: 'markdown', parentId: 'top' }],
       ['top', { type: 'directory', parentId: 'root', cwd: '/top' }],
     )
-    expect(getAncestorCwd(map, 'child')).toBe('/top')
+    expect(getAncestorCwd(map, nid('child'))).toBe('/top')
   })
 
   it('accepts a directory node as the cwd source', () => {
@@ -67,7 +70,7 @@ describe('getAncestorCwd', () => {
       ['child', { type: 'file', parentId: 'dir' }],
       ['dir', { type: 'directory', parentId: 'root', cwd: '/dir' }],
     )
-    expect(getAncestorCwd(map, 'child')).toBe('/dir')
+    expect(getAncestorCwd(map, nid('child'))).toBe('/dir')
   })
 
   it('returns the closest cwd, not the furthest', () => {
@@ -76,7 +79,7 @@ describe('getAncestorCwd', () => {
       ['near', { type: 'terminal', parentId: 'far', cwd: '/near' }],
       ['far', { type: 'directory', parentId: 'root', cwd: '/far' }],
     )
-    expect(getAncestorCwd(map, 'child')).toBe('/near')
+    expect(getAncestorCwd(map, nid('child'))).toBe('/near')
   })
 
   it('skips a terminal whose cwd is unset', () => {
@@ -84,7 +87,7 @@ describe('getAncestorCwd', () => {
       ['child', { type: 'terminal', parentId: 'top' }],
       ['top', { type: 'directory', parentId: 'root', cwd: '/top' }],
     )
-    expect(getAncestorCwd(map, 'child')).toBe('/top')
+    expect(getAncestorCwd(map, nid('child'))).toBe('/top')
   })
 
   it('returns undefined when nothing in the chain has a cwd', () => {
@@ -92,16 +95,16 @@ describe('getAncestorCwd', () => {
       ['child', { type: 'markdown', parentId: 'top' }],
       ['top', { type: 'markdown', parentId: 'root' }],
     )
-    expect(getAncestorCwd(map, 'child')).toBeUndefined()
+    expect(getAncestorCwd(map, nid('child'))).toBeUndefined()
   })
 
   it('returns undefined for an unknown node', () => {
-    expect(getAncestorCwd(nodes(), 'missing')).toBeUndefined()
+    expect(getAncestorCwd(nodes(), nid('missing'))).toBeUndefined()
   })
 
   it('stops at the root sentinel', () => {
     const map = nodes(['a', { type: 'markdown', parentId: 'root' }])
-    expect(getAncestorCwd(map, 'a')).toBeUndefined()
+    expect(getAncestorCwd(map, nid('a'))).toBeUndefined()
   })
 
   it('terminates on a parent cycle instead of looping forever', () => {
@@ -109,16 +112,16 @@ describe('getAncestorCwd', () => {
       ['a', { type: 'markdown', parentId: 'b' }],
       ['b', { type: 'markdown', parentId: 'a' }],
     )
-    expect(getAncestorCwd(map, 'a')).toBeUndefined()
+    expect(getAncestorCwd(map, nid('a'))).toBeUndefined()
   })
 
   it('terminates on a self-referencing parent', () => {
     const map = nodes(['a', { type: 'markdown', parentId: 'a' }])
-    expect(getAncestorCwd(map, 'a')).toBeUndefined()
+    expect(getAncestorCwd(map, nid('a'))).toBeUndefined()
   })
 
   it('stops when the chain points at a missing node', () => {
     const map = nodes(['a', { type: 'markdown', parentId: 'gone' }])
-    expect(getAncestorCwd(map, 'a')).toBeUndefined()
+    expect(getAncestorCwd(map, nid('a'))).toBeUndefined()
   })
 })

@@ -18,7 +18,7 @@ export const HOOK_LOG_DIR = join(SOCKET_DIR, 'hook-logs')
 export const DECISION_LOG_DIR = join(SOCKET_DIR, 'decision-logs')
 
 export interface SessionInfo {
-  sessionId: string
+  sessionId: PtySessionId
   cols: number
   rows: number
 }
@@ -35,7 +35,7 @@ export interface CreateOptions {
   /** Codex CLI surface (binary: `codex`). Mutually exclusive with `claude`/`cursor` in practice. */
   codex?: { prompt?: string; resumeSessionId?: string; forkSessionId?: string }
   /** Stable node ID for SPACETERM_NODE_ID env var. Used during reincarnation when nodeId !== sessionId. */
-  nodeId?: string
+  nodeId?: NodeId
 }
 
 export interface CreateMessage {
@@ -58,82 +58,82 @@ export interface ServerRestartMessage {
 export interface AttachMessage {
   type: 'attach'
   seq: number
-  sessionId: string
+  sessionId: PtySessionId
 }
 
 export interface DetachMessage {
   type: 'detach'
   seq: number
-  sessionId: string
+  sessionId: PtySessionId
 }
 
 export interface DestroyMessage {
   type: 'destroy'
   seq: number
-  sessionId: string
+  sessionId: PtySessionId
 }
 
 export interface WriteMessage {
   type: 'write'
-  sessionId: string
+  sessionId: PtySessionId
   data: string
 }
 
 export interface ResizeMessage {
   type: 'resize'
-  sessionId: string
+  sessionId: PtySessionId
   cols: number
   rows: number
 }
 
 export interface HookMessage {
   type: 'hook'
-  surfaceId: string
+  surfaceId: PtySessionId
   ts?: number          // epoch ms — when hook event fired (added by hook-handler.sh)
   payload: Record<string, unknown>
 }
 
 export interface StatusLineMessage {
   type: 'status-line'
-  surfaceId: string
+  surfaceId: PtySessionId
   payload: Record<string, unknown>
 }
 
 export interface EmitMarkdownMessage {
   type: 'emit-markdown'
-  surfaceId: string
+  surfaceId: PtySessionId
   content: string
 }
 
 export interface EmitMarkdownOnParentMessage {
   type: 'emit-markdown-on-parent'
-  surfaceId: string
+  surfaceId: PtySessionId
   content: string
 }
 
 export interface SpawnClaudeSurfaceMessage {
   type: 'spawn-claude-surface'
-  surfaceId: string
+  surfaceId: PtySessionId
   prompt: string
   title: string
 }
 
 export interface ForkClaudeSurfaceMessage {
   type: 'fork-claude-surface'
-  surfaceId: string
+  surfaceId: PtySessionId
   prompt: string
   title: string
 }
 
 export interface SpacetermBroadcastMessage {
   type: 'spaceterm-broadcast'
-  surfaceId: string
+  surfaceId: PtySessionId
   content: string
 }
 
 export interface PlaySoundMessage {
   type: 'play-sound'
-  surfaceId: string
+  surfaceId: PtySessionId
   sound: SoundName
 }
 
@@ -147,7 +147,7 @@ export interface NodeSyncRequestMessage {
 export interface NodeMoveMessage {
   type: 'node-move'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   x: number
   y: number
 }
@@ -155,41 +155,41 @@ export interface NodeMoveMessage {
 export interface NodeBatchMoveMessage {
   type: 'node-batch-move'
   seq: number
-  moves: Array<{ nodeId: string; x: number; y: number }>
+  moves: Array<{ nodeId: NodeId; x: number; y: number }>
 }
 
 export interface NodeRenameMessage {
   type: 'node-rename'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   name: string
 }
 
 export interface NodeSetColorMessage {
   type: 'node-set-color'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   colorPresetId: string
 }
 
 export interface NodeArchiveMessage {
   type: 'node-archive'
   seq: number
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface NodeUnarchiveMessage {
   type: 'node-unarchive'
   seq: number
-  parentNodeId: string
-  archivedNodeId: string
+  parentNodeId: NodeId
+  archivedNodeId: NodeId
 }
 
 export interface NodeArchiveDeleteMessage {
   type: 'node-archive-delete'
   seq: number
-  parentNodeId: string
-  archivedNodeId: string
+  parentNodeId: NodeId
+  archivedNodeId: NodeId
 }
 
 export interface UndoBufferPushMessage {
@@ -207,27 +207,27 @@ export interface UndoBufferSetCursorMessage {
 export interface NodeBringToFrontMessage {
   type: 'node-bring-to-front'
   seq: number
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface NodeReparentMessage {
   type: 'node-reparent'
   seq: number
-  nodeId: string
-  newParentId: string
+  nodeId: NodeId
+  newParentId: NodeId
 }
 
 export interface NodeSwapParentChildMessage {
   type: 'node-swap-parent-child'
   seq: number
-  nodeId: string   // P — the node being re-parented
-  childId: string  // C — P's immediate child that becomes P's new parent
+  nodeId: NodeId   // P — the node being re-parented
+  childId: NodeId  // C — P's immediate child that becomes P's new parent
 }
 
 export interface TerminalCreateMessage {
   type: 'terminal-create'
   seq: number
-  parentId: string
+  parentId: NodeId
   x?: number
   y?: number
   options?: CreateOptions
@@ -239,7 +239,7 @@ export interface TerminalCreateMessage {
 export interface TerminalResizeMessage {
   type: 'terminal-resize'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   cols: number
   rows: number
 }
@@ -247,7 +247,7 @@ export interface TerminalResizeMessage {
 export interface MarkdownAddMessage {
   type: 'markdown-add'
   seq: number
-  parentId: string
+  parentId: NodeId
   x?: number
   y?: number
 }
@@ -255,7 +255,7 @@ export interface MarkdownAddMessage {
 export interface MarkdownResizeMessage {
   type: 'markdown-resize'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   width: number
   height: number
 }
@@ -263,28 +263,28 @@ export interface MarkdownResizeMessage {
 export interface MarkdownContentMessage {
   type: 'markdown-content'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   content: string
 }
 
 export interface MarkdownSetMaxWidthMessage {
   type: 'markdown-set-max-width'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   maxWidth: number
 }
 
 export interface TerminalReincarnateMessage {
   type: 'terminal-reincarnate'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   options?: CreateOptions
 }
 
 export interface DirectoryAddMessage {
   type: 'directory-add'
   seq: number
-  parentId: string
+  parentId: NodeId
   x?: number
   y?: number
   cwd: string
@@ -293,20 +293,20 @@ export interface DirectoryAddMessage {
 export interface DirectoryCwdMessage {
   type: 'directory-cwd'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   cwd: string
 }
 
 export interface DirectoryGitFetchMessage {
   type: 'directory-git-fetch'
   seq: number
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface DirectoryWtSpawnMessage {
   type: 'directory-wt-spawn'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   branchName: string
 }
 
@@ -326,7 +326,7 @@ export interface ValidateDirectoryResult {
 export interface FileAddMessage {
   type: 'file-add'
   seq: number
-  parentId: string
+  parentId: NodeId
   x?: number
   y?: number
   filePath: string
@@ -335,14 +335,14 @@ export interface FileAddMessage {
 export interface FilePathMessage {
   type: 'file-path'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   filePath: string
 }
 
 export interface TitleAddMessage {
   type: 'title-add'
   seq: number
-  parentId: string
+  parentId: NodeId
   x?: number
   y?: number
 }
@@ -350,7 +350,7 @@ export interface TitleAddMessage {
 export interface TitleTextMessage {
   type: 'title-text'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   text: string
 }
 
@@ -370,44 +370,44 @@ export interface ValidateFileResult {
 
 export interface SetTerminalModeMessage {
   type: 'set-terminal-mode'
-  sessionId: string
+  sessionId: PtySessionId
   mode: 'live' | 'snapshot'
 }
 
 export interface SetClaudeStatusUnreadMessage {
   type: 'set-claude-status-unread'
-  sessionId: string
+  sessionId: PtySessionId
   unread: boolean
 }
 
 export interface SetClaudeStatusAsleepMessage {
   type: 'set-claude-status-asleep'
-  sessionId: string
+  sessionId: PtySessionId
   asleep: boolean
 }
 
 export interface ForkSessionMessage {
   type: 'fork-session'
   seq: number
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface TerminalRestartMessage {
   type: 'terminal-restart'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   extraCliArgs: string
 }
 
 export interface CrabReorderMessage {
   type: 'crab-reorder'
   seq: number
-  order: string[]  // Node IDs in desired visual order
+  order: NodeId[]  // Node IDs in desired visual order
 }
 
 export interface SetAlertsReadTimestampMessage {
   type: 'set-alerts-read-timestamp'
-  nodeId: string
+  nodeId: NodeId
   timestamp: number
 }
 
@@ -426,7 +426,7 @@ export interface CameraBoundsMessage {
 /** Request the server to focus the surface with this SPACETERM_SURFACE_ID on one client. */
 export interface FocusSurfaceRequestMessage {
   type: 'focus-surface-request'
-  surfaceId: string
+  surfaceId: PtySessionId
 }
 
 /**
@@ -439,12 +439,12 @@ export interface FocusSurfaceRequestMessage {
  */
 export interface FocusClaudeSessionMessage {
   type: 'focus-claude-session'
-  claudeSessionId: string
+  claudeSessionId: ClaudeSessionId
 }
 
 export interface SummaryChatStartMessage {
   type: 'summary-chat-start'
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface VoiceCommandMessage {
@@ -530,7 +530,7 @@ export type ClientMessage =
 export interface CreatedMessage {
   type: 'created'
   seq: number
-  sessionId: string
+  sessionId: PtySessionId
   cols: number
   rows: number
 }
@@ -548,7 +548,7 @@ export interface ListedMessage {
 }
 
 export interface ClaudeSessionEntry {
-  claudeSessionId: string
+  claudeSessionId: ClaudeSessionId
   reason: 'startup' | 'fork' | 'clear' | 'compact' | 'resume'
   timestamp: string
 }
@@ -556,7 +556,7 @@ export interface ClaudeSessionEntry {
 export interface AttachedMessage {
   type: 'attached'
   seq: number
-  sessionId: string
+  sessionId: PtySessionId
   scrollback: string
   claudeContextPercent?: number
   claudeSessionLineCount?: number
@@ -565,7 +565,7 @@ export interface AttachedMessage {
 export interface DetachedMessage {
   type: 'detached'
   seq: number
-  sessionId: string
+  sessionId: PtySessionId
 }
 
 export interface DestroyedMessage {
@@ -575,31 +575,32 @@ export interface DestroyedMessage {
 
 export interface DataMessage {
   type: 'data'
-  sessionId: string
+  sessionId: PtySessionId
   data: string
 }
 
 export interface ExitMessage {
   type: 'exit'
-  sessionId: string
+  sessionId: PtySessionId
   exitCode: number
 }
 
 export interface ClaudeContextMessage {
   type: 'claude-context'
-  sessionId: string
+  sessionId: PtySessionId
   contextRemainingPercent: number
 }
 
 export interface ClaudeSessionLineCountMessage {
   type: 'claude-session-line-count'
-  sessionId: string
+  sessionId: PtySessionId
   lineCount: number
 }
 
 // --- Server → Client node state messages ---
 
 import type { ServerState, NodeData } from './state'
+import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 
 export interface SyncStateMessage {
   type: 'sync-state'
@@ -609,7 +610,7 @@ export interface SyncStateMessage {
 
 export interface NodeUpdatedMessage {
   type: 'node-updated'
-  nodeId: string
+  nodeId: NodeId
   fields: Partial<NodeData>
 }
 
@@ -620,7 +621,7 @@ export interface NodeAddedMessage {
 
 export interface NodeRemovedMessage {
   type: 'node-removed'
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface MutationAckMessage {
@@ -631,7 +632,7 @@ export interface MutationAckMessage {
 export interface NodeAddAckMessage {
   type: 'node-add-ack'
   seq: number
-  nodeId: string
+  nodeId: NodeId
 }
 
 // --- Snapshot types ---
@@ -651,7 +652,7 @@ export type SnapshotRow = AttrSpan[]
 
 export interface SnapshotMessage {
   type: 'snapshot'
-  sessionId: string
+  sessionId: PtySessionId
   cols: number
   rows: number
   cursorX: number
@@ -661,13 +662,13 @@ export interface SnapshotMessage {
 
 export interface FileContentMessage {
   type: 'file-content'
-  nodeId: string   // markdown node ID
+  nodeId: NodeId   // markdown node ID
   content: string  // full file contents
 }
 
 export interface PlanCacheUpdateMessage {
   type: 'plan-cache-update'
-  sessionId: string
+  sessionId: PtySessionId
   count: number
   files: string[]
 }
@@ -700,7 +701,7 @@ export interface PlaySoundServerMessage {
 
 export interface SpeakMessage {
   type: 'speak'
-  surfaceId: string
+  surfaceId: PtySessionId
   text: string
 }
 
@@ -711,7 +712,7 @@ export interface SpeakServerMessage {
 
 export interface SpeakingChangedMessage {
   type: 'speaking-changed'
-  nodeId: string
+  nodeId: NodeId
   speaking: boolean
   voice?: string
 }
@@ -719,7 +720,7 @@ export interface SpeakingChangedMessage {
 /** Summary Chat lifecycle for the toolbar's thinking and target indicators. */
 export interface SummaryChatStatusMessage {
   type: 'summary-chat-status'
-  nodeId: string
+  nodeId: NodeId
   state: 'thinking' | 'ready' | 'target' | 'error'
   message?: string
 }
@@ -743,7 +744,7 @@ export interface PeerCameraBoundsMessage {
 /** Sent to exactly one client, instructing it to raise its window and focus this node. */
 export interface FocusSurfaceMessage {
   type: 'focus-surface'
-  nodeId: string
+  nodeId: NodeId
 }
 
 /** Full set of saved viewport slots (slot -> bounds). Sent on connect and broadcast on every save. */
@@ -757,19 +758,19 @@ export interface SavedViewportsMessage {
 export interface ScriptGetAncestorsMessage {
   type: 'script-get-ancestors'
   seq: number
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface ScriptGetNodeMessage {
   type: 'script-get-node'
   seq: number
-  nodeId: string
+  nodeId: NodeId
 }
 
 export interface ScriptShipItMessage {
   type: 'script-ship-it'
   seq: number
-  nodeId: string
+  nodeId: NodeId
   data: string
   submit?: boolean  // default true — send \r after 200ms delay
 }
@@ -784,13 +785,13 @@ export interface ScriptSubscribeMessage {
 export interface ScriptForkClaudeMessage {
   type: 'script-fork-claude'
   seq: number
-  nodeId: string    // source terminal node to fork from
-  parentId: string  // parent node for placement (new terminal goes below this)
+  nodeId: NodeId    // source terminal node to fork from
+  parentId: NodeId  // parent node for placement (new terminal goes below this)
 }
 
 export interface ScriptUnreadMessage {
   type: 'script-unread'
-  nodeId: string
+  nodeId: NodeId
 }
 
 /**
@@ -807,7 +808,7 @@ export interface ScriptUnreadMessage {
 export interface ScriptResolveHandoffMessage {
   type: 'script-resolve-handoff'
   seq: number
-  surfaceId: string
+  surfaceId: PtySessionId
 }
 
 export type ScriptMessage =
@@ -851,13 +852,13 @@ export interface ScriptSubscribeResult {
 export interface ScriptForkClaudeResult {
   type: 'script-fork-claude-result'
   seq: number
-  nodeId: string   // new node ID (empty string on error)
+  nodeId: NodeId   // new node ID (empty string on error)
   error?: string
 }
 
 /** The parent surface a handoff can be shipped to. */
 export interface HandoffTargetSurface {
-  nodeId: string
+  nodeId: NodeId
   title: string | null
   alive: boolean
 }

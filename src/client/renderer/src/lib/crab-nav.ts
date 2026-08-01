@@ -1,3 +1,4 @@
+import { type NodeId } from '../../../../shared/ids'
 export type CrabColor = 'white' | 'red' | 'green' | 'purple' | 'orange' | 'yellow' | 'gray' | 'asleep'
 
 /** Hex colors for each crab color variant. Matches the toolbar CSS classes. */
@@ -17,7 +18,7 @@ export const CRAB_COLORS: Record<CrabColor, string> = {
 export type AgentIndicatorKind = 'claude' | 'cursor' | 'codex' | 'terminal'
 
 export interface CrabEntry {
-  nodeId: string
+  nodeId: NodeId
   /** All Claude session ids this crab has hosted — used to match TTS speaking events. */
   claudeSessionIds: string[]
   kind: AgentIndicatorKind
@@ -93,7 +94,7 @@ function deriveToolbarIndicatorInner(
  */
 export function adjacentCrab(
   crabs: CrabEntry[],
-  focusedId: string | null,
+  focusedId: NodeId | null,
   direction: 'left' | 'right',
   phantomCreatedAt?: string
 ): CrabEntry | null {

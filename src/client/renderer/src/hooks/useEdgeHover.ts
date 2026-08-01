@@ -3,10 +3,11 @@ import type { Camera } from '../lib/camera'
 import type { TreeLineNode } from '../components/CanvasBackground'
 import { EDGE_HOVER_THRESHOLD_PX, EDGE_SPLIT_NODE_MARGIN_PX, ROOT_NODE_RADIUS } from '../lib/constants'
 import { useNodeStore, nodePixelSize } from '../stores/nodeStore'
+import { type NodeId } from '../../../../shared/ids'
 
 export interface HoveredEdge {
-  parentId: string
-  childId: string
+  parentId: NodeId
+  childId: NodeId
   point: { x: number; y: number }
 }
 

@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ColorPreset } from '../lib/color-presets'
 import { blendHex } from '../lib/color-presets'
 import { terminalSubtitle } from '../lib/node-title'
+import { type NodeId } from '../../../../shared/ids'
 interface TerminalTitleBarContentProps {
   name: string | undefined
   shellTitleHistory: string[] | undefined
   preset: ColorPreset | undefined
-  id: string
+  id: NodeId
   isClaudeSurface: boolean
-  onRename: (id: string, name: string) => void
+  onRename: (id: NodeId, name: string) => void
   canStartEdit?: () => boolean
 }
 

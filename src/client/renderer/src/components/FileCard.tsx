@@ -9,6 +9,7 @@ import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
 import { angleBorderColor } from '../lib/angle-color'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
+import { type NodeId } from '../../../../shared/ids'
 
 const DRAG_THRESHOLD = 5
 const FILE_H_PADDING = 80
@@ -33,7 +34,7 @@ function documentPaths(w: number) {
 }
 
 interface FileCardProps {
-  id: string
+  id: NodeId
   x: number
   y: number
   zIndex: number
@@ -45,20 +46,20 @@ interface FileCardProps {
   colorPresetId?: string
   resolvedPreset?: ColorPreset
   archivedChildren: ArchivedNode[]
-  onFocus: (id: string) => void
-  onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
-  onFilePathChange: (id: string, filePath: string) => void
-  onColorChange: (id: string, color: string) => void
-  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onOpenArchiveSearch: (nodeId: string) => void
-  onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
-  onDragEnd?: (id: string) => void
-  onStartReparent?: (id: string) => void
-  onReparentTarget?: (id: string) => void
-  onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  onFocus: (id: NodeId) => void
+  onClose: (id: NodeId) => void
+  onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
+  onFilePathChange: (id: NodeId, filePath: string) => void
+  onColorChange: (id: NodeId, color: string) => void
+  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onOpenArchiveSearch: (nodeId: NodeId) => void
+  onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
+  onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
+  onDragEnd?: (id: NodeId) => void
+  onStartReparent?: (id: NodeId) => void
+  onReparentTarget?: (id: NodeId) => void
+  onAddNode?: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.MutableRefObject<Camera>
 }
 

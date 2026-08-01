@@ -38,6 +38,7 @@ import { execFile } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import type { SessionFileEntry } from '../session-file-watcher'
+import type { ClaudeSessionId, PtySessionId } from '../../shared/ids'
 
 export type LaunchKind = 'bash' | 'agent' | 'monitor' | 'workflow'
 
@@ -71,7 +72,7 @@ interface Launch {
  */
 export interface LivenessProbes {
   bashFinished(outputPath: string): Promise<boolean>
-  monitorFinished(sessionId: string): Promise<boolean>
+  monitorFinished(sessionId: ClaudeSessionId): Promise<boolean>
   agentFinished(subagentTranscriptPath: string): Promise<boolean>
   workflowFinished(stateFilePath: string): Promise<boolean>
 }
@@ -137,7 +138,7 @@ async function realBashFinished(outputPath: string): Promise<boolean> {
  * "still running" whenever any shell for the session is alive. Spawn failure
  * == still running (fail-safe).
  */
-async function realMonitorFinished(sessionId: string): Promise<boolean> {
+async function realMonitorFinished(sessionId: ClaudeSessionId): Promise<boolean> {
   const status = await probeExit('/usr/bin/pgrep', ['-f', `CLAUDE_SESSION_ID=${sessionId}`])
   if (status === null) return false
   return status !== 0
@@ -198,20 +199,20 @@ interface SurfaceLedger {
   launches: Map<string, Launch>
   /** Directory containing the main transcript — used to locate subagent/workflow files for probes */
   transcriptDir?: string
-  sessionId?: string
+  sessionId?: ClaudeSessionId
 }
 
 // ─── Ledger ─────────────────────────────────────────────────────────────────
 
 export class BackgroundLedger {
-  private surfaces = new Map<string, SurfaceLedger>()
+  private surfaces = new Map<PtySessionId, SurfaceLedger>()
   private probes: LivenessProbes
 
   constructor(probes: LivenessProbes = REAL_PROBES) {
     this.probes = probes
   }
 
-  private get(surfaceId: string): SurfaceLedger {
+  private get(surfaceId: PtySessionId): SurfaceLedger {
     let s = this.surfaces.get(surfaceId)
     if (!s) { s = { launches: new Map() }; this.surfaces.set(surfaceId, s) }
     return s
@@ -222,24 +223,24 @@ export class BackgroundLedger {
    * Stop hook payloads). Needed to build subagent/workflow probe paths and to
    * run the monitor pgrep. Cheap to call on every relevant hook.
    */
-  setContext(surfaceId: string, transcriptPath: string | undefined, sessionId: string | undefined): void {
+  setContext(surfaceId: PtySessionId, transcriptPath: string | undefined, sessionId: ClaudeSessionId | undefined): void {
     const s = this.get(surfaceId)
     if (transcriptPath) s.transcriptDir = path.dirname(transcriptPath)
     if (sessionId) s.sessionId = sessionId
   }
 
   /** SubagentStart(agent_id) — register (or re-register, on resume) a background subagent. */
-  registerAgent(surfaceId: string, agentId: string): void {
+  registerAgent(surfaceId: PtySessionId, agentId: string): void {
     this.get(surfaceId).launches.set(agentId, { id: agentId, kind: 'agent', queued: false })
   }
 
   /** SubagentStop(agent_id) — the subagent finished; drop it. */
-  completeAgent(surfaceId: string, agentId: string): void {
+  completeAgent(surfaceId: PtySessionId, agentId: string): void {
     this.get(surfaceId).launches.delete(agentId)
   }
 
   /** How many background launches are still outstanding on this surface. */
-  outstandingCount(surfaceId: string): number {
+  outstandingCount(surfaceId: PtySessionId): number {
     return this.surfaces.get(surfaceId)?.launches.size ?? 0
   }
 
@@ -248,7 +249,7 @@ export class BackgroundLedger {
    * makes prior background context moot, and bounds any leak from a missed
    * completion to "until the next prompt") and on SessionEnd.
    */
-  clear(surfaceId: string): void {
+  clear(surfaceId: PtySessionId): void {
     this.surfaces.get(surfaceId)?.launches.clear()
   }
 
@@ -259,7 +260,7 @@ export class BackgroundLedger {
    * different id-space than the transcript's <task-id>, so mixing the two would
    * double-count.
    */
-  ingestJsonl(surfaceId: string, entries: SessionFileEntry[]): void {
+  ingestJsonl(surfaceId: PtySessionId, entries: SessionFileEntry[]): void {
     const s = this.get(surfaceId)
     for (const entry of entries) {
       // Queued-but-undelivered completions: the work is done but the agent
@@ -298,7 +299,7 @@ export class BackgroundLedger {
    * Returns true if any launch was pruned (so the caller can re-check whether
    * the surface just went idle).
    */
-  async reconcile(surfaceId: string): Promise<boolean> {
+  async reconcile(surfaceId: PtySessionId): Promise<boolean> {
     const s = this.surfaces.get(surfaceId)
     if (!s || s.launches.size === 0) return false
 
@@ -334,8 +335,8 @@ export class BackgroundLedger {
   }
 
   /** surfaceIds that currently have outstanding launches — used to scope the reconciliation sweep. */
-  activeSurfaces(): string[] {
-    const out: string[] = []
+  activeSurfaces(): PtySessionId[] {
+    const out: PtySessionId[] = []
     for (const [id, s] of Array.from(this.surfaces.entries())) {
       if (s.launches.size > 0) out.push(id)
     }

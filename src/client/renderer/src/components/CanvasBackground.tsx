@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react'
 import type { Camera } from '../lib/camera'
 import { isWindowVisible } from '../hooks/useWindowVisible'
+import type { NodeId } from '../../../../shared/ids'
 
 export interface TreeLineNode {
-  id: string
-  parentId: string
+  id: NodeId
+  parentId: NodeId
   x: number
   y: number
 }

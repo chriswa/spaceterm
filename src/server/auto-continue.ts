@@ -8,6 +8,7 @@
  */
 
 import { log } from '../client/main/logger'
+import type { PtySessionId } from '../shared/ids'
 
 /**
  * Regex to strip ANSI escape sequences from terminal output so we can
@@ -50,8 +51,8 @@ export function findApiErrorMatch(strippedScrollbackTail: string): RegExpExecArr
 }
 
 export interface PotentialErrorDetectorDeps {
-  getScrollback(surfaceId: string): string | null
-  getNodeTitle(surfaceId: string): string | null
+  getScrollback(surfaceId: PtySessionId): string | null
+  getNodeTitle(surfaceId: PtySessionId): string | null
 }
 
 export class PotentialErrorDetector {
@@ -65,7 +66,7 @@ export class PotentialErrorDetector {
    * Called when a surface transitions to 'stopped'. Checks the scrollback
    * for API error patterns and returns whether it should be marked for review.
    */
-  hasPotentialError(surfaceId: string): boolean {
+  hasPotentialError(surfaceId: PtySessionId): boolean {
     const scrollback = this.deps.getScrollback(surfaceId)
     if (!scrollback) return false
 

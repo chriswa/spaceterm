@@ -15,12 +15,13 @@ import type {
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { StatePersister } from './persistence'
 import { getAncestorCwd } from './path-utils'
+import { asNodeId, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { isDisposable } from '../shared/node-utils'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
 
-export type NodeUpdateCallback = (nodeId: string, fields: Partial<NodeData>) => void
+export type NodeUpdateCallback = (nodeId: NodeId, fields: Partial<NodeData>) => void
 export type NodeAddCallback = (node: NodeData) => void
-export type NodeRemoveCallback = (nodeId: string) => void
+export type NodeRemoveCallback = (nodeId: NodeId) => void
 
 /** Everything StateManager pushes back out to the rest of the server. */
 export interface StateManagerDeps {
@@ -41,12 +42,12 @@ export class StateManager {
   private onNodeRemove: NodeRemoveCallback
   private persister: StatePersister
   /** Maps active PTY session ID → node ID (they diverge after reincarnation) */
-  private sessionToNodeId = new Map<string, string>()
+  private sessionToNodeId = new Map<PtySessionId, NodeId>()
   /** Tracks node IDs mid-restart — prevents terminalExited from archiving the node */
-  private restartingNodes = new Set<string>()
+  private restartingNodes = new Set<NodeId>()
   /** Tracks node IDs spawned by startup revival — terminalExited skips archival so the
    *  surface stays visible as a dead remnant the user can manually retry. */
-  private revivingNodes = new Set<string>()
+  private revivingNodes = new Set<NodeId>()
 
   constructor(deps: StateManagerDeps, options: StateManagerOptions = {}) {
     this.onNodeUpdate = deps.onNodeUpdate
@@ -83,8 +84,8 @@ export class StateManager {
    * (alive === true) or a prior startup marked them dead but crashed before
    * the revival loop could re-spawn them (alive === false).
    */
-  processDeadTerminals(): Array<{ nodeId: string; claudeSessionId?: string; cwd?: string; extraCliArgs?: string }> {
-    const deadList: Array<{ nodeId: string; claudeSessionId?: string; cwd?: string; extraCliArgs?: string }> = []
+  processDeadTerminals(): Array<{ nodeId: NodeId; claudeSessionId?: ClaudeSessionId; cwd?: string; extraCliArgs?: string }> {
+    const deadList: Array<{ nodeId: NodeId; claudeSessionId?: ClaudeSessionId; cwd?: string; extraCliArgs?: string }> = []
 
     for (const node of Object.values(this.state.nodes)) {
       if (node.type !== 'terminal') continue
@@ -120,34 +121,34 @@ export class StateManager {
   /**
    * Archive a specific terminal node (public wrapper for archiveNode).
    */
-  archiveTerminal(nodeId: string): void {
+  archiveTerminal(nodeId: NodeId): void {
     this.archiveNode(nodeId)
   }
 
   /** Mark a node as mid-restart so terminalExited skips archival. */
-  markRestarting(nodeId: string): void {
+  markRestarting(nodeId: NodeId): void {
     this.restartingNodes.add(nodeId)
     console.log(`[restart] Marking node ${nodeId.slice(0, 8)} as restarting`)
   }
 
   /** Mark a node as spawned by startup revival.  If the PTY exits,
    *  terminalExited will leave it as a dead remnant instead of archiving. */
-  markReviving(nodeId: string): void {
+  markReviving(nodeId: NodeId): void {
     this.revivingNodes.add(nodeId)
   }
 
   /** Clear the reviving flag (called once the PTY is confirmed stable). */
-  clearReviving(nodeId: string): void {
+  clearReviving(nodeId: NodeId): void {
     this.revivingNodes.delete(nodeId)
   }
 
   /** Check if a node was spawned by startup revival and is still in the protection window. */
-  isReviving(nodeId: string): boolean {
+  isReviving(nodeId: NodeId): boolean {
     return this.revivingNodes.has(nodeId)
   }
 
   /** Update extra CLI args on a terminal node, broadcast, and persist. */
-  updateExtraCliArgs(nodeId: string, extraCliArgs: string): void {
+  updateExtraCliArgs(nodeId: NodeId, extraCliArgs: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
     node.extraCliArgs = extraCliArgs
@@ -168,7 +169,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  getNode(id: string): NodeData | undefined {
+  getNode(id: NodeId): NodeData | undefined {
     return this.state.nodes[id]
   }
 
@@ -178,8 +179,8 @@ export class StateManager {
    * Create a terminal node for a newly spawned PTY session.
    */
   createTerminal(
-    sessionId: string,
-    parentId: string,
+    sessionId: PtySessionId,
+    parentId: NodeId,
     x: number,
     y: number,
     cols: number,
@@ -187,7 +188,7 @@ export class StateManager {
     cwd?: string,
     initialTitleHistory?: string[],
     name?: string,
-    insertAfterNodeId?: string,
+    insertAfterNodeId?: NodeId,
     agentType?: 'claude' | 'cursor' | 'codex'
   ): TerminalNodeData {
     const zIndex = this.state.nextZIndex++
@@ -219,8 +220,9 @@ export class StateManager {
       sortOrder = this.nextSortOrder()
     }
 
+    const nodeId = nodeIdFromFirstPtySession(sessionId)
     const node: TerminalNodeData = {
-      id: sessionId,
+      id: nodeId,
       type: 'terminal',
       alive: true,
       sessionId,
@@ -244,15 +246,15 @@ export class StateManager {
       ...(agentType ? { agentType } : {})
     }
 
-    this.state.nodes[sessionId] = node
-    this.sessionToNodeId.set(sessionId, sessionId)
+    this.state.nodes[nodeId] = node
+    this.sessionToNodeId.set(sessionId, nodeId)
     this.onNodeAdd(node)
     this.schedulePersist()
     return node
   }
 
   /** Resolve a PTY session ID to its terminal node. */
-  private getTerminalBySession(ptySessionId: string): TerminalNodeData | undefined {
+  private getTerminalBySession(ptySessionId: PtySessionId): TerminalNodeData | undefined {
     const nodeId = this.sessionToNodeId.get(ptySessionId)
     if (!nodeId) return undefined
     const node = this.state.nodes[nodeId]
@@ -260,9 +262,35 @@ export class StateManager {
     return node
   }
 
-  /** Get the node ID for a PTY session ID. */
-  getNodeIdForSession(ptySessionId: string): string | undefined {
+  /**
+   * Get the node ID for a *live, registered* PTY session ID.
+   *
+   * Returns undefined for a session the in-memory map does not know about. When
+   * you want "whatever node this pty belongs to", including sessions the map has
+   * not caught up with, use {@link resolveNodeIdForPtySession}.
+   */
+  getNodeIdForSession(ptySessionId: PtySessionId): NodeId | undefined {
     return this.sessionToNodeId.get(ptySessionId)
+  }
+
+  /**
+   * Resolve a PTY session ID to its node, consulting node data when the
+   * in-memory map comes up empty.
+   *
+   * The map is authoritative for live sessions but is rebuilt lazily as ptys
+   * register, so a miss does not mean "no such node". Callers used to paper over
+   * that with `getNodeIdForSession(id) ?? id`, which only works while a
+   * terminal's node id and pty session id still coincide — that is, until its
+   * first restart. Scanning `sessionId` is correct in both cases, and is the
+   * same reasoning `getNodeIdForClaudeSession` already applies.
+   */
+  resolveNodeIdForPtySession(ptySessionId: PtySessionId): NodeId | undefined {
+    const mapped = this.sessionToNodeId.get(ptySessionId)
+    if (mapped) return mapped
+    for (const node of Object.values(this.state.nodes)) {
+      if (node.type === 'terminal' && node.sessionId === ptySessionId) return node.id
+    }
+    return undefined
   }
 
   /**
@@ -271,7 +299,7 @@ export class StateManager {
    * nodes such as title cards. Returns undefined if the chain reaches the root
    * without hitting a terminal. Deterministic: every node has a single parent.
    */
-  getNearestTerminalAncestor(nodeId: string): string | undefined {
+  getNearestTerminalAncestor(nodeId: NodeId): NodeId | undefined {
     const start = this.state.nodes[nodeId]
     if (!start) return undefined
     let currentId: string = start.parentId
@@ -301,8 +329,8 @@ export class StateManager {
    * whereas node data is loaded from disk at startup — so this resolves an alive
    * terminal correctly even immediately after a restart.
    */
-  getNodeIdForClaudeSession(claudeSessionId: string): string | undefined {
-    let fallback: string | undefined
+  getNodeIdForClaudeSession(claudeSessionId: ClaudeSessionId): NodeId | undefined {
+    let fallback: NodeId | undefined
     for (const node of Object.values(this.state.nodes)) {
       if (node.type !== 'terminal') continue
       const hosts =
@@ -318,7 +346,7 @@ export class StateManager {
   /**
    * Handle terminal PTY exit: update metadata then immediately archive.
    */
-  terminalExited(ptySessionId: string, exitCode: number): void {
+  terminalExited(ptySessionId: PtySessionId, exitCode: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
 
@@ -363,7 +391,7 @@ export class StateManager {
    * @param nodeId - The node ID of the remnant
    * @param newPtySessionId - The new PTY session ID from SessionManager
    */
-  reincarnateTerminal(nodeId: string, newPtySessionId: string, cols: number, rows: number): void {
+  reincarnateTerminal(nodeId: NodeId, newPtySessionId: PtySessionId, cols: number, rows: number): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
     console.log(`[restart] Reincarnated node ${nodeId.slice(0, 8)} → session ${newPtySessionId.slice(0, 8)}`)
@@ -406,7 +434,7 @@ export class StateManager {
 
   // --- Node mutations ---
 
-  moveNode(nodeId: string, x: number, y: number): void {
+  moveNode(nodeId: NodeId, x: number, y: number): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     node.x = x
@@ -415,7 +443,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  batchMoveNodes(moves: Array<{ nodeId: string; x: number; y: number }>): void {
+  batchMoveNodes(moves: Array<{ nodeId: NodeId; x: number; y: number }>): void {
     for (const { nodeId, x, y } of moves) {
       const node = this.state.nodes[nodeId]
       if (node) {
@@ -427,7 +455,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  renameNode(nodeId: string, name: string): void {
+  renameNode(nodeId: NodeId, name: string): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     node.name = name || null
@@ -435,7 +463,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  setNodeColor(nodeId: string, colorPresetId: string): void {
+  setNodeColor(nodeId: NodeId, colorPresetId: string): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     node.colorPresetId = colorPresetId
@@ -443,7 +471,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  reorderCrabs(orderedIds: string[]): void {
+  reorderCrabs(orderedIds: NodeId[]): void {
     for (let i = 0; i < orderedIds.length; i++) {
       const node = this.state.nodes[orderedIds[i]]
       if (!node || node.type !== 'terminal') continue
@@ -455,7 +483,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  bringToFront(nodeId: string): void {
+  bringToFront(nodeId: NodeId): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     node.zIndex = this.state.nextZIndex++
@@ -464,7 +492,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  reparentNode(nodeId: string, newParentId: string): void {
+  reparentNode(nodeId: NodeId, newParentId: NodeId): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     node.parentId = newParentId
@@ -480,7 +508,7 @@ export class StateManager {
    * - P becomes C's child
    * - C's former children become P's children
    */
-  swapParentChild(nodeId: string, childId: string): void {
+  swapParentChild(nodeId: NodeId, childId: NodeId): void {
     const parent = this.state.nodes[nodeId]
     const child = this.state.nodes[childId]
     if (!parent || !child) return
@@ -489,10 +517,10 @@ export class StateManager {
     const oldParentOfP = parent.parentId
 
     // Collect C's current children before mutating
-    const cChildIds: string[] = []
-    for (const id in this.state.nodes) {
-      if (this.state.nodes[id].parentId === childId) {
-        cChildIds.push(id)
+    const cChildIds: NodeId[] = []
+    for (const node of Object.values(this.state.nodes)) {
+      if (node.parentId === childId) {
+        cChildIds.push(node.id)
       }
     }
 
@@ -521,7 +549,7 @@ export class StateManager {
   /**
    * Archive a node: snapshot into parent's archivedChildren, reparent children, remove node.
    */
-  archiveNode(nodeId: string): void {
+  archiveNode(nodeId: NodeId): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     console.log(`[archive] Archiving node ${nodeId.slice(0, 8)}`)
@@ -540,9 +568,9 @@ export class StateManager {
         archivedAt: new Date().toISOString(),
         data: JSON.parse(JSON.stringify(node)) // deep copy
       }
-      if (parentId === 'root') {
+      if (parentId === ROOT_NODE_ID) {
         this.state.rootArchivedChildren.push(snapshot)
-        this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+        this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
       } else {
         const parent = this.state.nodes[parentId]
         if (parent) {
@@ -571,9 +599,9 @@ export class StateManager {
   /**
    * Read archived node data without modifying state.
    */
-  peekArchivedNode(parentNodeId: string, archivedNodeId: string): NodeData | undefined {
+  peekArchivedNode(parentNodeId: NodeId, archivedNodeId: NodeId): NodeData | undefined {
     let archiveArray: import('../shared/state').ArchivedNode[]
-    if (parentNodeId === 'root') {
+    if (parentNodeId === ROOT_NODE_ID) {
       archiveArray = this.state.rootArchivedChildren
     } else {
       const parent = this.state.nodes[parentNodeId]
@@ -587,10 +615,10 @@ export class StateManager {
   /**
    * Unarchive a node: restore from parent's archivedChildren back into the node tree.
    */
-  unarchiveNode(parentNodeId: string, archivedNodeId: string, positionOverride?: { x: number; y: number }): void {
+  unarchiveNode(parentNodeId: NodeId, archivedNodeId: NodeId, positionOverride?: { x: number; y: number }): void {
     // Find the archive array
     let archiveArray: import('../shared/state').ArchivedNode[]
-    if (parentNodeId === 'root') {
+    if (parentNodeId === ROOT_NODE_ID) {
       archiveArray = this.state.rootArchivedChildren
     } else {
       const parent = this.state.nodes[parentNodeId]
@@ -625,8 +653,8 @@ export class StateManager {
     this.onNodeAdd(restoredNode)
 
     // Broadcast updated archivedChildren on the parent
-    if (parentNodeId === 'root') {
-      this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+    if (parentNodeId === ROOT_NODE_ID) {
+      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
     } else {
       const parent = this.state.nodes[parentNodeId]
       if (parent) {
@@ -640,9 +668,9 @@ export class StateManager {
   /**
    * Delete an archived node entry permanently.
    */
-  deleteArchivedNode(parentNodeId: string, archivedNodeId: string): void {
+  deleteArchivedNode(parentNodeId: NodeId, archivedNodeId: NodeId): void {
     let archiveArray: import('../shared/state').ArchivedNode[]
-    if (parentNodeId === 'root') {
+    if (parentNodeId === ROOT_NODE_ID) {
       archiveArray = this.state.rootArchivedChildren
     } else {
       const parent = this.state.nodes[parentNodeId]
@@ -655,8 +683,8 @@ export class StateManager {
     archiveArray.splice(idx, 1)
 
     // Broadcast updated archivedChildren on the parent
-    if (parentNodeId === 'root') {
-      this.onNodeUpdate('root', { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+    if (parentNodeId === ROOT_NODE_ID) {
+      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
     } else {
       const parent = this.state.nodes[parentNodeId]
       if (parent) {
@@ -689,7 +717,7 @@ export class StateManager {
 
   // --- Terminal metadata updates (from SessionManager callbacks) ---
 
-  updateTerminalSize(ptySessionId: string, cols: number, rows: number): void {
+  updateTerminalSize(ptySessionId: PtySessionId, cols: number, rows: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.cols = cols
@@ -698,7 +726,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateCwd(ptySessionId: string, cwd: string): void {
+  updateCwd(ptySessionId: PtySessionId, cwd: string): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.cwd = cwd
@@ -709,7 +737,7 @@ export class StateManager {
     this.recheckDescendantCwdAlerts(node.id)
   }
 
-  updateShellTitleHistory(ptySessionId: string, history: string[]): void {
+  updateShellTitleHistory(ptySessionId: PtySessionId, history: string[]): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.shellTitleHistory = history
@@ -724,7 +752,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateClaudeSessionHistory(ptySessionId: string, history: ClaudeSessionEntry[]): void {
+  updateClaudeSessionHistory(ptySessionId: PtySessionId, history: ClaudeSessionEntry[]): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.claudeSessionHistory = history
@@ -756,7 +784,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateClaudeState(ptySessionId: string, state: import('../shared/state').ClaudeState): void {
+  updateClaudeState(ptySessionId: PtySessionId, state: import('../shared/state').ClaudeState): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.claudeState = state
@@ -764,7 +792,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateClaudeModel(ptySessionId: string, model: string): void {
+  updateClaudeModel(ptySessionId: PtySessionId, model: string): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node || node.claudeModel === model) return
     node.claudeModel = model
@@ -772,7 +800,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateClaudeContextPercent(ptySessionId: string, percent: number): void {
+  updateClaudeContextPercent(ptySessionId: PtySessionId, percent: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node || node.claudeContextPercent === percent) return
     node.claudeContextPercent = percent
@@ -780,7 +808,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateClaudeSessionLineCount(ptySessionId: string, lineCount: number): void {
+  updateClaudeSessionLineCount(ptySessionId: PtySessionId, lineCount: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node || node.claudeSessionLineCount === lineCount) return
     node.claudeSessionLineCount = lineCount
@@ -788,15 +816,15 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  getClaudeContextPercent(ptySessionId: string): number | null {
+  getClaudeContextPercent(ptySessionId: PtySessionId): number | null {
     return this.getTerminalBySession(ptySessionId)?.claudeContextPercent ?? null
   }
 
-  getClaudeSessionLineCount(ptySessionId: string): number | null {
+  getClaudeSessionLineCount(ptySessionId: PtySessionId): number | null {
     return this.getTerminalBySession(ptySessionId)?.claudeSessionLineCount ?? null
   }
 
-  updateClaudeStateDecisionTime(ptySessionId: string, timestamp: number): void {
+  updateClaudeStateDecisionTime(ptySessionId: PtySessionId, timestamp: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.claudeStateDecidedAt = timestamp
@@ -804,7 +832,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateClaudeStatusUnread(ptySessionId: string, unread: boolean): void {
+  updateClaudeStatusUnread(ptySessionId: PtySessionId, unread: boolean): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.claudeStatusUnread = unread
@@ -812,7 +840,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateClaudeStatusAsleep(ptySessionId: string, asleep: boolean): void {
+  updateClaudeStatusAsleep(ptySessionId: PtySessionId, asleep: boolean): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     node.claudeStatusAsleep = asleep
@@ -820,7 +848,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateLastInteracted(ptySessionId: string, timestamp: number): void {
+  updateLastInteracted(ptySessionId: PtySessionId, timestamp: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     const prevMinute = node.lastInteractedAt ? Math.floor(node.lastInteractedAt / 60000) : -1
@@ -835,7 +863,7 @@ export class StateManager {
 
   // --- Directory operations ---
 
-  createDirectory(parentId: string, x: number, y: number, cwd: string): DirectoryNodeData {
+  createDirectory(parentId: NodeId, x: number, y: number, cwd: string): DirectoryNodeData {
     const home = homedir()
     if (cwd === home) {
       cwd = '~'
@@ -843,7 +871,7 @@ export class StateManager {
       cwd = '~' + cwd.slice(home.length)
     }
 
-    const id = randomUUID()
+    const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
 
     const node: DirectoryNodeData = {
@@ -864,7 +892,7 @@ export class StateManager {
     return node
   }
 
-  updateDirectoryCwd(nodeId: string, cwd: string): void {
+  updateDirectoryCwd(nodeId: NodeId, cwd: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'directory') return
     node.cwd = cwd
@@ -874,7 +902,7 @@ export class StateManager {
     this.recheckDescendantCwdAlerts(nodeId)
   }
 
-  updateDirectoryGitStatus(nodeId: string, gitStatus: GitStatus | null): void {
+  updateDirectoryGitStatus(nodeId: NodeId, gitStatus: GitStatus | null): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'directory') return
     node.gitStatus = gitStatus
@@ -890,8 +918,8 @@ export class StateManager {
 
   // --- File operations ---
 
-  createFile(parentId: string, x: number, y: number, filePath: string): FileNodeData {
-    const id = randomUUID()
+  createFile(parentId: NodeId, x: number, y: number, filePath: string): FileNodeData {
+    const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
 
     const node: FileNodeData = {
@@ -912,7 +940,7 @@ export class StateManager {
     return node
   }
 
-  updateFilePath(nodeId: string, filePath: string): void {
+  updateFilePath(nodeId: NodeId, filePath: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'file') return
     node.filePath = filePath
@@ -922,8 +950,8 @@ export class StateManager {
 
   // --- Markdown operations ---
 
-  createMarkdown(parentId: string, x: number, y: number, content?: string, fileBacked?: boolean): MarkdownNodeData {
-    const id = randomUUID()
+  createMarkdown(parentId: NodeId, x: number, y: number, content?: string, fileBacked?: boolean): MarkdownNodeData {
+    const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
 
     const node: MarkdownNodeData = {
@@ -948,7 +976,7 @@ export class StateManager {
     return node
   }
 
-  resizeMarkdown(nodeId: string, width: number, height: number): void {
+  resizeMarkdown(nodeId: NodeId, width: number, height: number): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'markdown') return
     node.width = width
@@ -957,7 +985,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  updateMarkdownContent(nodeId: string, content: string): void {
+  updateMarkdownContent(nodeId: NodeId, content: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'markdown') return
     node.content = content
@@ -965,7 +993,7 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  setMarkdownMaxWidth(nodeId: string, maxWidth: number): void {
+  setMarkdownMaxWidth(nodeId: NodeId, maxWidth: number): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'markdown') return
     node.maxWidth = maxWidth
@@ -975,8 +1003,8 @@ export class StateManager {
 
   // --- Title operations ---
 
-  createTitle(parentId: string, x: number, y: number, text?: string): TitleNodeData {
-    const id = randomUUID()
+  createTitle(parentId: NodeId, x: number, y: number, text?: string): TitleNodeData {
+    const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
 
     const node: TitleNodeData = {
@@ -997,7 +1025,7 @@ export class StateManager {
     return node
   }
 
-  updateTitleText(nodeId: string, text: string): void {
+  updateTitleText(nodeId: NodeId, text: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'title') return
     node.text = text
@@ -1067,7 +1095,7 @@ export class StateManager {
   }
 
   /** BFS descendants of nodeId, calling checkCwdMismatchAlert on every Claude terminal found. */
-  recheckDescendantCwdAlerts(nodeId: string): void {
+  recheckDescendantCwdAlerts(nodeId: NodeId): void {
     const queue = [nodeId]
     const visited = new Set<string>()
     while (queue.length > 0) {
@@ -1089,7 +1117,7 @@ export class StateManager {
   }
 
   /** Set the alerts-read timestamp on a node. */
-  setAlertsReadTimestamp(nodeId: string, timestamp: number): void {
+  setAlertsReadTimestamp(nodeId: NodeId, timestamp: number): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     node.alertsReadTimestamp = timestamp

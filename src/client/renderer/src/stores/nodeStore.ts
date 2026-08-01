@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, ArchivedNode } from '../../../../shared/state'
 import { nodePixelSize } from '../../../../shared/node-size'
+import { type NodeId } from '../../../../shared/ids'
 
 export { nodePixelSize }
 
@@ -40,24 +41,24 @@ interface NodeStoreState {
   clearFreshlyCreated(id: string): void
 
   // --- Local mutations (optimistic, instant) ---
-  moveNode(id: string, x: number, y: number): void
+  moveNode(id: NodeId, x: number, y: number): void
   batchMoveNodes(moves: Array<{ id: string; dx: number; dy: number }>): void
-  renameNode(id: string, name: string): void
-  setNodeColor(id: string, colorPresetId: string): void
+  renameNode(id: NodeId, name: string): void
+  setNodeColor(id: NodeId, colorPresetId: string): void
   bringToFront(id: string): void
 
   // --- File content ---
-  applyFileContent(nodeId: string, content: string): void
+  applyFileContent(nodeId: NodeId, content: string): void
 
   // --- Server sync handlers ---
   applyServerState(state: ServerState): void
-  applyServerNodeUpdate(id: string, fields: Partial<NodeData>): void
+  applyServerNodeUpdate(id: NodeId, fields: Partial<NodeData>): void
   applyServerNodeAdd(node: NodeData): void
   applyServerNodeRemove(id: string): void
 
   // --- Override management ---
-  setOverride(id: string, fields: Partial<NodeData>, suppressFields: string[]): void
-  clearOverride(id: string, fields?: string[]): void
+  setOverride(id: NodeId, fields: Partial<NodeData>, suppressFields: string[]): void
+  clearOverride(id: NodeId, fields?: string[]): void
 }
 
 function recomputeDerived(nodes: Record<string, NodeData>) {

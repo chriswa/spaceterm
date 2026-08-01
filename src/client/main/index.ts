@@ -9,6 +9,7 @@ import { ServerClient } from './server-client'
 import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
 import { loadWindowState, saveWindowState, findTargetDisplay } from './window-state'
+import { asPtySessionId, type NodeId, type PtySessionId } from '../../shared/ids'
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
@@ -18,18 +19,19 @@ const CLIENT_RESTART_EXIT_CODE = 75
 
 // Surface id from a `spaceterm-surface://` link that arrived before the server
 // connection was ready (cold launch). Flushed once the client connects.
-let pendingFocusSurfaceId: string | null = null
+let pendingFocusSurfaceId: PtySessionId | null = null
 // Node id to focus once the renderer has finished loading (cold launch).
 let pendingFocusNodeId: string | null = null
 
-function parseSurfaceUrl(url: string): string | null {
+/** A `spaceterm-surface://<id>` deep link carries a pty session id. */
+function parseSurfaceUrl(url: string): PtySessionId | null {
   const prefix = 'spaceterm-surface://'
   if (!url.startsWith(prefix)) return null
   const id = decodeURIComponent(url.slice(prefix.length).replace(/^\/+/, '').replace(/\/+$/, ''))
-  return id || null
+  return id ? asPtySessionId(id) : null
 }
 
-function requestFocusSurface(surfaceId: string): void {
+function requestFocusSurface(surfaceId: PtySessionId): void {
   if (client?.isConnected()) {
     client.focusSurface(surfaceId)
   } else {
@@ -39,7 +41,7 @@ function requestFocusSurface(surfaceId: string): void {
 
 // Bring this window to the foreground and tell the renderer to focus the node.
 // The server has already decided this client should be the one to raise.
-function raiseAndFocusNode(nodeId: string): void {
+function raiseAndFocusNode(nodeId: NodeId): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -172,16 +174,16 @@ function setupIPC(): void {
     return client!.list()
   })
 
-  ipcMain.handle('pty:attach', async (_event, sessionId: string) => {
+  ipcMain.handle('pty:attach', async (_event, sessionId: PtySessionId) => {
     const { scrollback, claudeContextPercent, claudeSessionLineCount } = await client!.attach(sessionId)
     return { scrollback, claudeContextPercent, claudeSessionLineCount }
   })
 
-  ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {
+  ipcMain.on('pty:write', (_event, sessionId: PtySessionId, data: string) => {
     client!.write(sessionId, data)
   })
 
-  ipcMain.on('pty:resize', (_event, sessionId: string, cols: number, rows: number) => {
+  ipcMain.on('pty:resize', (_event, sessionId: PtySessionId, cols: number, rows: number) => {
     client!.resize(sessionId, cols, rows)
   })
 
@@ -214,7 +216,7 @@ function setupIPC(): void {
     return filepath
   })
 
-  ipcMain.handle('pty:destroy', async (_event, sessionId: string) => {
+  ipcMain.handle('pty:destroy', async (_event, sessionId: PtySessionId) => {
     await client!.destroy(sessionId)
   })
 
@@ -232,7 +234,7 @@ function setupIPC(): void {
     setTimeout(() => app.exit(CLIENT_RESTART_EXIT_CODE), 50)
   })
 
-  ipcMain.on('summary-chat:start', (_event, nodeId: string) => {
+  ipcMain.on('summary-chat:start', (_event, nodeId: NodeId) => {
     logger.log(`[summary-chat] requested for node=${nodeId.slice(0, 8)}`)
     client!.startSummaryChat(nodeId)
   })
@@ -245,31 +247,31 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:move', async (_event, nodeId: string, x: number, y: number) => {
+  ipcMain.handle('node:move', async (_event, nodeId: NodeId, x: number, y: number) => {
     await client!.nodeMove(nodeId, x, y)
   })
 
-  ipcMain.handle('node:batch-move', async (_event, moves: Array<{ nodeId: string; x: number; y: number }>) => {
+  ipcMain.handle('node:batch-move', async (_event, moves: Array<{ nodeId: NodeId; x: number; y: number }>) => {
     await client!.nodeBatchMove(moves)
   })
 
-  ipcMain.handle('node:rename', async (_event, nodeId: string, name: string) => {
+  ipcMain.handle('node:rename', async (_event, nodeId: NodeId, name: string) => {
     await client!.nodeRename(nodeId, name)
   })
 
-  ipcMain.handle('node:set-color', async (_event, nodeId: string, colorPresetId: string) => {
+  ipcMain.handle('node:set-color', async (_event, nodeId: NodeId, colorPresetId: string) => {
     await client!.nodeSetColor(nodeId, colorPresetId)
   })
 
-  ipcMain.handle('node:archive', async (_event, nodeId: string) => {
+  ipcMain.handle('node:archive', async (_event, nodeId: NodeId) => {
     await client!.nodeArchive(nodeId)
   })
 
-  ipcMain.handle('node:unarchive', async (_event, parentNodeId: string, archivedNodeId: string) => {
+  ipcMain.handle('node:unarchive', async (_event, parentNodeId: NodeId, archivedNodeId: NodeId) => {
     await client!.nodeUnarchive(parentNodeId, archivedNodeId)
   })
 
-  ipcMain.handle('node:archive-delete', async (_event, parentNodeId: string, archivedNodeId: string) => {
+  ipcMain.handle('node:archive-delete', async (_event, parentNodeId: NodeId, archivedNodeId: NodeId) => {
     await client!.nodeArchiveDelete(parentNodeId, archivedNodeId)
   })
 
@@ -281,19 +283,19 @@ function setupIPC(): void {
     await client!.undoSetCursor(cursor)
   })
 
-  ipcMain.handle('node:bring-to-front', async (_event, nodeId: string) => {
+  ipcMain.handle('node:bring-to-front', async (_event, nodeId: NodeId) => {
     await client!.nodeBringToFront(nodeId)
   })
 
-  ipcMain.handle('node:reparent', async (_event, nodeId: string, newParentId: string) => {
+  ipcMain.handle('node:reparent', async (_event, nodeId: NodeId, newParentId: NodeId) => {
     await client!.nodeReparent(nodeId, newParentId)
   })
 
-  ipcMain.handle('node:swap-parent-child', async (_event, nodeId: string, childId: string) => {
+  ipcMain.handle('node:swap-parent-child', async (_event, nodeId: NodeId, childId: NodeId) => {
     await client!.nodeSwapParentChild(nodeId, childId)
   })
 
-  ipcMain.handle('node:terminal-create', async (_event, parentId: string, options?: Record<string, unknown>, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string) => {
+  ipcMain.handle('node:terminal-create', async (_event, parentId: NodeId, options?: Record<string, unknown>, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string) => {
     const resp = await client!.terminalCreate(parentId, options as any, initialTitleHistory, initialName, x, y, initialInput)
     if (resp.type === 'created') {
       // Auto-attach so we receive data events for this session
@@ -303,11 +305,11 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:terminal-resize', async (_event, nodeId: string, cols: number, rows: number) => {
+  ipcMain.handle('node:terminal-resize', async (_event, nodeId: NodeId, cols: number, rows: number) => {
     await client!.terminalResize(nodeId, cols, rows)
   })
 
-  ipcMain.handle('node:terminal-reincarnate', async (_event, nodeId: string, options?: Record<string, unknown>) => {
+  ipcMain.handle('node:terminal-reincarnate', async (_event, nodeId: NodeId, options?: Record<string, unknown>) => {
     const resp = await client!.terminalReincarnate(nodeId, options as any)
     if (resp.type === 'created') {
       // Auto-attach so we receive data events for the new session
@@ -317,21 +319,21 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:directory-add', async (_event, parentId: string, cwd: string, x?: number, y?: number) => {
+  ipcMain.handle('node:directory-add', async (_event, parentId: NodeId, cwd: string, x?: number, y?: number) => {
     const resp = await client!.directoryAdd(parentId, cwd, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
 
-  ipcMain.handle('node:directory-cwd', async (_event, nodeId: string, cwd: string) => {
+  ipcMain.handle('node:directory-cwd', async (_event, nodeId: NodeId, cwd: string) => {
     await client!.directoryCwd(nodeId, cwd)
   })
 
-  ipcMain.handle('node:directory-git-fetch', async (_event, nodeId: string) => {
+  ipcMain.handle('node:directory-git-fetch', async (_event, nodeId: NodeId) => {
     await client!.directoryGitFetch(nodeId)
   })
 
-  ipcMain.handle('node:directory-wt-spawn', async (_event, nodeId: string, branchName: string) => {
+  ipcMain.handle('node:directory-wt-spawn', async (_event, nodeId: NodeId, branchName: string) => {
     const resp = await client!.directoryWtSpawn(nodeId, branchName)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     throw new Error('wt-spawn failed')
@@ -343,13 +345,13 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:file-add', async (_event, parentId: string, filePath: string, x?: number, y?: number) => {
+  ipcMain.handle('node:file-add', async (_event, parentId: NodeId, filePath: string, x?: number, y?: number) => {
     const resp = await client!.fileAdd(parentId, filePath, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
 
-  ipcMain.handle('node:file-path', async (_event, nodeId: string, filePath: string) => {
+  ipcMain.handle('node:file-path', async (_event, nodeId: NodeId, filePath: string) => {
     await client!.filePath(nodeId, filePath)
   })
 
@@ -359,35 +361,35 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:markdown-add', async (_event, parentId: string, x?: number, y?: number) => {
+  ipcMain.handle('node:markdown-add', async (_event, parentId: NodeId, x?: number, y?: number) => {
     const resp = await client!.markdownAdd(parentId, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
 
-  ipcMain.handle('node:markdown-resize', async (_event, nodeId: string, width: number, height: number) => {
+  ipcMain.handle('node:markdown-resize', async (_event, nodeId: NodeId, width: number, height: number) => {
     await client!.markdownResize(nodeId, width, height)
   })
 
-  ipcMain.handle('node:markdown-content', async (_event, nodeId: string, content: string) => {
+  ipcMain.handle('node:markdown-content', async (_event, nodeId: NodeId, content: string) => {
     await client!.markdownContent(nodeId, content)
   })
 
-  ipcMain.handle('node:markdown-set-max-width', async (_event, nodeId: string, maxWidth: number) => {
+  ipcMain.handle('node:markdown-set-max-width', async (_event, nodeId: NodeId, maxWidth: number) => {
     await client!.markdownSetMaxWidth(nodeId, maxWidth)
   })
 
-  ipcMain.handle('node:title-add', async (_event, parentId: string, x?: number, y?: number) => {
+  ipcMain.handle('node:title-add', async (_event, parentId: NodeId, x?: number, y?: number) => {
     const resp = await client!.titleAdd(parentId, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
     return {}
   })
 
-  ipcMain.handle('node:title-text', async (_event, nodeId: string, text: string) => {
+  ipcMain.handle('node:title-text', async (_event, nodeId: NodeId, text: string) => {
     await client!.titleText(nodeId, text)
   })
 
-  ipcMain.handle('node:fork-session', async (_event, nodeId: string) => {
+  ipcMain.handle('node:fork-session', async (_event, nodeId: NodeId) => {
     const resp = await client!.forkSession(nodeId)
     if (resp.type === 'created') {
       await client!.attach(resp.sessionId)
@@ -396,7 +398,7 @@ function setupIPC(): void {
     throw new Error('Unexpected response')
   })
 
-  ipcMain.handle('node:terminal-restart', async (_event, nodeId: string, extraCliArgs: string) => {
+  ipcMain.handle('node:terminal-restart', async (_event, nodeId: NodeId, extraCliArgs: string) => {
     logger.log(`[terminal-restart] Restart requested for node=${nodeId.slice(0, 8)} extraCliArgs=${JSON.stringify(extraCliArgs)}`)
     try {
       const resp = await client!.terminalRestart(nodeId, extraCliArgs)
@@ -417,19 +419,19 @@ function setupIPC(): void {
     await client!.crabReorder(order)
   })
 
-  ipcMain.on('node:set-terminal-mode', (_event, sessionId: string, mode: 'live' | 'snapshot') => {
+  ipcMain.on('node:set-terminal-mode', (_event, sessionId: PtySessionId, mode: 'live' | 'snapshot') => {
     client!.setTerminalMode(sessionId, mode)
   })
 
-  ipcMain.on('node:set-claude-status-unread', (_event, sessionId: string, unread: boolean) => {
+  ipcMain.on('node:set-claude-status-unread', (_event, sessionId: PtySessionId, unread: boolean) => {
     client!.setClaudeStatusUnread(sessionId, unread)
   })
 
-  ipcMain.on('node:set-claude-status-asleep', (_event, sessionId: string, asleep: boolean) => {
+  ipcMain.on('node:set-claude-status-asleep', (_event, sessionId: PtySessionId, asleep: boolean) => {
     client!.setClaudeStatusAsleep(sessionId, asleep)
   })
 
-  ipcMain.on('node:set-alerts-read-timestamp', (_event, nodeId: string, timestamp: number) => {
+  ipcMain.on('node:set-alerts-read-timestamp', (_event, nodeId: NodeId, timestamp: number) => {
     client!.setAlertsReadTimestamp(nodeId, timestamp)
   })
 
@@ -483,41 +485,41 @@ function wireClientEvents(): void {
   // attachments. Reloading the renderer makes its existing initial-sync path
   // rebuild from the server's authoritative state.
   let needsRendererResync = false
-  client!.on('focus-surface', (nodeId: string) => {
+  client!.on('focus-surface', (nodeId: NodeId) => {
     raiseAndFocusNode(nodeId)
   })
 
-  client!.on('data', (sessionId: string, data: string) => {
+  client!.on('data', (sessionId: PtySessionId, data: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:data:${sessionId}`, data)
     }
   })
 
-  client!.on('exit', (sessionId: string, exitCode: number) => {
+  client!.on('exit', (sessionId: PtySessionId, exitCode: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:exit:${sessionId}`, exitCode)
     }
   })
 
-  client!.on('claude-context', (sessionId: string, contextRemainingPercent: number) => {
+  client!.on('claude-context', (sessionId: PtySessionId, contextRemainingPercent: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:claude-context:${sessionId}`, contextRemainingPercent)
     }
   })
 
-  client!.on('claude-session-line-count', (sessionId: string, lineCount: number) => {
+  client!.on('claude-session-line-count', (sessionId: PtySessionId, lineCount: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:claude-session-line-count:${sessionId}`, lineCount)
     }
   })
 
-  client!.on('file-content', (nodeId: string, content: string) => {
+  client!.on('file-content', (nodeId: NodeId, content: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('node:file-content', nodeId, content)
     }
   })
 
-  client!.on('node-updated', (nodeId: string, fields: Record<string, unknown>) => {
+  client!.on('node-updated', (nodeId: NodeId, fields: Record<string, unknown>) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('node:updated', nodeId, fields)
     }
@@ -529,19 +531,19 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('node-removed', (nodeId: string) => {
+  client!.on('node-removed', (nodeId: NodeId) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('node:removed', nodeId)
     }
   })
 
-  client!.on('snapshot', (sessionId: string, snapshot: Record<string, unknown>) => {
+  client!.on('snapshot', (sessionId: PtySessionId, snapshot: Record<string, unknown>) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`snapshot:${sessionId}`, snapshot)
     }
   })
 
-  client!.on('plan-cache-update', (sessionId: string, count: number, files: string[]) => {
+  client!.on('plan-cache-update', (sessionId: PtySessionId, count: number, files: string[]) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:plan-cache-update:${sessionId}`, count, files)
     }
@@ -571,13 +573,13 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('speaking-changed', (nodeId: string, speaking: boolean, voice: string | undefined) => {
+  client!.on('speaking-changed', (nodeId: NodeId, speaking: boolean, voice: string | undefined) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('speaking-changed', nodeId, speaking, voice)
     }
   })
 
-  client!.on('summary-chat-status', (nodeId: string, state: string, message: string | undefined) => {
+  client!.on('summary-chat-status', (nodeId: NodeId, state: string, message: string | undefined) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('summary-chat-status', nodeId, state, message)
     }

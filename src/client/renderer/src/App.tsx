@@ -71,9 +71,10 @@ function getMarkdownSpawnInfo(parentNode: import('../../../shared/state').NodeDa
 }
 
 import type { SearchMode } from './lib/search'
+import { ROOT_NODE_ID, asNodeId, nodeIdFromFirstPtySession, nodeIdsOf, type NodeId, type PtySessionId } from '../../../shared/ids'
 
 export function App() {
-  const [focusedId, setFocusedId] = useState<string | null>(null)
+  const [focusedId, setFocusedId] = useState<NodeId | null>(null)
   const [scrollMode, setScrollMode] = useState(false)
   const [searchVisible, setSearchVisible] = useState(false)
   const [searchMode, setSearchMode] = useState<SearchMode>({ kind: 'global' })
@@ -87,7 +88,7 @@ export function App() {
   const [restartingSpaceterm, setRestartingSpaceterm] = useState(false)
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
-  const focusRef = useRef<string | null>(focusedId)
+  const focusRef = useRef<NodeId | null>(focusedId)
   focusRef.current = focusedId
   const navBlockUntilRef = useRef(0)
   const onCameraEvent = useCallback((cam: import('./lib/camera').Camera, type: 'flyTo' | 'settle' | 'snapback') => {
@@ -95,16 +96,16 @@ export function App() {
     if (Date.now() < navBlockUntilRef.current) return
     pushCameraHistory({ camera: cam, focusedId: focusRef.current })
   }, [])
-  const [selection, setSelection] = useState<string | null>(null)
-  const selectionRef = useRef<string | null>(null)
+  const [selection, setSelection] = useState<NodeId | null>(null)
+  const selectionRef = useRef<NodeId | null>(null)
   selectionRef.current = selection
-  const lastFocusedRef = useRef<string | null>(null)
-  const lastCrabRef = useRef<{ nodeId: string; createdAt: string } | null>(null)
-  const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: string | null; toNodeId: string; ts: number } | null>(null)
+  const lastFocusedRef = useRef<NodeId | null>(null)
+  const lastCrabRef = useRef<{ nodeId: NodeId; createdAt: string } | null>(null)
+  const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: NodeId | null; toNodeId: NodeId; ts: number } | null>(null)
   const focusRestoredRef = useRef(false)
-  const [quickActions, setQuickActions] = useState<{ nodeId: string; screenX: number; screenY: number } | null>(null)
-  const [edgeSplit, setEdgeSplit] = useState<{ parentId: string; childId: string; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
-  const cmdClickPendingRef = useRef<{ nodeId: string; screenX: number; screenY: number } | null>(null)
+  const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
+  const [edgeSplit, setEdgeSplit] = useState<{ parentId: NodeId; childId: NodeId; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
+  const cmdClickPendingRef = useRef<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
   const shiftClickPendingRef = useRef(false)
   const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop, isSpeaking } = useTTS()
@@ -189,7 +190,7 @@ export function App() {
   const resolvedPresets = useMemo(() => {
     const map: Record<string, import('./lib/color-presets').ColorPreset> = {}
     map['root'] = DEFAULT_PRESET
-    for (const id in nodes) {
+    for (const id of nodeIdsOf(nodes)) {
       map[id] = resolveInheritedPreset(nodes, id) ?? angleColorPreset(nodes[id].x, nodes[id].y)
     }
     return map
@@ -324,7 +325,7 @@ export function App() {
     const handler = (e: MouseEvent) => {
       const canvasNode = (e.target as HTMLElement).closest('.canvas-node') as HTMLElement | null
       if (!canvasNode) return
-      const nodeId = canvasNode.dataset.nodeId
+      const nodeId = canvasNode.dataset.nodeId ? asNodeId(canvasNode.dataset.nodeId) : undefined
       if (!nodeId) return
 
       // Cmd+click: quick-actions toolbar (takes priority over shift)
@@ -350,7 +351,7 @@ export function App() {
   }, [focusedId, scrollMode])
 
   // Track the focused node's parent so we can fly to it if the focused node disappears
-  const focusedParentRef = useRef<string | null>(null)
+  const focusedParentRef = useRef<NodeId | null>(null)
   useEffect(() => {
     if (!focusedId) {
       focusedParentRef.current = null
@@ -466,18 +467,18 @@ export function App() {
     })
   }, [initialSyncDone, flyTo, resetCamera])
 
-  const draggingRef = useRef(new Set<string>())
-  const dragDescendantsRef = useRef<string[]>([])
+  const draggingRef = useRef(new Set<NodeId>())
+  const dragDescendantsRef = useRef<NodeId[]>([])
 
   // Snap-to-align state
   const ctrlAtStartRef = useRef(false)
   const metaKeyWasReleasedRef = useRef(false)
-  const snapStateRef = useRef<{ nodeId: string; axis: 'x' | 'y' } | null>(null)
+  const snapStateRef = useRef<{ nodeId: NodeId; axis: 'x' | 'y' } | null>(null)
   const snapGuideRef = useRef<HTMLDivElement>(null)
 
   // Undo: pre-drag position capture
-  const preDragPositionsRef = useRef<Array<{ nodeId: string; x: number; y: number }>>([])
-  const preDragParentRef = useRef<string>('root')
+  const preDragPositionsRef = useRef<Array<{ nodeId: NodeId; x: number; y: number }>>([])
+  const preDragParentRef = useRef<NodeId>(ROOT_NODE_ID)
   const preDragDescriptionRef = useRef<string>('')
 
   // Rotational drag state (Shift+drag)
@@ -485,10 +486,10 @@ export function App() {
     pivotX: number
     pivotY: number
     initialAngle: number
-    initialOffsets: Map<string, { dx: number; dy: number }>
+    initialOffsets: Map<NodeId, { dx: number; dy: number }>
   } | null>(null)
 
-  const handleDragStart = useCallback((id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => {
+  const handleDragStart = useCallback((id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => {
     ctrlAtStartRef.current = !!ctrlAtStart
     metaKeyWasReleasedRef.current = false
     snapStateRef.current = null
@@ -513,7 +514,7 @@ export function App() {
           const pivotX = parent ? parent.x : 0
           const pivotY = parent ? parent.y : 0
           const initialAngle = Math.atan2(node.y - pivotY, node.x - pivotX)
-          const initialOffsets = new Map<string, { dx: number; dy: number }>()
+          const initialOffsets = new Map<NodeId, { dx: number; dy: number }>()
           for (const d of descendants) {
             const dn = allNodes[d]
             if (dn) {
@@ -528,7 +529,7 @@ export function App() {
     // Capture pre-drag positions for undo
     const allNodesForUndo = useNodeStore.getState().nodes
     const dragNode = allNodesForUndo[id]
-    const positions: Array<{ nodeId: string; x: number; y: number }> = []
+    const positions: Array<{ nodeId: NodeId; x: number; y: number }> = []
     if (dragNode) {
       positions.push({ nodeId: id, x: dragNode.x, y: dragNode.y })
       preDragParentRef.current = dragNode.parentId
@@ -541,7 +542,7 @@ export function App() {
     preDragPositionsRef.current = positions
   }, [])
 
-  const handleDragEnd = useCallback((id: string) => {
+  const handleDragEnd = useCallback((id: NodeId) => {
     const descendants = dragDescendantsRef.current
     draggingRef.current.delete(id)
     for (const d of descendants) {
@@ -558,7 +559,7 @@ export function App() {
     if (guide) guide.style.display = 'none'
     // Send final positions to server for dragged node + descendants
     const allNodes = useNodeStore.getState().nodes
-    const moves: Array<{ nodeId: string; x: number; y: number }> = []
+    const moves: Array<{ nodeId: NodeId; x: number; y: number }> = []
     const node = allNodes[id]
     if (node) {
       moves.push({ nodeId: id, x: node.x, y: node.y })
@@ -601,15 +602,19 @@ export function App() {
 
   // CWD tracking — ref so optimistic writes (spawnNode, createChildNode) don't trigger re-renders.
   // getAncestorCwd falls back to node.cwd from the store when cwdMapRef has no entry.
-  const cwdMapRef = useRef(new Map<string, string>())
+  // Keyed by NODE id: getAncestorCwd looks entries up while walking the parentId
+  // chain. Spawn sites only have the new pty session id to hand, which is the
+  // node's id because the terminal has just been created — hence the explicit
+  // nodeIdFromFirstPtySession conversions below rather than a bare reuse.
+  const cwdMapRef = useRef(new Map<NodeId, string>())
 
-  const getParentCwd = useCallback((parentId: string): string | undefined => {
+  const getParentCwd = useCallback((parentId: NodeId): string | undefined => {
     if (parentId === 'root') return undefined
     const allNodes = useNodeStore.getState().nodes
     return getAncestorCwd(allNodes, parentId, cwdMapRef.current)
   }, [])
 
-  const flashNode = useCallback((nodeId: string) => {
+  const flashNode = useCallback((nodeId: NodeId) => {
     const el = document.querySelector(`[data-node-id="${nodeId}"]`)?.firstElementChild as HTMLElement | null
     if (!el) return
     el.classList.remove('card-shell--selection-flash')
@@ -659,7 +664,7 @@ export function App() {
     flyTo(entry.camera, computeFlyToSpeed(dist))
   }, [shakeCamera, flyTo, bringToFront, flashNode, cameraRef, inertiaBlock])
 
-  const handleNodeFocus = useCallback((nodeId: string) => {
+  const handleNodeFocus = useCallback((nodeId: NodeId) => {
     // Cmd+click without drag → show floating quick-actions toolbar instead of focusing
     const pending = cmdClickPendingRef.current
     cmdClickPendingRef.current = null
@@ -737,7 +742,7 @@ export function App() {
     }
   }, [bringToFront, flyTo, cameraRef, flashNode, inertiaBlock])
 
-  const navigateToNode = useCallback(async (nodeId: string) => {
+  const navigateToNode = useCallback(async (nodeId: NodeId) => {
     // Wait for node to appear in store if not yet present
     if (!useNodeStore.getState().nodes[nodeId]) {
       await new Promise<void>(resolve => {
@@ -832,14 +837,14 @@ export function App() {
       const titleHistory = parentNode?.type === 'terminal' ? parentNode.shellTitleHistory : undefined
       const parentName = parentNode?.name ?? undefined
       sendTerminalCreate(nodeId, { cwd, claude: { resumeSessionId } }, titleHistory, parentName).then((result) => {
-        if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-        navigateToNode(result.sessionId)
+        if (cwd) cwdMapRef.current.set(nodeIdFromFirstPtySession(result.sessionId), cwd)
+        navigateToNode(nodeIdFromFirstPtySession(result.sessionId))
       })
     })
     return destroyServerSync
   }, [])
 
-  const handleCrabClick = useCallback((nodeId: string, metaKey: boolean) => {
+  const handleCrabClick = useCallback((nodeId: NodeId, metaKey: boolean) => {
     setSearchVisible(false)
     setHelpVisible(false)
     if (nodeId === 'root') {
@@ -865,7 +870,7 @@ export function App() {
     navigateToNode(nodeId)
   }, [focusedId, handleNodeFocus, navigateToNode])
 
-  const handleCrabReorder = useCallback((order: string[]) => {
+  const handleCrabReorder = useCallback((order: NodeId[]) => {
     // Optimistically update sortOrder on affected nodes in the store
     const store = useNodeStore.getState()
     for (let i = 0; i < order.length; i++) {
@@ -911,7 +916,7 @@ export function App() {
     }
   }, [restartingSpaceterm])
 
-  const handleReparentTarget = useCallback((targetId: string) => {
+  const handleReparentTarget = useCallback((targetId: NodeId) => {
     const srcId = useReparentStore.getState().reparentingNodeId
     if (!srcId) return
 
@@ -953,7 +958,7 @@ export function App() {
   }, [flyTo, handleNodeFocus])
 
 
-  const handleUnarchive = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
+  const handleUnarchive = useCallback(async (parentNodeId: NodeId, archivedNodeId: NodeId) => {
     if (!getUndoInProgress()) {
       const { nodes, rootArchivedChildren } = useNodeStore.getState()
       const archiveArray = parentNodeId === 'root'
@@ -975,7 +980,7 @@ export function App() {
     await sendUnarchive(parentNodeId, archivedNodeId)
   }, [])
 
-  const handleReviveNode = useCallback(async (archiveParentId: string, archivedNodeId: string) => {
+  const handleReviveNode = useCallback(async (archiveParentId: NodeId, archivedNodeId: NodeId) => {
     setSearchVisible(false)
     if (!getUndoInProgress()) {
       const { nodes, rootArchivedChildren } = useNodeStore.getState()
@@ -999,16 +1004,16 @@ export function App() {
     await navigateToNode(archivedNodeId)
   }, [navigateToNode])
 
-  const handleArchiveDelete = useCallback(async (parentNodeId: string, archivedNodeId: string) => {
+  const handleArchiveDelete = useCallback(async (parentNodeId: NodeId, archivedNodeId: NodeId) => {
     await sendArchiveDelete(parentNodeId, archivedNodeId)
   }, [])
 
-  const handleOpenArchiveSearch = useCallback((nodeId: string) => {
+  const handleOpenArchiveSearch = useCallback((nodeId: NodeId) => {
     setSearchMode({ kind: 'archived-children', parentId: nodeId })
     setSearchVisible(true)
   }, [])
 
-  const handleSessionRevive = useCallback(async (nodeId: string, session: import('../../../shared/state').TerminalSessionEntry) => {
+  const handleSessionRevive = useCallback(async (nodeId: NodeId, session: import('../../../shared/state').TerminalSessionEntry) => {
     if (!session.claudeSessionId) return
     const cwd = getParentCwd(nodeId)
     const node = useNodeStore.getState().nodes[nodeId]
@@ -1018,20 +1023,20 @@ export function App() {
         ? { cwd, codex: { resumeSessionId: session.claudeSessionId } }
         : { cwd, claude: { resumeSessionId: session.claudeSessionId } }
     const result = await sendTerminalCreate(nodeId, resumeOpts, session.shellTitleHistory)
-    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-    navigateToNode(result.sessionId)
+    if (cwd) cwdMapRef.current.set(nodeIdFromFirstPtySession(result.sessionId), cwd)
+    navigateToNode(nodeIdFromFirstPtySession(result.sessionId))
   }, [getParentCwd, navigateToNode])
 
-  const handleForkSession = useCallback(async (nodeId: string) => {
+  const handleForkSession = useCallback(async (nodeId: NodeId) => {
     try {
       const result = await sendForkSession(nodeId)
-      navigateToNode(result.sessionId)
+      navigateToNode(nodeIdFromFirstPtySession(result.sessionId))
     } catch (err: any) {
       console.error(`Fork session failed: ${err.message}`)
     }
   }, [navigateToNode])
 
-  const handleExtraCliArgs = useCallback(async (nodeId: string, extraCliArgs: string) => {
+  const handleExtraCliArgs = useCallback(async (nodeId: NodeId, extraCliArgs: string) => {
     try {
       await sendTerminalRestart(nodeId, extraCliArgs)
     } catch (err: any) {
@@ -1039,12 +1044,12 @@ export function App() {
     }
   }, [])
 
-  const handleRemoveNode = useCallback(async (id: string) => {
+  const handleRemoveNode = useCallback(async (id: NodeId) => {
     cwdMapRef.current.delete(id)
     const { nodes } = useNodeStore.getState()
     const node = nodes[id]
     if (node && !isDisposable(node) && !getUndoInProgress()) {
-      const reparentedChildIds = Object.keys(nodes).filter(k => nodes[k].parentId === id)
+      const reparentedChildIds = nodeIdsOf(nodes).filter(k => nodes[k].parentId === id)
       const entry: UndoArchiveEntry = {
         kind: 'archive',
         ts: Date.now(),
@@ -1179,7 +1184,7 @@ export function App() {
     }
   }, [flyTo, navigateToNode])
 
-  const handleShipIt = useCallback((nodeId: string) => {
+  const handleShipIt = useCallback((nodeId: NodeId) => {
     const { nodes } = useNodeStore.getState()
     const node = nodes[nodeId]
     if (!node || node.type !== 'markdown') return
@@ -1221,7 +1226,7 @@ export function App() {
     setScrollMode(false)
   }, [])
 
-  const handleHoverFocus = useCallback((nodeId: string) => {
+  const handleHoverFocus = useCallback((nodeId: NodeId) => {
     if (!useCameraLockStore.getState().locked) return
     const node = useNodeStore.getState().nodes[nodeId]
     if (!node) return
@@ -1243,7 +1248,7 @@ export function App() {
     setScrollMode(false)
   }, [])
 
-  const flyToSelection = useCallback((nodeId: string) => {
+  const flyToSelection = useCallback((nodeId: NodeId) => {
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
     const vw = viewport.clientWidth
@@ -1289,7 +1294,7 @@ export function App() {
       if (!focused || focused === 'root') return
       if (!state.nodes[focused] && prevState.nodes[focused]) {
         // Focused node was removed
-        const parentId = focusedParentRef.current ?? 'root'
+        const parentId = focusedParentRef.current ?? ROOT_NODE_ID
         focusRef.current = null
         setFocusedId(null)
         setScrollMode(false)
@@ -1333,7 +1338,7 @@ export function App() {
   }, [focusedId])
 
 
-  const handleStartReparent = useCallback((nodeId: string) => {
+  const handleStartReparent = useCallback((nodeId: NodeId) => {
     useReparentStore.getState().startReparent(nodeId)
     handleUnfocus()
     flyToUnfocusZoom()
@@ -1344,7 +1349,7 @@ export function App() {
   }, [])
 
   // Handlers that send mutations to server
-  const handleMove = useCallback((id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => {
+  const handleMove = useCallback((id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => {
     // Track Command key releases for fresh-press detection
     if (!metaKey) {
       metaKeyWasReleasedRef.current = true
@@ -1367,11 +1372,12 @@ export function App() {
         const currentSnap = snapStateRef.current
 
         let bestDist = Infinity
-        let bestNodeId: string | null = null
+        let bestNodeId: NodeId | null = null
         let bestAxis: 'x' | 'y' = 'x'
         let bestSnapValue = 0
 
-        for (const [otherId, otherNode] of Object.entries(allNodes)) {
+        for (const otherId of nodeIdsOf(allNodes)) {
+          const otherNode = allNodes[otherId]
           if (draggingRef.current.has(otherId)) continue
 
           const otherSize = nodePixelSize(otherNode)
@@ -1501,48 +1507,48 @@ export function App() {
     }
   }, [moveNode, batchMoveNodes])
 
-  const handleRename = useCallback((id: string, name: string) => {
+  const handleRename = useCallback((id: NodeId, name: string) => {
     renameNode(id, name)
     sendRename(id, name)
   }, [renameNode])
 
-  const handleColorChange = useCallback((id: string, colorPresetId: string) => {
+  const handleColorChange = useCallback((id: NodeId, colorPresetId: string) => {
     setNodeColor(id, colorPresetId)
     sendSetColor(id, colorPresetId)
   }, [setNodeColor])
 
-  const handleResizeTerminal = useCallback((id: string, cols: number, rows: number) => {
+  const handleResizeTerminal = useCallback((id: NodeId, cols: number, rows: number) => {
     sendTerminalResize(id, cols, rows)
   }, [])
 
-  const handleResizeMarkdown = useCallback((id: string, width: number, height: number) => {
+  const handleResizeMarkdown = useCallback((id: NodeId, width: number, height: number) => {
     sendMarkdownResize(id, width, height)
   }, [])
 
-  const handleMarkdownContent = useCallback((id: string, content: string) => {
+  const handleMarkdownContent = useCallback((id: NodeId, content: string) => {
     sendMarkdownContent(id, content)
   }, [])
 
-  const handleMaxWidthChange = useCallback((id: string, maxWidth: number) => {
+  const handleMaxWidthChange = useCallback((id: NodeId, maxWidth: number) => {
     sendMarkdownSetMaxWidth(id, maxWidth)
   }, [])
 
-  const handleDirectoryCwdChange = useCallback((id: string, newCwd: string) => {
+  const handleDirectoryCwdChange = useCallback((id: NodeId, newCwd: string) => {
     cwdMapRef.current.set(id, newCwd)
     sendDirectoryCwd(id, newCwd)
   }, [])
 
-  const handleFilePathChange = useCallback((id: string, newFilePath: string) => {
+  const handleFilePathChange = useCallback((id: NodeId, newFilePath: string) => {
     sendFilePath(id, newFilePath)
   }, [])
 
-  const handleTitleTextChange = useCallback((id: string, text: string) => {
+  const handleTitleTextChange = useCallback((id: NodeId, text: string) => {
     sendTitleText(id, text)
   }, [])
 
   const spawnNode = useCallback(async (
-    create: (parentId: string, cwd: string | undefined) => Promise<string>,
-    parentIdOverride?: string
+    create: (parentId: NodeId, cwd: string | undefined) => Promise<NodeId>,
+    parentIdOverride?: NodeId
   ) => {
     const anchor = focusRef.current ?? selectionRef.current
     if (!anchor) return
@@ -1553,18 +1559,18 @@ export function App() {
     await navigateToNode(nodeId)
   }, [getParentCwd, navigateToNode])
 
-  const createChildNode = useCallback(async (parentNodeId: string, type: AddNodeType, hint?: { x: number; y: number }): Promise<string> => {
+  const createChildNode = useCallback(async (parentNodeId: NodeId, type: AddNodeType, hint?: { x: number; y: number }): Promise<NodeId> => {
     const cwd = getParentCwd(parentNodeId)
-    let nodeId: string
+    let nodeId: NodeId
     switch (type) {
-      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: false } }, undefined, undefined, hint?.x, hint?.y); nodeId = r.sessionId; break }
-      case 'cursor': { const r = await sendTerminalCreate(parentNodeId, { cwd, cursor: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = r.sessionId; break }
-      case 'codex': { const r = await sendTerminalCreate(parentNodeId, { cwd, codex: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = r.sessionId; break }
+      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: false } }, undefined, undefined, hint?.x, hint?.y); nodeId = nodeIdFromFirstPtySession(r.sessionId); break }
+      case 'cursor': { const r = await sendTerminalCreate(parentNodeId, { cwd, cursor: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = nodeIdFromFirstPtySession(r.sessionId); break }
+      case 'codex': { const r = await sendTerminalCreate(parentNodeId, { cwd, codex: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = nodeIdFromFirstPtySession(r.sessionId); break }
       case 'terminal': {
         const parentNode = useNodeStore.getState().nodes[parentNodeId]
         const { initialInput, initialName: mdName, x, y } = getMarkdownSpawnInfo(parentNode)
         const r = await sendTerminalCreate(parentNodeId, cwd ? { cwd } : undefined, undefined, mdName, hint?.x ?? x, hint?.y ?? y, initialInput)
-        nodeId = r.sessionId
+        nodeId = nodeIdFromFirstPtySession(r.sessionId)
         break
       }
       case 'markdown': { const r = await sendMarkdownAdd(parentNodeId, hint?.x, hint?.y); nodeId = r.nodeId; break }
@@ -1579,12 +1585,12 @@ export function App() {
     return nodeId
   }, [getParentCwd])
 
-  const handleAddNode = useCallback(async (parentNodeId: string, type: AddNodeType) => {
+  const handleAddNode = useCallback(async (parentNodeId: NodeId, type: AddNodeType) => {
     const nodeId = await createChildNode(parentNodeId, type)
     await navigateToNode(nodeId)
   }, [createChildNode, navigateToNode])
 
-  const handlePostSync = useCallback(async (dirNodeId: string) => {
+  const handlePostSync = useCallback(async (dirNodeId: NodeId) => {
     const node = useNodeStore.getState().nodes[dirNodeId]
     if (!node || node.type !== 'directory') return
     const cwd = node.cwd
@@ -1593,11 +1599,11 @@ export function App() {
     const spawnX = node.x
     const spawnY = node.y + DIRECTORY_HEIGHT / 2 + gap + termSize.height / 2
     const result = await sendTerminalCreate(dirNodeId, cwd ? { cwd } : undefined, undefined, 'post-sync', spawnX, spawnY, 'pnpm post-sync')
-    if (cwd) cwdMapRef.current.set(result.sessionId, cwd)
-    await navigateToNode(result.sessionId)
+    if (cwd) cwdMapRef.current.set(nodeIdFromFirstPtySession(result.sessionId), cwd)
+    await navigateToNode(nodeIdFromFirstPtySession(result.sessionId))
   }, [navigateToNode])
 
-  const handleWtSpawn = useCallback(async (dirNodeId: string, branchName: string) => {
+  const handleWtSpawn = useCallback(async (dirNodeId: NodeId, branchName: string) => {
     const result = await sendDirectoryWtSpawn(dirNodeId, branchName)
     useNodeStore.getState().markFreshlyCreated(result.nodeId)
     await navigateToNode(result.nodeId)
@@ -1847,7 +1853,7 @@ export function App() {
           const parentNode = useNodeStore.getState().nodes[parentId]
           const { initialInput, initialName, x, y } = getMarkdownSpawnInfo(parentNode)
           const r = await sendTerminalCreate(parentId, cwd ? { cwd } : undefined, undefined, initialName, x, y, initialInput)
-          return r.sessionId
+          return nodeIdFromFirstPtySession(r.sessionId)
         })
       }
 
@@ -1856,7 +1862,7 @@ export function App() {
         e.stopPropagation()
         spawnNode(async (parentId, cwd) => {
           const r = await sendTerminalCreate(parentId, { cwd, claude: { appendSystemPrompt: false } })
-          return r.sessionId
+          return nodeIdFromFirstPtySession(r.sessionId)
         })
       }
 
@@ -2018,7 +2024,7 @@ export function App() {
     return () => window.removeEventListener('keydown', suppressTab)
   }, [])
 
-  const handleNodeReady = useCallback((nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => {
+  const handleNodeReady = useCallback((nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => {
     if (focusRef.current !== nodeId) return
     if (pinnedFocusRef.current) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
@@ -2163,9 +2169,9 @@ export function App() {
       <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} goodGfx={goodGfx} />} overlay={<>{rtsSelectOverlay}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <PeerCameraOverlay />
         <RootNode
-          focused={focusedId === 'root'}
-          selected={selection === 'root'}
-          onClick={() => handleNodeFocus('root')}
+          focused={focusedId === ROOT_NODE_ID}
+          selected={selection === ROOT_NODE_ID}
+          onClick={() => handleNodeFocus(ROOT_NODE_ID)}
           archivedChildren={rootArchivedChildren}
           onUnarchive={handleUnarchive}
           onArchiveDelete={handleArchiveDelete}

@@ -1,6 +1,7 @@
 import type { NodeData, ArchivedNode } from '../../../../shared/state'
 import type { ColorPreset } from './color-presets'
 import { COLOR_PRESET_MAP, DEFAULT_PRESET } from './color-presets'
+import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
 // --- Types ---
 
@@ -19,7 +20,7 @@ export interface SearchEntry {
   data: NodeData
   isActive: boolean
   archivedAt?: string
-  archiveParentId?: string
+  archiveParentId?: NodeId
   depth: number
   resolvedPreset: ColorPreset
   ancestors: AncestorEntry[]
@@ -90,7 +91,7 @@ export function buildSearchableEntries(
   if (mode.kind === 'archived-children') {
     const parentPreset = resolvedPresets[mode.parentId] ?? DEFAULT_PRESET
     if (mode.parentId === 'root') {
-      collectArchived(entries, rootArchivedChildren, 'root', 0, parentPreset, archiveMaxDepth)
+      collectArchived(entries, rootArchivedChildren, ROOT_NODE_ID, 0, parentPreset, archiveMaxDepth)
     } else {
       const node = nodes[mode.parentId]
       if (node) {
@@ -106,7 +107,7 @@ export function buildSearchableEntries(
       const parentPreset = resolvedPresets[data.id] ?? DEFAULT_PRESET
       collectArchived(entries, data.archivedChildren, data.id, 0, parentPreset, Infinity)
     }
-    collectArchived(entries, rootArchivedChildren, 'root', 0, resolvedPresets['root'] ?? DEFAULT_PRESET, Infinity)
+    collectArchived(entries, rootArchivedChildren, ROOT_NODE_ID, 0, resolvedPresets['root'] ?? DEFAULT_PRESET, Infinity)
   }
 
   // Compute ancestor chains for all entries
@@ -120,7 +121,7 @@ export function buildSearchableEntries(
 function collectArchived(
   entries: SearchEntry[],
   archives: ArchivedNode[],
-  archiveParentId: string,
+  archiveParentId: NodeId,
   depth: number,
   inheritedPreset: ColorPreset,
   maxDepth: number

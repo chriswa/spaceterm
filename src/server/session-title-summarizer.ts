@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { spawn } from 'child_process'
 import { homedir } from 'os'
+import type { ClaudeSessionId, PtySessionId } from '../shared/ids'
 
 const ENABLED = Boolean(false)
 const SPACETERM_HOME = process.env.SPACETERM_HOME || path.join(homedir(), '.spaceterm')
@@ -15,8 +16,8 @@ function log(msg: string): void {
 
 interface TitleLogEntry {
   ts: string
-  claudeSessionId: string
-  surfaceId: string
+  claudeSessionId: ClaudeSessionId
+  surfaceId: PtySessionId
   input: string
   output: string | null
   error: string | null
@@ -55,7 +56,7 @@ function readLastUserMessage(transcriptPath: string): string | null {
 }
 
 export interface SummarizerDeps {
-  injectTitle(sessionId: string, title: string): void
+  injectTitle(sessionId: PtySessionId, title: string): void
 }
 
 export class SessionTitleSummarizer {
@@ -66,12 +67,12 @@ export class SessionTitleSummarizer {
   }
 
   /** Fire-and-forget: read transcript, summarize, inject title. */
-  summarize(surfaceId: string, transcriptPath: string, claudeSessionId: string): void {
+  summarize(surfaceId: PtySessionId, transcriptPath: string, claudeSessionId: ClaudeSessionId): void {
     if (!ENABLED) return
     setImmediate(() => this.run(surfaceId, transcriptPath, claudeSessionId))
   }
 
-  private run(surfaceId: string, transcriptPath: string, claudeSessionId: string): void {
+  private run(surfaceId: PtySessionId, transcriptPath: string, claudeSessionId: ClaudeSessionId): void {
     log(`${surfaceId.slice(0, 8)}: triggered, reading ${transcriptPath}`)
     const message = readLastUserMessage(transcriptPath)
     if (!message) {

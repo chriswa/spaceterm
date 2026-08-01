@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 // The bridge contract lives in src/shared/api.ts so the renderer type-checks
 // against the same declaration this file implements. Do not restate it here.
 import type { Api, NodeApi, PtyApi } from '../../shared/api'
+import type { NodeId, PtySessionId } from '../../shared/ids'
 
 const ptyApi: PtyApi = {
   create: (options?) => ipcRenderer.invoke('pty:create', options),
@@ -71,7 +72,7 @@ const nodeApi: NodeApi = {
   terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
   terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
   forkSession: (nodeId) => ipcRenderer.invoke('node:fork-session', nodeId),
-  terminalRestart: (nodeId: string, extraCliArgs: string) => ipcRenderer.invoke('node:terminal-restart', nodeId, extraCliArgs),
+  terminalRestart: (nodeId: NodeId, extraCliArgs: string) => ipcRenderer.invoke('node:terminal-restart', nodeId, extraCliArgs),
   crabReorder: (order: string[]) => ipcRenderer.invoke('node:crab-reorder', order),
   directoryAdd: (parentId, cwd, x?, y?) => ipcRenderer.invoke('node:directory-add', parentId, cwd, x, y),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
@@ -89,9 +90,9 @@ const nodeApi: NodeApi = {
   titleText: (nodeId, text) => ipcRenderer.invoke('node:title-text', nodeId, text),
 
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
-  setClaudeStatusUnread: (sessionId: string, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
-  setClaudeStatusAsleep: (sessionId: string, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
-  setAlertsReadTimestamp: (nodeId: string, timestamp: number) => ipcRenderer.send('node:set-alerts-read-timestamp', nodeId, timestamp),
+  setClaudeStatusUnread: (sessionId: PtySessionId, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
+  setClaudeStatusAsleep: (sessionId: PtySessionId, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
+  setAlertsReadTimestamp: (nodeId: NodeId, timestamp: number) => ipcRenderer.send('node:set-alerts-read-timestamp', nodeId, timestamp),
   sendCameraBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:camera-bounds', bounds),
   saveViewport: (slot: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:save-viewport', slot, bounds),
   onSnapshot: (sessionId, callback) => {
@@ -101,7 +102,7 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
   onUpdated: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, fields: any) => callback(nodeId, fields)
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, fields: any) => callback(nodeId, fields)
     ipcRenderer.on('node:updated', listener)
     return () => ipcRenderer.removeListener('node:updated', listener)
   },
@@ -111,12 +112,12 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener('node:added', listener)
   },
   onRemoved: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: string) => callback(nodeId)
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId) => callback(nodeId)
     ipcRenderer.on('node:removed', listener)
     return () => ipcRenderer.removeListener('node:removed', listener)
   },
   onFileContent: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, content: string) => callback(nodeId, content)
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, content: string) => callback(nodeId, content)
     ipcRenderer.on('node:file-content', listener)
     return () => ipcRenderer.removeListener('node:file-content', listener)
   },
@@ -141,12 +142,12 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener('speak', listener)
   },
   onSpeakingChanged: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, speaking: boolean, voice: string | undefined) => callback(nodeId, speaking, voice)
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, speaking: boolean, voice: string | undefined) => callback(nodeId, speaking, voice)
     ipcRenderer.on('speaking-changed', listener)
     return () => ipcRenderer.removeListener('speaking-changed', listener)
   },
   onSummaryChatStatus: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: string, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => callback(nodeId, state, message)
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => callback(nodeId, state, message)
     ipcRenderer.on('summary-chat-status', listener)
     return () => ipcRenderer.removeListener('summary-chat-status', listener)
   },
@@ -178,7 +179,7 @@ const api: Api = {
   pty: ptyApi,
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
-  startSummaryChat: (nodeId: string) => ipcRenderer.send('summary-chat:start', nodeId),
+  startSummaryChat: (nodeId: NodeId) => ipcRenderer.send('summary-chat:start', nodeId),
   restartSpaceterm: (): Promise<void> => ipcRenderer.invoke('app:restart-spaceterm'),
   writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
@@ -191,8 +192,8 @@ const api: Api = {
       ipcRenderer.on('window:visibility-changed', listener)
       return () => ipcRenderer.removeListener('window:visibility-changed', listener)
     },
-    onFocusNode: (callback: (nodeId: string) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, nodeId: string) => callback(nodeId)
+    onFocusNode: (callback: (nodeId: NodeId) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId) => callback(nodeId)
       ipcRenderer.on('window:focus-node', listener)
       return () => ipcRenderer.removeListener('window:focus-node', listener)
     }

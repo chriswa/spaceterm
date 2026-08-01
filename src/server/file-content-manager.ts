@@ -1,9 +1,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import type { NodeId } from '../shared/ids'
 
 interface WatchedEntry {
-  markdownNodeId: string
-  fileNodeId: string
+  markdownNodeId: NodeId
+  fileNodeId: NodeId
   resolvedPath: string
   lastWrittenContent: string | null
   watcher: fs.FSWatcher | null
@@ -15,10 +16,10 @@ interface WatchedEntry {
  * Handles watching, reading, writing, and echo suppression.
  */
 export class FileContentManager {
-  private entries = new Map<string, WatchedEntry>()
-  private onContent: (nodeId: string, content: string) => void
+  private entries = new Map<NodeId, WatchedEntry>()
+  private onContent: (nodeId: NodeId, content: string) => void
 
-  constructor(onContent: (nodeId: string, content: string) => void) {
+  constructor(onContent: (nodeId: NodeId, content: string) => void) {
     this.onContent = onContent
   }
 
@@ -26,7 +27,7 @@ export class FileContentManager {
    * Start watching a file for a markdown node.
    * Reads the file (creating it if missing), broadcasts content, and starts fs.watch.
    */
-  startWatching(markdownNodeId: string, fileNodeId: string, resolvedPath: string): void {
+  startWatching(markdownNodeId: NodeId, fileNodeId: NodeId, resolvedPath: string): void {
     // Stop any existing watcher for this node
     this.stopWatching(markdownNodeId)
 
@@ -105,7 +106,7 @@ export class FileContentManager {
   /**
    * Stop watching a markdown node's file.
    */
-  stopWatching(markdownNodeId: string): void {
+  stopWatching(markdownNodeId: NodeId): void {
     const entry = this.entries.get(markdownNodeId)
     if (!entry) return
     if (entry.watcher) {
@@ -122,7 +123,7 @@ export class FileContentManager {
   /**
    * Write content to a file-backed markdown's file.
    */
-  writeContent(markdownNodeId: string, content: string): void {
+  writeContent(markdownNodeId: NodeId, content: string): void {
     const entry = this.entries.get(markdownNodeId)
     if (!entry) return
     entry.lastWrittenContent = content
@@ -139,7 +140,7 @@ export class FileContentManager {
   /**
    * Get the current file content for a watched node (for initial sync).
    */
-  getContent(markdownNodeId: string): string | null {
+  getContent(markdownNodeId: NodeId): string | null {
     const entry = this.entries.get(markdownNodeId)
     if (!entry) return null
     try {
@@ -152,14 +153,14 @@ export class FileContentManager {
   /**
    * Check if a markdown node is being watched.
    */
-  isWatched(markdownNodeId: string): boolean {
+  isWatched(markdownNodeId: NodeId): boolean {
     return this.entries.has(markdownNodeId)
   }
 
   /**
    * Update the file path for a watched node (stop old watcher, start new one).
    */
-  updatePath(markdownNodeId: string, fileNodeId: string, newResolvedPath: string): void {
+  updatePath(markdownNodeId: NodeId, fileNodeId: NodeId, newResolvedPath: string): void {
     const entry = this.entries.get(markdownNodeId)
     if (!entry) return
     this.stopWatching(markdownNodeId)
@@ -169,7 +170,7 @@ export class FileContentManager {
   /**
    * Get all watched markdown node IDs (for initial sync enumeration).
    */
-  getWatchedNodeIds(): string[] {
+  getWatchedNodeIds(): NodeId[] {
     return Array.from(this.entries.keys())
   }
 

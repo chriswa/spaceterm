@@ -1,9 +1,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { SessionFileWatcher, type SessionFileEntry } from './session-file-watcher'
+import type { PtySessionId, ClaudeSessionId } from '../shared/ids'
 
 export type EntriesCallback = (
-  surfaceId: string,
+  surfaceId: PtySessionId,
   newEntries: SessionFileEntry[],
   totalLineCount: number,
   isBackfill: boolean,
@@ -92,7 +93,7 @@ export interface PollingTranscriptWatcherOptions {
  */
 export class PollingTranscriptWatcher {
   private readonly watcher: SessionFileWatcher
-  private readonly retries = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly retries = new Map<PtySessionId, ReturnType<typeof setTimeout>>()
   private readonly locator: TranscriptLocator
   private readonly retryMs: number
   private readonly maxRetries: number
@@ -104,12 +105,12 @@ export class PollingTranscriptWatcher {
     this.maxRetries = options.maxRetries ?? 60
   }
 
-  watch(surfaceId: string, sessionId: string): void {
+  watch(surfaceId: PtySessionId, sessionId: ClaudeSessionId): void {
     this.unwatch(surfaceId)
     this.resolveAndWatch(surfaceId, sessionId, 0)
   }
 
-  unwatch(surfaceId: string): void {
+  unwatch(surfaceId: PtySessionId): void {
     const retry = this.retries.get(surfaceId)
     if (retry) clearTimeout(retry)
     this.retries.delete(surfaceId)
@@ -121,11 +122,11 @@ export class PollingTranscriptWatcher {
     this.watcher.dispose()
   }
 
-  getFilePath(surfaceId: string): string | undefined {
+  getFilePath(surfaceId: PtySessionId): string | undefined {
     return this.watcher.getFilePath(surfaceId)
   }
 
-  private resolveAndWatch(surfaceId: string, sessionId: string, attempt: number): void {
+  private resolveAndWatch(surfaceId: PtySessionId, sessionId: ClaudeSessionId, attempt: number): void {
     const filePath = findNewestTranscript(this.locator, sessionId)
     if (filePath) {
       this.retries.delete(surfaceId)

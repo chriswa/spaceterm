@@ -4,6 +4,7 @@ import { homedir, userInfo } from 'os'
 import { randomUUID } from 'crypto'
 import { execFileSync } from 'child_process'
 import { serverLog } from './server-log'
+import type { NodeId } from '../shared/ids'
 
 const DISCOVERY_PATH = path.join(homedir(), 'Library', 'Application Support', 'VoiceOperator', 'speech-service.json')
 const MAX_MESSAGES = 24
@@ -28,7 +29,7 @@ type SpeechStatus = {
 
 interface Conversation {
   auditId: string
-  nodeId: string
+  nodeId: NodeId
   sourceAgentSessionId?: string
   haikuHistory: HaikuMessage[]
   voice?: string
@@ -48,8 +49,8 @@ export class SummaryChat {
   private voiceRefreshTimer: ReturnType<typeof setInterval>
 
   constructor(
-    private readonly onSpeakingChanged: (nodeId: string, speaking: boolean, voice?: string) => void,
-    private readonly onStatusChanged: (nodeId: string, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => void,
+    private readonly onSpeakingChanged: (nodeId: NodeId, speaking: boolean, voice?: string) => void,
+    private readonly onStatusChanged: (nodeId: NodeId, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => void,
   ) {
     this.voiceRefreshTimer = setInterval(() => { void this.refreshVoices() }, 5_000)
     void this.refreshVoices()
@@ -61,12 +62,12 @@ export class SummaryChat {
   }
 
   /** The conversation unqualified Voice Operator commands currently target. */
-  getTargetNodeId(): string | undefined {
+  getTargetNodeId(): NodeId | undefined {
     return Array.from(this.conversations.values())
       .sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0]?.nodeId
   }
 
-  async start(nodeId: string, transcriptPath: string | undefined, sourceAgentSessionId?: string): Promise<void> {
+  async start(nodeId: NodeId, transcriptPath: string | undefined, sourceAgentSessionId?: string): Promise<void> {
     if (!transcriptPath) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} has no resolved transcript`)
       this.onStatusChanged(nodeId, 'error', 'This surface has no transcript to summarize yet.')
@@ -292,7 +293,7 @@ export class SummaryChat {
     if (voices.length) this.voices = voices
   }
 
-  private voiceFor(nodeId: string): string | undefined {
+  private voiceFor(nodeId: NodeId): string | undefined {
     if (!this.voices.length) return undefined
     let hash = 0
     for (const char of nodeId) hash = ((hash * 31) + char.charCodeAt(0)) >>> 0

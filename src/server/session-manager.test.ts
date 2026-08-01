@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { DaemonClient } from './daemon-client'
 import { SessionManager, type SessionManagerDeps } from './session-manager'
 import { FakeDaemon } from './testing/fake-daemon'
+import { asNodeId as nid, asPtySessionId as pid, asClaudeSessionId as cid } from '../shared/ids'
 
 /**
  * Drives the session lifecycle end to end against an in-memory daemon: create,
@@ -78,7 +79,7 @@ describe('SessionManager create', () => {
     // Reincarnation rebinds an existing node to a fresh PTY; SPACETERM_NODE_ID is
     // what lets the surface keep its identity across that.
     const { daemon, manager, client } = await setup()
-    const info = manager.create({ nodeId: 'stable-node' })
+    const info = manager.create({ nodeId: nid('stable-node') })
     const env = sent(daemon, 'create')[0].env as Record<string, string>
     expect(env.SPACETERM_NODE_ID).toBe('stable-node')
     expect(env.SPACETERM_SURFACE_ID).toBe(info.sessionId)
@@ -194,7 +195,7 @@ describe('SessionManager PTY output', () => {
 
   it('ignores output for an unknown session', async () => {
     const { manager, deps, client } = await setup()
-    manager.handleDaemonData('never-created', 'data')
+    manager.handleDaemonData(pid('never-created'), 'data')
     expect(deps.onActivity).not.toHaveBeenCalled()
     client.dispose()
   })
@@ -211,7 +212,7 @@ describe('SessionManager lifecycle', () => {
 
   it('drops writes to an unknown session', async () => {
     const { daemon, manager, client } = await setup()
-    manager.write('never-created', 'ls\n')
+    manager.write(pid('never-created'), 'ls\n')
     expect(sent(daemon, 'write')).toHaveLength(0)
     client.dispose()
   })
@@ -256,10 +257,10 @@ describe('SessionManager lifecycle', () => {
 
   it('rebuilds local state when re-attaching after a server restart', async () => {
     const { manager, deps, client } = await setup()
-    manager.reattachSession('restored', '\x1b]2;recovered\x07some output', 120, 30)
+    manager.reattachSession(pid('restored'), '\x1b]2;recovered\x07some output', 120, 30)
     // Title and scrollback are rebuilt from the replay...
     expect(deps.onTitleHistory).toHaveBeenCalledWith('restored', ['recovered'])
-    expect(manager.getScrollback('restored')).toContain('some output')
+    expect(manager.getScrollback(pid('restored'))).toContain('some output')
     // ...but the replay must not be broadcast as if it were live output.
     expect(deps.onData).not.toHaveBeenCalled()
     client.dispose()

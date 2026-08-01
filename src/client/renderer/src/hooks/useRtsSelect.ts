@@ -5,10 +5,11 @@ import type { Camera } from '../lib/camera'
 import { useNodeStore, nodePixelSize } from '../stores/nodeStore'
 import { angleBorderColor } from '../lib/angle-color'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
+import { type NodeId } from '../../../../shared/ids'
 
 const CARD_SELECTOR = '.terminal-card, .markdown-card, .directory-card, .file-card, .title-card'
 
-function findCardElement(nodeId: string): HTMLElement | null {
+function findCardElement(nodeId: NodeId): HTMLElement | null {
   const wrapper = document.querySelector(`[data-node-id="${nodeId}"]`)
   if (!wrapper) return null
   return wrapper.querySelector(CARD_SELECTOR) as HTMLElement | null
@@ -26,8 +27,8 @@ export function useRtsSelect(
   const anchorRef = useRef({ x: 0, y: 0 })
   const currentRef = useRef({ x: 0, y: 0 })
   const rectRef = useRef<HTMLDivElement>(null)
-  const selectedIdsRef = useRef(new Set<string>())
-  const glowedElementsRef = useRef(new Map<string, HTMLElement>())
+  const selectedIdsRef = useRef(new Set<NodeId>())
+  const glowedElementsRef = useRef(new Map<NodeId, HTMLElement>())
   const onCompleteRef = useRef(onComplete)
   onCompleteRef.current = onComplete
 
@@ -86,7 +87,7 @@ export function useRtsSelect(
 
     const nodeList = useNodeStore.getState().nodeList
     const nodes = useNodeStore.getState().nodes
-    const newIds = new Set<string>()
+    const newIds = new Set<NodeId>()
 
     for (const node of nodeList) {
       const size = nodePixelSize(node)
@@ -133,7 +134,7 @@ export function useRtsSelect(
       clearGlow(el)
     })
     glowedElementsRef.current.clear()
-    selectedIdsRef.current = new Set()
+    selectedIdsRef.current = new Set<NodeId>()
     setActive(false)
     document.querySelector('.canvas-viewport')?.classList.remove('rts-selecting')
   }, [clearGlow])

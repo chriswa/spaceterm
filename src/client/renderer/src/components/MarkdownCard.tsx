@@ -13,6 +13,7 @@ import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 import { angleBorderColor } from '../lib/angle-color'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
+import { type NodeId } from '../../../../shared/ids'
 
 const DRAG_THRESHOLD = 5
 const CARD_TOP_PADDING = 28
@@ -20,7 +21,7 @@ const TYPING_BUFFER = 24
 const URL_RE = /https?:\/\/[^\s\])<>]+/g
 
 interface MarkdownCardProps {
-  id: string
+  id: NodeId
   x: number
   y: number
   width: number
@@ -35,27 +36,27 @@ interface MarkdownCardProps {
   archivedChildren: ArchivedNode[]
   focused: boolean
   selected: boolean
-  onFocus: (id: string) => void
-  onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
-  onResize: (id: string, width: number, height: number) => void
-  onContentChange: (id: string, content: string) => void
-  onMaxWidthChange: (id: string, maxWidth: number) => void
-  onRename: (id: string, name: string) => void
-  onColorChange: (id: string, color: string) => void
-  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onOpenArchiveSearch: (nodeId: string) => void
-  onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
-  onDragEnd?: (id: string) => void
+  onFocus: (id: NodeId) => void
+  onClose: (id: NodeId) => void
+  onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
+  onResize: (id: NodeId, width: number, height: number) => void
+  onContentChange: (id: NodeId, content: string) => void
+  onMaxWidthChange: (id: NodeId, maxWidth: number) => void
+  onRename: (id: NodeId, name: string) => void
+  onColorChange: (id: NodeId, color: string) => void
+  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onOpenArchiveSearch: (nodeId: NodeId) => void
+  onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
+  onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
+  onDragEnd?: (id: NodeId) => void
   onUnfocus: () => void
-  onStartReparent?: (id: string) => void
-  onReparentTarget?: (id: string) => void
-  onShipIt?: (id: string) => void
+  onStartReparent?: (id: NodeId) => void
+  onReparentTarget?: (id: NodeId) => void
+  onShipIt?: (id: NodeId) => void
   fileBacked?: boolean
   fileError?: boolean
-  onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  onAddNode?: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.MutableRefObject<Camera>
 }
 

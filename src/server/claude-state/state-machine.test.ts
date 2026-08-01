@@ -3,6 +3,7 @@ import { ClaudeStateMachine } from './index'
 import { BackgroundLedger } from './background-ledger'
 import type { StateMachineDeps, ClaudeState } from './types'
 import type { SessionFileEntry } from '../session-file-watcher'
+import { asPtySessionId as pid, asClaudeSessionId as cid } from '../../shared/ids'
 
 /**
  * Tests for the ClaudeStateMachine transitions introduced with the yellow
@@ -15,7 +16,7 @@ import type { SessionFileEntry } from '../session-file-watcher'
  * Run with: npm test
  */
 
-const S = 'surface-1'
+const S = pid('surface-1')
 
 class FakeDeps implements StateMachineDeps {
   state = new Map<string, ClaudeState>()

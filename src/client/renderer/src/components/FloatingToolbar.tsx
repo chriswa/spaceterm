@@ -2,9 +2,10 @@ import { useEffect, useRef } from 'react'
 import type { ColorPreset } from '../lib/color-presets'
 import { nodeActionRegistry } from '../lib/action-registry'
 import { NodeActionBar } from './NodeActionBar'
+import type { NodeId } from '../../../../shared/ids'
 
 interface FloatingToolbarProps {
-  nodeId: string
+  nodeId: NodeId
   screenX: number
   screenY: number
   preset: ColorPreset

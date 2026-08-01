@@ -28,14 +28,15 @@ import { useFontStore, FONT_THEMES } from '../stores/fontStore'
 import { useCameraLockStore } from '../stores/cameraLockStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
+import { asNodeId, type NodeId } from '../../../../shared/ids'
 
 export type CrabNavEvent = { fromNodeId: string | null; toNodeId: string; ts: number } | null
 
 interface ToolbarProps {
   crabs: CrabEntry[]
-  onCrabClick: (nodeId: string, metaKey: boolean) => void
-  onCrabReorder: (order: string[]) => void
-  selectedNodeId: string | null
+  onCrabClick: (nodeId: NodeId, metaKey: boolean) => void
+  onCrabReorder: (order: NodeId[]) => void
+  selectedNodeId: NodeId | null
   crabNavEvent: CrabNavEvent
   zoom: number
   onHelpClick: () => void
@@ -385,7 +386,7 @@ function ProportionalFontToggle() {
   )
 }
 
-function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: { crabs: CrabEntry[]; onCrabClick: (nodeId: string, metaKey: boolean) => void; onCrabReorder: (order: string[]) => void; selectedNodeId: string | null; crabNavEvent: CrabNavEvent }) {
+function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: { crabs: CrabEntry[]; onCrabClick: (nodeId: NodeId, metaKey: boolean) => void; onCrabReorder: (order: NodeId[]) => void; selectedNodeId: NodeId | null; crabNavEvent: CrabNavEvent }) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const speakingSessions = useSpeakingStore(s => s.speaking)
   const summaryTargetNodeId = useSummaryChatStore(s => s.targetNodeId)
@@ -420,7 +421,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
     const slots = el.querySelectorAll<HTMLElement>('.toolbar__crab-slot')
     const containerWidth = el.offsetWidth
     for (const slot of slots) {
-      const nodeId = slot.dataset.nodeId
+      const nodeId = slot.dataset.nodeId ? asNodeId(slot.dataset.nodeId) : undefined
       if (nodeId) {
         newPositions.set(nodeId, containerWidth - slot.offsetLeft)
       }
@@ -465,7 +466,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
 
     // Enters — crabs in current but not prev
     for (const slot of slots) {
-      const nodeId = slot.dataset.nodeId
+      const nodeId = slot.dataset.nodeId ? asNodeId(slot.dataset.nodeId) : undefined
       if (nodeId && !prevIds.has(nodeId)) {
         slot.animate(
           [
@@ -484,7 +485,7 @@ function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavE
       // delta = newRightOffset - oldRightOffset: positive means the crab moved
       // further from the right edge (leftward), so we start shifted right.
       for (const slot of slots) {
-        const nodeId = slot.dataset.nodeId
+        const nodeId = slot.dataset.nodeId ? asNodeId(slot.dataset.nodeId) : undefined
         if (nodeId && prevIds.has(nodeId) && currIds.has(nodeId)) {
           const oldRightOffset = oldPositions.get(nodeId)
           const newRightOffset = newPositions.get(nodeId)

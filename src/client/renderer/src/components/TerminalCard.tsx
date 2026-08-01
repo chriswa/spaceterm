@@ -30,6 +30,7 @@ import { useFontStore } from '../stores/fontStore'
 import { useProportionalOverlay, isBoxDrawing, isAlphanumeric, boxDrawingAlignment } from '../hooks/useProportionalOverlay'
 import { cleanTerminalCopy } from '../lib/cleanTerminalCopy'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
+import { type NodeId, type PtySessionId } from '../../../../shared/ids'
 
 
 function formatElapsed(epochMs: number): string {
@@ -55,8 +56,8 @@ export const terminalPlanJumpers = new Map<string, () => boolean>()
 
 
 interface TerminalCardProps {
-  id: string
-  sessionId: string
+  id: NodeId
+  sessionId: PtySessionId
   x: number
   y: number
   cols: number
@@ -75,7 +76,7 @@ interface TerminalCardProps {
   claudeStatusUnread?: boolean
   claudeStatusAsleep?: boolean
   scrollMode: boolean
-  onFocus: (id: string) => void
+  onFocus: (id: NodeId) => void
   onUnfocus: () => void
   onDisableScrollMode: () => void
   // Drive the window-manager camera (pan/zoom) from a wheel event that
@@ -83,34 +84,34 @@ interface TerminalCardProps {
   // bubbling, because a TUI app's mouse tracking makes xterm cancel
   // propagation on every wheel event (see the custom wheel handler).
   onForwardWheelToCanvas: (e: WheelEvent) => void
-  onClose: (id: string) => void
-  onMove: (id: string, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
-  onResize: (id: string, cols: number, rows: number) => void
-  onRename: (id: string, name: string) => void
+  onClose: (id: NodeId) => void
+  onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
+  onResize: (id: NodeId, cols: number, rows: number) => void
+  onRename: (id: NodeId, name: string) => void
   archivedChildren: ArchivedNode[]
-  onColorChange: (id: string, color: string) => void
-  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onOpenArchiveSearch: (nodeId: string) => void
+  onColorChange: (id: NodeId, color: string) => void
+  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onOpenArchiveSearch: (nodeId: NodeId) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
   agentType?: 'claude' | 'cursor' | 'codex'
   claudeState?: string
   claudeModel?: string
-  onExit?: (id: string, exitCode: number) => void
-  onNodeReady?: (nodeId: string, bounds: { x: number; y: number; width: number; height: number }) => void
-  onDragStart?: (id: string, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
-  onDragEnd?: (id: string) => void
-  onStartReparent?: (id: string) => void
-  onReparentTarget?: (id: string) => void
+  onExit?: (id: NodeId, exitCode: number) => void
+  onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
+  onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
+  onDragEnd?: (id: NodeId) => void
+  onStartReparent?: (id: NodeId) => void
+  onReparentTarget?: (id: NodeId) => void
   terminalSessions?: TerminalSessionEntry[]
-  onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
-  onFork?: (id: string) => void
-  onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
+  onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
+  onFork?: (id: NodeId) => void
+  onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   lastInteractedAt?: number
-  onHoverFocus?: (id: string) => void
+  onHoverFocus?: (id: NodeId) => void
   onHoverUnfocus?: () => void
-  onAddNode?: (parentNodeId: string, type: import('./AddNodeBody').AddNodeType) => void
+  onAddNode?: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.MutableRefObject<Camera>
 }
 

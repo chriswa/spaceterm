@@ -1,11 +1,12 @@
 import { create } from 'zustand'
+import type { NodeId } from '../../../../shared/ids'
 
 interface SummaryChatState {
   /** The surface that receives unqualified Voice Operator follow-up commands. */
-  targetNodeId: string | null
+  targetNodeId: NodeId | null
   /** Nodes currently waiting for Haiku. */
   thinking: Record<string, true>
-  setStatus: (nodeId: string, state: 'thinking' | 'ready' | 'target' | 'error') => void
+  setStatus: (nodeId: NodeId, state: 'thinking' | 'ready' | 'target' | 'error') => void
 }
 
 export const useSummaryChatStore = create<SummaryChatState>((set) => ({

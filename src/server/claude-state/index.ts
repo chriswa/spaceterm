@@ -23,6 +23,7 @@ import { TransitionQueue } from './transition-queue'
 import { DecisionLogger } from './decision-logger'
 import { BackgroundLedger } from './background-ledger'
 import { localISOTimestamp } from '../timestamp'
+import { asClaudeSessionId, type PtySessionId } from '../../shared/ids'
 
 export { DecisionLogger } from './decision-logger'
 export type { DecisionLogEntry } from './decision-logger'
@@ -84,9 +85,9 @@ export class ClaudeStateMachine {
   // these events invalidate any pending permission state.
 
   /** surfaceId → tool_use_id from the most recent PreToolUse */
-  private lastPreToolUseId = new Map<string, string>()
+  private lastPreToolUseId = new Map<PtySessionId, string>()
   /** surfaceId → Set of tool_use_ids awaiting PostToolUse confirmation */
-  private pendingPermissionIds = new Map<string, Set<string>>()
+  private pendingPermissionIds = new Map<PtySessionId, Set<string>>()
 
   constructor(deps: StateMachineDeps, backgroundLedger: BackgroundLedger = new BackgroundLedger()) {
     this.deps = deps
@@ -128,11 +129,11 @@ export class ClaudeStateMachine {
    * come directly from Claude Code's lifecycle (not parsed from files).
    * The hookTime parameter uses msg.ts when available for accurate ordering.
    */
-  handleHook(surfaceId: string, hookType: string, payload: Record<string, unknown>, hookTime: number): void {
+  handleHook(surfaceId: PtySessionId, hookType: string, payload: Record<string, unknown>, hookTime: number): void {
     // Keep the background ledger's probe paths current: SubagentStart/Stop and
     // Stop all carry transcript_path + session_id. Cheap and idempotent.
     const transcriptPath = typeof payload?.transcript_path === 'string' ? payload.transcript_path : undefined
-    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : undefined
+    const sessionId = typeof payload?.session_id === 'string' ? asClaudeSessionId(payload.session_id) : undefined
     if (transcriptPath || sessionId) this.backgroundLedger.setContext(surfaceId, transcriptPath, sessionId)
 
     // Subagents fire their tool hooks (PreToolUse/PostToolUse/PreCompact) on the
@@ -320,7 +321,7 @@ export class ClaudeStateMachine {
    * a rejection). During backfill (initial file read), we skip state
    * transitions to avoid replaying historical state changes.
    */
-  handleJsonlEntries(surfaceId: string, entries: SessionFileEntry[], isBackfill: boolean): void {
+  handleJsonlEntries(surfaceId: PtySessionId, entries: SessionFileEntry[], isBackfill: boolean): void {
     // During backfill, don't transition state — we're reading historical entries
     // from disk that have already been processed. State routing during backfill
     // would replay old transitions and could leave the indicator in a wrong state.
@@ -449,7 +450,7 @@ export class ClaudeStateMachine {
    * transitions (e.g. a stray Enter while working, or Enter that wasn't
    * actually a response).
    */
-  handleClientInteract(surfaceId: string): void {
+  handleClientInteract(surfaceId: PtySessionId): void {
     if (!this.deps.getClaudeStatusUnread(surfaceId)) return
     this.deps.setClaudeStatusUnread(surfaceId, false)
     this.decisionLogger.log(surfaceId, {
@@ -467,7 +468,7 @@ export class ClaudeStateMachine {
    * the durable attention signals Cursor's hook API omits: AskQuestion blocks
    * for an answer, while SwitchMode(plan) and CreatePlan block for plan review.
    */
-  handleCursorTranscriptEntries(surfaceId: string, entries: SessionFileEntry[]): void {
+  handleCursorTranscriptEntries(surfaceId: PtySessionId, entries: SessionFileEntry[]): void {
     for (const entry of entries) {
       if (entry.role !== 'assistant') continue
       const message = entry.message as { content?: unknown } | undefined
@@ -496,7 +497,7 @@ export class ClaudeStateMachine {
    * This is a direct user action (e.g. clicking the unread indicator)
    * and always succeeds — there's no business logic to guard against.
    */
-  handleClientMarkUnread(surfaceId: string, unread: boolean): void {
+  handleClientMarkUnread(surfaceId: PtySessionId, unread: boolean): void {
     this.deps.setClaudeStatusUnread(surfaceId, unread)
     this.decisionLogger.log(surfaceId, {
       timestamp: localISOTimestamp(),
@@ -515,7 +516,7 @@ export class ClaudeStateMachine {
    * without affecting the underlying claude state. Unlike unread (which auto-sets
    * on state transitions), asleep is purely manual.
    */
-  handleClientMarkAsleep(surfaceId: string, asleep: boolean): void {
+  handleClientMarkAsleep(surfaceId: PtySessionId, asleep: boolean): void {
     this.deps.setClaudeStatusAsleep(surfaceId, asleep)
     this.decisionLogger.log(surfaceId, {
       timestamp: localISOTimestamp(),
@@ -536,7 +537,7 @@ export class ClaudeStateMachine {
    * side effects (unread flag, decision logging) are centralized here.
    */
   private applyTransition(
-    surfaceId: string,
+    surfaceId: PtySessionId,
     newState: ClaudeState,
     source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
     event: string,
@@ -643,7 +644,7 @@ export class ClaudeStateMachine {
    * whenever the ledger empties without racing the yellow-inducing Stop.
    */
   private drainBackgroundIfIdle(
-    surfaceId: string,
+    surfaceId: PtySessionId,
     source: 'hook' | 'jsonl' | 'ledger',
     event: string,
     time: number

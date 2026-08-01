@@ -10,11 +10,12 @@ import type { NodeActionBarProps } from './NodeActionBar'
 import { nodeActionRegistry } from '../lib/action-registry'
 import { useNodeStore } from '../stores/nodeStore'
 import type { NodeAlert } from '../../../../shared/state'
+import { type NodeId } from '../../../../shared/ids'
 
 const EMPTY_ALERTS: NodeAlert[] = []
 
 interface CardShellProps {
-  nodeId: string
+  nodeId: NodeId
   x: number
   y: number
   width: number
@@ -28,25 +29,25 @@ interface CardShellProps {
   showClose?: boolean
   showColorPicker?: boolean
   archivedChildren: ArchivedNode[]
-  onClose: (id: string) => void
-  onColorChange: (id: string, color: string) => void
-  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onOpenArchiveSearch?: (nodeId: string) => void
+  onClose: (id: NodeId) => void
+  onColorChange: (id: NodeId, color: string) => void
+  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onOpenArchiveSearch?: (nodeId: NodeId) => void
   pastSessions?: TerminalSessionEntry[]
   currentSessionIndex?: number
-  onSessionsToggled?: (nodeId: string, open: boolean) => void
-  onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
+  onSessionsToggled?: (nodeId: NodeId, open: boolean) => void
+  onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
   onMouseDown?: (e: React.MouseEvent) => void
-  onStartReparent?: (id: string) => void
-  onShipIt?: (id: string) => void
-  onFork?: (id: string) => void
+  onStartReparent?: (id: NodeId) => void
+  onShipIt?: (id: NodeId) => void
+  onFork?: (id: NodeId) => void
   onDiffPlans?: () => void
   isReparenting?: boolean
-  onPostSync?: (id: string) => void
-  onWtSpawn?: (id: string, branchName: string) => void
-  onAddNode?: (parentNodeId: string, type: AddNodeType) => void
-  onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
+  onPostSync?: (id: NodeId) => void
+  onWtSpawn?: (id: NodeId, branchName: string) => void
+  onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
+  onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   className?: string
   style?: CSSProperties

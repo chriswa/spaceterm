@@ -1,10 +1,11 @@
 import { create } from 'zustand'
+import { type NodeId } from '../../../../shared/ids'
 
 interface ReparentStoreState {
-  reparentingNodeId: string | null
-  hoveredNodeId: string | null
-  startReparent(nodeId: string): void
-  setHoveredNode(nodeId: string | null): void
+  reparentingNodeId: NodeId | null
+  hoveredNodeId: NodeId | null
+  startReparent(nodeId: NodeId): void
+  setHoveredNode(nodeId: NodeId | null): void
   reset(): void
 }
 

@@ -1,4 +1,5 @@
 import type { ClaudeSessionEntry, CameraBounds } from './protocol'
+import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UndoEntry } from './undo-types'
 
 // --- Claude state enum ---
@@ -12,7 +13,7 @@ export interface TerminalSessionEntry {
   startedAt: string
   endedAt?: string
   trigger: 'initial' | 'claude-session-change' | 'claude-exit' | 'reincarnation'
-  claudeSessionId?: string
+  claudeSessionId?: ClaudeSessionId
   shellTitleHistory: string[]
 }
 
@@ -27,8 +28,8 @@ export interface NodeAlert {
 // --- Node types (unified terminal/remnant) ---
 
 export interface BaseNodeData {
-  id: string
-  parentId: string // 'root' for top-level
+  id: NodeId
+  parentId: NodeId // ROOT_NODE_ID for top-level
   x: number
   y: number
   zIndex: number
@@ -44,7 +45,7 @@ export interface TerminalNodeData extends BaseNodeData {
   type: 'terminal'
   alive: boolean // true = live PTY, false = remnant
   /** Active PTY session ID. Initially same as node id. Changes on reincarnation. */
-  sessionId: string
+  sessionId: PtySessionId
   cols: number
   rows: number
   exitCode?: number // set when alive → false

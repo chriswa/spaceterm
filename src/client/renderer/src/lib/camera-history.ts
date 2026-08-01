@@ -1,8 +1,9 @@
 import type { Camera } from './camera'
+import { type NodeId } from '../../../../shared/ids'
 
 export interface CameraHistoryEntry {
   camera: Camera
-  focusedId: string | null
+  focusedId: NodeId | null
 }
 
 const MAX_ENTRIES = 1000

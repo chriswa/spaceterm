@@ -13,36 +13,37 @@ import { sendSetAlertsReadTimestamp } from '../lib/server-sync'
 import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import foodIcon from '../assets/food.svg'
 import type { NodeAlert } from '../../../../shared/state'
+import { type NodeId } from '../../../../shared/ids'
 
 const EMPTY_ALERTS: NodeAlert[] = []
 
 export interface NodeActionBarProps {
-  nodeId: string
+  nodeId: NodeId
   preset?: ColorPreset
   focused: boolean
   width: number
-  onShipIt?: (id: string) => void
-  onFork?: (id: string) => void
-  onExtraCliArgs?: (nodeId: string, extraCliArgs: string) => void
+  onShipIt?: (id: NodeId) => void
+  onFork?: (id: NodeId) => void
+  onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   onDiffPlans?: () => void
   showColorPicker?: boolean
-  onColorChange: (id: string, color: string) => void
+  onColorChange: (id: NodeId, color: string) => void
   pastSessions?: TerminalSessionEntry[]
   currentSessionIndex?: number
-  onSessionsToggled?: (nodeId: string, open: boolean) => void
-  onSessionRevive?: (nodeId: string, session: TerminalSessionEntry) => void
+  onSessionsToggled?: (nodeId: NodeId, open: boolean) => void
+  onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
   archivedChildren: ArchivedNode[]
-  onOpenArchiveSearch?: (nodeId: string) => void
-  onUnarchive: (parentNodeId: string, archivedNodeId: string) => void
-  onArchiveDelete: (parentNodeId: string, archivedNodeId: string) => void
-  onPostSync?: (id: string) => void
-  onWtSpawn?: (id: string, branchName: string) => void
-  onStartReparent?: (id: string) => void
+  onOpenArchiveSearch?: (nodeId: NodeId) => void
+  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  onPostSync?: (id: NodeId) => void
+  onWtSpawn?: (id: NodeId, branchName: string) => void
+  onStartReparent?: (id: NodeId) => void
   isReparenting?: boolean
-  onAddNode?: (parentNodeId: string, type: AddNodeType) => void
+  onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   showClose?: boolean
-  onClose: (id: string) => void
+  onClose: (id: NodeId) => void
 }
 
 /**

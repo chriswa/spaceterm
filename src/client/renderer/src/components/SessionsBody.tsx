@@ -1,11 +1,12 @@
 import { relativeTime } from '../lib/search'
 import type { TerminalSessionEntry } from '../../../../shared/state'
+import type { NodeId } from '../../../../shared/ids'
 
 interface SessionsBodyProps {
-  nodeId: string
+  nodeId: NodeId
   sessions: TerminalSessionEntry[]
   currentSessionIndex?: number
-  onRevive: (nodeId: string, session: TerminalSessionEntry) => void
+  onRevive: (nodeId: NodeId, session: TerminalSessionEntry) => void
 }
 
 function triggerLabel(trigger: TerminalSessionEntry['trigger']): string {

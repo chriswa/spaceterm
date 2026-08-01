@@ -1,10 +1,11 @@
 import { create } from 'zustand'
+import { type NodeId } from '../../../../shared/ids'
 
 interface HoveredCardStoreState {
-  hoveredNodeId: string | null
-  setHoveredNode(nodeId: string | null): void
-  toolbarHoveredNodeId: string | null
-  setToolbarHoveredNode(nodeId: string | null): void
+  hoveredNodeId: NodeId | null
+  setHoveredNode(nodeId: NodeId | null): void
+  toolbarHoveredNodeId: NodeId | null
+  setToolbarHoveredNode(nodeId: NodeId | null): void
 }
 
 export const useHoveredCardStore = create<HoveredCardStoreState>((set) => ({

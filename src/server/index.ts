@@ -6,6 +6,7 @@ import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
 import { unhandledVariant } from '../shared/exhaustive'
+import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { serverLog, sanitizeForLog } from './server-log'
@@ -292,7 +293,7 @@ function prepareCursorAgentPluginDir(): string {
 }
 
 /** Latest Cursor chat id from session history (no on-disk JSONL validation). */
-function lastCursorSessionId(history: Array<{ claudeSessionId: string }>): string | undefined {
+function lastCursorSessionId(history: Array<{ claudeSessionId: ClaudeSessionId }>): ClaudeSessionId | undefined {
   if (!history.length) return undefined
   return history[history.length - 1].claudeSessionId
 }
@@ -474,7 +475,7 @@ function buildCodexCreateOptions(opts: CodexLaunchOpts): CreateOptions {
 }
 
 /** Latest Codex session id from history (no Claude JSONL validation). */
-function lastCodexSessionId(history: Array<{ claudeSessionId: string }>): string | undefined {
+function lastCodexSessionId(history: Array<{ claudeSessionId: ClaudeSessionId }>): ClaudeSessionId | undefined {
   if (!history.length) return undefined
   return history[history.length - 1].claudeSessionId
 }
@@ -485,15 +486,15 @@ function isNonClaudeAgent(agentType: 'claude' | 'cursor' | 'codex' | undefined):
 }
 
 /** Pull agent chat id from a hook/status-line payload (Cursor: conversation_id). */
-function agentSessionIdFromPayload(payload: Record<string, unknown> | undefined): string {
+function agentSessionIdFromPayload(payload: Record<string, unknown> | undefined): ClaudeSessionId | '' {
   if (!payload) return ''
-  if (typeof payload.session_id === 'string' && payload.session_id) return payload.session_id
-  if (typeof payload.conversation_id === 'string' && payload.conversation_id) return payload.conversation_id
+  if (typeof payload.session_id === 'string' && payload.session_id) return asClaudeSessionId(payload.session_id)
+  if (typeof payload.conversation_id === 'string' && payload.conversation_id) return asClaudeSessionId(payload.conversation_id)
   return ''
 }
 
 /** Last-resort: read the most recent main-session id from this surface's hook log. */
-function peekAgentSessionIdFromHookLog(surfaceId: string): string | undefined {
+function peekAgentSessionIdFromHookLog(surfaceId: PtySessionId): ClaudeSessionId | undefined {
   const logPath = path.join(HOOK_LOG_DIR, `${surfaceId}.jsonl`)
   if (!fs.existsSync(logPath)) return undefined
   try {
@@ -522,17 +523,21 @@ function peekAgentSessionIdFromHookLog(surfaceId: string): string | undefined {
  */
 function resolveNonClaudeResumeId(
   node: {
-    id: string
-    sessionId: string
-    claudeSessionHistory?: Array<{ claudeSessionId: string }>
-    terminalSessions?: Array<{ claudeSessionId?: string }>
+    id: NodeId
+    sessionId: PtySessionId
+    claudeSessionHistory?: Array<{ claudeSessionId: ClaudeSessionId }>
+    terminalSessions?: Array<{ claudeSessionId?: ClaudeSessionId }>
   },
-  liveAgentSessionId?: string | null,
-): string | undefined {
+  liveAgentSessionId?: ClaudeSessionId | null,
+): ClaudeSessionId | undefined {
   if (liveAgentSessionId) return liveAgentSessionId
   const fromHook =
     peekAgentSessionIdFromHookLog(node.sessionId)
-    ?? peekAgentSessionIdFromHookLog(node.id)
+    // Deliberate: hook logs are named after the surface (pty session) that wrote
+    // them, and a terminal's first pty session id *is* its node id. So this
+    // second probe reaches the log from before the terminal was ever restarted,
+    // which a botched restart may be the only place the real chat id survives.
+    ?? peekAgentSessionIdFromHookLog(asPtySessionId(node.id))
   if (fromHook) return fromHook
   const fromHistory = lastCursorSessionId(node.claudeSessionHistory ?? [])
   if (fromHistory) return fromHistory
@@ -554,7 +559,7 @@ function resolveNonClaudeResumeId(
  * crashes before writing the JSONL.  Without this check the revival enters a
  * cascading failure: every restart picks the ghost and fails again.
  */
-function findValidClaudeSession(history: Array<{ claudeSessionId: string }>, cwd: string | undefined): string | undefined {
+function findValidClaudeSession(history: Array<{ claudeSessionId: ClaudeSessionId }>, cwd: string | undefined): ClaudeSessionId | undefined {
   if (!cwd || history.length === 0) {
     return history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
   }
@@ -673,14 +678,19 @@ let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
 let summaryChat: SummaryChat
 
-function surfaceAgentType(surfaceId: string): 'claude' | 'cursor' | 'codex' | undefined {
-  const nodeId = stateManager.getNodeIdForSession(surfaceId) ?? surfaceId
+function surfaceAgentType(surfaceId: PtySessionId): 'claude' | 'cursor' | 'codex' | undefined {
+  // Was `getNodeIdForSession(surfaceId) ?? surfaceId` — falling back to the pty
+  // session id as a node id, which only resolves while the two still coincide,
+  // i.e. before the terminal's first restart. resolveNodeIdForPtySession scans
+  // node data on a map miss instead, which is right in both cases.
+  const nodeId = stateManager.resolveNodeIdForPtySession(surfaceId)
+  if (!nodeId) return undefined
   const node = stateManager.getNode(nodeId)
   if (node && node.type === 'terminal') return node.agentType
   return undefined
 }
 
-function transcriptPathForNode(nodeId: string): string | undefined {
+function transcriptPathForNode(nodeId: NodeId): string | undefined {
   const node = stateManager.getNode(nodeId)
   if (!node || node.type !== 'terminal') return undefined
   switch (node.agentType) {
@@ -697,7 +707,7 @@ function transcriptPathForNode(nodeId: string): string | undefined {
  * Skips PreToolUse — subagents can carry a different conversation_id.
  */
 function ensureNonClaudeSessionRecorded(
-  surfaceId: string,
+  surfaceId: PtySessionId,
   payload: Record<string, unknown> | undefined,
   source: string = 'startup',
 ): void {
@@ -710,7 +720,7 @@ function ensureNonClaudeSessionRecorded(
 }
 
 /** After reincarnating a PTY, keep in-memory session history aligned with the node. */
-function seedHistoryAfterReincarnate(nodeId: string, newPtyId: string): void {
+function seedHistoryAfterReincarnate(nodeId: NodeId, newPtyId: PtySessionId): void {
   const node = stateManager.getNode(nodeId)
   if (node?.type === 'terminal' && node.claudeSessionHistory.length > 0) {
     sessionManager.seedClaudeSessionHistory(newPtyId, node.claudeSessionHistory)
@@ -731,7 +741,7 @@ function send(socket: net.Socket, msg: ServerMessage): void {
  * `tag` names the caller for the log line. Shared by both focus paths
  * (surface-id and claude-session-id resolution).
  */
-function raiseNodeOnClient(focusNodeId: string, tag: string): void {
+function raiseNodeOnClient(focusNodeId: NodeId, tag: string): void {
   const target = clients.values().next().value
   if (!target) {
     serverLog(`[${tag}] No connected clients to raise`)
@@ -741,7 +751,7 @@ function raiseNodeOnClient(focusNodeId: string, tag: string): void {
   send(target.socket, { type: 'focus-surface', nodeId: focusNodeId })
 }
 
-function broadcastToAttached(sessionId: string, msg: ServerMessage): void {
+function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void {
   clients.forEach((client) => {
     if (client.attachedSessions.has(sessionId)) {
       // Mid-attach: queue instead of sending, so live output is held until the
@@ -801,7 +811,7 @@ function handleIngestMessage(msg: IngestMessage): void {
       // Process SessionStart hooks for agent session history tracking
       // (session lifecycle management stays here — not state machine concern)
       if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
-        const claudeSessionId = 'session_id' in msg.payload ? String(msg.payload.session_id) : ''
+        const claudeSessionId = 'session_id' in msg.payload ? asClaudeSessionId(String(msg.payload.session_id)) : ''
         const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
         if (claudeSessionId) {
           sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
@@ -846,8 +856,8 @@ function handleIngestMessage(msg: IngestMessage): void {
       if (hookType === 'UserPromptSubmit' && msg.payload && typeof msg.payload === 'object') {
         if (!isNonClaudeAgent(surfaceAgentType(msg.surfaceId))) {
           const transcriptPath = 'transcript_path' in msg.payload ? String(msg.payload.transcript_path) : ''
-          const claudeSessionId = 'session_id' in msg.payload ? String(msg.payload.session_id) : ''
-          if (transcriptPath) {
+          const claudeSessionId = 'session_id' in msg.payload ? asClaudeSessionId(String(msg.payload.session_id)) : ''
+          if (transcriptPath && claudeSessionId) {
             sessionTitleSummarizer.summarize(msg.surfaceId, transcriptPath, claudeSessionId)
           }
         }
@@ -940,7 +950,7 @@ function handleIngestMessage(msg: IngestMessage): void {
           console.error(`[fork-claude-surface] Cannot determine cwd for ${forkSrcNodeId.slice(0, 8)}`)
           break
         }
-        let sourceClaudeSessionId: string | undefined
+        let sourceClaudeSessionId: ClaudeSessionId | undefined
         for (let i = history.length - 1; i >= 0; i--) {
           if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
             sourceClaudeSessionId = history[i].claudeSessionId
@@ -1071,7 +1081,7 @@ interface ScriptSubscriber {
 }
 const scriptSubscribers = new Set<ScriptSubscriber>()
 
-function broadcastToScriptSubscribers(eventType: string, nodeId: string | undefined, msg: Record<string, unknown>): void {
+function broadcastToScriptSubscribers(eventType: string, nodeId: NodeId | undefined, msg: Record<string, unknown>): void {
   scriptSubscribers.forEach((sub) => {
     if (sub.events && !sub.events.has(eventType)) return
     if (sub.nodeIds && nodeId && !sub.nodeIds.has(nodeId)) return
@@ -1241,7 +1251,7 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
         }
         // Walk backwards through history to find the most recent session with an
         // existing transcript file on disk.
-        let sourceClaudeSessionId: string | undefined
+        let sourceClaudeSessionId: ClaudeSessionId | undefined
         for (let i = history.length - 1; i >= 0; i--) {
           if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
             sourceClaudeSessionId = history[i].claudeSessionId
@@ -1729,7 +1739,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'terminal-resize': {
       const tNode = stateManager.getNode(msg.nodeId)
-      const ptyId = tNode && tNode.type === 'terminal' ? tNode.sessionId : msg.nodeId
+      // Previously fell back to using the node id as a pty id. That can only
+      // ever name a live pty when node id == pty id, in which case getNode
+      // would have succeeded — so the fallback was reachable only when there is
+      // nothing to resize. Skipping is what it was already effectively doing.
+      if (!tNode || tNode.type !== 'terminal') {
+        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        break
+      }
+      const ptyId = tNode.sessionId
       sessionManager.resize(ptyId, msg.cols, msg.rows)
       snapshotManager.resize(ptyId, msg.cols, msg.rows)
       stateManager.updateTerminalSize(ptyId, msg.cols, msg.rows)
@@ -2126,7 +2144,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
 
         // Claude: clone JSONL then resume the new session id.
-        let sourceClaudeSessionId: string | undefined
+        let sourceClaudeSessionId: ClaudeSessionId | undefined
         for (let i = history.length - 1; i >= 0; i--) {
           if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
             sourceClaudeSessionId = history[i].claudeSessionId
@@ -2390,10 +2408,10 @@ async function startServer(): Promise<void> {
   daemonClient = new DaemonClient((msg) => {
     switch (msg.type) {
       case 'data':
-        sessionManager.handleDaemonData(msg.id as string, msg.data as string)
+        sessionManager.handleDaemonData(asPtySessionId(msg.id as string), msg.data as string)
         break
       case 'exit':
-        sessionManager.handleDaemonExit(msg.id as string, msg.exitCode as number)
+        sessionManager.handleDaemonExit(asPtySessionId(msg.id as string), msg.exitCode as number)
         break
       case 'error':
         console.error(`[pty-daemon] Error: ${msg.message}`)
@@ -2727,7 +2745,7 @@ async function startServer(): Promise<void> {
   // Step 2: Process dead terminals, but check daemon first.
   const deadTerminals = stateManager.processDeadTerminals()
   console.log(`[startup] ${deadTerminals.length} terminal(s) to process`)
-  const revivedNodeIds: string[] = []
+  const revivedNodeIds: NodeId[] = []
   const reattachedSessionIds = new Set<string>()
 
   for (const { nodeId, claudeSessionId, cwd, extraCliArgs } of deadTerminals) {

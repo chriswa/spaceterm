@@ -3,6 +3,7 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import type { AttrSpan, SnapshotRow, SnapshotMessage } from '../shared/protocol'
 import { DEFAULT_FG, DEFAULT_BG } from '../shared/theme'
 import { resolveFg, resolveBg } from '../shared/terminal-colors'
+import type { PtySessionId } from '../shared/ids'
 
 const TICK_INTERVAL = 100 // 10 ticks/sec, one dirty session per tick
 
@@ -48,7 +49,7 @@ function serializeMouseState(terminal: Terminal): string {
 }
 
 interface HeadlessSession {
-  sessionId: string
+  sessionId: PtySessionId
   terminal: Terminal
   serialize: SerializeAddon
   cols: number
@@ -67,7 +68,7 @@ export class SnapshotManager {
     this.timer = setInterval(() => this.tick(), TICK_INTERVAL)
   }
 
-  addSession(sessionId: string, cols: number, rows: number): void {
+  addSession(sessionId: PtySessionId, cols: number, rows: number): void {
     const terminal = new Terminal({ cols, rows, scrollback: SCROLLBACK_LINES, allowProposedApi: true })
     const serialize = new SerializeAddon()
     // SerializeAddon is typed against @xterm/xterm's Terminal, but the runtime
@@ -78,7 +79,7 @@ export class SnapshotManager {
     this.lastSnapshotTime.set(sessionId, 0)
   }
 
-  removeSession(sessionId: string): void {
+  removeSession(sessionId: PtySessionId): void {
     const session = this.sessions.get(sessionId)
     if (session) {
       session.terminal.dispose()
@@ -88,14 +89,14 @@ export class SnapshotManager {
     }
   }
 
-  write(sessionId: string, data: string): void {
+  write(sessionId: PtySessionId, data: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.terminal.write(data)
     this.dirtySet.add(sessionId)
   }
 
-  resize(sessionId: string, cols: number, rows: number): void {
+  resize(sessionId: PtySessionId, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.terminal.resize(cols, rows)
@@ -119,7 +120,7 @@ export class SnapshotManager {
    * before calling, and flush that buffer after the callback fires — otherwise
    * data straddling the cut is lost or duplicated.
    */
-  serializeForAttach(sessionId: string, cb: (state: string | null) => void): void {
+  serializeForAttach(sessionId: PtySessionId, cb: (state: string | null) => void): void {
     const session = this.sessions.get(sessionId)
     if (!session) {
       cb(null)
@@ -136,7 +137,7 @@ export class SnapshotManager {
   }
 
   /** Force an immediate snapshot for a specific session */
-  snapshotNow(sessionId: string): SnapshotMessage | null {
+  snapshotNow(sessionId: PtySessionId): SnapshotMessage | null {
     const session = this.sessions.get(sessionId)
     if (!session) return null
     this.dirtySet.delete(sessionId)

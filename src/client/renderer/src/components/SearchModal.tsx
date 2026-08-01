@@ -6,6 +6,7 @@ import type { SearchEntry, SearchResult, SearchMode, NodeTypeFilter } from '../l
 import type { ColorPreset } from '../lib/color-presets'
 import type { NodeData } from '../../../../shared/state'
 import { createWheelAccumulator, classifyWheelEvent } from '../lib/wheel-gesture'
+import type { NodeId } from '../../../../shared/ids'
 
 function typeIcon(data: NodeData, size = 26): JSX.Element {
   const props = { width: size, height: size, viewBox: '0 0 14 14', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
@@ -39,9 +40,9 @@ interface SearchModalProps {
   mode: SearchMode
   resolvedPresets: Record<string, ColorPreset>
   onDismiss: () => void
-  onNavigateToNode: (nodeId: string) => void
-  onReviveNode: (archiveParentId: string, archivedNodeId: string) => void
-  onArchiveDelete?: (parentNodeId: string, archivedNodeId: string) => void
+  onNavigateToNode: (nodeId: NodeId) => void
+  onReviveNode: (archiveParentId: NodeId, archivedNodeId: NodeId) => void
+  onArchiveDelete?: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
 }
 
 function countNestedArchives(data: SearchEntry['data']): number {

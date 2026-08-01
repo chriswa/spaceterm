@@ -28,6 +28,7 @@ import type {
 } from './protocol'
 import type { NodeData, ServerState } from './state'
 import type { UndoEntry } from './undo-types'
+import type { NodeId, PtySessionId } from './ids'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
 
@@ -46,34 +47,34 @@ export interface AttachResult {
 export interface PtyApi {
   create(options?: CreateOptions): Promise<SessionInfo>
   list(): Promise<SessionInfo[]>
-  attach(sessionId: string): Promise<AttachResult>
-  write(sessionId: string, data: string): void
-  resize(sessionId: string, cols: number, rows: number): void
-  destroy(sessionId: string): Promise<void>
-  onData(sessionId: string, callback: (data: string) => void): () => void
-  onExit(sessionId: string, callback: (exitCode: number) => void): () => void
-  onClaudeContext(sessionId: string, callback: (percent: number) => void): () => void
-  onClaudeSessionLineCount(sessionId: string, callback: (lineCount: number) => void): () => void
-  onPlanCacheUpdate(sessionId: string, callback: (count: number, files: string[]) => void): () => void
+  attach(sessionId: PtySessionId): Promise<AttachResult>
+  write(sessionId: PtySessionId, data: string): void
+  resize(sessionId: PtySessionId, cols: number, rows: number): void
+  destroy(sessionId: PtySessionId): Promise<void>
+  onData(sessionId: PtySessionId, callback: (data: string) => void): () => void
+  onExit(sessionId: PtySessionId, callback: (exitCode: number) => void): () => void
+  onClaudeContext(sessionId: PtySessionId, callback: (percent: number) => void): () => void
+  onClaudeSessionLineCount(sessionId: PtySessionId, callback: (lineCount: number) => void): () => void
+  onPlanCacheUpdate(sessionId: PtySessionId, callback: (count: number, files: string[]) => void): () => void
 }
 
 export interface NodeApi {
   syncRequest(): Promise<ServerState>
-  move(nodeId: string, x: number, y: number): Promise<void>
-  batchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void>
-  rename(nodeId: string, name: string): Promise<void>
-  setColor(nodeId: string, colorPresetId: string): Promise<void>
-  archive(nodeId: string): Promise<void>
-  unarchive(parentNodeId: string, archivedNodeId: string): Promise<void>
-  archiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void>
+  move(nodeId: NodeId, x: number, y: number): Promise<void>
+  batchMove(moves: Array<{ nodeId: NodeId; x: number; y: number }>): Promise<void>
+  rename(nodeId: NodeId, name: string): Promise<void>
+  setColor(nodeId: NodeId, colorPresetId: string): Promise<void>
+  archive(nodeId: NodeId): Promise<void>
+  unarchive(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void>
+  archiveDelete(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void>
   undoPush(entry: UndoEntry): Promise<void>
   undoSetCursor(cursor: number): Promise<void>
-  bringToFront(nodeId: string): Promise<void>
-  reparent(nodeId: string, newParentId: string): Promise<void>
-  swapParentChild(nodeId: string, childId: string): Promise<void>
+  bringToFront(nodeId: NodeId): Promise<void>
+  reparent(nodeId: NodeId, newParentId: NodeId): Promise<void>
+  swapParentChild(nodeId: NodeId, childId: NodeId): Promise<void>
 
   terminalCreate(
-    parentId: string,
+    parentId: NodeId,
     options?: CreateOptions,
     initialTitleHistory?: string[],
     initialName?: string,
@@ -81,42 +82,42 @@ export interface NodeApi {
     y?: number,
     initialInput?: string,
   ): Promise<SessionInfo>
-  terminalResize(nodeId: string, cols: number, rows: number): Promise<void>
-  terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<SessionInfo>
-  terminalRestart(nodeId: string, extraCliArgs: string): Promise<SessionInfo>
-  forkSession(nodeId: string): Promise<SessionInfo>
-  setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void
+  terminalResize(nodeId: NodeId, cols: number, rows: number): Promise<void>
+  terminalReincarnate(nodeId: NodeId, options?: CreateOptions): Promise<SessionInfo>
+  terminalRestart(nodeId: NodeId, extraCliArgs: string): Promise<SessionInfo>
+  forkSession(nodeId: NodeId): Promise<SessionInfo>
+  setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot'): void
   crabReorder(order: string[]): Promise<void>
 
-  directoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  directoryCwd(nodeId: string, cwd: string): Promise<void>
-  directoryGitFetch(nodeId: string): Promise<void>
-  directoryWtSpawn(nodeId: string, branchName: string): Promise<{ nodeId: string }>
+  directoryAdd(parentId: NodeId, cwd: string, x?: number, y?: number): Promise<{ nodeId: NodeId }>
+  directoryCwd(nodeId: NodeId, cwd: string): Promise<void>
+  directoryGitFetch(nodeId: NodeId): Promise<void>
+  directoryWtSpawn(nodeId: NodeId, branchName: string): Promise<{ nodeId: NodeId }>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
 
-  fileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  filePath(nodeId: string, filePath: string): Promise<void>
+  fileAdd(parentId: NodeId, filePath: string, x?: number, y?: number): Promise<{ nodeId: NodeId }>
+  filePath(nodeId: NodeId, filePath: string): Promise<void>
   validateFile(path: string, cwd?: string): Promise<{ valid: boolean; error?: string }>
 
-  markdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  markdownResize(nodeId: string, width: number, height: number): Promise<void>
-  markdownContent(nodeId: string, content: string): Promise<void>
-  markdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<void>
+  markdownAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }>
+  markdownResize(nodeId: NodeId, width: number, height: number): Promise<void>
+  markdownContent(nodeId: NodeId, content: string): Promise<void>
+  markdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<void>
 
-  titleAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }>
-  titleText(nodeId: string, text: string): Promise<void>
+  titleAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }>
+  titleText(nodeId: NodeId, text: string): Promise<void>
 
-  setClaudeStatusUnread(sessionId: string, unread: boolean): void
-  setClaudeStatusAsleep(sessionId: string, asleep: boolean): void
-  setAlertsReadTimestamp(nodeId: string, timestamp: number): void
+  setClaudeStatusUnread(sessionId: PtySessionId, unread: boolean): void
+  setClaudeStatusAsleep(sessionId: PtySessionId, asleep: boolean): void
+  setAlertsReadTimestamp(nodeId: NodeId, timestamp: number): void
   sendCameraBounds(bounds: CameraBounds): void
   saveViewport(slot: string, bounds: CameraBounds): void
 
-  onSnapshot(sessionId: string, callback: (snapshot: SnapshotMessage) => void): () => void
-  onUpdated(callback: (nodeId: string, fields: Partial<NodeData>) => void): () => void
+  onSnapshot(sessionId: PtySessionId, callback: (snapshot: SnapshotMessage) => void): () => void
+  onUpdated(callback: (nodeId: NodeId, fields: Partial<NodeData>) => void): () => void
   onAdded(callback: (node: NodeData) => void): () => void
-  onRemoved(callback: (nodeId: string) => void): () => void
-  onFileContent(callback: (nodeId: string, content: string) => void): () => void
+  onRemoved(callback: (nodeId: NodeId) => void): () => void
+  onFileContent(callback: (nodeId: NodeId, content: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
   onGhRateLimit(
     callback: (data: GhRateLimitData, usedHistory: (number | null)[], slotMinutes: number) => void,
@@ -124,10 +125,10 @@ export interface NodeApi {
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
   onSpeakingChanged(
-    callback: (nodeId: string, speaking: boolean, voice: string | undefined) => void,
+    callback: (nodeId: NodeId, speaking: boolean, voice: string | undefined) => void,
   ): () => void
   onSummaryChatStatus(
-    callback: (nodeId: string, state: SummaryChatUiState, message?: string) => void,
+    callback: (nodeId: NodeId, state: SummaryChatUiState, message?: string) => void,
   ): () => void
   onPeerConnected(callback: (clientId: string) => void): () => void
   onPeerDisconnected(callback: (clientId: string) => void): () => void
@@ -152,7 +153,7 @@ export interface WindowApi {
   isFullScreen(): Promise<boolean>
   setFullScreen(enabled: boolean): Promise<void>
   onVisibilityChanged(callback: (visible: boolean) => void): () => void
-  onFocusNode(callback: (nodeId: string) => void): () => void
+  onFocusNode(callback: (nodeId: NodeId) => void): () => void
 }
 
 /** The object exposed as `window.api` by `src/client/preload/index.ts`. */
@@ -160,7 +161,7 @@ export interface Api {
   pty: PtyApi
   node: NodeApi
   log(message: string): void
-  startSummaryChat(nodeId: string): void
+  startSummaryChat(nodeId: NodeId): void
   restartSpaceterm(): Promise<void>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>

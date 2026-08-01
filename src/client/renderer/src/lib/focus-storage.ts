@@ -1,12 +1,13 @@
+import { asNodeId, type NodeId, PtySessionId } from '../../../../shared/ids'
 const FOCUS_KEY = 'spaceterm-focus'
 const SCROLL_PREFIX = 'spaceterm-scroll-'
 
 interface FocusState {
-  focusedId: string | null
+  focusedId: NodeId | null
   scrollMode: boolean
 }
 
-export function saveFocusState(focusedId: string | null, scrollMode: boolean): void {
+export function saveFocusState(focusedId: NodeId | null, scrollMode: boolean): void {
   try {
     localStorage.setItem(FOCUS_KEY, JSON.stringify({ focusedId, scrollMode }))
   } catch { /* ignore quota errors */ }
@@ -18,19 +19,20 @@ export function loadFocusState(): FocusState | null {
     if (!raw) return null
     const parsed = JSON.parse(raw)
     if (typeof parsed.focusedId === 'string' || parsed.focusedId === null) {
-      return { focusedId: parsed.focusedId, scrollMode: !!parsed.scrollMode }
+      // localStorage is an untyped boundary; the value was written by saveFocusState.
+      return { focusedId: parsed.focusedId === null ? null : asNodeId(parsed.focusedId), scrollMode: !!parsed.scrollMode }
     }
     return null
   } catch { return null }
 }
 
-export function saveTerminalScroll(sessionId: string, pixels: number): void {
+export function saveTerminalScroll(sessionId: PtySessionId, pixels: number): void {
   try {
     localStorage.setItem(SCROLL_PREFIX + sessionId, String(pixels))
   } catch { /* ignore quota errors */ }
 }
 
-export function loadTerminalScroll(sessionId: string): number | null {
+export function loadTerminalScroll(sessionId: PtySessionId): number | null {
   try {
     const raw = localStorage.getItem(SCROLL_PREFIX + sessionId)
     if (!raw) return null
@@ -39,7 +41,7 @@ export function loadTerminalScroll(sessionId: string): number | null {
   } catch { return null }
 }
 
-export function clearTerminalScroll(sessionId: string): void {
+export function clearTerminalScroll(sessionId: PtySessionId): void {
   try {
     localStorage.removeItem(SCROLL_PREFIX + sessionId)
   } catch { /* ignore */ }
@@ -48,11 +50,11 @@ export function clearTerminalScroll(sessionId: string): void {
 // Tracks which sessions should restore scroll on next mount (set by App during reload restore)
 const pendingScrollRestore = new Set<string>()
 
-export function markSessionForScrollRestore(sessionId: string): void {
+export function markSessionForScrollRestore(sessionId: PtySessionId): void {
   pendingScrollRestore.add(sessionId)
 }
 
-export function consumeScrollRestore(sessionId: string): boolean {
+export function consumeScrollRestore(sessionId: PtySessionId): boolean {
   return pendingScrollRestore.delete(sessionId)
 }
 

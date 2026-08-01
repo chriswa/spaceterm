@@ -1,4 +1,5 @@
 import type { QueuedTransition, ClaudeState } from './types'
+import type { PtySessionId } from '../../shared/ids'
 
 /**
  * How long (ms) to hold queued transitions before processing them.
@@ -22,7 +23,7 @@ export const TRANSITION_DELAY_MS = 500
 export const TRANSITION_DRAIN_INTERVAL_MS = 50
 
 export type ApplyFn = (
-  surfaceId: string,
+  surfaceId: PtySessionId,
   newState: ClaudeState,
   source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
   event: string,
@@ -48,7 +49,7 @@ export class TransitionQueue {
   }
 
   enqueue(
-    surfaceId: string,
+    surfaceId: PtySessionId,
     newState: ClaudeState,
     source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
     event: string,

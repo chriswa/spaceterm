@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm'
 import { WebglAddon } from '@xterm/addon-webgl'
+import type { PtySessionId } from '../../../../shared/ids'
 
 /**
  * Manages WebGL renderer activation. Only one terminal gets WebGL at a time
@@ -9,7 +10,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 let activeSessionId: string | null = null
 let activeAddon: WebglAddon | null = null
 
-export function activateWebGL(sessionId: string, terminal: Terminal): void {
+export function activateWebGL(sessionId: PtySessionId, terminal: Terminal): void {
   if (activeSessionId === sessionId) return
 
   // Dispose previous WebGL addon
@@ -44,7 +45,7 @@ export function activateWebGL(sessionId: string, terminal: Terminal): void {
   }
 }
 
-export function deactivateWebGL(sessionId: string): void {
+export function deactivateWebGL(sessionId: PtySessionId): void {
   if (activeSessionId !== sessionId) return
 
   if (activeAddon) {

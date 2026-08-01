@@ -10,6 +10,7 @@ import type {
 } from '../../shared/protocol'
 import { LineParser } from '../../server/line-parser'
 import { unhandledVariant } from '../../shared/exhaustive'
+import type { NodeId, PtySessionId } from '../../shared/ids'
 
 const INITIAL_RECONNECT_DELAY = 200
 const MAX_RECONNECT_DELAY = 1000
@@ -242,25 +243,25 @@ export class ServerClient extends EventEmitter {
     if (resp.type !== 'server-restarted') throw new Error('Unexpected response')
   }
 
-  async attach(sessionId: string): Promise<{ scrollback: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
+  async attach(sessionId: PtySessionId): Promise<{ scrollback: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
     if (resp.type === 'attached') return { scrollback: resp.scrollback, claudeContextPercent: resp.claudeContextPercent, claudeSessionLineCount: resp.claudeSessionLineCount }
     throw new Error('Unexpected response')
   }
 
-  async detach(sessionId: string): Promise<void> {
+  async detach(sessionId: PtySessionId): Promise<void> {
     await this.sendRequest({ type: 'detach', sessionId })
   }
 
-  async destroy(sessionId: string): Promise<void> {
+  async destroy(sessionId: PtySessionId): Promise<void> {
     await this.sendRequest({ type: 'destroy', sessionId })
   }
 
-  write(sessionId: string, data: string): void {
+  write(sessionId: PtySessionId, data: string): void {
     this.sendFireAndForget({ type: 'write', sessionId, data })
   }
 
-  resize(sessionId: string, cols: number, rows: number): void {
+  resize(sessionId: PtySessionId, cols: number, rows: number): void {
     this.sendFireAndForget({ type: 'resize', sessionId, cols, rows })
   }
 
@@ -270,31 +271,31 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-sync-request' })
   }
 
-  async nodeMove(nodeId: string, x: number, y: number): Promise<ServerMessage> {
+  async nodeMove(nodeId: NodeId, x: number, y: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-move', nodeId, x, y })
   }
 
-  async nodeBatchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<ServerMessage> {
+  async nodeBatchMove(moves: Array<{ nodeId: NodeId; x: number; y: number }>): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-batch-move', moves })
   }
 
-  async nodeRename(nodeId: string, name: string): Promise<ServerMessage> {
+  async nodeRename(nodeId: NodeId, name: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-rename', nodeId, name })
   }
 
-  async nodeSetColor(nodeId: string, colorPresetId: string): Promise<ServerMessage> {
+  async nodeSetColor(nodeId: NodeId, colorPresetId: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-set-color', nodeId, colorPresetId })
   }
 
-  async nodeArchive(nodeId: string): Promise<ServerMessage> {
+  async nodeArchive(nodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-archive', nodeId })
   }
 
-  async nodeUnarchive(parentNodeId: string, archivedNodeId: string): Promise<ServerMessage> {
+  async nodeUnarchive(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-unarchive', parentNodeId, archivedNodeId })
   }
 
-  async nodeArchiveDelete(parentNodeId: string, archivedNodeId: string): Promise<ServerMessage> {
+  async nodeArchiveDelete(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-archive-delete', parentNodeId, archivedNodeId })
   }
 
@@ -306,43 +307,43 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'undo-buffer-set-cursor', cursor })
   }
 
-  async nodeBringToFront(nodeId: string): Promise<ServerMessage> {
+  async nodeBringToFront(nodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-bring-to-front', nodeId })
   }
 
-  async nodeReparent(nodeId: string, newParentId: string): Promise<ServerMessage> {
+  async nodeReparent(nodeId: NodeId, newParentId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-reparent', nodeId, newParentId })
   }
 
-  async nodeSwapParentChild(nodeId: string, childId: string): Promise<ServerMessage> {
+  async nodeSwapParentChild(nodeId: NodeId, childId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-swap-parent-child', nodeId, childId })
   }
 
-  async terminalCreate(parentId: string, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<ServerMessage> {
+  async terminalCreate(parentId: NodeId, options?: CreateOptions, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput })
   }
 
-  async terminalResize(nodeId: string, cols: number, rows: number): Promise<ServerMessage> {
+  async terminalResize(nodeId: NodeId, cols: number, rows: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'terminal-resize', nodeId, cols, rows })
   }
 
-  async terminalReincarnate(nodeId: string, options?: CreateOptions): Promise<ServerMessage> {
+  async terminalReincarnate(nodeId: NodeId, options?: CreateOptions): Promise<ServerMessage> {
     return this.sendRequest({ type: 'terminal-reincarnate', nodeId, options })
   }
 
-  async directoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<ServerMessage> {
+  async directoryAdd(parentId: NodeId, cwd: string, x?: number, y?: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'directory-add', parentId, cwd, x, y })
   }
 
-  async directoryCwd(nodeId: string, cwd: string): Promise<ServerMessage> {
+  async directoryCwd(nodeId: NodeId, cwd: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'directory-cwd', nodeId, cwd })
   }
 
-  async directoryGitFetch(nodeId: string): Promise<ServerMessage> {
+  async directoryGitFetch(nodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'directory-git-fetch', nodeId })
   }
 
-  async directoryWtSpawn(nodeId: string, branchName: string): Promise<ServerMessage> {
+  async directoryWtSpawn(nodeId: NodeId, branchName: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'directory-wt-spawn', nodeId, branchName })
   }
 
@@ -350,11 +351,11 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'validate-directory', path })
   }
 
-  async fileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<ServerMessage> {
+  async fileAdd(parentId: NodeId, filePath: string, x?: number, y?: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'file-add', parentId, filePath, x, y })
   }
 
-  async filePath(nodeId: string, filePath: string): Promise<ServerMessage> {
+  async filePath(nodeId: NodeId, filePath: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'file-path', nodeId, filePath })
   }
 
@@ -362,35 +363,35 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'validate-file', path, cwd })
   }
 
-  async markdownAdd(parentId: string, x?: number, y?: number): Promise<ServerMessage> {
+  async markdownAdd(parentId: NodeId, x?: number, y?: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-add', parentId, x, y })
   }
 
-  async markdownResize(nodeId: string, width: number, height: number): Promise<ServerMessage> {
+  async markdownResize(nodeId: NodeId, width: number, height: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-resize', nodeId, width, height })
   }
 
-  async markdownContent(nodeId: string, content: string): Promise<ServerMessage> {
+  async markdownContent(nodeId: NodeId, content: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-content', nodeId, content })
   }
 
-  async markdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<ServerMessage> {
+  async markdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
   }
 
-  async titleAdd(parentId: string, x?: number, y?: number): Promise<ServerMessage> {
+  async titleAdd(parentId: NodeId, x?: number, y?: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'title-add', parentId, x, y })
   }
 
-  async titleText(nodeId: string, text: string): Promise<ServerMessage> {
+  async titleText(nodeId: NodeId, text: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'title-text', nodeId, text })
   }
 
-  async forkSession(nodeId: string): Promise<ServerMessage> {
+  async forkSession(nodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'fork-session', nodeId })
   }
 
-  async terminalRestart(nodeId: string, extraCliArgs: string): Promise<ServerMessage> {
+  async terminalRestart(nodeId: NodeId, extraCliArgs: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'terminal-restart', nodeId, extraCliArgs })
   }
 
@@ -398,19 +399,19 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'crab-reorder', order })
   }
 
-  setTerminalMode(sessionId: string, mode: 'live' | 'snapshot'): void {
+  setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot'): void {
     this.sendFireAndForget({ type: 'set-terminal-mode', sessionId, mode })
   }
 
-  setClaudeStatusUnread(sessionId: string, unread: boolean): void {
+  setClaudeStatusUnread(sessionId: PtySessionId, unread: boolean): void {
     this.sendFireAndForget({ type: 'set-claude-status-unread', sessionId, unread } as ClientMessage)
   }
 
-  setClaudeStatusAsleep(sessionId: string, asleep: boolean): void {
+  setClaudeStatusAsleep(sessionId: PtySessionId, asleep: boolean): void {
     this.sendFireAndForget({ type: 'set-claude-status-asleep', sessionId, asleep } as ClientMessage)
   }
 
-  setAlertsReadTimestamp(nodeId: string, timestamp: number): void {
+  setAlertsReadTimestamp(nodeId: NodeId, timestamp: number): void {
     this.sendFireAndForget({ type: 'set-alerts-read-timestamp', nodeId, timestamp } as ClientMessage)
   }
 
@@ -422,11 +423,11 @@ export class ServerClient extends EventEmitter {
     this.sendFireAndForget({ type: 'save-viewport', slot, bounds })
   }
 
-  focusSurface(surfaceId: string): void {
+  focusSurface(surfaceId: PtySessionId): void {
     this.sendFireAndForget({ type: 'focus-surface-request', surfaceId })
   }
 
-  startSummaryChat(nodeId: string): void {
+  startSummaryChat(nodeId: NodeId): void {
     this.sendFireAndForget({ type: 'summary-chat-start', nodeId })
   }
 

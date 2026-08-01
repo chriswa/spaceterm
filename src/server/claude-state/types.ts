@@ -1,4 +1,5 @@
 import type { ClaudeState } from '../../shared/state'
+import type { PtySessionId } from '../../shared/ids'
 export type { ClaudeState }
 
 /**
@@ -8,16 +9,16 @@ export type { ClaudeState }
  * tested in isolation and doesn't depend on concrete manager implementations.
  */
 export interface StateMachineDeps {
-  getClaudeState(surfaceId: string): ClaudeState
-  setClaudeState(surfaceId: string, state: ClaudeState): void
-  getClaudeStatusUnread(surfaceId: string): boolean
-  setClaudeStatusUnread(surfaceId: string, unread: boolean): void
-  handleClaudeStop(surfaceId: string): void
-  broadcastClaudeState(surfaceId: string, state: ClaudeState): void
-  broadcastClaudeStateDecisionTime(surfaceId: string, timestamp: number): void
-  broadcastClaudeStatusUnread(surfaceId: string, unread: boolean): void
-  setClaudeStatusAsleep(surfaceId: string, asleep: boolean): void
-  broadcastClaudeStatusAsleep(surfaceId: string, asleep: boolean): void
+  getClaudeState(surfaceId: PtySessionId): ClaudeState
+  setClaudeState(surfaceId: PtySessionId, state: ClaudeState): void
+  getClaudeStatusUnread(surfaceId: PtySessionId): boolean
+  setClaudeStatusUnread(surfaceId: PtySessionId, unread: boolean): void
+  handleClaudeStop(surfaceId: PtySessionId): void
+  broadcastClaudeState(surfaceId: PtySessionId, state: ClaudeState): void
+  broadcastClaudeStateDecisionTime(surfaceId: PtySessionId, timestamp: number): void
+  broadcastClaudeStatusUnread(surfaceId: PtySessionId, unread: boolean): void
+  setClaudeStatusAsleep(surfaceId: PtySessionId, asleep: boolean): void
+  broadcastClaudeStatusAsleep(surfaceId: PtySessionId, asleep: boolean): void
 }
 
 /**
@@ -31,7 +32,7 @@ export interface StateMachineDeps {
 export interface QueuedTransition {
   /** Epoch ms — when the event actually happened (from hook timestamp or JSONL entry) */
   sourceTime: number
-  surfaceId: string
+  surfaceId: PtySessionId
   newState: ClaudeState
   /** Where this transition originated — determines logging and priority */
   source: 'hook' | 'jsonl' | 'status-line' | 'ledger'

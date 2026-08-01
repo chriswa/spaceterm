@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import { homedir } from 'os'
+import { asClaudeSessionId, type ClaudeSessionId } from '../shared/ids'
 
 const CLAUDE_PROJECTS_DIR = path.join(homedir(), '.claude', 'projects')
 
@@ -20,7 +21,7 @@ function cwdToSlug(cwd: string): string {
   return cwd.replaceAll('/', '-')
 }
 
-export function sessionFilePath(cwd: string, claudeSessionId: string): string {
+export function sessionFilePath(cwd: string, claudeSessionId: ClaudeSessionId): string {
   return path.join(CLAUDE_PROJECTS_DIR, cwdToSlug(cwd), `${claudeSessionId}.jsonl`)
 }
 
@@ -31,7 +32,7 @@ const KEEP_TYPES = new Set(['user', 'assistant', 'attachment', 'system', 'progre
  * Clone a Claude Code JSONL session transcript, rewriting it with a new session
  * ID and forkedFrom metadata. Returns the new session UUID.
  */
-export function forkSession(cwd: string, sourceClaudeSessionId: string): string {
+export function forkSession(cwd: string, sourceClaudeSessionId: ClaudeSessionId): ClaudeSessionId {
   const sourcePath = sessionFilePath(cwd, sourceClaudeSessionId)
 
   if (!fs.existsSync(sourcePath)) {
@@ -60,7 +61,7 @@ export function forkSession(cwd: string, sourceClaudeSessionId: string): string 
     throw new Error('No valid entries in source session')
   }
 
-  const newSessionId = crypto.randomUUID()
+  const newSessionId = asClaudeSessionId(crypto.randomUUID())
 
   // Detect plan file slug (last entry wins — a session may use multiple plans)
   let oldSlug: string | undefined

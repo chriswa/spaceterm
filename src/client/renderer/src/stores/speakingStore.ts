@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { NodeId } from '../../../../shared/ids'
 
 /**
  * Tracks which terminal nodes are currently speaking through Summary Chat.
@@ -21,13 +22,13 @@ interface SpeakingEntry {
 interface SpeakingState {
   /** nodeId -> speaking metadata. Presence of the key means "speaking". */
   speaking: Record<string, SpeakingEntry>
-  setSpeaking: (nodeId: string, speaking: boolean, voice?: string) => void
+  setSpeaking: (nodeId: NodeId, speaking: boolean, voice?: string) => void
 }
 
 /** Per-session safety timers, kept outside zustand state (not render-relevant). */
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function clearTimer(nodeId: string): void {
+function clearTimer(nodeId: NodeId): void {
   const t = timers.get(nodeId)
   if (t) {
     clearTimeout(t)

@@ -10,6 +10,7 @@ import { TitleParser } from './title-parser'
 import type { DaemonClient } from './daemon-client'
 import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
 import type { ClaudeState } from '../shared/state'
+import { asPtySessionId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
 
 const MAX_TITLE_HISTORY = 50
@@ -22,13 +23,13 @@ function isSpuriousTitle(title: string): boolean {
 }
 
 interface Session {
-  id: string
+  id: PtySessionId
   batcher: DataBatcher
   scrollback: ScrollbackBuffer
   titleParser: TitleParser
   shellTitleHistory: string[]
   claudeSessionHistory: ClaudeSessionEntry[]
-  lastClaudeSessionId: string | null
+  lastClaudeSessionId: ClaudeSessionId | null
   pendingStop: boolean
   claudeState: ClaudeState
   claudeStatusUnread: boolean
@@ -40,17 +41,17 @@ interface Session {
   rows: number
 }
 
-export type DataCallback = (sessionId: string, data: string) => void
-export type ExitCallback = (sessionId: string, exitCode: number) => void
-export type TitleHistoryCallback = (sessionId: string, history: string[]) => void
-export type CwdCallback = (sessionId: string, cwd: string) => void
-export type ClaudeSessionHistoryCallback = (sessionId: string, history: ClaudeSessionEntry[]) => void
-export type ClaudeStateCallback = (sessionId: string, state: ClaudeState) => void
-export type ClaudeContextCallback = (sessionId: string, contextRemainingPercent: number) => void
-export type ClaudeSessionLineCountCallback = (sessionId: string, lineCount: number) => void
-export type ClaudeStatusUnreadCallback = (sessionId: string, unread: boolean) => void
-export type ClaudeStatusAsleepCallback = (sessionId: string, asleep: boolean) => void
-export type ActivityCallback = (sessionId: string) => void
+export type DataCallback = (sessionId: PtySessionId, data: string) => void
+export type ExitCallback = (sessionId: PtySessionId, exitCode: number) => void
+export type TitleHistoryCallback = (sessionId: PtySessionId, history: string[]) => void
+export type CwdCallback = (sessionId: PtySessionId, cwd: string) => void
+export type ClaudeSessionHistoryCallback = (sessionId: PtySessionId, history: ClaudeSessionEntry[]) => void
+export type ClaudeStateCallback = (sessionId: PtySessionId, state: ClaudeState) => void
+export type ClaudeContextCallback = (sessionId: PtySessionId, contextRemainingPercent: number) => void
+export type ClaudeSessionLineCountCallback = (sessionId: PtySessionId, lineCount: number) => void
+export type ClaudeStatusUnreadCallback = (sessionId: PtySessionId, unread: boolean) => void
+export type ClaudeStatusAsleepCallback = (sessionId: PtySessionId, asleep: boolean) => void
+export type ActivityCallback = (sessionId: PtySessionId) => void
 
 /**
  * Everything SessionManager pushes back out to the rest of the server. Named
@@ -104,7 +105,7 @@ export class SessionManager {
   }
 
   create(options?: CreateOptions): SessionInfo {
-    const sessionId = randomUUID()
+    const sessionId = asPtySessionId(randomUUID())
     const cols = DEFAULT_COLS
     const rows = DEFAULT_ROWS
     const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
@@ -159,7 +160,7 @@ export class SessionManager {
   }
 
   /** Called by the daemon message router when PTY output arrives. */
-  handleDaemonData(sessionId: string, data: string): void {
+  handleDaemonData(sessionId: PtySessionId, data: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.titleParser.write(data)
@@ -168,7 +169,7 @@ export class SessionManager {
   }
 
   /** Called by the daemon message router when a PTY exits. */
-  handleDaemonExit(sessionId: string, exitCode: number): void {
+  handleDaemonExit(sessionId: PtySessionId, exitCode: number): void {
     this.onExit(sessionId, exitCode)
     const session = this.sessions.get(sessionId)
     if (session) {
@@ -182,7 +183,7 @@ export class SessionManager {
    * Replays the scrollback through the local pipeline to rebuild state.
    * Does NOT broadcast to clients — they get scrollback via the normal attach flow.
    */
-  reattachSession(sessionId: string, scrollback: string, cols: number, rows: number, cwd?: string): void {
+  reattachSession(sessionId: PtySessionId, scrollback: string, cols: number, rows: number, cwd?: string): void {
     this.initLocalSession(sessionId, cwd ?? process.env.HOME ?? '/', cols, rows)
 
     // Replay scrollback through TitleParser and ScrollbackBuffer only.
@@ -194,13 +195,13 @@ export class SessionManager {
     }
   }
 
-  write(sessionId: string, data: string): void {
+  write(sessionId: PtySessionId, data: string): void {
     if (!this.sessions.has(sessionId)) return
     this.daemon.send({ type: 'write', id: sessionId, data })
     this.onActivity(sessionId)
   }
 
-  resize(sessionId: string, cols: number, rows: number): void {
+  resize(sessionId: PtySessionId, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId)
     if (session) {
       this.daemon.send({ type: 'resize', id: sessionId, cols, rows })
@@ -210,7 +211,7 @@ export class SessionManager {
   }
 
   /** Destroy a session in the daemon (kills the PTY process). */
-  destroy(sessionId: string): void {
+  destroy(sessionId: PtySessionId): void {
     this.daemon.send({ type: 'destroy', id: sessionId })
     const session = this.sessions.get(sessionId)
     if (session) {
@@ -240,21 +241,21 @@ export class SessionManager {
     return result
   }
 
-  getScrollback(sessionId: string): string | null {
+  getScrollback(sessionId: PtySessionId): string | null {
     const session = this.sessions.get(sessionId)
     return session ? session.scrollback.getContents() : null
   }
 
-  getShellTitleHistory(sessionId: string): string[] {
+  getShellTitleHistory(sessionId: PtySessionId): string[] {
     const session = this.sessions.get(sessionId)
     return session ? session.shellTitleHistory : []
   }
 
-  getCwd(sessionId: string): string | undefined {
+  getCwd(sessionId: PtySessionId): string | undefined {
     return this.sessions.get(sessionId)?.cwd
   }
 
-  handleClaudeSessionStart(surfaceId: string, claudeSessionId: string, source: string): void {
+  handleClaudeSessionStart(surfaceId: PtySessionId, claudeSessionId: ClaudeSessionId, source: string): void {
     const session = this.sessions.get(surfaceId)
     if (!session) return
 
@@ -298,7 +299,7 @@ export class SessionManager {
    * the new PTY replaces node history with a one-entry list and drops prior ids
    * needed for --resume.
    */
-  seedClaudeSessionHistory(surfaceId: string, history: ClaudeSessionEntry[]): void {
+  seedClaudeSessionHistory(surfaceId: PtySessionId, history: ClaudeSessionEntry[]): void {
     const session = this.sessions.get(surfaceId)
     if (!session || history.length === 0) return
     session.claudeSessionHistory = history.map((e) => ({ ...e }))
@@ -309,34 +310,34 @@ export class SessionManager {
     session.lastClaudeSessionId = latest?.claudeSessionId ?? null
   }
 
-  handleClaudeStop(surfaceId: string): void {
+  handleClaudeStop(surfaceId: PtySessionId): void {
     const session = this.sessions.get(surfaceId)
     if (session) session.pendingStop = true
   }
 
-  setClaudeState(surfaceId: string, state: ClaudeState): void {
+  setClaudeState(surfaceId: PtySessionId, state: ClaudeState): void {
     const session = this.sessions.get(surfaceId)
     if (!session || session.claudeState === state) return
     session.claudeState = state
     this.onClaudeState(surfaceId, state)
   }
 
-  getClaudeState(sessionId: string): ClaudeState {
+  getClaudeState(sessionId: PtySessionId): ClaudeState {
     return this.sessions.get(sessionId)?.claudeState ?? 'stopped'
   }
 
-  setClaudeStatusUnread(surfaceId: string, unread: boolean): void {
+  setClaudeStatusUnread(surfaceId: PtySessionId, unread: boolean): void {
     const session = this.sessions.get(surfaceId)
     if (!session || session.claudeStatusUnread === unread) return
     session.claudeStatusUnread = unread
     this.onClaudeStatusUnread(surfaceId, unread)
   }
 
-  getClaudeStatusUnread(sessionId: string): boolean {
+  getClaudeStatusUnread(sessionId: PtySessionId): boolean {
     return this.sessions.get(sessionId)?.claudeStatusUnread ?? false
   }
 
-  setClaudeStatusAsleep(surfaceId: string, asleep: boolean): void {
+  setClaudeStatusAsleep(surfaceId: PtySessionId, asleep: boolean): void {
     const session = this.sessions.get(surfaceId)
     if (session) {
       session.claudeStatusAsleep = asleep
@@ -347,22 +348,22 @@ export class SessionManager {
     this.onClaudeStatusAsleep(surfaceId, asleep)
   }
 
-  getClaudeStatusAsleep(sessionId: string): boolean {
+  getClaudeStatusAsleep(sessionId: PtySessionId): boolean {
     return this.sessions.get(sessionId)?.claudeStatusAsleep ?? false
   }
 
-  setClaudeContextPercent(surfaceId: string, percent: number): void {
+  setClaudeContextPercent(surfaceId: PtySessionId, percent: number): void {
     const session = this.sessions.get(surfaceId)
     if (!session) return
     session.claudeContextPercent = percent
     this.onClaudeContext(surfaceId, percent)
   }
 
-  getClaudeContextPercent(sessionId: string): number | null {
+  getClaudeContextPercent(sessionId: PtySessionId): number | null {
     return this.sessions.get(sessionId)?.claudeContextPercent ?? null
   }
 
-  setClaudeSessionLineCount(surfaceId: string, lineCount: number): void {
+  setClaudeSessionLineCount(surfaceId: PtySessionId, lineCount: number): void {
     const session = this.sessions.get(surfaceId)
     if (!session) return
     if (session.claudeSessionLineCount === lineCount) return
@@ -370,16 +371,16 @@ export class SessionManager {
     this.onClaudeSessionLineCount(surfaceId, lineCount)
   }
 
-  getClaudeSessionLineCount(sessionId: string): number | null {
+  getClaudeSessionLineCount(sessionId: PtySessionId): number | null {
     return this.sessions.get(sessionId)?.claudeSessionLineCount ?? null
   }
 
-  getClaudeSessionHistory(sessionId: string): ClaudeSessionEntry[] {
+  getClaudeSessionHistory(sessionId: PtySessionId): ClaudeSessionEntry[] {
     const session = this.sessions.get(sessionId)
     return session ? session.claudeSessionHistory : []
   }
 
-  seedTitleHistory(sessionId: string, history: string[]): void {
+  seedTitleHistory(sessionId: PtySessionId, history: string[]): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     const filtered = history.filter(t => !isSpuriousTitle(t))
@@ -387,7 +388,7 @@ export class SessionManager {
   }
 
   /** Inject a title using the same LRU logic as the OSC title callback. */
-  injectTitle(sessionId: string, title: string): void {
+  injectTitle(sessionId: PtySessionId, title: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     if (isSpuriousTitle(title)) return
@@ -401,18 +402,18 @@ export class SessionManager {
     this.onTitleHistory(sessionId, shellTitleHistory)
   }
 
-  getLastClaudeSessionId(sessionId: string): string | null {
+  getLastClaudeSessionId(sessionId: PtySessionId): ClaudeSessionId | null {
     return this.sessions.get(sessionId)?.lastClaudeSessionId ?? null
   }
 
-  has(sessionId: string): boolean {
+  has(sessionId: PtySessionId): boolean {
     return this.sessions.has(sessionId)
   }
 
   // --- Private helpers ---
 
   /** Create the local processing pipeline for a session (TitleParser, DataBatcher, ScrollbackBuffer). */
-  private initLocalSession(sessionId: string, cwd: string, cols: number, rows: number): void {
+  private initLocalSession(sessionId: PtySessionId, cwd: string, cols: number, rows: number): void {
     const scrollback = new ScrollbackBuffer()
     const shellTitleHistory: string[] = []
 

@@ -1,6 +1,7 @@
 import * as path from 'path'
 import { homedir } from 'os'
 import type { NodeData } from '../shared/state'
+import type { NodeId } from '../shared/ids'
 
 /**
  * Expand `~` and resolve relative paths against an optional cwd.
@@ -25,7 +26,7 @@ export function resolveFilePath(rawPath: string, cwd?: string): string {
  * Walk the parentId chain to find an ancestor with a cwd
  * (terminal or directory node). Mirrors client-side `getAncestorCwd`.
  */
-export function getAncestorCwd(nodes: Record<string, NodeData>, nodeId: string): string | undefined {
+export function getAncestorCwd(nodes: Record<string, NodeData>, nodeId: NodeId): string | undefined {
   let currentId = nodeId
   const visited = new Set<string>()
   while (currentId && currentId !== 'root') {

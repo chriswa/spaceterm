@@ -1,6 +1,7 @@
 import { describe, it } from 'vitest'
 import { BackgroundLedger, type LivenessProbes } from './background-ledger'
 import type { SessionFileEntry } from '../session-file-watcher'
+import { asPtySessionId, asPtySessionId as pid, asClaudeSessionId as cid } from '../../shared/ids'
 
 /**
  * Tests for the background-work ledger — the launch/completion parsing and the
@@ -10,7 +11,7 @@ import type { SessionFileEntry } from '../session-file-watcher'
  * Run with: npm test
  */
 
-const SURFACE = 'surface-1'
+const SURFACE = asPtySessionId('surface-1')
 
 // Probes we can steer per-test. Default: everything still running (fail-safe).
 function fakeProbes(overrides: Partial<Record<'bash' | 'monitor' | 'agent' | 'workflow', boolean>> = {}): LivenessProbes {
@@ -157,9 +158,9 @@ const cases: Case[] = [
     name: 'activeSurfaces lists only surfaces with outstanding launches',
     run: () => {
       const l = new BackgroundLedger(fakeProbes())
-      l.registerAgent('a', 'x1')
-      l.registerAgent('b', 'x2')
-      l.completeAgent('b', 'x2')
+      l.registerAgent(pid('a'), 'x1')
+      l.registerAgent(pid('b'), 'x2')
+      l.completeAgent(pid('b'), 'x2')
       assertEq(JSON.stringify(l.activeSurfaces()), JSON.stringify(['a']))
     },
   },

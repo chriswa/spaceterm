@@ -1,3 +1,4 @@
+import type { NodeId } from '../../../../shared/ids'
 /**
  * Audible progress cue for Summary Chat while its cyan thinking indicator is
  * visible. It mirrors Voice Operator's decaying echo timing, but uses a lower
@@ -78,7 +79,7 @@ export function playSummaryChatStartedCue(): void {
  * out of cyan cancels both pending repeats and every active oscillator so the
  * yellow speaking indicator never overlaps a stale waiting sound.
  */
-export function setSummaryChatWaiting(nodeId: string, waiting: boolean): void {
+export function setSummaryChatWaiting(nodeId: NodeId, waiting: boolean): void {
   const wasWaiting = waitingNodeIds.size > 0
   if (waiting) waitingNodeIds.add(nodeId)
   else waitingNodeIds.delete(nodeId)

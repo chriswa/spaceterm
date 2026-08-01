@@ -13,6 +13,7 @@ import { speakText } from './tts-player'
 import { setSummaryChatWaiting } from './summary-chat-wait-cue'
 import { showToast } from './toast'
 import type { CreateOptions, SoundName } from '../../../../shared/protocol'
+import type { NodeId, PtySessionId } from '../../../../shared/ids'
 
 /** Play notification sound if enabled. */
 function playUnreadSound(): void {
@@ -23,7 +24,7 @@ function playUnreadSound(): void {
 
 /** Called before a node-updated patch is applied to the store. */
 export type NodeUpdateInterceptor = (
-  nodeId: string,
+  nodeId: NodeId,
   fields: Partial<NodeData>,
   prevNode: NodeData | undefined
 ) => void
@@ -44,7 +45,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
 
   // Subscribe to server node state events
   cleanupFns.push(
-    window.api.node.onUpdated((nodeId: string, fields: Partial<NodeData>) => {
+    window.api.node.onUpdated((nodeId: NodeId, fields: Partial<NodeData>) => {
       const prev = useNodeStore.getState().nodes[nodeId]
       onBeforeNodeUpdate?.(nodeId, fields, prev)
 
@@ -72,13 +73,13 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.node.onRemoved((nodeId: string) => {
+    window.api.node.onRemoved((nodeId: NodeId) => {
       useNodeStore.getState().applyServerNodeRemove(nodeId)
     })
   )
 
   cleanupFns.push(
-    window.api.node.onFileContent((nodeId: string, content: string) => {
+    window.api.node.onFileContent((nodeId: NodeId, content: string) => {
       useNodeStore.getState().applyFileContent(nodeId, content)
     })
   )
@@ -102,7 +103,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.node.onSpeakingChanged((nodeId: string, speaking: boolean, voice: string | undefined) => {
+    window.api.node.onSpeakingChanged((nodeId: NodeId, speaking: boolean, voice: string | undefined) => {
       if (speaking) {
         const node = useNodeStore.getState().nodes[nodeId]
         if (!node || node.type !== 'terminal') {
@@ -173,123 +174,123 @@ export function destroyServerSync(): void {
 
 // --- Mutation helpers that send to server + clear overrides on ack ---
 
-export async function sendMove(nodeId: string, x: number, y: number): Promise<void> {
+export async function sendMove(nodeId: NodeId, x: number, y: number): Promise<void> {
   await window.api.node.move(nodeId, x, y)
 }
 
-export async function sendBatchMove(moves: Array<{ nodeId: string; x: number; y: number }>): Promise<void> {
+export async function sendBatchMove(moves: Array<{ nodeId: NodeId; x: number; y: number }>): Promise<void> {
   await window.api.node.batchMove(moves)
 }
 
-export async function sendRename(nodeId: string, name: string): Promise<void> {
+export async function sendRename(nodeId: NodeId, name: string): Promise<void> {
   await window.api.node.rename(nodeId, name)
 }
 
-export async function sendSetColor(nodeId: string, colorPresetId: string): Promise<void> {
+export async function sendSetColor(nodeId: NodeId, colorPresetId: string): Promise<void> {
   await window.api.node.setColor(nodeId, colorPresetId)
 }
 
-export async function sendBringToFront(nodeId: string): Promise<void> {
+export async function sendBringToFront(nodeId: NodeId): Promise<void> {
   await window.api.node.bringToFront(nodeId)
 }
 
-export async function sendArchive(nodeId: string): Promise<void> {
+export async function sendArchive(nodeId: NodeId): Promise<void> {
   await window.api.node.archive(nodeId)
 }
 
-export async function sendUnarchive(parentNodeId: string, archivedNodeId: string): Promise<void> {
+export async function sendUnarchive(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void> {
   await window.api.node.unarchive(parentNodeId, archivedNodeId)
 }
 
-export async function sendArchiveDelete(parentNodeId: string, archivedNodeId: string): Promise<void> {
+export async function sendArchiveDelete(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void> {
   await window.api.node.archiveDelete(parentNodeId, archivedNodeId)
 }
 
 export async function sendTerminalCreate(
-  parentId: string,
+  parentId: NodeId,
   options?: CreateOptions,
   initialTitleHistory?: string[],
   initialName?: string,
   x?: number,
   y?: number,
   initialInput?: string
-): Promise<{ sessionId: string; cols: number; rows: number }> {
+): Promise<{ sessionId: PtySessionId; cols: number; rows: number }> {
   return window.api.node.terminalCreate(parentId, options, initialTitleHistory, initialName, x, y, initialInput)
 }
 
-export async function sendDirectoryAdd(parentId: string, cwd: string, x?: number, y?: number): Promise<{ nodeId: string }> {
+export async function sendDirectoryAdd(parentId: NodeId, cwd: string, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
   return window.api.node.directoryAdd(parentId, cwd, x, y)
 }
 
-export async function sendDirectoryCwd(nodeId: string, cwd: string): Promise<void> {
+export async function sendDirectoryCwd(nodeId: NodeId, cwd: string): Promise<void> {
   await window.api.node.directoryCwd(nodeId, cwd)
 }
 
-export async function sendDirectoryWtSpawn(nodeId: string, branchName: string): Promise<{ nodeId: string }> {
+export async function sendDirectoryWtSpawn(nodeId: NodeId, branchName: string): Promise<{ nodeId: NodeId }> {
   return window.api.node.directoryWtSpawn(nodeId, branchName)
 }
 
-export async function sendFileAdd(parentId: string, filePath: string, x?: number, y?: number): Promise<{ nodeId: string }> {
+export async function sendFileAdd(parentId: NodeId, filePath: string, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
   return window.api.node.fileAdd(parentId, filePath, x, y)
 }
 
-export async function sendFilePath(nodeId: string, filePath: string): Promise<void> {
+export async function sendFilePath(nodeId: NodeId, filePath: string): Promise<void> {
   await window.api.node.filePath(nodeId, filePath)
 }
 
-export async function sendMarkdownAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }> {
+export async function sendMarkdownAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
   return window.api.node.markdownAdd(parentId, x, y)
 }
 
-export async function sendMarkdownResize(nodeId: string, width: number, height: number): Promise<void> {
+export async function sendMarkdownResize(nodeId: NodeId, width: number, height: number): Promise<void> {
   await window.api.node.markdownResize(nodeId, width, height)
 }
 
-export async function sendMarkdownContent(nodeId: string, content: string): Promise<void> {
+export async function sendMarkdownContent(nodeId: NodeId, content: string): Promise<void> {
   await window.api.node.markdownContent(nodeId, content)
 }
 
-export async function sendMarkdownSetMaxWidth(nodeId: string, maxWidth: number): Promise<void> {
+export async function sendMarkdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<void> {
   await window.api.node.markdownSetMaxWidth(nodeId, maxWidth)
 }
 
-export async function sendTerminalResize(nodeId: string, cols: number, rows: number): Promise<void> {
+export async function sendTerminalResize(nodeId: NodeId, cols: number, rows: number): Promise<void> {
   await window.api.node.terminalResize(nodeId, cols, rows)
 }
 
-export async function sendReparent(nodeId: string, newParentId: string): Promise<void> {
+export async function sendReparent(nodeId: NodeId, newParentId: NodeId): Promise<void> {
   await window.api.node.reparent(nodeId, newParentId)
 }
 
-export async function sendSwapParentChild(nodeId: string, childId: string): Promise<void> {
+export async function sendSwapParentChild(nodeId: NodeId, childId: NodeId): Promise<void> {
   await window.api.node.swapParentChild(nodeId, childId)
 }
 
-export async function sendTitleAdd(parentId: string, x?: number, y?: number): Promise<{ nodeId: string }> {
+export async function sendTitleAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
   return window.api.node.titleAdd(parentId, x, y)
 }
 
-export async function sendTitleText(nodeId: string, text: string): Promise<void> {
+export async function sendTitleText(nodeId: NodeId, text: string): Promise<void> {
   await window.api.node.titleText(nodeId, text)
 }
 
 export async function sendTerminalReincarnate(
-  nodeId: string,
+  nodeId: NodeId,
   options?: CreateOptions
-): Promise<{ sessionId: string; cols: number; rows: number }> {
+): Promise<{ sessionId: PtySessionId; cols: number; rows: number }> {
   return window.api.node.terminalReincarnate(nodeId, options)
 }
 
 export async function sendForkSession(
-  nodeId: string
-): Promise<{ sessionId: string; cols: number; rows: number }> {
+  nodeId: NodeId
+): Promise<{ sessionId: PtySessionId; cols: number; rows: number }> {
   return window.api.node.forkSession(nodeId)
 }
 
 export async function sendTerminalRestart(
-  nodeId: string,
+  nodeId: NodeId,
   extraCliArgs: string
-): Promise<{ sessionId: string; cols: number; rows: number }> {
+): Promise<{ sessionId: PtySessionId; cols: number; rows: number }> {
   return window.api.node.terminalRestart(nodeId, extraCliArgs)
 }
 
@@ -297,7 +298,7 @@ export async function sendCrabReorder(order: string[]): Promise<void> {
   await window.api.node.crabReorder(order)
 }
 
-export function sendSetAlertsReadTimestamp(nodeId: string, timestamp: number): void {
+export function sendSetAlertsReadTimestamp(nodeId: NodeId, timestamp: number): void {
   window.api.node.setAlertsReadTimestamp(nodeId, timestamp)
 }
 

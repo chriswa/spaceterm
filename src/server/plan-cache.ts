@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { SOCKET_DIR } from '../shared/protocol'
+import type { ClaudeSessionId, PtySessionId } from '../shared/ids'
 
 const CACHE_DIR = path.join(SOCKET_DIR, 'cached-plans')
 
@@ -10,7 +11,7 @@ export class PlanCacheManager {
   /** claudeSessionId → array of cached file paths */
   private cache = new Map<string, string[]>()
 
-  trackPlanFile(surfaceId: string, filePath: string): void {
+  trackPlanFile(surfaceId: PtySessionId, filePath: string): void {
     this.trackedPlanPaths.set(surfaceId, filePath)
   }
 
@@ -18,7 +19,7 @@ export class PlanCacheManager {
    * Read the tracked plan file from disk and copy it to the cache directory.
    * Returns the updated list of cached files for this Claude session.
    */
-  snapshot(surfaceId: string, claudeSessionId: string): string[] {
+  snapshot(surfaceId: PtySessionId, claudeSessionId: ClaudeSessionId): string[] {
     const planPath = this.trackedPlanPaths.get(surfaceId)
     if (!planPath) return this.cache.get(claudeSessionId) ?? []
 
@@ -52,7 +53,7 @@ export class PlanCacheManager {
     return files
   }
 
-  getVersions(claudeSessionId: string): string[] {
+  getVersions(claudeSessionId: ClaudeSessionId): string[] {
     return this.cache.get(claudeSessionId) ?? []
   }
 }

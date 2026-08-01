@@ -1,6 +1,7 @@
 import type { NodeData } from '../../../../shared/state'
 import { COLOR_PRESET_MAP } from './color-presets'
 import type { ColorPreset } from './color-presets'
+import { nodeIdsOf, type NodeId } from '../../../../shared/ids'
 
 /**
  * Collect all descendant IDs of a given node (children, grandchildren, etc.) via BFS.
@@ -8,11 +9,11 @@ import type { ColorPreset } from './color-presets'
  */
 export function getDescendantIds(
   nodes: Record<string, NodeData>,
-  nodeId: string
-): string[] {
+  nodeId: NodeId
+): NodeId[] {
   // Build parentId → childIds map
-  const childrenMap = new Map<string, string[]>()
-  for (const id in nodes) {
+  const childrenMap = new Map<NodeId, NodeId[]>()
+  for (const id of nodeIdsOf(nodes)) {
     const parentId = nodes[id].parentId
     let list = childrenMap.get(parentId)
     if (!list) {
@@ -23,7 +24,7 @@ export function getDescendantIds(
   }
 
   // BFS from nodeId
-  const result: string[] = []
+  const result: NodeId[] = []
   const queue = childrenMap.get(nodeId)
   if (!queue) return result
   const frontier = [...queue]
@@ -74,7 +75,7 @@ export function getAncestorCwd(
  */
 export function resolveInheritedPreset(
   nodes: Record<string, NodeData>,
-  nodeId: string
+  nodeId: NodeId
 ): ColorPreset | null {
   let current = nodeId
   while (current && current !== 'root') {
@@ -91,8 +92,8 @@ export function resolveInheritedPreset(
 
 export function isImmediateChildOf(
   nodes: Record<string, NodeData>,
-  potentialChildId: string,
-  parentId: string
+  potentialChildId: NodeId,
+  parentId: NodeId
 ): boolean {
   const node = nodes[potentialChildId]
   return !!node && node.parentId === parentId
@@ -100,8 +101,8 @@ export function isImmediateChildOf(
 
 export function isDescendantOf(
   nodes: Record<string, NodeData>,
-  nodeId: string,
-  potentialAncestorId: string
+  nodeId: NodeId,
+  potentialAncestorId: NodeId
 ): boolean {
   let current = nodeId
   while (current && current !== 'root') {
