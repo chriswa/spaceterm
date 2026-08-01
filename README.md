@@ -2,9 +2,27 @@
 
 Multiple terminals on a zoomable canvas. Built with Electron, React, and xterm.js.
 
+## What it is for
+
+A terminal multiplexer arranges terminals in a grid and expects you to remember
+which is which. Spaceterm puts them on an infinite canvas instead, so *where* a
+terminal is carries meaning: a surface spawned from another sits below it, a
+fork sits beside its source, and the shape of what you are working on is
+visible at a glance rather than held in your head.
+
+That matters most when the terminals are agents. Spaceterm knows when an agent
+is working, waiting on you, or has gone quiet, and shows it — so a dozen
+concurrent Claude Code, Cursor or Codex sessions become something you can
+supervise rather than poll. Around that: markdown and file cards pinned to the
+canvas, per-directory git status, session fork and resume, and a scripts socket
+agents can drive.
+
+If you want one terminal, use a terminal. If you routinely have ten agents
+running and lose track of which is stuck, this is what it is for.
+
 ## Requirements
 
-- **macOS** (Apple Silicon or Intel)
+- **macOS** (Apple Silicon or Intel) — see [Platform support](#platform-support)
 - **Node.js 18+** (tested on v22)
 - **npm**
 - **Go 1.22+** — for the PTY daemon (`brew install go`)
@@ -59,6 +77,42 @@ Select text in a terminal and press **Cmd+Shift+S** to read it aloud. Works out 
 
 The app auto-detects and prefers premium > enhanced > compact voices.
 
+## Diagnostics
+
+Several features are optional and fail softly, which is right — but softly is
+not the same as silently. To see what this machine has:
+
+```bash
+npm run cli -- capabilities          # human-readable
+npm run cli -- capabilities --json   # for scripts
+```
+
+Each line says what was looked for, whether it was found, and — when it was not
+— what stops working because of it. The same report is written to
+`~/.spaceterm/electron.log` every time the server starts, so the answer to "why
+did nothing happen when I clicked that?" is already on disk.
+
+`npm run cli -- protocol` reports the scripts-socket protocol version and the
+full set of subscribable events, which is the handshake a script should perform
+before relying on anything else.
+
+## Platform support
+
+Spaceterm runs on macOS today. The coupling is narrower than that sounds — four
+dependencies, all of which degrade rather than crash:
+
+| Depends on | Used for | Without it |
+|---|---|---|
+| `/usr/bin/security` (Keychain) | Reusing Claude Code's OAuth credential | Summary Chat reports an error |
+| Voice Operator | Speaking summaries aloud | Summary Chat produces text, says nothing |
+| `/usr/bin/pgrep` | Detecting background work | A surface may not drain back to idle on its own |
+| `/usr/sbin/lsof` | Detecting a finished background command | Same |
+
+Terminals, the canvas, agent state tracking, git status, fork and resume have
+no platform-specific dependency. Running usefully on Linux is therefore mostly
+the two shell-outs; `capabilities` above will tell you exactly what is missing
+on any given machine.
+
 ## Architecture overview
 
 ```
@@ -86,8 +140,22 @@ Standalone server (src/server/)
 |--------|-------------|
 | `npm run dev` | Start server + Electron in dev mode |
 | `npm run client:package` | Build + package as .dmg |
+| `npm run typecheck` | Type-check both projects — nothing else checks contracts between server, preload and renderer |
+| `npm test` | Vitest (node + jsdom projects, discovered by glob) |
 | `npm run lint` | ESLint check (catches use-before-define bugs) |
+| `npm run cli -- <cmd>` | The scripts CLI — see `npm run cli -- --help` |
 | `npm run daemon:build` | Build the PTY daemon binary |
 | `npm run daemon:dev` | Build + restart the daemon (use after modifying Go code) |
 | `npm run et` | Emergency terminal (tmux-based fallback CLI) |
 | `npm run et -- --daemon` | Emergency terminal direct to daemon (works without server) |
+
+## Contributing
+
+- `CLAUDE.md` — conventions this repo holds itself to, including the testing
+  rule that has found the most bugs: if a module cannot be tested without
+  reaching into `fs`, `child_process` or a timer, **adding the seam is the
+  deliverable**, not a mock.
+- `NEXT_STEPS.md` — the prioritised backlog, what the last few sessions found,
+  and the ideas worth picking up next.
+- `MODDING.md` — how features become mods, and why the scripts socket is
+  already most of an extension API.
