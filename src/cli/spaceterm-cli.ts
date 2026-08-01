@@ -9,6 +9,7 @@
  *   spaceterm-cli fork-claude <node-id> <parent-id>      # fork a Claude session, wait for settle
  *   spaceterm-cli subscribe [--events ...] [--nodes ...]  # stream events as JSON lines
  *   spaceterm-cli protocol                               # version + event set, as JSON
+ *   spaceterm-cli capabilities [--json]                  # what optional integrations are present
  *
  * Environment:
  *   SPACETERM_NODE_ID   — set automatically in PTY sessions
@@ -22,6 +23,7 @@ import {
   SCRIPT_PROTOCOL_VERSION,
   type ScriptEvent,
 } from '../shared/protocol'
+import { probeCapabilities, formatCapabilityReport } from '../server/capabilities'
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -146,6 +148,33 @@ async function protocol(): Promise<void> {
   }
 }
 
+/**
+ * Report which optional integrations this machine has, and what each missing
+ * one costs.
+ *
+ * Runs no server request on purpose: every probe reads the local filesystem or
+ * shells out, so this answers even when Spaceterm is not running — which is
+ * exactly when someone is asking "why did nothing happen?". The same report is
+ * written to `~/.spaceterm/electron.log` at server startup.
+ *
+ * Always exits zero. Every capability probed here is optional, and one of them
+ * ("PTY daemon socket") is *expected* to be absent before the app has started
+ * — so a non-zero exit would report a perfectly healthy machine as broken,
+ * which is the same cry-wolf failure the first version of the pgrep probe had.
+ * A caller that needs to gate on a specific capability should parse `--json`
+ * and name the one it cares about; different callers care about different ones.
+ */
+function capabilities(asJson: boolean): void {
+  const probed = probeCapabilities()
+  if (asJson) {
+    process.stdout.write(JSON.stringify(probed, null, 2) + '\n')
+  } else {
+    for (const line of formatCapabilityReport(probed)) {
+      process.stdout.write(line.replace(/^\[capabilities\] /, '') + '\n')
+    }
+  }
+}
+
 function subscribe(events: ScriptEvent[] | undefined, nodeIds: string[] | undefined): void {
   const socket = net.createConnection(SCRIPTS_SOCKET_PATH)
   socket.setEncoding('utf8')
@@ -202,6 +231,7 @@ function printUsage(): void {
   spaceterm-cli unread <node-id>                           Mark a terminal as unread
   spaceterm-cli subscribe [--events e1,e2] [--nodes n1,n2] Stream events
   spaceterm-cli protocol                                   Protocol version and event set
+  spaceterm-cli capabilities [--json]                      Optional integrations present on this machine
 
 Events: ${SCRIPT_EVENTS.join(', ')}
 `)
@@ -237,6 +267,10 @@ switch (command) {
 
   case 'protocol':
     protocol().catch((err) => fatal(err.message))
+    break
+
+  case 'capabilities':
+    capabilities(args.includes('--json'))
     break
 
   case 'subscribe': {
