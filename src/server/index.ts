@@ -3,15 +3,16 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
-import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, SCRIPT_EVENTS, SCRIPT_PROTOCOL_VERSION, MIN_SCRIPT_PROTOCOL_VERSION } from '../shared/protocol'
-import type { ClientMessage, IngestMessage, ScriptEvent, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
+import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
+import { ScriptApi, type ScriptConnection } from './script-api'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import type { AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
 import { GhRateLimitPoller } from './gh-rate-limit'
 import { probeCapabilities, formatCapabilityReport } from './capabilities'
-import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
+import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirstPtySession, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { serverLog, sanitizeForLog } from './server-log'
@@ -46,6 +47,21 @@ import { SummaryChat } from './summary-chat'
  * UPDATE THIS when Claude Code changes its compaction threshold.
  */
 const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 0
+
+/**
+ * How long to wait after a bracketed paste before sending the carriage return
+ * that submits it. Claude's input box needs a beat to finish processing the
+ * paste, or the return lands as a newline inside the prompt instead.
+ */
+const SHIP_IT_SUBMIT_DELAY_MS = 1000
+
+/**
+ * How long a script-requested fork may take to replay its transcript and fire
+ * SessionStart before the request is failed. Generous: a long transcript on a
+ * cold filesystem is slow, and a spurious timeout leaves a live terminal the
+ * caller believes does not exist.
+ */
+const FORK_SETTLE_TIMEOUT_MS = 30_000
 
 /** Spaceterm project root (two levels up from src/server/). */
 
@@ -451,6 +467,128 @@ interface PendingForkSettle {
 }
 const pendingForkSettles = new Map<string, PendingForkSettle>()
 
+// --- Script socket (scripts.sock) ---
+
+/**
+ * The mod-facing API. Everything it is allowed to do is the `ScriptHost`
+ * literal below; the dispatch itself lives in script-api.ts, away from the
+ * singletons, so it can be tested without a server.
+ */
+const scriptApi = new ScriptApi({
+  getNode: (nodeId) => stateManager.getNode(nodeId),
+  getNodeIdForSession: (surfaceId) => stateManager.getNodeIdForSession(surfaceId),
+  getNearestTerminalAncestor: (nodeId) => stateManager.getNearestTerminalAncestor(nodeId),
+  log: (line) => serverLog(line),
+
+  shipIt(sessionId, text, submit) {
+    sessionManager.write(sessionId, '\x1b[200~' + text + '\x1b[201~')
+    // Mark read; the resulting UserPromptSubmit hook drives the working state.
+    claudeStateMachine.handleClientInteract(sessionId)
+    // Claude's input box needs a beat to finish processing the paste before it
+    // will treat a carriage return as "submit" rather than "newline".
+    if (submit) setTimeout(() => sessionManager.write(sessionId, '\r'), SHIP_IT_SUBMIT_DELAY_MS)
+  },
+
+  markUnread: (sessionId) => claudeStateMachine.handleClientMarkUnread(sessionId, true),
+
+  resolveTranscript(node) {
+    const cwd = node.cwd
+    if (!cwd) return { isFork: false }
+    // Walk backwards: the newest session whose transcript still exists on disk.
+    const history = node.claudeSessionHistory ?? []
+    for (let i = history.length - 1; i >= 0; i--) {
+      const candidate = sessionFilePath(cwd, history[i].claudeSessionId)
+      if (!fs.existsSync(candidate)) continue
+      let isFork = false
+      try {
+        // fork stamps `forkedFrom` on every copied prefix entry; a non-forked
+        // (spawned or root) session's transcript never contains it.
+        isFork = fs.readFileSync(candidate, 'utf8').includes('"forkedFrom"')
+      } catch { /* leave isFork=false when unreadable */ }
+      return { path: candidate, isFork }
+    }
+    return { isFork: false }
+  },
+
+  forkClaude(sourceNodeId, parentId) {
+    return new Promise<NodeId>((resolve, reject) => {
+      const forkNode = stateManager.getNode(sourceNodeId)
+      if (!forkNode || forkNode.type !== 'terminal') {
+        return reject(new Error(`node ${sourceNodeId} is not a terminal`))
+      }
+      const history = forkNode.claudeSessionHistory ?? []
+      if (history.length === 0) return reject(new Error('no Claude session history'))
+      const forkCwd = forkNode.cwd ?? sessionManager.getCwd(forkNode.sessionId)
+      if (!forkCwd) return reject(new Error('cannot determine cwd'))
+
+      let sourceClaudeSessionId: ClaudeSessionId | undefined
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
+          sourceClaudeSessionId = history[i].claudeSessionId
+          break
+        }
+      }
+      if (!sourceClaudeSessionId) return reject(new Error('no session transcript file found on disk'))
+
+      const forkName = computeForkName(forkNode.name)
+      const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
+      const forkOptions = agentDrivers.claude.buildCreateOptions({
+        cwd: forkCwd,
+        resumeSessionId: newClaudeSessionId,
+        extraArgs: parseExtraCliArgs(forkNode.extraCliArgs)
+      })
+      const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
+      snapshotManager.addSession(forkPtyId, forkCols, forkRows)
+
+      // Place the new terminal below the specified parent, not the source node.
+      const forkPos = computePlacement(stateManager.getState().nodes, parentId, terminalPixelSize(forkCols, forkRows))
+      stateManager.createTerminal(forkPtyId, parentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName, sourceNodeId)
+      if (forkNode.shellTitleHistory?.length) {
+        sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
+      }
+
+      // The pty exists but Claude has not replayed the transcript yet. Settle
+      // is signalled by the SessionStart hook, or by the pty exiting first.
+      let settled = false
+      const respond = (error?: string): void => {
+        if (settled) return
+        settled = true
+        pendingForkSettles.delete(forkPtyId)
+        if (error) reject(new Error(error))
+        // createTerminal seeds the node id from the pty session id, so for a
+        // terminal that has never restarted the two are the same value.
+        else resolve(nodeIdFromFirstPtySession(forkPtyId))
+      }
+      const timeoutId = setTimeout(() => respond('Timed out waiting for session to settle'), FORK_SETTLE_TIMEOUT_MS)
+      pendingForkSettles.set(forkPtyId, { respond, timeoutId })
+
+      serverLog(`[script-fork-claude] Forked terminal ${sourceNodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (parent ${parentId.slice(0, 8)}), waiting for settle...`)
+    })
+  }
+})
+
+/**
+ * Bridge one `net.Socket` to the transport-free `ScriptConnection` the API
+ * speaks. Writes to a disconnected socket are swallowed: a script that hung up
+ * mid-command is normal, not an error.
+ */
+function scriptConnectionFor(socket: net.Socket): ScriptConnection {
+  return {
+    send(message) {
+      try {
+        socket.write(JSON.stringify(message) + '\n')
+      } catch { /* disconnected */ }
+    },
+    close() {
+      socket.end()
+    },
+    onDisconnect(fn) {
+      socket.on('close', fn)
+      socket.on('error', fn)
+    }
+  }
+}
+
 /** Handle fire-and-forget messages from the hooks socket. No response is sent. */
 function handleIngestMessage(msg: IngestMessage): void {
   switch (msg.type) {
@@ -649,7 +787,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         console.error(`[spaceterm-broadcast] Unknown surfaceId: ${msg.surfaceId}`)
         break
       }
-      broadcastToScriptSubscribers('broadcast', broadcastNodeId, {
+      scriptApi.broadcast('broadcast', broadcastNodeId, {
         type: 'broadcast',
         nodeId: broadcastNodeId,
         surfaceId: msg.surfaceId,
@@ -728,289 +866,6 @@ function handleIngestMessage(msg: IngestMessage): void {
       // without this branch an unhandled ingest message vanished silently.
       const unknownType = unhandledVariant(msg)
       console.error(`[ingest] Unknown message type: ${unknownType}`)
-      break
-    }
-  }
-}
-
-// --- Script socket (scripts.sock) ---
-
-interface ScriptSubscriber {
-  socket: net.Socket
-  events: Set<ScriptEvent> | null   // null = all events
-  nodeIds: Set<NodeId> | null  // null = all nodes
-}
-const scriptSubscribers = new Set<ScriptSubscriber>()
-
-/**
- * Fan an event out to subscribed scripts.
- *
- * `eventType` is typed against SCRIPT_EVENTS rather than `string`, so emitting
- * an event the protocol does not document is a compile error — a subscriber
- * cannot discover events by reading source it does not have.
- */
-function broadcastToScriptSubscribers(eventType: ScriptEvent, nodeId: NodeId | undefined, msg: Record<string, unknown>): void {
-  scriptSubscribers.forEach((sub) => {
-    if (sub.events && !sub.events.has(eventType)) return
-    if (sub.nodeIds && nodeId && !sub.nodeIds.has(nodeId)) return
-    try {
-      sub.socket.write(JSON.stringify(msg) + '\n')
-    } catch {
-      // Disconnected — will be cleaned up by 'close'/'error' handler
-    }
-  })
-}
-
-function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
-  const sendAndClose = (resp: ScriptResponse): void => {
-    try {
-      socket.write(JSON.stringify(resp) + '\n')
-    } catch { /* disconnected */ }
-    socket.end()
-  }
-
-  switch (msg.type) {
-    case 'script-get-ancestors': {
-      const node = stateManager.getNode(msg.nodeId)
-      if (!node) {
-        sendAndClose({ type: 'script-get-ancestors-result', seq: msg.seq, ancestors: [], error: 'unknown-node' })
-        return
-      }
-      const ancestors: string[] = [node.id]
-      let currentId = node.parentId
-      const visited = new Set<string>()
-      while (currentId && currentId !== 'root' && !visited.has(currentId)) {
-        visited.add(currentId)
-        const ancestor = stateManager.getNode(currentId)
-        if (!ancestor) break
-        ancestors.push(ancestor.id)
-        currentId = ancestor.parentId
-      }
-      sendAndClose({ type: 'script-get-ancestors-result', seq: msg.seq, ancestors })
-      break
-    }
-
-    case 'script-get-node': {
-      const node = stateManager.getNode(msg.nodeId)
-      if (!node) {
-        sendAndClose({ type: 'script-get-node-result', seq: msg.seq, error: 'unknown-node' })
-        return
-      }
-      const stripped = { ...node, archivedChildren: [] as [] }
-      sendAndClose({ type: 'script-get-node-result', seq: msg.seq, node: stripped })
-      break
-    }
-
-    case 'script-ship-it': {
-      const node = stateManager.getNode(msg.nodeId)
-      if (!node) {
-        sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: false, error: 'unknown-node' })
-        return
-      }
-      if (node.type !== 'terminal') {
-        sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: false, error: 'not-a-terminal' })
-        return
-      }
-      if (!node.alive) {
-        sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: false, error: 'terminal-not-alive' })
-        return
-      }
-
-      const targetSessionId = node.sessionId
-      const content = msg.data.replace(/\r?\n/g, '\r')
-      sessionManager.write(targetSessionId, '\x1b[200~' + content + '\x1b[201~')
-      // Mark read; the resulting UserPromptSubmit hook drives the working state.
-      claudeStateMachine.handleClientInteract(targetSessionId)
-
-      const submit = msg.submit !== false  // default true
-      if (submit) {
-        setTimeout(() => {
-          sessionManager.write(targetSessionId, '\r')
-        }, 1000)
-      }
-
-      sendAndClose({ type: 'script-ship-it-result', seq: msg.seq, ok: true })
-      break
-    }
-
-    case 'script-resolve-handoff': {
-      // The caller supplies its pty-level surface id; resolve it to the stable
-      // node id (survives terminal restarts, which rebind the node to a new pty).
-      const nodeId = stateManager.getNodeIdForSession(msg.surfaceId)
-      const node = nodeId ? stateManager.getNode(nodeId) : undefined
-      if (!nodeId || !node || node.type !== 'terminal') {
-        sendAndClose({ type: 'script-resolve-handoff-result', seq: msg.seq, error: 'not-a-terminal' })
-        return
-      }
-
-      // Resolve this surface's current transcript (newest claude session on disk).
-      let transcriptPath: string | undefined
-      let isFork = false
-      const cwd = node.cwd
-      if (cwd) {
-        const history = node.claudeSessionHistory ?? []
-        for (let i = history.length - 1; i >= 0; i--) {
-          const candidate = sessionFilePath(cwd, history[i].claudeSessionId)
-          if (fs.existsSync(candidate)) { transcriptPath = candidate; break }
-        }
-        if (transcriptPath) {
-          try {
-            // fork stamps `forkedFrom` on every copied prefix entry; a non-forked
-            // (spawned or root) session's transcript never contains it.
-            isFork = fs.readFileSync(transcriptPath, 'utf8').includes('"forkedFrom"')
-          } catch { /* leave isFork=false when unreadable */ }
-        }
-      }
-
-      // Nearest ancestor terminal = the "parent surface" to hand the summary to.
-      const targetId = stateManager.getNearestTerminalAncestor(nodeId)
-      const targetNode = targetId ? stateManager.getNode(targetId) : undefined
-      const targetSurface = targetNode && targetNode.type === 'terminal'
-        ? { nodeId: targetNode.id, title: targetNode.name ?? null, alive: targetNode.alive }
-        : null
-
-      sendAndClose({ type: 'script-resolve-handoff-result', seq: msg.seq, transcriptPath, isFork, targetSurface })
-      break
-    }
-
-    case 'script-hello': {
-      const compatible =
-        msg.protocolVersion >= MIN_SCRIPT_PROTOCOL_VERSION &&
-        msg.protocolVersion <= SCRIPT_PROTOCOL_VERSION
-      if (!compatible) {
-        serverLog(`[scripts] Rejected ${msg.client ?? 'unknown client'}: protocol v${msg.protocolVersion}, this build serves v${MIN_SCRIPT_PROTOCOL_VERSION}-v${SCRIPT_PROTOCOL_VERSION}`)
-      }
-      sendAndClose({
-        type: 'script-hello-result',
-        seq: msg.seq,
-        compatible,
-        protocolVersion: SCRIPT_PROTOCOL_VERSION,
-        minProtocolVersion: MIN_SCRIPT_PROTOCOL_VERSION,
-        events: [...SCRIPT_EVENTS],
-        ...(compatible ? {} : { error: `Protocol v${msg.protocolVersion} is not served by this build (v${MIN_SCRIPT_PROTOCOL_VERSION}-v${SCRIPT_PROTOCOL_VERSION})` }),
-      })
-      return
-    }
-
-    case 'script-subscribe': {
-      const events = msg.events ? new Set(msg.events) : null
-      const nodeIds = msg.nodeIds ? new Set(msg.nodeIds) : null
-      const sub: ScriptSubscriber = { socket, events, nodeIds }
-      scriptSubscribers.add(sub)
-
-      // Ack the subscription
-      try {
-        socket.write(JSON.stringify({ type: 'script-subscribe-result', seq: msg.seq, ok: true }) + '\n')
-      } catch { /* disconnected */ }
-
-      // Clean up on disconnect
-      const cleanup = () => { scriptSubscribers.delete(sub) }
-      socket.on('close', cleanup)
-      socket.on('error', cleanup)
-      // Do NOT call socket.end() — keep alive for event streaming
-      break
-    }
-
-    case 'script-fork-claude': {
-      const SETTLE_TIMEOUT_MS = 30_000
-      const sendError = (error: string): void => {
-        try {
-          socket.write(JSON.stringify({ type: 'script-fork-claude-result', seq: msg.seq, nodeId: '', error }) + '\n')
-        } catch { /* disconnected */ }
-        socket.end()
-      }
-
-      try {
-        const forkNode = stateManager.getNode(msg.nodeId)
-        if (!forkNode || forkNode.type !== 'terminal') {
-          sendError(`node ${msg.nodeId} is not a terminal`)
-          break
-        }
-        const history = forkNode.claudeSessionHistory ?? []
-        if (history.length === 0) {
-          sendError('no Claude session history')
-          break
-        }
-        const forkCwd = forkNode.cwd ?? sessionManager.getCwd(forkNode.sessionId)
-        if (!forkCwd) {
-          sendError('cannot determine cwd')
-          break
-        }
-        // Walk backwards through history to find the most recent session with an
-        // existing transcript file on disk.
-        let sourceClaudeSessionId: ClaudeSessionId | undefined
-        for (let i = history.length - 1; i >= 0; i--) {
-          if (fs.existsSync(sessionFilePath(forkCwd, history[i].claudeSessionId))) {
-            sourceClaudeSessionId = history[i].claudeSessionId
-            break
-          }
-        }
-        if (!sourceClaudeSessionId) {
-          sendError('no session transcript file found on disk')
-          break
-        }
-
-        const forkName = computeForkName(forkNode.name)
-        const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
-        const forkOptions = agentDrivers.claude.buildCreateOptions({ cwd: forkCwd, resumeSessionId: newClaudeSessionId, extraArgs: parseExtraCliArgs(forkNode.extraCliArgs) })
-        const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
-        snapshotManager.addSession(forkPtyId, forkCols, forkRows)
-
-        // Place the new terminal below the specified parent (not the source node)
-        const forkPos = computePlacement(stateManager.getState().nodes, msg.parentId, terminalPixelSize(forkCols, forkRows))
-        stateManager.createTerminal(forkPtyId, msg.parentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName, msg.nodeId)
-        if (forkNode.shellTitleHistory?.length) {
-          sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
-        }
-
-        const newNodeId = forkPtyId
-        let responded = false
-
-        const respond = (error?: string): void => {
-          if (responded) return
-          responded = true
-          pendingForkSettles.delete(forkPtyId)
-          try {
-            socket.write(JSON.stringify({
-              type: 'script-fork-claude-result',
-              seq: msg.seq,
-              nodeId: error ? '' : newNodeId,
-              error
-            }) + '\n')
-          } catch { /* disconnected */ }
-          socket.end()
-        }
-
-        const timeoutId = setTimeout(
-          () => respond('Timed out waiting for session to settle'),
-          SETTLE_TIMEOUT_MS
-        )
-        pendingForkSettles.set(forkPtyId, { respond, timeoutId })
-
-        console.log(`[script-fork-claude] Forked terminal ${msg.nodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (parent ${msg.parentId.slice(0, 8)}), waiting for settle...`)
-      } catch (err: any) {
-        console.error(`script-fork-claude failed: ${err.message}`)
-        sendError(err.message)
-      }
-      break
-    }
-
-    case 'script-unread': {
-      // Fire-and-forget: mark a terminal as unread. Silently no-ops for unknown/non-terminal nodes.
-      const node = stateManager.getNode(msg.nodeId)
-      if (node && node.type === 'terminal') {
-        claudeStateMachine.handleClientMarkUnread(node.sessionId, true)
-      }
-      break
-    }
-
-    default: {
-      const unknownType = unhandledVariant(msg)
-      console.error(`[scripts] Unknown message type: ${unknownType}`)
-      try {
-        socket.write(JSON.stringify({ type: 'error', error: `Unknown message type: ${unknownType}` }) + '\n')
-      } catch { /* disconnected */ }
-      socket.end()
       break
     }
   }
@@ -2035,15 +1890,15 @@ async function startServer(): Promise<void> {
   stateManager = new StateManager({
     onNodeUpdate: (nodeId, fields) => {
       broadcastToAll({ type: 'node-updated', nodeId, fields })
-      broadcastToScriptSubscribers('node-updated', nodeId, { type: 'node-updated', nodeId, fields })
+      scriptApi.broadcast('node-updated', nodeId, { type: 'node-updated', nodeId, fields })
     },
     onNodeAdd: (node) => {
       broadcastToAll({ type: 'node-added', node })
-      broadcastToScriptSubscribers('node-added', node.id, { type: 'node-added', node })
+      scriptApi.broadcast('node-added', node.id, { type: 'node-added', node })
     },
     onNodeRemove: (nodeId) => {
       broadcastToAll({ type: 'node-removed', nodeId })
-      broadcastToScriptSubscribers('node-removed', nodeId, { type: 'node-removed', nodeId })
+      scriptApi.broadcast('node-removed', nodeId, { type: 'node-removed', nodeId })
     }
   })
 
@@ -2180,7 +2035,7 @@ async function startServer(): Promise<void> {
           }
 
           broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
-          broadcastToScriptSubscribers('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
+          scriptApi.broadcast('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
           clients.forEach((client) => {
             client.attachedSessions.delete(sessionId)
             client.snapshotSessions.delete(sessionId)
@@ -2207,7 +2062,7 @@ async function startServer(): Promise<void> {
 
       stateManager.terminalExited(sessionId, exitCode)
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
-      broadcastToScriptSubscribers('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
+      scriptApi.broadcast('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
       // Remove from all clients' attached/snapshot sets
       clients.forEach((client) => {
         client.attachedSessions.delete(sessionId)
@@ -2609,8 +2464,9 @@ async function startServer(): Promise<void> {
   const scriptsServer = net.createServer((socket) => {
     socket.setEncoding('utf8')
 
+    const connection = scriptConnectionFor(socket)
     const parser = new LineParser((msg) => {
-      handleScriptMessage(socket, msg as ScriptMessage)
+      scriptApi.handle(connection, msg as ScriptMessage)
     })
 
     socket.on('data', (data) => parser.feed(data))
