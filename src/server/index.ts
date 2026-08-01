@@ -9,6 +9,7 @@ import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, Create
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
 import { RestartRecoveryLedger } from './restart-recovery'
+import { planSurfaceRecovery, orphanedDaemonSessions } from './startup-reconciliation'
 import {
   agentSessionIdFromPayload,
   findValidClaudeSession,
@@ -2147,10 +2148,13 @@ async function startServer(): Promise<void> {
   // --- Startup: reconcile with daemon sessions, then revive remaining terminals ---
 
   // Step 1: Ask daemon for all surviving sessions.
-  const daemonSessions = await new Promise<Array<{ id: string; pid: number; cols: number; rows: number; alive: boolean; exitCode: number }>>((resolve) => {
+  // Branded at the boundary: everything downstream treats these as pty session
+  // ids, and the daemon protocol types them as plain strings.
+  type DaemonSessionInfo = { id: PtySessionId; pid: number; cols: number; rows: number; alive: boolean; exitCode: number }
+  const daemonSessions = await new Promise<DaemonSessionInfo[]>((resolve) => {
     const handler = (msg: import('./daemon-client').DaemonMessage) => {
       if (msg.type === 'listed') {
-        resolve(msg.sessions as Array<{ id: string; pid: number; cols: number; rows: number; alive: boolean; exitCode: number }>)
+        resolve(msg.sessions as DaemonSessionInfo[])
       }
     }
     // Temporarily intercept the next 'listed' response.
@@ -2180,7 +2184,23 @@ async function startServer(): Promise<void> {
     const ptySessionId = node?.type === 'terminal' ? node.sessionId : undefined
     const daemonSession = ptySessionId ? daemonSessionMap.get(ptySessionId) : undefined
 
-    if (daemonSession && daemonSession.alive) {
+    const history = (node?.type === 'terminal' && node.claudeSessionHistory) || []
+    const agentType = node?.type === 'terminal' ? node.agentType : undefined
+    const reviveDriver = agentDriver(agentType)
+    const usesClaudeTranscript = reviveDriver.capabilities.claudeTranscript
+    const validSessionId = usesClaudeTranscript
+      ? (claudeSessionId ? findValidClaudeSession(history, cwd) : undefined)
+      : (node?.type === 'terminal' ? resolveNonClaudeResumeId(node) : undefined) ?? claudeSessionId
+
+    const plan = planSurfaceRecovery({
+      daemonSession: daemonSession && ptySessionId
+        ? { id: ptySessionId, alive: daemonSession.alive, cols: daemonSession.cols, rows: daemonSession.rows }
+        : undefined,
+      resumeSessionId: validSessionId,
+      requiresResumableSession: reviveDriver.capabilities.requiresResumableSession
+    })
+
+    if (plan.action === 'reattach') {
       // PTY survived in daemon — re-attach instead of respawning.
       reattachedSessionIds.add(ptySessionId!)
       try {
@@ -2200,8 +2220,8 @@ async function startServer(): Promise<void> {
 
         respawnTerminal(nodeId, () => {
           // The pty already exists in the daemon; adopt it rather than spawn one.
-          sessionManager.reattachSession(ptySessionId!, scrollback, daemonSession.cols, daemonSession.rows, cwd)
-          return { sessionId: ptySessionId!, cols: daemonSession.cols, rows: daemonSession.rows }
+          sessionManager.reattachSession(plan.sessionId, scrollback, plan.cols, plan.rows, cwd)
+          return { sessionId: plan.sessionId, cols: plan.cols, rows: plan.rows }
         }, RESPAWN_DEPS)
 
         // Resume the applicable local telemetry stream after a daemon reattach.
@@ -2219,24 +2239,17 @@ async function startServer(): Promise<void> {
         continue
       } catch (err: any) {
         console.error(`[startup] Failed to re-attach to daemon session ${ptySessionId!.slice(0, 8)}: ${err.message}`)
-        // Fall through to normal revival logic.
+        // Fall through to revival: re-plan as though the daemon had nothing,
+        // which is now true for practical purposes.
+        reattachedSessionIds.delete(ptySessionId!)
       }
     }
 
-    // No surviving daemon session — use existing revival logic.
-    const history = (node?.type === 'terminal' && node.claudeSessionHistory) || []
-    const agentType = node?.type === 'terminal' ? node.agentType : undefined
-    const reviveDriver = agentDriver(agentType)
-    const usesClaudeTranscript = reviveDriver.capabilities.claudeTranscript
-    const validSessionId = usesClaudeTranscript
-      ? (claudeSessionId ? findValidClaudeSession(history, cwd) : undefined)
-      : (node?.type === 'terminal' ? resolveNonClaudeResumeId(node) : undefined) ?? claudeSessionId
-
     // Claude cannot come back as a fresh conversation — a surface with no
     // resumable session is archived rather than launched empty.
-    if (!validSessionId && reviveDriver.capabilities.requiresResumableSession) {
+    if (plan.action === 'archive') {
       stateManager.archiveTerminal(nodeId)
-      console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (no agent session)`)
+      console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (${plan.reason})`)
       continue
     }
     if (usesClaudeTranscript && claudeSessionId && validSessionId !== claudeSessionId) {
@@ -2267,12 +2280,11 @@ async function startServer(): Promise<void> {
     }
   }
 
-  // Step 3: Destroy orphaned daemon sessions (in daemon but not in state).
-  for (const daemonSess of daemonSessions) {
-    if (!reattachedSessionIds.has(daemonSess.id) && daemonSess.alive) {
-      console.log(`[startup] Destroying orphaned daemon session ${daemonSess.id.slice(0, 8)}`)
-      daemonClient.send({ type: 'destroy', id: daemonSess.id })
-    }
+  // Step 3: Destroy daemon sessions no surface claimed. Left alone they hold a
+  // process and a megabyte of ring buffer forever, invisible to the user.
+  for (const orphan of orphanedDaemonSessions(daemonSessions, reattachedSessionIds)) {
+    console.log(`[startup] Destroying orphaned daemon session ${orphan.id.slice(0, 8)}`)
+    daemonClient.send({ type: 'destroy', id: orphan.id })
   }
 
   // After 30s, clear reviving flags — PTYs that survived this long are stable
