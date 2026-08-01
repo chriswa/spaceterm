@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { fileURLToPath } from 'url'
@@ -135,12 +135,19 @@ function stop(proc: ChildProcess): Promise<void> {
  * than adopting — and then destroying — the developer's live session.
  */
 export async function launchApp(
-  options: { timeoutMs?: number; withServer?: boolean } = {}
+  options: { timeoutMs?: number; withServer?: boolean; seedState?: unknown } = {}
 ): Promise<LaunchedApp> {
   const blocker = e2eBlocker()
   if (blocker) throw new Error(`Cannot launch: ${blocker}`)
 
   const home = mkdtempSync(join(tmpdir(), 'spaceterm-e2e-'))
+  if (options.seedState !== undefined) {
+    // Written before the server starts, so it is loaded rather than migrated
+    // over an empty file. This is how a canvas with content is tested without
+    // driving the UI to build one.
+    mkdirSync(home, { recursive: true })
+    writeFileSync(join(home, 'state.json'), JSON.stringify(options.seedState, null, 2))
+  }
   // The server auto-starts the Go daemon, so this brings up the whole stack.
   // `withServer: false` is for testing what a user sees when it cannot start.
   const server = options.withServer === false ? null : await startServer(home)

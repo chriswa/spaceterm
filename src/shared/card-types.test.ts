@@ -4,6 +4,7 @@ import {
   CARD_TYPE_SPECS,
   isCardType,
   measureCard,
+  tieredZIndex,
   type CardType
 } from './card-types'
 import {
@@ -153,5 +154,49 @@ describe('defaultSize agrees with measureCard for the fixed-size types', () => {
     expect(CARD_TYPE_SPECS.title.contentSized).toBe(true)
     expect(CARD_TYPE_SPECS.file.contentSized).toBe(false)
     expect(CARD_TYPE_SPECS.markdown.contentSized).toBe(false)
+  })
+})
+
+describe('tieredZIndex', () => {
+  // Two of App.tsx's five card blocks called the old tiering helper and two did
+  // not, which read as a real difference between card kinds. It was not — the
+  // helper is the identity for their types — and that is what makes one shared
+  // prop bundle safe.
+
+  it('leaves ordinary cards where they are', () => {
+    for (const type of ['terminal', 'markdown', 'file'] as const) {
+      expect(tieredZIndex(type, 42), type).toBe(42)
+    }
+  })
+
+  it('floats directories above ordinary cards', () => {
+    expect(tieredZIndex('directory', 0)).toBeGreaterThan(tieredZIndex('terminal', 999_999))
+  })
+
+  it('floats titles above directories', () => {
+    // A title must never end up buried under the terminal it labels, whatever
+    // order the user last touched them in.
+    expect(tieredZIndex('title', 0)).toBeGreaterThan(tieredZIndex('directory', 999_999))
+  })
+
+  it('keeps a card’s own z-index meaningful inside its tier', () => {
+    expect(tieredZIndex('title', 5)).toBeGreaterThan(tieredZIndex('title', 4))
+    expect(tieredZIndex('directory', 5)).toBeGreaterThan(tieredZIndex('directory', 4))
+  })
+
+  it('gives every card type a tier, so a new one cannot default to nothing', () => {
+    for (const type of CARD_TYPES) {
+      expect(typeof CARD_TYPE_SPECS[type].zIndexTier, type).toBe('number')
+    }
+  })
+
+  it('spaces the tiers far enough apart that a real z-index cannot cross one', () => {
+    // z-index comes from a monotonically increasing counter that only advances
+    // on bring-to-front, so a million is generous — but the gap is the
+    // invariant, not the specific number.
+    const tiers = [...new Set(CARD_TYPES.map((t) => CARD_TYPE_SPECS[t].zIndexTier))].sort((a, b) => a - b)
+    for (let i = 1; i < tiers.length; i++) {
+      expect(tiers[i] - tiers[i - 1]).toBeGreaterThanOrEqual(1_000_000)
+    }
   })
 })

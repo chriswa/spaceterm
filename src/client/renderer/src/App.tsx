@@ -47,12 +47,8 @@ import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 import { playSummaryChatStartedCue } from './lib/summary-chat-wait-cue'
 import { shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
-
-function tieredZIndex(type: import('../../../shared/state').NodeData['type'], z: number): number {
-  if (type === 'title') return z + 2_000_000
-  if (type === 'directory') return z + 1_000_000
-  return z
-}
+import { tieredZIndex } from '../../../shared/card-types'
+import type { NodeData } from '../../../shared/state'
 
 function getMarkdownSpawnInfo(parentNode: import('../../../shared/state').NodeData | undefined): {
   initialInput?: string; initialName?: string; x?: number; y?: number
@@ -2154,6 +2150,53 @@ export function App() {
     }
   }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, hoveredEdgeRef, clearHoveredEdge])
 
+  /**
+   * The props every canvas card takes, built once per card.
+   *
+   * Four card blocks below used to spell out the same twenty-four props each,
+   * so adding a card type meant copying a block and adding a type meant editing
+   * five of them. The two that differ genuinely — a card's own content and the
+   * callback that changes it — are still passed explicitly at each site, which
+   * is the point: what is left visible at the call site is exactly what is
+   * different.
+   *
+   * `tieredZIndex` is applied uniformly. Two of the old blocks called it and two
+   * did not, which read as a real difference between card kinds; it is not —
+   * the tier is zero for their types.
+   */
+  const cardProps = useCallback((node: NodeData) => ({
+    id: node.id,
+    x: node.x,
+    y: node.y,
+    zIndex: tieredZIndex(node.type, node.zIndex),
+    zoom: camera.z,
+    colorPresetId: node.colorPresetId,
+    resolvedPreset: resolvedPresets[node.id],
+    archivedChildren: node.archivedChildren,
+    focused: focusedId === node.id,
+    selected: selection === node.id,
+    onFocus: handleNodeFocus,
+    onClose: handleRemoveNode,
+    onMove: handleMove,
+    onColorChange: handleColorChange,
+    onUnarchive: handleUnarchive,
+    onArchiveDelete: handleArchiveDelete,
+    onOpenArchiveSearch: handleOpenArchiveSearch,
+    onNodeReady: handleNodeReady,
+    onDragStart: handleDragStart,
+    onDragEnd: handleDragEnd,
+    onStartReparent: handleStartReparent,
+    onReparentTarget: handleReparentTarget,
+    onAddNode: handleAddNode,
+    cameraRef,
+  }), [
+    camera.z, resolvedPresets, focusedId, selection,
+    handleNodeFocus, handleRemoveNode, handleMove, handleColorChange,
+    handleUnarchive, handleArchiveDelete, handleOpenArchiveSearch, handleNodeReady,
+    handleDragStart, handleDragEnd, handleStartReparent, handleReparentTarget,
+    handleAddNode, cameraRef,
+  ])
+
   return (
     <div className="app">
       <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} goodGfx={goodGfx} />} overlay={<>{rtsSelectOverlay}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
@@ -2233,141 +2276,49 @@ export function App() {
           return (
             <MarkdownCard
               key={m.id}
-              id={m.id}
-              x={m.x}
-              y={m.y}
+              {...cardProps(m)}
               width={m.width}
               height={m.height}
-              zIndex={m.zIndex}
-              zoom={camera.z}
               content={effectiveContent}
               maxWidth={m.maxWidth}
               name={m.name ?? undefined}
-              colorPresetId={m.colorPresetId}
-              resolvedPreset={resolvedPresets[m.id]}
-              archivedChildren={m.archivedChildren}
-              focused={focusedId === m.id}
-              selected={selection === m.id}
-              onFocus={handleNodeFocus}
               onUnfocus={() => { handleUnfocus(); if (!useCameraLockStore.getState().locked) flyToUnfocusZoom() }}
-              onClose={handleRemoveNode}
-              onMove={handleMove}
               onResize={handleResizeMarkdown}
               onContentChange={handleMarkdownContent}
               onMaxWidthChange={handleMaxWidthChange}
               onRename={handleRename}
-              onColorChange={handleColorChange}
-              onUnarchive={handleUnarchive}
-              onArchiveDelete={handleArchiveDelete}
-              onOpenArchiveSearch={handleOpenArchiveSearch}
-              onNodeReady={handleNodeReady}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-              onStartReparent={handleStartReparent}
-              onReparentTarget={handleReparentTarget}
               onShipIt={parentNode?.type === 'terminal' ? handleShipIt : undefined}
               fileBacked={isFileBacked}
               fileError={fileError}
-              onAddNode={handleAddNode}
-              cameraRef={cameraRef}
             />
           )
         })}
         {titles.map((t) => (
           <TitleCard
             key={t.id}
-            id={t.id}
-            x={t.x}
-            y={t.y}
-            zIndex={tieredZIndex('title', t.zIndex)}
-            zoom={camera.z}
+            {...cardProps(t)}
             text={t.text}
-            colorPresetId={t.colorPresetId}
-            resolvedPreset={resolvedPresets[t.id]}
-            archivedChildren={t.archivedChildren}
-            focused={focusedId === t.id}
-            selected={selection === t.id}
-            onFocus={handleNodeFocus}
-            onClose={handleRemoveNode}
-            onMove={handleMove}
             onTextChange={handleTitleTextChange}
-            onColorChange={handleColorChange}
-            onUnarchive={handleUnarchive}
-            onArchiveDelete={handleArchiveDelete}
-            onOpenArchiveSearch={handleOpenArchiveSearch}
-            onNodeReady={handleNodeReady}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onStartReparent={handleStartReparent}
-            onReparentTarget={handleReparentTarget}
-            onAddNode={handleAddNode}
-            cameraRef={cameraRef}
           />
         ))}
         {directories.map((d) => (
           <DirectoryCard
             key={d.id}
-            id={d.id}
-            x={d.x}
-            y={d.y}
-            zIndex={tieredZIndex('directory', d.zIndex)}
-            zoom={camera.z}
+            {...cardProps(d)}
             cwd={d.cwd}
-            colorPresetId={d.colorPresetId}
             gitStatus={d.gitStatus}
-            resolvedPreset={resolvedPresets[d.id]}
-            archivedChildren={d.archivedChildren}
-            focused={focusedId === d.id}
-            selected={selection === d.id}
-            onFocus={handleNodeFocus}
-            onClose={handleRemoveNode}
-            onMove={handleMove}
             onCwdChange={handleDirectoryCwdChange}
-            onColorChange={handleColorChange}
-            onUnarchive={handleUnarchive}
-            onArchiveDelete={handleArchiveDelete}
-            onOpenArchiveSearch={handleOpenArchiveSearch}
-            onNodeReady={handleNodeReady}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
             onPostSync={handlePostSync}
             onWtSpawn={handleWtSpawn}
-            onStartReparent={handleStartReparent}
-            onReparentTarget={handleReparentTarget}
-            onAddNode={handleAddNode}
-            cameraRef={cameraRef}
           />
         ))}
         {files.map((f) => (
           <FileCard
             key={f.id}
-            id={f.id}
-            x={f.x}
-            y={f.y}
-            zIndex={f.zIndex}
-            zoom={camera.z}
+            {...cardProps(f)}
             filePath={f.filePath}
             inheritedCwd={getAncestorCwd(nodes, f.id, cwdMapRef.current)}
-            colorPresetId={f.colorPresetId}
-            resolvedPreset={resolvedPresets[f.id]}
-            archivedChildren={f.archivedChildren}
-            focused={focusedId === f.id}
-            selected={selection === f.id}
-            onFocus={handleNodeFocus}
-            onClose={handleRemoveNode}
-            onMove={handleMove}
             onFilePathChange={handleFilePathChange}
-            onColorChange={handleColorChange}
-            onUnarchive={handleUnarchive}
-            onArchiveDelete={handleArchiveDelete}
-            onOpenArchiveSearch={handleOpenArchiveSearch}
-            onNodeReady={handleNodeReady}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onStartReparent={handleStartReparent}
-            onReparentTarget={handleReparentTarget}
-            onAddNode={handleAddNode}
-            cameraRef={cameraRef}
           />
         ))}
         {hoveredEdge && (

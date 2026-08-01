@@ -176,3 +176,83 @@ describeE2E('when the server cannot start', () => {
     expect(errors, `page errors with no server:\n  ${errors.join('\n  ')}`).toEqual([])
   })
 })
+
+describeE2E('a canvas with content', () => {
+  /**
+   * A persisted state file with one card of every non-terminal type.
+   *
+   * Terminals are deliberately absent: reviving one spawns a real shell through
+   * the daemon, which makes the test about pty lifecycle rather than about
+   * rendering. The four here are exactly the ones App.tsx renders from one
+   * shared prop bundle, so this is the end-to-end check on that hoist.
+   */
+  function seededState(): unknown {
+    const base = (id: string, x: number, y: number) => ({
+      id, parentId: 'root', x, y, zIndex: 1, archivedChildren: [], colorPresetId: 'inherit'
+    })
+    return {
+      version: 2,
+      nextZIndex: 10,
+      nodes: {
+        md: { ...base('md', 0, 0), type: 'markdown', width: 400, height: 300, content: '# Seeded Markdown' },
+        ttl: { ...base('ttl', 600, 0), type: 'title', text: 'Seeded Title' },
+        dir: { ...base('dir', 0, 500), type: 'directory', cwd: '/tmp' },
+        fil: { ...base('fil', 600, 500), type: 'file', filePath: '/tmp/seeded.txt' }
+      },
+      rootArchivedChildren: [],
+      undoBuffer: [],
+      undoCursor: -1,
+      savedViewports: {}
+    }
+  }
+
+  it('renders one card per persisted node', async () => {
+    launched = await launchApp({ seedState: seededState() })
+    await launched.window.waitForSelector('.card-shell', { timeout: 30_000 })
+
+    const ids = await launched.window.locator('.card-shell').evaluateAll(
+      (els) => els.map((e) => e.getAttribute('data-node-id')).sort()
+    )
+    // `root` is the canvas origin marker, which is a CardShell too — one more
+    // thing the shared shell already covers.
+    expect(ids).toEqual(['dir', 'fil', 'md', 'root', 'ttl'])
+  })
+
+  it('shows each card’s own content', async () => {
+    launched = await launchApp({ seedState: seededState() })
+    await launched.window.waitForSelector('.card-shell', { timeout: 30_000 })
+    const text = await launched.window.locator('.canvas-viewport').innerText()
+
+    expect(text).toContain('Seeded Title')
+    expect(text).toContain('Seeded Markdown')
+  })
+
+  it('stacks titles above directories above ordinary cards', async () => {
+    // The z-index tiering moved into CARD_TYPE_SPECS and is now applied
+    // uniformly through one shared prop bundle. This is the check that the
+    // uniform call did not change what lands in the DOM.
+    launched = await launchApp({ seedState: seededState() })
+    await launched.window.waitForSelector('.card-shell', { timeout: 30_000 })
+
+    const z = Object.fromEntries(
+      await launched.window.locator('.card-shell').evaluateAll((els) =>
+        els.map((e) => [e.getAttribute('data-node-id'), Number((e as HTMLElement).style.zIndex)])
+      )
+    ) as Record<string, number>
+
+    expect(z.ttl).toBeGreaterThan(z.dir)
+    expect(z.dir).toBeGreaterThan(z.md)
+    expect(z.dir).toBeGreaterThan(z.fil)
+  })
+
+  it('renders them all without a page error', async () => {
+    const errors: string[] = []
+    launched = await launchApp({ seedState: seededState() })
+    launched.window.on('pageerror', (err) => errors.push(err.message))
+
+    await launched.window.waitForSelector('.card-shell', { timeout: 30_000 })
+    await launched.window.waitForTimeout(1000)
+
+    expect(errors, `page errors rendering cards:\n  ${errors.join('\n  ')}`).toEqual([])
+  })
+})

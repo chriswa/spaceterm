@@ -55,40 +55,72 @@ export interface CardTypeSpec {
    * from `defaultSize` alone; sized ones must be measured.
    */
   readonly contentSized: boolean
+  /**
+   * Stacking tier added to a node's own z-index.
+   *
+   * Titles float above everything and directories above ordinary cards, so a
+   * title is never buried under the terminal it labels no matter what order the
+   * user last touched them. Zero for cards that stack purely by z-index.
+   *
+   * Declared per type rather than computed in an if-chain in `App.tsx`, where
+   * two of the five card blocks called the tiering helper and two did not —
+   * which read as a real difference and was not, since the helper is the
+   * identity for their types.
+   */
+  readonly zIndexTier: number
 }
+
+/** Tiers are a million apart so a node's own z-index can never cross one. */
+const TIER = { base: 0, directory: 1_000_000, title: 2_000_000 } as const
 
 export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
   terminal: {
     type: 'terminal',
     label: 'Terminal',
     defaultSize: terminalPixelSize(DEFAULT_COLS, DEFAULT_ROWS),
-    contentSized: true
+    contentSized: true,
+    zIndexTier: TIER.base
   },
   markdown: {
     type: 'markdown',
     label: 'Markdown',
     defaultSize: { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT },
-    contentSized: false
+    contentSized: false,
+    zIndexTier: TIER.base
   },
   directory: {
     type: 'directory',
     label: 'Directory',
     // Width is derived from the path and git status; only the height is fixed.
     defaultSize: { width: directoryFolderWidth(''), height: DIRECTORY_HEIGHT },
-    contentSized: true
+    contentSized: true,
+    zIndexTier: TIER.directory
   },
   file: {
     type: 'file',
     label: 'File',
     defaultSize: { width: FILE_WIDTH, height: FILE_HEIGHT },
-    contentSized: false
+    contentSized: false,
+    zIndexTier: TIER.base
   },
   title: {
     type: 'title',
     label: 'Title',
     defaultSize: { width: TITLE_MIN_WIDTH, height: TITLE_HEIGHT },
-    contentSized: true
+    contentSized: true,
+    zIndexTier: TIER.title
   }
+}
+
+/**
+ * A card's effective stacking order: its own z-index plus its type's tier.
+ *
+ * Safe to call for every card type — the tier is zero for the ones that do not
+ * float — which is what lets `App.tsx` build one shared prop bundle instead of
+ * remembering which two card kinds needed it.
+ */
+export function tieredZIndex(type: CardType, zIndex: number): number {
+  return zIndex + CARD_TYPE_SPECS[type].zIndexTier
 }
 
 /**
