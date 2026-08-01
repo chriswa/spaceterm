@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import * as fs from 'fs'
 import * as path from 'path'
+import { readFileSync } from 'fs'
+import {
+  SRC_ROOT as SRC,
+  sourceFiles,
+  relativeValueSpecifiers,
+  resolveSpecifier
+} from './testing/module-graph'
 
 /**
  * Guards against circular imports between modules under `src/`.
@@ -18,69 +24,10 @@ import * as path from 'path'
  * never intentional here, and "not fatal yet" is a bad thing to rely on.
  */
 
-const SRC = path.join(__dirname, '..')
-
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === 'assets') continue
-      sourceFiles(full, out)
-    } else if (/\.tsx?$/.test(entry.name)) {
-      out.push(full)
-    }
-  }
-  return out
-}
-
-/**
- * Relative specifiers that survive to runtime, in source order.
- *
- * Three kinds are deliberately excluded, because none of them can produce an
- * evaluation-order cycle:
- *  - `import type` / `export type`, which TypeScript erases entirely. The
- *    protocol.ts ↔ state.ts pair is one of these and is fine.
- *  - dynamic `import()`, which resolves after both modules have evaluated.
- *  - anything non-relative, which cannot be part of a cycle inside src/.
- */
-export function relativeValueSpecifiers(source: string): string[] {
-  const specifiers: string[] = []
-  // `import ... from '.'` / `export ... from '.'`, where the clause does not
-  // begin with the `type` keyword.
-  //
-  // The clause pattern is `[^'"]*?` — newlines allowed, quotes not. A first
-  // version used `[^'"\n]*?`, which silently skipped every multi-line import
-  // and made the whole check vacuous: it passed against the exact cycle it was
-  // written to catch. Quotes are the right boundary because an import clause
-  // never contains one before its `from`, so the match cannot run past the end
-  // of one statement into the next.
-  const staticRe = /^[ \t]*(?:import|export)\s+(?!type\s)[^'"]*?from\s*['"](\.[^'"]*)['"]/gm
-  // Bare `import '.'` for side effects — the strongest kind of value edge.
-  const bareRe = /^[ \t]*import\s*['"](\.[^'"]*)['"]/gm
-  for (const re of [staticRe, bareRe]) {
-    let m: RegExpExecArray | null
-    while ((m = re.exec(source)) !== null) specifiers.push(m[1])
-  }
-  return specifiers
-}
-
-/** Resolve a relative specifier to a file on disk, or null if it is not one. */
-function resolveSpecifier(fromFile: string, specifier: string): string | null {
-  // Written as '.js' in ESM-style imports, but the file on disk is '.ts'.
-  const base = path.resolve(path.dirname(fromFile), specifier.replace(/\.js$/, ''))
-  const candidates = [
-    `${base}.ts`,
-    `${base}.tsx`,
-    path.join(base, 'index.ts'),
-    path.join(base, 'index.tsx')
-  ]
-  return candidates.find((c) => fs.existsSync(c) && fs.statSync(c).isFile()) ?? null
-}
-
 function buildGraph(): Map<string, string[]> {
   const graph = new Map<string, string[]>()
   for (const file of sourceFiles(SRC)) {
-    const source = fs.readFileSync(file, 'utf-8')
+    const source = readFileSync(file, 'utf-8')
     const edges: string[] = []
     for (const spec of relativeValueSpecifiers(source)) {
       const target = resolveSpecifier(file, spec)
