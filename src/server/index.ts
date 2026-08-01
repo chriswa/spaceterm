@@ -8,6 +8,7 @@ import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
+import { RestartRecoveryLedger } from './restart-recovery'
 import {
   agentSessionIdFromPayload,
   findValidClaudeSession,
@@ -195,13 +196,12 @@ interface ClientConnection {
   cameraBounds: CameraBounds | null
 }
 
-/** Tracks manual restarts for auto-recovery when the new PTY exits quickly. */
-const restartRecovery = new Map<string, {
-  restartedAt: number
-  newSessionId: string
-  previousExtraCliArgs: string
-  isRetry: boolean
-}>()
+/**
+ * Manual restarts being watched, so a surface whose new CLI arguments turn out
+ * to be unlaunchable is reverted rather than archived. See restart-recovery.ts
+ * for the three rules and why each one exists.
+ */
+const restartRecovery = new RestartRecoveryLedger()
 
 // `concurrently --restart-tries` restarts non-zero exits in development. Keep
 // this distinct from an ordinary shutdown for the current launcher and any
@@ -1727,11 +1727,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = respawnTerminal(
           msg.nodeId, () => sessionManager.create(restartOptions), RESPAWN_DEPS)
 
-        // Track for auto-recovery if the new PTY exits quickly
-        restartRecovery.set(msg.nodeId, {
-          restartedAt: Date.now(),
-          newSessionId: newPtyId,
+        restartRecovery.record(msg.nodeId, {
+          sessionId: newPtyId,
           previousExtraCliArgs,
+          startedAt: Date.now(),
           isRetry: false
         })
 
@@ -1932,13 +1931,13 @@ async function startServer(): Promise<void> {
       cursorSessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
 
-      // Check restart recovery — if this PTY was spawned by a manual restart
-      // and exited within 10 seconds, auto-recover with the previous CLI args
+      // If this pty was spawned by a manual restart and died quickly, the new
+      // CLI args are the likely cause: revert them and relaunch once.
       const nodeId = stateManager.getNodeIdForSession(sessionId)
-      const recovery = nodeId ? restartRecovery.get(nodeId) : undefined
-      if (nodeId && recovery && recovery.newSessionId === sessionId) {
-        const elapsed = Date.now() - recovery.restartedAt
-        if (elapsed < 10_000 && !recovery.isRetry) {
+      if (nodeId) {
+        const recovery = restartRecovery.onExit(nodeId, sessionId, Date.now())
+        if (recovery.kind === 'recover') {
+          const elapsed = recovery.elapsedMs
           console.log(`[restart-recovery] PTY exited after ${elapsed}ms (exitCode=${exitCode}), recovering node ${nodeId.slice(0, 8)} with previous args`)
 
           // Prevent terminalExited from archiving
@@ -1968,13 +1967,7 @@ async function startServer(): Promise<void> {
               const { sessionId: recoveryPtyId } = respawnTerminal(
                 nodeId, () => sessionManager.create(recoveryOptions), RESPAWN_DEPS)
 
-              // Update recovery entry to mark as retry with the new session
-              restartRecovery.set(nodeId, {
-                restartedAt: Date.now(),
-                newSessionId: recoveryPtyId,
-                previousExtraCliArgs: recovery.previousExtraCliArgs,
-                isRetry: true
-              })
+              restartRecovery.recordRetry(nodeId, recoveryPtyId, recovery.previousExtraCliArgs, Date.now())
 
               // Notify clients
               broadcastToAll({
@@ -1984,10 +1977,10 @@ async function startServer(): Promise<void> {
               console.log(`[restart-recovery] Recovered node ${nodeId.slice(0, 8)} → session ${recoveryPtyId.slice(0, 8)}`)
             } catch (err: any) {
               console.error(`[restart-recovery] Failed to recover node ${nodeId.slice(0, 8)}: ${err.message}`)
-              restartRecovery.delete(nodeId)
+              restartRecovery.forget(nodeId)
             }
           } else {
-            restartRecovery.delete(nodeId)
+            restartRecovery.forget(nodeId)
           }
 
           broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
@@ -1998,8 +1991,9 @@ async function startServer(): Promise<void> {
           })
           return
         }
-        // Retry already happened or elapsed >= 10s — clean up and proceed with normal exit
-        restartRecovery.delete(nodeId)
+        if (recovery.kind === 'give-up') {
+          console.log(`[restart-recovery] Not recovering node ${nodeId.slice(0, 8)}: ${recovery.reason} (${recovery.elapsedMs}ms)`)
+        }
       }
 
       // Log diagnostic info when a startup-revived PTY fails
