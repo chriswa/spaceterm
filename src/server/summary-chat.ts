@@ -16,9 +16,18 @@ const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_HAIKU_HISTORY_MESSAGES = 12
 const BLOCKED_VOICE_IDS = new Set(['af_nicole'])
 const SPEECH_LONG_POLL_TIMEOUT_MS = 5 * 60_000
+const VOICE_REFRESH_MS = 5_000
+/**
+ * Floor between speech-status polls. The loop is normally paced by the `?wait=`
+ * long poll, but that is the *service's* promise, not ours: a Voice Operator
+ * that answers immediately — an older build, or one that has lost its job
+ * queue — would otherwise spin this loop as fast as the event loop allows.
+ * Invisible next to a 30s long poll; caps a degenerate service at 4 polls/sec.
+ */
+const SPEECH_POLL_FLOOR_MS = 250
 const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Speak in two to four concise sentences of plain English. Later messages supersede earlier ones. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words to speak.`
 
-type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
+export type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
 type HaikuMessage = { role: 'user' | 'assistant'; content: string }
 type SpeechStatus = {
   id: string
@@ -35,7 +44,85 @@ interface Conversation {
   voice?: string
   speechId?: string
   isSpeaking: boolean
-  lastUsedAt: number
+  /**
+   * Where the listener cut off the last spoken answer, recorded by
+   * monitorSpeech at the moment it observed the interruption. Consumed by the
+   * next follow-up.
+   */
+  interruptedAtCharacter?: number
+  /**
+   * Monotonic use counter, not a timestamp. "Most recently used" is a sequence
+   * question, and two conversations started in the same millisecond used to tie
+   * — leaving the target conversation up to sort stability.
+   */
+  lastUsedSeq: number
+}
+
+/**
+ * Everything SummaryChat reaches outside its own process: two HTTP services
+ * (Anthropic's Messages API and the local Voice Operator), the filesystem, the
+ * macOS Keychain, and a timer. Each is narrow enough to fake, which is what
+ * makes the conversation lifecycle testable without a network or a keychain.
+ */
+export interface SummaryChatDeps {
+  /** HTTP. Same shape as global `fetch`. */
+  fetch: typeof fetch
+  /** Voice Operator's discovery document, or undefined when it is not running. */
+  readDiscovery(): { port?: unknown } | undefined
+  /** Parse an agent transcript off disk. Returns [] when unreadable. */
+  readTranscript(filePath: string): TranscriptMessage[]
+  /** Claude Code's OAuth credential. Throws when unavailable. */
+  oauthToken(): string
+  /** Audit trail. Best-effort — failures must not break a conversation. */
+  audit: SummaryChatAudit
+  /** Run `fn` every `ms` milliseconds. Returns a cancel function. */
+  scheduleInterval(fn: () => void, ms: number): () => void
+  /** Resolve after `ms` milliseconds. */
+  sleep(ms: number): Promise<void>
+}
+
+export interface SummaryChatAudit {
+  /** Persist the initial prompt; returns the path recorded in the audit entry. */
+  writeSnapshot(auditId: string, prompt: string): string
+  append(entry: Record<string, unknown>): void
+}
+
+export const REAL_SUMMARY_CHAT_AUDIT: SummaryChatAudit = {
+  writeSnapshot(auditId, prompt) {
+    fs.mkdirSync(SUMMARY_CHAT_DIR, { recursive: true })
+    const snapshotPath = path.join(SUMMARY_CHAT_DIR, `${auditId}.initial-prompt.txt`)
+    fs.writeFileSync(snapshotPath, prompt)
+    return snapshotPath
+  },
+  append(entry) {
+    try {
+      fs.mkdirSync(SUMMARY_CHAT_DIR, { recursive: true })
+      fs.appendFileSync(AUDIT_PATH, JSON.stringify({ timestamp: new Date().toISOString(), ...entry }) + '\n')
+    } catch (err) {
+      serverLog(`[summary-chat] failed to append audit: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+}
+
+export const REAL_SUMMARY_CHAT_DEPS: SummaryChatDeps = {
+  fetch: (...args) => fetch(...args),
+  readDiscovery() {
+    try {
+      return JSON.parse(fs.readFileSync(DISCOVERY_PATH, 'utf8')) as { port?: unknown }
+    } catch {
+      return undefined
+    }
+  },
+  readTranscript,
+  oauthToken: claudeCodeOAuthToken,
+  audit: REAL_SUMMARY_CHAT_AUDIT,
+  scheduleInterval(fn, ms) {
+    const timer = setInterval(fn, ms)
+    return () => clearInterval(timer)
+  },
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
 }
 
 /**
@@ -46,25 +133,27 @@ interface Conversation {
 export class SummaryChat {
   private readonly conversations = new Map<string, Conversation>()
   private voices: string[] = []
-  private voiceRefreshTimer: ReturnType<typeof setInterval>
+  private useCounter = 0
+  private readonly cancelVoiceRefresh: () => void
 
   constructor(
     private readonly onSpeakingChanged: (nodeId: NodeId, speaking: boolean, voice?: string) => void,
     private readonly onStatusChanged: (nodeId: NodeId, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => void,
+    private readonly deps: SummaryChatDeps = REAL_SUMMARY_CHAT_DEPS,
   ) {
-    this.voiceRefreshTimer = setInterval(() => { void this.refreshVoices() }, 5_000)
+    this.cancelVoiceRefresh = this.deps.scheduleInterval(() => { void this.refreshVoices() }, VOICE_REFRESH_MS)
     void this.refreshVoices()
   }
 
   dispose(): void {
-    clearInterval(this.voiceRefreshTimer)
+    this.cancelVoiceRefresh()
     for (const conversation of Array.from(this.conversations.values())) void this.cancelSpeech(conversation)
   }
 
   /** The conversation unqualified Voice Operator commands currently target. */
   getTargetNodeId(): NodeId | undefined {
     return Array.from(this.conversations.values())
-      .sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0]?.nodeId
+      .sort((a, b) => b.lastUsedSeq - a.lastUsedSeq)[0]?.nodeId
   }
 
   async start(nodeId: NodeId, transcriptPath: string | undefined, sourceAgentSessionId?: string): Promise<void> {
@@ -73,7 +162,7 @@ export class SummaryChat {
       this.onStatusChanged(nodeId, 'error', 'This surface has no transcript to summarize yet.')
       return
     }
-    const messages = readTranscript(transcriptPath)
+    const messages = this.deps.readTranscript(transcriptPath)
     if (!messages.length || !messages.some(message => message.role === 'user')) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} transcript has no user-facing messages`)
       this.onStatusChanged(nodeId, 'error', 'This transcript has no user messages to summarize yet.')
@@ -89,7 +178,7 @@ export class SummaryChat {
       haikuHistory: [],
       voice: this.voiceFor(nodeId),
       isSpeaking: false,
-      lastUsedAt: Date.now(),
+      lastUsedSeq: ++this.useCounter,
     }
     this.conversations.set(nodeId, conversation)
     this.onStatusChanged(nodeId, 'target')
@@ -100,7 +189,7 @@ export class SummaryChat {
 
   async followUp(text: string): Promise<void> {
     const conversation = Array.from(this.conversations.values())
-      .sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0]
+          .sort((a, b) => b.lastUsedSeq - a.lastUsedSeq)[0]
     if (!conversation) {
       serverLog('[summary-chat] voice command ignored: no active summary conversation')
       return
@@ -113,12 +202,12 @@ export class SummaryChat {
   }
 
   private async ask(conversation: Conversation, prompt: string, kind: 'initial' | 'follow-up'): Promise<void> {
-    conversation.lastUsedAt = Date.now()
+    conversation.lastUsedSeq = ++this.useCounter
     this.onStatusChanged(conversation.nodeId, 'thinking')
     let waitingForSpeech = false
     try {
       const text = await this.askHaiku(conversation, prompt)
-      this.appendAudit({
+      this.deps.audit.append({
         event: 'haiku-response', auditId: conversation.auditId, nodeId: conversation.nodeId,
         kind, provider: 'messages-api', responseCharacters: text.length,
       })
@@ -152,11 +241,11 @@ export class SummaryChat {
   private async askHaiku(conversation: Conversation, prompt: string): Promise<string> {
     const pending: HaikuMessage = { role: 'user', content: prompt }
     const messages = boundedHaikuHistory([...conversation.haikuHistory, pending])
-    const response = await fetch(HAIKU_URL, {
+    const response = await this.deps.fetch(HAIKU_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: `Bearer ${claudeCodeOAuthToken()}`,
+        authorization: `Bearer ${this.deps.oauthToken()}`,
         'anthropic-beta': 'oauth-2025-04-20',
         'anthropic-version': '2023-06-01',
         'user-agent': 'claude-code/2.1.47',
@@ -186,11 +275,9 @@ export class SummaryChat {
 
   private recordInitialSnapshot(conversation: Conversation, transcriptPath: string, messages: TranscriptMessage[], prompt: string): void {
     try {
-      fs.mkdirSync(SUMMARY_CHAT_DIR, { recursive: true })
-      const snapshotPath = path.join(SUMMARY_CHAT_DIR, `${conversation.auditId}.initial-prompt.txt`)
-      fs.writeFileSync(snapshotPath, prompt)
+      const snapshotPath = this.deps.audit.writeSnapshot(conversation.auditId, prompt)
       const messageCharacters = messages.reduce((total, message) => total + message.text.length, 0)
-      this.appendAudit({
+      this.deps.audit.append({
         event: 'started', auditId: conversation.auditId, nodeId: conversation.nodeId,
         sourceAgentSessionId: conversation.sourceAgentSessionId ?? null,
         transcriptPath, snapshotPath, messageCount: messages.length,
@@ -201,16 +288,15 @@ export class SummaryChat {
     }
   }
 
-  private appendAudit(entry: Record<string, unknown>): void {
-    try {
-      fs.mkdirSync(SUMMARY_CHAT_DIR, { recursive: true })
-      fs.appendFileSync(AUDIT_PATH, JSON.stringify({ timestamp: new Date().toISOString(), ...entry }) + '\n')
-    } catch (err) {
-      serverLog(`[summary-chat] failed to append audit: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
+  /**
+   * How much of the previous answer the listener actually heard, if they cut it
+   * off. Consumed once, so a later follow-up does not repeat stale context.
+   */
   private async heardPrefix(conversation: Conversation): Promise<number | undefined> {
+    const recorded = conversation.interruptedAtCharacter
+    conversation.interruptedAtCharacter = undefined
+    if (recorded !== undefined) return recorded
+    // Still-live job: the follow-up beat the monitor to the terminal status.
     if (!conversation.speechId) return undefined
     const status = await this.speechRequest<SpeechStatus>(`/v1/speech/${encodeURIComponent(conversation.speechId)}?wait=0`)
     if (!status || status.state !== 'interrupted_by_user') return undefined
@@ -270,9 +356,16 @@ export class SummaryChat {
           conversation.isSpeaking = false
           this.onSpeakingChanged(conversation.nodeId, false)
         }
+        await this.deps.sleep(SPEECH_POLL_FLOOR_MS)
         continue
       }
       if (conversation.speechId === speechId) {
+        // Capture the cut-off point now. By the time a follow-up voice command
+        // arrives the job is already terminal, and a terminal job's offset is
+        // no longer queryable — so asking later only ever returned undefined.
+        if (status.state === 'interrupted_by_user') {
+          conversation.interruptedAtCharacter = status.character_offset ?? 0
+        }
         conversation.speechId = undefined
         if (conversation.isSpeaking) {
           conversation.isSpeaking = false
@@ -307,15 +400,14 @@ export class SummaryChat {
   }
 
   private async speechRequest<T>(endpoint: string, init?: RequestInit, timeoutMs = 3_000): Promise<T | undefined> {
-    let port: number | undefined
+    const discovery = this.deps.readDiscovery()
+    if (!discovery) return undefined
+    const port = typeof discovery.port === 'number' && discovery.port > 0 && discovery.port < 65536
+      ? discovery.port
+      : undefined
+    if (port === undefined) return undefined
     try {
-      const discovery = JSON.parse(fs.readFileSync(DISCOVERY_PATH, 'utf8')) as { port?: unknown }
-      if (typeof discovery.port === 'number' && discovery.port > 0 && discovery.port < 65536) port = discovery.port
-    } catch {
-      return undefined
-    }
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      const response = await this.deps.fetch(`http://127.0.0.1:${port}${endpoint}`, {
         ...init,
         headers: { 'content-type': 'application/json', ...init?.headers },
         signal: AbortSignal.timeout(timeoutMs),
@@ -386,6 +478,17 @@ function claudeCodeOAuthToken(): string {
 export function readTranscript(filePath: string): TranscriptMessage[] {
   let raw: string
   try { raw = fs.readFileSync(filePath, 'utf8') } catch { return [] }
+  return parseTranscript(raw)
+}
+
+/**
+ * Select the speakable messages from a raw JSONL transcript.
+ *
+ * Split from readTranscript so the selection rules — which agent shapes count
+ * as human speech, and how much backwards context fits — can be tested against
+ * fixture text rather than files on disk.
+ */
+export function parseTranscript(raw: string): TranscriptMessage[] {
   const result: TranscriptMessage[] = []
   for (const line of raw.split('\n')) {
     if (!line) continue
