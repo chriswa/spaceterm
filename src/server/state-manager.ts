@@ -13,7 +13,7 @@ import type {
   GitStatus
 } from '../shared/state'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
-import { schedulePersist, persistNow, loadState } from './persistence'
+import { StatePersister } from './persistence'
 import { getAncestorCwd } from './path-utils'
 import { isDisposable } from '../shared/node-utils'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
@@ -24,11 +24,24 @@ export type NodeUpdateCallback = (nodeId: string, fields: Partial<NodeData>) => 
 export type NodeAddCallback = (node: NodeData) => void
 export type NodeRemoveCallback = (nodeId: string) => void
 
+/** Everything StateManager pushes back out to the rest of the server. */
+export interface StateManagerDeps {
+  onNodeUpdate: NodeUpdateCallback
+  onNodeAdd: NodeAddCallback
+  onNodeRemove: NodeRemoveCallback
+}
+
+export interface StateManagerOptions {
+  /** Defaults to a `StatePersister` writing to `~/.spaceterm/state.json`. */
+  persister?: StatePersister
+}
+
 export class StateManager {
   private state: ServerState
   private onNodeUpdate: NodeUpdateCallback
   private onNodeAdd: NodeAddCallback
   private onNodeRemove: NodeRemoveCallback
+  private persister: StatePersister
   /** Maps active PTY session ID → node ID (they diverge after reincarnation) */
   private sessionToNodeId = new Map<string, string>()
   /** Tracks node IDs mid-restart — prevents terminalExited from archiving the node */
@@ -37,17 +50,14 @@ export class StateManager {
    *  surface stays visible as a dead remnant the user can manually retry. */
   private revivingNodes = new Set<string>()
 
-  constructor(
-    onNodeUpdate: NodeUpdateCallback,
-    onNodeAdd: NodeAddCallback,
-    onNodeRemove: NodeRemoveCallback
-  ) {
-    this.onNodeUpdate = onNodeUpdate
-    this.onNodeAdd = onNodeAdd
-    this.onNodeRemove = onNodeRemove
+  constructor(deps: StateManagerDeps, options: StateManagerOptions = {}) {
+    this.onNodeUpdate = deps.onNodeUpdate
+    this.onNodeAdd = deps.onNodeAdd
+    this.onNodeRemove = deps.onNodeRemove
+    this.persister = options.persister ?? new StatePersister()
 
     // Load persisted state or create empty
-    const loaded = loadState()
+    const loaded = this.persister.load()
     if (loaded) {
       this.state = loaded
       // Backfill for state files that predate rootArchivedChildren
@@ -181,7 +191,7 @@ export class StateManager {
       deadList.push({ nodeId: node.id, claudeSessionId: latestClaude, cwd: node.cwd, extraCliArgs: node.extraCliArgs })
     }
 
-    persistNow(this.state)
+    this.persister.flush(this.state)
     return deadList
   }
 
@@ -1168,13 +1178,13 @@ export class StateManager {
   // --- Persistence ---
 
   private schedulePersist(): void {
-    schedulePersist(this.state)
+    this.persister.schedule(this.state)
   }
 
   /**
    * Immediately persist state. Call on shutdown.
    */
   persistImmediate(): void {
-    persistNow(this.state)
+    this.persister.flush(this.state)
   }
 }

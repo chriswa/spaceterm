@@ -2348,20 +2348,20 @@ async function startServer(): Promise<void> {
   await cleanStaleSocket(SCRIPTS_SOCKET_PATH, false)
 
   // Initialize StateManager — broadcasts node changes to all clients and script subscribers
-  stateManager = new StateManager(
-    (nodeId, fields) => {
+  stateManager = new StateManager({
+    onNodeUpdate: (nodeId, fields) => {
       broadcastToAll({ type: 'node-updated', nodeId, fields })
       broadcastToScriptSubscribers('node-updated', nodeId, { type: 'node-updated', nodeId, fields })
     },
-    (node) => {
+    onNodeAdd: (node) => {
       broadcastToAll({ type: 'node-added', node })
       broadcastToScriptSubscribers('node-added', node.id, { type: 'node-added', node })
     },
-    (nodeId) => {
+    onNodeRemove: (nodeId) => {
       broadcastToAll({ type: 'node-removed', nodeId })
       broadcastToScriptSubscribers('node-removed', nodeId, { type: 'node-removed', nodeId })
     }
-  )
+  })
 
   // Initialize FileContentManager — manages bidirectional file sync for file-backed markdowns
   fileContentManager = new FileContentManager((nodeId, content) => {
