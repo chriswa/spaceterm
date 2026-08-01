@@ -68,6 +68,31 @@ export class StateManager {
     this.initialAlertScan()
   }
 
+  /**
+   * Apply a patch to a node and broadcast exactly what changed.
+   *
+   * Replaces ~30 hand-written mutate → onNodeUpdate → schedulePersist triples.
+   * Each of those carried an `as Partial<TerminalNodeData>`-style cast, which
+   * switches off excess-property checking: a misspelled field name compiled,
+   * broadcast a key no client reads, and silently did nothing. Here the patch is
+   * typed against the node's own type with no cast at the call site, so a typo
+   * or a wrong value type is a compile error.
+   *
+   * The single cast below is a variance artifact — `Partial<TerminalNodeData>`
+   * is not assignable to `Partial<NodeData>` because NodeData is a union — and
+   * is safe because `node` is the node the patch was checked against.
+   */
+  private applyPatch<T extends NodeData>(node: T, patch: Partial<T>): void {
+    Object.assign(node, patch)
+    this.onNodeUpdate(node.id, patch as Partial<NodeData>)
+  }
+
+  /** {@link applyPatch}, plus a debounced save. The common case. */
+  private patchNode<T extends NodeData>(node: T, patch: Partial<T>): void {
+    this.applyPatch(node, patch)
+    this.schedulePersist()
+  }
+
   /** Compute the next available sortOrder by scanning all terminal nodes. */
   private nextSortOrder(): number {
     let max = -1
@@ -152,9 +177,7 @@ export class StateManager {
   updateExtraCliArgs(nodeId: NodeId, extraCliArgs: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
-    node.extraCliArgs = extraCliArgs
-    this.onNodeUpdate(nodeId, { extraCliArgs: node.extraCliArgs } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { extraCliArgs })
   }
 
   getState(): ServerState {
@@ -209,8 +232,7 @@ export class StateManager {
         const sourceSortOrder = sourceNode.sortOrder
         for (const node of Object.values(this.state.nodes)) {
           if (node.type === 'terminal' && node.sortOrder > sourceSortOrder) {
-            node.sortOrder += 1
-            this.onNodeUpdate(node.id, { sortOrder: node.sortOrder } as Partial<TerminalNodeData>)
+            this.applyPatch(node, { sortOrder: node.sortOrder + 1 })
           }
         }
         sortOrder = sourceSortOrder + 1
@@ -378,8 +400,7 @@ export class StateManager {
     if (isReviving) {
       // Keep as dead remnant — the surface stays visible and can be manually restarted.
       // Preserve sessionToNodeId so asleep toggles can still resolve the node.
-      this.onNodeUpdate(node.id, { alive: false, exitCode, claudeState: 'stopped' } as Partial<TerminalNodeData>)
-      this.schedulePersist()
+      this.patchNode(node, { alive: false, exitCode, claudeState: 'stopped' })
     } else {
       this.sessionToNodeId.delete(ptySessionId)
       this.archiveNode(node.id)
@@ -402,14 +423,6 @@ export class StateManager {
       this.sessionToNodeId.delete(node.sessionId)
     }
 
-    node.alive = true
-    node.sessionId = newPtySessionId
-    node.cols = cols
-    node.rows = rows
-    node.exitCode = undefined
-    node.claudeState = 'stopped'
-    node.claudeStatusUnread = false
-
     // Start a new terminal session
     const prevSession = node.terminalSessions[node.terminalSessions.length - 1]
     const newSession: TerminalSessionEntry = {
@@ -421,7 +434,7 @@ export class StateManager {
     node.terminalSessions.push(newSession)
 
     this.sessionToNodeId.set(newPtySessionId, nodeId)
-    this.onNodeUpdate(nodeId, {
+    this.patchNode(node, {
       alive: true,
       sessionId: newPtySessionId,
       cols,
@@ -429,8 +442,7 @@ export class StateManager {
       exitCode: undefined,
       claudeState: 'stopped',
       claudeStatusUnread: false
-    } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    })
   }
 
   // --- Node mutations ---
@@ -477,8 +489,7 @@ export class StateManager {
       const node = this.state.nodes[orderedIds[i]]
       if (!node || node.type !== 'terminal') continue
       if (node.sortOrder !== i) {
-        node.sortOrder = i
-        this.onNodeUpdate(orderedIds[i], { sortOrder: i } as Partial<TerminalNodeData>)
+        this.applyPatch(node, { sortOrder: i })
       }
     }
     this.schedulePersist()
@@ -571,7 +582,7 @@ export class StateManager {
       }
       if (parentId === ROOT_NODE_ID) {
         this.state.rootArchivedChildren.push(snapshot)
-        this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+        this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren })
       } else {
         const parent = this.state.nodes[parentId]
         if (parent) {
@@ -655,7 +666,7 @@ export class StateManager {
 
     // Broadcast updated archivedChildren on the parent
     if (parentNodeId === ROOT_NODE_ID) {
-      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren })
     } else {
       const parent = this.state.nodes[parentNodeId]
       if (parent) {
@@ -685,7 +696,7 @@ export class StateManager {
 
     // Broadcast updated archivedChildren on the parent
     if (parentNodeId === ROOT_NODE_ID) {
-      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren } as Partial<NodeData>)
+      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren })
     } else {
       const parent = this.state.nodes[parentNodeId]
       if (parent) {
@@ -721,18 +732,13 @@ export class StateManager {
   updateTerminalSize(ptySessionId: PtySessionId, cols: number, rows: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    node.cols = cols
-    node.rows = rows
-    this.onNodeUpdate(node.id, { cols, rows } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { cols, rows })
   }
 
   updateCwd(ptySessionId: PtySessionId, cwd: string): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    node.cwd = cwd
-    this.onNodeUpdate(node.id, { cwd } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { cwd })
     // Check self + descendants for cwd-mismatch alerts
     this.checkCwdMismatchAlert(node)
     this.recheckDescendantCwdAlerts(node.id)
@@ -749,8 +755,7 @@ export class StateManager {
       currentSession.shellTitleHistory = [...history]
     }
 
-    this.onNodeUpdate(node.id, { shellTitleHistory: history } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { shellTitleHistory: history })
   }
 
   updateClaudeSessionHistory(ptySessionId: PtySessionId, history: ClaudeSessionEntry[]): void {
@@ -781,40 +786,31 @@ export class StateManager {
       }
     }
 
-    this.onNodeUpdate(node.id, { claudeSessionHistory: history } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeSessionHistory: history })
   }
 
   updateClaudeState(ptySessionId: PtySessionId, state: import('../shared/state').ClaudeState): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    node.claudeState = state
-    this.onNodeUpdate(node.id, { claudeState: state } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeState: state })
   }
 
   updateClaudeModel(ptySessionId: PtySessionId, model: string): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node || node.claudeModel === model) return
-    node.claudeModel = model
-    this.onNodeUpdate(node.id, { claudeModel: model } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeModel: model })
   }
 
   updateClaudeContextPercent(ptySessionId: PtySessionId, percent: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node || node.claudeContextPercent === percent) return
-    node.claudeContextPercent = percent
-    this.onNodeUpdate(node.id, { claudeContextPercent: percent } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeContextPercent: percent })
   }
 
   updateClaudeSessionLineCount(ptySessionId: PtySessionId, lineCount: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node || node.claudeSessionLineCount === lineCount) return
-    node.claudeSessionLineCount = lineCount
-    this.onNodeUpdate(node.id, { claudeSessionLineCount: lineCount } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeSessionLineCount: lineCount })
   }
 
   getClaudeContextPercent(ptySessionId: PtySessionId): number | null {
@@ -828,25 +824,19 @@ export class StateManager {
   updateClaudeStateDecisionTime(ptySessionId: PtySessionId, timestamp: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    node.claudeStateDecidedAt = timestamp
-    this.onNodeUpdate(node.id, { claudeStateDecidedAt: timestamp } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeStateDecidedAt: timestamp })
   }
 
   updateClaudeStatusUnread(ptySessionId: PtySessionId, unread: boolean): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    node.claudeStatusUnread = unread
-    this.onNodeUpdate(node.id, { claudeStatusUnread: unread } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeStatusUnread: unread })
   }
 
   updateClaudeStatusAsleep(ptySessionId: PtySessionId, asleep: boolean): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    node.claudeStatusAsleep = asleep
-    this.onNodeUpdate(node.id, { claudeStatusAsleep: asleep } as Partial<TerminalNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { claudeStatusAsleep: asleep })
   }
 
   updateLastInteracted(ptySessionId: PtySessionId, timestamp: number): void {
@@ -854,10 +844,12 @@ export class StateManager {
     if (!node) return
     const prevMinute = node.lastInteractedAt ? Math.floor(node.lastInteractedAt / 60000) : -1
     const curMinute = Math.floor(timestamp / 60000)
-    node.lastInteractedAt = timestamp
-    // Only broadcast when the displayed minute value changes (or on first activity)
+    // Only broadcast when the displayed minute value changes (or on first
+    // activity) — but always record it, so the persisted value stays current.
     if (curMinute !== prevMinute) {
-      this.onNodeUpdate(node.id, { lastInteractedAt: timestamp } as Partial<TerminalNodeData>)
+      this.applyPatch(node, { lastInteractedAt: timestamp })
+    } else {
+      node.lastInteractedAt = timestamp
     }
     this.schedulePersist()
   }
@@ -896,9 +888,7 @@ export class StateManager {
   updateDirectoryCwd(nodeId: NodeId, cwd: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'directory') return
-    node.cwd = cwd
-    this.onNodeUpdate(nodeId, { cwd } as Partial<DirectoryNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { cwd })
     // Recheck cwd-mismatch alerts for descendants whose ancestor cwd changed
     this.recheckDescendantCwdAlerts(nodeId)
   }
@@ -906,8 +896,7 @@ export class StateManager {
   updateDirectoryGitStatus(nodeId: NodeId, gitStatus: GitStatus | null): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'directory') return
-    node.gitStatus = gitStatus
-    this.onNodeUpdate(nodeId, { gitStatus } as Partial<DirectoryNodeData>)
+    this.applyPatch(node, { gitStatus })
     // Don't persist — ephemeral data, same pattern as updateClaudeState
   }
 
@@ -944,9 +933,7 @@ export class StateManager {
   updateFilePath(nodeId: NodeId, filePath: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'file') return
-    node.filePath = filePath
-    this.onNodeUpdate(nodeId, { filePath } as Partial<FileNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { filePath })
   }
 
   // --- Markdown operations ---
@@ -980,26 +967,19 @@ export class StateManager {
   resizeMarkdown(nodeId: NodeId, width: number, height: number): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'markdown') return
-    node.width = width
-    node.height = height
-    this.onNodeUpdate(nodeId, { width, height } as Partial<MarkdownNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { width, height })
   }
 
   updateMarkdownContent(nodeId: NodeId, content: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'markdown') return
-    node.content = content
-    this.onNodeUpdate(nodeId, { content } as Partial<MarkdownNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { content })
   }
 
   setMarkdownMaxWidth(nodeId: NodeId, maxWidth: number): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'markdown') return
-    node.maxWidth = maxWidth
-    this.onNodeUpdate(nodeId, { maxWidth } as Partial<MarkdownNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { maxWidth })
   }
 
   // --- Title operations ---
@@ -1029,9 +1009,7 @@ export class StateManager {
   updateTitleText(nodeId: NodeId, text: string): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'title') return
-    node.text = text
-    this.onNodeUpdate(nodeId, { text } as Partial<TitleNodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { text })
   }
 
   // --- Alerts ---
@@ -1081,7 +1059,7 @@ export class StateManager {
         const message = `Working directory changed to ${this.abbreviatePath(node.cwd)} (parent: ${this.abbreviatePath(parentCwd)})`
         const newAlerts: NodeAlert[] = [...alerts, { type: 'cwd-mismatch', message, timestamp: Date.now() }]
         node.alerts = newAlerts
-        this.onNodeUpdate(node.id, { alerts: newAlerts } as Partial<NodeData>)
+        this.applyPatch(node, { alerts: newAlerts })
         this.schedulePersist()
       }
     } else {
@@ -1089,7 +1067,7 @@ export class StateManager {
       if (existingIdx !== -1) {
         const newAlerts = alerts.filter(a => a.type !== 'cwd-mismatch')
         node.alerts = newAlerts.length > 0 ? newAlerts : undefined
-        this.onNodeUpdate(node.id, { alerts: node.alerts ?? [] } as Partial<NodeData>)
+        this.applyPatch(node, { alerts: node.alerts ?? [] })
         this.schedulePersist()
       }
     }
@@ -1121,9 +1099,7 @@ export class StateManager {
   setAlertsReadTimestamp(nodeId: NodeId, timestamp: number): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
-    node.alertsReadTimestamp = timestamp
-    this.onNodeUpdate(nodeId, { alertsReadTimestamp: timestamp } as Partial<NodeData>)
-    this.schedulePersist()
+    this.patchNode(node, { alertsReadTimestamp: timestamp })
   }
 
   // --- Persistence ---

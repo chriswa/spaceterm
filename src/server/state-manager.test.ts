@@ -5,15 +5,16 @@ import { CURRENT_STATE_VERSION } from './state-migrations'
 import { FakePersistenceIO } from './testing/fake-persistence'
 import type { NodeData, ServerState, TerminalNodeData } from '../shared/state'
 import { asNodeId as nid, asPtySessionId as pid, ROOT_NODE_ID } from '../shared/ids'
+import type { NodeId } from '../shared/ids'
 
 const DEBOUNCE = 1000
 
 interface Harness {
   sm: StateManager
   io: FakePersistenceIO
-  updates: Array<{ nodeId: string; fields: Partial<NodeData> }>
+  updates: Array<{ nodeId: NodeId; fields: Partial<NodeData> }>
   adds: NodeData[]
-  removes: string[]
+  removes: NodeId[]
 }
 
 /**
@@ -29,7 +30,7 @@ function harness(seed?: unknown): Harness {
 
   const updates: Harness['updates'] = []
   const adds: NodeData[] = []
-  const removes: string[] = []
+  const removes: Harness['removes'] = []
 
   const deps: StateManagerDeps = {
     onNodeUpdate: (nodeId, fields) => updates.push({ nodeId, fields }),
@@ -501,5 +502,110 @@ describe('getNearestTerminalAncestor', () => {
     const { sm } = harness()
     createTerminal(sm, 'term')
     expect(sm.getNearestTerminalAncestor(nid('term'))).toBeUndefined()
+  })
+})
+
+describe('patched fields are broadcast exactly as applied', () => {
+  // The mutate → broadcast pair used to be written by hand at ~30 sites, each
+  // with an `as Partial<X>` cast that switched off excess-property checking —
+  // so a typo'd field name compiled, broadcast a key no client reads, and
+  // silently did nothing. These pin that the two halves cannot drift.
+  function patchedFields(h: Harness, nodeId: NodeId): Array<Record<string, unknown>> {
+    return h.updates.filter((u) => u.nodeId === nodeId).map((u) => u.fields as Record<string, unknown>)
+  }
+
+  it('broadcasts the same value it stored, for a terminal field', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.updates.length = 0
+
+    h.sm.updateClaudeState(pid('t1'), 'waiting_permission')
+
+    expect(patchedFields(h, nid('t1'))).toEqual([{ claudeState: 'waiting_permission' }])
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).claudeState).toBe('waiting_permission')
+  })
+
+  it('broadcasts only the fields that changed', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.updates.length = 0
+
+    h.sm.updateTerminalSize(pid('t1'), 120, 40)
+
+    expect(patchedFields(h, nid('t1'))).toEqual([{ cols: 120, rows: 40 }])
+  })
+
+  it('carries an explicit undefined through, so a cleared field is cleared', () => {
+    // reincarnate clears exitCode. Dropping it from the broadcast would leave a
+    // stale exit code on the client while the server showed none.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.markReviving(nid('t1'))
+    h.sm.terminalExited(pid('t1'), 3)
+    h.updates.length = 0
+
+    h.sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
+
+    const fields = patchedFields(h, nid('t1'))[0]
+    expect('exitCode' in fields).toBe(true)
+    expect(fields.exitCode).toBeUndefined()
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).exitCode).toBeUndefined()
+  })
+
+  it('applies markdown fields to the node it broadcasts about', () => {
+    const h = harness()
+    createTerminal(h.sm, 'parent')
+    const md = h.sm.createMarkdown(nid('parent'), 0, 0, 'body')
+    h.updates.length = 0
+
+    h.sm.resizeMarkdown(md.id, 300, 200)
+
+    expect(patchedFields(h, md.id)).toEqual([{ width: 300, height: 200 }])
+    expect(h.sm.getNode(md.id)).toMatchObject({ width: 300, height: 200 })
+  })
+
+  it('records lastInteractedAt even on the ticks it does not broadcast', () => {
+    // The broadcast is throttled to once a minute, but the persisted value must
+    // stay current — the two used to be written separately.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.updateLastInteracted(pid('t1'), 60_000)
+    h.updates.length = 0
+
+    h.sm.updateLastInteracted(pid('t1'), 60_001)
+
+    expect(h.updates).toHaveLength(0)
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(60_001)
+  })
+
+  it('broadcasts again once the displayed minute changes', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.updateLastInteracted(pid('t1'), 60_000)
+    h.updates.length = 0
+
+    h.sm.updateLastInteracted(pid('t1'), 120_000)
+
+    expect(patchedFields(h, nid('t1'))).toEqual([{ lastInteractedAt: 120_000 }])
+  })
+
+  it('reorderCrabs broadcasts one sortOrder per moved terminal', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    createTerminal(h.sm, 't2')
+    createTerminal(h.sm, 't3')
+    h.updates.length = 0
+
+    h.sm.reorderCrabs([nid('t3'), nid('t1'), nid('t2')])
+
+    const order = (id: string): number => (h.sm.getNode(nid(id)) as TerminalNodeData).sortOrder
+    expect(order('t3')).toBe(0)
+    expect(order('t1')).toBe(1)
+    expect(order('t2')).toBe(2)
+    // Every broadcast value matches what was stored.
+    for (const u of h.updates) {
+      expect((h.sm.getNode(u.nodeId) as TerminalNodeData).sortOrder)
+        .toBe((u.fields as { sortOrder: number }).sortOrder)
+    }
   })
 })

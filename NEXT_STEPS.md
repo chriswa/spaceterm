@@ -8,7 +8,7 @@ question of turning features into mods.
 | | Two sessions ago | Last session | Now |
 |---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, and now covers `src/cli` and `src/claude-code-plugin` too |
-| Tests | 89, hand-rolled | 331 | 597 |
+| Tests | 89, hand-rolled | 331 | 604 |
 | Test files | 5 | 18 | 30 |
 | Exhaustiveness checks | none | none | all four message switches |
 | State migrations | none | none | versioned pipeline |
@@ -20,7 +20,7 @@ clean; nothing had been checking them.
 
 ## What the last session did, and what it found
 
-Ten commits, each self-contained. `git log` carries the reasoning; the short
+Eleven commits, each self-contained. `git log` carries the reasoning; the short
 version is that **every seam added turned up a real defect**, which is the
 argument for adding the rest.
 
@@ -80,11 +80,14 @@ Every module on the original list now has a seam and tests, except one:
 Unchanged in shape, but `persistence.ts` no longer blocks it and `state-manager`
 now has 34 tests to refactor against.
 
-- **`state-manager.ts`** (1141 LOC, down from 1180). Still needs the ~40
-  hand-written mutate → `onNodeUpdate` → `schedulePersist` triples collapsed
-  into one private helper. Each carries an `as Partial<X>` cast, so a typo'd
-  field name still compiles. The constructor is now three lines; the
-  cwd-mismatch alert engine (`:1030-1108`) is the remaining tenant to move out.
+- **`state-manager.ts`** (1117 LOC, down from 1180). The mutate → broadcast →
+  persist triples are now `patchNode` / `applyPatch`, and every `as Partial<X>`
+  cast is gone except one justified variance cast inside the helper — so a
+  typo'd field, a wrong value type, or a field belonging to a different node
+  type are all compile errors now. The constructor is three lines. **The
+  remaining tenant is the cwd-mismatch alert engine** (`:1006-1084`): it is
+  self-contained, has no business living in the state store, and would be
+  straightforward to extract with tests.
 - **`server/index.ts`** (3007 LOC, down from 3087). The seven duplicated spawn
   sequences are now one registry call each, so the next target is different:
   the file is now mostly `handleMessage` (a ~900-line switch) plus socket setup
