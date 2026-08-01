@@ -70,14 +70,30 @@ export const REAL_PERSISTENCE_IO: PersistenceIO = {
 }
 
 /**
- * Strip ephemeral fields (e.g. gitStatus) from state before persisting.
- * Returns a JSON string ready to write. Uses a replacer to avoid deep-cloning.
+ * Node fields deliberately not persisted.
+ *
+ * These are re-derived at startup and are worse than useless on disk: a stale
+ * `gitStatus` shows the branch and dirty count from whenever the app last quit,
+ * which reads as current until the first poll replaces it seconds later.
+ *
+ * Named and exported rather than inlined in the replacer so the round-trip test
+ * can assert this exact list — a field added here without a reason, or a field
+ * that stops being ephemeral, both show up as a failing test instead of as a
+ * document that quietly loses data.
+ */
+export const EPHEMERAL_STATE_FIELDS = ['gitStatus'] as const
+
+const EPHEMERAL_FIELD_SET: ReadonlySet<string> = new Set(EPHEMERAL_STATE_FIELDS)
+
+/**
+ * Serialise state for disk, dropping the ephemeral fields above.
+ *
+ * A `JSON.stringify` replacer rather than a deep clone: the document holds
+ * every node plus their archived children, and copying it on every debounced
+ * write would be the most expensive thing the server does at idle.
  */
 export function serializeState(state: ServerState): string {
-  return JSON.stringify(state, (key, value) => {
-    if (key === 'gitStatus') return undefined
-    return value
-  }, 2)
+  return JSON.stringify(state, (key, value) => (EPHEMERAL_FIELD_SET.has(key) ? undefined : value), 2)
 }
 
 /**
