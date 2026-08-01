@@ -15,6 +15,17 @@ export const SCROLLBACK_LINES = 1000
 
 export type SnapshotCallback = (snapshot: SnapshotMessage) => void
 
+/** Cancels a scheduled callback. Calling it after the callback ran is a no-op. */
+export type CancelScheduled = () => void
+
+export interface SnapshotManagerOptions {
+  /**
+   * Drives the snapshot tick. Defaults to a real `setInterval`; a test supplies
+   * a manual clock so it can step the scheduler instead of waiting on it.
+   */
+  scheduleInterval?: (fn: () => void, ms: number) => CancelScheduled
+}
+
 // activeProtocol → the DECSET that enables it. xterm tracks the mouse tracking
 // mode here, and SerializeAddon already reproduces it (from terminal.modes), but
 // we re-assert it too so the encoding below always lands in a consistent state.
@@ -59,13 +70,24 @@ interface HeadlessSession {
 export class SnapshotManager {
   private sessions = new Map<string, HeadlessSession>()
   private dirtySet = new Set<string>()
-  private lastSnapshotTime = new Map<string, number>()
-  private timer: ReturnType<typeof setInterval> | null = null
+  /**
+   * Fairness ordering for the round-robin tick: which dirty session went
+   * longest without a snapshot. A monotonic counter rather than a timestamp —
+   * this is a sequence question, and two snapshots in the same millisecond used
+   * to tie.
+   */
+  private lastSnapshotSeq = new Map<string, number>()
+  private snapshotCounter = 0
+  private cancelTick: CancelScheduled | null = null
   private onSnapshot: SnapshotCallback
 
-  constructor(onSnapshot: SnapshotCallback) {
+  constructor(onSnapshot: SnapshotCallback, options: SnapshotManagerOptions = {}) {
     this.onSnapshot = onSnapshot
-    this.timer = setInterval(() => this.tick(), TICK_INTERVAL)
+    const schedule = options.scheduleInterval ?? ((fn, ms) => {
+      const timer = setInterval(fn, ms)
+      return () => clearInterval(timer)
+    })
+    this.cancelTick = schedule(() => this.tick(), TICK_INTERVAL)
   }
 
   addSession(sessionId: PtySessionId, cols: number, rows: number): void {
@@ -76,7 +98,7 @@ export class SnapshotManager {
     // Derive the expected param type from this terminal to bridge the two.
     terminal.loadAddon(serialize as unknown as Parameters<typeof terminal.loadAddon>[0])
     this.sessions.set(sessionId, { sessionId, terminal, serialize, cols, rows })
-    this.lastSnapshotTime.set(sessionId, 0)
+    this.lastSnapshotSeq.set(sessionId, 0)
   }
 
   removeSession(sessionId: PtySessionId): void {
@@ -85,7 +107,7 @@ export class SnapshotManager {
       session.terminal.dispose()
       this.sessions.delete(sessionId)
       this.dirtySet.delete(sessionId)
-      this.lastSnapshotTime.delete(sessionId)
+      this.lastSnapshotSeq.delete(sessionId)
     }
   }
 
@@ -141,7 +163,7 @@ export class SnapshotManager {
     const session = this.sessions.get(sessionId)
     if (!session) return null
     this.dirtySet.delete(sessionId)
-    this.lastSnapshotTime.set(sessionId, Date.now())
+    this.lastSnapshotSeq.set(sessionId, ++this.snapshotCounter)
     return this.serializeSession(session)
   }
 
@@ -150,11 +172,11 @@ export class SnapshotManager {
 
     // Pick the dirty session with the oldest last-snapshot time
     let oldestId: string | null = null
-    let oldestTime = Infinity
+    let oldestSeq = Infinity
     for (const id of this.dirtySet) {
-      const t = this.lastSnapshotTime.get(id) ?? 0
-      if (t < oldestTime) {
-        oldestTime = t
+      const t = this.lastSnapshotSeq.get(id) ?? 0
+      if (t < oldestSeq) {
+        oldestSeq = t
         oldestId = id
       }
     }
@@ -167,7 +189,7 @@ export class SnapshotManager {
     }
 
     this.dirtySet.delete(oldestId)
-    this.lastSnapshotTime.set(oldestId, Date.now())
+    this.lastSnapshotSeq.set(oldestId, ++this.snapshotCounter)
     const snapshot = this.serializeSession(session)
     this.onSnapshot(snapshot)
   }
@@ -257,16 +279,31 @@ export class SnapshotManager {
     }
   }
 
+  /**
+   * Resolve once every session's headless terminal has parsed its buffered
+   * writes.
+   *
+   * `Terminal.write` is asynchronous: xterm queues the data and parses it on a
+   * later turn. Production never notices, because the next tick is 100ms away —
+   * but a test that writes and ticks immediately would serialize a blank
+   * screen. Test-only; nothing in the server calls this.
+   */
+  async flushForTest(): Promise<void> {
+    await Promise.all(
+      Array.from(this.sessions.values()).map(
+        (session) => new Promise<void>((resolve) => session.terminal.write('', resolve))
+      )
+    )
+  }
+
   dispose(): void {
-    if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = null
-    }
+    this.cancelTick?.()
+    this.cancelTick = null
     for (const session of this.sessions.values()) {
       session.terminal.dispose()
     }
     this.sessions.clear()
     this.dirtySet.clear()
-    this.lastSnapshotTime.clear()
+    this.lastSnapshotSeq.clear()
   }
 }

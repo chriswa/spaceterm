@@ -11,10 +11,37 @@ const EXEC_TIMEOUT_MS = 5_000
 type GetDirectoryNodes = () => DirectoryNodeData[]
 type OnGitStatus = (nodeId: NodeId, gitStatus: GitStatus | null) => void
 
+/** Cancels a scheduled callback. Calling it after the callback ran is a no-op. */
+export type CancelScheduled = () => void
+
+/**
+ * The three things the poller reaches outside itself: git, the filesystem, and
+ * timers. Injecting them lets the dedup/caching/spreading logic be tested
+ * without a repo on disk or a minute of wall-clock.
+ */
+export interface GitStatusPollerDeps {
+  /** `git status --porcelain=v2 --branch` output for `cwd`, or null if not a repo. */
+  gitStatus(cwd: string): Promise<GitStatus | null>
+  scheduleInterval(fn: () => void, ms: number): CancelScheduled
+  scheduleTimeout(fn: () => void, ms: number): CancelScheduled
+}
+
+export const REAL_GIT_STATUS_POLLER_DEPS: GitStatusPollerDeps = {
+  gitStatus: runGitStatus,
+  scheduleInterval(fn, ms) {
+    const timer = setInterval(fn, ms)
+    return () => clearInterval(timer)
+  },
+  scheduleTimeout(fn, ms) {
+    const timer = setTimeout(fn, ms)
+    return () => clearTimeout(timer)
+  }
+}
+
 /**
  * Parse `git status --porcelain=v2 --branch` output into a GitStatus object.
  */
-function parseGitStatus(stdout: string, fetchHeadMtime: number | null): GitStatus {
+export function parseGitStatus(stdout: string, fetchHeadMtime: number | null): GitStatus {
   let branch: string | null = null
   let upstream: string | null = null
   let ahead = 0
@@ -119,15 +146,23 @@ function runGitStatus(cwd: string): Promise<GitStatus | null> {
 }
 
 export class GitStatusPoller {
-  private timer: ReturnType<typeof setInterval> | null = null
+  private cancelInterval: CancelScheduled | null = null
+  /** Staggered per-cwd polls from the current cycle, cancelled on dispose. */
+  private pendingPolls = new Set<CancelScheduled>()
   private cache = new Map<NodeId, string>() // nodeId → JSON.stringify(GitStatus)
   private getDirectoryNodes: GetDirectoryNodes
   private onGitStatus: OnGitStatus
+  private deps: GitStatusPollerDeps
 
-  constructor(getDirectoryNodes: GetDirectoryNodes, onGitStatus: OnGitStatus) {
+  constructor(
+    getDirectoryNodes: GetDirectoryNodes,
+    onGitStatus: OnGitStatus,
+    deps: GitStatusPollerDeps = REAL_GIT_STATUS_POLLER_DEPS
+  ) {
     this.getDirectoryNodes = getDirectoryNodes
     this.onGitStatus = onGitStatus
-    this.timer = setInterval(() => this.pollAll(), POLL_INTERVAL_MS)
+    this.deps = deps
+    this.cancelInterval = this.deps.scheduleInterval(() => this.pollAll(), POLL_INTERVAL_MS)
     // Poll all directories immediately on startup
     this.pollAll()
   }
@@ -145,7 +180,7 @@ export class GitStatusPoller {
     const node = nodes.find(n => n.id === nodeId)
     if (!node) return
     this.cache.delete(nodeId)
-    runGitStatus(node.cwd).then((result) => {
+    this.deps.gitStatus(node.cwd).then((result) => {
       const json = JSON.stringify(result)
       this.cache.set(nodeId, json)
       this.onGitStatus(nodeId, result)
@@ -155,10 +190,13 @@ export class GitStatusPoller {
   }
 
   dispose(): void {
-    if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = null
-    }
+    this.cancelInterval?.()
+    this.cancelInterval = null
+    // Staggered polls from the current cycle would otherwise keep firing —
+    // and keep the process alive — for up to a full poll interval after
+    // dispose. Same shape as the DaemonClient reconnect-after-dispose bug.
+    for (const cancel of this.pendingPolls) cancel()
+    this.pendingPolls.clear()
   }
 
   private pollAll(): void {
@@ -185,8 +223,11 @@ export class GitStatusPoller {
 
     for (let i = 0; i < uniqueCwds.length; i++) {
       const [cwd, nodeIds] = uniqueCwds[i]
-      setTimeout(() => {
-        runGitStatus(cwd).then((result) => {
+      // Holder rather than a `let` the callback closes over before assignment.
+      const handle: { cancel?: CancelScheduled } = {}
+      handle.cancel = this.deps.scheduleTimeout(() => {
+        if (handle.cancel) this.pendingPolls.delete(handle.cancel)
+        this.deps.gitStatus(cwd).then((result) => {
           const json = JSON.stringify(result)
           for (const nodeId of nodeIds) {
             if (json !== this.cache.get(nodeId)) {
@@ -196,6 +237,7 @@ export class GitStatusPoller {
           }
         }).catch(() => { /* retry next cycle */ })
       }, i * spacing)
+      this.pendingPolls.add(handle.cancel)
     }
   }
 }
