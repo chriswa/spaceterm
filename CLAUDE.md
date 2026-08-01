@@ -1,5 +1,12 @@
 # Spaceterm
 
+## Orientation
+
+- `NEXT_STEPS.md` — prioritised backlog: which modules still need a test seam, which
+  need extracting first, and the structural issues worth fixing. Start here.
+- `MODDING.md` — design note on turning features into mods, and why the scripts
+  socket is already most of an extension API.
+
 ## After making changes
 
 Run `npm run typecheck && npm run lint` after editing files in `src/`.
