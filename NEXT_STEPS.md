@@ -8,8 +8,8 @@ question of turning features into mods.
 | | Two sessions ago | Last session | Now |
 |---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, and now covers `src/cli` and `src/claude-code-plugin` too |
-| Tests | 89, hand-rolled | 331 | 604 |
-| Test files | 5 | 18 | 30 |
+| Tests | 89, hand-rolled | 331 | 635 |
+| Test files | 5 | 18 | 31 |
 | Exhaustiveness checks | none | none | all four message switches |
 | State migrations | none | none | versioned pipeline |
 | Identifier types | plain `string` | plain `string` | branded |
@@ -20,7 +20,7 @@ clean; nothing had been checking them.
 
 ## What the last session did, and what it found
 
-Eleven commits, each self-contained. `git log` carries the reasoning; the short
+Twelve commits, each self-contained. `git log` carries the reasoning; the short
 version is that **every seam added turned up a real defect**, which is the
 argument for adding the rest.
 
@@ -80,14 +80,14 @@ Every module on the original list now has a seam and tests, except one:
 Unchanged in shape, but `persistence.ts` no longer blocks it and `state-manager`
 now has 34 tests to refactor against.
 
-- **`state-manager.ts`** (1117 LOC, down from 1180). The mutate → broadcast →
-  persist triples are now `patchNode` / `applyPatch`, and every `as Partial<X>`
-  cast is gone except one justified variance cast inside the helper — so a
-  typo'd field, a wrong value type, or a field belonging to a different node
-  type are all compile errors now. The constructor is three lines. **The
-  remaining tenant is the cwd-mismatch alert engine** (`:1006-1084`): it is
-  self-contained, has no business living in the state store, and would be
-  straightforward to extract with tests.
+- **`state-manager.ts`** (1055 LOC, down from 1180). Both tenants are out. The
+  mutate → broadcast → persist triples are now `patchNode` / `applyPatch`, with
+  every `as Partial<X>` cast gone except one justified variance cast inside the
+  helper — a typo'd field, a wrong value type, and a field belonging to a
+  different node type are all compile errors. The cwd-mismatch engine now lives
+  in `cwd-alerts.ts` as pure functions of the node graph, with 31 tests.
+  What is left really is state management, so the next question is whether it
+  needs splitting at all rather than where to cut.
 - **`server/index.ts`** (3007 LOC, down from 3087). The seven duplicated spawn
   sequences are now one registry call each, so the next target is different:
   the file is now mostly `handleMessage` (a ~900-line switch) plus socket setup

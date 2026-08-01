@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto'
-import { homedir } from 'os'
 import type {
   ServerState,
   NodeData,
@@ -14,7 +13,7 @@ import type {
 } from '../shared/state'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { StatePersister } from './persistence'
-import { getAncestorCwd } from './path-utils'
+import { abbreviateCwd, scanCwdMismatches, scanDescendantCwdMismatches } from './cwd-alerts'
 import { asNodeId, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import type { AgentType } from '../shared/agent-type'
 import { isDisposable } from '../shared/node-utils'
@@ -739,8 +738,8 @@ export class StateManager {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
     this.patchNode(node, { cwd })
-    // Check self + descendants for cwd-mismatch alerts
-    this.checkCwdMismatchAlert(node)
+    // The BFS starts at this node, so it covers the surface itself as well as
+    // everything that inherits a cwd from it.
     this.recheckDescendantCwdAlerts(node.id)
   }
 
@@ -857,12 +856,7 @@ export class StateManager {
   // --- Directory operations ---
 
   createDirectory(parentId: NodeId, x: number, y: number, cwd: string): DirectoryNodeData {
-    const home = homedir()
-    if (cwd === home) {
-      cwd = '~'
-    } else if (cwd.startsWith(home + '/')) {
-      cwd = '~' + cwd.slice(home.length)
-    }
+    cwd = abbreviateCwd(cwd)
 
     const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
@@ -1014,85 +1008,29 @@ export class StateManager {
 
   // --- Alerts ---
 
-  /** Normalize a path for comparison: expand ~ and strip trailing slashes. */
-  private normalizePath(p: string): string {
-    const home = homedir()
-    let out = p
-    if (out === '~') out = home
-    else if (out.startsWith('~/')) out = home + out.slice(1)
-    if (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1)
-    return out
-  }
-
-  /** Abbreviate a path with ~ for the home directory. */
-  private abbreviatePath(p: string): string {
-    const home = homedir()
-    if (p === home) return '~'
-    if (p.startsWith(home + '/')) return '~' + p.slice(home.length)
-    return p
+  /**
+   * The cwd-mismatch rules live in cwd-alerts.ts as pure functions of the node
+   * graph. StateManager's job is only to apply what they decide.
+   */
+  private applyAlertChanges(changes: Array<{ node: TerminalNodeData; alerts: NodeAlert[] | undefined }>): void {
+    if (changes.length === 0) return
+    for (const { node, alerts } of changes) {
+      // Broadcast [] rather than undefined: the client reads it as "no alerts",
+      // whereas an absent key would leave the previous list on screen.
+      this.applyPatch(node, { alerts })
+      node.alerts = alerts
+    }
+    this.schedulePersist()
   }
 
   /** Scan all existing Claude terminals for cwd-mismatch alerts on startup. */
   private initialAlertScan(): void {
-    for (const node of Object.values(this.state.nodes)) {
-      if (node.type === 'terminal' && node.claudeSessionHistory.length > 0) {
-        this.checkCwdMismatchAlert(node)
-      }
-    }
+    this.applyAlertChanges(scanCwdMismatches(this.state.nodes, Date.now()))
   }
 
-  /** Check a single terminal node for cwd-mismatch alert. */
-  private checkCwdMismatchAlert(node: TerminalNodeData): void {
-    if (node.claudeSessionHistory.length === 0) return
-    const parentCwd = getAncestorCwd(this.state.nodes, node.parentId)
-    if (!parentCwd || !node.cwd) return
-
-    const normalizedNodeCwd = this.normalizePath(node.cwd)
-    const normalizedParentCwd = this.normalizePath(parentCwd)
-
-    const alerts = node.alerts ?? []
-    const existingIdx = alerts.findIndex(a => a.type === 'cwd-mismatch')
-
-    if (normalizedNodeCwd !== normalizedParentCwd) {
-      // Mismatch detected — add alert if not already present
-      if (existingIdx === -1) {
-        const message = `Working directory changed to ${this.abbreviatePath(node.cwd)} (parent: ${this.abbreviatePath(parentCwd)})`
-        const newAlerts: NodeAlert[] = [...alerts, { type: 'cwd-mismatch', message, timestamp: Date.now() }]
-        node.alerts = newAlerts
-        this.applyPatch(node, { alerts: newAlerts })
-        this.schedulePersist()
-      }
-    } else {
-      // Match — remove existing cwd-mismatch alert if present
-      if (existingIdx !== -1) {
-        const newAlerts = alerts.filter(a => a.type !== 'cwd-mismatch')
-        node.alerts = newAlerts.length > 0 ? newAlerts : undefined
-        this.applyPatch(node, { alerts: node.alerts ?? [] })
-        this.schedulePersist()
-      }
-    }
-  }
-
-  /** BFS descendants of nodeId, calling checkCwdMismatchAlert on every Claude terminal found. */
+  /** Re-evaluate cwd alerts for a node and everything beneath it. */
   recheckDescendantCwdAlerts(nodeId: NodeId): void {
-    const queue = [nodeId]
-    const visited = new Set<string>()
-    while (queue.length > 0) {
-      const id = queue.shift()!
-      if (visited.has(id)) continue
-      visited.add(id)
-      const node = this.state.nodes[id]
-      if (!node) continue
-      if (node.type === 'terminal' && node.claudeSessionHistory.length > 0) {
-        this.checkCwdMismatchAlert(node)
-      }
-      // Enqueue children
-      for (const child of Object.values(this.state.nodes)) {
-        if (child.parentId === id && !visited.has(child.id)) {
-          queue.push(child.id)
-        }
-      }
-    }
+    this.applyAlertChanges(scanDescendantCwdMismatches(this.state.nodes, nodeId, Date.now()))
   }
 
   /** Set the alerts-read timestamp on a node. */
