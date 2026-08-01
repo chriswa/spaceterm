@@ -4,8 +4,9 @@ import * as path from 'path'
 import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
-import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
+import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import type { AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
@@ -383,12 +384,28 @@ function ensureNonClaudeSessionRecorded(
 }
 
 /** After reincarnating a PTY, keep in-memory session history aligned with the node. */
-function seedHistoryAfterReincarnate(nodeId: NodeId, newPtyId: PtySessionId): void {
-  const node = stateManager.getNode(nodeId)
-  if (node?.type === 'terminal' && node.claudeSessionHistory.length > 0) {
-    sessionManager.seedClaudeSessionHistory(newPtyId, node.claudeSessionHistory)
-  }
+/**
+ * The five collaborators `respawnTerminal` needs, bound to this server's
+ * singletons. Defined once so all five respawn paths share it — see
+ * terminal-respawn.ts for why the order inside matters.
+ */
+const RESPAWN_DEPS: TerminalRespawnDeps = {
+  addSnapshotSession: (sessionId, cols, rows) => snapshotManager.addSession(sessionId, cols, rows),
+  seedTitleHistory: (sessionId, titles) => sessionManager.seedTitleHistory(sessionId, titles),
+  titleHistoryOf: (nodeId) => {
+    const node = stateManager.getNode(nodeId)
+    return node?.type === 'terminal' ? node.shellTitleHistory : undefined
+  },
+  agentSessionHistoryOf: (nodeId) => {
+    const node = stateManager.getNode(nodeId)
+    return node?.type === 'terminal' ? node.claudeSessionHistory : []
+  },
+  seedAgentSessionHistory: (sessionId, history) =>
+    sessionManager.seedClaudeSessionHistory(sessionId, history as ClaudeSessionEntry[]),
+  rebindNode: (nodeId, sessionId, cols, rows) =>
+    stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
 }
+
 
 function send(socket: net.Socket, msg: ServerMessage): void {
   try {
@@ -542,7 +559,10 @@ const scriptApi = new ScriptApi({
 
       // Place the new terminal below the specified parent, not the source node.
       const forkPos = computePlacement(stateManager.getState().nodes, parentId, terminalPixelSize(forkCols, forkRows))
-      stateManager.createTerminal(forkPtyId, parentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName, sourceNodeId)
+      stateManager.createTerminal({
+        sessionId: forkPtyId, parentId, x: forkPos.x, y: forkPos.y, cols: forkCols, rows: forkRows,
+        cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory, name: forkName, insertAfterNodeId: sourceNodeId
+      })
       if (forkNode.shellTitleHistory?.length) {
         sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
       }
@@ -721,7 +741,10 @@ function handleIngestMessage(msg: IngestMessage): void {
         const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
         snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
         const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, terminalPixelSize(spawnCols, spawnRows))
-        stateManager.createTerminal(spawnSessionId, spawnParentNodeId, spawnPos.x, spawnPos.y, spawnCols, spawnRows, spawnCwd, undefined, msg.title)
+        stateManager.createTerminal({
+          sessionId: spawnSessionId, parentId: spawnParentNodeId, x: spawnPos.x, y: spawnPos.y,
+          cols: spawnCols, rows: spawnRows, cwd: spawnCwd, name: msg.title
+        })
         console.log(`[spawn-claude-surface] Created terminal "${msg.title}" parented to ${spawnParentNodeId.slice(0, 8)}`)
       } catch (err: any) {
         console.error(`[spawn-claude-surface] Failed: ${err.message}`)
@@ -769,7 +792,11 @@ function handleIngestMessage(msg: IngestMessage): void {
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
         const forkPos = computePlacement(stateManager.getState().nodes, forkSrcNodeId, terminalPixelSize(forkCols, forkRows))
-        stateManager.createTerminal(forkPtyId, forkSrcNodeId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkSrcNode.shellTitleHistory, msg.title)
+        stateManager.createTerminal({
+          sessionId: forkPtyId, parentId: forkSrcNodeId, x: forkPos.x, y: forkPos.y,
+          cols: forkCols, rows: forkRows, cwd: forkCwd,
+          initialTitleHistory: forkSrcNode.shellTitleHistory, name: msg.title
+        })
         if (forkSrcNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkSrcNode.shellTitleHistory)
         }
@@ -1105,13 +1132,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
             }),
             nodeId: msg.archivedNodeId,
           }
-          const { sessionId: newPtyId, cols, rows } = sessionManager.create(restoreOptions)
-          snapshotManager.addSession(newPtyId, cols, rows)
-          if (restoredNode.shellTitleHistory?.length) {
-            sessionManager.seedTitleHistory(newPtyId, restoredNode.shellTitleHistory)
-          }
-          stateManager.reincarnateTerminal(msg.archivedNodeId, newPtyId, cols, rows)
-          seedHistoryAfterReincarnate(msg.archivedNodeId, newPtyId)
+          const { sessionId: newPtyId, cols, rows } = respawnTerminal(
+            msg.archivedNodeId, () => sessionManager.create(restoreOptions), RESPAWN_DEPS)
           client.attachedSessions.add(newPtyId)
           send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols, rows })
           const agentLabel = agentDriver(agentType).label
@@ -1245,7 +1267,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
         const parentNode = stateManager.getNode(msg.parentId)
         console.log(`[terminal-create] parent=${msg.parentId.slice(0, 8)} parentPos=(${parentNode?.x}, ${parentNode?.y}) parentSize=(${parentNode?.type === 'markdown' ? parentNode.width : '?'}x${parentNode?.type === 'markdown' ? parentNode.height : '?'}) termPos=(${posX}, ${posY}) clientPos=(${msg.x}, ${msg.y}) initialInput=${!!msg.initialInput}`)
-        stateManager.createTerminal(sessionId, msg.parentId, posX, posY, cols, rows, cwd, msg.initialTitleHistory, msg.initialName, undefined, agentType)
+        stateManager.createTerminal({
+          sessionId, parentId: msg.parentId, x: posX, y: posY, cols, rows, cwd,
+          initialTitleHistory: msg.initialTitleHistory, name: msg.initialName, agentType
+        })
         if (msg.initialTitleHistory?.length) {
           sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
         }
@@ -1309,14 +1334,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
         // Pass stable nodeId so SPACETERM_NODE_ID survives reincarnation
         rOptions = { ...rOptions, nodeId: msg.nodeId }
-        const { sessionId: newPtyId, cols: rCols, rows: rRows } = sessionManager.create(rOptions)
-        snapshotManager.addSession(newPtyId, rCols, rRows)
-        // Seed the new PTY session with the remnant's title history before reincarnation
-        if (rNode.shellTitleHistory?.length) {
-          sessionManager.seedTitleHistory(newPtyId, rNode.shellTitleHistory)
-        }
-        stateManager.reincarnateTerminal(msg.nodeId, newPtyId, rCols, rRows)
-        seedHistoryAfterReincarnate(msg.nodeId, newPtyId)
+        const { sessionId: newPtyId, cols: rCols, rows: rRows } = respawnTerminal(
+          msg.nodeId, () => sessionManager.create(rOptions), RESPAWN_DEPS)
         // Auto-attach client to the new PTY session
         client.attachedSessions.add(newPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
@@ -1641,7 +1660,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
           snapshotManager.addSession(forkPtyId, forkCols, forkRows)
           const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, terminalPixelSize(forkCols, forkRows))
-          stateManager.createTerminal(forkPtyId, forkParentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName, msg.nodeId, 'codex')
+          stateManager.createTerminal({
+            sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
+            cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,
+            name: forkName, insertAfterNodeId: msg.nodeId, agentType: 'codex'
+          })
           if (forkNode.shellTitleHistory?.length) {
             sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
           }
@@ -1670,7 +1693,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
         const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, terminalPixelSize(forkCols, forkRows))
-        stateManager.createTerminal(forkPtyId, forkParentId, forkPos.x, forkPos.y, forkCols, forkRows, forkCwd, forkNode.shellTitleHistory, forkName, msg.nodeId)
+        stateManager.createTerminal({
+          sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
+          cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,
+          name: forkName, insertAfterNodeId: msg.nodeId
+        })
         if (forkNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
         }
@@ -1758,13 +1785,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           }),
           nodeId: msg.nodeId,
         }
-        const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = sessionManager.create(restartOptions)
-        snapshotManager.addSession(newPtyId, restartCols, restartRows)
-        if (restartNode.shellTitleHistory?.length) {
-          sessionManager.seedTitleHistory(newPtyId, restartNode.shellTitleHistory)
-        }
-        stateManager.reincarnateTerminal(msg.nodeId, newPtyId, restartCols, restartRows)
-        seedHistoryAfterReincarnate(msg.nodeId, newPtyId)
+        const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = respawnTerminal(
+          msg.nodeId, () => sessionManager.create(restartOptions), RESPAWN_DEPS)
 
         // Track for auto-recovery if the new PTY exits quickly
         restartRecovery.set(msg.nodeId, {
@@ -2004,13 +2026,8 @@ async function startServer(): Promise<void> {
                 }),
                 nodeId,
               }
-              const { sessionId: recoveryPtyId, cols: recoveryCols, rows: recoveryRows } = sessionManager.create(recoveryOptions)
-              snapshotManager.addSession(recoveryPtyId, recoveryCols, recoveryRows)
-              if (recoveryNode.shellTitleHistory?.length) {
-                sessionManager.seedTitleHistory(recoveryPtyId, recoveryNode.shellTitleHistory)
-              }
-              stateManager.reincarnateTerminal(nodeId, recoveryPtyId, recoveryCols, recoveryRows)
-              seedHistoryAfterReincarnate(nodeId, recoveryPtyId)
+              const { sessionId: recoveryPtyId } = respawnTerminal(
+                nodeId, () => sessionManager.create(recoveryOptions), RESPAWN_DEPS)
 
               // Update recovery entry to mark as retry with the new session
               restartRecovery.set(nodeId, {
@@ -2246,13 +2263,11 @@ async function startServer(): Promise<void> {
           daemonClient.send({ type: 'attach', id: ptySessionId })
         })
 
-        sessionManager.reattachSession(ptySessionId!, scrollback, daemonSession.cols, daemonSession.rows, cwd)
-        snapshotManager.addSession(ptySessionId!, daemonSession.cols, daemonSession.rows)
-        if (node?.type === 'terminal' && node.shellTitleHistory?.length) {
-          sessionManager.seedTitleHistory(ptySessionId!, node.shellTitleHistory)
-        }
-        stateManager.reincarnateTerminal(nodeId, ptySessionId!, daemonSession.cols, daemonSession.rows)
-        seedHistoryAfterReincarnate(nodeId, ptySessionId!)
+        respawnTerminal(nodeId, () => {
+          // The pty already exists in the daemon; adopt it rather than spawn one.
+          sessionManager.reattachSession(ptySessionId!, scrollback, daemonSession.cols, daemonSession.rows, cwd)
+          return { sessionId: ptySessionId!, cols: daemonSession.cols, rows: daemonSession.rows }
+        }, RESPAWN_DEPS)
 
         // Resume the applicable local telemetry stream after a daemon reattach.
         const reattachedAgentType = node?.type === 'terminal' ? node.agentType : undefined
@@ -2304,14 +2319,7 @@ async function startServer(): Promise<void> {
         }),
         nodeId,
       }
-      const { sessionId, cols, rows } = sessionManager.create(reviveOptions)
-      snapshotManager.addSession(sessionId, cols, rows)
-      const revivingNode = stateManager.getNode(nodeId)
-      if (revivingNode?.type === 'terminal' && revivingNode.shellTitleHistory?.length) {
-        sessionManager.seedTitleHistory(sessionId, revivingNode.shellTitleHistory)
-      }
-      stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
-      seedHistoryAfterReincarnate(nodeId, sessionId)
+      const { sessionId } = respawnTerminal(nodeId, () => sessionManager.create(reviveOptions), RESPAWN_DEPS)
       if (validSessionId) {
         watchAgentTranscript(sessionId, agentType, validSessionId, sessionManager.getCwd(sessionId))
       }

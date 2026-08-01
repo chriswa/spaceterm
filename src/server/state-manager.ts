@@ -35,6 +35,35 @@ export interface StateManagerOptions {
   persister?: StatePersister
 }
 
+/**
+ * A new terminal node.
+ *
+ * Named rather than positional on purpose. This used to be eleven positional
+ * parameters ending in `cwd?, initialTitleHistory?, name?, insertAfterNodeId?,
+ * agentType?`, called from six places that each cared about a different subset
+ * — so every call site padded the gaps with `undefined` and a reader had to
+ * count commas to tell which field a bare string was. Two of the six had
+ * drifted apart in exactly that way.
+ */
+export interface NewTerminalSpec {
+  sessionId: PtySessionId
+  parentId: NodeId
+  x: number
+  y: number
+  cols: number
+  rows: number
+  cwd?: string
+  /** Shell titles carried over from a source surface, for fork and restore. */
+  initialTitleHistory?: string[]
+  name?: string
+  /**
+   * Place this terminal immediately after another in crab-nav order, rather
+   * than at the end. Set when forking, so the fork lands beside its source.
+   */
+  insertAfterNodeId?: NodeId
+  agentType?: AgentType
+}
+
 export class StateManager {
   private state: ServerState
   private onNodeUpdate: NodeUpdateCallback
@@ -201,22 +230,11 @@ export class StateManager {
   /**
    * Create a terminal node for a newly spawned PTY session.
    */
-  createTerminal(
-    sessionId: PtySessionId,
-    parentId: NodeId,
-    x: number,
-    y: number,
-    cols: number,
-    rows: number,
-    cwd?: string,
-    initialTitleHistory?: string[],
-    name?: string,
-    insertAfterNodeId?: NodeId,
-    agentType?: AgentType
-  ): TerminalNodeData {
+  createTerminal(spec: NewTerminalSpec): TerminalNodeData {
+    const { sessionId, parentId, x, y, cols, rows, cwd, name, insertAfterNodeId, agentType } = spec
     const zIndex = this.state.nextZIndex++
     const now = new Date().toISOString()
-    const seedHistory = initialTitleHistory ?? []
+    const seedHistory = spec.initialTitleHistory ?? []
     const initialSession: TerminalSessionEntry = {
       sessionIndex: 0,
       startedAt: now,
