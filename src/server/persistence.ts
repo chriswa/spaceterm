@@ -1,7 +1,9 @@
-import { writeFileSync, readFileSync, renameSync, existsSync, openSync, fsyncSync, closeSync, mkdirSync } from 'fs'
+import { writeFileSync, readFileSync, renameSync, existsSync, openSync, fsyncSync, closeSync, mkdirSync, copyFileSync } from 'fs'
 import { dirname, join } from 'path'
 import type { ServerState } from '../shared/state'
 import { SOCKET_DIR } from '../shared/protocol'
+import { assertNever } from '../shared/exhaustive'
+import { migrateState, emptyState, CURRENT_STATE_VERSION, type MigrationResult } from './state-migrations'
 
 const STATE_FILE = join(SOCKET_DIR, 'state.json')
 const STATE_TMP = STATE_FILE + '.tmp'
@@ -20,6 +22,11 @@ export interface PersistenceIO {
   read(): string | null
   /** Replace the persisted document atomically. May throw. */
   write(data: string): void
+  /**
+   * Copy the current document aside under `label`, so a state file we are about
+   * to stop honouring is not lost. Best-effort: failures must not block startup.
+   */
+  archive(label: string): void
   /** Run `fn` after `ms` milliseconds. Returns a cancel function. */
   schedule(fn: () => void, ms: number): CancelScheduled
 }
@@ -45,6 +52,15 @@ export const REAL_PERSISTENCE_IO: PersistenceIO = {
       closeSync(fd)
     }
     renameSync(STATE_TMP, STATE_FILE)
+  },
+
+  archive(label: string): void {
+    if (!existsSync(STATE_FILE)) return
+    try {
+      copyFileSync(STATE_FILE, `${STATE_FILE}.${label}`)
+    } catch (err) {
+      console.error(`[persistence] Could not preserve state file as .${label}: ${String(err)}`)
+    }
   },
 
   schedule(fn: () => void, ms: number): CancelScheduled {
@@ -116,17 +132,61 @@ export class StatePersister {
   }
 
   /**
-   * Load state from storage. Returns null if absent or invalid.
+   * Load and migrate persisted state.
+   *
+   * Returns a usable `ServerState` in every case, because refusing to start is
+   * worse than starting empty. When the stored document cannot be honoured — it
+   * is corrupt, or was written by a newer build whose fields we would silently
+   * drop — the file is copied aside before the caller is handed a fresh state,
+   * so the next write does not destroy something recoverable.
    */
-  load(): ServerState | null {
+  load(): { state: ServerState; outcome: MigrationResult } {
     const raw = this.io.read()
-    if (raw === null) return null
+    if (raw === null) return { state: emptyState(), outcome: { status: 'empty' } }
+
+    let parsed: unknown
     try {
-      const parsed = JSON.parse(raw) as ServerState
-      if (!parsed || typeof parsed.version !== 'number' || !parsed.nodes) return null
-      return parsed
-    } catch {
-      return null
+      parsed = JSON.parse(raw)
+    } catch (err) {
+      return this.startFresh({ status: 'corrupt', reason: `invalid JSON: ${String(err)}` })
     }
+
+    const outcome = migrateState(parsed)
+    switch (outcome.status) {
+      case 'ok':
+        if (outcome.migratedFrom !== null) {
+          // Keep the pre-migration file: a migration bug should be recoverable.
+          this.io.archive(`v${outcome.migratedFrom}`)
+          console.log(
+            `[persistence] Migrated state from version ${outcome.migratedFrom} to ${CURRENT_STATE_VERSION}`
+          )
+        }
+        return { state: outcome.state, outcome }
+
+      case 'corrupt':
+        return this.startFresh(outcome)
+
+      case 'too-new':
+        console.error(
+          `[persistence] State file is version ${outcome.found}, but this build understands ${outcome.supported}. ` +
+            'Starting empty and preserving the existing file.'
+        )
+        return this.startFresh(outcome)
+
+      case 'empty':
+        return { state: emptyState(), outcome }
+
+      default:
+        return assertNever(outcome, 'StatePersister.load')
+    }
+  }
+
+  private startFresh(outcome: MigrationResult): { state: ServerState; outcome: MigrationResult } {
+    const label = outcome.status === 'too-new' ? `v${outcome.found}` : 'unreadable'
+    if (outcome.status === 'corrupt') {
+      console.error(`[persistence] State file is unusable (${outcome.reason}); preserving it as .${label}`)
+    }
+    this.io.archive(label)
+    return { state: emptyState(), outcome }
   }
 }

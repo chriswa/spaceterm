@@ -14,6 +14,8 @@ export class FakePersistenceIO implements PersistenceIO {
   writes: string[] = []
   /** Set to make the next `write` throw, to exercise the failure path. */
   failNextWrite = false
+  /** Labels passed to `archive`, in order — one per document preserved. */
+  archived: Array<{ label: string; content: string | null }> = []
 
   private pending: Array<{ fn: () => void; dueAt: number; cancelled: boolean }> = []
   private clock = 0
@@ -29,6 +31,10 @@ export class FakePersistenceIO implements PersistenceIO {
     }
     this.stored = data
     this.writes.push(data)
+  }
+
+  archive(label: string): void {
+    this.archived.push({ label, content: this.stored })
   }
 
   schedule(fn: () => void, ms: number): CancelScheduled {

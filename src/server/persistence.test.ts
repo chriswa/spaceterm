@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { StatePersister, serializeState } from './persistence'
+import { CURRENT_STATE_VERSION } from './state-migrations'
 import { FakePersistenceIO as FakeIO } from './testing/fake-persistence'
 import type { ServerState } from '../shared/state'
 
 function makeState(overrides: Partial<ServerState> = {}): ServerState {
   return {
-    version: 1,
+    version: CURRENT_STATE_VERSION,
     nextZIndex: 1,
     nodes: {},
     rootArchivedChildren: [],
@@ -147,23 +148,11 @@ describe('StatePersister instances are independent', () => {
 })
 
 describe('StatePersister.load', () => {
-  it('returns null when nothing is stored', () => {
-    expect(new StatePersister(new FakeIO()).load()).toBeNull()
-  })
-
-  it('returns null on malformed JSON', () => {
-    const io = new FakeIO()
-    io.stored = '{ not json'
-    expect(new StatePersister(io).load()).toBeNull()
-  })
-
-  it('returns null when the document is missing required fields', () => {
-    const io = new FakeIO()
-    io.stored = JSON.stringify({ version: 1 }) // no nodes
-    expect(new StatePersister(io).load()).toBeNull()
-
-    io.stored = JSON.stringify({ nodes: {} }) // no version
-    expect(new StatePersister(io).load()).toBeNull()
+  it('reports an empty store as a first run', () => {
+    const { state, outcome } = new StatePersister(new FakeIO()).load()
+    expect(outcome.status).toBe('empty')
+    expect(state.nodes).toEqual({})
+    expect(state.version).toBe(CURRENT_STATE_VERSION)
   })
 
   it('round-trips a written document', () => {
@@ -171,9 +160,70 @@ describe('StatePersister.load', () => {
     const p = new StatePersister(io, DEBOUNCE)
 
     p.flush(makeState({ nextZIndex: 7 }))
-    const loaded = new StatePersister(io).load()
+    const { state, outcome } = new StatePersister(io).load()
 
-    expect(loaded?.nextZIndex).toBe(7)
+    expect(outcome.status).toBe('ok')
+    expect(state.nextZIndex).toBe(7)
+  })
+
+  it('does not archive on a clean load — no migration ran', () => {
+    const io = new FakeIO()
+    new StatePersister(io, DEBOUNCE).flush(makeState())
+    io.archived.length = 0
+
+    new StatePersister(io).load()
+    expect(io.archived).toHaveLength(0)
+  })
+
+  describe('when the document cannot be honoured', () => {
+    // Starting empty is right — refusing to boot is worse — but the old file
+    // must survive, because the very next mutation overwrites it.
+    it('preserves a malformed document instead of overwriting it', () => {
+      const io = new FakeIO()
+      io.stored = '{ not json'
+
+      const { state, outcome } = new StatePersister(io).load()
+
+      expect(outcome.status).toBe('corrupt')
+      expect(state.nodes).toEqual({})
+      expect(io.archived).toEqual([{ label: 'unreadable', content: '{ not json' }])
+    })
+
+    it('preserves a document missing required fields', () => {
+      const io = new FakeIO()
+      io.seed({ version: 1 }) // no nodes
+
+      const { outcome } = new StatePersister(io).load()
+
+      expect(outcome).toMatchObject({ status: 'corrupt' })
+      expect(io.archived[0].label).toBe('unreadable')
+    })
+
+    it('refuses a document from a newer build and preserves it under its version', () => {
+      const io = new FakeIO()
+      io.seed({ version: CURRENT_STATE_VERSION + 5, nodes: { a: { id: 'a' } } })
+
+      const { state, outcome } = new StatePersister(io).load()
+
+      expect(outcome).toMatchObject({
+        status: 'too-new',
+        found: CURRENT_STATE_VERSION + 5,
+        supported: CURRENT_STATE_VERSION
+      })
+      expect(state.nodes).toEqual({})
+      expect(io.archived[0].label).toBe(`v${CURRENT_STATE_VERSION + 5}`)
+    })
+  })
+
+  it('archives the pre-migration document when a migration runs', () => {
+    const io = new FakeIO()
+    io.seed({ version: 1, nextZIndex: 3, nodes: {} })
+
+    const { state, outcome } = new StatePersister(io).load()
+
+    expect(outcome).toMatchObject({ status: 'ok', migratedFrom: 1 })
+    expect(state.version).toBe(CURRENT_STATE_VERSION)
+    expect(io.archived).toEqual([{ label: 'v1', content: JSON.stringify({ version: 1, nextZIndex: 3, nodes: {} }) }])
   })
 })
 

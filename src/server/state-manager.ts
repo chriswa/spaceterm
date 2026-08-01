@@ -18,8 +18,6 @@ import { getAncestorCwd } from './path-utils'
 import { isDisposable } from '../shared/node-utils'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
 
-const STATE_VERSION = 1
-
 export type NodeUpdateCallback = (nodeId: string, fields: Partial<NodeData>) => void
 export type NodeAddCallback = (node: NodeData) => void
 export type NodeRemoveCallback = (nodeId: string) => void
@@ -56,56 +54,16 @@ export class StateManager {
     this.onNodeRemove = deps.onNodeRemove
     this.persister = options.persister ?? new StatePersister()
 
-    // Load persisted state or create empty
-    const loaded = this.persister.load()
-    if (loaded) {
-      this.state = loaded
-      // Backfill for state files that predate rootArchivedChildren
-      if (!this.state.rootArchivedChildren) {
-        this.state.rootArchivedChildren = []
-      }
-      // Backfill for state files that predate undoBuffer
-      if (!this.state.undoBuffer) {
-        this.state.undoBuffer = []
-      }
-      // Backfill for state files that predate undoCursor
-      if (this.state.undoCursor == null) {
-        this.state.undoCursor = this.state.undoBuffer.length
-      }
-      // Backfill for state files that predate savedViewports
-      if (!this.state.savedViewports) {
-        this.state.savedViewports = {}
-      }
-      // Dead terminal processing is done by the caller via processDeadTerminals()
+    // Shape normalisation (field backfills, sortOrder, the one-time alert wipe)
+    // lives in state-migrations.ts and has already run by the time load()
+    // returns. Dead terminal processing is done by the caller via
+    // processDeadTerminals().
+    this.state = this.persister.load().state
 
-      // MIGRATION: Backfill sortOrder for terminals that predate this field.
-      // Can be removed once all users have launched at least once after this change.
-      this.migrateSortOrder()
-
-      // TEMPORARY: Wipe all alerts to clear bad state from before ~ expansion fix.
-      // Remove this block once state is clean.
-      for (const node of Object.values(this.state.nodes)) {
-        if (node.alerts) {
-          node.alerts = undefined
-          node.alertsReadTimestamp = undefined
-        }
-      }
-
-      // Scan all existing Claude terminals for cwd-mismatch alerts.
-      // This catches mismatches that existed before the alert system was deployed
-      // or that occurred while the server was offline.
-      this.initialAlertScan()
-    } else {
-      this.state = {
-        version: STATE_VERSION,
-        nextZIndex: 1,
-        nodes: {},
-        rootArchivedChildren: [],
-        undoBuffer: [],
-        undoCursor: 0,
-        savedViewports: {}
-      }
-    }
+    // Scan all existing Claude terminals for cwd-mismatch alerts.
+    // This catches mismatches that existed before the alert system was deployed
+    // or that occurred while the server was offline.
+    this.initialAlertScan()
   }
 
   /** Compute the next available sortOrder by scanning all terminal nodes. */
@@ -119,29 +77,6 @@ export class StateManager {
     return max + 1
   }
 
-  /** Backfill sortOrder for terminals that predate this field. */
-  private migrateSortOrder(): void {
-    const needsMigration: import('../shared/state').TerminalNodeData[] = []
-    for (const node of Object.values(this.state.nodes)) {
-      if (node.type === 'terminal' && node.sortOrder == null) {
-        needsMigration.push(node)
-      }
-    }
-    if (needsMigration.length === 0) return
-
-    // Sort by first session startedAt so existing order matches createdAt
-    needsMigration.sort((a, b) => {
-      const aTime = a.terminalSessions[0]?.startedAt ?? ''
-      const bTime = b.terminalSessions[0]?.startedAt ?? ''
-      return aTime < bTime ? -1 : aTime > bTime ? 1 : 0
-    })
-
-    let next = this.nextSortOrder()
-    for (const node of needsMigration) {
-      node.sortOrder = next++
-    }
-  }
-
   /**
    * On startup, collect all terminal nodes for revival.  Terminals still in
    * `nodes` always need a new PTY — either the previous server owned the PTY
@@ -153,19 +88,6 @@ export class StateManager {
 
     for (const node of Object.values(this.state.nodes)) {
       if (node.type !== 'terminal') continue
-
-      // Backward compat: remove old waitingForUser key if present in persisted state
-      if ('waitingForUser' in node) {
-        delete (node as any).waitingForUser
-      }
-
-      if (node.claudeStatusUnread === undefined) {
-        (node as any).claudeStatusUnread = false
-      }
-
-      if (node.claudeStatusAsleep === undefined) {
-        (node as any).claudeStatusAsleep = false
-      }
 
       // End current terminal session if still open
       if (node.alive) {

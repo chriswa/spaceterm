@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { StateManager, type StateManagerDeps } from './state-manager'
 import { StatePersister } from './persistence'
+import { CURRENT_STATE_VERSION } from './state-migrations'
 import { FakePersistenceIO } from './testing/fake-persistence'
 import type { NodeData, ServerState, TerminalNodeData } from '../shared/state'
 
@@ -48,7 +49,7 @@ describe('StateManager construction', () => {
     const { sm } = harness()
     const state = sm.getState()
 
-    expect(state.version).toBe(1)
+    expect(state.version).toBe(CURRENT_STATE_VERSION)
     expect(state.nodes).toEqual({})
     expect(state.rootArchivedChildren).toEqual([])
     expect(state.undoBuffer).toEqual([])
@@ -94,15 +95,32 @@ describe('StateManager construction', () => {
     expect(sm.getState().nextZIndex).toBe(5)
   })
 
-  it('backfills fields absent from older persisted documents', () => {
-    // A state file written before rootArchivedChildren / undoBuffer / savedViewports existed.
+  it('migrates an older persisted document on the way in', () => {
+    // A state file written before rootArchivedChildren / undoBuffer / savedViewports
+    // existed. StateManager no longer backfills these itself — state-migrations.ts
+    // does, once, and stamps the new version.
     const { sm } = harness({ version: 1, nextZIndex: 1, nodes: {} })
     const state = sm.getState()
 
+    expect(state.version).toBe(CURRENT_STATE_VERSION)
     expect(state.rootArchivedChildren).toEqual([])
     expect(state.undoBuffer).toEqual([])
     expect(state.undoCursor).toBe(0)
     expect(state.savedViewports).toEqual({})
+  })
+
+  it('persists the migrated version, so the migration runs only once', () => {
+    const { sm, io } = harness({ version: 1, nextZIndex: 1, nodes: {} })
+    sm.persistImmediate()
+
+    expect(io.lastWritten<{ version: number }>().version).toBe(CURRENT_STATE_VERSION)
+
+    io.archived.length = 0
+    new StateManager(
+      { onNodeUpdate: () => {}, onNodeAdd: () => {}, onNodeRemove: () => {} },
+      { persister: new StatePersister(io, DEBOUNCE) }
+    )
+    expect(io.archived).toHaveLength(0)
   })
 })
 
