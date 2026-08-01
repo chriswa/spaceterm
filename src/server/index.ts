@@ -10,6 +10,7 @@ import type { AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
 import { GhRateLimitPoller } from './gh-rate-limit'
+import { probeCapabilities, formatCapabilityReport } from './capabilities'
 import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
@@ -2016,6 +2017,10 @@ async function startServer(): Promise<void> {
   // Ensure socket directory exists
   fs.mkdirSync(SOCKET_DIR, { recursive: true })
   fs.mkdirSync(HOOK_LOG_DIR, { recursive: true })
+
+  // Report which optional integrations this machine has. Several features
+  // degrade silently without them, and the log is where someone will look.
+  for (const line of formatCapabilityReport(probeCapabilities())) serverLog(line)
 
   // Remove stale socket files — but first check if another server is alive.
   // If we blindly unlink, we'd steal the socket from a running server: the running
