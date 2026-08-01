@@ -109,19 +109,11 @@ The original four are done. What is left from that list, and what replaced it:
    client ships with the server — but that is an assumption, not a guarantee.
 2. ~~State migrations~~ — done. `state-migrations.ts`, currently at version 2.
 3. ~~Branded identifiers~~ — done.
-4. **One owner for surface state.** Half done. The `potential_error` part is
-   fixed: the stopped → potential_error upgrade now happens inside
-   `ClaudeStateMachine` as an ordinary transition, so all seven `ClaudeState`
-   values appear in the decision log, and `index.ts` no longer re-enters
-   `setClaudeState` from its own callback.
-
-   The duplication itself remains: `claudeState`, `claudeStatusUnread`,
-   `claudeStatusAsleep`, `claudeContextPercent` and `claudeSessionLineCount`
-   still live in *both* `SessionManager`'s in-memory session and
-   `StateManager`'s persisted node, hand-synced through `index.ts`. This is now
-   the largest remaining structural item, and the `ClaudeStateMachineDeps`
-   interface is the seam to do it behind — it already names every read and write
-   those two need to agree on.
+4. ~~**One owner for surface state.**~~ Done. `claudeState`,
+   `claudeStatusUnread`, `claudeStatusAsleep`, `claudeContextPercent` and
+   `claudeSessionLineCount` now live only on the node. The `potential_error`
+   upgrade moved inside `ClaudeStateMachine`, so all seven `ClaudeState` values
+   reach the decision log.
 5. **One owner for the PTY byte stream.** The ANSI case was already fixed. The
    UTF-8 one turned out to be two separate things — see the rewritten
    `Potential UTF Bug Fix.md`. The chunk-splitting half is handled in the

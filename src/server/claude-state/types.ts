@@ -5,8 +5,15 @@ export type { ClaudeState }
 /**
  * Dependency injection interface for ClaudeStateMachine.
  *
- * Abstracts the sessionManager and stateManager so the state machine can be
- * tested in isolation and doesn't depend on concrete manager implementations.
+ * Abstracts the surface state store so the state machine can be tested in
+ * isolation and doesn't depend on a concrete manager.
+ *
+ * There used to be a parallel `broadcastClaudeState` / `broadcastClaudeStatusUnread`
+ * / `broadcastClaudeStatusAsleep` trio here. They were wired up in index.ts and
+ * never called: the broadcast actually happened because `setClaudeState` wrote
+ * to SessionManager, which fired a callback, which index.ts routed to
+ * StateManager. With one owner the setters broadcast directly and the trio is
+ * gone.
  */
 export interface StateMachineDeps {
   getClaudeState(surfaceId: PtySessionId): ClaudeState
@@ -24,11 +31,8 @@ export interface StateMachineDeps {
   getClaudeStatusUnread(surfaceId: PtySessionId): boolean
   setClaudeStatusUnread(surfaceId: PtySessionId, unread: boolean): void
   handleClaudeStop(surfaceId: PtySessionId): void
-  broadcastClaudeState(surfaceId: PtySessionId, state: ClaudeState): void
   broadcastClaudeStateDecisionTime(surfaceId: PtySessionId, timestamp: number): void
-  broadcastClaudeStatusUnread(surfaceId: PtySessionId, unread: boolean): void
   setClaudeStatusAsleep(surfaceId: PtySessionId, asleep: boolean): void
-  broadcastClaudeStatusAsleep(surfaceId: PtySessionId, asleep: boolean): void
 }
 
 /**

@@ -788,9 +788,27 @@ export class StateManager {
     this.patchNode(node, { claudeSessionHistory: history })
   }
 
+  /**
+   * Live agent state for a surface.
+   *
+   * These five fields — claudeState, claudeStatusUnread, claudeStatusAsleep,
+   * claudeContextPercent, claudeSessionLineCount — used to live here *and* in
+   * SessionManager's in-memory session, written to both at every call site and
+   * read with a `session ?? node` fallback. The session copy was strictly the
+   * weaker of the two: it was cleared by a server restart and reset by
+   * reincarnation, which is why every reader fell back here. The node is now
+   * the only owner.
+   *
+   * The dedup that SessionManager used to provide lives here, so an unchanged
+   * value still costs no broadcast.
+   */
+  getClaudeState(ptySessionId: PtySessionId): import('../shared/state').ClaudeState {
+    return this.getTerminalBySession(ptySessionId)?.claudeState ?? 'stopped'
+  }
+
   updateClaudeState(ptySessionId: PtySessionId, state: import('../shared/state').ClaudeState): void {
     const node = this.getTerminalBySession(ptySessionId)
-    if (!node) return
+    if (!node || node.claudeState === state) return
     this.patchNode(node, { claudeState: state })
   }
 
@@ -800,16 +818,20 @@ export class StateManager {
     this.patchNode(node, { claudeModel: model })
   }
 
-  updateClaudeContextPercent(ptySessionId: PtySessionId, percent: number): void {
+  /** Returns true when the value changed, so callers can gate a client broadcast. */
+  updateClaudeContextPercent(ptySessionId: PtySessionId, percent: number): boolean {
     const node = this.getTerminalBySession(ptySessionId)
-    if (!node || node.claudeContextPercent === percent) return
+    if (!node || node.claudeContextPercent === percent) return false
     this.patchNode(node, { claudeContextPercent: percent })
+    return true
   }
 
-  updateClaudeSessionLineCount(ptySessionId: PtySessionId, lineCount: number): void {
+  /** Returns true when the value changed, so callers can gate a client broadcast. */
+  updateClaudeSessionLineCount(ptySessionId: PtySessionId, lineCount: number): boolean {
     const node = this.getTerminalBySession(ptySessionId)
-    if (!node || node.claudeSessionLineCount === lineCount) return
+    if (!node || node.claudeSessionLineCount === lineCount) return false
     this.patchNode(node, { claudeSessionLineCount: lineCount })
+    return true
   }
 
   getClaudeContextPercent(ptySessionId: PtySessionId): number | null {
@@ -826,15 +848,23 @@ export class StateManager {
     this.patchNode(node, { claudeStateDecidedAt: timestamp })
   }
 
+  getClaudeStatusUnread(ptySessionId: PtySessionId): boolean {
+    return this.getTerminalBySession(ptySessionId)?.claudeStatusUnread ?? false
+  }
+
   updateClaudeStatusUnread(ptySessionId: PtySessionId, unread: boolean): void {
     const node = this.getTerminalBySession(ptySessionId)
-    if (!node) return
+    if (!node || node.claudeStatusUnread === unread) return
     this.patchNode(node, { claudeStatusUnread: unread })
+  }
+
+  getClaudeStatusAsleep(ptySessionId: PtySessionId): boolean {
+    return this.getTerminalBySession(ptySessionId)?.claudeStatusAsleep ?? false
   }
 
   updateClaudeStatusAsleep(ptySessionId: PtySessionId, asleep: boolean): void {
     const node = this.getTerminalBySession(ptySessionId)
-    if (!node) return
+    if (!node || node.claudeStatusAsleep === asleep) return
     this.patchNode(node, { claudeStatusAsleep: asleep })
   }
 

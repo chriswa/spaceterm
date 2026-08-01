@@ -19,11 +19,6 @@ function recorder() {
     onTitleHistory: vi.fn(),
     onCwd: vi.fn(),
     onClaudeSessionHistory: vi.fn(),
-    onClaudeState: vi.fn(),
-    onClaudeContext: vi.fn(),
-    onClaudeSessionLineCount: vi.fn(),
-    onClaudeStatusUnread: vi.fn(),
-    onClaudeStatusAsleep: vi.fn(),
     onActivity: vi.fn(),
   } satisfies SessionManagerDeps
 }

@@ -609,3 +609,147 @@ describe('patched fields are broadcast exactly as applied', () => {
     }
   })
 })
+
+describe('live agent state has one owner', () => {
+  // These five fields used to be mirrored in SessionManager's in-memory session
+  // as well as on the node: written to both at every call site, and read with a
+  // `session ?? node` fallback. The session copy was always the weaker one — a
+  // server restart cleared it and reincarnation reset it — which is what the
+  // fallbacks were for. These pin that reads follow the node.
+  it('reports the state that was last written', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+
+    h.sm.updateClaudeState(pid('t1'), 'waiting_plan')
+    expect(h.sm.getClaudeState(pid('t1'))).toBe('waiting_plan')
+  })
+
+  it('defaults to stopped for an unknown session', () => {
+    const h = harness()
+    expect(h.sm.getClaudeState(pid('nobody'))).toBe('stopped')
+    expect(h.sm.getClaudeStatusUnread(pid('nobody'))).toBe(false)
+    expect(h.sm.getClaudeStatusAsleep(pid('nobody'))).toBe(false)
+  })
+
+  it('keeps the asleep flag across a reincarnation', () => {
+    // The divergence the old code documented and worked around: the session
+    // copy was reset to false by initLocalSession while the node kept true, so
+    // whichever copy you read gave a different answer.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.updateClaudeStatusAsleep(pid('t1'), true)
+
+    h.sm.markReviving(nid('t1'))
+    h.sm.terminalExited(pid('t1'), 0)
+    h.sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
+
+    expect(h.sm.getClaudeStatusAsleep(pid('pty-2'))).toBe(true)
+  })
+
+  it('resolves an asleep toggle on a dead remnant, whose session id still maps', () => {
+    // terminalExited deliberately preserves sessionToNodeId for revived
+    // surfaces so this keeps working.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.markReviving(nid('t1'))
+    h.sm.terminalExited(pid('t1'), 1)
+
+    h.sm.updateClaudeStatusAsleep(pid('t1'), true)
+    expect(h.sm.getClaudeStatusAsleep(pid('t1'))).toBe(true)
+  })
+
+  it('survives a server restart, because the node is persisted', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.updateClaudeContextPercent(pid('t1'), 42)
+    h.sm.updateClaudeSessionLineCount(pid('t1'), 1234)
+    h.sm.persistImmediate()
+
+    // The real restart flow: load state, revive the terminal onto a fresh pty,
+    // and only then does anything read by session id. The session-side copy was
+    // in-memory only and did not make this trip, which is why every reader used
+    // to fall back to the node.
+    const restarted = new StateManager(
+      { onNodeUpdate: () => {}, onNodeAdd: () => {}, onNodeRemove: () => {} },
+      { persister: new StatePersister(h.io, DEBOUNCE) }
+    )
+    restarted.processDeadTerminals()
+    restarted.reincarnateTerminal(nid('t1'), pid('pty-after-restart'), 80, 24)
+
+    expect(restarted.getClaudeContextPercent(pid('pty-after-restart'))).toBe(42)
+    expect(restarted.getClaudeSessionLineCount(pid('pty-after-restart'))).toBe(1234)
+  })
+
+  it('a restart resets the fields that describe a live pty, and keeps the rest', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.updateClaudeState(pid('t1'), 'waiting_permission')
+    h.sm.updateClaudeStatusUnread(pid('t1'), true)
+    h.sm.updateClaudeStatusAsleep(pid('t1'), true)
+    h.sm.updateClaudeContextPercent(pid('t1'), 42)
+    h.sm.persistImmediate()
+
+    const restarted = new StateManager(
+      { onNodeUpdate: () => {}, onNodeAdd: () => {}, onNodeRemove: () => {} },
+      { persister: new StatePersister(h.io, DEBOUNCE) }
+    )
+    restarted.processDeadTerminals()
+    restarted.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
+
+    // A fresh pty has done nothing yet, so state and unread start clean...
+    expect(restarted.getClaudeState(pid('pty-2'))).toBe('stopped')
+    expect(restarted.getClaudeStatusUnread(pid('pty-2'))).toBe(false)
+    // ...but the user's asleep choice and the last known context are not facts
+    // about the pty, and outlive it.
+    expect(restarted.getClaudeStatusAsleep(pid('pty-2'))).toBe(true)
+    expect(restarted.getClaudeContextPercent(pid('pty-2'))).toBe(42)
+  })
+
+  describe('dedup', () => {
+    it('does not broadcast an unchanged state', () => {
+      const h = harness()
+      createTerminal(h.sm, 't1')
+      h.sm.updateClaudeState(pid('t1'), 'working')
+      h.updates.length = 0
+
+      h.sm.updateClaudeState(pid('t1'), 'working')
+      expect(h.updates).toEqual([])
+    })
+
+    it('does not broadcast an unchanged unread flag', () => {
+      const h = harness()
+      createTerminal(h.sm, 't1')
+      h.sm.updateClaudeStatusUnread(pid('t1'), true)
+      h.updates.length = 0
+
+      h.sm.updateClaudeStatusUnread(pid('t1'), true)
+      expect(h.updates).toEqual([])
+    })
+
+    it('does not broadcast an unchanged asleep flag', () => {
+      const h = harness()
+      createTerminal(h.sm, 't1')
+      h.sm.updateClaudeStatusAsleep(pid('t1'), true)
+      h.updates.length = 0
+
+      h.sm.updateClaudeStatusAsleep(pid('t1'), true)
+      expect(h.updates).toEqual([])
+    })
+
+    it('reports whether the telemetry values changed, so callers can gate a broadcast', () => {
+      const h = harness()
+      createTerminal(h.sm, 't1')
+
+      expect(h.sm.updateClaudeContextPercent(pid('t1'), 50)).toBe(true)
+      expect(h.sm.updateClaudeContextPercent(pid('t1'), 50)).toBe(false)
+      expect(h.sm.updateClaudeSessionLineCount(pid('t1'), 10)).toBe(true)
+      expect(h.sm.updateClaudeSessionLineCount(pid('t1'), 10)).toBe(false)
+    })
+
+    it('reports no change for an unknown session', () => {
+      const h = harness()
+      expect(h.sm.updateClaudeContextPercent(pid('nobody'), 50)).toBe(false)
+      expect(h.sm.updateClaudeSessionLineCount(pid('nobody'), 10)).toBe(false)
+    })
+  })
+})

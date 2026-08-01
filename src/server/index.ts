@@ -725,6 +725,26 @@ function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void 
   })
 }
 
+/**
+ * Record the surface's remaining-context reading and tell attached clients.
+ *
+ * Split out because it happens from three places (Claude status line, Codex
+ * telemetry, and the JSONL watcher's sibling below) and each used to write the
+ * value to two owners and rely on a SessionManager callback for the broadcast.
+ * The store reports whether the value actually changed, which is what used to
+ * gate the broadcast.
+ */
+function publishContextPercent(sessionId: PtySessionId, contextRemainingPercent: number): void {
+  if (!stateManager.updateClaudeContextPercent(sessionId, contextRemainingPercent)) return
+  broadcastToAttached(sessionId, { type: 'claude-context', sessionId, contextRemainingPercent })
+}
+
+/** {@link publishContextPercent} for the transcript line count. */
+function publishSessionLineCount(sessionId: PtySessionId, lineCount: number): void {
+  if (!stateManager.updateClaudeSessionLineCount(sessionId, lineCount)) return
+  broadcastToAttached(sessionId, { type: 'claude-session-line-count', sessionId, lineCount })
+}
+
 function broadcastToAll(msg: ServerMessage): void {
   clients.forEach((client) => {
     send(client.socket, msg)
@@ -1001,9 +1021,7 @@ function handleIngestMessage(msg: IngestMessage): void {
           }
         }
         if (remainingPercent != null) {
-          sessionManager.setClaudeContextPercent(msg.surfaceId, remainingPercent)
-          // Also persist on the node so it survives a server restart (session state is in-memory only).
-          stateManager.updateClaudeContextPercent(msg.surfaceId, remainingPercent)
+          publishContextPercent(msg.surfaceId, remainingPercent)
         }
       }
 
@@ -1402,16 +1420,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           seq: msg.seq,
           sessionId,
           scrollback: state ?? '',
-          // After a server restart the in-memory session value is null until Claude next
-          // emits a status line; fall back to the value persisted on the node.
-          claudeContextPercent:
-            sessionManager.getClaudeContextPercent(sessionId)
-            ?? stateManager.getClaudeContextPercent(sessionId)
-            ?? undefined,
-          claudeSessionLineCount:
-            sessionManager.getClaudeSessionLineCount(sessionId)
-            ?? stateManager.getClaudeSessionLineCount(sessionId)
-            ?? undefined
+          claudeContextPercent: stateManager.getClaudeContextPercent(sessionId) ?? undefined,
+          claudeSessionLineCount: stateManager.getClaudeSessionLineCount(sessionId) ?? undefined
         })
 
         // Stop buffering and flush queued live output in order — everything
@@ -2527,28 +2537,6 @@ async function startServer(): Promise<void> {
     onClaudeSessionHistory: (sessionId, history) => {
       stateManager.updateClaudeSessionHistory(sessionId, history)
     },
-    // update state (node-updated broadcast handles client sync). The
-    // stopped → potential_error upgrade is decided inside ClaudeStateMachine,
-    // so by the time this fires the state is already final.
-    onClaudeState: (sessionId, state) => {
-      stateManager.updateClaudeState(sessionId, state)
-    },
-    // broadcast context remaining % to all attached clients
-    onClaudeContext: (sessionId, contextRemainingPercent) => {
-      broadcastToAttached(sessionId, { type: 'claude-context', sessionId, contextRemainingPercent })
-    },
-    // broadcast JSONL line count to all attached clients
-    onClaudeSessionLineCount: (sessionId, lineCount) => {
-      broadcastToAttached(sessionId, { type: 'claude-session-line-count', sessionId, lineCount })
-    },
-    // update state manager (node-updated broadcast handles client sync)
-    onClaudeStatusUnread: (sessionId, unread) => {
-      stateManager.updateClaudeStatusUnread(sessionId, unread)
-    },
-    // update state manager (node-updated broadcast handles client sync)
-    onClaudeStatusAsleep: (sessionId, asleep) => {
-      stateManager.updateClaudeStatusAsleep(sessionId, asleep)
-    },
     // track last interaction timestamp for footer display
     onActivity: (sessionId) => {
       stateManager.updateLastInteracted(sessionId, Date.now())
@@ -2578,24 +2566,19 @@ async function startServer(): Promise<void> {
 
   // Initialize ClaudeStateMachine — manages state indicator transitions, queue, stale sweep
   claudeStateMachine = new ClaudeStateMachine({
-    getClaudeState: (id) => sessionManager.getClaudeState(id),
-    setClaudeState: (id, state) => sessionManager.setClaudeState(id, state),
+    getClaudeState: (id) => stateManager.getClaudeState(id),
+    setClaudeState: (id, state) => stateManager.updateClaudeState(id, state),
     hasPotentialError: (id) => potentialErrorDetector.hasPotentialError(id),
-    getClaudeStatusUnread: (id) => sessionManager.getClaudeStatusUnread(id),
-    setClaudeStatusUnread: (id, unread) => sessionManager.setClaudeStatusUnread(id, unread),
+    getClaudeStatusUnread: (id) => stateManager.getClaudeStatusUnread(id),
+    setClaudeStatusUnread: (id, unread) => stateManager.updateClaudeStatusUnread(id, unread),
+    setClaudeStatusAsleep: (id, asleep) => stateManager.updateClaudeStatusAsleep(id, asleep),
     handleClaudeStop: (id) => sessionManager.handleClaudeStop(id),
-    broadcastClaudeState: (id, state) => stateManager.updateClaudeState(id, state),
     broadcastClaudeStateDecisionTime: (id, ts) => stateManager.updateClaudeStateDecisionTime(id, ts),
-    broadcastClaudeStatusUnread: (id, unread) => stateManager.updateClaudeStatusUnread(id, unread),
-    setClaudeStatusAsleep: (id, asleep) => sessionManager.setClaudeStatusAsleep(id, asleep),
-    broadcastClaudeStatusAsleep: (id, asleep) => stateManager.updateClaudeStatusAsleep(id, asleep),
   })
 
   // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + plan cache + state routing
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
-    sessionManager.setClaudeSessionLineCount(surfaceId, totalLineCount)
-    // Also persist on the node so it survives a server restart (session state is in-memory only).
-    stateManager.updateClaudeSessionLineCount(surfaceId, totalLineCount)
+    publishSessionLineCount(surfaceId, totalLineCount)
 
     // Plan-cache tracking: scan assistant entries for plan file writes and ExitPlanMode.
     // This runs for both backfill and live entries (plan file paths need to be ready
@@ -2648,8 +2631,7 @@ async function startServer(): Promise<void> {
       if (typeof usedTokens !== 'number' || !Number.isFinite(usedTokens) || usedTokens < 0 ||
           typeof windowTokens !== 'number' || !Number.isFinite(windowTokens) || windowTokens <= 0) continue
       const remainingPercent = Math.max(0, Math.min(100, (1 - usedTokens / windowTokens) * 100))
-      sessionManager.setClaudeContextPercent(surfaceId, remainingPercent)
-      stateManager.updateClaudeContextPercent(surfaceId, remainingPercent)
+      publishContextPercent(surfaceId, remainingPercent)
     }
   })
 

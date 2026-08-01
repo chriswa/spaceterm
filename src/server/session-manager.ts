@@ -31,11 +31,6 @@ interface Session {
   claudeSessionHistory: ClaudeSessionEntry[]
   lastClaudeSessionId: ClaudeSessionId | null
   pendingStop: boolean
-  claudeState: ClaudeState
-  claudeStatusUnread: boolean
-  claudeStatusAsleep: boolean
-  claudeContextPercent: number | null
-  claudeSessionLineCount: number | null
   cwd: string
   cols: number
   rows: number
@@ -46,11 +41,6 @@ export type ExitCallback = (sessionId: PtySessionId, exitCode: number) => void
 export type TitleHistoryCallback = (sessionId: PtySessionId, history: string[]) => void
 export type CwdCallback = (sessionId: PtySessionId, cwd: string) => void
 export type ClaudeSessionHistoryCallback = (sessionId: PtySessionId, history: ClaudeSessionEntry[]) => void
-export type ClaudeStateCallback = (sessionId: PtySessionId, state: ClaudeState) => void
-export type ClaudeContextCallback = (sessionId: PtySessionId, contextRemainingPercent: number) => void
-export type ClaudeSessionLineCountCallback = (sessionId: PtySessionId, lineCount: number) => void
-export type ClaudeStatusUnreadCallback = (sessionId: PtySessionId, unread: boolean) => void
-export type ClaudeStatusAsleepCallback = (sessionId: PtySessionId, asleep: boolean) => void
 export type ActivityCallback = (sessionId: PtySessionId) => void
 
 /**
@@ -66,11 +56,6 @@ export interface SessionManagerDeps {
   onTitleHistory: TitleHistoryCallback
   onCwd: CwdCallback
   onClaudeSessionHistory: ClaudeSessionHistoryCallback
-  onClaudeState: ClaudeStateCallback
-  onClaudeContext: ClaudeContextCallback
-  onClaudeSessionLineCount: ClaudeSessionLineCountCallback
-  onClaudeStatusUnread: ClaudeStatusUnreadCallback
-  onClaudeStatusAsleep: ClaudeStatusAsleepCallback
   onActivity: ActivityCallback
 }
 
@@ -82,11 +67,6 @@ export class SessionManager {
   private onTitleHistory: TitleHistoryCallback
   private onCwd: CwdCallback
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
-  private onClaudeState: ClaudeStateCallback
-  private onClaudeContext: ClaudeContextCallback
-  private onClaudeSessionLineCount: ClaudeSessionLineCountCallback
-  private onClaudeStatusUnread: ClaudeStatusUnreadCallback
-  private onClaudeStatusAsleep: ClaudeStatusAsleepCallback
   private onActivity: ActivityCallback
 
   constructor(daemon: DaemonClient, deps: SessionManagerDeps) {
@@ -96,11 +76,6 @@ export class SessionManager {
     this.onTitleHistory = deps.onTitleHistory
     this.onCwd = deps.onCwd
     this.onClaudeSessionHistory = deps.onClaudeSessionHistory
-    this.onClaudeState = deps.onClaudeState
-    this.onClaudeContext = deps.onClaudeContext
-    this.onClaudeSessionLineCount = deps.onClaudeSessionLineCount
-    this.onClaudeStatusUnread = deps.onClaudeStatusUnread
-    this.onClaudeStatusAsleep = deps.onClaudeStatusAsleep
     this.onActivity = deps.onActivity
   }
 
@@ -315,65 +290,13 @@ export class SessionManager {
     if (session) session.pendingStop = true
   }
 
-  setClaudeState(surfaceId: PtySessionId, state: ClaudeState): void {
-    const session = this.sessions.get(surfaceId)
-    if (!session || session.claudeState === state) return
-    session.claudeState = state
-    this.onClaudeState(surfaceId, state)
-  }
-
-  getClaudeState(sessionId: PtySessionId): ClaudeState {
-    return this.sessions.get(sessionId)?.claudeState ?? 'stopped'
-  }
-
-  setClaudeStatusUnread(surfaceId: PtySessionId, unread: boolean): void {
-    const session = this.sessions.get(surfaceId)
-    if (!session || session.claudeStatusUnread === unread) return
-    session.claudeStatusUnread = unread
-    this.onClaudeStatusUnread(surfaceId, unread)
-  }
-
-  getClaudeStatusUnread(sessionId: PtySessionId): boolean {
-    return this.sessions.get(sessionId)?.claudeStatusUnread ?? false
-  }
-
-  setClaudeStatusAsleep(surfaceId: PtySessionId, asleep: boolean): void {
-    const session = this.sessions.get(surfaceId)
-    if (session) {
-      session.claudeStatusAsleep = asleep
-    }
-    // Always propagate — session manager's local state may be stale after
-    // reincarnation (initLocalSession resets to false, but node preserves true).
-    // Also handles dead remnants where the session no longer exists.
-    this.onClaudeStatusAsleep(surfaceId, asleep)
-  }
-
-  getClaudeStatusAsleep(sessionId: PtySessionId): boolean {
-    return this.sessions.get(sessionId)?.claudeStatusAsleep ?? false
-  }
-
-  setClaudeContextPercent(surfaceId: PtySessionId, percent: number): void {
-    const session = this.sessions.get(surfaceId)
-    if (!session) return
-    session.claudeContextPercent = percent
-    this.onClaudeContext(surfaceId, percent)
-  }
-
-  getClaudeContextPercent(sessionId: PtySessionId): number | null {
-    return this.sessions.get(sessionId)?.claudeContextPercent ?? null
-  }
-
-  setClaudeSessionLineCount(surfaceId: PtySessionId, lineCount: number): void {
-    const session = this.sessions.get(surfaceId)
-    if (!session) return
-    if (session.claudeSessionLineCount === lineCount) return
-    session.claudeSessionLineCount = lineCount
-    this.onClaudeSessionLineCount(surfaceId, lineCount)
-  }
-
-  getClaudeSessionLineCount(sessionId: PtySessionId): number | null {
-    return this.sessions.get(sessionId)?.claudeSessionLineCount ?? null
-  }
+  /**
+   * The five live agent fields — claudeState, claudeStatusUnread,
+   * claudeStatusAsleep, claudeContextPercent, claudeSessionLineCount — used to
+   * be mirrored here as well as on the node. StateManager owns them now; see
+   * the note on StateManager.getClaudeState. A pty session is not a durable
+   * thing, so it was always the weaker of the two copies.
+   */
 
   getClaudeSessionHistory(sessionId: PtySessionId): ClaudeSessionEntry[] {
     const session = this.sessions.get(sessionId)
@@ -451,11 +374,6 @@ export class SessionManager {
       claudeSessionHistory: [],
       lastClaudeSessionId: null,
       pendingStop: false,
-      claudeState: 'stopped' as ClaudeState,
-      claudeStatusUnread: false,
-      claudeStatusAsleep: false,
-      claudeContextPercent: null,
-      claudeSessionLineCount: null,
       cwd,
       cols,
       rows

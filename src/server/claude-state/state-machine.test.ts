@@ -29,11 +29,8 @@ class FakeDeps implements StateMachineDeps {
   getClaudeStatusUnread(id: string): boolean { return this.unread.get(id) ?? false }
   setClaudeStatusUnread(id: string, u: boolean): void { this.unread.set(id, u) }
   handleClaudeStop(): void { /* no-op */ }
-  broadcastClaudeState(): void { /* no-op */ }
   broadcastClaudeStateDecisionTime(): void { /* no-op */ }
-  broadcastClaudeStatusUnread(): void { /* no-op */ }
   setClaudeStatusAsleep(): void { /* no-op */ }
-  broadcastClaudeStatusAsleep(): void { /* no-op */ }
 }
 
 /** Monotonic clock so queued transitions apply in the order events were fired. */
