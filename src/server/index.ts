@@ -9,7 +9,7 @@ import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, Create
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
 import { RestartRecoveryLedger } from './restart-recovery'
-import { planSurfaceRecovery, orphanedDaemonSessions } from './startup-reconciliation'
+import { recoverSurfaces, type DaemonSessionInfo } from './startup-recovery'
 import {
   agentSessionIdFromPayload,
   findValidClaudeSession,
@@ -1828,6 +1828,62 @@ async function cleanStaleSocket(socketPath: string, exitIfAlive: boolean): Promi
   try { fs.unlinkSync(socketPath) } catch { /* stale file already gone */ }
 }
 
+/**
+ * How long a freshly revived surface is immune to being archived by its own
+ * exit. A pty that survives this long is stable; one that dies sooner should
+ * stay visible as a dead remnant the user can retry, rather than being archived
+ * out from under them.
+ */
+const REVIVAL_PROTECTION_MS = 30_000
+
+/**
+ * One-shot daemon requests, phrased as promises.
+ *
+ * Both temporarily displace `DaemonClient`'s message handler to intercept a
+ * single reply, which is the same trick the inline startup code used — kept
+ * because the daemon protocol has no request ids, so correlating a reply means
+ * watching for the next one of its type.
+ */
+function listDaemonSessions(client: DaemonClient): Promise<DaemonSessionInfo[]> {
+  return requestFromDaemon(client, { type: 'list' }, (msg) =>
+    msg.type === 'listed' ? (msg.sessions as DaemonSessionInfo[]) : undefined
+  )
+}
+
+function attachDaemonSession(client: DaemonClient, sessionId: PtySessionId): Promise<string> {
+  return requestFromDaemon(client, { type: 'attach', id: sessionId }, (msg) =>
+    msg.type === 'attached' && msg.id === sessionId ? String(msg.scrollback ?? '') : undefined
+  )
+}
+
+/**
+ * Send `request` and resolve with the first reply `match` accepts, passing
+ * every other message through to the normal handler untouched.
+ *
+ * The handler is displaced *before* the request goes out, because the daemon
+ * may answer synchronously and a reply that arrives before the interceptor is
+ * installed would hang the promise forever.
+ */
+function requestFromDaemon<T>(
+  client: DaemonClient,
+  request: Record<string, unknown>,
+  match: (msg: import('./daemon-client').DaemonMessage) => T | undefined
+): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const original = client['onMessage']
+    client['onMessage'] = (msg) => {
+      const hit = match(msg)
+      if (hit !== undefined) {
+        client['onMessage'] = original
+        resolve(hit)
+      } else {
+        original(msg)
+      }
+    }
+    client.send(request as never)
+  })
+}
+
 async function startServer(): Promise<void> {
   // Write shell integration scripts (OSC 7 hooks for CWD reporting)
   setupShellIntegration()
@@ -2146,155 +2202,75 @@ async function startServer(): Promise<void> {
   )
 
   // --- Startup: reconcile with daemon sessions, then revive remaining terminals ---
+  //
+  // The sequence lives in startup-recovery.ts so it can be driven against a
+  // fake daemon; this is only the wiring. Everything below is a one-line
+  // adapter from a singleton to the narrow operation recovery asked for.
+  const recoveryOutcome = await recoverSurfaces({
+    listDaemonSessions: () => listDaemonSessions(daemonClient),
+    attachDaemonSession: (sessionId) => attachDaemonSession(daemonClient, sessionId),
+    destroyDaemonSession: (sessionId) => daemonClient.send({ type: 'destroy', id: sessionId }),
 
-  // Step 1: Ask daemon for all surviving sessions.
-  // Branded at the boundary: everything downstream treats these as pty session
-  // ids, and the daemon protocol types them as plain strings.
-  type DaemonSessionInfo = { id: PtySessionId; pid: number; cols: number; rows: number; alive: boolean; exitCode: number }
-  const daemonSessions = await new Promise<DaemonSessionInfo[]>((resolve) => {
-    const handler = (msg: import('./daemon-client').DaemonMessage) => {
-      if (msg.type === 'listed') {
-        resolve(msg.sessions as DaemonSessionInfo[])
-      }
-    }
-    // Temporarily intercept the next 'listed' response.
-    const origHandler = daemonClient['onMessage']
-    daemonClient['onMessage'] = (msg) => {
-      if (msg.type === 'listed') {
-        daemonClient['onMessage'] = origHandler
-        handler(msg)
-      } else {
-        origHandler(msg)
-      }
-    }
-    daemonClient.send({ type: 'list' })
-  })
-  const daemonSessionMap = new Map(daemonSessions.map(s => [s.id, s]))
-  console.log(`[startup] Daemon has ${daemonSessions.length} session(s)`)
+    takeRecoverableTerminals: () => stateManager.processDeadTerminals(),
+    getNode: (nodeId) => stateManager.getNode(nodeId),
+    archiveTerminal: (nodeId) => stateManager.archiveTerminal(nodeId),
+    markReviving: (nodeId) => stateManager.markReviving(nodeId),
+    clearReviving: (nodeId) => stateManager.clearReviving(nodeId),
 
-  // Step 2: Process dead terminals, but check daemon first.
-  const deadTerminals = stateManager.processDeadTerminals()
-  console.log(`[startup] ${deadTerminals.length} terminal(s) to process`)
-  const revivedNodeIds: NodeId[] = []
-  const reattachedSessionIds = new Set<string>()
+    resolveResumeTarget(node, recorded) {
+      if (node.type !== 'terminal') return undefined
+      return agentDriver(node.agentType).capabilities.claudeTranscript
+        // Claude verifies against the transcript on disk: a recorded id whose
+        // JSONL never got written is a ghost that fails every restart.
+        ? (recorded ? findValidClaudeSession(node.claudeSessionHistory ?? [], node.cwd) : undefined)
+        : resolveNonClaudeResumeId(node) ?? recorded
+    },
+    requiresResumableSession: (node) =>
+      agentDriver(node?.type === 'terminal' ? node.agentType : undefined)
+        .capabilities.requiresResumableSession,
 
-  for (const { nodeId, claudeSessionId, cwd, extraCliArgs } of deadTerminals) {
-    // Check if this terminal's PTY is still alive in the daemon.
-    const node = stateManager.getNode(nodeId)
-    const ptySessionId = node?.type === 'terminal' ? node.sessionId : undefined
-    const daemonSession = ptySessionId ? daemonSessionMap.get(ptySessionId) : undefined
+    reattachSurface(nodeId, pty, scrollback, cwd) {
+      respawnTerminal(nodeId, () => {
+        // The pty already exists in the daemon; adopt it rather than spawn one.
+        sessionManager.reattachSession(pty.sessionId, scrollback, pty.cols, pty.rows, cwd)
+        return pty
+      }, RESPAWN_DEPS)
+      // Feed scrollback into the snapshot manager so a client attaching
+      // immediately sees the same screen the daemon has.
+      if (scrollback) snapshotManager.write(pty.sessionId, scrollback)
+    },
 
-    const history = (node?.type === 'terminal' && node.claudeSessionHistory) || []
-    const agentType = node?.type === 'terminal' ? node.agentType : undefined
-    const reviveDriver = agentDriver(agentType)
-    const usesClaudeTranscript = reviveDriver.capabilities.claudeTranscript
-    const validSessionId = usesClaudeTranscript
-      ? (claudeSessionId ? findValidClaudeSession(history, cwd) : undefined)
-      : (node?.type === 'terminal' ? resolveNonClaudeResumeId(node) : undefined) ?? claudeSessionId
-
-    const plan = planSurfaceRecovery({
-      daemonSession: daemonSession && ptySessionId
-        ? { id: ptySessionId, alive: daemonSession.alive, cols: daemonSession.cols, rows: daemonSession.rows }
-        : undefined,
-      resumeSessionId: validSessionId,
-      requiresResumableSession: reviveDriver.capabilities.requiresResumableSession
-    })
-
-    if (plan.action === 'reattach') {
-      // PTY survived in daemon — re-attach instead of respawning.
-      reattachedSessionIds.add(ptySessionId!)
-      try {
-        // Request attach — the daemon will send scrollback and start streaming output.
-        const scrollback = await new Promise<string>((resolve) => {
-          const origHandler = daemonClient['onMessage']
-          daemonClient['onMessage'] = (msg) => {
-            if (msg.type === 'attached' && msg.id === ptySessionId) {
-              daemonClient['onMessage'] = origHandler
-              resolve(msg.scrollback as string)
-            } else {
-              origHandler(msg)
-            }
-          }
-          daemonClient.send({ type: 'attach', id: ptySessionId })
-        })
-
-        respawnTerminal(nodeId, () => {
-          // The pty already exists in the daemon; adopt it rather than spawn one.
-          sessionManager.reattachSession(plan.sessionId, scrollback, plan.cols, plan.rows, cwd)
-          return { sessionId: plan.sessionId, cols: plan.cols, rows: plan.rows }
-        }, RESPAWN_DEPS)
-
-        // Resume the applicable local telemetry stream after a daemon reattach.
-        const reattachedAgentType = node?.type === 'terminal' ? node.agentType : undefined
-        if (claudeSessionId) {
-          watchAgentTranscript(ptySessionId!, reattachedAgentType, claudeSessionId, cwd)
-        }
-
-        // Feed scrollback into snapshot manager for immediate snapshot availability.
-        if (scrollback) {
-          snapshotManager.write(ptySessionId!, scrollback)
-        }
-
-        console.log(`[startup] Re-attached to daemon session ${ptySessionId!.slice(0, 8)} for terminal ${nodeId.slice(0, 8)}`)
-        continue
-      } catch (err: any) {
-        console.error(`[startup] Failed to re-attach to daemon session ${ptySessionId!.slice(0, 8)}: ${err.message}`)
-        // Fall through to revival: re-plan as though the daemon had nothing,
-        // which is now true for practical purposes.
-        reattachedSessionIds.delete(ptySessionId!)
-      }
-    }
-
-    // Claude cannot come back as a fresh conversation — a surface with no
-    // resumable session is archived rather than launched empty.
-    if (plan.action === 'archive') {
-      stateManager.archiveTerminal(nodeId)
-      console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (${plan.reason})`)
-      continue
-    }
-    if (usesClaudeTranscript && claudeSessionId && validSessionId !== claudeSessionId) {
-      console.log(`[startup] Session ${claudeSessionId.slice(0, 8)} has no JSONL, falling back to ${validSessionId!.slice(0, 8)}`)
-    }
-
-    try {
-      stateManager.markReviving(nodeId)
-      const reviveExtra = parseExtraCliArgs(extraCliArgs)
-      const reviveOptions = {
-        ...reviveDriver.buildCreateOptions({
-          cwd,
-          resumeSessionId: validSessionId,
-          extraArgs: reviveExtra,
+    reviveSurface(terminal, resumeSessionId) {
+      const node = stateManager.getNode(terminal.nodeId)
+      const driver = agentDriver(node?.type === 'terminal' ? node.agentType : undefined)
+      const options = {
+        ...driver.buildCreateOptions({
+          cwd: terminal.cwd,
+          resumeSessionId,
+          extraArgs: parseExtraCliArgs(terminal.extraCliArgs),
         }),
-        nodeId,
+        nodeId: terminal.nodeId,
       }
-      const { sessionId } = respawnTerminal(nodeId, () => sessionManager.create(reviveOptions), RESPAWN_DEPS)
-      if (validSessionId) {
-        watchAgentTranscript(sessionId, agentType, validSessionId, sessionManager.getCwd(sessionId))
-      }
-      revivedNodeIds.push(nodeId)
-      console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with ${reviveDriver.label} session ${validSessionId ? validSessionId.slice(0, 8) : '(fresh)'}`)
-    } catch (err: any) {
-      stateManager.clearReviving(nodeId)
-      console.error(`[startup] Failed to revive terminal ${nodeId.slice(0, 8)}: ${err.message}`)
-      stateManager.archiveTerminal(nodeId)
-    }
-  }
+      return respawnTerminal(terminal.nodeId, () => sessionManager.create(options), RESPAWN_DEPS).sessionId
+    },
 
-  // Step 3: Destroy daemon sessions no surface claimed. Left alone they hold a
-  // process and a megabyte of ring buffer forever, invisible to the user.
-  for (const orphan of orphanedDaemonSessions(daemonSessions, reattachedSessionIds)) {
-    console.log(`[startup] Destroying orphaned daemon session ${orphan.id.slice(0, 8)}`)
-    daemonClient.send({ type: 'destroy', id: orphan.id })
-  }
+    watchTranscript(sessionId, nodeId, resumeSessionId) {
+      const node = stateManager.getNode(nodeId)
+      const agentType = node?.type === 'terminal' ? node.agentType : undefined
+      watchAgentTranscript(sessionId, agentType, resumeSessionId, sessionManager.getCwd(sessionId))
+    },
 
-  // After 30s, clear reviving flags — PTYs that survived this long are stable
-  if (revivedNodeIds.length > 0) {
+    log: (line) => console.log(line),
+  })
+
+  // Revival protection stays armed for 30s: a pty that survives that long is
+  // stable, and one that dies sooner should stay visible as a dead remnant the
+  // user can retry rather than being archived out from under them.
+  if (recoveryOutcome.revived.length > 0) {
     setTimeout(() => {
-      for (const nodeId of revivedNodeIds) {
-        stateManager.clearReviving(nodeId)
-      }
-      console.log(`[startup] Cleared revival protection for ${revivedNodeIds.length} terminal(s)`)
-    }, 30_000)
+      for (const nodeId of recoveryOutcome.revived) stateManager.clearReviving(nodeId)
+      console.log(`[startup] Cleared revival protection for ${recoveryOutcome.revived.length} terminal(s)`)
+    }, REVIVAL_PROTECTION_MS)
   }
 
   // --- Git status polling for directory nodes ---
