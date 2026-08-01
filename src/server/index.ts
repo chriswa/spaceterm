@@ -5,6 +5,7 @@ import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
+import { unhandledVariant } from '../shared/exhaustive'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { serverLog, sanitizeForLog } from './server-log'
@@ -1050,6 +1051,14 @@ function handleIngestMessage(msg: IngestMessage): void {
       }
       break
     }
+
+    default: {
+      // The hooks socket is fire-and-forget, so there is nobody to reply to —
+      // without this branch an unhandled ingest message vanished silently.
+      const unknownType = unhandledVariant(msg)
+      console.error(`[ingest] Unknown message type: ${unknownType}`)
+      break
+    }
   }
 }
 
@@ -1299,7 +1308,7 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
     }
 
     default: {
-      const unknownType = (msg as unknown as Record<string, unknown>).type
+      const unknownType = unhandledVariant(msg)
       console.error(`[scripts] Unknown message type: ${unknownType}`)
       try {
         socket.write(JSON.stringify({ type: 'error', error: `Unknown message type: ${unknownType}` }) + '\n')
@@ -2301,7 +2310,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     default: {
-      const unknownType = (msg as any).type
+      const unknownType = unhandledVariant(msg)
       console.error(`Unknown message type: ${unknownType}`)
       send(client.socket, { type: 'server-error', message: `Unknown message type: ${unknownType}` })
       break

@@ -20,6 +20,8 @@
     "src/client/preload/**/*",
     "src/server/**/*",
     "src/shared/**/*",
+    "src/cli/**/*",
+    "src/claude-code-plugin/**/*",
     "electron.vite.config.ts"
   ]
 }

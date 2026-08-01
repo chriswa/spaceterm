@@ -9,6 +9,7 @@ import type {
   CameraBounds
 } from '../../shared/protocol'
 import { LineParser } from '../../server/line-parser'
+import { unhandledVariant } from '../../shared/exhaustive'
 
 const INITIAL_RECONNECT_DELAY = 200
 const MAX_RECONNECT_DELAY = 1000
@@ -91,131 +92,118 @@ export class ServerClient extends EventEmitter {
     this.pending.clear()
   }
 
+  /**
+   * Route one message from the server.
+   *
+   * A `switch` rather than an if-chain so the `default:` branch can assert the
+   * union is fully covered: adding a `ServerMessage` variant without deciding
+   * whether it is an event or a correlated reply is now a type error here.
+   * Correlated replies are listed explicitly for the same reason — falling back
+   * on `'seq' in msg` would let a new event silently take the response path and
+   * be dropped.
+   */
   private handleMessage(msg: ServerMessage): void {
-    // Events (no seq) — broadcast to listeners
-    if (msg.type === 'data') {
-      this.emit('data', msg.sessionId, msg.data)
-      return
-    }
+    switch (msg.type) {
+      // --- Events: unsolicited broadcasts, no seq ---
+      case 'data':
+        this.emit('data', msg.sessionId, msg.data)
+        return
+      case 'exit':
+        this.emit('exit', msg.sessionId, msg.exitCode)
+        return
+      case 'claude-context':
+        this.emit('claude-context', msg.sessionId, msg.contextRemainingPercent)
+        return
+      case 'claude-session-line-count':
+        this.emit('claude-session-line-count', msg.sessionId, msg.lineCount)
+        return
+      case 'node-updated':
+        this.emit('node-updated', msg.nodeId, msg.fields)
+        return
+      case 'node-added':
+        this.emit('node-added', msg.node)
+        return
+      case 'node-removed':
+        this.emit('node-removed', msg.nodeId)
+        return
+      case 'file-content':
+        this.emit('file-content', msg.nodeId, msg.content)
+        return
+      case 'snapshot':
+        this.emit('snapshot', msg.sessionId, msg)
+        return
+      case 'plan-cache-update':
+        this.emit('plan-cache-update', msg.sessionId, msg.count, msg.files)
+        return
+      case 'gh-rate-limit':
+        this.emit('gh-rate-limit', msg.data, msg.usedHistory, msg.slotMinutes)
+        return
+      case 'play-sound':
+        this.emit('play-sound', msg.sound)
+        return
+      case 'speak':
+        this.emit('speak', msg.text)
+        return
+      case 'speaking-changed':
+        this.emit('speaking-changed', msg.nodeId, msg.speaking, msg.voice)
+        return
+      case 'summary-chat-status':
+        this.emit('summary-chat-status', msg.nodeId, msg.state, msg.message)
+        return
+      case 'peer-connected':
+        this.emit('peer-connected', msg.clientId)
+        return
+      case 'peer-disconnected':
+        this.emit('peer-disconnected', msg.clientId)
+        return
+      case 'peer-camera-bounds':
+        this.emit('peer-camera-bounds', msg.clientId, msg.bounds)
+        return
+      case 'focus-surface':
+        this.emit('focus-surface', msg.nodeId)
+        return
+      case 'saved-viewports':
+        this.emit('saved-viewports', msg.viewports)
+        return
 
-    if (msg.type === 'exit') {
-      this.emit('exit', msg.sessionId, msg.exitCode)
-      return
-    }
-
-    if (msg.type === 'claude-context') {
-      this.emit('claude-context', msg.sessionId, msg.contextRemainingPercent)
-      return
-    }
-
-    if (msg.type === 'claude-session-line-count') {
-      this.emit('claude-session-line-count', msg.sessionId, msg.lineCount)
-      return
-    }
-
-    // Node state events (broadcast, no seq)
-    if (msg.type === 'node-updated') {
-      this.emit('node-updated', msg.nodeId, msg.fields)
-      return
-    }
-
-    if (msg.type === 'node-added') {
-      this.emit('node-added', msg.node)
-      return
-    }
-
-    if (msg.type === 'node-removed') {
-      this.emit('node-removed', msg.nodeId)
-      return
-    }
-
-    if (msg.type === 'file-content') {
-      this.emit('file-content', msg.nodeId, msg.content)
-      return
-    }
-
-    if (msg.type === 'snapshot') {
-      this.emit('snapshot', msg.sessionId, msg)
-      return
-    }
-
-    if (msg.type === 'plan-cache-update') {
-      this.emit('plan-cache-update', msg.sessionId, msg.count, msg.files)
-      return
-    }
-
-    if (msg.type === 'server-error') {
-      this.emit('server-error', msg.message)
-      // Prefer rejecting the matching pending request so callers don't hang.
-      if ('seq' in msg && typeof msg.seq === 'number') {
-        const pending = this.pending.get(msg.seq)
-        if (pending) {
-          this.pending.delete(msg.seq)
-          pending.reject(new Error(msg.message))
-          return
+      // --- Both: an error is broadcast, and also rejects its request if correlated ---
+      case 'server-error':
+        this.emit('server-error', msg.message)
+        if (typeof msg.seq === 'number') {
+          const pending = this.pending.get(msg.seq)
+          if (pending) {
+            this.pending.delete(msg.seq)
+            pending.reject(new Error(msg.message))
+          }
         }
-      }
-      return
-    }
+        return
 
-    if (msg.type === 'gh-rate-limit') {
-      this.emit('gh-rate-limit', msg.data, msg.usedHistory, msg.slotMinutes)
-      return
-    }
+      // --- Replies: correlated to a request by seq ---
+      case 'created':
+      case 'server-restarted':
+      case 'listed':
+      case 'attached':
+      case 'detached':
+      case 'destroyed':
+      case 'sync-state':
+      case 'mutation-ack':
+      case 'node-add-ack':
+      case 'validate-directory-result':
+      case 'validate-file-result':
+        this.resolvePending(msg.seq, msg)
+        return
 
-    if (msg.type === 'play-sound') {
-      this.emit('play-sound', msg.sound)
-      return
+      default:
+        console.error(`[server-client] Unknown message type: ${unhandledVariant(msg)}`)
+        return
     }
+  }
 
-    if (msg.type === 'speak') {
-      this.emit('speak', msg.text)
-      return
-    }
-
-    if (msg.type === 'speaking-changed') {
-      this.emit('speaking-changed', msg.nodeId, msg.speaking, msg.voice)
-      return
-    }
-
-    if (msg.type === 'summary-chat-status') {
-      this.emit('summary-chat-status', msg.nodeId, msg.state, msg.message)
-      return
-    }
-
-    if (msg.type === 'peer-connected') {
-      this.emit('peer-connected', msg.clientId)
-      return
-    }
-
-    if (msg.type === 'peer-disconnected') {
-      this.emit('peer-disconnected', msg.clientId)
-      return
-    }
-
-    if (msg.type === 'peer-camera-bounds') {
-      this.emit('peer-camera-bounds', msg.clientId, msg.bounds)
-      return
-    }
-
-    if (msg.type === 'focus-surface') {
-      this.emit('focus-surface', msg.nodeId)
-      return
-    }
-
-    if (msg.type === 'saved-viewports') {
-      this.emit('saved-viewports', msg.viewports)
-      return
-    }
-
-    // Request/response correlation
-    if ('seq' in msg) {
-      const pending = this.pending.get(msg.seq)
-      if (pending) {
-        this.pending.delete(msg.seq)
-        pending.resolve(msg)
-      }
-    }
+  private resolvePending(seq: number, msg: ServerMessage): void {
+    const pending = this.pending.get(seq)
+    if (!pending) return
+    this.pending.delete(seq)
+    pending.resolve(msg)
   }
 
   private sendRequest(msg: Record<string, unknown>): Promise<ServerMessage> {
