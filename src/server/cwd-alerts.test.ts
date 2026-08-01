@@ -158,7 +158,7 @@ describe('evaluateCwdMismatch', () => {
   })
 
   it('clears only the cwd alert, leaving others intact', () => {
-    const other: NodeAlert = { type: 'something-else', message: 'keep me', timestamp: 5 }
+    const other: NodeAlert = { type: 'launch-failed', message: 'keep me', timestamp: 5 }
     const dir = directory('d1', 'root', '/work/app')
     const term = terminal('t1', 'd1', { cwd: '/work/app', alerts: [MISMATCH, other] })
 
@@ -166,12 +166,12 @@ describe('evaluateCwdMismatch', () => {
   })
 
   it('appends to existing alerts rather than replacing them', () => {
-    const other: NodeAlert = { type: 'something-else', message: 'keep me', timestamp: 5 }
+    const other: NodeAlert = { type: 'launch-failed', message: 'keep me', timestamp: 5 }
     const dir = directory('d1', 'root', '/work/app')
     const term = terminal('t1', 'd1', { cwd: '/elsewhere', alerts: [other] })
 
     const change = evaluateCwdMismatch(graph(dir, term), term, NOW)
-    expect(change?.alerts?.map((a) => a.type)).toEqual(['something-else', 'cwd-mismatch'])
+    expect(change?.alerts?.map((a) => a.type)).toEqual(['launch-failed', 'cwd-mismatch'])
   })
 
   it('ignores a surface that is not running an agent', () => {

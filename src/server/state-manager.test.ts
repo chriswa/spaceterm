@@ -753,3 +753,103 @@ describe('live agent state has one owner', () => {
     })
   })
 })
+
+describe('setAlert', () => {
+  // Alerts now have more than one producer — the cwd-mismatch scan and launch
+  // failures — so the invariant that matters is that each replaces only its own
+  // kind.
+
+  function withTerminal() {
+    const h = harness()
+    const node = createTerminal(h.sm, 't1')
+    h.updates.length = 0
+    return { ...h, node }
+  }
+
+  it('raises an alert of the given kind', () => {
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'launch-failed', 'Restart failed: boom', 1000)
+
+    expect(h.sm.getNode(h.node.id)?.alerts).toEqual([
+      { type: 'launch-failed', message: 'Restart failed: boom', timestamp: 1000 }
+    ])
+  })
+
+  it('broadcasts the change', () => {
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'launch-failed', 'boom', 1000)
+    expect(h.updates.at(-1)).toMatchObject({ nodeId: h.node.id })
+    expect(h.updates.at(-1)?.fields.alerts).toHaveLength(1)
+  })
+
+  it('leaves alerts of other kinds alone', () => {
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'cwd-mismatch', 'moved', 1000)
+    h.sm.setAlert(h.node.id, 'launch-failed', 'boom', 2000)
+
+    expect(h.sm.getNode(h.node.id)?.alerts?.map((a) => a.type).sort())
+      .toEqual(['cwd-mismatch', 'launch-failed'])
+  })
+
+  it('clears only the named kind', () => {
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'cwd-mismatch', 'moved', 1000)
+    h.sm.setAlert(h.node.id, 'launch-failed', 'boom', 2000)
+    h.sm.setAlert(h.node.id, 'launch-failed', null)
+
+    expect(h.sm.getNode(h.node.id)?.alerts).toEqual([
+      { type: 'cwd-mismatch', message: 'moved', timestamp: 1000 }
+    ])
+  })
+
+  it('keeps the first-detected timestamp when the message changes', () => {
+    // The unread badge compares against this timestamp. Refreshing it would
+    // make an alert the user already dismissed pop back as unread.
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'launch-failed', 'first reason', 1000)
+    h.sm.setAlert(h.node.id, 'launch-failed', 'second reason', 5000)
+
+    expect(h.sm.getNode(h.node.id)?.alerts).toEqual([
+      { type: 'launch-failed', message: 'second reason', timestamp: 1000 }
+    ])
+  })
+
+  it('is a no-op when re-raising the identical alert', () => {
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'launch-failed', 'boom', 1000)
+    const after = h.updates.length
+    h.sm.setAlert(h.node.id, 'launch-failed', 'boom', 9999)
+    expect(h.updates.length).toBe(after)
+  })
+
+  it('is a no-op when clearing something that is not there', () => {
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'launch-failed', null)
+    expect(h.updates).toEqual([])
+  })
+
+  it('broadcasts an empty array rather than undefined when the last alert clears', () => {
+    // An absent key leaves the previous list on screen; [] reads as "none".
+    const h = withTerminal()
+    h.sm.setAlert(h.node.id, 'launch-failed', 'boom', 1000)
+    h.sm.setAlert(h.node.id, 'launch-failed', null)
+
+    expect(h.updates.at(-1)?.fields.alerts).toEqual([])
+    // Stored as undefined, so an empty key is not persisted.
+    expect(h.sm.getNode(h.node.id)?.alerts).toBeUndefined()
+  })
+
+  it('ignores an unknown node', () => {
+    const h = withTerminal()
+    expect(() => h.sm.setAlert(nid('ghost'), 'launch-failed', 'boom', 1000)).not.toThrow()
+    expect(h.updates).toEqual([])
+  })
+
+  it('works on non-terminal nodes too', () => {
+    // Alerts live on BaseNodeData; nothing about them is terminal-specific.
+    const h = harness()
+    const md = h.sm.createMarkdown(ROOT_NODE_ID, 0, 0, 'hi')
+    h.sm.setAlert(md.id, 'launch-failed', 'boom', 1000)
+    expect(h.sm.getNode(md.id)?.alerts).toHaveLength(1)
+  })
+})

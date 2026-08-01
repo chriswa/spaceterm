@@ -1269,11 +1269,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         rOptions = { ...rOptions, nodeId: msg.nodeId }
         const { sessionId: newPtyId, cols: rCols, rows: rRows } = respawnTerminal(
           msg.nodeId, () => sessionManager.create(rOptions), RESPAWN_DEPS)
+        stateManager.setAlert(msg.nodeId, 'launch-failed', null)
         // Auto-attach client to the new PTY session
         client.attachedSessions.add(newPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
       } catch (err: any) {
         console.error(`terminal-reincarnate failed: ${err.message}`)
+        stateManager.setAlert(msg.nodeId, 'launch-failed', `Could not revive this surface: ${err.message}`)
         send(client.socket, { type: 'server-error', message: `terminal-reincarnate failed: ${err.message}` })
       }
       break
@@ -1720,6 +1722,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
         const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = respawnTerminal(
           msg.nodeId, () => sessionManager.create(restartOptions), RESPAWN_DEPS)
+        // It launched, so whatever went wrong last time no longer applies.
+        stateManager.setAlert(msg.nodeId, 'launch-failed', null)
 
         restartRecovery.record(msg.nodeId, {
           sessionId: newPtyId,
@@ -1734,6 +1738,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         serverLog(`[terminal-restart] Restarted terminal ${msg.nodeId.slice(0, 8)} with new session ${newPtyId.slice(0, 8)} resume=${resumeId ? resumeId.slice(0, 8) : '(none)'} extraCliArgs=${msg.extraCliArgs || '(none)'}`)
       } catch (err: any) {
         serverLog(`[terminal-restart] failed: ${err.message}${err.stack ? `\n${err.stack}` : ''}`)
+        // The server-error toast is transient; the surface itself has to carry
+        // the reason, or a terminal that failed to come back looks identical to
+        // one the user deliberately left dead.
+        stateManager.setAlert(msg.nodeId, 'launch-failed', `Restart failed: ${err.message}`)
         send(client.socket, {
           type: 'server-error',
           seq: msg.seq,

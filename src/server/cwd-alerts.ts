@@ -1,5 +1,5 @@
 import { homedir } from 'os'
-import type { NodeAlert, NodeData, TerminalNodeData } from '../shared/state'
+import type { AlertType, NodeAlert, NodeData, TerminalNodeData } from '../shared/state'
 import type { NodeId } from '../shared/ids'
 import { expandTilde } from './cwd'
 import { getAncestorCwd } from './path-utils'
@@ -18,7 +18,7 @@ import { getAncestorCwd } from './path-utils'
  * return.
  */
 
-const CWD_MISMATCH = 'cwd-mismatch'
+const CWD_MISMATCH: AlertType = 'cwd-mismatch'
 
 /**
  * Normalize a path for comparison: expand `~` and strip a trailing slash.

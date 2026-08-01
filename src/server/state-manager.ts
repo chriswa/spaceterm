@@ -9,7 +9,8 @@ import type {
   FileNodeData,
   TitleNodeData,
   TerminalSessionEntry,
-  GitStatus
+  GitStatus,
+  AlertType
 } from '../shared/state'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { StatePersister } from './persistence'
@@ -1069,6 +1070,43 @@ export class StateManager {
   /** Re-evaluate cwd alerts for a node and everything beneath it. */
   recheckDescendantCwdAlerts(nodeId: NodeId): void {
     this.applyAlertChanges(scanDescendantCwdMismatches(this.state.nodes, nodeId, Date.now()))
+  }
+
+  /**
+   * Raise or clear the alert of one kind on a node, leaving other kinds alone.
+   *
+   * Pass a message to raise, `null` to clear. Replacing only the matching kind
+   * is what lets more than one thing produce alerts — the cwd-mismatch scan and
+   * launch failures both write here, and neither may wipe the other's.
+   *
+   * Raising an alert that is already present is a no-op rather than a refresh,
+   * so the timestamp stays at first detection. That timestamp is what the
+   * unread badge compares against; refreshing it would make an alert the user
+   * already dismissed pop back as unread on every re-evaluation.
+   */
+  setAlert(nodeId: NodeId, type: AlertType, message: string | null, now: number = Date.now()): void {
+    const node = this.state.nodes[nodeId]
+    if (!node) return
+    const current = node.alerts ?? []
+    const existing = current.find((a) => a.type === type)
+
+    if (message === null) {
+      if (!existing) return
+      const remaining = current.filter((a) => a.type !== type)
+      // Broadcast [] rather than undefined: the client reads [] as "no alerts",
+      // whereas an absent key leaves the previous list on screen.
+      this.patchNode(node, { alerts: remaining.length > 0 ? remaining : [] })
+      node.alerts = remaining.length > 0 ? remaining : undefined
+      return
+    }
+
+    if (existing?.message === message) return
+    const others = current.filter((a) => a.type !== type)
+    // Keep the original timestamp when only the message changed, so a
+    // re-worded alert does not re-badge as unread.
+    const alerts = [...others, { type, message, timestamp: existing?.timestamp ?? now }]
+    this.patchNode(node, { alerts })
+    node.alerts = alerts
   }
 
   /** Set the alerts-read timestamp on a node. */

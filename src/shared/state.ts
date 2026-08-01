@@ -21,8 +21,19 @@ export interface TerminalSessionEntry {
 
 // --- Node alerts ---
 
+/**
+ * The kinds of alert a node can carry.
+ *
+ * Closed set rather than free-form strings: alerts are produced by more than
+ * one thing now (the cwd-mismatch scan, and launch failures), and each producer
+ * must replace only its own kind. A typo'd type would leave a stale alert
+ * nothing can ever clear, since clearing is by type match.
+ */
+export const ALERT_TYPES = ['cwd-mismatch', 'launch-failed'] as const
+export type AlertType = (typeof ALERT_TYPES)[number]
+
 export interface NodeAlert {
-  type: string
+  type: AlertType
   message: string
   timestamp: number  // epoch ms, set once when first detected
 }
