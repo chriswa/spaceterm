@@ -2527,16 +2527,10 @@ async function startServer(): Promise<void> {
     onClaudeSessionHistory: (sessionId, history) => {
       stateManager.updateClaudeSessionHistory(sessionId, history)
     },
-    // update state + flag stopped API errors for human review
+    // update state (node-updated broadcast handles client sync). The
+    // stopped → potential_error upgrade is decided inside ClaudeStateMachine,
+    // so by the time this fires the state is already final.
     onClaudeState: (sessionId, state) => {
-      if (state === 'stopped' && potentialErrorDetector.hasPotentialError(sessionId)) {
-        // Keep the session model and the persisted/UI model in sync. Calling
-        // setClaudeState emits a second callback for potential_error, which
-        // performs the state-manager update below.
-        sessionManager.setClaudeStatusUnread(sessionId, true)
-        sessionManager.setClaudeState(sessionId, 'potential_error')
-        return
-      }
       stateManager.updateClaudeState(sessionId, state)
     },
     // broadcast context remaining % to all attached clients
@@ -2586,6 +2580,7 @@ async function startServer(): Promise<void> {
   claudeStateMachine = new ClaudeStateMachine({
     getClaudeState: (id) => sessionManager.getClaudeState(id),
     setClaudeState: (id, state) => sessionManager.setClaudeState(id, state),
+    hasPotentialError: (id) => potentialErrorDetector.hasPotentialError(id),
     getClaudeStatusUnread: (id) => sessionManager.getClaudeStatusUnread(id),
     setClaudeStatusUnread: (id, unread) => sessionManager.setClaudeStatusUnread(id, unread),
     handleClaudeStop: (id) => sessionManager.handleClaudeStop(id),

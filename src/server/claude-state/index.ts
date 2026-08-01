@@ -605,7 +605,16 @@ export class ClaudeStateMachine {
       }
     }
 
-    this.deps.setClaudeState(surfaceId, newState)
+    // ── Stopped-with-an-API-error upgrade ──────────────────────────────────
+    // Applied here rather than by the caller so it is an ordinary transition:
+    // it lands in the decision log with the event that caused it, and does not
+    // require re-entering this method from setClaudeState's own callback.
+    let effectiveState = newState
+    if (newState === 'stopped' && this.deps.hasPotentialError(surfaceId)) {
+      effectiveState = 'potential_error'
+    }
+
+    this.deps.setClaudeState(surfaceId, effectiveState)
 
     // ── Unread flag: set true when entering an attention-needed state ──
     // The user needs to see and act on stopped (Claude finished), waiting_permission
@@ -614,8 +623,14 @@ export class ClaudeStateMachine {
     // We only set unread on state *changes* to avoid re-flagging when the state
     // is set to the same value (e.g. multiple 'working' transitions in a row).
     let unread: boolean | undefined
-    if (prevState !== newState) {
-      if (newState === 'stopped' || newState === 'waiting_permission' || newState === 'waiting_question' || newState === 'waiting_plan') {
+    if (prevState !== effectiveState) {
+      if (
+        effectiveState === 'stopped' ||
+        effectiveState === 'potential_error' ||
+        effectiveState === 'waiting_permission' ||
+        effectiveState === 'waiting_question' ||
+        effectiveState === 'waiting_plan'
+      ) {
         unread = true
         this.deps.setClaudeStatusUnread(surfaceId, true)
       }
@@ -628,8 +643,8 @@ export class ClaudeStateMachine {
       source,
       event,
       prevState,
-      newState,
-      detail,
+      newState: effectiveState,
+      detail: effectiveState === newState ? detail : `${detail ? detail + ' ' : ''}(upgraded from stopped: potential API error)`,
       unread
     })
   }

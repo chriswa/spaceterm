@@ -8,7 +8,7 @@ question of turning features into mods.
 | | Two sessions ago | Last session | Now |
 |---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, and now covers `src/cli` and `src/claude-code-plugin` too |
-| Tests | 89, hand-rolled | 331 | 638 |
+| Tests | 89, hand-rolled | 331 | 641 |
 | Test files | 5 | 18 | 31 |
 | Exhaustiveness checks | none | none | all four message switches |
 | State migrations | none | none | versioned pipeline |
@@ -20,7 +20,7 @@ clean; nothing had been checking them.
 
 ## What the last session did, and what it found
 
-Thirteen commits, each self-contained. `git log` carries the reasoning; the short
+Fourteen commits, each self-contained. `git log` carries the reasoning; the short
 version is that **every seam added turned up a real defect**, which is the
 argument for adding the rest.
 
@@ -109,13 +109,19 @@ The original four are done. What is left from that list, and what replaced it:
    client ships with the server — but that is an assumption, not a guarantee.
 2. ~~State migrations~~ — done. `state-migrations.ts`, currently at version 2.
 3. ~~Branded identifiers~~ — done.
-4. **One owner for surface state.** Untouched. `claudeState`,
-   `claudeStatusUnread`, `claudeStatusAsleep`, `claudeContextPercent`,
-   `claudeSessionLineCount` still live in *both* `SessionManager`'s in-memory
-   session and `StateManager`'s persisted node, hand-synced through `index.ts`.
-   Related: `potential_error` is still decided outside the state machine by
-   re-entering `setClaudeState`, so one of seven `ClaudeState` values never
-   appears in the decision log.
+4. **One owner for surface state.** Half done. The `potential_error` part is
+   fixed: the stopped → potential_error upgrade now happens inside
+   `ClaudeStateMachine` as an ordinary transition, so all seven `ClaudeState`
+   values appear in the decision log, and `index.ts` no longer re-enters
+   `setClaudeState` from its own callback.
+
+   The duplication itself remains: `claudeState`, `claudeStatusUnread`,
+   `claudeStatusAsleep`, `claudeContextPercent` and `claudeSessionLineCount`
+   still live in *both* `SessionManager`'s in-memory session and
+   `StateManager`'s persisted node, hand-synced through `index.ts`. This is now
+   the largest remaining structural item, and the `ClaudeStateMachineDeps`
+   interface is the seam to do it behind — it already names every read and write
+   those two need to agree on.
 5. **One owner for the PTY byte stream.** The ANSI case was already fixed. The
    UTF-8 one turned out to be two separate things — see the rewritten
    `Potential UTF Bug Fix.md`. The chunk-splitting half is handled in the

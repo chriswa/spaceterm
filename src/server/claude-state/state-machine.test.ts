@@ -21,8 +21,11 @@ const S = pid('surface-1')
 class FakeDeps implements StateMachineDeps {
   state = new Map<string, ClaudeState>()
   unread = new Map<string, boolean>()
+  /** Surfaces whose scrollback shows a stopped API error. */
+  potentialErrors = new Set<string>()
   getClaudeState(id: string): ClaudeState { return this.state.get(id) ?? 'stopped' }
   setClaudeState(id: string, s: ClaudeState): void { this.state.set(id, s) }
+  hasPotentialError(id: string): boolean { return this.potentialErrors.has(id) }
   getClaudeStatusUnread(id: string): boolean { return this.unread.get(id) ?? false }
   setClaudeStatusUnread(id: string, u: boolean): void { this.unread.set(id, u) }
   handleClaudeStop(): void { /* no-op */ }
@@ -51,6 +54,38 @@ function toolResult(toolUseId: string, text = 'ok'): SessionFileEntry {
 interface Case { name: string; run: (sm: ClaudeStateMachine, deps: FakeDeps) => void }
 
 const cases: Case[] = [
+  {
+    // The upgrade used to happen in index.ts, downstream of here, by
+    // re-entering setClaudeState from its own callback — so potential_error was
+    // the one ClaudeState value that never appeared in the decision log.
+    name: 'Stop with a detected API error → potential_error (+unread)',
+    run: (sm, deps) => {
+      deps.potentialErrors.add(S)
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'potential_error')
+      assertEq(deps.getClaudeStatusUnread(S), true)
+    },
+  },
+  {
+    name: 'API error does not upgrade a state other than stopped',
+    run: (sm, deps) => {
+      deps.potentialErrors.add(S)
+      hook(sm, 'UserPromptSubmit')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    name: 'no detected error leaves stopped alone',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+    },
+  },
   {
     name: 'Stop with no background work → stopped (+unread)',
     run: (sm, deps) => {

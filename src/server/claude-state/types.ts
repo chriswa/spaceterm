@@ -11,6 +11,16 @@ export type { ClaudeState }
 export interface StateMachineDeps {
   getClaudeState(surfaceId: PtySessionId): ClaudeState
   setClaudeState(surfaceId: PtySessionId, state: ClaudeState): void
+  /**
+   * True when a surface that just stopped shows signs of a stopped API error,
+   * so 'stopped' should be upgraded to 'potential_error'.
+   *
+   * A dep rather than a caller-side check: deciding it downstream of the state
+   * machine meant re-entering setClaudeState from its own callback, and left
+   * 'potential_error' as the one ClaudeState value that never appeared in the
+   * decision log — the artifact every other state bug was diagnosed from.
+   */
+  hasPotentialError(surfaceId: PtySessionId): boolean
   getClaudeStatusUnread(surfaceId: PtySessionId): boolean
   setClaudeStatusUnread(surfaceId: PtySessionId, unread: boolean): void
   handleClaudeStop(surfaceId: PtySessionId): void
