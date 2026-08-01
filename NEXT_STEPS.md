@@ -8,12 +8,12 @@ question of turning features into mods.
 | | Three sessions ago | Two ago | Last | Now |
 |---|---|---|---|---|
 | `npm run typecheck` | did not exist | 0 errors | 0 errors, all of `src/` | 0 errors |
-| Tests | 89, hand-rolled | 331 | 641 | **984** |
-| Test files | 5 | 18 | 31 | **46** |
+| Tests | 89, hand-rolled | 331 | 641 | **1002** |
+| Test files | 5 | 18 | 31 | **47** |
 | Vitest projects | 1 (node) | 1 | 1 | **2 (node + jsdom)** |
 | Tier 0 registries | none | none | 1 of 3 | **3 of 3** |
 | Versioned sockets | 0 | 0 | 1 of 2 | **2 of 2** |
-| `server/index.ts` | 3061 | 3087 | 3007 | **2478** |
+| `server/index.ts` | 3061 | 3087 | 3007 | **2490** |
 | `Toolbar.tsx` | 1021 | 1021 | 1021 | **40** |
 
 All three of MODDING.md's Tier 0 registries now exist — `AgentDriver`,
@@ -24,11 +24,12 @@ All four preconditions for a mod API are met.
 
 Fourteen commits, each self-contained. `git log` carries the reasoning.
 
-**Extractions from `index.ts`** (3007 → 2478): `gh-rate-limit.ts` (the sparkline
+**Extractions from `index.ts`** (3007 → 2490): `gh-rate-limit.ts` (the sparkline
 poller, 24 tests), `script-api.ts` (the mod API, 45 tests), `resume-target.ts`
 (which agent session to resume, 31 tests), `terminal-respawn.ts` (six
 hand-written copies of an order-sensitive sequence collapsed to one),
-`restart-recovery.ts` (the last lifecycle state outside a tested module).
+`restart-recovery.ts` (the last lifecycle state outside a tested module),
+`startup-reconciliation.ts` (the reattach/revive/archive decision, 18 tests).
 
 **`ToolbarWidget` registry** — the last of MODDING.md's Tier 0. `Toolbar.tsx`
 went from 1021 lines to 40 and its four unrelated tenants became four files.
@@ -108,9 +109,9 @@ Three corollaries worth stating, all learned the hard way:
 
 ### Tier C — extract before testing
 
-- **`server/index.ts`** (2478, down from 3087). Five tenants have moved out
+- **`server/index.ts`** (2490, down from 3087). Six tenants have moved out
   (`agent-provisioning`, `gh-rate-limit`, `script-api`, `resume-target`,
-  `restart-recovery`). What remains is `handleMessage` — a ~990-line switch over
+  `restart-recovery`, `startup-reconciliation`). What remains is `handleMessage` — a ~990-line switch over
   49 client message types — plus socket setup plus startup reconciliation.
   Those are three files.
 
@@ -162,11 +163,12 @@ done last session; kept so the reasoning is not lost.
    fake connection, `respawnTerminal` with injectable deps); what is missing is
    `startServer` being callable with injected collaborators rather than
    constructing its own. **This is the single highest-value remaining item.**
-3. **Startup reconciliation is the least-tested, highest-consequence code in
-   the repo.** It decides, per node, whether to reattach, revive, or archive —
-   and it runs before anyone is watching. Everything it depends on is now behind
-   a seam (`respawnTerminal`, `resume-target`, `StatePersister`); only its own
-   structure is left.
+3. **Startup reconciliation** — the *decision* is now
+   `startup-reconciliation.ts` with 18 tests (reattach / revive / archive, plus
+   orphaned-daemon-session cleanup). What is still untested is the **sequence**:
+   the daemon round-trip, the reattach-fails-fall-through-to-revive path, and
+   the 30-second revival-protection window. That needs item 2 rather than
+   another pure function.
 4. ~~**Nothing verifies that a persisted state file round-trips.**~~ Done, over
    generated graphs. It also turned the ephemeral-field strip from a magic
    string into `EPHEMERAL_STATE_FIELDS`.
