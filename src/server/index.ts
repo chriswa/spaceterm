@@ -5,7 +5,9 @@ import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR } from '../shared/protocol'
 import type { ClientMessage, IngestMessage, ScriptMessage, ScriptResponse, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds } from '../shared/protocol'
-import { unhandledVariant } from '../shared/exhaustive'
+import { assertNever, unhandledVariant } from '../shared/exhaustive'
+import type { AgentType } from '../shared/agent-type'
+import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
@@ -86,52 +88,6 @@ function gatherAncestorPrompt(nodes: Record<string, import('../shared/state').No
 function parseExtraCliArgs(s?: string): string[] {
   if (!s || !s.trim()) return []
   return shellParse(s).filter((entry): entry is string => typeof entry === 'string')
-}
-
-/** Escape a string for embedding inside a shell single-quoted string. */
-function shellQuote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
-
-function buildClaudeCodeCreateOptions(cwd?: string, resumeSessionId?: string, prompt?: string, appendSystemPrompt?: boolean, extraArgs?: string[]): CreateOptions {
-  const pluginDir = path.join(PROJECT_ROOT, 'src/claude-code-plugin')
-  const statusLineSettings = JSON.stringify({
-    statusLine: {
-      type: 'command',
-      command: path.join(pluginDir, 'scripts/statusline-handler.sh')
-    }
-  })
-  const args = ['--plugin-dir', pluginDir, '--settings', statusLineSettings, '--dangerously-skip-permissions']
-  if (extraArgs && extraArgs.length > 0) {
-    args.push(...extraArgs)
-  }
-  if (resumeSessionId) {
-    args.push('-r', resumeSessionId)
-  }
-  if (prompt && appendSystemPrompt) {
-    args.push('--append-system-prompt', prompt)
-
-    // Print a banner showing the appended system prompt, then exec claude.
-    // We use stty -echo before the printf to suppress PTY line discipline echo,
-    // which otherwise causes the banner to appear twice — a known PTY echo issue.
-    const header = ' The following was appended to the system prompt '
-    const footer = ' The preceding was appended to the system prompt '
-    // Normalize newlines to \r\n for terminal display (CRLF)
-    const termPrompt = prompt.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
-    const claudeCmd = ['claude', ...args].map(a => shellQuote(a)).join(' ')
-    const script = [
-      'stty -echo',
-      `printf '\\x1b[30;47m${header}\\x1b[0m\\r\\n'`,
-      `printf '%s\\r\\n' ${shellQuote(termPrompt)}`,
-      `printf '\\x1b[30;47m${footer}\\x1b[0m\\r\\n\\r\\n'`,
-      'stty echo',
-      `exec ${claudeCmd}`
-    ].join('; ')
-    return { cwd, command: '/bin/sh', args: ['-c', script] }
-  } else if (prompt) {
-    args.push('--', prompt)
-  }
-  return { cwd, command: 'claude', args }
 }
 
 /** Cursor CLI hook events Spaceterm subscribes to via ~/.cursor/hooks.json. */
@@ -293,43 +249,7 @@ function prepareCursorAgentPluginDir(): string {
 }
 
 /** Latest Cursor chat id from session history (no on-disk JSONL validation). */
-function lastCursorSessionId(history: Array<{ claudeSessionId: ClaudeSessionId }>): ClaudeSessionId | undefined {
-  if (!history.length) return undefined
-  return history[history.length - 1].claudeSessionId
-}
-
 /** Launch Cursor Agent CLI with Spaceterm's plugin (MCP) + user-level hooks. */
-function buildCursorAgentCreateOptions(
-  cwd?: string,
-  resumeSessionId?: string,
-  prompt?: string,
-  extraArgs?: string[],
-): CreateOptions {
-  const pluginDir = prepareCursorAgentPluginDir()
-  // Expand `~` — Cursor takes the workspace as an argv entry, not a PTY cwd, so
-  // no shell expansion happens and a literal `~` would fail to resolve.
-  cwd = expandTilde(cwd)
-  const args = [
-    '--plugin-dir', pluginDir,
-    '--yolo',
-    '--trust',
-    '--approve-mcps',
-  ]
-  if (cwd) {
-    args.push('--workspace', cwd)
-  }
-  if (extraArgs && extraArgs.length > 0) {
-    args.push(...extraArgs)
-  }
-  if (resumeSessionId) {
-    args.push(`--resume=${resumeSessionId}`)
-  }
-  if (prompt) {
-    args.push(prompt)
-  }
-  return { cwd, command: 'agent', args }
-}
-
 /** Codex CLI hook events Spaceterm subscribes to via ~/.codex/hooks.json. */
 const CODEX_HOOK_EVENTS = [
   'SessionStart',
@@ -426,63 +346,69 @@ function prepareCodexAgentDir(): string {
   return destRoot
 }
 
-interface CodexLaunchOpts {
-  cwd?: string
-  prompt?: string
-  resumeSessionId?: string
-  forkSessionId?: string
-  /** Extra CLI args from the surface's Extra CLI arguments control. */
-  extraArgs?: string[]
+/**
+ * The agent registry. Provisioning stays here — it is filesystem work bound to
+ * this process's layout — while the argv each CLI needs lives in the driver.
+ */
+const agentDrivers = createAgentDrivers({
+  claudePluginDir: () => path.join(PROJECT_ROOT, 'src/claude-code-plugin'),
+  cursorPluginDir: prepareCursorAgentPluginDir,
+  prepareCodex: prepareCodexAgentDir,
+})
+
+/** Driver for a surface, defaulting to Claude when no agentType was recorded. */
+function agentDriver(agentType: AgentType | undefined): AgentDriver {
+  return driverFor(agentDrivers, agentType)
 }
 
-/** Launch Codex CLI with Spaceterm hooks + profile MCP. */
-function buildCodexCreateOptions(opts: CodexLaunchOpts): CreateOptions {
-  prepareCodexAgentDir()
-  // Expand `~` — Codex takes the working dir as an argv entry (`-C`), not a PTY
-  // cwd, so no shell expansion happens and a literal `~` would fail to resolve.
-  const cwd = expandTilde(opts.cwd)
-  const shared = [
-    '--dangerously-bypass-hook-trust',
-    '--dangerously-bypass-approvals-and-sandbox',
-    // Spaceterm's MCP tools are few and surface-specific. Keep them in the
-    // initial tool set so an agent can invoke them directly instead of first
-    // discovering them through ToolSearch.
-    '--disable', 'tool_search_always_defer_mcp_tools',
-    '-p', 'spaceterm',
-  ]
-  if (cwd) {
-    shared.push('-C', cwd)
+/**
+ * Decode a client's CreateOptions into the agent it asks for and a launch spec.
+ *
+ * The wire format carries a per-agent sub-object (`options.codex`,
+ * `options.cursor`, `options.claude`); this is the one place that shape is
+ * read. Returns undefined for a plain shell terminal, which has no agent.
+ */
+function agentRequestFrom(
+  options: CreateOptions | undefined
+): { agentType: AgentType; spec: AgentLaunchSpec } | undefined {
+  if (options?.codex) {
+    return {
+      agentType: 'codex',
+      spec: {
+        cwd: options.cwd,
+        resumeSessionId: options.codex.resumeSessionId,
+        forkSessionId: options.codex.forkSessionId,
+        prompt: options.codex.prompt,
+      },
+    }
   }
-  if (opts.extraArgs && opts.extraArgs.length > 0) {
-    // Insert after Spaceterm options so they remain OPTIONS before SESSION_ID/PROMPT.
-    shared.push(...opts.extraArgs)
+  if (options?.cursor) {
+    return {
+      agentType: 'cursor',
+      spec: {
+        cwd: options.cwd,
+        resumeSessionId: options.cursor.resumeSessionId,
+        prompt: options.cursor.prompt,
+      },
+    }
   }
-
-  let args: string[]
-  if (opts.forkSessionId) {
-    // `codex fork [OPTIONS] [SESSION_ID] [PROMPT]`
-    args = ['fork', ...shared, opts.forkSessionId]
-  } else if (opts.resumeSessionId) {
-    // `codex resume [OPTIONS] [SESSION_ID] [PROMPT]`
-    args = ['resume', ...shared, opts.resumeSessionId]
-  } else {
-    args = [...shared]
+  if (options?.claude) {
+    return {
+      agentType: 'claude',
+      spec: {
+        cwd: options.cwd,
+        resumeSessionId: options.claude.resumeSessionId,
+        prompt: options.claude.prompt,
+        appendSystemPrompt: options.claude.appendSystemPrompt,
+      },
+    }
   }
-  if (opts.prompt) {
-    args.push(opts.prompt)
-  }
-  return { cwd, command: 'codex', args }
-}
-
-/** Latest Codex session id from history (no Claude JSONL validation). */
-function lastCodexSessionId(history: Array<{ claudeSessionId: ClaudeSessionId }>): ClaudeSessionId | undefined {
-  if (!history.length) return undefined
-  return history[history.length - 1].claudeSessionId
+  return undefined
 }
 
 /** Agents whose transcripts are not Claude ~/.claude/projects JSONL. */
-function isNonClaudeAgent(agentType: 'claude' | 'cursor' | 'codex' | undefined): boolean {
-  return agentType === 'cursor' || agentType === 'codex'
+function isNonClaudeAgent(agentType: AgentType | undefined): boolean {
+  return !agentDriver(agentType).capabilities.claudeTranscript
 }
 
 /** Pull agent chat id from a hook/status-line payload (Cursor: conversation_id). */
@@ -539,7 +465,7 @@ function resolveNonClaudeResumeId(
     // which a botched restart may be the only place the real chat id survives.
     ?? peekAgentSessionIdFromHookLog(asPtySessionId(node.id))
   if (fromHook) return fromHook
-  const fromHistory = lastCursorSessionId(node.claudeSessionHistory ?? [])
+  const fromHistory = lastAgentSessionId(node.claudeSessionHistory ?? [])
   if (fromHistory) return fromHistory
   const sessions = node.terminalSessions ?? []
   for (let i = sessions.length - 1; i >= 0; i--) {
@@ -678,7 +604,43 @@ let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
 let summaryChat: SummaryChat
 
-function surfaceAgentType(surfaceId: PtySessionId): 'claude' | 'cursor' | 'codex' | undefined {
+/**
+ * Point the right transcript watcher at a surface's agent session.
+ *
+ * Which watcher follows which agent is a per-agent fact, so it is decided once
+ * here rather than re-derived at each wiring site. The `assertNever` makes
+ * adding an agent a compile error in exactly one place.
+ */
+function watchAgentTranscript(
+  surfaceId: PtySessionId,
+  agentType: AgentType | undefined,
+  sessionId: ClaudeSessionId,
+  cwd: string | undefined,
+): void {
+  const driver = agentDriver(agentType)
+  switch (driver.type) {
+    case 'claude':
+      // Claude's transcript path is computed from (cwd, sessionId), so without
+      // a cwd there is nothing to watch.
+      if (cwd) sessionFileWatcher.watch(surfaceId, sessionId, cwd)
+      return
+    case 'codex':
+      codexSessionFileWatcher.watch(surfaceId, sessionId)
+      return
+    case 'cursor':
+      cursorSessionFileWatcher.watch(surfaceId, sessionId)
+      return
+    default:
+      assertNever(driver.type, 'watchAgentTranscript')
+  }
+}
+
+/** Most recent agent chat id recorded for a surface, whichever agent it runs. */
+function lastAgentSessionId(history: Array<{ claudeSessionId: ClaudeSessionId }>): ClaudeSessionId | undefined {
+  return history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
+}
+
+function surfaceAgentType(surfaceId: PtySessionId): AgentType | undefined {
   // Was `getNodeIdForSession(surfaceId) ?? surfaceId` — falling back to the pty
   // session id as a node id, which only resolves while the two still coincide,
   // i.e. before the terminal's first restart. resolveNodeIdForPtySession scans
@@ -815,16 +777,12 @@ function handleIngestMessage(msg: IngestMessage): void {
         const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
         if (claudeSessionId) {
           sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
-          const agentType = surfaceAgentType(msg.surfaceId)
-          // Claude transcript watcher only understands ~/.claude/projects/... — skip for Cursor/Codex.
-          if (!isNonClaudeAgent(agentType)) {
-            const hookCwd = sessionManager.getCwd(msg.surfaceId)
-            if (hookCwd) {
-              sessionFileWatcher.watch(msg.surfaceId, claudeSessionId, hookCwd)
-            }
-          } else if (agentType === 'codex') {
-            codexSessionFileWatcher.watch(msg.surfaceId, claudeSessionId)
-          }
+          watchAgentTranscript(
+            msg.surfaceId,
+            surfaceAgentType(msg.surfaceId),
+            claudeSessionId,
+            sessionManager.getCwd(msg.surfaceId),
+          )
         }
       }
 
@@ -916,7 +874,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         const spawnCwd = sessionManager.getCwd(msg.surfaceId)
         const ancestorContext = gatherAncestorPrompt(stateManager.getState().nodes, spawnParentNodeId)
         const fullPrompt = ancestorContext ? `${ancestorContext}\n${msg.prompt}` : msg.prompt
-        const spawnOptions = buildClaudeCodeCreateOptions(spawnCwd, undefined, fullPrompt)
+        const spawnOptions = agentDrivers.claude.buildCreateOptions({ cwd: spawnCwd, prompt: fullPrompt })
         const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
         snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
         const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, terminalPixelSize(spawnCols, spawnRows))
@@ -963,7 +921,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         }
 
         const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
-        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId, msg.prompt, undefined, parseExtraCliArgs(forkSrcNode.extraCliArgs))
+        const forkOptions = agentDrivers.claude.buildCreateOptions({ cwd: forkCwd, resumeSessionId: newClaudeSessionId, prompt: msg.prompt, extraArgs: parseExtraCliArgs(forkSrcNode.extraCliArgs) })
         const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
@@ -1265,7 +1223,7 @@ function handleScriptMessage(socket: net.Socket, msg: ScriptMessage): void {
 
         const forkName = computeForkName(forkNode.name)
         const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
-        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId, undefined, undefined, parseExtraCliArgs(forkNode.extraCliArgs))
+        const forkOptions = agentDrivers.claude.buildCreateOptions({ cwd: forkCwd, resumeSessionId: newClaudeSessionId, extraArgs: parseExtraCliArgs(forkNode.extraCliArgs) })
         const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
@@ -1547,8 +1505,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       if (restoredNode && restoredNode.type === 'terminal') {
         const history = restoredNode.claudeSessionHistory ?? []
         const agentType = restoredNode.agentType
-        const isCursorOrCodex = agentType === 'cursor' || agentType === 'codex'
-        const resumeId = agentType === 'cursor' || agentType === 'codex'
+        const isCursorOrCodex = !agentDriver(agentType).capabilities.claudeTranscript
+        const resumeId = isCursorOrCodex
           ? resolveNonClaudeResumeId(restoredNode)
           : findValidClaudeSession(history, restoredNode.cwd)
         // Claude still requires a resumable JSONL session. Cursor/Codex can come
@@ -1563,11 +1521,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           // Protect against immediate PTY exit re-archiving (bad resume / slow start).
           stateManager.markReviving(msg.archivedNodeId)
           const restoreExtra = parseExtraCliArgs(restoredNode.extraCliArgs)
-          const restoreOptions = agentType === 'cursor'
-            ? { ...buildCursorAgentCreateOptions(restoredNode.cwd, resumeId, undefined, restoreExtra), nodeId: msg.archivedNodeId }
-            : agentType === 'codex'
-              ? { ...buildCodexCreateOptions({ cwd: restoredNode.cwd, resumeSessionId: resumeId, extraArgs: restoreExtra }), nodeId: msg.archivedNodeId }
-              : { ...buildClaudeCodeCreateOptions(restoredNode.cwd, resumeId, undefined, undefined, restoreExtra), nodeId: msg.archivedNodeId }
+          const restoreOptions = {
+            ...agentDriver(agentType).buildCreateOptions({
+              cwd: restoredNode.cwd,
+              resumeSessionId: resumeId,
+              extraArgs: restoreExtra,
+            }),
+            nodeId: msg.archivedNodeId,
+          }
           const { sessionId: newPtyId, cols, rows } = sessionManager.create(restoreOptions)
           snapshotManager.addSession(newPtyId, cols, rows)
           if (restoredNode.shellTitleHistory?.length) {
@@ -1577,7 +1538,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           seedHistoryAfterReincarnate(msg.archivedNodeId, newPtyId)
           client.attachedSessions.add(newPtyId)
           send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols, rows })
-          const agentLabel = agentType === 'cursor' ? 'Cursor' : agentType === 'codex' ? 'Codex' : 'Claude'
+          const agentLabel = agentDriver(agentType).label
           serverLog(`[unarchive] Reincarnated terminal ${msg.archivedNodeId.slice(0, 8)} with ${agentLabel} session ${resumeId ? resumeId.slice(0, 8) : '(fresh)'}`)
         } catch (err: any) {
           console.error(`[unarchive] Failed to reincarnate terminal ${msg.archivedNodeId.slice(0, 8)}: ${err.message}`)
@@ -1680,28 +1641,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'terminal-create': {
       try {
+        const request = agentRequestFrom(msg.options)
+        const agentType: AgentType | undefined = request?.agentType
         let options: CreateOptions | undefined
-        let agentType: 'claude' | 'cursor' | 'codex' | undefined
-        if (msg.options?.codex) {
-          agentType = 'codex'
-          options = buildCodexCreateOptions({
-            cwd: msg.options.cwd,
-            resumeSessionId: msg.options.codex.resumeSessionId,
-            forkSessionId: msg.options.codex.forkSessionId,
-            prompt: msg.options.codex.prompt,
-          })
-        } else if (msg.options?.cursor) {
-          agentType = 'cursor'
-          options = buildCursorAgentCreateOptions(
-            msg.options.cwd,
-            msg.options.cursor.resumeSessionId,
-            msg.options.cursor.prompt
-          )
-        } else if (msg.options?.claude) {
-          agentType = 'claude'
-          const prompt = msg.options.claude.prompt
-            ?? gatherAncestorPrompt(stateManager.getState().nodes, msg.parentId)
-          options = buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, prompt, msg.options.claude.appendSystemPrompt)
+        if (request) {
+          const spec: AgentLaunchSpec = request.agentType === 'claude'
+            // A Claude surface with no explicit prompt inherits one from its
+            // markdown ancestors.
+            ? { ...request.spec, prompt: request.spec.prompt ?? gatherAncestorPrompt(stateManager.getState().nodes, msg.parentId) }
+            : request.spec
+          options = agentDrivers[request.agentType].buildCreateOptions(spec)
         } else {
           options = msg.options
         }
@@ -1762,41 +1711,23 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           send(client.socket, { type: 'mutation-ack', seq: msg.seq })
           break
         }
+        const rExtraArgs = parseExtraCliArgs(rNode.extraCliArgs)
+        const rRequest = agentRequestFrom(msg.options)
         let rOptions: CreateOptions | undefined
-        if (msg.options?.codex) {
-          rOptions = buildCodexCreateOptions({
-            cwd: msg.options.cwd,
-            resumeSessionId: msg.options.codex.resumeSessionId,
-            forkSessionId: msg.options.codex.forkSessionId,
-            prompt: msg.options.codex.prompt,
-            extraArgs: parseExtraCliArgs(rNode.extraCliArgs),
-          })
-        } else if (msg.options?.cursor) {
-          rOptions = buildCursorAgentCreateOptions(
-            msg.options.cwd,
-            msg.options.cursor.resumeSessionId,
-            msg.options.cursor.prompt,
-            parseExtraCliArgs(rNode.extraCliArgs),
-          )
-        } else if (msg.options?.claude) {
-          rOptions = buildClaudeCodeCreateOptions(msg.options.cwd, msg.options.claude.resumeSessionId, msg.options.claude.prompt, msg.options.claude.appendSystemPrompt)
-        } else if (rNode.agentType === 'codex') {
-          const history = rNode.claudeSessionHistory ?? []
-          rOptions = buildCodexCreateOptions({
+        if (rRequest) {
+          // The surface's Extra CLI arguments apply to every agent. The Claude
+          // branch used to drop them here while restart, unarchive and revive
+          // all passed them — an inconsistency that only survived because each
+          // path built its own command line.
+          rOptions = agentDrivers[rRequest.agentType].buildCreateOptions({ ...rRequest.spec, extraArgs: rExtraArgs })
+        } else if (rNode.agentType && !agentDriver(rNode.agentType).capabilities.claudeTranscript) {
+          // Revive a Cursor/Codex surface with no explicit payload (e.g. an
+          // empty reincarnate) by resuming its most recent recorded chat.
+          rOptions = agentDriver(rNode.agentType).buildCreateOptions({
             cwd: msg.options?.cwd ?? rNode.cwd,
-            resumeSessionId: lastCodexSessionId(history),
-            extraArgs: parseExtraCliArgs(rNode.extraCliArgs),
+            resumeSessionId: lastAgentSessionId(rNode.claudeSessionHistory ?? []),
+            extraArgs: rExtraArgs,
           })
-        } else if (rNode.agentType === 'cursor') {
-          // Revive a Cursor surface without an explicit payload (e.g. empty reincarnate).
-          const history = rNode.claudeSessionHistory ?? []
-          const resumeId = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
-          rOptions = buildCursorAgentCreateOptions(
-            msg.options?.cwd ?? rNode.cwd,
-            resumeId,
-            undefined,
-            parseExtraCliArgs(rNode.extraCliArgs),
-          )
         } else {
           rOptions = msg.options ? { ...msg.options } : undefined
         }
@@ -2100,8 +2031,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           send(client.socket, { type: 'server-error', message: `fork-session: node ${msg.nodeId} is not a terminal` })
           break
         }
-        if (forkNode.agentType === 'cursor') {
-          send(client.socket, { type: 'server-error', message: `fork-session: Cursor Agent does not support fork` })
+        const forkDriver = agentDriver(forkNode.agentType)
+        if (forkDriver.capabilities.forkStrategy === 'none') {
+          send(client.socket, { type: 'server-error', message: `fork-session: ${forkDriver.label} does not support fork` })
           break
         }
         const history = forkNode.claudeSessionHistory ?? []
@@ -2118,14 +2050,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const forkName = computeForkName(forkNode.name)
         const forkParentId = msg.nodeId
 
-        if (forkNode.agentType === 'codex') {
-          // Native Codex fork — new session id arrives via SessionStart hook.
-          const sourceSessionId = lastCodexSessionId(history)
+        if (forkDriver.capabilities.forkStrategy === 'native') {
+          // The CLI forks its own session; the new id arrives via SessionStart.
+          const sourceSessionId = lastAgentSessionId(history)
           if (!sourceSessionId) {
-            send(client.socket, { type: 'server-error', message: `fork-session: no Codex session id` })
+            send(client.socket, { type: 'server-error', message: `fork-session: no ${forkDriver.label} session id` })
             break
           }
-          const forkOptions = buildCodexCreateOptions({
+          const forkOptions = forkDriver.buildCreateOptions({
             cwd: forkCwd,
             forkSessionId: sourceSessionId,
             extraArgs: parseExtraCliArgs(forkNode.extraCliArgs),
@@ -2157,7 +2089,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
 
         const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
-        const forkOptions = buildClaudeCodeCreateOptions(forkCwd, newClaudeSessionId, undefined, undefined, parseExtraCliArgs(forkNode.extraCliArgs))
+        const forkOptions = agentDrivers.claude.buildCreateOptions({ cwd: forkCwd, resumeSessionId: newClaudeSessionId, extraArgs: parseExtraCliArgs(forkNode.extraCliArgs) })
         const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
@@ -2218,7 +2150,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const liveAgentSessionId = sessionManager.getLastClaudeSessionId(oldSessionId)
         const extraArgs = parseExtraCliArgs(msg.extraCliArgs)
         let resumeId: string | undefined
-        if (restartNode.agentType === 'cursor' || restartNode.agentType === 'codex') {
+        if (!agentDriver(restartNode.agentType).capabilities.claudeTranscript) {
           resumeId = resolveNonClaudeResumeId(restartNode, liveAgentSessionId)
           if (!resumeId) {
             serverLog(`[terminal-restart] WARNING: no ${restartNode.agentType} session id to resume for node ${msg.nodeId.slice(0, 8)}`)
@@ -2242,13 +2174,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           })
         }
 
-        let restartOptions: CreateOptions
-        if (restartNode.agentType === 'cursor') {
-          restartOptions = { ...buildCursorAgentCreateOptions(restartCwd, resumeId, undefined, extraArgs), nodeId: msg.nodeId }
-        } else if (restartNode.agentType === 'codex') {
-          restartOptions = { ...buildCodexCreateOptions({ cwd: restartCwd, resumeSessionId: resumeId, extraArgs }), nodeId: msg.nodeId }
-        } else {
-          restartOptions = { ...buildClaudeCodeCreateOptions(restartCwd, resumeId, undefined, undefined, extraArgs), nodeId: msg.nodeId }
+        const restartOptions: CreateOptions = {
+          ...agentDriver(restartNode.agentType).buildCreateOptions({
+            cwd: restartCwd,
+            resumeSessionId: resumeId,
+            extraArgs,
+          }),
+          nodeId: msg.nodeId,
         }
         const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = sessionManager.create(restartOptions)
         snapshotManager.addSession(newPtyId, restartCols, restartRows)
@@ -2480,22 +2412,17 @@ async function startServer(): Promise<void> {
               const recoveryCwd = recoveryNode.cwd
               const recoveryHistory = recoveryNode.claudeSessionHistory ?? []
               const recoveryArgs = parseExtraCliArgs(recovery.previousExtraCliArgs)
-              let recoveryOptions: CreateOptions
-              if (recoveryNode.agentType === 'cursor' || recoveryNode.agentType === 'codex') {
-                const recoveryResumeId = resolveNonClaudeResumeId(recoveryNode)
-                recoveryOptions = recoveryNode.agentType === 'cursor'
-                  ? { ...buildCursorAgentCreateOptions(recoveryCwd, recoveryResumeId, undefined, recoveryArgs), nodeId }
-                  : {
-                      ...buildCodexCreateOptions({
-                        cwd: recoveryCwd,
-                        resumeSessionId: recoveryResumeId,
-                        extraArgs: recoveryArgs,
-                      }),
-                      nodeId,
-                    }
-              } else {
-                const recoveryClaudeId = findValidClaudeSession(recoveryHistory, recoveryCwd)
-                recoveryOptions = { ...buildClaudeCodeCreateOptions(recoveryCwd, recoveryClaudeId, undefined, undefined, recoveryArgs), nodeId }
+              const recoveryDriver = agentDriver(recoveryNode.agentType)
+              const recoveryResumeId = recoveryDriver.capabilities.claudeTranscript
+                ? findValidClaudeSession(recoveryHistory, recoveryCwd)
+                : resolveNonClaudeResumeId(recoveryNode)
+              const recoveryOptions: CreateOptions = {
+                ...recoveryDriver.buildCreateOptions({
+                  cwd: recoveryCwd,
+                  resumeSessionId: recoveryResumeId,
+                  extraArgs: recoveryArgs,
+                }),
+                nodeId,
               }
               const { sessionId: recoveryPtyId, cols: recoveryCols, rows: recoveryRows } = sessionManager.create(recoveryOptions)
               snapshotManager.addSession(recoveryPtyId, recoveryCols, recoveryRows)
@@ -2782,12 +2709,8 @@ async function startServer(): Promise<void> {
 
         // Resume the applicable local telemetry stream after a daemon reattach.
         const reattachedAgentType = node?.type === 'terminal' ? node.agentType : undefined
-        if (claudeSessionId && cwd && !isNonClaudeAgent(reattachedAgentType)) {
-          sessionFileWatcher.watch(ptySessionId!, claudeSessionId, cwd)
-        } else if (claudeSessionId && reattachedAgentType === 'cursor') {
-          cursorSessionFileWatcher.watch(ptySessionId!, claudeSessionId)
-        } else if (claudeSessionId && reattachedAgentType === 'codex') {
-          codexSessionFileWatcher.watch(ptySessionId!, claudeSessionId)
+        if (claudeSessionId) {
+          watchAgentTranscript(ptySessionId!, reattachedAgentType, claudeSessionId, cwd)
         }
 
         // Feed scrollback into snapshot manager for immediate snapshot availability.
@@ -2806,29 +2729,34 @@ async function startServer(): Promise<void> {
     // No surviving daemon session — use existing revival logic.
     const history = (node?.type === 'terminal' && node.claudeSessionHistory) || []
     const agentType = node?.type === 'terminal' ? node.agentType : undefined
-    const isCursor = agentType === 'cursor'
-    const isCodex = agentType === 'codex'
-    const validSessionId = isCursor || isCodex
-      ? (node?.type === 'terminal' ? resolveNonClaudeResumeId(node) : undefined) ?? claudeSessionId
-      : (claudeSessionId ? findValidClaudeSession(history, cwd) : undefined)
+    const reviveDriver = agentDriver(agentType)
+    const usesClaudeTranscript = reviveDriver.capabilities.claudeTranscript
+    const validSessionId = usesClaudeTranscript
+      ? (claudeSessionId ? findValidClaudeSession(history, cwd) : undefined)
+      : (node?.type === 'terminal' ? resolveNonClaudeResumeId(node) : undefined) ?? claudeSessionId
 
-    if (!validSessionId && !isCursor && !isCodex) {
+    // Claude cannot come back as a fresh conversation — a surface with no
+    // resumable session is archived rather than launched empty.
+    if (!validSessionId && reviveDriver.capabilities.requiresResumableSession) {
       stateManager.archiveTerminal(nodeId)
       console.log(`[startup] Archived terminal ${nodeId.slice(0, 8)} (no agent session)`)
       continue
     }
-    if (!isCursor && !isCodex && claudeSessionId && validSessionId !== claudeSessionId) {
+    if (usesClaudeTranscript && claudeSessionId && validSessionId !== claudeSessionId) {
       console.log(`[startup] Session ${claudeSessionId.slice(0, 8)} has no JSONL, falling back to ${validSessionId!.slice(0, 8)}`)
     }
 
     try {
       stateManager.markReviving(nodeId)
       const reviveExtra = parseExtraCliArgs(extraCliArgs)
-      const reviveOptions = isCursor
-        ? { ...buildCursorAgentCreateOptions(cwd, validSessionId, undefined, reviveExtra), nodeId }
-        : isCodex
-          ? { ...buildCodexCreateOptions({ cwd, resumeSessionId: validSessionId, extraArgs: reviveExtra }), nodeId }
-          : { ...buildClaudeCodeCreateOptions(cwd, validSessionId, undefined, undefined, reviveExtra), nodeId }
+      const reviveOptions = {
+        ...reviveDriver.buildCreateOptions({
+          cwd,
+          resumeSessionId: validSessionId,
+          extraArgs: reviveExtra,
+        }),
+        nodeId,
+      }
       const { sessionId, cols, rows } = sessionManager.create(reviveOptions)
       snapshotManager.addSession(sessionId, cols, rows)
       const revivingNode = stateManager.getNode(nodeId)
@@ -2837,19 +2765,11 @@ async function startServer(): Promise<void> {
       }
       stateManager.reincarnateTerminal(nodeId, sessionId, cols, rows)
       seedHistoryAfterReincarnate(nodeId, sessionId)
-      if (!isCursor && !isCodex && validSessionId) {
-        const revivalCwd = sessionManager.getCwd(sessionId)
-        if (revivalCwd) {
-          sessionFileWatcher.watch(sessionId, validSessionId, revivalCwd)
-        }
-      } else if (isCodex && validSessionId) {
-        codexSessionFileWatcher.watch(sessionId, validSessionId)
-      } else if (isCursor && validSessionId) {
-        cursorSessionFileWatcher.watch(sessionId, validSessionId)
+      if (validSessionId) {
+        watchAgentTranscript(sessionId, agentType, validSessionId, sessionManager.getCwd(sessionId))
       }
       revivedNodeIds.push(nodeId)
-      const reviveLabel = isCursor ? 'Cursor' : isCodex ? 'Codex' : 'Claude'
-      console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with ${reviveLabel} session ${validSessionId ? validSessionId.slice(0, 8) : '(fresh)'}`)
+      console.log(`[startup] Revived terminal ${nodeId.slice(0, 8)} with ${reviveDriver.label} session ${validSessionId ? validSessionId.slice(0, 8) : '(fresh)'}`)
     } catch (err: any) {
       stateManager.clearReviving(nodeId)
       console.error(`[startup] Failed to revive terminal ${nodeId.slice(0, 8)}: ${err.message}`)

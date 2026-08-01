@@ -16,6 +16,7 @@ import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { StatePersister } from './persistence'
 import { getAncestorCwd } from './path-utils'
 import { asNodeId, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
+import type { AgentType } from '../shared/agent-type'
 import { isDisposable } from '../shared/node-utils'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
 
@@ -189,7 +190,7 @@ export class StateManager {
     initialTitleHistory?: string[],
     name?: string,
     insertAfterNodeId?: NodeId,
-    agentType?: 'claude' | 'cursor' | 'codex'
+    agentType?: AgentType
   ): TerminalNodeData {
     const zIndex = this.state.nextZIndex++
     const now = new Date().toISOString()

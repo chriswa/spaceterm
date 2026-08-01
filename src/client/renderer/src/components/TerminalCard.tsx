@@ -31,6 +31,7 @@ import { useProportionalOverlay, isBoxDrawing, isAlphanumeric, boxDrawingAlignme
 import { cleanTerminalCopy } from '../lib/cleanTerminalCopy'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
 import { type NodeId, type PtySessionId } from '../../../../shared/ids'
+import type { AgentType } from '../../../../shared/agent-type'
 
 
 function formatElapsed(epochMs: number): string {
@@ -94,7 +95,7 @@ interface TerminalCardProps {
   onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
-  agentType?: 'claude' | 'cursor' | 'codex'
+  agentType?: AgentType
   claudeState?: string
   claudeModel?: string
   onExit?: (id: NodeId, exitCode: number) => void

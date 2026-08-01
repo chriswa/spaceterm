@@ -1,4 +1,5 @@
 import { type NodeId } from '../../../../shared/ids'
+import type { AgentType } from '../../../../shared/agent-type'
 export type CrabColor = 'white' | 'red' | 'green' | 'purple' | 'orange' | 'yellow' | 'gray' | 'asleep'
 
 /** Hex colors for each crab color variant. Matches the toolbar CSS classes. */
@@ -15,7 +16,7 @@ export const CRAB_COLORS: Record<CrabColor, string> = {
   asleep: '#555555',
 }
 
-export type AgentIndicatorKind = 'claude' | 'cursor' | 'codex' | 'terminal'
+export type AgentIndicatorKind = AgentType | 'terminal'
 
 export interface CrabEntry {
   nodeId: NodeId
@@ -42,7 +43,7 @@ export function deriveToolbarIndicator(
   claudeStatusUnread: boolean,
   claudeStatusAsleep: boolean,
   hasSessionHistory: boolean,
-  agentType?: 'claude' | 'cursor' | 'codex'
+  agentType?: AgentType
 ): { kind: AgentIndicatorKind; color: CrabColor; unviewed: boolean; asleep: boolean } {
   const base = deriveToolbarIndicatorInner(claudeState, claudeStatusUnread, hasSessionHistory, agentType)
   if (claudeStatusAsleep) {
@@ -55,7 +56,7 @@ function deriveToolbarIndicatorInner(
   claudeState: string | undefined,
   claudeStatusUnread: boolean,
   hasSessionHistory: boolean,
-  agentType?: 'claude' | 'cursor' | 'codex'
+  agentType?: AgentType
 ): { kind: AgentIndicatorKind; color: CrabColor; unviewed: boolean } {
   const agentKind: AgentIndicatorKind =
     agentType === 'cursor' ? 'cursor'

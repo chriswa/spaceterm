@@ -1,7 +1,8 @@
 import crabIcon from '../assets/crab.png'
 import codexAgentIcon from '../assets/codex-agent.png'
+import type { AgentType } from '../../../../shared/agent-type'
 
-export type AddNodeType = 'claude' | 'cursor' | 'codex' | 'title' | 'markdown' | 'directory' | 'file' | 'terminal'
+export type AddNodeType = AgentType | 'title' | 'markdown' | 'directory' | 'file' | 'terminal'
 
 interface AddNodeBodyProps {
   onSelect: (type: AddNodeType) => void

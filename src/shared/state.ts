@@ -1,5 +1,6 @@
 import type { ClaudeSessionEntry, CameraBounds } from './protocol'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
+import type { AgentType } from './agent-type'
 import type { UndoEntry } from './undo-types'
 
 // --- Claude state enum ---
@@ -52,7 +53,7 @@ export interface TerminalNodeData extends BaseNodeData {
   cwd?: string
   extraCliArgs?: string
   /** Which agent CLI this surface runs. Absent = plain terminal or legacy Claude (inferred from session history). */
-  agentType?: 'claude' | 'cursor' | 'codex'
+  agentType?: AgentType
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean
