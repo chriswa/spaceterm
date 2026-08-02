@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 // against the same declaration this file implements. Do not restate it here.
 import type { Api, NodeApi, PtyApi } from '../../shared/api'
 import type { NodeId, PtySessionId } from '../../shared/ids'
+import type { SystemMetricsSample } from '../../shared/system-metrics'
 
 const ptyApi: PtyApi = {
   create: (options?) => ipcRenderer.invoke('pty:create', options),
@@ -205,6 +206,17 @@ const api: Api = {
   perf: {
     startTrace: () => ipcRenderer.invoke('perf:trace-start'),
     stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
+  },
+  system: {
+    setMetricsEnabled: (enabled: boolean) => ipcRenderer.send('system:set-metrics-enabled', enabled),
+    onMetrics: (callback: (sample: SystemMetricsSample) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, sample: SystemMetricsSample) => callback(sample)
+      ipcRenderer.on('system:metrics', listener)
+      return () => ipcRenderer.removeListener('system:metrics', listener)
+    },
+    getLaunchPrefs: () => ipcRenderer.invoke('system:get-launch-prefs'),
+    setLaunchPrefs: (patch) => ipcRenderer.invoke('system:set-launch-prefs', patch),
+    getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs')
   },
 }
 

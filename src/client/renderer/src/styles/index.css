@@ -295,6 +295,30 @@ html, body, #root {
   filter: drop-shadow(0 0 4px rgba(245, 215, 90, 0.9));
 }
 
+/* The monochrome variant the summary-chat mod supplies for the grid theme:
+   state reads by how much is filled in, not by hue. */
+.toolbar__summary-bubble--technical path,
+.toolbar__summary-bubble--technical rect {
+  stroke: none;
+  fill: #9aa4bd;
+  filter: none;
+}
+
+.toolbar__summary-bubble--technical path {
+  stroke: #9aa4bd;
+  fill: none;
+}
+
+.toolbar__summary-bubble--technical.toolbar__summary-bubble--talking path,
+.toolbar__summary-bubble--technical.toolbar__summary-bubble--talking rect {
+  stroke: #e8edf7;
+  fill: #e8edf7;
+}
+
+.toolbar__summary-bubble--technical.toolbar__summary-bubble--talking path {
+  fill: none;
+}
+
 @keyframes crab-sonar-ping {
   0%   { transform: scale(1); opacity: 0; }
   20%  { opacity: 0.9; }
@@ -453,12 +477,14 @@ html, body, #root {
   white-space: nowrap;
 }
 
-/* Debug dropdown */
-.toolbar__debug-group {
+/* Toolbar pull-up menus (debug tools, canvas theme).
+   The font picker keeps its own item styles for the two-column preview, but
+   shares this shell. */
+.toolbar__menu-group {
   position: relative;
 }
 
-.toolbar__debug-menu {
+.toolbar__menu {
   position: absolute;
   bottom: 100%;
   left: 50%;
@@ -473,7 +499,12 @@ html, body, #root {
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
 
-.toolbar__debug-menu-item {
+/* Wider variant for items that carry a line of explanation under the label. */
+.toolbar__menu--describing {
+  min-width: 240px;
+}
+
+.toolbar__menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -487,23 +518,68 @@ html, body, #root {
   text-align: left;
 }
 
-.toolbar__debug-menu-item:hover {
+.toolbar__menu-item:hover {
   background: rgba(255,255,255,0.08);
 }
 
-.toolbar__debug-menu-item--active {
+.toolbar__menu-item--active {
   color: #ff5c8a;
 }
 
-.toolbar__debug-menu-item:disabled {
+.toolbar__menu-item:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.toolbar__debug-menu-item svg {
+.toolbar__menu-item svg {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+}
+
+.toolbar__menu--describing .toolbar__menu-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.toolbar__menu-label {
+  font-weight: 600;
+}
+
+.toolbar__menu-blurb {
+  font-size: 11px;
+  color: #888;
+}
+
+/* Trailing aside on a menu item — e.g. a setting that needs a restart. */
+.toolbar__menu-note {
+  font-size: 11px;
+  color: #ffc94d;
+}
+
+.toolbar__menu-item--active .toolbar__menu-blurb {
+  color: #b06880;
+}
+
+/* Power monitor — a debug readout, so it is deliberately quieter than fps/zoom */
+.toolbar__power {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.toolbar__power-part {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.toolbar__power-mean {
+  color: #888;
+  margin-left: 2px;
 }
 
 /* Canvas */
@@ -538,13 +614,16 @@ html, body, #root {
 }
 
 /* Terminal Card */
+/* Card chrome reads the `cardChrome` theme facet through these custom
+   properties, published on :root by useCardChromeVars(). The fallbacks are the
+   values the app shipped with, so the rules stand alone if no theme sets them. */
 .terminal-card {
   width: 100%;
   height: 100%;
-  border-radius: 8px;
+  border-radius: var(--card-radius, 8px);
   overflow: visible;
-  border: 2px solid #313244;
-  background: #1e1e2e;
+  border: var(--card-border-width, 2px) solid var(--card-border-color, #313244);
+  background: var(--card-surface, #1e1e2e);
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
@@ -974,9 +1053,9 @@ html, body, #root {
 .markdown-card {
   width: 100%;
   height: 100%;
-  border-radius: 8px;
+  border-radius: var(--card-radius, 8px);
   overflow: visible;
-  border: 2px solid transparent;
+  border: var(--card-border-width, 2px) solid transparent;
   background: transparent;
   display: flex;
   flex-direction: column;
@@ -2028,8 +2107,8 @@ html, body, #root {
   display: flex;
   align-items: center;
   padding: 6px 10px;
-  background: #181825;
-  border-bottom: 1px solid #313244;
+  background: var(--card-head-surface, #181825);
+  border-bottom: 1px solid var(--card-head-border-color, #313244);
   font-size: 15px;
   user-select: none;
   -webkit-app-region: no-drag;

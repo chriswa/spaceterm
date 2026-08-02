@@ -171,11 +171,14 @@ type, with `measureCard` dispatching through `assertNever`. Two findings:
 the three:
 
 - **Widgets split cleanly into two kinds, and the split is exactly the mod
-  boundary.** Nine of the fourteen are *standalone*: they own their state
+  boundary.** Nine of the fifteen are *standalone*: they own their state
   through a zustand store, `localStorage` or `window.api`, and take **no props
-  at all**. Five are *host-driven* — a keyboard-toggled overlay, a WebGL
-  setting, an in-flight server restart, the crab-nav selection, the zoom level.
-  A mod could supply any of the nine today and none of the five.
+  at all**. Six are *host-driven* — a help modal, a keyboard-toggled overlay,
+  an in-flight server restart, App-owned debug actions, the crab-nav selection,
+  the zoom level. A mod could supply any of the nine today and none of the six.
+  The theme picker moved from the second group to the first when its state
+  became a store: that is the migration path, and it is one a mod-supplied
+  widget would have to make too.
 - **That line is enforced, not documented.** A standalone widget's `render` is
   typed `() => ReactNode`, so a function taking `ToolbarHost` fails to compile
   ("Target signature provides too few arguments"). `renderToolbarWidget`
@@ -186,6 +189,30 @@ the three:
   could come from elsewhere — every button looked like it belonged to the
   toolbar because it was written inside it. If that count ever drops to zero,
   the widget contract has become fiction; there is a test guarding it.
+
+**`Theme` / `ThemeFacets`** (`src/client/renderer/src/lib/theme/`). A fourth,
+added after the three above and shaped by them. It replaced a `goodGfx` boolean
+threaded from `App.tsx` through `ToolbarHost` into `CanvasBackground`, which had
+duplicated every piece of per-shader state — program, attribute, six uniform
+locations — once per branch. Two findings the other three did not produce:
+
+- **Entries are *sparse*, and that is what makes the registry growable.** A
+  theme names the facets it changes; everything else falls through to
+  `DEFAULT_FACETS`. `AGENT_TYPES`, `CARD_TYPES` and `TOOLBAR_WIDGETS` are all
+  total — every entry supplies every field — which is fine at their size but
+  means a new field is an edit to every entry, enforced by the compiler. Here,
+  adding a facet is one field on `ThemeFacets`, one entry in `DEFAULT_FACETS`,
+  and no existing theme changes. That is the difference between a registry that
+  can grow a dimension and one that can only grow rows.
+- **The default entry is the defaults, not a copy of them.** The default theme
+  is defined as the one overriding nothing, so "what a fresh install looks like"
+  and "what an unset facet falls back to" are the same object and cannot drift.
+  A test asserts its override set is empty, because that invariant is one
+  well-meaning edit away from being quietly false.
+
+A facet's value is whatever that facet needs — a GLSL string, a React
+component, a set of CSS custom properties — so the registry already spans three
+kinds of thing without a common base type beyond `{ id, label }`.
 
 **What Tier 0 cost, and what it returned.** Toolbar.tsx: 1021 → 40 lines.
 index.ts: 3087 → 2543. Test count: 641 → 843. Every registry was worth doing on
@@ -221,8 +248,9 @@ from a manifest; it speaks JSON-lines over `scripts.sock`.
   blast-radius reduction.
 
 Good fits: pollers and data feeds, notifications, external-service integrations,
-automation, anything an agent should be able to trigger. Bad fit: anything that
-draws.
+automation, anything an agent should be able to trigger. It cannot draw, and
+until Tier 3 it also could not *talk to* the half of a mod that draws — see
+below, because that gap is what kept whole features from being expressible.
 
 ### Tier 2 — renderer-side mods for UI
 
@@ -237,6 +265,136 @@ monotonic series precisely so this is possible.
 
 That is a much smaller thing than "renderer-side mods", and it covers the
 sparkline case, which is the one that motivated the tier.
+
+### Tier 3 — feature mods that span processes
+
+Tiers 1 and 2 each describe half a mod, and the halves could not talk. A
+sparkline is a poller *and* a widget. Summary chat is a subprocess that calls an
+external service *and* a speech bubble *and* a halo around a card. Every mod
+worth writing is a Tier 1 mod and a Tier 2 mod with a wire between them, and
+that wire is the thing that was missing.
+
+The earlier reading of this — recorded in `THEME_MODS.md` — was that a mod
+cannot own an IPC channel, so features like summary chat were blocked. That is
+true and beside the point. **A mod does not need its own channel; it needs an
+envelope.**
+
+#### One envelope, not one channel per mod
+
+Add exactly one variant to each existing union:
+
+```ts
+interface ModEnvelope {
+  type: 'mod'
+  /** Namespace. The only thing the base reads. */
+  modId: string
+  /** The mod's own discriminant, in the mod's own vocabulary. */
+  event: string
+  /** The mod's own shape. The base never looks inside. */
+  payload: unknown
+  /** Present on a request, echoed on its reply. */
+  seq?: number
+}
+```
+
+One member of `ClientMessage`, one of `ServerMessage`, one of `ScriptMessage`,
+and one pair of bridge methods (`window.api.mods.send` / `.onMessage`). That is
+the entire base-side cost, and it does not grow with the number of mods.
+
+Three properties make this the right shape rather than a shortcut:
+
+- **Exhaustiveness survives.** `assertNever` guards ~100 variants across five
+  unions today, and that is the repo's best defence against "nothing happens"
+  bugs. Each switch gains one `case 'mod':` that routes by `modId` and returns.
+  The union stays closed; the *payload* is open.
+- **It is the same trick the theme facets already use**, and that one is built
+  and tested. `Theme.modFacets` is `Record<string, unknown>`; the base stores
+  and routes, the mod owns the type and exports the typed accessor. Two
+  subsystems solving the extension problem two different ways would be the
+  smell — this is one idea applied twice.
+- **Each hop stays dumb.** Main relays renderer↔server; server relays
+  client↔script. Neither parses. A mod's two halves are correlated by `modId`
+  and nothing else.
+
+The mod ships its own protocol module with its own discriminated union and its
+own `assertNever`. It gets the same safety internally that the base has; the
+base simply is not a party to it.
+
+#### What summary chat would still need, concretely
+
+Worth enumerating, because it is short and it is the difference between a plan
+and a wish. Against today's `ScriptHost`:
+
+| Need | Status |
+|---|---|
+| Read the node tree, find the terminal ancestor | `getNode`, `getNearestTerminalAncestor` — **have it** |
+| Find the newest transcript | `resolveTranscript` — **have it** |
+| Call an external HTTP service, spawn a model | the mod is its own process — **needs nothing** |
+| Push status to its own UI | the envelope — **Tier 3** |
+| Draw the bubble, the halo | facets — **built** (`THEME_MODS.md`) |
+| Speak | `SpeakServerMessage` is core today; a mod needs either a `speak` capability on `ScriptHost` or to route through its renderer half |
+| Remember which surface is the voice target | a per-mod key-value store, or the mod keeps its own file |
+
+Two genuinely new capabilities, then, and both are small. That is a much better
+position than "blocked".
+
+#### Mods stepping on each other
+
+The base polices **names**, not **behaviour**, and that line is deliberate.
+
+Enforced, because a collision here is unrecoverable and silent:
+
+- Facet ids, theme ids, and envelope `modId`s are namespaced `<modId>:<name>`,
+  checked at registration. A mod cannot squat a built-in id or another mod's.
+- The same rule should extend to toolbar widget ids, card type ids, and any
+  per-mod persisted keys as those become mod-supplied.
+
+Not enforced, and not going to be: two mods writing the same node field, two
+mods claiming a keybinding, two mods whose themes disagree about what a colour
+means. A sufficiently expressive mod system cannot prevent this, and pretending
+otherwise buys a worse system in exchange for a promise it cannot keep. A mod
+can break another mod. That is the cost of the ceiling being high.
+
+What the base owes careful authors instead is the ability to **cooperate on
+purpose**:
+
+- **A declared public surface.** A mod's manifest lists the facets and events
+  it provides. Another mod targets them by string — which is exactly what
+  `modFacets` already does, and there is a test for the cross-mod case where
+  the only shared knowledge is the key.
+- **Optional peers.** `peers: { 'summary-chat': '^1' }`. Advisory: it orders
+  the register phase and produces a diagnostic when a peer is absent. It does
+  not gate loading, because a mod that degrades gracefully without its peer is
+  the behaviour we want to encourage.
+- **Two-phase lifecycle.** A `register` phase — facets, themes, widgets, routes;
+  declarations only, no side effects — runs for every mod before any mod's
+  `activate` phase. This is why a theme from one mod can dress a facet from
+  another regardless of load order, and it is already how the theme registry
+  behaves.
+- **Visibility.** `spaceterm-cli mods` should list what each mod registered and
+  flag two mods that touched the same thing. An ecosystem cannot form around
+  conflicts nobody can see; this is the highest-leverage item on the list and
+  the cheapest.
+
+#### Order of work
+
+1. **The envelope**, on all three hops. Small, self-contained, unblocks every
+   hybrid mod. Nothing else on this list is useful without it.
+2. **Manifest and lifecycle** — spawn, health, restart, disable, two-phase
+   registration, and per-mod scoping of `ScriptHost` (already listed as
+   outstanding under Tier 1).
+3. **Extract summary chat** as the first hybrid mod. It is pilot conversion #3
+   and it exercises every part of the above; anything the plan got wrong shows
+   up here.
+4. **Ecosystem tooling** — the registry inspector and conflict report.
+
+#### Non-goals, stated so they are not assumed
+
+Not a security boundary; mods run as the user, and the note under *Security*
+below applies unchanged. Not a guarantee that any two mods compose. Not hot
+reload. Not a stable API before the first real mod has shaped it — the envelope
+is deliberately the smallest thing that could work, so that what replaces it is
+informed by a mod that exists.
 
 ## Pilot conversions, in order
 

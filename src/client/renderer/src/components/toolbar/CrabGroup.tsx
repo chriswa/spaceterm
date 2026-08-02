@@ -8,6 +8,7 @@ import { CrabDance } from '../../lib/crab-dance'
 import { useHoveredCardStore } from '../../stores/hoveredCardStore'
 import { useSpeakingStore } from '../../stores/speakingStore'
 import { useSummaryChatStore } from '../../stores/summaryChatStore'
+import { useSummaryBubble } from '../../mods/summary-chat/bubble-facet'
 import { asNodeId, type NodeId } from '../../../../../shared/ids'
 
 /**
@@ -49,6 +50,9 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
   const speakingSessions = useSpeakingStore(s => s.speaking)
   const summaryTargetNodeId = useSummaryChatStore(s => s.targetNodeId)
   const summaryThinking = useSummaryChatStore(s => s.thinking)
+  // Supplied by the summary-chat mod, not by the base theme system — the
+  // active theme may swap it for a different mark entirely.
+  const { Component: SummaryBubble } = useSummaryBubble()
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
   const positionsRef = useRef<Map<string, number>>(new Map())
@@ -443,16 +447,7 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
               data-tooltip={crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title}
               data-tooltip-no-flip
             />
-            {summaryTarget && (
-              <svg
-                className={`toolbar__summary-bubble toolbar__summary-bubble--${summaryState}`}
-                viewBox="0 0 20 16"
-                role="img"
-                aria-label={summaryState === 'talking' ? 'Summary Chat is speaking' : summaryState === 'thinking' ? 'Summary Chat is thinking' : 'Voice follow-ups target this surface'}
-              >
-                <path d="M2.5 1.5h15v9h-8l-4.5 4v-4h-2.5z" />
-              </svg>
-            )}
+            {summaryTarget && <SummaryBubble state={summaryState} />}
           </div>
           )
       })}

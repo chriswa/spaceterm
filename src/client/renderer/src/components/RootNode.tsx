@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { ROOT_NODE_RADIUS } from '../lib/constants'
+import { useFacet } from '../hooks/useFacet'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import type { AddNodeType } from './AddNodeBody'
@@ -31,6 +32,8 @@ const HIDDEN_ACTIONS_HEIGHT = 28
 
 export function RootNode({ focused, selected, onClick, archivedChildren, onUnarchive, onArchiveDelete, onOpenArchiveSearch, onAddNode, onReparentTarget }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
+  const visualSize = size * 0.7
+  const { Component: RootNodeVisual } = useFacet('rootNode')
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -69,35 +72,20 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       className={`root-node${focused ? ' root-node--focused' : ''}`}
       style={{ background: 'transparent', border: 'none' }}
     >
+      {/* The box is positioned here and filled by the `rootNode` facet, so a
+          facet can be a CSS circle or a live WebGL canvas without either
+          knowing where CardShell puts it. */}
       <div
-        className="root-node__circle"
         style={{
           position: 'absolute',
           left: size * 0.15,
           top: size * 0.15 - HIDDEN_ACTIONS_HEIGHT,
-          width: size * 0.7,
-          height: size * 0.7,
-          borderRadius: '50%',
-          background: '#000',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          width: visualSize,
+          height: visualSize,
           pointerEvents: 'none',
         }}
       >
-        {focused && (
-          <span
-            style={{
-              color: '#fff',
-              fontSize: 22,
-              fontWeight: 600,
-              letterSpacing: '0.05em',
-              userSelect: 'none',
-            }}
-          >
-            root
-          </span>
-        )}
+        <RootNodeVisual size={visualSize} focused={focused} />
       </div>
     </CardShell>
   )

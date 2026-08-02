@@ -26,7 +26,9 @@ import type {
   SessionInfo,
   SnapshotMessage,
 } from './protocol'
+import type { LaunchPrefs } from './launch-prefs'
 import type { NodeData, ServerState } from './state'
+import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
 
@@ -149,6 +151,25 @@ export interface PerfApi {
   stopTrace(): Promise<string>
 }
 
+/**
+ * The power monitor's feed.
+ *
+ * Sampling is opt-in rather than always-on: reading GPU and battery state
+ * means spawning `ioreg` twice a second, and a measuring instrument that runs
+ * unasked would show up in its own readings. `setMetricsEnabled(false)` stops
+ * the timer outright.
+ */
+export interface SystemApi {
+  setMetricsEnabled(enabled: boolean): void
+  onMetrics(callback: (sample: SystemMetricsSample) => void): () => void
+  /** What the *next* launch will use. */
+  getLaunchPrefs(): Promise<LaunchPrefs>
+  /** Merge a patch into the stored prefs. Returns what is now stored. */
+  setLaunchPrefs(patch: Partial<LaunchPrefs>): Promise<LaunchPrefs>
+  /** What the *running* process launched with, so unapplied changes are visible. */
+  getActiveLaunchPrefs(): Promise<LaunchPrefs>
+}
+
 export interface WindowApi {
   isFullScreen(): Promise<boolean>
   setFullScreen(enabled: boolean): Promise<void>
@@ -169,4 +190,5 @@ export interface Api {
   tts: TtsApi
   perf: PerfApi
   window: WindowApi
+  system: SystemApi
 }

@@ -3,18 +3,19 @@ import type { NodeId } from '../../../../../shared/ids'
 import type { CrabEntry } from '../../lib/crab-nav'
 import { CrabGroup, type CrabNavEvent } from './CrabGroup'
 import { GhRateLimitIndicator } from './GhRateLimitIndicator'
+import { PowerMonitor } from './PowerMonitor'
 import {
   CameraLockToggle,
   CopyCleanupToggle,
   DebugDropdown,
   FpsMetric,
   FullscreenToggle,
-  GoodGfxToggle,
   HelpButton,
   KeycastToggle,
   NotificationSoundToggle,
   ProportionalFontToggle,
   RestartButton,
+  ThemePicker,
   ZoomMetric
 } from './buttons'
 
@@ -37,8 +38,8 @@ import {
  * - **Standalone widgets** own their state — a zustand store, `localStorage`,
  *   `window.api`. There are nine of them, and they take *no props at all*.
  * - **Host widgets** need something that lives in `App.tsx`: an overlay
- *   toggled by a keyboard shortcut, a WebGL setting, an in-flight server
- *   restart, the crab-nav selection.
+ *   toggled by a keyboard shortcut, an in-flight server restart, the crab-nav
+ *   selection.
  *
  * That line is exactly the line between "a mod could supply this today" and
  * "it could not", and the type enforces it: a standalone widget's `render` is
@@ -70,8 +71,6 @@ export interface ToolbarHost {
   onKeycastToggle: () => void
   onDebugCapture: () => void
   onInertiaLogDump: () => void
-  goodGfx: boolean
-  onGoodGfxToggle: () => void
   restartingSpaceterm: boolean
   onRestartSpaceterm: () => void
   crabs: CrabEntry[]
@@ -130,12 +129,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
     kind: 'host',
     render: (h) => <DebugDropdown onDebugCapture={h.onDebugCapture} onInertiaLogDump={h.onInertiaLogDump} />
   },
-  {
-    id: 'good-gfx',
-    slot: 'buttons',
-    kind: 'host',
-    render: (h) => <GoodGfxToggle enabled={h.goodGfx} onToggle={h.onGoodGfxToggle} />
-  },
+  { id: 'theme', slot: 'buttons', kind: 'standalone', render: () => <ThemePicker /> },
   {
     id: 'keycast',
     slot: 'buttons',
@@ -148,6 +142,8 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
 
   { id: 'fps', slot: 'status', kind: 'standalone', render: () => <FpsMetric /> },
   { id: 'zoom', slot: 'status', kind: 'host', render: (h) => <ZoomMetric zoom={h.zoom} /> },
+  // Renders nothing unless switched on from the debug menu.
+  { id: 'power-monitor', slot: 'status', kind: 'standalone', render: () => <PowerMonitor /> },
   { id: 'gh-rate-limit', slot: 'status', kind: 'standalone', render: () => <GhRateLimitIndicator /> },
 
   {

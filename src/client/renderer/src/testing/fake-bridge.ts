@@ -1,7 +1,9 @@
 import type {
   Api, AttachResult, CameraBounds, CreateOptions, NodeApi, PerfApi, PtyApi,
-  SessionInfo, SummaryChatUiState, TtsApi, WindowApi
+  SessionInfo, SummaryChatUiState, SystemApi, TtsApi, WindowApi
 } from '../../../../shared/api'
+import type { SystemMetricsSample } from '../../../../shared/system-metrics'
+import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
 import type { GhRateLimitData, SnapshotMessage } from '../../../../shared/protocol'
 import type { NodeData, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
@@ -78,6 +80,10 @@ export interface FakeBridgeResponses {
   newNodeId: NodeId
   isFullScreen: boolean
   ttsAvailable: boolean
+  /** What the next launch would use. `setLaunchPrefs` mutates this. */
+  launchPrefs: LaunchPrefs
+  /** What the running process launched with; differs once a change is unapplied. */
+  activeLaunchPrefs: LaunchPrefs
 }
 
 const EMPTY_STATE: ServerState = {
@@ -102,7 +108,9 @@ export class FakeBridge implements Api {
     validate: { valid: true },
     newNodeId: 'node-fake' as NodeId,
     isFullScreen: false,
-    ttsAvailable: true
+    ttsAvailable: true,
+    launchPrefs: { ...DEFAULT_LAUNCH_PREFS },
+    activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS }
   }
 
   /**
@@ -131,6 +139,7 @@ export class FakeBridge implements Api {
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId) => void>()
+  private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
 
   // --- per-session channels ---
   private readonly ptyData: SessionListeners<(data: string) => void> = new Map()
@@ -212,6 +221,9 @@ export class FakeBridge implements Api {
       for (const fn of this.visibilityChanged) fn(visible)
     },
     focusNode: (nodeId: NodeId): void => { for (const fn of this.focusNode) fn(nodeId) },
+    systemMetrics: (sample: SystemMetricsSample): void => {
+      for (const fn of this.systemMetrics) fn(sample)
+    },
 
     // Per-session. Emitting for a session nobody subscribed to is a silent
     // no-op on purpose: that is what the real bridge does.
@@ -340,6 +352,17 @@ export class FakeBridge implements Api {
     setFullScreen: (enabled) => this.reply('window.setFullScreen', undefined, enabled),
     onVisibilityChanged: (cb) => subscribe(this.visibilityChanged, cb),
     onFocusNode: (cb) => subscribe(this.focusNode, cb)
+  }
+
+  readonly system: SystemApi = {
+    setMetricsEnabled: (enabled) => this.record('system.setMetricsEnabled', enabled),
+    onMetrics: (cb) => subscribe(this.systemMetrics, cb),
+    getLaunchPrefs: () => this.reply('system.getLaunchPrefs', this.responses.launchPrefs),
+    setLaunchPrefs: (patch) => {
+      this.responses.launchPrefs = { ...this.responses.launchPrefs, ...patch }
+      return this.reply('system.setLaunchPrefs', this.responses.launchPrefs, patch)
+    },
+    getActiveLaunchPrefs: () => this.reply('system.getActiveLaunchPrefs', this.responses.activeLaunchPrefs)
   }
 
   log = (message: string): void => this.record('log', message)

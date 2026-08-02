@@ -47,6 +47,36 @@ export function BugIcon() {
   )
 }
 
+export function ChipIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <rect x="4.5" y="4.5" width="7" height="7" rx="1" />
+      <rect x="6.75" y="6.75" width="2.5" height="2.5" rx="0.5" />
+      {/* Pins, two per side */}
+      <line x1="6.5" y1="4.5" x2="6.5" y2="2.5" />
+      <line x1="9.5" y1="4.5" x2="9.5" y2="2.5" />
+      <line x1="6.5" y1="11.5" x2="6.5" y2="13.5" />
+      <line x1="9.5" y1="11.5" x2="9.5" y2="13.5" />
+      <line x1="4.5" y1="6.5" x2="2.5" y2="6.5" />
+      <line x1="4.5" y1="9.5" x2="2.5" y2="9.5" />
+      <line x1="11.5" y1="6.5" x2="13.5" y2="6.5" />
+      <line x1="11.5" y1="9.5" x2="13.5" y2="9.5" />
+    </svg>
+  )
+}
+
+export function GaugeIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      {/* Dial: a half-circle open at the bottom */}
+      <path d="M1.75 11.5a6.25 6.25 0 1 1 12.5 0" />
+      {/* Needle, resting past three-quarters */}
+      <line x1="8" y1="11.5" x2="11.5" y2="7.5" />
+      <circle cx="8" cy="11.5" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
 export function StopwatchIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>

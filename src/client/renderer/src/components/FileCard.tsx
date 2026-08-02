@@ -7,7 +7,7 @@ import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
-import { angleBorderColor } from '../lib/angle-color'
+import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { type NodeId } from '../../../../shared/ids'
 
@@ -69,6 +69,8 @@ export function FileCard({
   onUnarchive, onArchiveDelete, onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: FileCardProps) {
+  // Where an unset node's colour comes from — see the `nodeTint` theme facet.
+  const nodeTint = useFacet('nodeTint')
   const preset = resolvedPreset
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(filePath)
@@ -257,7 +259,7 @@ export function FileCard({
         viewBox={`0 0 ${fileWidth} 144`}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        style={focused && !rtsSelectActive ? { color: angleBorderColor(x, y), filter: `drop-shadow(0 0 4px ${angleBorderColor(x, y)})` } : undefined}
+        style={focused && !rtsSelectActive ? { color: nodeTint.borderColor(x, y), filter: `drop-shadow(0 0 4px ${nodeTint.borderColor(x, y)})` } : undefined}
       >
         <path d={paths.outline} fill={blendHex(preset?.titleBarBg ?? '#ffffff', '#000000', 0.8)} stroke="currentColor" strokeWidth="1.5" />
         <path d={paths.fold} fill="none" stroke="currentColor" strokeWidth="1.5" />

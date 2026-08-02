@@ -9,7 +9,20 @@ import { ServerClient } from './server-client'
 import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
 import { loadWindowState, saveWindowState, findTargetDisplay } from './window-state'
+import { startSystemMetrics, stopSystemMetrics } from './system-metrics'
+import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
+import type { LaunchPrefs } from '../../shared/launch-prefs'
 import { asPtySessionId, type NodeId, type PtySessionId } from '../../shared/ids'
+
+/**
+ * What this process launched with.
+ *
+ * Read at module scope because Chromium parses its command line before
+ * `whenReady()`, so the switches below have to be decided here — and because
+ * an IPC handler further down reports it, which means it must be initialised
+ * before any of them can run.
+ */
+const launchPrefs = loadLaunchPrefs()
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
@@ -478,6 +491,38 @@ function setupIPC(): void {
     return dest
   })
 
+  // --- Launch preferences ---
+
+  // Reports the *stored* prefs, which is what the next launch will use. When
+  // the two differ the UI has an unapplied change to tell the user about.
+  ipcMain.handle('system:get-launch-prefs', () => loadLaunchPrefs())
+
+  ipcMain.handle('system:set-launch-prefs', (_event, patch: Partial<LaunchPrefs>) => {
+    const next = saveLaunchPrefs(patch)
+    logger.log('[launch-prefs] saved: ' + JSON.stringify(next))
+    return next
+  })
+
+  /** What the running process actually launched with, for comparison. */
+  ipcMain.handle('system:active-launch-prefs', () => launchPrefs)
+
+  // --- System metrics (power monitor) ---
+
+  ipcMain.on('system:set-metrics-enabled', (_event, enabled: boolean) => {
+    if (!enabled) {
+      stopSystemMetrics()
+      return
+    }
+    startSystemMetrics((sample) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('system:metrics', sample)
+      } else {
+        // Nothing left to report to; do not keep spawning `ioreg`.
+        stopSystemMetrics()
+      }
+    })
+  })
+
 }
 
 /**
@@ -649,6 +694,12 @@ app.commandLine.appendSwitch('enable-gpu-rasterization')
 app.commandLine.appendSwitch('enable-zero-copy')
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
 
+if (launchPrefs.highPerformanceGpu) {
+  // Dual-GPU Macs only. Faster and hungrier — which of the two is better for
+  // battery depends on the machine, hence the toggle rather than a decision.
+  app.commandLine.appendSwitch('force_high_performance_gpu')
+}
+
 /**
  * How long startup waits for the server before opening the window anyway.
  *
@@ -676,6 +727,16 @@ function connectWithinGrace(serverClient: ServerClient, graceMs: number): Promis
 app.whenReady().then(async () => {
   logger.init()
   logger.log('Electron app starting')
+
+  // Which GPU Chromium actually chose. On a dual-GPU MacBook this is the
+  // difference between a canvas theme costing a couple of watts and costing
+  // fifteen, and it is not observable from the renderer.
+  try {
+    const gpuInfo = await app.getGPUInfo('basic')
+    logger.log('[gpu] active GPU: ' + JSON.stringify(gpuInfo))
+  } catch (err: unknown) {
+    logger.log('[gpu] failed to read GPU info: ' + (err instanceof Error ? err.message : String(err)))
+  }
 
   // Register custom protocol for loading local files in the renderer
   protocol.handle('spaceterm-file', (request) => {

@@ -4,8 +4,14 @@ import { useFontStore, FONT_THEMES } from '../../stores/fontStore'
 import { useCameraLockStore } from '../../stores/cameraLockStore'
 import { useNotificationSoundStore } from '../../stores/notificationSoundStore'
 import { useCopyCleanupStore } from '../../stores/copyCleanupStore'
+import { useThemeStore } from '../../stores/themeStore'
+import { usePowerMonitorStore } from '../../stores/powerMonitorStore'
+import { resolveTheme } from '../../lib/theme/themes'
+import { useThemes } from '../../hooks/useFacet'
 import { useFps } from '../../hooks/useFps'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FullscreenIcon, LockIcon, BellIcon, DustpanIcon, KeycastIcon } from './icons'
+import { useToolbarMenu } from './useToolbarMenu'
+import { showToast } from '../../lib/toast'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FullscreenIcon, LockIcon, BellIcon, DustpanIcon, KeycastIcon, GaugeIcon, ChipIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -25,54 +31,54 @@ export function DebugDropdown({ onDebugCapture, onInertiaLogDump }: {
   // re-rendered the whole bar.
   const tracing = usePerfStore(s => s.recording) === 'trace'
   const startTrace = usePerfStore(s => s.startTrace)
-  const [open, setOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
+  const powerMonitor = usePowerMonitorStore(s => s.enabled)
+  const togglePowerMonitor = usePowerMonitorStore(s => s.toggle)
+  const menu = useToolbarMenu()
 
   return (
-    <div className="toolbar__debug-group" ref={dropdownRef}>
+    <div className="toolbar__menu-group" ref={menu.ref}>
       <button
-        className={'toolbar__btn' + (open ? ' toolbar__btn--active' : '')}
-        onClick={() => setOpen(o => !o)}
+        className={'toolbar__btn' + (menu.open ? ' toolbar__btn--active' : '')}
+        onClick={menu.toggle}
         data-tooltip="Debug tools"
         data-tooltip-no-flip
       >
         <BugIcon />
       </button>
-      {open && (
-        <div className="toolbar__debug-menu">
+      {menu.open && (
+        <div className="toolbar__menu">
           <button
-            className={'toolbar__debug-menu-item' + (tracing ? ' toolbar__debug-menu-item--active' : '')}
-            onClick={() => { startTrace(); setOpen(false) }}
+            className={'toolbar__menu-item' + (tracing ? ' toolbar__menu-item--active' : '')}
+            onClick={() => { startTrace(); menu.close() }}
             disabled={tracing}
           >
             <StopwatchIcon />
             <span>{tracing ? 'Recording trace…' : 'Perf Trace'}</span>
           </button>
           <button
-            className="toolbar__debug-menu-item"
-            onClick={() => { onDebugCapture(); setOpen(false) }}
+            className="toolbar__menu-item"
+            onClick={() => { onDebugCapture(); menu.close() }}
           >
             <CameraIcon />
             <span>Camera Debug</span>
           </button>
           <button
-            className="toolbar__debug-menu-item"
-            onClick={() => { onInertiaLogDump(); setOpen(false) }}
+            className="toolbar__menu-item"
+            onClick={() => { onInertiaLogDump(); menu.close() }}
           >
             <ScrollIcon />
             <span>Inertia Log</span>
           </button>
+          {/* These two stay open: each toggles something you want to see the
+              state of, so closing the menu would hide the answer. */}
+          <button
+            className={'toolbar__menu-item' + (powerMonitor ? ' toolbar__menu-item--active' : '')}
+            onClick={togglePowerMonitor}
+          >
+            <GaugeIcon />
+            <span>Power Monitor</span>
+          </button>
+          <HighPerformanceGpuItem />
         </div>
       )}
     </div>
@@ -80,6 +86,69 @@ export function DebugDropdown({ onDebugCapture, onInertiaLogDump }: {
 }
 
 
+
+/**
+ * Toggle the discrete-GPU launch switch.
+ *
+ * Its own component, rather than more state inside `DebugDropdown`, because it
+ * is the only toolbar control that cannot take effect when clicked: Chromium
+ * parses its command line once at process start. So the item tracks two values
+ * — what is stored and what the running process launched with — and says
+ * "restart to apply" while they disagree. Reporting only the stored value
+ * would show the flag as on while the app is demonstrably not using it, which
+ * is exactly the confusion that makes an A/B comparison worthless.
+ *
+ * The restart is left to the user's ↻ button rather than done automatically:
+ * exiting for a supervised restart only works under `npm run dev`, and quitting
+ * the app instead would be a poor surprise.
+ */
+export function HighPerformanceGpuItem() {
+  const [stored, setStored] = useState<boolean | null>(null)
+  const [active, setActive] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([
+      window.api.system.getLaunchPrefs(),
+      window.api.system.getActiveLaunchPrefs(),
+    ]).then(([next, running]) => {
+      if (cancelled) return
+      setStored(next.highPerformanceGpu)
+      setActive(running.highPerformanceGpu)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const toggle = () => {
+    if (stored === null) return
+    const next = !stored
+    setStored(next)
+    void window.api.system.setLaunchPrefs({ highPerformanceGpu: next }).then((prefs) => {
+      setStored(prefs.highPerformanceGpu)
+      showToast(
+        prefs.highPerformanceGpu === active
+          ? `High-performance GPU ${prefs.highPerformanceGpu ? 'on' : 'off'}`
+          : `High-performance GPU ${prefs.highPerformanceGpu ? 'on' : 'off'} — restart to apply`,
+      )
+    })
+  }
+
+  const pending = stored !== null && active !== null && stored !== active
+
+  return (
+    <button
+      className={'toolbar__menu-item' + (stored ? ' toolbar__menu-item--active' : '')}
+      onClick={toggle}
+      disabled={stored === null}
+    >
+      <ChipIcon />
+      <span>
+        High-Perf GPU
+        {pending && <span className="toolbar__menu-note"> restart to apply</span>}
+      </span>
+    </button>
+  )
+}
 
 export function CameraLockToggle() {
   const locked = useCameraLockStore(s => s.locked)
@@ -132,23 +201,10 @@ export function ProportionalFontToggle() {
   const toggle = useFontStore(s => s.toggle)
   const themeId = useFontStore(s => s.themeId)
   const setThemeId = useFontStore(s => s.setThemeId)
-  const [open, setOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
+  const menu = useToolbarMenu()
 
   return (
-    <div className="toolbar__font-group" ref={dropdownRef}>
+    <div className="toolbar__font-group" ref={menu.ref}>
       <button
         className={'toolbar__btn' + (proportional ? ' toolbar__btn--active' : '')}
         onClick={toggle}
@@ -158,14 +214,14 @@ export function ProportionalFontToggle() {
         Aa
       </button>
       <button
-        className={'toolbar__font-dropdown-btn' + (open ? ' toolbar__font-dropdown-btn--open' : '')}
-        onClick={() => setOpen(o => !o)}
+        className={'toolbar__font-dropdown-btn' + (menu.open ? ' toolbar__font-dropdown-btn--open' : '')}
+        onClick={menu.toggle}
         data-tooltip="Font theme"
         data-tooltip-no-flip
       >
         ▾
       </button>
-      {open && (
+      {menu.open && (
         <div className="toolbar__font-menu">
           {FONT_THEMES.map(t => (
             <button
@@ -174,7 +230,7 @@ export function ProportionalFontToggle() {
               onClick={() => {
                 setThemeId(t.id)
                 if (!proportional) toggle()
-                setOpen(false)
+                menu.close()
               }}
             >
               <span className="toolbar__font-menu-label">{t.label}</span>
@@ -221,12 +277,57 @@ export function CopyCleanupToggle() {
   )
 }
 
+/**
+ * Pick the theme.
+ *
+ * This replaced a `Good Gfx` on/off button. The toggle was really a choice
+ * between two looks that happened to number two, and a third made that
+ * obvious — so the widget lists every registered theme and stays open while you click
+ * through them, which is the whole point when what you are judging is the
+ * difference between them.
+ */
+export function ThemePicker() {
+  const themeId = useThemeStore(s => s.themeId)
+  const setThemeId = useThemeStore(s => s.setThemeId)
+  // From the registry, not a constant: a mod may contribute themes, and may do
+  // it after this component has already rendered once.
+  const themes = useThemes()
+  const menu = useToolbarMenu()
+
+  return (
+    <div className="toolbar__menu-group" ref={menu.ref}>
+      <button
+        className={'toolbar__btn' + (menu.open ? ' toolbar__btn--active' : '')}
+        onClick={menu.toggle}
+        data-tooltip={`Theme — ${resolveTheme(themeId).label}`}
+        data-tooltip-no-flip
+      >
+        ✦
+      </button>
+      {menu.open && (
+        <div className="toolbar__menu toolbar__menu--describing">
+          {themes.map(t => (
+            <button
+              key={t.id}
+              className={'toolbar__menu-item' + (t.id === themeId ? ' toolbar__menu-item--active' : '')}
+              onClick={() => setThemeId(t.id)}
+            >
+              <span className="toolbar__menu-label">{t.label}</span>
+              <span className="toolbar__menu-blurb">{t.blurb}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // --- Host-driven buttons ---
 //
-// These four cannot be standalone: their state lives in App (a keyboard-driven
-// overlay, a WebGL setting, an in-flight server restart) rather than in a
-// store. That is the honest dividing line between what a mod could supply
-// today and what it could not.
+// These three cannot be standalone: their state lives in App (a keyboard-driven
+// overlay, an in-flight server restart) rather than in a store. That is the
+// honest dividing line between what a mod could supply today and what it could
+// not.
 
 export function HelpButton({ onClick }: { onClick: () => void }) {
   return (
@@ -250,18 +351,6 @@ export function RestartButton({ restarting, onRestart }: { restarting: boolean; 
   )
 }
 
-export function GoodGfxToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
-  return (
-    <button
-      className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
-      onClick={onToggle}
-      data-tooltip={enabled ? 'Good Gfx — Switch to simple background shader' : 'Good Gfx — Switch to full background shader'}
-      data-tooltip-no-flip
-    >
-      ✦
-    </button>
-  )
-}
 
 export function KeycastToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { angleBorderColor } from './angle-color'
+import { currentFacet } from '../hooks/useFacet'
 
 export interface DanceValues {
   /** Raised-cosine glow pulse, 0..1 */
@@ -143,7 +143,7 @@ export function useUnreadGlow(
 
 /**
  * Hook that applies a steady scale-invariant glow to a card when its
- * corresponding toolbar icon is hovered. Uses angleBorderColor for the
+ * corresponding toolbar icon is hovered. Uses the nodeTint facet for the
  * position-based color (same as focus glow) and scales blur/spread
  * inversely with camera zoom so the glow remains visible when zoomed out.
  */
@@ -180,7 +180,7 @@ export function useToolbarHoverGlow(
       const s = Math.max(1, 1 / z)
       const blur = 16 * s
       const spread = 4 * s
-      const color = angleBorderColor(cx, cy, 1)
+      const color = currentFacet('nodeTint').borderColor(cx, cy, 1)
       el.style.boxShadow = `0 0 ${blur}px ${spread}px ${color}`
       el.style.borderColor = color
     }

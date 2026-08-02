@@ -3,7 +3,7 @@ import type { MutableRefObject, ReactNode } from 'react'
 import { screenToCanvas } from '../lib/camera'
 import type { Camera } from '../lib/camera'
 import { useNodeStore, nodePixelSize } from '../stores/nodeStore'
-import { angleBorderColor } from '../lib/angle-color'
+import { currentFacet } from './useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { type NodeId } from '../../../../shared/ids'
 
@@ -33,7 +33,7 @@ export function useRtsSelect(
   onCompleteRef.current = onComplete
 
   const applyGlow = useCallback((el: HTMLElement, worldX: number, worldY: number) => {
-    const color = angleBorderColor(worldX, worldY)
+    const color = currentFacet('nodeTint').borderColor(worldX, worldY)
     const z = cameraRef.current?.z ?? 1
     const s = Math.max(1, 1 / z)
     const blur = 16 * s
@@ -64,7 +64,7 @@ export function useRtsSelect(
     const cam = cameraRef.current
     if (!cam) return
     const worldCenter = screenToCanvas({ x: left + w / 2, y: top + h / 2 }, cam)
-    const color = angleBorderColor(worldCenter.x, worldCenter.y)
+    const color = currentFacet('nodeTint').borderColor(worldCenter.x, worldCenter.y)
 
     el.style.left = `${left}px`
     el.style.top = `${top}px`

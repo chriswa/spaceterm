@@ -11,7 +11,7 @@ import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
-import { angleBorderColor } from '../lib/angle-color'
+import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { type NodeId } from '../../../../shared/ids'
 
@@ -368,6 +368,8 @@ export function MarkdownCard({
   onDragStart, onDragEnd, onUnfocus, onStartReparent, onReparentTarget, onShipIt,
   fileBacked, fileError, onAddNode, cameraRef
 }: MarkdownCardProps) {
+  // Where an unset node's colour comes from — see the `nodeTint` theme facet.
+  const nodeTint = useFacet('nodeTint')
   const preset = resolvedPreset
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -687,7 +689,7 @@ export function MarkdownCard({
         '--markdown-accent': preset?.markdownAccent ?? '#4d9eff',
         '--markdown-highlight': preset?.markdownHighlight ?? '#ffc94d',
         '--markdown-blockquote-fg': blendHex(preset?.markdownFg ?? '#cdd6f4', preset?.terminalBg ?? '#1e1e2e', 0.7),
-        ...(focused && !rtsSelectActive ? { borderColor: angleBorderColor(x, y), boxShadow: `0 0 4px ${angleBorderColor(x, y)}` } : undefined),
+        ...(focused && !rtsSelectActive ? { borderColor: nodeTint.borderColor(x, y), boxShadow: `0 0 4px ${nodeTint.borderColor(x, y)}` } : undefined),
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}

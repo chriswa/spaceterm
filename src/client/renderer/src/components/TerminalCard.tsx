@@ -24,7 +24,7 @@ import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
 import { deriveToolbarIndicator, CRAB_COLORS } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
-import { angleBorderColor } from '../lib/angle-color'
+import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { useFontStore } from '../stores/fontStore'
 import { useProportionalOverlay, isBoxDrawing, isAlphanumeric, boxDrawingAlignment } from '../hooks/useProportionalOverlay'
@@ -123,6 +123,8 @@ export function TerminalCard({
   onDragStart, onDragEnd, onStartReparent, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
+  // Where an unset node's colour comes from — see the `nodeTint` theme facet.
+  const nodeTint = useFacet('nodeTint')
   const preset = resolvedPreset
   const cardRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1016,7 +1018,7 @@ export function TerminalCard({
       : 'terminal-card--focused'
     : selected ? 'terminal-card--selected' : ''
   const rtsSelectActive = useRtsSelectStore(s => s.active)
-  const focusGlowColor = focused && !rtsSelectActive ? angleBorderColor(x, y, scrollMode ? 1.3 : 1) : undefined
+  const focusGlowColor = focused && !rtsSelectActive ? nodeTint.borderColor(x, y, scrollMode ? 1.3 : 1) : undefined
   const crabAppearance = deriveToolbarIndicator(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0, agentType)
   useCrabDance(behindCrabRef, crabAppearance.unviewed, 2.5)
   const anyToolbarHover = useHoveredCardStore(s => s.toolbarHoveredNodeId) != null

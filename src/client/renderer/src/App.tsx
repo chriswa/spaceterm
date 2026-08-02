@@ -23,12 +23,13 @@ import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
+import { useCardChromeVars, useFacet } from './hooks/useFacet'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
-import { angleColorPreset } from './lib/angle-color'
+
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useSavedViewportStore } from './stores/savedViewportStore'
 import { useReparentStore } from './stores/reparentStore'
@@ -81,7 +82,10 @@ export function App() {
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
   const [keycastEnabled, setKeycastEnabled] = useState(() => localStorage.getItem('toolbar.keycast') === 'true')
-  const [goodGfx, setGoodGfx] = useState(() => localStorage.getItem('toolbar.goodGfx') === 'true')
+  // Publishes the active theme's card-chrome custom properties on :root.
+  useCardChromeVars()
+  // Fallback colour for nodes the user has not coloured — see the nodeTint facet.
+  const nodeTint = useFacet('nodeTint')
   const [restartingSpaceterm, setRestartingSpaceterm] = useState(false)
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
@@ -188,10 +192,10 @@ export function App() {
     const map: Record<string, import('./lib/color-presets').ColorPreset> = {}
     map['root'] = DEFAULT_PRESET
     for (const id of nodeIdsOf(nodes)) {
-      map[id] = resolveInheritedPreset(nodes, id) ?? angleColorPreset(nodes[id].x, nodes[id].y)
+      map[id] = resolveInheritedPreset(nodes, id) ?? nodeTint.presetFor(nodes[id].x, nodes[id].y)
     }
     return map
-  }, [nodes])
+  }, [nodes, nodeTint])
 
   // Derive crab indicators for toolbar
   const crabs = useMemo(() => {
@@ -2199,7 +2203,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} goodGfx={goodGfx} />} overlay={<>{rtsSelectOverlay}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <PeerCameraOverlay />
         <RootNode
           focused={focusedId === ROOT_NODE_ID}
@@ -2348,8 +2352,6 @@ export function App() {
         onKeycastToggle={() => setKeycastEnabled(v => { const next = !v; localStorage.setItem('toolbar.keycast', String(next)); return next })}
         onDebugCapture={handleDebugCapture}
         onInertiaLogDump={handleInertiaLogDump}
-        goodGfx={goodGfx}
-        onGoodGfxToggle={() => setGoodGfx(v => { const next = !v; localStorage.setItem('toolbar.goodGfx', String(next)); return next })}
         restartingSpaceterm={restartingSpaceterm}
         onRestartSpaceterm={handleRestartSpaceterm}
       />
