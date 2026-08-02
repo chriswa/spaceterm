@@ -62,6 +62,12 @@ class FakeHost implements ScriptHost {
   readonly unread: PtySessionId[] = []
   readonly forks: Array<[NodeId, NodeId]> = []
   readonly logs: string[] = []
+  /** Mod envelopes the host was asked to relay to the Electron clients. */
+  readonly emittedMods: Array<{ modId: string; event: string; payload: unknown }> = []
+
+  emitMod(modId: string, event: string, payload: unknown): void {
+    this.emittedMods.push({ modId, event, payload })
+  }
 
   add(node: NodeData): this {
     this.nodes.set(node.id, node)
@@ -489,5 +495,95 @@ describe('broadcast with no subscribers', () => {
   it('is a no-op, not a crash', () => {
     const api = new ScriptApi(new FakeHost())
     expect(() => api.broadcast('exit', nid('a'), { type: 'exit' })).not.toThrow()
+  })
+})
+
+/**
+ * Mod envelopes on the scripts socket.
+ *
+ * The properties worth pinning are all about *isolation*: a mod's traffic must
+ * reach the app and the mods that asked for it, and nothing else. Getting this
+ * wrong is not a crash — it is every mod quietly seeing every other mod's
+ * messages, which is the kind of thing an ecosystem comes to depend on by
+ * accident and can then never be tightened.
+ */
+describe('script-mod-emit', () => {
+  it('relays the envelope to the app', () => {
+    const h = harness()
+    h.send({ type: 'script-mod-emit', seq: 1, modId: 'summary-chat', event: 'status', payload: { a: 1 } })
+
+    expect(h.host.emittedMods).toEqual([
+      { modId: 'summary-chat', event: 'status', payload: { a: 1 } }
+    ])
+  })
+
+  it('acknowledges with how many scripts it reached', () => {
+    const h = harness()
+    h.send({ type: 'script-mod-emit', seq: 7, modId: 'summary-chat', event: 'status', payload: null })
+    // Zero listeners is normal, not an error: the renderer half may be the
+    // only thing that cares.
+    expect(h.conn.only).toMatchObject({ type: 'script-mod-emit-result', seq: 7, delivered: 0 })
+  })
+
+  it('delivers to a script that named the modId', () => {
+    const h = harness()
+    const listener = new FakeConnection()
+    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    listener.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: { n: 3 } })
+
+    expect(listener.sent).toEqual([
+      { type: 'mod', modId: 'summary-chat', event: 'spoke', payload: { n: 3 } }
+    ])
+  })
+
+  it('does not deliver another mod\'s traffic', () => {
+    const h = harness()
+    const listener = new FakeConnection()
+    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    listener.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'weather', event: 'tick', payload: null })
+
+    expect(listener.sent).toEqual([])
+  })
+
+  it('does not treat "subscribe to all events" as "subscribe to all mods"', () => {
+    // The wildcard is for spaceterm's own events. Mod traffic is opt-in by
+    // name, so a script cannot come to depend on a mod it never declared.
+    const h = harness()
+    const listener = new FakeConnection()
+    h.api.handle(listener, { type: 'script-subscribe', seq: 1 })
+    listener.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: null })
+
+    expect(listener.sent).toEqual([])
+  })
+
+  it('does not echo an envelope back to its sender', () => {
+    const h = harness()
+    // The emitter is itself subscribed to its own mod — a mod with several
+    // processes would be.
+    h.api.handle(h.conn, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    h.conn.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: null })
+
+    const relayed = h.conn.sent.filter((m) => m.type === 'mod')
+    expect(relayed).toEqual([])
+  })
+
+  it('stops delivering once the listener disconnects', () => {
+    const h = harness()
+    const listener = new FakeConnection()
+    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    listener.disconnect()
+    listener.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: null })
+
+    expect(listener.sent).toEqual([])
   })
 })

@@ -81,6 +81,14 @@ export interface ScriptHost {
    * Rejects with a human-readable reason on any failure, including a timeout.
    */
   forkClaude(sourceNodeId: NodeId, parentId: NodeId): Promise<NodeId>
+  /**
+   * Relay one mod envelope to every connected client.
+   *
+   * Deliberately the whole of a mod's reach into the app: the host does not
+   * offer "send this specific message", because that would mean the base
+   * knowing what a mod's messages are. See `ModMessage` in the protocol.
+   */
+  emitMod(modId: string, event: string, payload: unknown): void
   log(line: string): void
 }
 
@@ -90,6 +98,14 @@ interface ScriptSubscriber {
   events: Set<ScriptEvent> | null
   /** null = every node. */
   nodeIds: Set<NodeId> | null
+  /**
+   * Mod envelopes this subscriber asked for, by `modId`. Empty = none.
+   *
+   * Not nullable, unlike the two above: "omit for all" is right for spaceterm's
+   * own events and wrong for mod traffic, where the default has to be that a
+   * mod hears only itself.
+   */
+  modIds: Set<string>
 }
 
 export class ScriptApi {
@@ -115,6 +131,24 @@ export class ScriptApi {
       if (sub.nodeIds && nodeId && !sub.nodeIds.has(nodeId)) continue
       sub.connection.send(message)
     }
+  }
+
+  /**
+   * Fan one mod envelope out to the scripts that named its `modId`.
+   *
+   * Returns the number reached, which the emitting mod gets back as an ack.
+   * Zero is normal — a mod whose renderer half is the only listener talks to
+   * no scripts at all — so it is a count, not an error.
+   */
+  broadcastMod(modId: string, event: string, payload: unknown, exclude?: ScriptConnection): number {
+    let delivered = 0
+    for (const sub of this.subscribers) {
+      if (sub.connection === exclude) continue
+      if (!sub.modIds.has(modId)) continue
+      sub.connection.send({ type: 'mod', modId, event, payload })
+      delivered++
+    }
+    return delivered
   }
 
   handle(connection: ScriptConnection, msg: ScriptMessage): void {
@@ -206,7 +240,8 @@ export class ScriptApi {
         const sub: ScriptSubscriber = {
           connection,
           events: msg.events ? new Set(msg.events) : null,
-          nodeIds: msg.nodeIds ? new Set(msg.nodeIds) : null
+          nodeIds: msg.nodeIds ? new Set(msg.nodeIds) : null,
+          modIds: new Set(msg.modIds ?? [])
         }
         this.subscribers.add(sub)
         connection.onDisconnect(() => { this.subscribers.delete(sub) })
@@ -235,6 +270,16 @@ export class ScriptApi {
         // gone or was never a terminal.
         const node = this.host.getNode(msg.nodeId)
         if (node && node.type === 'terminal') this.host.markUnread(node.sessionId)
+        return
+      }
+
+      case 'script-mod-emit': {
+        // Out to the renderer halves, and to any *other* mod that asked to
+        // watch this one. The emitting connection is excluded so a mod does
+        // not receive its own echo.
+        this.host.emitMod(msg.modId, msg.event, msg.payload)
+        const delivered = this.broadcastMod(msg.modId, msg.event, msg.payload, connection)
+        reply({ type: 'script-mod-emit-result', seq: msg.seq, delivered })
         return
       }
 

@@ -563,7 +563,47 @@ export interface ClientHelloResult {
 }
 
 /** Bidirectional messages received on the main socket (may trigger responses/broadcasts). */
+/**
+ * A message the base relays without understanding: the whole of a mod's wire
+ * protocol, as far as spaceterm is concerned.
+ *
+ * ## Why one variant instead of a channel per mod
+ *
+ * A mod's two halves — the part that draws and the part that runs
+ * out-of-process — need to talk, and every previous answer to that meant
+ * widening `ClientMessage`, `ServerMessage`, the preload `Api` and the socket
+ * dispatch once per mod. That is the same 45% "wiring in shared files" tax
+ * MODDING.md measures, charged to every mod forever.
+ *
+ * Instead the base learns exactly one variant per union and routes it by
+ * `modId`. `payload` is `unknown` and stays that way — nothing in this repo may
+ * inspect it, and there is a test that says so. The mod ships its own
+ * discriminated union and its own `assertNever`, so it keeps the safety the
+ * base has, internally, without the base being a party to it.
+ *
+ * This is the same shape the theme facets use (`Theme.modFacets` is
+ * `Record<string, unknown>`): the base stores and routes, the mod owns the
+ * type. Two subsystems solving extension two different ways would be the smell.
+ *
+ * Exhaustiveness survives, which is the reason this is safe. Every `switch`
+ * over these unions gains one `case 'mod':` that routes and returns; the union
+ * stays closed while the payload is open.
+ */
+export interface ModMessage {
+  type: 'mod'
+  /**
+   * The owning mod. The only field the base reads, and the namespace that
+   * keeps two mods' traffic apart.
+   */
+  modId: string
+  /** The mod's own discriminant, in the mod's own vocabulary. */
+  event: string
+  /** The mod's own shape. Opaque here, by design. */
+  payload: unknown
+}
+
 export type ClientMessage =
+  | ModMessage
   | ClientHelloMessage
   | CreateMessage
   | ListMessage
@@ -871,6 +911,15 @@ export interface ScriptSubscribeMessage {
   seq: number
   events?: ScriptEvent[]  // event types to receive; omit for all
   nodeIds?: NodeId[]      // node IDs to filter on; omit for all
+  /**
+   * Mod envelopes to receive, by `modId`. Omit for none.
+   *
+   * Opt-in rather than opt-out, and not covered by the `events` wildcard: a
+   * script asking for "all events" wants spaceterm's events, not every other
+   * mod's private traffic. A mod that genuinely wants to observe another names
+   * it, which is also what makes that dependency visible.
+   */
+  modIds?: string[]
 }
 
 /**
@@ -880,6 +929,21 @@ export interface ScriptSubscribeMessage {
  *
  * Optional — every existing tool works without it — but a mod should send it.
  */
+/**
+ * A mod process emitting one envelope to the rest of spaceterm.
+ *
+ * Fire-and-forget: the reply only acknowledges receipt, because the base has
+ * no idea what a meaningful answer would be. A mod that wants a response
+ * defines one in its own vocabulary and correlates it itself.
+ */
+export interface ScriptModEmitMessage {
+  type: 'script-mod-emit'
+  seq: number
+  modId: string
+  event: string
+  payload: unknown
+}
+
 export interface ScriptHelloMessage {
   type: 'script-hello'
   seq: number
@@ -934,6 +998,7 @@ export interface ScriptResolveHandoffMessage {
 }
 
 export type ScriptMessage =
+  | ScriptModEmitMessage
   | ScriptHelloMessage
   | ScriptGetAncestorsMessage
   | ScriptGetNodeMessage
@@ -944,6 +1009,13 @@ export type ScriptMessage =
   | ScriptResolveHandoffMessage
 
 // --- Script socket responses ---
+
+export interface ScriptModEmitResult {
+  type: 'script-mod-emit-result'
+  seq: number
+  /** How many listeners it reached. Zero is normal and not an error. */
+  delivered: number
+}
 
 export interface ScriptGetAncestorsResult {
   type: 'script-get-ancestors-result'
@@ -996,6 +1068,7 @@ export interface ScriptResolveHandoffResult {
 }
 
 export type ScriptResponse =
+  | ScriptModEmitResult
   | ScriptHelloResult
   | ScriptGetAncestorsResult
   | ScriptGetNodeResult
@@ -1005,6 +1078,7 @@ export type ScriptResponse =
   | ScriptResolveHandoffResult
 
 export type ServerMessage =
+  | ModMessage
   | ClientHelloResult
   | CreatedMessage
   | ServerRestartedMessage

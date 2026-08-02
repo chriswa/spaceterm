@@ -378,8 +378,21 @@ purpose**:
 
 #### Order of work
 
-1. **The envelope**, on all three hops. Small, self-contained, unblocks every
-   hybrid mod. Nothing else on this list is useful without it.
+1. ~~**The envelope**, on all three hops.~~ **Built.** `ModMessage` is one
+   variant of `ClientMessage` and of `ServerMessage`; `ScriptModEmitMessage` is
+   the scripts-socket half; `window.api.mods` is two methods; `ScriptHost`
+   gained `emitMod` and nothing else. The three `assertNever` guards found
+   every switch that had to learn it, which is the argument for the guards.
+
+   Isolation is opt-in by name: `script-subscribe` gained `modIds`, and a
+   script asking for "all events" does **not** receive other mods' traffic —
+   the wildcard is for spaceterm's events. A mod that wants to observe another
+   names it, which also makes that dependency visible.
+
+   `modChannel<M>(modId)` in the renderer is the typed counterpart to
+   `useModFacet`: the mod declares its union once and gets a checked channel,
+   while the base still sees only `unknown`. A test asserts no routing file
+   inspects a payload, and the routing surface is five files.
 2. **Manifest and lifecycle** — spawn, health, restart, disable, two-phase
    registration, and per-mod scoping of `ScriptHost` (already listed as
    outstanding under Tier 1).

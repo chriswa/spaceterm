@@ -491,6 +491,12 @@ function setupIPC(): void {
     return dest
   })
 
+  // --- Mod envelopes (renderer → server) ---
+
+  ipcMain.on('mod:send', (_event, modId: string, event: string, payload: unknown) => {
+    client?.sendMod(modId, event, payload)
+  })
+
   // --- Launch preferences ---
 
   // Reports the *stored* prefs, which is what the next launch will use. When
@@ -566,6 +572,14 @@ function wireClientEvents(): void {
   client!.on('claude-session-line-count', (sessionId: PtySessionId, lineCount: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty:claude-session-line-count:${sessionId}`, lineCount)
+    }
+  })
+
+  // Mod envelopes, relayed straight through. This process reads `modId` only
+  // to put it back on the wire — see ModMessage in shared/protocol.
+  client!.on('mod', (modId: string, event: string, payload: unknown) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('mod:message', modId, event, payload)
     }
   })
 

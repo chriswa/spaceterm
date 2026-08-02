@@ -152,6 +152,24 @@ export interface PerfApi {
 }
 
 /**
+ * A mod's own wire, in both directions.
+ *
+ * Two methods rather than two per mod: `modId` namespaces the traffic and
+ * `payload` is opaque, so the bridge does not widen when a mod is added. See
+ * `ModMessage` in `./protocol` for why that is the whole design.
+ */
+export interface ModsApi {
+  /** Send one envelope toward the server and any listening mod process. */
+  send(modId: string, event: string, payload: unknown): void
+  /**
+   * Listen for envelopes belonging to one mod. Other mods' traffic is filtered
+   * out here rather than delivered and ignored, so a mod cannot accidentally
+   * come to depend on another's messages.
+   */
+  onMessage(modId: string, callback: (event: string, payload: unknown) => void): () => void
+}
+
+/**
  * The power monitor's feed.
  *
  * Sampling is opt-in rather than always-on: reading GPU and battery state
@@ -191,4 +209,5 @@ export interface Api {
   perf: PerfApi
   window: WindowApi
   system: SystemApi
+  mods: ModsApi
 }

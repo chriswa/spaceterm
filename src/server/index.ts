@@ -409,6 +409,10 @@ const scriptApi = new ScriptApi({
   getNearestTerminalAncestor: (nodeId) => stateManager.getNearestTerminalAncestor(nodeId),
   log: (line) => serverLog(line),
 
+  // The base's entire understanding of a mod's message: which mod, and pass it
+  // on. `payload` is not read here or anywhere else in this repo.
+  emitMod: (modId, event, payload) => broadcastToAll({ type: 'mod', modId, event, payload }),
+
   shipIt(sessionId, text, submit) {
     sessionManager.write(sessionId, '\x1b[200~' + text + '\x1b[201~')
     // Mark read; the resulting UserPromptSubmit hook drives the working state.
@@ -1795,6 +1799,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         break
       }
       raiseNodeOnClient(focusNodeId, `focus-claude-session claudeSessionId=${msg.claudeSessionId.slice(0, 8)}`)
+      break
+    }
+
+    // A mod's own traffic, relayed by `modId` and never inspected. Goes to
+    // the other clients (a mod's renderer half in another window) and to the
+    // script connections that named this modId when they subscribed.
+    case 'mod': {
+      broadcastToOthers(client.socket, msg)
+      scriptApi.broadcastMod(msg.modId, msg.event, msg.payload)
       break
     }
 

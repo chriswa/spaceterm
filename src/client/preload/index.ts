@@ -218,6 +218,18 @@ const api: Api = {
     setLaunchPrefs: (patch) => ipcRenderer.invoke('system:set-launch-prefs', patch),
     getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs')
   },
+  mods: {
+    send: (modId: string, event: string, payload: unknown) =>
+      ipcRenderer.send('mod:send', modId, event, payload),
+    onMessage: (modId: string, callback: (event: string, payload: unknown) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, id: string, event: string, payload: unknown) => {
+        // Filtered here so a mod never sees another's traffic by accident.
+        if (id === modId) callback(event, payload)
+      }
+      ipcRenderer.on('mod:message', listener)
+      return () => ipcRenderer.removeListener('mod:message', listener)
+    }
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

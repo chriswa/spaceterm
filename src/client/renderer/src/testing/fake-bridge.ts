@@ -1,5 +1,5 @@
 import type {
-  Api, AttachResult, CameraBounds, CreateOptions, NodeApi, PerfApi, PtyApi,
+  Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SummaryChatUiState, SystemApi, TtsApi, WindowApi
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
@@ -140,6 +140,8 @@ export class FakeBridge implements Api {
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
+  /** Mod envelope listeners, keyed by the modId they asked for. */
+  private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
 
   // --- per-session channels ---
   private readonly ptyData: SessionListeners<(data: string) => void> = new Map()
@@ -223,6 +225,10 @@ export class FakeBridge implements Api {
     focusNode: (nodeId: NodeId): void => { for (const fn of this.focusNode) fn(nodeId) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
+    },
+    /** Deliver one envelope, as the real bridge does — only to that mod. */
+    modMessage: (modId: string, event: string, payload: unknown): void => {
+      for (const fn of this.modListeners.get(modId) ?? []) fn(event, payload)
     },
 
     // Per-session. Emitting for a session nobody subscribed to is a silent
@@ -352,6 +358,16 @@ export class FakeBridge implements Api {
     setFullScreen: (enabled) => this.reply('window.setFullScreen', undefined, enabled),
     onVisibilityChanged: (cb) => subscribe(this.visibilityChanged, cb),
     onFocusNode: (cb) => subscribe(this.focusNode, cb)
+  }
+
+  readonly mods: ModsApi = {
+    send: (modId, event, payload) => this.record('mods.send', modId, event, payload),
+    onMessage: (modId, callback) => {
+      let set = this.modListeners.get(modId)
+      if (!set) { set = new Set(); this.modListeners.set(modId, set) }
+      set.add(callback)
+      return () => { set.delete(callback) }
+    }
   }
 
   readonly system: SystemApi = {

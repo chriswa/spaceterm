@@ -111,6 +111,11 @@ export class ServerClient extends EventEmitter {
   private handleMessage(msg: ServerMessage): void {
     switch (msg.type) {
       // --- Events: unsolicited broadcasts, no seq ---
+      // Relayed, not interpreted. `payload` is whatever the owning mod put
+      // there; this process is a wire, not a participant.
+      case 'mod':
+        this.emit('mod', msg.modId, msg.event, msg.payload)
+        return
       case 'data':
         this.emit('data', msg.sessionId, msg.data)
         return
@@ -269,6 +274,17 @@ export class ServerClient extends EventEmitter {
   private sendFireAndForget(msg: ClientMessage): void {
     if (!this.connected || !this.socket) return
     this.socket.write(JSON.stringify(msg) + '\n')
+  }
+
+  /**
+   * Put one mod envelope on the wire.
+   *
+   * Fire-and-forget by design: a request/reply here would mean the base
+   * correlating messages it cannot read. A mod that wants an answer defines
+   * one in its own vocabulary.
+   */
+  sendMod(modId: string, event: string, payload: unknown): void {
+    this.sendFireAndForget({ type: 'mod', modId, event, payload })
   }
 
   async create(options?: CreateOptions): Promise<SessionInfo> {
