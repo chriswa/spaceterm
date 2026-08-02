@@ -951,6 +951,14 @@ export interface ScriptHelloMessage {
   protocolVersion: number
   /** Free-form identifier for logs, e.g. "spaceterm-mcp/1.2.0". */
   client?: string
+  /**
+   * The mod this connection belongs to, matching a manifest's `id`.
+   *
+   * Optional, and omitting it means unscoped access — which is what the nine
+   * existing MCP tools do. Sending it is how a mod opts into being held to its
+   * manifest, so capability scoping can land without breaking anything.
+   */
+  modId?: string
 }
 
 export interface ScriptHelloResult {

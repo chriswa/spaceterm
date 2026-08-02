@@ -529,12 +529,22 @@ uniform float uIntensity;
 
 ${CHEVRON_GLSL}
 
-const vec3  CORE       = vec3(0.86, 0.89, 0.95);
+const vec3  CORE       = vec3(0.74, 0.78, 0.88);
 const vec3  OUTLINE    = vec3(0.02, 0.02, 0.03);
 /** Rim thickness, in the same UV units as HALF_W. */
 const float OUTLINE_W  = 0.045;
-const float CORE_A     = 0.90;
-const float OUTLINE_A  = 0.78;
+/**
+ * Alpha is what carries the weight here, and it is set low on purpose: the rim
+ * is what makes a chevron legible over a bright grid line, so the core does
+ * not also have to be bright to be seen. The first outlined version raised
+ * both and the edges took over the canvas.
+ *
+ * The rim stays a little more opaque than the core because it is doing the
+ * work — and being near-black on a dark field, it costs almost nothing where
+ * there is no grid line under it.
+ */
+const float CORE_A     = 0.50;
+const float OUTLINE_A  = 0.55;
 
 void main() {
   float d = chevronDistance(vec2(vUV.x, fract(vUV.y)));

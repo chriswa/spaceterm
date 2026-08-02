@@ -393,9 +393,26 @@ purpose**:
    `useModFacet`: the mod declares its union once and gets a checked channel,
    while the base still sees only `unknown`. A test asserts no routing file
    inspects a payload, and the routing surface is five files.
-2. **Manifest and lifecycle** — spawn, health, restart, disable, two-phase
-   registration, and per-mod scoping of `ScriptHost` (already listed as
-   outstanding under Tier 1).
+2. **Manifest and lifecycle.** *Partly built.*
+
+   Done: `ModManifest` (`src/shared/mod-manifest.ts`) with id, version,
+   protocol range, capabilities and advisory peers; `ModRegistry`
+   (`src/server/mod-registry.ts`) reading `<home>/mods/<id>/mod.json`, where a
+   broken manifest disables one mod with a complaint rather than taking down
+   the loader; and **per-mod scoping of `ScriptHost`**, the item that had been
+   outstanding under Tier 1 longest.
+
+   Scoping is enforced by a `REQUIRED_CAPABILITY` map that is *total* over
+   `ScriptMessage`, so adding a message without deciding what it costs is a
+   compile error rather than a capability everyone silently gains. It is opt-in
+   by identification: a connection that sends no `modId` — which is all nine
+   MCP tools — stays unscoped, and a `modId` with no manifest on disk stays
+   unscoped *and says so in the log*. That is what let it land without
+   breaking anything, and it makes the un-opted case visible instead of silent.
+
+   Still needed: spawning, health, restart-on-crash, disable, and the two-phase
+   register/activate ordering. Those are the parts that need a process, and
+   they are where the next decision is — see below.
 3. **Extract summary chat** as the first hybrid mod. It is pilot conversion #3
    and it exercises every part of the above; anything the plan got wrong shows
    up here.

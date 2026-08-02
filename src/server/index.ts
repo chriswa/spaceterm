@@ -7,6 +7,7 @@ import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_L
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
+import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
 import { RestartRecoveryLedger } from './restart-recovery'
 import { recoverSurfaces, type DaemonSessionInfo } from './startup-recovery'
@@ -399,6 +400,16 @@ const pendingForkSettles = new Map<string, PendingForkSettle>()
 // --- Script socket (scripts.sock) ---
 
 /**
+ * Manifests under `<SPACETERM_HOME>/mods/`, read once before anything can
+ * connect. A mod with no manifest here runs unscoped — see ModRegistry.
+ */
+const modRegistry = new ModRegistry((line) => serverLog(line))
+modRegistry.loadFrom(SOCKET_DIR)
+for (const { modId, peer, range } of modRegistry.missingPeers()) {
+  serverLog(`[mods] ${modId} names peer ${peer}@${range}, which is not installed`)
+}
+
+/**
  * The mod-facing API. Everything it is allowed to do is the `ScriptHost`
  * literal below; the dispatch itself lives in script-api.ts, away from the
  * singletons, so it can be tested without a server.
@@ -412,6 +423,7 @@ const scriptApi = new ScriptApi({
   // The base's entire understanding of a mod's message: which mod, and pass it
   // on. `payload` is not read here or anywhere else in this repo.
   emitMod: (modId, event, payload) => broadcastToAll({ type: 'mod', modId, event, payload }),
+  capabilitiesFor: (modId) => modRegistry.capabilitiesFor(modId),
 
   shipIt(sessionId, text, submit) {
     sessionManager.write(sessionId, '\x1b[200~' + text + '\x1b[201~')

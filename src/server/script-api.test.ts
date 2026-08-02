@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { ScriptApi, type ScriptConnection, type ScriptHost, type TranscriptLocation } from './script-api'
 import { SCRIPT_EVENTS, SCRIPT_PROTOCOL_VERSION, MIN_SCRIPT_PROTOCOL_VERSION } from '../shared/protocol'
 import type { ScriptMessage } from '../shared/protocol'
+import type { ModCapability } from '../shared/mod-manifest'
 import type { NodeData, TerminalNodeData } from '../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
 
@@ -67,6 +68,13 @@ class FakeHost implements ScriptHost {
 
   emitMod(modId: string, event: string, payload: unknown): void {
     this.emittedMods.push({ modId, event, payload })
+  }
+
+  /** Manifests this fake knows about. Absent = unscoped, as on a real server. */
+  readonly manifests = new Map<string, ModCapability[]>()
+
+  capabilitiesFor(modId: string): readonly ModCapability[] | null {
+    return this.manifests.get(modId) ?? null
   }
 
   add(node: NodeData): this {
@@ -585,5 +593,89 @@ describe('script-mod-emit', () => {
     h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: null })
 
     expect(listener.sent).toEqual([])
+  })
+})
+
+/**
+ * Capability scoping.
+ *
+ * Not a sandbox — a mod runs as the user and could do anything the user can.
+ * What this buys is blast radius and legibility: a mod cannot reach a
+ * capability it never declared *by accident*, and the manifest is a readable
+ * answer to "what does this thing do to my canvas".
+ *
+ * The migration shape matters as much as the enforcement: the nine existing
+ * MCP tools declare nothing, so a connection that does not identify must keep
+ * full access.
+ */
+describe('capability scoping', () => {
+  const identify = (h: ReturnType<typeof harness>, modId: string) =>
+    h.send({ type: 'script-hello', seq: 1, protocolVersion: SCRIPT_PROTOCOL_VERSION, modId })
+
+  it('leaves a connection that never identified unscoped', () => {
+    // The nine MCP tools. Scoping is opt-in so landing it breaks nothing.
+    const h = harness((host) => { host.manifests.set('summary-chat', []) })
+    h.send({ type: 'script-mod-emit', seq: 1, modId: 'summary-chat', event: 'e', payload: null })
+    expect(h.host.emittedMods).toHaveLength(1)
+  })
+
+  it('leaves a mod with no manifest unscoped, and says so', () => {
+    const h = harness()
+    identify(h, 'in-development')
+    h.conn.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'in-development', event: 'e', payload: null })
+
+    expect(h.host.emittedMods).toHaveLength(1)
+    expect(h.host.logs.join('\n')).toContain('no manifest')
+  })
+
+  it('allows a capability the manifest declares', () => {
+    const h = harness((host) => { host.manifests.set('summary-chat', ['emit-mod']) })
+    identify(h, 'summary-chat')
+    h.conn.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'e', payload: null })
+
+    expect(h.host.emittedMods).toHaveLength(1)
+  })
+
+  it('refuses one it does not, with the capability named', () => {
+    const h = harness((host) => { host.manifests.set('summary-chat', ['read-nodes']) })
+    identify(h, 'summary-chat')
+    h.conn.sent.length = 0
+
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'e', payload: null })
+
+    expect(h.host.emittedMods).toEqual([])
+    expect(h.conn.only).toMatchObject({ type: 'error' })
+    // Naming the capability is the difference between a fixable message and a
+    // mystery: the manifest edit is right there in the text.
+    expect(String(h.conn.only.error)).toContain('emit-mod')
+  })
+
+  it('never refuses the handshake itself', () => {
+    // Otherwise a mod with an empty capability list could not even identify,
+    // and would be told so by a message it could not receive.
+    const h = harness((host) => { host.manifests.set('locked-down', []) })
+    identify(h, 'locked-down')
+    expect(h.conn.only).toMatchObject({ type: 'script-hello-result', compatible: true })
+  })
+
+  it('scopes each capability independently', () => {
+    const h = harness((host) => { host.manifests.set('reader', ['read-nodes']) })
+    const node = terminal({ id: 'a' })
+    h.host.add(node)
+    identify(h, 'reader')
+    h.conn.sent.length = 0
+
+    h.send({ type: 'script-get-node', seq: 2, nodeId: node.id })
+    expect(h.conn.only).toMatchObject({ type: 'script-get-node-result' })
+
+    const second = new FakeConnection()
+    h.api.handle(second, { type: 'script-hello', seq: 1, protocolVersion: SCRIPT_PROTOCOL_VERSION, modId: 'reader' })
+    second.sent.length = 0
+    h.api.handle(second, { type: 'script-unread', nodeId: node.id })
+    expect(h.host.unread).toEqual([])
   })
 })

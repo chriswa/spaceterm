@@ -11,6 +11,7 @@ import type { NodeId, PtySessionId } from '../shared/ids'
 import { ancestorsOf } from '../shared/node-ancestry'
 import { unhandledVariant } from '../shared/exhaustive'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
+import type { ModCapability } from '../shared/mod-manifest'
 
 /** What this build serves on the scripts socket. */
 const SCRIPT_PROTOCOL_RANGE = { min: MIN_SCRIPT_PROTOCOL_VERSION, current: SCRIPT_PROTOCOL_VERSION }
@@ -64,6 +65,19 @@ export interface TranscriptLocation {
  * one list. Anything blocking or effectful returns a promise or takes a
  * callback, so this module never owns a timer.
  */
+/**
+ * What a connection has told us about itself, from `script-hello`.
+ *
+ * A connection that never identified is `null`, which means the nine existing
+ * MCP tools — none of which send a modId — keep working untouched. That is
+ * deliberate: capability scoping tightens opt-in, so adopting it is a mod
+ * declaring a manifest rather than everything breaking on the day it lands.
+ */
+interface ConnectionIdentity {
+  modId: string
+  capabilities: ReadonlySet<ModCapability>
+}
+
 export interface ScriptHost {
   getNode(nodeId: NodeId): NodeData | undefined
   /** Resolve a pty-level SPACETERM_SURFACE_ID to the stable node id. */
@@ -89,7 +103,32 @@ export interface ScriptHost {
    * knowing what a mod's messages are. See `ModMessage` in the protocol.
    */
   emitMod(modId: string, event: string, payload: unknown): void
+  /**
+   * What the named mod's manifest grants, or `null` if there is no manifest
+   * for it. `null` means unscoped — see `ConnectionIdentity`.
+   */
+  capabilitiesFor(modId: string): readonly ModCapability[] | null
   log(line: string): void
+}
+
+/**
+ * The capability each message needs, as a total map over `ScriptMessage`.
+ *
+ * Total on purpose: adding a message type without deciding what it costs is a
+ * compile error here, rather than a new capability that everyone silently has.
+ * `null` means "needs nothing" — the handshake, and anything that only reads
+ * back what the caller already told us.
+ */
+const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapability | null } = {
+  'script-hello': null,
+  'script-mod-emit': 'emit-mod',
+  'script-subscribe': 'subscribe-events',
+  'script-get-node': 'read-nodes',
+  'script-get-ancestors': 'read-nodes',
+  'script-resolve-handoff': 'read-transcript',
+  'script-ship-it': 'write-terminal',
+  'script-unread': 'mark-unread',
+  'script-fork-claude': 'fork-session',
 }
 
 interface ScriptSubscriber {
@@ -110,6 +149,8 @@ interface ScriptSubscriber {
 
 export class ScriptApi {
   private readonly subscribers = new Set<ScriptSubscriber>()
+  /** Identity per connection, learned at `script-hello`. */
+  private readonly identities = new Map<ScriptConnection, ConnectionIdentity>()
 
   constructor(private readonly host: ScriptHost) {}
 
@@ -157,11 +198,37 @@ export class ScriptApi {
       connection.close()
     }
 
+    // Checked once, here, rather than inside each case: a capability that has
+    // to be remembered at nine call sites is one that will be forgotten at the
+    // tenth.
+    const required = REQUIRED_CAPABILITY[msg.type]
+    const identity = this.identities.get(connection)
+    if (required !== null && identity && !identity.capabilities.has(required)) {
+      this.host.log(`[scripts] ${identity.modId} refused ${msg.type}: manifest does not declare "${required}"`)
+      connection.send({
+        type: 'error',
+        error: `mod "${identity.modId}" did not declare the "${required}" capability`,
+      })
+      connection.close()
+      return
+    }
+
     switch (msg.type) {
       case 'script-hello': {
         const { compatible, error } = checkProtocolVersion(msg.protocolVersion, SCRIPT_PROTOCOL_RANGE)
         if (!compatible) {
           this.host.log(`[scripts] Rejected ${msg.client ?? 'unknown client'}: ${error}`)
+        }
+        if (msg.modId !== undefined) {
+          const granted = this.host.capabilitiesFor(msg.modId)
+          if (granted === null) {
+            // A mod naming itself with no manifest on disk. Unscoped, because
+            // refusing would break a mod mid-development, but said out loud.
+            this.host.log(`[scripts] ${msg.modId} has no manifest; running unscoped`)
+          } else {
+            this.identities.set(connection, { modId: msg.modId, capabilities: new Set(granted) })
+            connection.onDisconnect(() => { this.identities.delete(connection) })
+          }
         }
         reply({
           type: 'script-hello-result',
