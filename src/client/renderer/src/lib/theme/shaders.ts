@@ -529,22 +529,28 @@ uniform float uIntensity;
 
 ${CHEVRON_GLSL}
 
-const vec3  CORE       = vec3(0.74, 0.78, 0.88);
-const vec3  OUTLINE    = vec3(0.02, 0.02, 0.03);
-/** Rim thickness, in the same UV units as HALF_W. */
-const float OUTLINE_W  = 0.045;
 /**
- * Alpha is what carries the weight here, and it is set low on purpose: the rim
- * is what makes a chevron legible over a bright grid line, so the core does
- * not also have to be bright to be seen. The first outlined version raised
- * both and the edges took over the canvas.
+ * Opaque, so brightness is set by the colour rather than by how much grid
+ * shows through.
  *
- * The rim stays a little more opaque than the core because it is doing the
- * work — and being near-black on a dark field, it costs almost nothing where
- * there is no grid line under it.
+ * An earlier version carried its weight in alpha, which made the chevrons
+ * translucent — the grid read straight through them, and their apparent colour
+ * changed depending on whether a grid line happened to be underneath. Alpha is
+ * now coverage only: antialiasing at the silhouette, fully opaque inside. The
+ * core is therefore about the luminance the translucent version *averaged* to,
+ * not the value it was written with.
  */
-const float CORE_A     = 0.50;
-const float OUTLINE_A  = 0.55;
+const vec3  CORE       = vec3(0.42, 0.45, 0.52);
+const vec3  OUTLINE    = vec3(0.02, 0.02, 0.03);
+/**
+ * Rim thickness, in the same UV units as HALF_W.
+ *
+ * The ceiling is 0.065: the chevron's apex sits at v = 0.125 in the tile, so a
+ * total half-width past that clips the tip against the tile boundary. A
+ * thicker rim than this needs the chevron geometry moved down the tile, which
+ * CHEVRON_GLSL shares with the other themes.
+ */
+const float OUTLINE_W  = 0.06;
 
 void main() {
   float d = chevronDistance(vec2(vUV.x, fract(vUV.y)));
@@ -553,13 +559,16 @@ void main() {
   if (outline < 0.004) discard;
   float core = chevronCoverage(d, HALF_W);
 
-  // One fragment, not two passes: colour runs from the rim to the core, and
-  // alpha with it, so the rim is opaque where the core is absent and vice
-  // versa. Compositing them as separate draws would need the outline pass to
-  // avoid the core, which this gets for free.
-  vec3 rgb = mix(OUTLINE, CORE, core);
-  float alpha = mix(outline * OUTLINE_A, CORE_A, core);
+  // One fragment, not two passes: colour runs from rim to core across the same
+  // two coverages. Compositing them as separate draws would need the outline
+  // pass to avoid the core, which this gets for free — and costs one extra
+  // smoothstep rather than a second set of geometry.
+  //
+  // uIntensity (3.0 on the selected edge) brightens the core rather than the
+  // alpha, since alpha is no longer free to carry it. The rim stays black, so
+  // a highlighted edge is still legible over a bright grid line.
+  vec3 rgb = mix(OUTLINE, min(CORE * uIntensity, vec3(1.0)), core);
 
-  gl_FragColor = vec4(rgb, min(alpha * uIntensity, 1.0));
+  gl_FragColor = vec4(rgb, outline);
 }
 `
