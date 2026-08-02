@@ -141,6 +141,33 @@ describeE2E('the main process', () => {
     expect(handled).toBe(true)
   })
 
+  it('fills the work area without a title bar, rather than going fullscreen', async () => {
+    // The window is deliberately not fullscreen: native fullscreen hides the menu bar
+    // (and its status items) unless the OS is configured not to, and that setting is
+    // per-machine. Frameless + work-area bounds drops the title bar without the OS
+    // dependency. Content bounds matching the outer bounds is what "no frame" looks
+    // like from the main process — there is no isFrameless() to ask.
+    launched = await launchApp()
+    const info = await launched.app.evaluate(async ({ BrowserWindow, screen }) => {
+      const win = BrowserWindow.getAllWindows()[0]
+      const bounds = win.getBounds()
+      const display = screen.getDisplayNearestPoint({
+        x: bounds.x + Math.floor(bounds.width / 2),
+        y: bounds.y + Math.floor(bounds.height / 2)
+      })
+      return {
+        fullScreen: win.isFullScreen(),
+        bounds,
+        content: win.getContentBounds(),
+        workArea: display.workArea
+      }
+    })
+
+    expect(info.fullScreen).toBe(false)
+    expect(info.bounds).toEqual(info.workArea)
+    expect(info.content).toEqual(info.bounds)
+  })
+
   it('has exactly one window — a second would mean a duplicate createWindow', async () => {
     launched = await launchApp()
     const count = await launched.app.evaluate(async ({ BrowserWindow }) =>

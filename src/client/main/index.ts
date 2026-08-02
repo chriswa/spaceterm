@@ -87,11 +87,27 @@ app.on('open-url', (event, url) => {
   }
 })
 
+// Fill the display's work area — the screen minus the menu bar and dock — instead of
+// using native fullscreen. Combined with a frameless window this gives chrome-free
+// terminal space while leaving the menu bar (and its status items) permanently visible;
+// native fullscreen hides the menu bar unless the OS is configured otherwise, and that
+// setting varies per machine.
+function fitToWorkArea(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isFullScreen()) return
+  const bounds = mainWindow.getBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2)
+  })
+  mainWindow.setBounds(display.workArea)
+}
+
 function createWindow(): void {
   // Determine which display to open on based on saved state
   const saved = loadWindowState()
   const targetDisplay = saved ? findTargetDisplay(saved.displayBounds) : screen.getPrimaryDisplay()
-  const { x, y, width, height } = targetDisplay.bounds
+  const { x, y, width, height } = targetDisplay.workArea
 
   mainWindow = new BrowserWindow({
     x,
@@ -99,6 +115,7 @@ function createWindow(): void {
     width,
     height,
     show: false,
+    frame: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -114,8 +131,13 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
-  mainWindow.setFullScreen(true)
   mainWindow.show()
+
+  // The work area moves under us when the dock resizes or the display mode changes,
+  // and native fullscreen restores pre-fullscreen bounds on exit rather than refitting.
+  const onDisplayMetricsChanged = () => fitToWorkArea()
+  screen.on('display-metrics-changed', onDisplayMetricsChanged)
+  mainWindow.on('leave-full-screen', fitToWorkArea)
 
   // Save display on move (debounced) — handles user dragging to a different monitor
   let moveTimer: ReturnType<typeof setTimeout> | null = null
@@ -133,6 +155,7 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     if (moveTimer !== null) clearTimeout(moveTimer)
+    screen.removeListener('display-metrics-changed', onDisplayMetricsChanged)
     mainWindow = null
   })
 }

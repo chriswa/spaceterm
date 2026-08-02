@@ -165,11 +165,18 @@ export function CameraLockToggle() {
   )
 }
 
+// The window fills the display's work area by default — frameless, but with the menu
+// bar still showing. This toggles native fullscreen on top of that, which covers the
+// menu bar too. Stored under a v2 key: under the old default the window launched
+// fullscreen, so a legacy `true` doesn't mean the user asked to hide the menu bar.
+const FULLSCREEN_KEY = 'toolbar.fullscreen.v2'
+
 export function FullscreenToggle() {
-  const [on, setOn] = useState(true)
+  const [on, setOn] = useState(false)
 
   useEffect(() => {
-    const saved = localStorage.getItem('toolbar.fullscreen')
+    localStorage.removeItem('toolbar.fullscreen')
+    const saved = localStorage.getItem(FULLSCREEN_KEY)
     if (saved !== null) {
       const desired = saved === 'true'
       window.api.window.setFullScreen(desired).then(() => setOn(desired))
@@ -180,7 +187,7 @@ export function FullscreenToggle() {
 
   const toggle = () => {
     const next = !on
-    localStorage.setItem('toolbar.fullscreen', String(next))
+    localStorage.setItem(FULLSCREEN_KEY, String(next))
     window.api.window.setFullScreen(next).then(() => setOn(next))
   }
 
