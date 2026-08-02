@@ -410,9 +410,43 @@ purpose**:
    unscoped *and says so in the log*. That is what let it land without
    breaking anything, and it makes the un-opted case visible instead of silent.
 
-   Still needed: spawning, health, restart-on-crash, disable, and the two-phase
-   register/activate ordering. Those are the parts that need a process, and
-   they are where the next decision is — see below.
+   **Spawning was cut, and cutting it was right.** The plan had spaceterm
+   launching each mod as a child process, which meant a supervisor, health
+   checks, a restart policy, and an unanswerable question about which process
+   owned a mod's lifetime — plus one mod instance *per window*, since multiple
+   Electron clients are a designed-for case.
+
+   A mod instead supplies **modules that spaceterm imports and calls**: server
+   code the server calls, client code the renderer calls (`ModModule` in
+   `src/shared/mod-module.ts`). Lifetime stops being a question — server code
+   lives as long as the server, client code as long as the renderer — and
+   instancing is correct for free. A mod that genuinely needs its own process,
+   for heavy CPU or another language, spawns one *itself* from its own server
+   module, which it could always do and spaceterm never needed to own.
+
+   Two phases: `register` runs for every mod before any mod's `activate`, so a
+   mod's declarations are all in place before anything reads them. That is what
+   makes one mod's theme able to restyle another mod's facet regardless of load
+   order. Registration is order-independent anyway, so the phase is an
+   optimisation rather than a correctness crutch.
+
+   What it gives up, said plainly: **crash isolation**. `runModPhase` contains
+   what a `try`/`catch` can — a mod that throws during either phase is marked
+   failed, never advances to the next phase, and the others carry on — but a
+   mod that blocks the event loop stops everything, and only a process boundary
+   would change that. Relatedly, capability *enforcement* weakens: the
+   `REQUIRED_CAPABILITY` check works on the scripts socket because the socket
+   is the only door, and in-process there is no door. For in-process mods the
+   manifest is a declaration and a scoped convenience host, not a fence.
+
+   Still needed: disable/enable, and runtime loading of client code that is not
+   in this repo (the renderer is a Vite bundle, so in-repo mods are imports and
+   third-party ones need a build story).
+
+   **The scripts socket keeps its own audience.** It is for things *outside*
+   spaceterm that want to poke it — Claude Code's nine MCP tools, shell
+   scripts, agents — which is a different thing from code that extends
+   spaceterm, and separating the two is what untangles Tier 1 from Tier 3.
 3. **Extract summary chat** as the first hybrid mod. It is pilot conversion #3
    and it exercises every part of the above; anything the plan got wrong shows
    up here.

@@ -24,6 +24,7 @@ import { useEdgeHover } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
+import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
@@ -82,6 +83,9 @@ export function App() {
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
   const [keycastEnabled, setKeycastEnabled] = useState(() => localStorage.getItem('toolbar.keycast') === 'true')
+  // Every mod registers, then every mod activates — before the first paint
+  // that could read a facet. Idempotent, so strict mode and hot reload are fine.
+  loadClientMods()
   // Publishes the active theme's card-chrome custom properties on :root.
   useCardChromeVars()
   // Fallback colour for nodes the user has not coloured — see the nodeTint facet.

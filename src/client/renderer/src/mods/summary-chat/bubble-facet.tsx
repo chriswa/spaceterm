@@ -92,23 +92,33 @@ export const SUMMARY_BUBBLES = {
   technical: { id: 'technical', label: 'Technical mark', Component: TechnicalMark },
 } as const satisfies Record<string, SummaryBubbleFacet>
 
-registerFacet<SummaryBubbleFacet>({
-  id: SUMMARY_BUBBLE_FACET,
-  defaultValue: SUMMARY_BUBBLES.speech,
-  // The mod dresses itself for the themes it knows about. A theme it has never
-  // heard of gets the default, and no theme has to know this mod exists.
-  byTheme: {
-    grid: SUMMARY_BUBBLES.technical,
-  },
-})
+/**
+ * Called from the mod's `register` phase rather than at import time.
+ *
+ * Import-time registration worked, but it made the mod's contributions a
+ * side effect of whoever happened to import this file first — which is exactly
+ * the ordering the two-phase load exists to make explicit.
+ */
+export function registerBubbleFacet(): void {
+  registerFacet<SummaryBubbleFacet>({
+    id: SUMMARY_BUBBLE_FACET,
+    defaultValue: SUMMARY_BUBBLES.speech,
+    // The mod dresses itself for the themes it knows about. A theme it has
+    // never heard of gets the default, and no theme has to know this mod
+    // exists.
+    byTheme: {
+      grid: SUMMARY_BUBBLES.technical,
+    },
+  })
+}
 
 /**
  * The typed accessor this mod exports.
  *
- * Non-null: registration above ran when this module was imported, and only
- * this module's own consumers call it. A *different* mod reading this facet
- * would use `useModFacet` directly and handle `undefined`, since this mod
- * might not be installed.
+ * Falls back rather than asserting: registration now happens in the mod's
+ * `register` phase, so a component could in principle render before the mod
+ * loads, or while the mod is marked failed. The fallback keeps the toolbar
+ * drawing something sensible instead of crashing on a mod's bad day.
  */
 export function useSummaryBubble(): SummaryBubbleFacet {
   return useModFacet<SummaryBubbleFacet>(SUMMARY_BUBBLE_FACET) ?? SUMMARY_BUBBLES.speech

@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { resolveModFacet } from '../../lib/theme/themes'
 import { SUMMARY_BUBBLE_FACET, SUMMARY_BUBBLES, type SummaryBubbleFacet } from './bubble-facet'
+import { register } from './index'
 import { themes } from '../../lib/theme/themes'
 
 /**
@@ -8,6 +9,10 @@ import { themes } from '../../lib/theme/themes'
  * the real theme list — no test doubles, because what is being checked is that
  * a mod registering itself at import time actually reaches theme resolution.
  */
+
+// Through the mod's own register phase, not an import side effect — which is
+// the path the app takes and the one worth testing.
+beforeAll(() => { register({ modId: 'summary-chat', channel: () => { throw new Error('unused') }, log: () => {} }) })
 
 const bubbleFor = (themeId: string) =>
   resolveModFacet(themeId, SUMMARY_BUBBLE_FACET) as SummaryBubbleFacet
