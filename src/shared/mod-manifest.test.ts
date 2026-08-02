@@ -75,3 +75,54 @@ describe('the capability list', () => {
     expect(isModCapability('read-everything')).toBe(false)
   })
 })
+
+/**
+ * Capabilities a mod defines for other mods.
+ *
+ * The base validates the shape and records who provides what; it cannot
+ * enforce one, because in-process a caller can import the provider directly.
+ * These tests pin the part that *is* the base's job: that a namespaced
+ * capability is well-formed, that it belongs to the mod claiming it, and that
+ * requesting one whose provider is absent does not make a manifest invalid.
+ */
+describe('mod-provided capabilities', () => {
+  it('accepts a namespaced capability nothing has provided yet', () => {
+    // The provider may simply not be installed. A manifest should not become
+    // invalid because of what is missing beside it.
+    const parsed = parseModManifest({ ...VALID, capabilities: ['summary-chat:speak'] })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.manifest.capabilities).toEqual(['summary-chat:speak'])
+  })
+
+  it('records what a mod provides', () => {
+    const parsed = parseModManifest({ ...VALID, provides: ['summary-chat:speak'] })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.manifest.provides).toEqual(['summary-chat:speak'])
+  })
+
+  it('refuses to let a mod provide another mod\'s capability', () => {
+    // Otherwise a mod could quietly satisfy a dependency it has nothing to do
+    // with, which is the one collision worth policing here.
+    const parsed = parseModManifest({ ...VALID, provides: ['weather:forecast'] })
+    expect(parsed.ok).toBe(false)
+    if (parsed.ok) return
+    expect(parsed.error).toContain('must be namespaced to "summary-chat"')
+  })
+
+  it.each([
+    ['a bare name', ['speak']],
+    ['too many colons', ['a:b:c']],
+    ['an empty half', [':speak']],
+  ])('rejects %s in provides', (_label, provides) => {
+    const parsed = parseModManifest({ ...VALID, provides })
+    expect(parsed.ok).toBe(false)
+  })
+
+  it('still rejects an unknown bare capability', () => {
+    // Bare means base-defined, and the base's list is closed.
+    const parsed = parseModManifest({ ...VALID, capabilities: ['rm-rf'] })
+    expect(parsed.ok).toBe(false)
+  })
+})

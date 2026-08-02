@@ -111,3 +111,49 @@ describe('peers', () => {
     expect(registry.capabilitiesFor('themer')).toEqual(['read-nodes'])
   })
 })
+
+describe('mod-provided capabilities', () => {
+  it('finds the provider of a capability', () => {
+    writeMod('summary-chat', manifest('summary-chat', { provides: ['summary-chat:speak'] }))
+    registry.loadFrom(home)
+    expect(registry.providerOf('summary-chat:speak')).toBe('summary-chat')
+  })
+
+  it('reports a requested capability nobody provides', () => {
+    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
+    registry.loadFrom(home)
+    expect(registry.unprovidedCapabilities()).toEqual([
+      { modId: 'narrator', capability: 'summary-chat:speak' },
+    ])
+  })
+
+  it('says nothing once the provider is installed', () => {
+    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
+    writeMod('summary-chat', manifest('summary-chat', { provides: ['summary-chat:speak'] }))
+    registry.loadFrom(home)
+    expect(registry.unprovidedCapabilities()).toEqual([])
+  })
+
+  it('does not report base capabilities as unprovided', () => {
+    // Those always exist; only namespaced ones can be missing.
+    writeMod('reader', manifest('reader', { capabilities: ['read-nodes'] }))
+    registry.loadFrom(home)
+    expect(registry.unprovidedCapabilities()).toEqual([])
+  })
+
+  it('answers whether a caller declared a capability', () => {
+    // What a provider asks before handing over its API. Information, not a
+    // gate: a caller that ignores it and imports directly still gets through.
+    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
+    registry.loadFrom(home)
+    expect(registry.declares('narrator', 'summary-chat:speak')).toBe(true)
+    expect(registry.declares('narrator', 'summary-chat:shush')).toBe(false)
+    expect(registry.declares('nobody', 'summary-chat:speak')).toBe(false)
+  })
+
+  it('still loads a mod whose requested capability is unprovided', () => {
+    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
+    registry.loadFrom(home)
+    expect(registry.all().map((m) => m.id)).toEqual(['narrator'])
+  })
+})

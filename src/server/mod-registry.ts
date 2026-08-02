@@ -1,6 +1,11 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { parseModManifest, type ModCapability, type ModManifest } from '../shared/mod-manifest'
+import {
+  isModProvidedCapability,
+  parseModManifest,
+  type ModCapability,
+  type ModManifest,
+} from '../shared/mod-manifest'
 
 /**
  * The manifests found on disk, read once at server start.
@@ -86,6 +91,47 @@ export class ModRegistry {
   /** Every loaded manifest, for the mod list and for diagnostics. */
   all(): readonly ModManifest[] {
     return [...this.manifests.values()]
+  }
+
+  /** The mod that defines this capability, if one is loaded. */
+  providerOf(capability: ModCapability): string | undefined {
+    for (const manifest of this.manifests.values()) {
+      if (manifest.provides?.includes(capability as never)) return manifest.id
+    }
+    return undefined
+  }
+
+  /**
+   * Whether a mod declared a capability. The question a *provider* asks before
+   * handing its API to a caller.
+   *
+   * The base answers honestly and cannot enforce the answer: in-process there
+   * is no door, so a caller that ignores this and imports the provider
+   * directly gets through. Which is why this is offered as information rather
+   * than as a gate — the provider decides how much to trust it.
+   */
+  declares(modId: string, capability: ModCapability): boolean {
+    return this.manifests.get(modId)?.capabilities.includes(capability) ?? false
+  }
+
+  /**
+   * Mod-provided capabilities that something requested and nothing supplies.
+   *
+   * The same shape as `missingPeers` and for the same reason: a capability
+   * whose provider is not installed is a legible diagnostic, not a load
+   * failure. Base capabilities are excluded — those always exist.
+   */
+  unprovidedCapabilities(): Array<{ modId: string; capability: string }> {
+    const missing: Array<{ modId: string; capability: string }> = []
+    for (const manifest of this.manifests.values()) {
+      for (const capability of manifest.capabilities) {
+        if (!isModProvidedCapability(capability)) continue
+        if (this.providerOf(capability) === undefined) {
+          missing.push({ modId: manifest.id, capability })
+        }
+      }
+    }
+    return missing
   }
 
   /**

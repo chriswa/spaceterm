@@ -40,12 +40,35 @@ export const MOD_CAPABILITIES = [
   'subscribe-events',
 ] as const
 
-export type ModCapability = (typeof MOD_CAPABILITIES)[number]
+/** A capability the base defines. Bare id, fixed list, enforced on the socket. */
+export type BaseModCapability = (typeof MOD_CAPABILITIES)[number]
+
+/**
+ * A capability *a mod* defines, namespaced to it: `summary-chat:speak`.
+ *
+ * The base validates the shape and nothing else. It cannot know what such a
+ * capability means, whether the provider is installed, or whether it is
+ * honoured — which is exactly the arrangement facets and themes already use,
+ * and for the same reason.
+ */
+export type ModProvidedCapability = `${string}:${string}`
+
+export type ModCapability = BaseModCapability | ModProvidedCapability
 
 const CAPABILITY_SET: ReadonlySet<string> = new Set(MOD_CAPABILITIES)
 
-export function isModCapability(value: string): value is ModCapability {
+export function isBaseModCapability(value: string): value is BaseModCapability {
   return CAPABILITY_SET.has(value)
+}
+
+/** Well-formed `<modId>:<name>`, both halves non-empty. */
+export function isModProvidedCapability(value: string): value is ModProvidedCapability {
+  const parts = value.split(':')
+  return parts.length === 2 && parts[0].length > 0 && parts[1].length > 0
+}
+
+export function isModCapability(value: string): value is ModCapability {
+  return isBaseModCapability(value) || isModProvidedCapability(value)
 }
 
 export interface ModManifest {
@@ -60,8 +83,24 @@ export interface ModManifest {
   version: string
   /** The scripts-socket protocol version this mod was written against. */
   protocolVersion: number
-  /** What it may do. Anything not listed is refused. */
+  /**
+   * What it may do. A base capability is refused on the scripts socket if it
+   * is not listed here; a mod-provided one is only as binding as the mod that
+   * defined it chooses to make it (see below).
+   */
   capabilities: ModCapability[]
+  /**
+   * Capabilities this mod *defines*, for other mods to request. Must be
+   * namespaced to this mod's id.
+   *
+   * The base records who provides what and reports a capability nobody
+   * provides — it cannot enforce one. In-process there is no door: a mod can
+   * import another mod directly and the base never sees it. What this buys is
+   * that a mod handing out an API through the host can ask whether its caller
+   * declared the capability, and that `provides`/`capabilities` together make
+   * the dependency legible before anything runs.
+   */
+  provides?: ModProvidedCapability[]
   /**
    * Mods this one knows how to cooperate with, and what it expects of them.
    *
@@ -119,9 +158,31 @@ export function parseModManifest(value: unknown): ModManifestOk | ModManifestErr
   const capabilities: ModCapability[] = []
   for (const entry of raw.capabilities) {
     if (typeof entry !== 'string' || !isModCapability(entry)) {
+      // A namespaced capability is accepted without checking that anything
+      // provides it: the provider may simply not be installed, and a manifest
+      // should not become invalid because of what is missing beside it.
       return { ok: false, error: `unknown capability ${JSON.stringify(entry)}` }
     }
     if (!capabilities.includes(entry)) capabilities.push(entry)
+  }
+
+  let provides: ModProvidedCapability[] | undefined
+  if (raw.provides !== undefined) {
+    if (!Array.isArray(raw.provides)) {
+      return { ok: false, error: 'provides must be an array' }
+    }
+    provides = []
+    for (const entry of raw.provides) {
+      if (typeof entry !== 'string' || !isModProvidedCapability(entry)) {
+        return { ok: false, error: `provided capability ${JSON.stringify(entry)} must be <modId>:<name>` }
+      }
+      if (!entry.startsWith(`${id}:`)) {
+        // Otherwise a mod could claim to provide another mod's capability and
+        // quietly satisfy a dependency it has nothing to do with.
+        return { ok: false, error: `provided capability "${entry}" must be namespaced to "${id}"` }
+      }
+      if (!provides.includes(entry)) provides.push(entry)
+    }
   }
 
   let peers: Record<string, string> | undefined
@@ -149,5 +210,15 @@ export function parseModManifest(value: unknown): ModManifestOk | ModManifestErr
     command = raw.command as string[]
   }
 
-  return { ok: true, manifest: { id, name, version, protocolVersion: raw.protocolVersion, capabilities, ...(peers ? { peers } : {}), ...(command ? { command } : {}) } }
+  return {
+    ok: true,
+    manifest: {
+      id, name, version,
+      protocolVersion: raw.protocolVersion,
+      capabilities,
+      ...(provides ? { provides } : {}),
+      ...(peers ? { peers } : {}),
+      ...(command ? { command } : {}),
+    },
+  }
 }

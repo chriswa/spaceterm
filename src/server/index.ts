@@ -408,6 +408,9 @@ modRegistry.loadFrom(SOCKET_DIR)
 for (const { modId, peer, range } of modRegistry.missingPeers()) {
   serverLog(`[mods] ${modId} names peer ${peer}@${range}, which is not installed`)
 }
+for (const { modId, capability } of modRegistry.unprovidedCapabilities()) {
+  serverLog(`[mods] ${modId} requests ${capability}, which no installed mod provides`)
+}
 
 /**
  * The mod-facing API. Everything it is allowed to do is the `ScriptHost`

@@ -439,9 +439,43 @@ purpose**:
    is the only door, and in-process there is no door. For in-process mods the
    manifest is a declaration and a scoped convenience host, not a fence.
 
+   **Mods can define capabilities too.** A capability id follows the same
+   namespacing rule as everything else: bare (`read-nodes`) is base-defined and
+   its list is closed; `summary-chat:speak` is defined by a mod, which declares
+   it under `provides`. A manifest may request a namespaced capability whose
+   provider is not installed — that is a diagnostic, like a missing peer, not a
+   load failure, since a manifest should not become invalid because of what is
+   missing beside it. A mod cannot claim to provide *another* mod's capability,
+   which is the one collision here worth policing.
+
+   `ModRegistry.declares(callerId, capability)` is what a provider asks before
+   handing over its API. Offered as information, not as a gate: in-process a
+   caller that ignores it and imports the provider directly still gets through,
+   so the provider decides how far to trust it.
+
    Still needed: disable/enable, and runtime loading of client code that is not
-   in this repo (the renderer is a Vite bundle, so in-repo mods are imports and
-   third-party ones need a build story).
+   in this repo. That last one is smaller than it first looked — see below.
+
+#### Loading third-party client code
+
+Worth writing down because the first assessment of it was vague and slightly
+wrong.
+
+There is **no CSP** in the renderer, and the app already registers a custom
+protocol (`spaceterm-file://`) with `protocol.handle`. So serving a mod's built
+bundle and `import()`-ing it is not the obstacle; that part is a few lines.
+
+The actual obstacle is **singleton sharing**. A mod's client bundle that does
+`import React from 'react'` gets its *own* React, and hooks break across two
+copies. Worse and less obviously: a second copy of `lib/theme/registry` is a
+different `Map`, so the mod's facets would register somewhere nothing reads.
+
+The fix is the ordinary one — a mod builds against host-provided externals, and
+the host publishes them — and the shape of the host object already exists.
+`ClientModHost` is the seam for spaceterm's own singletons; React and friends
+need an import map or a global the mod's bundle references as an external. That
+is a known, bounded piece of work rather than an open question, and it is the
+only thing standing between in-repo mods and third-party ones.
 
    **The scripts socket keeps its own audience.** It is for things *outside*
    spaceterm that want to poke it — Claude Code's nine MCP tools, shell
