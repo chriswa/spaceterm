@@ -67,8 +67,6 @@ export function useCamera(
       const safeCam = z === cam.z ? cam : { ...cam, z }
       surfaceRef.current.style.transform = getCameraTransform(safeCam)
       surfaceRef.current.style.setProperty('--camera-zoom', String(z))
-      surfaceRef.current.style.setProperty('--zoom-boost', String(Math.min(Math.max(1, 0.5 + 0.25 / z), 6.75)))
-      surfaceRef.current.style.setProperty('--dir-zoom-boost', String(Math.min(Math.max(1, 0.3 / z), 6.75)))
     }
   }, [])
 

@@ -34,25 +34,44 @@ export const MARKDOWN_MIN_HEIGHT = 88
 export const MARKDOWN_DEFAULT_MAX_WIDTH = 600
 export const MARKDOWN_MIN_MAX_WIDTH = 100
 
+/**
+ * Directory and title nodes are label-scale objects: they exist to mark a
+ * region of the canvas legibly, not to be read up close. They used to grow as
+ * you zoomed out, via a `--zoom-boost` CSS transform capped at 6.75×. A
+ * transform is invisible to layout, so their world footprint disagreed with
+ * the constants below — placement, camera-fit, snap guides and drag-select all
+ * measured something other than what was drawn, and the disagreement varied
+ * with the camera. The boost is gone, replaced by the fixed factor below —
+ * chosen by eye, not derived from anything — applied here where measureCard()
+ * can see it rather than in a transform that layout cannot.
+ *
+ * The base values below are the pre-scale numbers, kept visible because they
+ * document intent (font sizes, leading, padding). The matching CSS multiplies
+ * the same base values by `--label-node-scale` on :root, which must equal this.
+ */
+export const LABEL_NODE_SCALE = 5
+
 // Directory node dimensions
-export const DIRECTORY_WIDTH = 300
-export const DIRECTORY_HEIGHT = 144
-export const DIR_CWD_CHAR_WIDTH = CELL_WIDTH * (44 / 14)   // Menlo 44px bold
-export const DIR_GIT_CHAR_WIDTH = CELL_WIDTH * (11 / 14)   // Menlo 11px
-export const DIR_FOLDER_H_PADDING = 80
-export const DIR_MIN_FOLDER_WIDTH = 180
+export const DIRECTORY_WIDTH = 300 * LABEL_NODE_SCALE
+export const DIRECTORY_HEIGHT = 144 * LABEL_NODE_SCALE
+/** Native height of the folder artwork's coordinate space, before scaling. */
+export const DIR_FOLDER_ART_HEIGHT = 144
+export const DIR_CWD_CHAR_WIDTH = CELL_WIDTH * (44 / 14) * LABEL_NODE_SCALE   // Menlo 44px bold
+export const DIR_GIT_CHAR_WIDTH = CELL_WIDTH * (11 / 14) * LABEL_NODE_SCALE   // Menlo 11px
+export const DIR_FOLDER_H_PADDING = 80 * LABEL_NODE_SCALE
+export const DIR_MIN_FOLDER_WIDTH = 180 * LABEL_NODE_SCALE
 
 // File node dimensions
 export const FILE_WIDTH = 300
 export const FILE_HEIGHT = 144
 
-// Title node dimensions
-export const TITLE_DEFAULT_WIDTH = 600
-export const TITLE_HEIGHT = 120
-export const TITLE_LINE_HEIGHT = 80    // 66px font + 14px leading
-export const TITLE_CHAR_WIDTH = 39.75  // Menlo 66px bold (CELL_WIDTH * 66/14)
-export const TITLE_H_PADDING = 72      // 36px padding on each side
-export const TITLE_MIN_WIDTH = 360
+// Title node dimensions — see LABEL_NODE_SCALE above.
+export const TITLE_DEFAULT_WIDTH = 600 * LABEL_NODE_SCALE
+export const TITLE_HEIGHT = 120 * LABEL_NODE_SCALE
+export const TITLE_LINE_HEIGHT = 80 * LABEL_NODE_SCALE                      // 66px font + 14px leading
+export const TITLE_CHAR_WIDTH = CELL_WIDTH * (66 / 14) * LABEL_NODE_SCALE   // Menlo 66px bold
+export const TITLE_H_PADDING = 72 * LABEL_NODE_SCALE                        // 36px padding on each side
+export const TITLE_MIN_WIDTH = 360 * LABEL_NODE_SCALE
 
 // Placement
 export const PLACEMENT_MARGIN = 80

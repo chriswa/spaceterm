@@ -1,5 +1,15 @@
 @import '@xterm/xterm/css/xterm.css';
 
+/* A CONSTANT, not a camera-derived value — nothing rewrites it at runtime.
+   Directory and title nodes (and the two decorations that sized themselves off
+   them) render at this multiple of their base design sizes. It must stay equal
+   to LABEL_NODE_SCALE in src/shared/node-size.ts, which applies the same factor
+   to the world-space geometry those nodes report to layout. Every px below that
+   is multiplied by this keeps its original base value visible in the calc(). */
+:root {
+  --label-node-scale: 5;
+}
+
 /* Cmd+P plan-jump flash highlight — 4× ping-pong */
 @keyframes plan-jump-flash {
   0%      { opacity: 0.3; }
@@ -1204,8 +1214,6 @@ html, body, #root {
   flex-direction: column;
   position: relative;
   cursor: grab;
-  transform: scale(var(--dir-zoom-boost, 1));
-  transform-origin: center center;
 }
 
 .directory-card:active {
@@ -1258,18 +1266,18 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   overflow: visible;
-  padding-top: 28px;
+  padding-top: calc(28px * var(--label-node-scale));
   box-sizing: border-box;
   z-index: 1;
 }
 
 .directory-card__label {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 44px;
+  font-size: calc(44px * var(--label-node-scale));
   font-weight: bold;
   color: var(--dir-fg, #1e1e2e);
   text-align: center;
-  padding: 0 20px;
+  padding: 0 calc(20px * var(--label-node-scale));
   cursor: text;
   white-space: nowrap;
   overflow: visible;
@@ -1279,23 +1287,23 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: calc(4px * var(--label-node-scale));
   width: 100%;
-  padding: 0 20px;
+  padding: 0 calc(20px * var(--label-node-scale));
 }
 
 .directory-card__input {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 44px;
+  font-size: calc(44px * var(--label-node-scale));
   font-weight: bold;
   color: var(--dir-fg, #1e1e2e);
   background: transparent;
   border: none;
   outline: none;
   text-align: center;
-  min-width: 60px;
+  min-width: calc(60px * var(--label-node-scale));
   max-width: 100%;
-  border-bottom: 1px solid #585b70;
+  border-bottom: calc(1px * var(--label-node-scale)) solid #585b70;
 }
 
 .directory-card__input:focus {
@@ -1307,7 +1315,7 @@ html, body, #root {
   visibility: hidden;
   white-space: pre;
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 44px;
+  font-size: calc(44px * var(--label-node-scale));
   font-weight: bold;
 }
 
@@ -1316,11 +1324,11 @@ html, body, #root {
   visibility: hidden;
   white-space: pre;
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 11px;
+  font-size: calc(11px * var(--label-node-scale));
 }
 
 .directory-card__error {
-  font-size: 11px;
+  font-size: calc(11px * var(--label-node-scale));
   color: #ff5c8a;
   text-align: center;
   white-space: nowrap;
@@ -1407,12 +1415,12 @@ html, body, #root {
 
 .directory-card__git-status {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 11px;
+  font-size: calc(11px * var(--label-node-scale));
   color: var(--dir-fg, #1e1e2e);
   opacity: 0.55;
   white-space: nowrap;
   pointer-events: none;
-  margin-top: 2px;
+  margin-top: calc(2px * var(--label-node-scale));
 }
 
 .directory-card__git-status--conflict {
@@ -1451,8 +1459,6 @@ html, body, #root {
   flex-direction: column;
   position: relative;
   cursor: grab;
-  transform: scale(var(--zoom-boost, 1));
-  transform-origin: center center;
 }
 
 .title-card:active {
@@ -1487,12 +1493,12 @@ html, body, #root {
 
 .title-card__label {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 66px;
+  font-size: calc(66px * var(--label-node-scale));
   font-weight: bold;
-  line-height: 80px;
+  line-height: calc(80px * var(--label-node-scale));
   color: var(--title-fg, #a66cff);
   text-align: center;
-  padding: 0 12px;
+  padding: 0 calc(12px * var(--label-node-scale));
   cursor: text;
   white-space: pre;
   overflow: visible;
@@ -1500,20 +1506,20 @@ html, body, #root {
 
 .title-card__input {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 66px;
+  font-size: calc(66px * var(--label-node-scale));
   font-weight: bold;
-  line-height: 80px;
+  line-height: calc(80px * var(--label-node-scale));
   color: var(--title-fg, #a66cff);
   background: transparent;
   border: none;
   outline: none;
   text-align: center;
-  min-width: 60px;
+  min-width: calc(60px * var(--label-node-scale));
   max-width: 100%;
   resize: none;
   overflow: hidden;
   white-space: pre;
-  border-bottom: 1px solid #585b70;
+  border-bottom: calc(1px * var(--label-node-scale)) solid #585b70;
 }
 
 .title-card__input:focus {
@@ -1530,7 +1536,7 @@ html, body, #root {
   visibility: hidden;
   white-space: pre;
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: 66px;
+  font-size: calc(66px * var(--label-node-scale));
   font-weight: bold;
 }
 
@@ -2285,7 +2291,7 @@ html, body, #root {
   top: 0;
   left: 50%;
   translate: -50% -60%;
-  height: calc(50px * var(--zoom-boost, 1));
+  height: calc(50px * var(--label-node-scale));
   aspect-ratio: 128 / 85;
   z-index: -1;
   pointer-events: none;
@@ -2300,13 +2306,13 @@ html, body, #root {
 /* Cursor/Codex marks are square and read smaller than the wide crab mark at the same height. */
 .terminal-card__crab-behind--cursor,
 .terminal-card__crab-behind--codex {
-  height: calc(62px * var(--zoom-boost, 1));
+  height: calc(62px * var(--label-node-scale));
   aspect-ratio: 1;
   translate: -50% -55%;
 }
 
 .terminal-card__crab-behind--codex {
-  height: calc(68px * var(--zoom-boost, 1));
+  height: calc(68px * var(--label-node-scale));
 }
 
 /* Terminal Search Bar */
@@ -2723,11 +2729,16 @@ html, body, #root {
   top: 50%;
   left: 50%;
   translate: -50% -50%;
-  transform: scale(var(--dir-zoom-boost, 1));
-  transform-origin: center center;
   z-index: 10;
   pointer-events: none;
   color: #fff;
+}
+
+/* Sized here rather than scaled with a transform, so the badge's layout box is
+   the box that gets painted. Overrides the svg's own width/height attributes. */
+.card-shell__alert-badge svg {
+  width: calc(60px * var(--label-node-scale));
+  height: calc(60px * var(--label-node-scale));
 }
 
 .card-shell__alert-badge--unread {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { DIRECTORY_HEIGHT } from '../lib/constants'
-import { DIR_FOLDER_H_PADDING, DIR_MIN_FOLDER_WIDTH } from '../../../../shared/node-size'
+import { DIR_FOLDER_ART_HEIGHT, DIR_FOLDER_H_PADDING, DIR_MIN_FOLDER_WIDTH } from '../../../../shared/node-size'
 import type { ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
@@ -160,7 +160,14 @@ export function DirectoryCard({
   }, [gitStatusText])
 
   const folderWidth = Math.max(DIR_MIN_FOLDER_WIDTH, Math.max(textWidth, gitTextWidth) + DIR_FOLDER_H_PADDING)
-  const paths = folderPaths(folderWidth)
+
+  // The folder artwork is authored in its own coordinate space, DIR_FOLDER_ART_HEIGHT
+  // tall — folderPaths hardcodes vertical coordinates against it. Divide the world
+  // width by the same factor so the viewBox keeps the card's exact aspect ratio; the
+  // svg is width/height:100%, so it stretches the art to fill the node either way,
+  // and a mismatched aspect would letterbox the folder inside its own card.
+  const artWidth = folderWidth * (DIR_FOLDER_ART_HEIGHT / DIRECTORY_HEIGHT)
+  const paths = folderPaths(artWidth)
 
   // Notify parent when focused node size is known
   useEffect(() => {
@@ -319,7 +326,7 @@ export function DirectoryCard({
     >
       <svg
         className="directory-card__folder-svg"
-        viewBox={`0 0 ${folderWidth} 144`}
+        viewBox={`0 0 ${artWidth} ${DIR_FOLDER_ART_HEIGHT}`}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         style={focused && !rtsSelectActive ? { color: nodeTint.borderColor(x, y), filter: `drop-shadow(0 0 4px ${nodeTint.borderColor(x, y)})` } : undefined}
