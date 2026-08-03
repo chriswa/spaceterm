@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import {
+  ROOT_NODE_RADIUS,
+  ROOT_DISC_RADIUS,
+  ROOT_DISC_INSET,
   clampTerminalSize,
   terminalPixelSize,
   terminalSizeFromCorner,
   resizeDraftSize,
+  CELL_WIDTH,
+  CELL_HEIGHT,
   DEFAULT_COLS,
   DEFAULT_ROWS,
   MIN_COLS,
@@ -50,6 +55,21 @@ describe('clampTerminalSize', () => {
   })
 })
 
+describe('the cell grid', () => {
+  it('survives the renderer\'s device-pixel rounding at every ratio in use', () => {
+    // The grid unit is what the card, the snapshot canvas, the resize ghost and
+    // the overlay all multiply by, while xterm's WebGL renderer rounds each
+    // cell to whole *device* pixels. A unit that does not survive that rounding
+    // draws narrower than the card reserves, and the gap accumulates across the
+    // row — which is exactly what 8.4375 did, floored to 8.0 and leaving 140px
+    // of black down the side of a 320-column terminal.
+    for (const dpr of [1, 1.25, 1.5, 2, 2.5, 3]) {
+      expect(Math.floor(CELL_WIDTH * dpr) / dpr).toBe(CELL_WIDTH)
+      expect(Math.ceil(CELL_HEIGHT * dpr) / dpr).toBe(CELL_HEIGHT)
+    }
+  })
+})
+
 describe('terminalSizeFromCorner', () => {
   const center = { x: 1000, y: 500 }
 
@@ -69,7 +89,7 @@ describe('terminalSizeFromCorner', () => {
     const before = terminalSizeFromCorner(center, cornerOf(120, 40))
     const { width } = terminalPixelSize(before.cols, before.rows)
     // Push the cursor out by one cell; the card gains two columns, one per side.
-    const after = terminalSizeFromCorner(center, { x: center.x + width / 2 + 8.4375, y: center.y })
+    const after = terminalSizeFromCorner(center, { x: center.x + width / 2 + CELL_WIDTH, y: center.y })
     expect(after.cols).toBe(before.cols + 2)
   })
 
@@ -112,5 +132,24 @@ describe('terminalSizeFromCorner', () => {
       expect(cols).toBeGreaterThanOrEqual(prev)
       prev = cols
     }
+  })
+})
+
+describe('root node geometry', () => {
+  it('keeps the drawn circle concentric with its box', () => {
+    // RootNode insets the visual by ROOT_DISC_INSET on every side, so this is
+    // what puts the circle's centre on the world origin. Anything aligning to
+    // the circle — the grid background hangs its rings off it — is wrong the
+    // moment these stop adding up.
+    expect(ROOT_DISC_INSET + ROOT_DISC_RADIUS).toBe(ROOT_NODE_RADIUS)
+  })
+
+  it('draws a circle smaller than the box it sits in', () => {
+    // The gap is the point: it leaves room for the hidden action row and the
+    // focus ring without growing the node's footprint. It is also the trap —
+    // ROOT_NODE_RADIUS is not the radius anyone sees.
+    expect(ROOT_DISC_RADIUS).toBeGreaterThan(0)
+    expect(ROOT_DISC_RADIUS).toBeLessThan(ROOT_NODE_RADIUS)
+    expect(ROOT_DISC_INSET).toBeGreaterThan(0)
   })
 })

@@ -42,9 +42,44 @@ export function clampTerminalSize(cols: number, rows: number): { cols: number; r
   }
 }
 
-// xterm.js cell pixel dimensions for Menlo 14px.
-export const CELL_WIDTH = 8.4375
+/**
+ * The pixel footprint of one terminal cell — this app's grid unit.
+ *
+ * Not a measurement of the font: a *contract* the live terminal is held to at
+ * mount by `alignTerminalCellWidth`. It has to be a contract, because xterm's
+ * two renderers disagree about the same font. xterm measures Menlo 14px at
+ * 8.4375px per column (`"W".repeat(32)`, `offsetWidth` 270, ÷32) and the DOM
+ * renderer draws it at exactly that fractional width — but the WebGL renderer
+ * floors every cell to whole *device* pixels, and `floor(8.4375 * dpr) / dpr`
+ * is 8.0 at both dpr 1 and dpr 2. Sizing a card from the measurement then
+ * loses 0.4375px per column against what the terminal actually draws, and the
+ * error accumulates across the row: at 320 columns the focused terminal drew
+ * 140px narrower than its own card, as a black bar down the right-hand side.
+ *
+ * So the grid unit is a whole number of CSS pixels, which survives the floor
+ * intact at every ratio in use (`8 * dpr` is an integer for dpr 1, 1.25, 1.5,
+ * 2, 2.5 and 3), and the terminal's `letterSpacing` is trimmed at mount to
+ * close whatever gap the font leaves. Glyphs are still 14px Menlo; only the
+ * advance narrows — which is what the focused terminal already drew, and what
+ * the snapshot canvases now draw to match.
+ *
+ * CELL_HEIGHT needs none of this: the measured line height is already a whole
+ * number, so both renderers round it to the same 16. That asymmetry is why the
+ * bar only ever appeared on the right and never along the bottom.
+ */
+export const CELL_WIDTH = 8
 export const CELL_HEIGHT = 16
+
+/**
+ * Menlo's advance width per pixel of font size — 8.4375 / 14, as xterm measures
+ * it.
+ *
+ * Label nodes draw Menlo through the DOM at 11px, 44px and 66px, where nothing
+ * snaps anything to a cell grid, so their widths must come from the real font
+ * metric. They used to be derived from CELL_WIDTH, which was the same number by
+ * coincidence; it deliberately is not any more.
+ */
+export const MENLO_ADVANCE_RATIO = 8.4375 / 14
 
 // Card chrome sub-constants — update these when CSS changes.
 export const CARD_BORDER = 2
@@ -103,6 +138,32 @@ export const LABEL_NODE_SCALE = 5
 export const ROOT_NODE_RADIUS = 90 * LABEL_NODE_SCALE
 
 /**
+ * How much of that box the *visible* circle fills.
+ *
+ * The box is the hit target and the layout slot; the disc drawn inside it is
+ * smaller, so the hidden action row and the focus ring have somewhere to go
+ * without growing the node's footprint or overlapping the artwork.
+ *
+ * Named because the gap between the two is a trap. `ROOT_NODE_RADIUS` is what
+ * layout, placement and hit-testing mean by "the root node", but it is *not*
+ * the circle anyone sees — anything lining itself up with the drawn edge wants
+ * `ROOT_DISC_RADIUS`. This lived as a bare `0.7` inside `RootNode`, and the
+ * concentric background duly hung its rings off the box instead of the circle.
+ */
+export const ROOT_DISC_FRACTION = 0.7
+
+/** Radius of the circle actually drawn: what "the root node's circle" means. */
+export const ROOT_DISC_RADIUS = ROOT_NODE_RADIUS * ROOT_DISC_FRACTION
+
+/**
+ * Gap from the box edge to the circle, the same on every side.
+ *
+ * Derived rather than written out, so the disc stays concentric with the box
+ * — and therefore centred on the world origin — whatever the fraction becomes.
+ */
+export const ROOT_DISC_INSET = ROOT_NODE_RADIUS - ROOT_DISC_RADIUS
+
+/**
  * Half-extent of the box the camera frames when the root node is focused.
  *
  * Wider than the node itself so its nearest children stay in shot — flying to
@@ -118,8 +179,8 @@ export const DIRECTORY_WIDTH = 300 * LABEL_NODE_SCALE
 export const DIRECTORY_HEIGHT = 144 * LABEL_NODE_SCALE
 /** Native height of the folder artwork's coordinate space, before scaling. */
 export const DIR_FOLDER_ART_HEIGHT = 144
-export const DIR_CWD_CHAR_WIDTH = CELL_WIDTH * (44 / 14) * LABEL_NODE_SCALE   // Menlo 44px bold
-export const DIR_GIT_CHAR_WIDTH = CELL_WIDTH * (11 / 14) * LABEL_NODE_SCALE   // Menlo 11px
+export const DIR_CWD_CHAR_WIDTH = 44 * MENLO_ADVANCE_RATIO * LABEL_NODE_SCALE  // Menlo 44px bold
+export const DIR_GIT_CHAR_WIDTH = 11 * MENLO_ADVANCE_RATIO * LABEL_NODE_SCALE  // Menlo 11px
 export const DIR_FOLDER_H_PADDING = 80 * LABEL_NODE_SCALE
 export const DIR_MIN_FOLDER_WIDTH = 180 * LABEL_NODE_SCALE
 
@@ -131,7 +192,7 @@ export const FILE_HEIGHT = 144
 export const TITLE_DEFAULT_WIDTH = 600 * LABEL_NODE_SCALE
 export const TITLE_HEIGHT = 120 * LABEL_NODE_SCALE
 export const TITLE_LINE_HEIGHT = 80 * LABEL_NODE_SCALE                      // 66px font + 14px leading
-export const TITLE_CHAR_WIDTH = CELL_WIDTH * (66 / 14) * LABEL_NODE_SCALE   // Menlo 66px bold
+export const TITLE_CHAR_WIDTH = 66 * MENLO_ADVANCE_RATIO * LABEL_NODE_SCALE  // Menlo 66px bold
 export const TITLE_H_PADDING = 72 * LABEL_NODE_SCALE                        // 36px padding on each side
 export const TITLE_MIN_WIDTH = 360 * LABEL_NODE_SCALE
 
