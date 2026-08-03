@@ -675,6 +675,12 @@ export class ClaudeStateMachine {
    * actually finished, drain to 'stopped'. This is the backstop for completions
    * we never see in the transcript (killed tasks, work that finished while the
    * session sat idle). Only yellow surfaces are probed, so it's cheap otherwise.
+   *
+   * A probe that can say nothing at all reports 'indeterminate' rather than
+   * "still running", and the ledger drains such a launch after a few minutes —
+   * so a launch whose evidence is permanently gone (an interrupted subagent, a
+   * killed process) can no longer pin the surface yellow until the next prompt.
+   * See LivenessVerdict / STALE_INDETERMINATE_MS in background-ledger.ts.
    */
   private async reconcileBackgroundSurfaces(): Promise<void> {
     for (const surfaceId of this.backgroundLedger.activeSurfaces()) {

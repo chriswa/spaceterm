@@ -28,6 +28,15 @@
  *   drained by the next reconciliation sweep. Completion parsing is only an
  *   optimization that drains the yellow state faster than the sweep interval.
  *
+ * - Probes answer with THREE values, not two (see LivenessVerdict). The original
+ *   boolean collapsed "positive evidence it's still running" and "no evidence
+ *   either way" into one answer, and since the fail-safe direction is "keep it
+ *   outstanding", any launch a probe could never read pinned the surface yellow
+ *   until the next user prompt. A user-interrupted subagent hit this exactly:
+ *   no SubagentStop hook, and a transcript that can never reach `end_turn`.
+ *   Splitting the two lets `running` stay unbounded (a 40-minute workflow must
+ *   not drain) while `indeterminate` is bounded by STALE_INDETERMINATE_MS.
+ *
  * Unlike voiceop (which re-scans the whole transcript on every poll and
  * therefore needs byte offsets + a resolved-id cache), spaceterm ingests the
  * transcript delta once per append. So a launch ack is seen exactly once and a
@@ -50,31 +59,82 @@ interface Launch {
   /** workflow only: the wf_… id naming its on-disk state file */
   runId?: string
   /**
-   * Completion was enqueued but not yet delivered to the agent. The work is
-   * finished, but the surface must keep muting (stay outstanding) until the
+   * Epoch ms when the completion was enqueued but not yet delivered to the
+   * agent, or undefined while the work is still genuinely outstanding.
+   *
+   * The work is finished, but the surface must keep muting until the
    * notification is delivered — delivery re-invokes the agent, so we are
-   * genuinely still "busy" until then. Matches voiceop: queued launches are
-   * never probed.
+   * genuinely still "busy" until then. Such a launch is NOT probed: the probe
+   * would say 'finished' (it is) and drain it before delivery.
+   *
+   * It is a timestamp rather than a boolean because that exemption has to be
+   * bounded. As a bare flag it was a one-way latch — a queued launch was
+   * exempt from probing forever, so a delivery we failed to parse made it
+   * immortal and pinned the surface yellow until the next user prompt. Same
+   * failure shape as a probe that can never answer, so it gets the same
+   * treatment: STALE_INDETERMINATE_MS and then drain.
    */
-  queued: boolean
+  queuedSinceMs?: number
+  /**
+   * Epoch ms of the first consecutive 'indeterminate' probe, cleared whenever a
+   * probe answers definitively. Drives the staleness bound in reconcile(): a
+   * launch nobody can say anything about must not pin the indicator forever.
+   */
+  indeterminateSinceMs?: number
 }
 
 /**
+ * How long (ms) a launch may sit with NO usable evidence before we drain it
+ * anyway. Applies to two cases: a probe that keeps answering 'indeterminate',
+ * and a queued launch whose delivery we never observe.
+ *
+ * Only those accrue toward this — a probe that positively reports 'running'
+ * resets the clock, so genuinely long background work (a 40-minute workflow, a
+ * slow subagent) is never drained early no matter how long it runs. The bound
+ * exists solely for launches whose evidence is *gone*: a killed process, an
+ * unreadable transcript, an lsof that won't spawn, a notification whose
+ * delivery was written in a shape we do not parse.
+ *
+ * 5 minutes = 60 consecutive no-evidence sweeps at the 5s reconcile interval.
+ * Long enough that a transient probe failure (lsof timing out under load)
+ * cannot drain real work; short enough that a ghost launch does not outlive the
+ * user's attention. Before this bound the only backstop was UserPromptSubmit,
+ * i.e. "yellow until you happen to type something".
+ */
+const STALE_INDETERMINATE_MS = 5 * 60_000
+
+/**
+ * What a probe learned about one launch.
+ *
+ * - `finished`      — positive evidence the work ended. Drain it now.
+ * - `running`       — positive evidence it is still going. Keep it outstanding
+ *                     indefinitely; this is the answer that must never be
+ *                     guessed, since draining live work fires the completion
+ *                     tone while Claude is still busy.
+ * - `indeterminate` — no evidence either way: the probe could not run, the file
+ *                     is unreadable, or the transcript carries no verdict. Still
+ *                     fail-safe (the launch stays outstanding), but only for
+ *                     STALE_INDETERMINATE_MS, after which it is drained.
+ *
+ * The distinction that matters is `running` vs `indeterminate`. Both keep the
+ * surface yellow right now, so a probe that cannot tell them apart looks
+ * correct — until the evidence disappears permanently and the indicator sticks.
+ * When a probe is unsure, `indeterminate` is always the honest answer.
+ */
+export type LivenessVerdict = 'finished' | 'running' | 'indeterminate'
+
+/**
  * Liveness probes are injectable so the ledger is unit-testable without
- * shelling out. All probes answer the question "is this launch FINISHED?" and
- * follow a fail-safe rule: on any uncertainty (probe failed to run, file
- * unreadable) they resolve `false` (still running). Reporting "still running"
- * too long only keeps the indicator yellow a bit longer; reporting "finished"
- * too early would fire the completion tone while Claude is still working.
+ * shelling out.
  *
  * Probes are async so a slow/hung lsof or pgrep can never block the server's
  * event loop (which is also servicing PTY and websocket traffic).
  */
 export interface LivenessProbes {
-  bashFinished(outputPath: string): Promise<boolean>
-  monitorFinished(sessionId: ClaudeSessionId): Promise<boolean>
-  agentFinished(subagentTranscriptPath: string): Promise<boolean>
-  workflowFinished(stateFilePath: string): Promise<boolean>
+  probeBash(outputPath: string): Promise<LivenessVerdict>
+  probeMonitor(sessionId: ClaudeSessionId): Promise<LivenessVerdict>
+  probeAgent(subagentTranscriptPath: string): Promise<LivenessVerdict>
+  probeWorkflow(stateFilePath: string): Promise<LivenessVerdict>
 }
 
 // ─── Launch-ack / completion patterns (from voiceop) ────────────────────────
@@ -122,75 +182,154 @@ function probeExit(cmd: string, args: string[]): Promise<number | null> {
 /**
  * lsof exits 0 while any process still holds the file open, 1 once nothing
  * does. A background bash's process tree keeps its .output file open until it
- * exits, so "not held open" == finished. Missing file == finished (nothing to
- * hold open). Spawn failure == treat as still running (fail-safe).
+ * exits, so "held open" == running and "not held open" == finished. Missing
+ * file == finished (nothing to hold open). Spawn failure tells us nothing.
  */
-async function realBashFinished(outputPath: string): Promise<boolean> {
-  if (!fs.existsSync(outputPath)) return true
+async function realBashProbe(outputPath: string): Promise<LivenessVerdict> {
+  if (!fs.existsSync(outputPath)) return 'finished'
   const status = await probeExit('/usr/sbin/lsof', ['-t', '--', outputPath])
-  if (status === null) return false
-  return status !== 0
+  if (status === null) return 'indeterminate'
+  return status === 0 ? 'running' : 'finished'
 }
 
 /**
  * pgrep matches any live process whose command line carries this session's
  * CLAUDE_SESSION_ID env var. Coarse by design (voiceop): a monitor reads as
- * "still running" whenever any shell for the session is alive. Spawn failure
- * == still running (fail-safe).
+ * 'running' whenever any shell for the session is alive. Spawn failure tells us
+ * nothing.
  */
-async function realMonitorFinished(sessionId: ClaudeSessionId): Promise<boolean> {
+async function realMonitorProbe(sessionId: ClaudeSessionId): Promise<LivenessVerdict> {
   const status = await probeExit('/usr/bin/pgrep', ['-f', `CLAUDE_SESSION_ID=${sessionId}`])
-  if (status === null) return false
-  return status !== 0
+  if (status === null) return 'indeterminate'
+  return status === 0 ? 'running' : 'finished'
 }
 
 /**
- * A subagent is finished when the last `assistant` entry in its own transcript
- * has stop_reason === 'end_turn'. We read only the tail (8 KB) because the
- * verdict is in the final entry. Missing file == finished (the subagent hasn't
- * or won't produce more). Unreadable / no marker == not finished (fail-safe).
+ * Tail sizes tried in order when reading a subagent transcript, growing until a
+ * verdict is found.
+ *
+ * A single fixed window was the original bug: 8 KB is usually plenty (the
+ * verdict is in the final entries), but one large trailing tool_result pushes
+ * the last `assistant` entry out of the window, the scan finds nothing, and the
+ * launch is stuck 'indeterminate' forever. Observed at 11 KB from EOF with a
+ * single `cat` result. Growing costs nothing in the common case — the 8 KB read
+ * decides and we stop — and the cap keeps a pathological transcript from being
+ * slurped whole on every 5s sweep.
  */
-async function realAgentFinished(subagentTranscriptPath: string): Promise<boolean> {
-  if (!fs.existsSync(subagentTranscriptPath)) return true
+const AGENT_TAIL_WINDOWS = [8 * 1024, 64 * 1024, 1024 * 1024]
+
+/**
+ * A subagent's transcript decides its own liveness:
+ *
+ * - last `assistant` entry has stop_reason 'end_turn' → it finished its turn.
+ * - a `[Request interrupted by user]` text entry AFTER the last assistant entry
+ *   → the user killed it. This is terminal and it is the ONLY signal we get:
+ *   an interrupt fires no SubagentStop hook, and the transcript stops at
+ *   stop_reason 'tool_use', which can never become 'end_turn'. Without this
+ *   case an interrupted subagent pins the surface yellow until the next prompt.
+ * - any other last `assistant` entry (typically stop_reason 'tool_use') → it is
+ *   mid-tool and genuinely running.
+ *
+ * Missing file == finished (it has not and will not produce more). Unreadable,
+ * or no assistant entry within the largest window == indeterminate.
+ */
+async function realAgentProbe(subagentTranscriptPath: string): Promise<LivenessVerdict> {
+  if (!fs.existsSync(subagentTranscriptPath)) return 'finished'
   try {
     const fd = fs.openSync(subagentTranscriptPath, 'r')
     try {
       const size = fs.fstatSync(fd).size
-      const start = size > 8192 ? size - 8192 : 0
-      const buf = Buffer.alloc(size - start)
-      fs.readSync(fd, buf, 0, size - start, start)
-      const lines = buf.toString('utf-8').split('\n')
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i]
-        if (!line) continue
-        try {
-          const e = JSON.parse(line)
-          if (e && e.type === 'assistant' && e.message) {
-            return e.message.stop_reason === 'end_turn'
-          }
-        } catch {
-          // partial/non-JSON tail line — keep scanning older lines
-        }
+      for (const window of AGENT_TAIL_WINDOWS) {
+        const start = size > window ? size - window : 0
+        const buf = Buffer.alloc(size - start)
+        fs.readSync(fd, buf, 0, size - start, start)
+        const verdict = agentTranscriptVerdict(buf.toString('utf-8'))
+        // Undecided only means "look further back" while there IS further back.
+        if (verdict !== 'indeterminate' || start === 0) return verdict
       }
-      return false
+      return 'indeterminate'
     } finally {
       fs.closeSync(fd)
     }
   } catch {
-    return false
+    return 'indeterminate'
   }
 }
 
-/** The per-run workflow state file is written (with status + result) only when the run ends, so its existence == finished. */
-async function realWorkflowFinished(stateFilePath: string): Promise<boolean> {
-  return fs.existsSync(stateFilePath)
+/**
+ * Decide a subagent's liveness from a tail of its transcript. Pure, and
+ * exported, so the ordering rules above are testable as data rather than
+ * through the filesystem.
+ *
+ * Scanning runs backwards from the end, so anything seen before reaching the
+ * last `assistant` entry is by construction *after* it in the file — that is
+ * what makes the interruption check positional without tracking indices.
+ */
+export function agentTranscriptVerdict(tail: string): LivenessVerdict {
+  let interruptedAfterLastAssistant = false
+  const lines = tail.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      // A tail read starts mid-line, and a live transcript's last line may be
+      // half-written. Both are expected — keep scanning older lines.
+      continue
+    }
+    if (!parsed || typeof parsed !== 'object') continue
+    const entry = parsed as { type?: string; message?: { stop_reason?: unknown; content?: unknown } }
+    if (entry.type === 'user' && hasInterruptionMarker(entry.message?.content)) {
+      interruptedAfterLastAssistant = true
+      continue
+    }
+    if (entry.type === 'assistant' && entry.message) {
+      if (entry.message.stop_reason === 'end_turn') return 'finished'
+      return interruptedAfterLastAssistant ? 'finished' : 'running'
+    }
+  }
+  // An interrupt with no assistant entry in view is still conclusive.
+  return interruptedAfterLastAssistant ? 'finished' : 'indeterminate'
+}
+
+/** Text Claude Code writes as a user entry when a turn is interrupted (bare, or `… for tool use`). */
+const INTERRUPTION_PREFIX = '[Request interrupted by user'
+
+/**
+ * True if this user entry's content carries an interruption marker.
+ *
+ * Matched only against `text` blocks, never `tool_result` blocks, for the same
+ * reason the launch-ack patterns are: a subagent that reads or greps a
+ * transcript would otherwise hand us its own bogus interruption.
+ */
+function hasInterruptionMarker(content: unknown): boolean {
+  if (!Array.isArray(content)) return false
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue
+    const b = block as { type?: string; text?: unknown }
+    if (b.type !== 'text' || typeof b.text !== 'string') continue
+    if (b.text.trimStart().startsWith(INTERRUPTION_PREFIX)) return true
+  }
+  return false
+}
+
+/**
+ * The per-run workflow state file is written (with status + result) only when
+ * the run ends, so its existence == finished. Absence is the NORMAL condition
+ * during a run, so it is 'running' rather than 'indeterminate' — a long
+ * workflow must not accrue toward the staleness bound.
+ */
+async function realWorkflowProbe(stateFilePath: string): Promise<LivenessVerdict> {
+  return fs.existsSync(stateFilePath) ? 'finished' : 'running'
 }
 
 const REAL_PROBES: LivenessProbes = {
-  bashFinished: realBashFinished,
-  monitorFinished: realMonitorFinished,
-  agentFinished: realAgentFinished,
-  workflowFinished: realWorkflowFinished,
+  probeBash: realBashProbe,
+  probeMonitor: realMonitorProbe,
+  probeAgent: realAgentProbe,
+  probeWorkflow: realWorkflowProbe,
 }
 
 // ─── Per-surface state ──────────────────────────────────────────────────────
@@ -231,7 +370,7 @@ export class BackgroundLedger {
 
   /** SubagentStart(agent_id) — register (or re-register, on resume) a background subagent. */
   registerAgent(surfaceId: PtySessionId, agentId: string): void {
-    this.get(surfaceId).launches.set(agentId, { id: agentId, kind: 'agent', queued: false })
+    this.get(surfaceId).launches.set(agentId, { id: agentId, kind: 'agent' })
   }
 
   /** SubagentStop(agent_id) — the subagent finished; drop it. */
@@ -260,16 +399,29 @@ export class BackgroundLedger {
    * different id-space than the transcript's <task-id>, so mixing the two would
    * double-count.
    */
-  ingestJsonl(surfaceId: PtySessionId, entries: SessionFileEntry[]): void {
+  ingestJsonl(surfaceId: PtySessionId, entries: SessionFileEntry[], now: number = Date.now()): void {
     const s = this.get(surfaceId)
     for (const entry of entries) {
-      // Queued-but-undelivered completions: the work is done but the agent
-      // hasn't been notified yet — keep it outstanding until delivery.
+      // The notification queue is the authoritative delivery signal, and both
+      // of its operations matter:
+      //   enqueue — the work finished but the agent has not been told yet, so
+      //             the launch stays outstanding (and unprobed) until delivery.
+      //   anything else (remove/dequeue) — the notification has left the queue,
+      //             delivered or cancelled. Either way it will never resolve
+      //             again, so the launch is done.
+      // Only 'enqueue' used to be handled and everything else hit the `continue`
+      // below, which dropped every delivery on the floor: the launch stayed
+      // latched as queued, exempt from probing, and immortal. Observed with four
+      // background Bash launches whose 'remove' ops landed ~2s after enqueue.
       if (entry.type === 'queue-operation') {
-        if (entry.operation === 'enqueue' && typeof entry.content === 'string') {
+        if (typeof entry.content === 'string') {
           for (const id of completedTaskIds(entry.content)) {
-            const l = s.launches.get(id)
-            if (l) l.queued = true
+            if (entry.operation === 'enqueue') {
+              const l = s.launches.get(id)
+              if (l) l.queuedSinceMs ??= now
+            } else {
+              s.launches.delete(id)
+            }
           }
         }
         continue
@@ -292,46 +444,77 @@ export class BackgroundLedger {
 
   /**
    * Probe outstanding launches whose completion we haven't parsed and prune any
-   * the OS says are finished. This is the correctness backstop: a launch whose
-   * completion string we never matched is drained here. Queued launches are
-   * never probed (their work is done; we're only awaiting delivery).
+   * that have finished — or that nothing has been able to resolve for
+   * STALE_INDETERMINATE_MS. This is the correctness backstop: a launch whose
+   * completion string we never matched is drained here.
+   *
+   * The invariant to preserve: EVERY launch is reachable by some drain path.
+   * Both bugs this method has had were an unbounded exemption from one — a
+   * probe that could never answer 'finished', and a queued launch that was
+   * never probed at all. Any new "skip this launch" branch needs its own bound.
+   *
+   * `now` is a parameter rather than a wall-clock read so the staleness bound is
+   * testable without timers.
    *
    * Returns true if any launch was pruned (so the caller can re-check whether
    * the surface just went idle).
    */
-  async reconcile(surfaceId: PtySessionId): Promise<boolean> {
+  async reconcile(surfaceId: PtySessionId, now: number = Date.now()): Promise<boolean> {
     const s = this.surfaces.get(surfaceId)
     if (!s || s.launches.size === 0) return false
 
     let pruned = false
     for (const launch of Array.from(s.launches.values())) {
-      if (launch.queued) continue
-      let finished = false
-      switch (launch.kind) {
-        case 'bash':
-          finished = launch.outputPath ? await this.probes.bashFinished(launch.outputPath) : false
-          break
-        case 'monitor':
-          finished = s.sessionId ? await this.probes.monitorFinished(s.sessionId) : false
-          break
-        case 'agent':
-          finished = s.transcriptDir && s.sessionId
-            ? await this.probes.agentFinished(path.join(s.transcriptDir, s.sessionId, 'subagents', `agent-${launch.id}.jsonl`))
-            : false
-          break
-        case 'workflow':
-          finished = s.transcriptDir && s.sessionId && launch.runId
-            ? await this.probes.workflowFinished(path.join(s.transcriptDir, s.sessionId, 'workflows', `${launch.runId}.json`))
-            : false
-          break
+      // Queued: the work is done and a probe would only confirm that, draining
+      // it before delivery re-invokes the agent. So skip the probe — but not
+      // the clock, or an unparsed delivery makes it immortal.
+      if (launch.queuedSinceMs !== undefined) {
+        if (now - launch.queuedSinceMs < STALE_INDETERMINATE_MS) continue
+        if (s.launches.delete(launch.id)) pruned = true
+        continue
+      }
+      const verdict = await this.probeLaunch(s, launch)
+
+      if (verdict === 'running') {
+        // Fresh positive evidence — any earlier no-evidence streak is void.
+        launch.indeterminateSinceMs = undefined
+        continue
+      }
+      if (verdict === 'indeterminate') {
+        launch.indeterminateSinceMs ??= now
+        if (now - launch.indeterminateSinceMs < STALE_INDETERMINATE_MS) continue
+        // Held out long enough. Nothing will ever resolve this launch, so
+        // draining it beats leaving the surface yellow indefinitely.
       }
       // The launch may have been delivered/cleared by a concurrent ingest while
       // we awaited the probe — only prune if it's still present.
-      if (finished && s.launches.delete(launch.id)) {
+      if (s.launches.delete(launch.id)) {
         pruned = true
       }
     }
     return pruned
+  }
+
+  /**
+   * Route one launch to its probe. Missing context (no session id, no
+   * transcript dir, no output path) is 'indeterminate', not 'running': we
+   * cannot look, which is exactly the case the staleness bound exists for.
+   */
+  private async probeLaunch(s: SurfaceLedger, launch: Launch): Promise<LivenessVerdict> {
+    switch (launch.kind) {
+      case 'bash':
+        return launch.outputPath ? await this.probes.probeBash(launch.outputPath) : 'indeterminate'
+      case 'monitor':
+        return s.sessionId ? await this.probes.probeMonitor(s.sessionId) : 'indeterminate'
+      case 'agent':
+        return s.transcriptDir && s.sessionId
+          ? await this.probes.probeAgent(path.join(s.transcriptDir, s.sessionId, 'subagents', `agent-${launch.id}.jsonl`))
+          : 'indeterminate'
+      case 'workflow':
+        return s.transcriptDir && s.sessionId && launch.runId
+          ? await this.probes.probeWorkflow(path.join(s.transcriptDir, s.sessionId, 'workflows', `${launch.runId}.json`))
+          : 'indeterminate'
+    }
   }
 
   /** surfaceIds that currently have outstanding launches — used to scope the reconciliation sweep. */
@@ -383,20 +566,20 @@ function trackLaunches(text: string, launches: Map<string, Launch>): void {
   const bash = BASH_LAUNCH.exec(text)
   if (bash) {
     const [, id, outputPath] = bash
-    if (!launches.has(id)) launches.set(id, { id, kind: 'bash', outputPath, queued: false })
+    if (!launches.has(id)) launches.set(id, { id, kind: 'bash', outputPath })
     return
   }
   const monitor = MONITOR_LAUNCH.exec(text)
   if (monitor) {
     const [, id] = monitor
-    if (!launches.has(id)) launches.set(id, { id, kind: 'monitor', queued: false })
+    if (!launches.has(id)) launches.set(id, { id, kind: 'monitor' })
     return
   }
   const wfId = WORKFLOW_LAUNCH_ID.exec(text)
   const wfRun = WORKFLOW_RUN_ID.exec(text)
   if (wfId && wfRun) {
     const id = wfId[1]
-    if (!launches.has(id)) launches.set(id, { id, kind: 'workflow', runId: wfRun[1], queued: false })
+    if (!launches.has(id)) launches.set(id, { id, kind: 'workflow', runId: wfRun[1] })
   }
 }
 
