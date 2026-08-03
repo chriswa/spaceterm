@@ -205,7 +205,7 @@ describe.each(CARDS)('$name', ({ build, visibleText }) => {
     expect(shellOf(container).style.zIndex).toBe('42')
   })
 
-  it('marks itself focused on its own element, not on the shell', () => {
+  it('marks itself focused on its own element, and the shell marks it too', () => {
     const { container: focused } = render(build(sharedProps({ focused: true })))
     const focusedClass = cardBodyOf(focused).className
     const shellClass = shellOf(focused).className
@@ -214,8 +214,12 @@ describe.each(CARDS)('$name', ({ build, visibleText }) => {
     const { container: blurred } = render(build(sharedProps({ focused: false })))
     expect(focusedClass).toMatch(/focused/)
     expect(focusedClass).not.toBe(cardBodyOf(blurred).className)
-    // The shell root is identical either way — already fully shared.
-    expect(shellClass).toBe(shellOf(blurred).className)
+    // Each card styles focus through its own class, and the shell carries one
+    // of its own for the chrome it owns rather than the card does — the
+    // hidden-head buttons, which hang above the card entirely. Everything else
+    // about the shell root is still identical either way.
+    expect(shellClass).toBe('card-shell canvas-node card-shell--focused')
+    expect(shellOf(blurred).className).toBe('card-shell canvas-node')
   })
 
   it('marks itself selected, distinctly from focused', () => {

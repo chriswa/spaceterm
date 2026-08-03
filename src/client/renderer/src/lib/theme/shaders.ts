@@ -40,6 +40,8 @@
  * background field, and it is the only pairing that is not free to mix.
  */
 
+import { glslVec3, LINEAR_TO_SRGB_GLSL, linearEmission, rgbToLinear, type Rgb } from './srgb'
+
 /** OKLab → sRGB, for the shaders that tint by polar angle. The grid does not. */
 const OKLAB_GLSL = `
 const float PI = 3.14159265358979;
@@ -339,6 +341,43 @@ void main() {
 /*  Grid — a logarithmic technical grid                                */
 /* ------------------------------------------------------------------ */
 
+/** The unlit background of the grid theme, as sRGB. */
+export const GRID_BASE: Rgb = [0.055, 0.058, 0.075]
+/** The colour a line would reach at tone 1.0 is `GRID_BASE + GRID_LINE`. */
+export const GRID_LINE: Rgb = [0.62, 0.67, 0.8]
+
+/**
+ * How far each kind of line lifts the base toward `GRID_LINE`.
+ *
+ * Deliberately in sRGB, which is the space these are legible and tunable in —
+ * `bright` at 0.29 looks about twice as far from the background as `mid` at
+ * 0.19, which is what you want when picking them, and is not at all what the
+ * corresponding linear-light numbers (0.119 and 0.059) would suggest. The
+ * decode to light happens in `gridEmission`, once, at module load.
+ *
+ * The spread between them is the whole hierarchy, so they move together: the
+ * grid reads by *contrast* between tiers, not by absolute brightness, and
+ * three tiers plus a brighter axis was more competing bright lines than a
+ * background should put in front of someone all day.
+ */
+export const GRID_TONES = {
+  dim: 0.11,
+  mid: 0.19,
+  bright: 0.29,
+  /** Only just above `bright`: an axis is a decade line with a wider stroke. */
+  axis: 0.33,
+} as const
+
+/** sRGB colour of a fully covered line at the given tone. */
+export const gridTone = (tone: number): Rgb => [
+  GRID_BASE[0] + GRID_LINE[0] * tone,
+  GRID_BASE[1] + GRID_LINE[1] * tone,
+  GRID_BASE[2] + GRID_LINE[2] * tone,
+]
+
+/** Linear light a fully covered line at the given tone adds to the background. */
+const gridEmission = (tone: number): Rgb => linearEmission(GRID_BASE, gridTone(tone))
+
 /**
  * A true logarithmic grid: line positions are evenly spaced in log space, so
  * they crowd toward the origin and spread without limit going out.
@@ -393,11 +432,35 @@ void main() {
  * has neither problem, and the shader no longer needs the derivatives
  * extension at all.
  *
- * One approximation remains: coverage is composited into an sRGB value rather
- * than in linear light, so a line split evenly across two pixels still reads a
- * shade brighter than one sitting on a single pixel. It is a much smaller
- * effect than the one above and fixing it would shift every colour here, so it
- * is left alone deliberately.
+ * ## Why the lines do not pulse either
+ *
+ * Exact coverage is necessary and not sufficient. Coverage says what fraction
+ * of a pixel a line lights; turning that into a colour is a second step, and
+ * the obvious way to do it — `BASE + LINE * coverage`, written straight to the
+ * framebuffer — mixes *encoded* values, not light. Against a background this
+ * dark that costs a decade line about a fifth of its output when it lands
+ * between two pixels rather than on one, which is a visible pulse while
+ * panning even with coverage exact to floating point.
+ *
+ * So the tones below are decoded to linear light once, in TypeScript, as the
+ * amount a fully covered line *adds* to the base. A pixel emits
+ * `BASE_LIN + coverage * emission`, which is affine in coverage and therefore
+ * sums to the same total however the line is split, and the shader encodes to
+ * sRGB once at the end. See `./srgb`.
+ *
+ * ## The axes
+ *
+ * The axes are lines of this same family — index 0 is a multiple of ten, so an
+ * axis always sits on a decade line — drawn in linear pixel space rather than
+ * through the warp, and only slightly brighter than the decade lines they lie
+ * on. They used to be a separate paler colour composited on top, which made
+ * them by some way the brightest thing on the canvas; with three tiers plus an
+ * axis tone that was one bright line too many to read anything against.
+ *
+ * `AXIS_HALF_PX >= HALF_PX` is load-bearing rather than aesthetic: it means an
+ * axis's coverage is never less than that of the decade line beneath it, so
+ * the `max` below always resolves to the axis term there. Two conserved terms
+ * crossing over would not be conserved through the crossing.
  */
 export const GRID_BG_FRAG = `
 precision highp float;
@@ -405,9 +468,13 @@ uniform vec2 uOrigin;
 uniform float uZoom;
 uniform float uDpr;
 
-const vec3  BASE       = vec3(0.055, 0.058, 0.075);
-const vec3  LINE       = vec3(0.62, 0.67, 0.80);
-const vec3  AXIS       = vec3(0.82, 0.86, 0.95);
+/** The unlit background, in linear light. */
+const vec3 BASE_LIN = ${glslVec3(rgbToLinear(GRID_BASE))};
+/** Linear light a fully covered line of each tone adds to it. */
+const vec3 E_DIM    = ${glslVec3(gridEmission(GRID_TONES.dim))};
+const vec3 E_MID    = ${glslVec3(gridEmission(GRID_TONES.mid))};
+const vec3 E_BRIGHT = ${glslVec3(gridEmission(GRID_TONES.bright))};
+const vec3 E_AXIS   = ${glslVec3(gridEmission(GRID_TONES.axis))};
 
 /** World units at the first line out from the origin; sets the near-origin pitch. */
 const float S0         = 120.0;
@@ -415,14 +482,12 @@ const float S0         = 120.0;
 const float INV_LN_B   = 4.342944819;
 /** Half-width of a grid line, in device pixels. */
 const float HALF_PX    = 0.5;
-/** Half-width of an axis, in device pixels. */
+/** Half-width of an axis, in device pixels. Never below HALF_PX — see above. */
 const float AXIS_HALF_PX = 0.6;
 /** Screen pixels below which a tier is faded out rather than left as a wash. */
 const float MIN_PX     = 6.0;
 
-const float DIM        = 0.13;
-const float MID        = 0.24;
-const float BRIGHT     = 0.40;
+${LINEAR_TO_SRGB_GLSL}
 
 /** World coordinate to line-index space. Signed, so it is symmetric about 0. */
 vec2 logCoord(vec2 w) {
@@ -481,21 +546,22 @@ void main() {
     // fwidth of the same quantity.
     vec2 du = INV_LN_B * worldPerPx / (S0 + abs(world));
 
-    float lum = max(
-        max(tier(u, du, 1.0) * DIM, tier(u, du, 5.0) * MID),
-        tier(u, du, 10.0) * BRIGHT
-    );
-
-    vec3 rgb = BASE + LINE * lum;
-
-    vec2 axisPx = world / worldPerPx;
+    vec2 axisPx = gl_FragCoord.xy - uOrigin;
     float axis = max(
         axisCoverage(axisPx.x, AXIS_HALF_PX),
         axisCoverage(axisPx.y, AXIS_HALF_PX)
     );
-    rgb = mix(rgb, AXIS, axis * 0.30);
 
-    gl_FragColor = vec4(rgb, 1.0);
+    // Coverage scales emission, not an encoded colour: each term is affine in
+    // its coverage, so a line's total output is the same however it falls
+    // between pixels. Brightest tone wins where lines coincide — the max is
+    // componentwise, which is exact here because the tones share a hue.
+    vec3 emission = max(
+        max(tier(u, du,  1.0) * E_DIM,    tier(u, du, 5.0) * E_MID),
+        max(tier(u, du, 10.0) * E_BRIGHT, axis             * E_AXIS)
+    );
+
+    gl_FragColor = vec4(linearToSrgb(BASE_LIN + emission), 1.0);
 }
 `
 
@@ -509,11 +575,12 @@ void main() {
  *
  * ## Why these are outlined and the other themes' are not
  *
- * A pale chevron over a pale grid line is invisible, and on the axes — the
- * brightest lines on the canvas, and the ones edges most often run along —
- * that is exactly where it happened. An accent hue would fix it and would also
- * be the only chromatic thing in a theme whose whole point is that colour
- * means what you say it means, so it would read as significant when it is not.
+ * A pale chevron over a pale grid line is invisible, and on the decade lines
+ * and axes — the brightest lines on the canvas, and the ones edges most often
+ * run along — that is exactly where it happened. An accent hue would fix it
+ * and would also be the only chromatic thing in a theme whose whole point is
+ * that colour means what you say it means, so it would read as significant
+ * when it is not.
  *
  * A dark rim fixes it achromatically: the same chevron is drawn twice, once
  * grown by `OUTLINE_W`, and the difference between the two coverages is the

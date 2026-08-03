@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { GRID_BG_FRAG } from './shaders'
+import { GRID_BASE, GRID_LINE, GRID_TONES, GRID_BG_FRAG, gridTone } from './shaders'
+import { linearEmission, srgbToLinear } from './srgb'
 
 /**
  * The grid's antialiasing rule: a line's total brightness must not depend on
@@ -109,5 +110,66 @@ describe('grid line coverage', () => {
     // spikes where the warp's sign flips. Matching the call, not the word —
     // the shader mentions it in a comment saying why it is not used.
     expect(GRID_BG_FRAG).not.toMatch(/fwidth\s*\(/)
+  })
+})
+
+/**
+ * The second half of the same property. Coverage being exact only removes the
+ * flicker if coverage is then used to mix *light*; mixing the sRGB-encoded
+ * values instead throws most of the win away, and that is what the grid did
+ * until the emission constants below replaced `BASE + LINE * lum`.
+ */
+describe('grid line tones', () => {
+  /** Linear light emitted by a pixel with `coverage` of a line at `tone`. */
+  const emit = (tone: number, coverage: number): number =>
+    srgbToLinear(GRID_BASE[0]) + coverage * linearEmission(GRID_BASE, gridTone(tone))[0]
+
+  /** The same, for the old shortcut: mix the encoded values, then decode. */
+  const emitEncoded = (tone: number, coverage: number): number =>
+    srgbToLinear(GRID_BASE[0] + GRID_LINE[0] * tone * coverage)
+
+  const tones = Object.values(GRID_TONES)
+
+  it('emits the same total light however a line falls between pixels', () => {
+    const base = srgbToLinear(GRID_BASE[0])
+    for (const tone of tones) {
+      const whole = emit(tone, 1) - base
+      for (const split of [0.5, 0.25, 0.1, 0.02]) {
+        // The pixels a line touches, at any phase, carry coverage summing to 1.
+        const parts = (emit(tone, split) - base) + (emit(tone, 1 - split) - base)
+        expect(parts, `tone ${tone}, split ${split}`).toBeCloseTo(whole, 12)
+      }
+    }
+  })
+
+  it('would lose a fifth of a decade line if it composited in sRGB instead', () => {
+    // The number that justifies the constants being baked in linear: this is
+    // the residual pulse the exact-coverage fix left behind.
+    const base = srgbToLinear(GRID_BASE[0])
+    const whole = emitEncoded(GRID_TONES.bright, 1) - base
+    const halved = 2 * (emitEncoded(GRID_TONES.bright, 0.5) - base)
+    expect(halved / whole).toBeLessThan(0.85)
+    expect(halved / whole).toBeGreaterThan(0.6)
+  })
+
+  it('keeps the tiers ordered and the axis level with the decade lines', () => {
+    expect(GRID_TONES.dim).toBeLessThan(GRID_TONES.mid)
+    expect(GRID_TONES.mid).toBeLessThan(GRID_TONES.bright)
+    // The axis is a decade line with a wider stroke, not a fourth tier. It used
+    // to be half again as bright as anything else, which is what made the grid
+    // hard to read anything else against. The tones are in sRGB, so comparing
+    // the gaps directly is comparing what the eye compares.
+    expect(GRID_TONES.axis - GRID_TONES.bright)
+      .toBeLessThan((GRID_TONES.bright - GRID_TONES.mid) / 2)
+  })
+
+  it('bakes the emission constants into the shader rather than encoding a mix', () => {
+    expect(GRID_BG_FRAG).toContain('linearToSrgb')
+    // `BASE + LINE * lum` is the shortcut this replaced.
+    expect(GRID_BG_FRAG).not.toMatch(/BASE\s*\+\s*LINE\s*\*/)
+    for (const [name, tone] of Object.entries(GRID_TONES)) {
+      const e = linearEmission(GRID_BASE, gridTone(tone))[0].toFixed(6)
+      expect(GRID_BG_FRAG, `${name} emission`).toContain(`vec3(${e},`)
+    }
   })
 })

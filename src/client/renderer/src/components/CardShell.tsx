@@ -175,7 +175,10 @@ export function CardShell({
 
   return (
     <div
-      className="card-shell canvas-node"
+      // The focused modifier is on the shell, not on the per-card element, so
+      // chrome the shell itself owns — the hidden-head buttons — can hide when
+      // the node is not focused the way each card's own action bar does.
+      className={`card-shell canvas-node${focused ? ' card-shell--focused' : ''}`}
       data-node-id={nodeId}
       style={{
         position: 'absolute',

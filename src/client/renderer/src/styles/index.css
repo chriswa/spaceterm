@@ -2245,6 +2245,17 @@ html, body, #root {
   padding: 4px 0;
   transform: scale(var(--card-chrome-scale, 1));
   transform-origin: bottom center;
+  /* Shown on focus only, like every other card's action bar. Hidden with
+     opacity rather than display, so the row keeps the layout height RootNode
+     offsets its visual by and the node does not shift when you focus it. */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.card-shell--focused .card-shell__hidden-head-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .card-shell__archive-btn {

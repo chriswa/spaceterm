@@ -41,12 +41,21 @@ interface CanvasBackgroundProps {
 /*  GL program construction                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A GLSL compile error used to fail silently here, which is the worst possible
+ * behaviour for the one thing in this app whose source is a string: the canvas
+ * simply went black, with the driver's diagnostic — line number and all —
+ * discarded. Shader sources are assembled from several template fragments, so
+ * "the background disappeared" was the only symptom of a typo in any of them.
+ */
 function compileShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {
   const s = gl.createShader(type)
   if (!s) return null
   gl.shaderSource(s, src)
   gl.compileShader(s)
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    const stage = type === gl.VERTEX_SHADER ? 'vertex' : 'fragment'
+    window.api.log(`[CanvasBackground] ${stage} shader failed to compile: ${gl.getShaderInfoLog(s)}`)
     gl.deleteShader(s)
     return null
   }
@@ -73,6 +82,7 @@ function createProgram(gl: WebGLRenderingContext, vertSrc: string, fragSrc: stri
   gl.deleteShader(vs)
   gl.deleteShader(fs)
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    window.api.log(`[CanvasBackground] program failed to link: ${gl.getProgramInfoLog(prog)}`)
     gl.deleteProgram(prog)
     return null
   }
