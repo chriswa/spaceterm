@@ -211,6 +211,13 @@ export class SnapshotManager {
     // 0. cursorX/cursorY are already viewport-relative, so they need no offset.
     const base = buffer.baseY
 
+    // One scratch cell for the whole scan. `getLine(y).getCell(x)` allocates a
+    // fresh CellData per call — cols*rows of them per snapshot, ten snapshots a
+    // second, on the same thread that pumps every PTY. Passing a cell to fill
+    // makes the scan ~3x faster and the garbage constant. Nothing may retain a
+    // reference to it: every loop below reads the primitives out immediately.
+    const cell = buffer.getNullCell()
+
     for (let y = 0; y < rows; y++) {
       const line = buffer.getLine(base + y)
       if (!line) {
@@ -227,8 +234,7 @@ export class SnapshotManager {
       let spanUnderline = false
 
       for (let x = 0; x < cols; x++) {
-        const cell = line.getCell(x)
-        if (!cell) {
+        if (!line.getCell(x, cell)) {
           spanText += ' '
           continue
         }

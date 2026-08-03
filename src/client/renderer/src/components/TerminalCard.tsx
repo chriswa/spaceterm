@@ -3,12 +3,16 @@ import { Terminal } from '@xterm/xterm'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
+import { attachWebGLRenderer } from '../lib/webgl-renderer'
 import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '../lib/constants'
 import { classifyWheelEvent } from '../lib/wheel-gesture'
 import { type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
-import type { ClaudeSessionEntry, SnapshotMessage } from '../../../../shared/protocol'
+import type { ClaudeSessionEntry, SnapshotMessage, SnapshotRow } from '../../../../shared/protocol'
+import { planRepaint, type PaintedState } from '../lib/snapshot-diff'
+import { isCardOnScreen } from '../lib/viewport'
+import { isWindowVisible, useWindowVisible } from '../hooks/useWindowVisible'
 import { XTERM_THEME, DEFAULT_BG } from '../../../../shared/theme'
 import { TerminalTitleBarContent } from './TerminalTitleBarContent'
 import { TerminalSearchBar } from './TerminalSearchBar'
@@ -26,7 +30,7 @@ import { deriveToolbarIndicator, CRAB_COLORS } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
-import { useFontStore } from '../stores/fontStore'
+import { useFontStore, type FontTheme } from '../stores/fontStore'
 import { useProportionalOverlay, isBoxDrawing, isAlphanumeric, boxDrawingAlignment } from '../hooks/useProportionalOverlay'
 import { cleanTerminalCopy } from '../lib/cleanTerminalCopy'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
@@ -65,6 +69,118 @@ export const terminalPlanJumpers = new Map<string, () => boolean>()
  * — see the lifecycle test, which fails if any of them outlive their card.
  */
 export const terminalSnapshotCanvases = new Map<string, HTMLCanvasElement>()
+
+/**
+ * Draw one row of a snapshot at grid row `y`. The caller has already painted
+ * the background this row sits on, either as part of a full clear or by
+ * clearing this row alone.
+ *
+ * Rows are drawn independently — nothing carries between them — which is what
+ * makes repainting a subset of them correct.
+ */
+function paintSnapshotRow(
+  ctx: CanvasRenderingContext2D,
+  row: SnapshotRow,
+  y: number,
+  termBg: string,
+  useProportional: boolean,
+  fontTheme: FontTheme
+): void {
+  let xOffset = 0
+  let proportional = false
+  let col = 0 // terminal column counter
+
+  for (const span of row) {
+    if (useProportional) {
+      const weight = span.bold ? fontTheme.boldWeight : fontTheme.fontWeight
+      ctx.font = `${weight} ${fontTheme.fontSize}px ${fontTheme.fontFamily}`
+
+      // Check if span starts with box-drawing: process char-by-char to split
+      // at box-drawing boundaries and snap those to the grid
+      let i = 0
+      while (i < span.text.length) {
+        if (isBoxDrawing(span.text[i])) {
+          // Run of box-drawing chars: snap to grid
+          const start = i
+          while (i < span.text.length && isBoxDrawing(span.text[i])) i++
+          const segment = span.text.slice(start, i)
+          xOffset = (col + start) * CELL_WIDTH
+          for (let j = 0; j < segment.length; j++) {
+            const cx = xOffset + j * CELL_WIDTH
+            if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+              ctx.fillStyle = span.bg
+              ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
+            }
+            // Align box-drawing glyph within its cell
+            const align = boxDrawingAlignment(segment[j])
+            let drawX = cx
+            if (align === 'center') drawX = cx + (CELL_WIDTH - ctx.measureText(segment[j]).width) / 2
+            else if (align === 'right') drawX = cx + CELL_WIDTH - ctx.measureText(segment[j]).width
+            ctx.fillStyle = span.fg
+            ctx.textBaseline = 'top'
+            ctx.fillText(segment[j], drawX, y * CELL_HEIGHT + fontTheme.verticalOffset)
+          }
+          xOffset += segment.length * CELL_WIDTH
+        } else if (!proportional && !isAlphanumeric(span.text[i])) {
+          // Fixed-width prefix (leading symbols/spaces)
+          const start = i
+          while (i < span.text.length && !isAlphanumeric(span.text[i]) && !isBoxDrawing(span.text[i])) i++
+          const segment = span.text.slice(start, i)
+          for (let j = 0; j < segment.length; j++) {
+            const cx = xOffset + j * CELL_WIDTH
+            if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+              ctx.fillStyle = span.bg
+              ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
+            }
+            if (segment[j] !== ' ') {
+              ctx.fillStyle = span.fg
+              ctx.textBaseline = 'top'
+              ctx.fillText(segment[j], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
+            }
+          }
+          xOffset += segment.length * CELL_WIDTH
+        } else {
+          // Proportional text: consume until next box-drawing char
+          proportional = true
+          const start = i
+          while (i < span.text.length && !isBoxDrawing(span.text[i])) i++
+          const segment = span.text.slice(start, i)
+          const tw = ctx.measureText(segment).width
+          if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+            ctx.fillStyle = span.bg
+            ctx.fillRect(xOffset, y * CELL_HEIGHT, tw, CELL_HEIGHT)
+          }
+          if (segment.trim().length > 0) {
+            ctx.fillStyle = span.fg
+            ctx.textBaseline = 'top'
+            ctx.fillText(segment, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
+          }
+          xOffset += tw
+        }
+      }
+      col += span.text.length
+    } else {
+      // Monospace: fixed grid, character by character
+      const spanWidth = span.text.length * CELL_WIDTH
+
+      if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+        ctx.fillStyle = span.bg
+        ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
+      }
+      if (span.text.trim().length > 0) {
+        ctx.fillStyle = span.fg
+        ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
+        ctx.textBaseline = 'top'
+        for (let i = 0; i < span.text.length; i++) {
+          if (span.text[i] !== ' ') {
+            ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
+          }
+        }
+      }
+      xOffset += spanWidth
+    }
+  }
+}
 
 
 interface TerminalCardProps {
@@ -246,6 +362,11 @@ export function TerminalCard({
     searchAddonRef.current = searchAddon
     term.open(containerRef.current)
     term.unicode.activeVersion = '11'
+
+    // Must come after open(): the addon needs the canvas xterm creates there.
+    // This is the only live xterm in the app, so it is the only place where
+    // renderer choice affects anything the user sees.
+    const disposeRenderer = attachWebGLRenderer(term)
 
     // Clean clipboard text on copy (when the toolbar toggle is enabled): strip
     // trailing whitespace, Claude Code prefixes, and common indent. When the
@@ -653,6 +774,7 @@ export function TerminalCard({
       searchAddonRef.current = null
       cleanupData()
       cleanupExit()
+      disposeRenderer()
       term.dispose()
     }
   }, [focused, sessionId])
@@ -748,6 +870,14 @@ export function TerminalCard({
 
   // --- Snapshot mode (only when unfocused) ---
 
+  /**
+   * What the canvas currently shows, so the next snapshot only has to repaint
+   * the rows that changed. `key` folds in everything that invalidates every row
+   * at once — bitmap size, background, font — so a change to any of them falls
+   * back to a full repaint instead of diffing against a stale-looking canvas.
+   */
+  const paintedRef = useRef<PaintedState | null>(null)
+
   const paintCanvas = (snapshot: SnapshotMessage) => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -762,114 +892,37 @@ export function TerminalCard({
     const cw = Math.ceil(cols * CELL_WIDTH)
     const ch = Math.ceil(rows * CELL_HEIGHT)
 
-    if (canvas.width !== cw || canvas.height !== ch) {
+    // Assigning width/height blanks the canvas, so a resize is always full.
+    const resized = canvas.width !== cw || canvas.height !== ch
+    if (resized) {
       canvas.width = cw
       canvas.height = ch
     }
 
     const termBg = preset?.terminalBg ?? DEFAULT_BG
-    ctx.fillStyle = termBg
-    ctx.fillRect(0, 0, cw, ch)
+    const { proportional: useProportional, theme: fontTheme, themeId } = useFontStore.getState()
 
-    const { proportional: useProportional, theme: fontTheme } = useFontStore.getState()
+    const key = `${cw}x${ch}|${termBg}|${useProportional ? 'p' : 'm'}|${themeId}|${snapshot.lines.length}`
+    const plan = planRepaint(paintedRef.current, key, snapshot.lines, resized)
 
-    for (let y = 0; y < snapshot.lines.length; y++) {
-      const row = snapshot.lines[y]
-      let xOffset = 0
-      let proportional = false
-      let col = 0 // terminal column counter
-
-      for (const span of row) {
-        if (useProportional) {
-          const weight = span.bold ? fontTheme.boldWeight : fontTheme.fontWeight
-          ctx.font = `${weight} ${fontTheme.fontSize}px ${fontTheme.fontFamily}`
-
-          // Check if span starts with box-drawing: process char-by-char to split
-          // at box-drawing boundaries and snap those to the grid
-          let i = 0
-          while (i < span.text.length) {
-            if (isBoxDrawing(span.text[i])) {
-              // Run of box-drawing chars: snap to grid
-              const start = i
-              while (i < span.text.length && isBoxDrawing(span.text[i])) i++
-              const segment = span.text.slice(start, i)
-              xOffset = (col + start) * CELL_WIDTH
-              for (let j = 0; j < segment.length; j++) {
-                const cx = xOffset + j * CELL_WIDTH
-                if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-                  ctx.fillStyle = span.bg
-                  ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
-                }
-                // Align box-drawing glyph within its cell
-                const align = boxDrawingAlignment(segment[j])
-                let drawX = cx
-                if (align === 'center') drawX = cx + (CELL_WIDTH - ctx.measureText(segment[j]).width) / 2
-                else if (align === 'right') drawX = cx + CELL_WIDTH - ctx.measureText(segment[j]).width
-                ctx.fillStyle = span.fg
-                ctx.textBaseline = 'top'
-                ctx.fillText(segment[j], drawX, y * CELL_HEIGHT + fontTheme.verticalOffset)
-              }
-              xOffset += segment.length * CELL_WIDTH
-            } else if (!proportional && !isAlphanumeric(span.text[i])) {
-              // Fixed-width prefix (leading symbols/spaces)
-              const start = i
-              while (i < span.text.length && !isAlphanumeric(span.text[i]) && !isBoxDrawing(span.text[i])) i++
-              const segment = span.text.slice(start, i)
-              for (let j = 0; j < segment.length; j++) {
-                const cx = xOffset + j * CELL_WIDTH
-                if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-                  ctx.fillStyle = span.bg
-                  ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
-                }
-                if (segment[j] !== ' ') {
-                  ctx.fillStyle = span.fg
-                  ctx.textBaseline = 'top'
-                  ctx.fillText(segment[j], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
-                }
-              }
-              xOffset += segment.length * CELL_WIDTH
-            } else {
-              // Proportional text: consume until next box-drawing char
-              proportional = true
-              const start = i
-              while (i < span.text.length && !isBoxDrawing(span.text[i])) i++
-              const segment = span.text.slice(start, i)
-              const tw = ctx.measureText(segment).width
-              if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-                ctx.fillStyle = span.bg
-                ctx.fillRect(xOffset, y * CELL_HEIGHT, tw, CELL_HEIGHT)
-              }
-              if (segment.trim().length > 0) {
-                ctx.fillStyle = span.fg
-                ctx.textBaseline = 'top'
-                ctx.fillText(segment, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
-              }
-              xOffset += tw
-            }
-          }
-          col += span.text.length
-        } else {
-          // Monospace: fixed grid, character by character
-          const spanWidth = span.text.length * CELL_WIDTH
-
-          if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-            ctx.fillStyle = span.bg
-            ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
-          }
-          if (span.text.trim().length > 0) {
-            ctx.fillStyle = span.fg
-            ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
-            ctx.textBaseline = 'top'
-            for (let i = 0; i < span.text.length; i++) {
-              if (span.text[i] !== ' ') {
-                ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
-              }
-            }
-          }
-          xOffset += spanWidth
-        }
+    if (plan.kind === 'full') {
+      ctx.fillStyle = termBg
+      ctx.fillRect(0, 0, cw, ch)
+      for (let y = 0; y < snapshot.lines.length; y++) {
+        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg, useProportional, fontTheme)
+      }
+    } else {
+      for (const y of plan.rows) {
+        // The row painter only draws glyphs and non-default backgrounds, so a
+        // row being redrawn has to be cleared first or the old text shows
+        // through wherever the new text is shorter.
+        ctx.fillStyle = termBg
+        ctx.fillRect(0, y * CELL_HEIGHT, cw, CELL_HEIGHT)
+        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg, useProportional, fontTheme)
       }
     }
+
+    paintedRef.current = { key, lines: snapshot.lines }
   }
 
   // The subscription below is keyed on [focused, sessionId], so its callback
@@ -881,6 +934,25 @@ export function TerminalCard({
   const paintCanvasRef = useRef(paintCanvas)
   paintCanvasRef.current = paintCanvas
 
+  /**
+   * Is this card's canvas somewhere the user could actually see it? Read from
+   * refs rather than props so it is correct mid-pan, when the camera is being
+   * written straight to the DOM and React has not re-rendered yet.
+   */
+  const canPaint = useCallback(() => {
+    if (!isWindowVisible()) return false
+    const { x, y, cols, rows } = propsRef.current
+    const size = terminalPixelSize(cols, rows)
+    return isCardOnScreen(
+      { x, y, width: size.width, height: size.height },
+      cameraRef.current,
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+  }, [cameraRef])
+
+  /** A snapshot arrived while the card was hidden; repaint once it is not. */
+  const paintDeferredRef = useRef(false)
+
   // Subscribe to snapshot events (only when unfocused)
   useEffect(() => {
     if (focused) return
@@ -889,13 +961,35 @@ export function TerminalCard({
 
     const cleanup = window.api.node.onSnapshot(sessionId, (snapshot) => {
       snapshotRef.current = snapshot
-      paintCanvasRef.current(snapshot)
+      // Painting a card that is minimised or two screens away costs a fillText
+      // per glyph for pixels nothing composites. Keep the snapshot — it is the
+      // freshest state either way — and draw it when the card comes back.
+      if (canPaint()) {
+        paintDeferredRef.current = false
+        paintCanvasRef.current(snapshot)
+      } else {
+        paintDeferredRef.current = true
+      }
     })
 
     return () => {
       cleanup()
     }
-  }, [focused, sessionId])
+  }, [focused, sessionId, canPaint])
+
+  // Flush a deferred paint once the card is visible again. Deliberately has no
+  // dependency array: visibility is a function of the camera, which syncs into
+  // React state when it settles, and of the window, which the hook below
+  // re-renders on. Both arrive as a render rather than as a value we could key
+  // on, and the check itself is a handful of comparisons.
+  useWindowVisible() // subscribed for the re-render; canPaint() reads the live value
+  useEffect(() => {
+    if (focused || !paintDeferredRef.current) return
+    const snapshot = snapshotRef.current
+    if (!snapshot || !canPaint()) return
+    paintDeferredRef.current = false
+    paintCanvasRef.current(snapshot)
+  })
 
   // Publish the canvas for resize mode's preview to copy from.
   useEffect(() => {
@@ -913,8 +1007,12 @@ export function TerminalCard({
   useEffect(() => {
     if (focused) return
     const snapshot = snapshotRef.current
-    if (snapshot) paintCanvasRef.current(snapshot)
-  }, [proportionalFont, fontThemeId, preset, cols, rows, focused])
+    if (!snapshot) return
+    // Same deal as an arriving snapshot: if the card is not visible there is
+    // nothing to repaint for, and the flush above will catch it later.
+    if (canPaint()) paintCanvasRef.current(snapshot)
+    else paintDeferredRef.current = true
+  }, [proportionalFont, fontThemeId, preset, cols, rows, focused, canPaint])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
