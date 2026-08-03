@@ -27,7 +27,7 @@ import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
-import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, terminalSizeFromCorner, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
+import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
@@ -1600,19 +1600,27 @@ export function App() {
       return node && node.type === 'terminal' ? { x: node.x, y: node.y } : null
     }
 
-    const sizeAt = (e: MouseEvent): { cols: number; rows: number } | null => {
+    // The last pointer position, so holding or releasing the snap modifier
+    // updates the preview without waiting for the mouse to move.
+    let lastPointer: { x: number; y: number } | null = null
+
+    const sizeFor = (e: MouseEvent | KeyboardEvent): { cols: number; rows: number } | null => {
       const center = centerOf()
       if (!center) return null
-      const cam = cameraRef.current
-      const rect = viewport.getBoundingClientRect()
-      return terminalSizeFromCorner(center, {
-        x: (e.clientX - rect.left - cam.x) / cam.z,
-        y: (e.clientY - rect.top - cam.y) / cam.z
-      })
+      if (e instanceof MouseEvent) {
+        const cam = cameraRef.current
+        const rect = viewport.getBoundingClientRect()
+        lastPointer = {
+          x: (e.clientX - rect.left - cam.x) / cam.z,
+          y: (e.clientY - rect.top - cam.y) / cam.z
+        }
+      }
+      if (!lastPointer) return null
+      return resizeDraftSize(center, lastPointer, e.metaKey)
     }
 
-    const onMouseMove = (e: MouseEvent) => {
-      const size = sizeAt(e)
+    const preview = (e: MouseEvent | KeyboardEvent) => {
+      const size = sizeFor(e)
       if (size) useResizeStore.getState().setDraft(size)
     }
 
@@ -1622,27 +1630,34 @@ export function App() {
       // Any button other than the left one cancels — right-drag is zoom, and
       // committing a size because someone reached for the camera would be rude.
       if (e.button === 0) {
-        const size = sizeAt(e) ?? useResizeStore.getState().draft
+        const size = sizeFor(e) ?? useResizeStore.getState().draft
         if (size) commitResize(resizingNodeId, size.cols, size.rows)
       }
       useResizeStore.getState().reset()
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopPropagation()
-      useResizeStore.getState().reset()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        useResizeStore.getState().reset()
+        return
+      }
+      // Command snaps the preview to the default size; releasing it hands the
+      // preview back to the pointer.
+      if (e.key === 'Meta') preview(e)
     }
 
-    window.addEventListener('mousemove', onMouseMove, { capture: true })
+    window.addEventListener('mousemove', preview, { capture: true })
     window.addEventListener('mousedown', onMouseDown, { capture: true })
     window.addEventListener('keydown', onKeyDown, { capture: true })
+    window.addEventListener('keyup', preview, { capture: true })
 
     return () => {
-      window.removeEventListener('mousemove', onMouseMove, { capture: true })
+      window.removeEventListener('mousemove', preview, { capture: true })
       window.removeEventListener('mousedown', onMouseDown, { capture: true })
       window.removeEventListener('keydown', onKeyDown, { capture: true })
+      window.removeEventListener('keyup', preview, { capture: true })
     }
   }, [resizingNodeId, cameraRef, commitResize])
 

@@ -171,6 +171,23 @@ export function terminalSizeFromCorner(
   )
 }
 
+/**
+ * The size resize mode should be previewing, given where the pointer is and
+ * whether the snap modifier is down.
+ *
+ * Holding the modifier abandons the pointer entirely rather than snapping to
+ * the nearest default-ish size: "put it back how it was" is the one target
+ * worth having, and making it exact means it cannot be missed by a pixel.
+ */
+export function resizeDraftSize(
+  center: { x: number; y: number },
+  cursor: { x: number; y: number },
+  snapToDefault: boolean
+): { cols: number; rows: number } {
+  if (snapToDefault) return { cols: DEFAULT_COLS, rows: DEFAULT_ROWS }
+  return terminalSizeFromCorner(center, cursor)
+}
+
 export type NodeLike =
   | { type: 'terminal'; cols: number; rows: number }
   | { type: 'directory'; cwd: string; gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null }

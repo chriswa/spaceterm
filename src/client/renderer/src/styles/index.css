@@ -2013,10 +2013,42 @@ html, body, #root {
    Drawn in world space, so every length here is scaled by the camera — the
    readout is deliberately huge because resize mode pulls the camera back. */
 .resize-ghost {
-  border: 4px dashed #a66cff;
+  /* An outline rather than a border: a border would eat 8px of the box, and
+     the header bar, body and footer bar below have to sum to exactly what
+     terminalPixelSize reserved or the preview lies about where the content
+     lands. `outline-offset` draws it inside instead. */
+  outline: 4px dashed #a66cff;
+  outline-offset: -4px;
   border-radius: 8px;
-  background: rgba(166, 108, 255, 0.08);
+  /* Opaque enough to read the copied screen against, purple enough that any
+     area the old content does not reach is obviously new space. */
+  background: rgba(166, 108, 255, 0.35);
   box-shadow: 0 0 40px 8px rgba(166, 108, 255, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Where the real card spends space on its title bar and footer. Solid, because
+   their content is not what anyone is judging here — their height is. */
+.resize-ghost__bar {
+  flex: none;
+  background: #a66cff;
+}
+
+/* The surface's current screen, copied from the card's snapshot canvas. Held
+   just under full opacity so the purple reads through it and the preview still
+   looks like a preview rather than a second card. */
+.resize-ghost__content {
+  flex: none;
+  display: block;
+  opacity: 0.8;
+}
+
+/* The card whose preview is currently up. Hidden rather than unmounted: the
+   preview copies pixels from its snapshot canvas, which has to keep painting. */
+.terminal-card--resize-source {
+  visibility: hidden;
 }
 
 .resize-ghost__readout {

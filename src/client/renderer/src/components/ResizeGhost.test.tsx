@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import { ResizeGhost } from './ResizeGhost'
+import { terminalSnapshotCanvases } from './TerminalCard'
 import { useNodeStore } from '../stores/nodeStore'
 import { useResizeStore } from '../stores/resizeStore'
 import { terminalPixelSize } from '../lib/constants'
@@ -99,5 +100,90 @@ describe('ResizeGhost', () => {
     useResizeStore.getState().startResize(NODE)
     const { container } = render(<ResizeGhost />)
     expect(ghostOf(container)?.style.pointerEvents).toBe('none')
+  })
+})
+
+describe('the content ResizeGhost previews', () => {
+  /** Stand in for a card's snapshot canvas, recording what gets copied out of it. */
+  function fakeSource(width: number, height: number) {
+    const source = document.createElement('canvas')
+    source.width = width
+    source.height = height
+    const draws: unknown[][] = []
+    const ctx = { clearRect: () => {}, drawImage: (...args: unknown[]) => { draws.push(args) } }
+    return { source, draws, ctx }
+  }
+
+  function withCanvas(width: number, height: number) {
+    const { source, draws, ctx } = fakeSource(width, height)
+    terminalSnapshotCanvases.set(NODE, source)
+    const original = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
+      return this === source ? null : (ctx as unknown as CanvasRenderingContext2D)
+    } as typeof original
+    return { draws, restore: () => { HTMLCanvasElement.prototype.getContext = original } }
+  }
+
+  afterEach(() => {
+    terminalSnapshotCanvases.delete(NODE)
+  })
+
+  it('copies the surface’s current screen into the preview at 1:1', () => {
+    // Whatever the size being previewed, the copy is never scaled: a stretched
+    // screen would misrepresent exactly the thing the preview exists to show.
+    const { draws, restore } = withCanvas(1350, 720)
+    try {
+      useResizeStore.getState().startResize(NODE)
+      useResizeStore.getState().setDraft({ cols: 300, rows: 80 })
+      render(<ResizeGhost />)
+      const [, sx, sy, sw, sh, dx, dy, dw, dh] = draws.at(-1) as number[]
+      expect([sx, sy, dx, dy]).toEqual([0, 0, 0, 0])
+      expect([sw, sh]).toEqual([dw, dh])
+    } finally { restore() }
+  })
+
+  it('truncates rather than shrinks when the new size is smaller', () => {
+    const { draws, restore } = withCanvas(1350, 720)
+    try {
+      useResizeStore.getState().startResize(NODE)
+      useResizeStore.getState().setDraft({ cols: 80, rows: 24 })
+      render(<ResizeGhost />)
+      const [, , , sw, sh] = draws.at(-1) as number[]
+      // Only as much of the old screen as the smaller grid can hold.
+      expect(sw).toBeLessThan(1350)
+      expect(sh).toBeLessThan(720)
+      expect(sw).toBeCloseTo(Math.ceil(80 * 8.4375), 0)
+    } finally { restore() }
+  })
+
+  it('copies the whole screen and leaves the rest bare when growing', () => {
+    const { draws, restore } = withCanvas(675, 360)
+    try {
+      useResizeStore.getState().startResize(NODE)
+      useResizeStore.getState().setDraft({ cols: 300, rows: 80 })
+      render(<ResizeGhost />)
+      const [, , , sw, sh] = draws.at(-1) as number[]
+      expect([sw, sh]).toEqual([675, 360])
+    } finally { restore() }
+  })
+
+  it('draws nothing when the card has no canvas registered', () => {
+    const { draws, restore } = withCanvas(1350, 720)
+    try {
+      terminalSnapshotCanvases.delete(NODE)
+      useResizeStore.getState().startResize(NODE)
+      render(<ResizeGhost />)
+      expect(draws).toEqual([])
+    } finally { restore() }
+  })
+
+  it('reserves the height the card spends on its title bar and footer', () => {
+    useResizeStore.getState().startResize(NODE)
+    const { container } = render(<ResizeGhost />)
+    const bars = container.querySelectorAll('.resize-ghost__bar')
+    expect(bars).toHaveLength(2)
+    const total = [...bars].reduce((sum, b) => sum + parseFloat((b as HTMLElement).style.height), 0)
+    // The preview's outline accounts for the same chrome the real card does.
+    expect(total).toBe(terminalPixelSize(160, 45).height - 45 * 16)
   })
 })

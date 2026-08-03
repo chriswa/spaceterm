@@ -32,7 +32,8 @@ export {
   MAX_COLS,
   MAX_ROWS,
   terminalPixelSize,
-  terminalSizeFromCorner
+  terminalSizeFromCorner,
+  resizeDraftSize
 } from '../../../../shared/node-size'
 
 // Client-only markdown size constants (resize minimums used for UI)

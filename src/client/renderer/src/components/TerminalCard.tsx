@@ -55,6 +55,17 @@ export const terminalSearchOpeners = new Map<string, () => void>()
 export const terminalSearchClosers = new Map<string, () => boolean>()
 export const terminalPlanJumpers = new Map<string, () => boolean>()
 
+/**
+ * Each card's snapshot canvas, by node id.
+ *
+ * Resize mode draws the surface's current content inside its preview, and this
+ * is where it gets the pixels: the card has already painted them, so the
+ * preview copies the bitmap rather than re-deriving it from the snapshot rows.
+ * Registered like the keyboard side-channels above and cleaned up the same way
+ * — see the lifecycle test, which fails if any of them outlive their card.
+ */
+export const terminalSnapshotCanvases = new Map<string, HTMLCanvasElement>()
+
 
 interface TerminalCardProps {
   id: NodeId
@@ -743,6 +754,11 @@ export function TerminalCard({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
+    // The node's size, not the arriving snapshot's: the two disagree for the
+    // moment between a resize being applied and the first snapshot at the new
+    // size arriving, and the canvas has to match the box the card lays out for
+    // it or the browser scales the bitmap to fit.
+    const { cols, rows } = propsRef.current
     const cw = Math.ceil(cols * CELL_WIDTH)
     const ch = Math.ceil(rows * CELL_HEIGHT)
 
@@ -856,6 +872,15 @@ export function TerminalCard({
     }
   }
 
+  // The subscription below is keyed on [focused, sessionId], so its callback
+  // would otherwise hold whichever paintCanvas existed when the card last
+  // focused — closing over that render's cols, rows and colours. A resize then
+  // painted every subsequent snapshot at the old bitmap size while the card
+  // laid out the new one, and the browser scaled the difference; it only came
+  // right when focusing and unfocusing rebuilt the subscription.
+  const paintCanvasRef = useRef(paintCanvas)
+  paintCanvasRef.current = paintCanvas
+
   // Subscribe to snapshot events (only when unfocused)
   useEffect(() => {
     if (focused) return
@@ -864,7 +889,7 @@ export function TerminalCard({
 
     const cleanup = window.api.node.onSnapshot(sessionId, (snapshot) => {
       snapshotRef.current = snapshot
-      paintCanvas(snapshot)
+      paintCanvasRef.current(snapshot)
     })
 
     return () => {
@@ -872,13 +897,24 @@ export function TerminalCard({
     }
   }, [focused, sessionId])
 
-  // Repaint snapshot canvas when font toggle or theme changes (unfocused terminals)
+  // Publish the canvas for resize mode's preview to copy from.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    terminalSnapshotCanvases.set(id, canvas)
+    return () => { terminalSnapshotCanvases.delete(id) }
+  }, [id])
+
+  // Repaint the snapshot canvas whenever what it should look like changes:
+  // font, colours, or the grid it is drawn on. Without the size here, a resize
+  // leaves the last-painted bitmap at the old dimensions until the next
+  // snapshot arrives — visible as a stretched image for a tick.
   const fontThemeId = useFontStore(s => s.themeId)
   useEffect(() => {
     if (focused) return
     const snapshot = snapshotRef.current
-    if (snapshot) paintCanvas(snapshot)
-  }, [proportionalFont, fontThemeId])
+    if (snapshot) paintCanvasRef.current(snapshot)
+  }, [proportionalFont, fontThemeId, preset, cols, rows, focused])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
@@ -1130,7 +1166,11 @@ export function TerminalCard({
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       isResizing={resizingNodeId === id}
-      className={`terminal-card ${focusClass}${focused && proportionalFont ? ' terminal-card--proportional' : ''}`}
+      // Hidden, not unmounted, while its own resize preview stands in for it:
+      // the preview copies pixels from this card's snapshot canvas, and the two
+      // are centred on the same point at different sizes, so leaving both
+      // visible shows the same content twice, offset.
+      className={`terminal-card ${focusClass}${focused && proportionalFont ? ' terminal-card--proportional' : ''}${resizingNodeId === id ? ' terminal-card--resize-source' : ''}`}
       style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 16px 4px ${focusGlowColor}` } : undefined}
       cardRef={cardRef}
       onMouseEnter={() => {

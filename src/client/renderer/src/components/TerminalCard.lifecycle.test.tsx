@@ -5,7 +5,8 @@ import {
   terminalSelectionGetters,
   terminalSearchOpeners,
   terminalSearchClosers,
-  terminalPlanJumpers
+  terminalPlanJumpers,
+  terminalSnapshotCanvases
 } from './TerminalCard'
 import { FakeBridge, installFakeBridge } from '../testing/fake-bridge'
 import { useNodeStore } from '../stores/nodeStore'
@@ -89,6 +90,7 @@ function registeredFor(id: NodeId): string[] {
 
 function clearRegistries(): void {
   for (const [, map] of REGISTRIES) map.clear()
+  terminalSnapshotCanvases.clear()
 }
 
 let bridge: FakeBridge
@@ -276,5 +278,32 @@ describe('the terminal grid', () => {
       await new Promise((resolve) => setTimeout(resolve, 20))
     })
     expect(renderedRows(container)).toBe(40)
+  })
+})
+
+describe('the snapshot canvas registry', () => {
+  // Unlike the keyboard side-channels, this one is *not* focus-scoped: resize
+  // mode previews an unfocused card, and the canvas it copies from is the one
+  // that only exists while the card is unfocused.
+  it('registers while unfocused, which is when the preview needs it', () => {
+    render(<TerminalCard {...props()} />)
+    expect(terminalSnapshotCanvases.has(nid('term-1'))).toBe(true)
+  })
+
+  it('registers under the node id, so the preview can find it', () => {
+    render(<TerminalCard {...props({ id: nid('node-a'), sessionId: pid('pty-b') })} />)
+    expect(terminalSnapshotCanvases.has(nid('node-a'))).toBe(true)
+    expect(terminalSnapshotCanvases.has(nid('pty-b'))).toBe(false)
+  })
+
+  it('hands back a canvas, not a stale detached element', () => {
+    const { container } = render(<TerminalCard {...props()} />)
+    expect(terminalSnapshotCanvases.get(nid('term-1'))).toBe(container.querySelector('canvas'))
+  })
+
+  it('lets go on unmount, like every other registry here', () => {
+    const { unmount } = render(<TerminalCard {...props()} />)
+    unmount()
+    expect(terminalSnapshotCanvases.size).toBe(0)
   })
 })

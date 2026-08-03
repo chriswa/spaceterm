@@ -3,6 +3,7 @@ import {
   clampTerminalSize,
   terminalPixelSize,
   terminalSizeFromCorner,
+  resizeDraftSize,
   DEFAULT_COLS,
   DEFAULT_ROWS,
   MIN_COLS,
@@ -87,6 +88,21 @@ describe('terminalSizeFromCorner', () => {
       .toEqual({ cols: MIN_COLS, rows: MIN_ROWS })
     expect(terminalSizeFromCorner(center, { x: center.x + 99999, y: center.y + 99999 }))
       .toEqual({ cols: MAX_COLS, rows: MAX_ROWS })
+  })
+
+  it('snaps to the default when the modifier is held, wherever the pointer is', () => {
+    // An exact target, not a nearest-default heuristic: "put it back how it
+    // was" is worth having precisely, and a snap you can miss by a pixel is
+    // not a snap.
+    for (const dx of [-500, 0, 137, 5000]) {
+      expect(resizeDraftSize(center, { x: center.x + dx, y: center.y + dx }, true))
+        .toEqual({ cols: DEFAULT_COLS, rows: DEFAULT_ROWS })
+    }
+  })
+
+  it('follows the pointer when the modifier is not held', () => {
+    const cursor = cornerOf(120, 40)
+    expect(resizeDraftSize(center, cursor, false)).toEqual({ cols: 120, rows: 40 })
   })
 
   it('is monotonic — dragging out never shrinks the surface', () => {

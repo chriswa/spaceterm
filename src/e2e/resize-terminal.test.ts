@@ -123,6 +123,98 @@ describeE2E('resizing a terminal surface', () => {
       .toBe(`${DEFAULT_COLS} × ${DEFAULT_ROWS}`)
   })
 
+  it('previews the surface’s own content, and hides the card it stands for', async () => {
+    launched = await launchApp()
+    const id = await createSurface(launched)
+    await launched.window.waitForTimeout(2000)
+
+    await pressCardButton(launched, id, 'Resize terminal')
+    await launched.window.waitForSelector('.resize-ghost', { timeout: 10_000 })
+    const viewport = await launched.window.evaluate(
+      () => ({ w: window.innerWidth, h: window.innerHeight })
+    )
+    await launched.window.mouse.move(viewport.w - 40, viewport.h - 40)
+    await launched.window.waitForTimeout(400)
+
+    const preview = await launched.window.evaluate(() => {
+      const ghost = document.querySelector('.resize-ghost') as HTMLElement
+      const canvas = ghost.querySelector('canvas') as HTMLCanvasElement | null
+      const card = document.querySelector('.terminal-card') as HTMLElement
+      let painted = 0
+      if (canvas) {
+        const w = Math.min(200, canvas.width)
+        const h = Math.min(100, canvas.height)
+        const pixels = canvas.getContext('2d')!.getImageData(0, 0, w, h).data
+        for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) painted++
+      }
+      return {
+        bars: [...ghost.querySelectorAll('.resize-ghost__bar')].length,
+        painted,
+        cardVisibility: getComputedStyle(card).visibility
+      }
+    })
+
+    // Content copied from the card, chrome stood in for, and the card itself
+    // out of the way — otherwise the same screen shows twice, offset.
+    expect(preview.painted).toBeGreaterThan(0)
+    expect(preview.bars).toBe(2)
+    expect(preview.cardVisibility).toBe('hidden')
+  })
+
+  it('snaps to the default size while the Command key is held', async () => {
+    launched = await launchApp()
+    const id = await createSurface(launched)
+    await resizeTo(launched, id, 200, 60)
+    await waitForPersistedSize(launched, id, { cols: 200, rows: 60 })
+
+    await pressCardButton(launched, id, 'Resize terminal')
+    await launched.window.waitForSelector('.resize-ghost', { timeout: 10_000 })
+    const viewport = await launched.window.evaluate(
+      () => ({ w: window.innerWidth, h: window.innerHeight })
+    )
+    await launched.window.mouse.move(viewport.w - 40, viewport.h - 40)
+    await launched.window.waitForTimeout(300)
+
+    await launched.window.keyboard.down('Meta')
+    await launched.window.waitForTimeout(300)
+    // The readout follows the modifier without waiting for the mouse to move.
+    expect(await launched.window.locator('.resize-ghost__readout').innerText())
+      .toBe(`${DEFAULT_COLS} × ${DEFAULT_ROWS}`)
+
+    await launched.window.mouse.down()
+    await launched.window.mouse.up()
+    await launched.window.keyboard.up('Meta')
+
+    await waitForPersistedSize(launched, id, { cols: DEFAULT_COLS, rows: DEFAULT_ROWS })
+  })
+
+  it('repaints the snapshot at the new size instead of stretching it', async () => {
+    // The snapshot subscription is keyed on focus, so its callback used to
+    // hold the cols/rows of whichever render last focused the card: every
+    // snapshot after a resize was painted at the old bitmap size and scaled to
+    // the new box, and only focusing and unfocusing put it right.
+    launched = await launchApp()
+    const id = await createSurface(launched)
+    await launched.window.waitForTimeout(2000)
+    await launched.window.evaluate(() => {
+      const vp = document.querySelector('.canvas-viewport') as HTMLElement
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        vp.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: 5, clientY: 5 }))
+      }
+    })
+    await launched.window.waitForTimeout(1000)
+
+    await resizeTo(launched, id, 200, 60)
+    await waitForPersistedSize(launched, id, { cols: 200, rows: 60 })
+    await launched.window.waitForTimeout(1000)
+
+    const canvas = await launched.window.evaluate((nodeId) => {
+      const c = document.querySelector(`.card-shell[data-node-id="${nodeId}"] canvas`) as HTMLCanvasElement
+      return { bitmap: [c.width, c.height], box: [parseFloat(c.style.width), parseFloat(c.style.height)] }
+    }, id)
+    expect(canvas.bitmap).toEqual(canvas.box)
+  })
+
   it('abandons the mode on Escape without touching the surface', async () => {
     launched = await launchApp()
     const id = await createSurface(launched)
