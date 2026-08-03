@@ -20,7 +20,12 @@ class Recorder implements TerminalRespawnDeps {
   readonly calls: string[] = []
   titles: string[] | undefined = ['old title']
   agentHistory: unknown[] = [{ claudeSessionId: 'abc' }]
+  size: { cols: number; rows: number } | undefined = { cols: 200, rows: 60 }
 
+  sizeOf(nodeId: NodeId): { cols: number; rows: number } | undefined {
+    this.calls.push(`readSize(${nodeId})`)
+    return this.size
+  }
   addSnapshotSession(sessionId: PtySessionId, cols: number, rows: number): void {
     this.calls.push(`addSnapshot(${sessionId},${cols},${rows})`)
   }
@@ -48,7 +53,9 @@ class Recorder implements TerminalRespawnDeps {
   }
 }
 
-function run(configure: (r: Recorder) => void = () => {}, spawn: () => SpawnedPty = () => pty()) {
+type Spawn = (size: { cols: number; rows: number } | undefined) => SpawnedPty
+
+function run(configure: (r: Recorder) => void = () => {}, spawn: Spawn = () => pty()) {
   const deps = new Recorder()
   configure(deps)
   const result = respawnTerminal(NODE, spawn, deps)
@@ -109,6 +116,7 @@ describe('respawnTerminal', () => {
       const spawnFirst = () => { order.push('spawn'); return pty() }
       respawnTerminal(NODE, spawnFirst, {
         ...deps,
+        sizeOf: () => ({ cols: 100, rows: 30 }),
         addSnapshotSession: () => order.push('addSnapshot'),
         titleHistoryOf: () => { order.push('readTitles'); return undefined },
         agentSessionHistoryOf: () => { order.push('readAgentHistory'); return [] },
@@ -153,6 +161,29 @@ describe('respawnTerminal', () => {
     // stayed dead: it looks alive and swallows input.
     const deps = new Recorder()
     expect(() => respawnTerminal(NODE, () => { throw new Error('daemon down') }, deps)).toThrow('daemon down')
-    expect(deps.calls).toEqual([])
+    // Reading the stored size is the one thing that precedes the spawn, and it
+    // mutates nothing.
+    expect(deps.calls).toEqual([`readSize(${NODE})`])
+  })
+
+  describe('the node’s stored size', () => {
+    it('is handed to the spawn, so a resized surface comes back that size', () => {
+      // reincarnateTerminal writes the new pty's size onto the node, so a path
+      // that spawned at the default would quietly undo the user's resize.
+      let seen: { cols: number; rows: number } | undefined
+      run((r) => { r.size = { cols: 220, rows: 70 } }, (size) => { seen = size; return pty(NEW_PTY, size!.cols, size!.rows) })
+      expect(seen).toEqual({ cols: 220, rows: 70 })
+    })
+
+    it('is read before the spawn, not after — the spawn needs it', () => {
+      const { deps } = run()
+      expect(deps.at('readSize')).toBe(0)
+    })
+
+    it('is undefined for a node that no longer exists, leaving the default to the caller', () => {
+      let seen: { cols: number; rows: number } | undefined | 'unset' = 'unset'
+      run((r) => { r.size = undefined }, (size) => { seen = size; return pty() })
+      expect(seen).toBeUndefined()
+    })
   })
 })

@@ -3,6 +3,45 @@
 export const DEFAULT_COLS = 160
 export const DEFAULT_ROWS = 45
 
+/**
+ * Bounds on a user-chosen terminal size.
+ *
+ * The floor is the classic 80×24 — below that most TUIs stop laying out
+ * sensibly. The ceiling is twice the default, which is already larger than most
+ * physical terminals; see `emergency-terminal.ts`, which cannot attach to a
+ * surface wider than the window it runs in and offers a resize to compensate.
+ *
+ * These four numbers are the whole policy. The server clamps every incoming
+ * resize through `clampTerminalSize`, so changing them here changes the limit
+ * everywhere — the client only imports them to keep the on-screen preview
+ * inside what the server would accept.
+ */
+export const MIN_COLS = 80
+export const MIN_ROWS = 24
+export const MAX_COLS = DEFAULT_COLS * 2
+export const MAX_ROWS = DEFAULT_ROWS * 2
+
+/**
+ * Force a requested size to a whole number of cells within the limits above.
+ *
+ * The only place terminal dimensions are trusted. Non-integers, NaN and
+ * out-of-range values all come out as something a PTY, an xterm and a card
+ * layout can each accept — the daemon casts to `uint16` without checking, so
+ * this is what stands between a typo and a wrapped window size.
+ */
+export function clampTerminalSize(cols: number, rows: number): { cols: number; rows: number } {
+  const safe = (value: number, min: number, max: number): number => {
+    // NaN has no side to be clamped to; anything else, including ±Infinity,
+    // falls out of the min/max below on the correct side.
+    if (Number.isNaN(value)) return min
+    return Math.min(max, Math.max(min, Math.round(value)))
+  }
+  return {
+    cols: safe(cols, MIN_COLS, MAX_COLS),
+    rows: safe(rows, MIN_ROWS, MAX_ROWS)
+  }
+}
+
 // xterm.js cell pixel dimensions for Menlo 14px.
 export const CELL_WIDTH = 8.4375
 export const CELL_HEIGHT = 16
@@ -79,6 +118,32 @@ export function terminalPixelSize(cols: number, rows: number, hasFooter = true):
     width: Math.ceil(cols * CELL_WIDTH + CHROME_W),
     height: Math.ceil(rows * CELL_HEIGHT + (hasFooter ? CHROME_H : CHROME_H_NO_FOOTER))
   }
+}
+
+/**
+ * The size a terminal would have if its bottom-right corner sat under a cursor
+ * at `cursor`, given a card centred on `center`.
+ *
+ * The inverse of `terminalPixelSize`, and the whole of the resize-mode
+ * geometry. Cards are centre-anchored (`CardShell` is positioned at
+ * `x - width/2`), so the card grows away from `center` in both directions and
+ * the returned size is always a whole number of cells within the limits — a
+ * PTY has no notion of a fraction of a column.
+ *
+ * Pure, and deliberately unaware of the camera: callers convert screen to world
+ * coordinates first.
+ */
+export function terminalSizeFromCorner(
+  center: { x: number; y: number },
+  cursor: { x: number; y: number },
+  hasFooter = true
+): { cols: number; rows: number } {
+  const width = (cursor.x - center.x) * 2
+  const height = (cursor.y - center.y) * 2
+  return clampTerminalSize(
+    (width - CHROME_W) / CELL_WIDTH,
+    (height - (hasFooter ? CHROME_H : CHROME_H_NO_FOOTER)) / CELL_HEIGHT
+  )
 }
 
 export type NodeLike =

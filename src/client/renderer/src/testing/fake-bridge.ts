@@ -255,7 +255,6 @@ export class FakeBridge implements Api {
     attach: (sessionId) => this.reply('pty.attach', this.responses.attach, sessionId),
     destroy: (sessionId) => this.reply('pty.destroy', undefined, sessionId),
     write: (sessionId, data) => this.record('pty.write', sessionId, data),
-    resize: (sessionId, cols, rows) => this.record('pty.resize', sessionId, cols, rows),
     onData: (sessionId, cb) => subscribeToSession(this.ptyData, sessionId, cb),
     onExit: (sessionId, cb) => subscribeToSession(this.ptyExit, sessionId, cb),
     onClaudeContext: (sessionId, cb) => subscribeToSession(this.ptyContext, sessionId, cb),

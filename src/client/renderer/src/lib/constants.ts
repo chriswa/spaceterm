@@ -27,7 +27,12 @@ export {
   MARKDOWN_MIN_HEIGHT,
   MARKDOWN_DEFAULT_MAX_WIDTH,
   MARKDOWN_MIN_MAX_WIDTH,
-  terminalPixelSize
+  MIN_COLS,
+  MIN_ROWS,
+  MAX_COLS,
+  MAX_ROWS,
+  terminalPixelSize,
+  terminalSizeFromCorner
 } from '../../../../shared/node-size'
 
 // Client-only markdown size constants (resize minimums used for UI)

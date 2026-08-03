@@ -41,6 +41,9 @@ export interface NodeActionBarProps {
   onWtSpawn?: (id: NodeId, branchName: string) => void
   onStartReparent?: (id: NodeId) => void
   isReparenting?: boolean
+  /** Terminals only — the other node types have no grid to resize. */
+  onStartResize?: (id: NodeId) => void
+  isResizing?: boolean
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   showClose?: boolean
   onClose: (id: NodeId) => void
@@ -62,6 +65,7 @@ export function NodeActionBar({
   archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
   onPostSync, onWtSpawn,
   onStartReparent, isReparenting,
+  onStartResize, isResizing,
   onAddNode, showClose, onClose,
   variant = 'card',
   onActionInvoked,
@@ -452,6 +456,22 @@ export function NodeActionBar({
             <line x1="7" y1="11" x2="7" y2="4" />
             <path d="M4 7 L7 4 L10 7" />
             <line x1="3" y1="2" x2="11" y2="2" />
+          </svg>
+        </button>
+      )}
+      {onStartResize && (
+        <button
+          className={`node-titlebar__reparent-btn${isResizing ? ' node-titlebar__reparent-btn--active' : ''}`}
+          data-tooltip="Resize terminal"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onStartResize(nodeId); onActionInvoked?.() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* A frame with a corner pulled out — the gesture the mode offers. */}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 5 L2 2 L5 2" />
+            <path d="M12 9 L12 12 L9 12" />
+            <path d="M3 11 L11 3" />
           </svg>
         </button>
       )}

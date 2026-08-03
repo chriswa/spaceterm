@@ -29,7 +29,9 @@ import type { NodeId, PtySessionId } from '../shared/ids'
  *
  * How the pty comes into existence is the caller's business: five paths spawn
  * a fresh one, and startup reattach adopts a pty the daemon already has. That
- * is why the pty arrives as a thunk rather than as create-options.
+ * is why the pty arrives as a thunk rather than as create-options. The thunk is
+ * handed the node's stored size; the five spawning paths pass it to `create`,
+ * and reattach ignores it because the daemon's pty already has a size.
  */
 
 /** A pty that has just been created. */
@@ -45,6 +47,13 @@ export interface SpawnedPty {
  * passes them through unchanged and a test supplies recorders.
  */
 export interface TerminalRespawnDeps {
+  /**
+   * The grid the node is stored at. Handed to `spawn` so a rebind comes back
+   * the size the user left it — `reincarnateTerminal` writes the new pty's
+   * size onto the node, so a path that spawned at the default would silently
+   * reset a resized surface.
+   */
+  sizeOf(nodeId: NodeId): { cols: number; rows: number } | undefined
   addSnapshotSession(sessionId: PtySessionId, cols: number, rows: number): void
   seedTitleHistory(sessionId: PtySessionId, titles: string[]): void
   /** Shell titles recorded against the node, carried across the rebind. */
@@ -64,10 +73,10 @@ export interface TerminalRespawnDeps {
  */
 export function respawnTerminal(
   nodeId: NodeId,
-  spawn: () => SpawnedPty,
+  spawn: (size: { cols: number; rows: number } | undefined) => SpawnedPty,
   deps: TerminalRespawnDeps
 ): SpawnedPty {
-  const pty = spawn()
+  const pty = spawn(deps.sizeOf(nodeId))
   deps.addSnapshotSession(pty.sessionId, pty.cols, pty.rows)
 
   // Read the node's history before rebinding — reincarnation opens a new

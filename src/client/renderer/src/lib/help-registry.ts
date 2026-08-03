@@ -6,6 +6,7 @@
  * Groups are rendered in array order — put the most essential stuff first so
  * new users see it without scrolling.
  */
+import { MIN_COLS, MIN_ROWS, MAX_COLS, MAX_ROWS } from './constants'
 
 export interface HelpEntry {
   /** Human-readable key combo, e.g. "Cmd + S" or "Click" */
@@ -78,6 +79,7 @@ export const helpGroups: HelpGroup[] = [
       { keys: `${MAC_CMD} D`,            name: 'Fork Claude surface' },
       { keys: 'Drag a node',             name: 'Move node and children' },
       { keys: `${MAC_CMD} Drag`,         name: 'Move node only', notes: 'Children stay put' },
+      { keys: '"Resize terminal" button', name: 'Resize surface', notes: `Camera pulls back; the pointer sizes the surface around its centre, click to settle, Escape to cancel. ${MIN_COLS}x${MIN_ROWS} to ${MAX_COLS}x${MAX_ROWS}, and the size survives restarts` },
     ],
   },
 

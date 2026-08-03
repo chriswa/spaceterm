@@ -32,7 +32,7 @@ import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { canFitAt, computePlacement } from './node-placement'
-import { terminalPixelSize, directoryFolderWidth, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
+import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { measureCard as nodePixelSize } from '../shared/card-types'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
@@ -303,6 +303,10 @@ function ensureNonClaudeSessionRecorded(
  * terminal-respawn.ts for why the order inside matters.
  */
 const RESPAWN_DEPS: TerminalRespawnDeps = {
+  sizeOf: (nodeId) => {
+    const node = stateManager.getNode(nodeId)
+    return node?.type === 'terminal' ? { cols: node.cols, rows: node.rows } : undefined
+  },
   addSnapshotSession: (sessionId, cols, rows) => snapshotManager.addSession(sessionId, cols, rows),
   seedTitleHistory: (sessionId, titles) => sessionManager.seedTitleHistory(sessionId, titles),
   titleHistoryOf: (nodeId) => {
@@ -979,11 +983,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'resize': {
-      sessionManager.resize(msg.sessionId, msg.cols, msg.rows)
-      break
-    }
-
     // --- Node state mutation messages ---
 
     case 'node-sync-request': {
@@ -1086,7 +1085,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
             nodeId: msg.archivedNodeId,
           }
           const { sessionId: newPtyId, cols, rows } = respawnTerminal(
-            msg.archivedNodeId, () => sessionManager.create(restoreOptions), RESPAWN_DEPS)
+            msg.archivedNodeId, (size) => sessionManager.create({ ...restoreOptions, ...size }), RESPAWN_DEPS)
           client.attachedSessions.add(newPtyId)
           send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols, rows })
           const agentLabel = agentDriver(agentType).label
@@ -1250,10 +1249,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         send(client.socket, { type: 'mutation-ack', seq: msg.seq })
         break
       }
+      // The only door into terminal sizing, so the only place limits need
+      // enforcing — the GUI, the emergency terminal and anything else all
+      // arrive here, and the daemon casts to uint16 without checking.
+      const { cols, rows } = clampTerminalSize(msg.cols, msg.rows)
       const ptyId = tNode.sessionId
-      sessionManager.resize(ptyId, msg.cols, msg.rows)
-      snapshotManager.resize(ptyId, msg.cols, msg.rows)
-      stateManager.updateTerminalSize(ptyId, msg.cols, msg.rows)
+      // A dead surface has neither a pty nor a headless emulator; both calls
+      // no-op, and the size lands on the node so a revive spawns at it.
+      sessionManager.resize(ptyId, cols, rows)
+      snapshotManager.resize(ptyId, cols, rows)
+      stateManager.updateTerminalSize(ptyId, cols, rows)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -1288,7 +1293,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // Pass stable nodeId so SPACETERM_NODE_ID survives reincarnation
         rOptions = { ...rOptions, nodeId: msg.nodeId }
         const { sessionId: newPtyId, cols: rCols, rows: rRows } = respawnTerminal(
-          msg.nodeId, () => sessionManager.create(rOptions), RESPAWN_DEPS)
+          msg.nodeId, (size) => sessionManager.create({ ...rOptions, ...size }), RESPAWN_DEPS)
         stateManager.setAlert(msg.nodeId, 'launch-failed', null)
         // Auto-attach client to the new PTY session
         client.attachedSessions.add(newPtyId)
@@ -1741,7 +1746,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           nodeId: msg.nodeId,
         }
         const { sessionId: newPtyId, cols: restartCols, rows: restartRows } = respawnTerminal(
-          msg.nodeId, () => sessionManager.create(restartOptions), RESPAWN_DEPS)
+          msg.nodeId, (size) => sessionManager.create({ ...restartOptions, ...size }), RESPAWN_DEPS)
         // It launched, so whatever went wrong last time no longer applies.
         stateManager.setAlert(msg.nodeId, 'launch-failed', null)
 
@@ -2052,7 +2057,7 @@ async function startServer(): Promise<void> {
                 nodeId,
               }
               const { sessionId: recoveryPtyId } = respawnTerminal(
-                nodeId, () => sessionManager.create(recoveryOptions), RESPAWN_DEPS)
+                nodeId, (size) => sessionManager.create({ ...recoveryOptions, ...size }), RESPAWN_DEPS)
 
               restartRecovery.recordRetry(nodeId, recoveryPtyId, recovery.previousExtraCliArgs, Date.now())
 
@@ -2258,8 +2263,19 @@ async function startServer(): Promise<void> {
         .capabilities.requiresResumableSession,
 
     reattachSurface(nodeId, pty, scrollback, cwd) {
-      respawnTerminal(nodeId, () => {
-        // The pty already exists in the daemon; adopt it rather than spawn one.
+      respawnTerminal(nodeId, (stored) => {
+        // The pty already exists in the daemon; adopt it rather than spawn one,
+        // and take its size rather than the node's. The card has to match the
+        // grid the running program actually has, and a SIGWINCH to every
+        // surviving agent at boot is not a price worth paying to make the
+        // stored number win. They only disagree if something went wrong, so
+        // say so — that is the signal, not the resize.
+        if (stored && (stored.cols !== pty.cols || stored.rows !== pty.rows)) {
+          serverLog(
+            `[startup] ${pty.sessionId.slice(0, 8)} size drift: daemon has ${pty.cols}x${pty.rows}, ` +
+            `node stored ${stored.cols}x${stored.rows} — adopting the daemon's`
+          )
+        }
         sessionManager.reattachSession(pty.sessionId, scrollback, pty.cols, pty.rows, cwd)
         return pty
       }, RESPAWN_DEPS)
@@ -2279,7 +2295,11 @@ async function startServer(): Promise<void> {
         }),
         nodeId: terminal.nodeId,
       }
-      return respawnTerminal(terminal.nodeId, () => sessionManager.create(options), RESPAWN_DEPS).sessionId
+      return respawnTerminal(
+        terminal.nodeId,
+        (size) => sessionManager.create({ ...options, ...size }),
+        RESPAWN_DEPS
+      ).sessionId
     },
 
     watchTranscript(sessionId, nodeId, resumeSessionId) {

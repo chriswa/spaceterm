@@ -97,6 +97,13 @@ export interface CreateOptions {
   codex?: { prompt?: string; resumeSessionId?: string; forkSessionId?: string }
   /** Stable node ID for SPACETERM_NODE_ID env var. Used during reincarnation when nodeId !== sessionId. */
   nodeId?: NodeId
+  /**
+   * Grid to spawn the PTY at. Omitted for a brand new surface, which gets the
+   * default; supplied when rebinding an existing node, whose stored size the
+   * user may have chosen and which reincarnation would otherwise discard.
+   */
+  cols?: number
+  rows?: number
 }
 
 export interface CreateMessage {
@@ -138,13 +145,6 @@ export interface WriteMessage {
   type: 'write'
   sessionId: PtySessionId
   data: string
-}
-
-export interface ResizeMessage {
-  type: 'resize'
-  sessionId: PtySessionId
-  cols: number
-  rows: number
 }
 
 export interface HookMessage {
@@ -612,7 +612,6 @@ export type ClientMessage =
   | DetachMessage
   | DestroyMessage
   | WriteMessage
-  | ResizeMessage
   | NodeSyncRequestMessage
   | NodeMoveMessage
   | NodeBatchMoveMessage

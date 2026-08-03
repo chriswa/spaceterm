@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
@@ -15,6 +14,7 @@ import { TerminalTitleBarContent } from './TerminalTitleBarContent'
 import { TerminalSearchBar } from './TerminalSearchBar'
 import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
+import { useResizeStore } from '../stores/resizeStore'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { showToast } from '../lib/toast'
@@ -87,7 +87,6 @@ interface TerminalCardProps {
   onForwardWheelToCanvas: (e: WheelEvent) => void
   onClose: (id: NodeId) => void
   onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
-  onResize: (id: NodeId, cols: number, rows: number) => void
   onRename: (id: NodeId, name: string) => void
   archivedChildren: ArchivedNode[]
   onColorChange: (id: NodeId, color: string) => void
@@ -103,6 +102,7 @@ interface TerminalCardProps {
   onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: NodeId) => void
   onStartReparent?: (id: NodeId) => void
+  onStartResize?: (id: NodeId) => void
   onReparentTarget?: (id: NodeId) => void
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
@@ -118,9 +118,9 @@ interface TerminalCardProps {
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
-  onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onResize, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
+  onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   claudeSessionHistory, agentType, claudeState, claudeModel, onExit, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget,
+  onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
@@ -129,7 +129,6 @@ export function TerminalCard({
   const cardRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
   const wheelAccRef = useRef({ dx: 0, dy: 0, t: 0 })
   const pixelOffsetRef = useRef(0)
   const searchAddonRef = useRef<SearchAddon | null>(null)
@@ -140,8 +139,8 @@ export function TerminalCard({
   const proportionalCanvasRef = useRef<HTMLCanvasElement>(null)
 
   // Keep current props in refs for event handlers
-  const propsRef = useRef({ x, y, zoom, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady })
-  propsRef.current = { x, y, zoom, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady }
+  const propsRef = useRef({ x, y, zoom, cols, rows, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady })
+  propsRef.current = { x, y, zoom, cols, rows, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady }
 
   const isSpeaking = useSpeakingStore((s) => id in s.speaking)
 
@@ -188,6 +187,16 @@ export function TerminalCard({
     if (!containerRef.current) return
 
     const term = new Terminal({
+      // The node's stored size is the single source of truth for this
+      // terminal's grid: it is what the card is drawn from, what the server
+      // sized the PTY to, and what the headless snapshot emulator holds. This
+      // used to be left at xterm's 80×24 default and then corrected by
+      // FitAddon measuring the container — which derived a *second* opinion on
+      // the grid from CELL_WIDTH-vs-actual-cell rounding, and could disagree
+      // with the PTY by a column. A disagreement there shows up as text
+      // wrapping one column early, so it is taken from props instead.
+      cols: propsRef.current.cols,
+      rows: propsRef.current.rows,
       fontSize: 14,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: {
@@ -200,8 +209,6 @@ export function TerminalCard({
       allowProposedApi: true
     })
 
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon((event, url) => {
       if (event.metaKey) {
         window.api.openExternal(url)
@@ -384,12 +391,6 @@ export function TerminalCard({
       return true
     })
 
-    try {
-      fitAddon.fit()
-    } catch {
-      // Container may not be sized yet
-    }
-
     // Log actual cell dimensions from xterm's renderer for calibration
     try {
       const dims = (term as any)._core._renderService.dimensions
@@ -498,10 +499,6 @@ export function TerminalCard({
       }
     })
 
-    term.onResize(({ cols, rows }) => {
-      window.api.pty.resize(propsRef.current.sessionId, cols, rows)
-    })
-
     // Scroll-jump guard: revert any rogue jumps to the top caused by xterm's
     // internal viewport scroll handler reading a stale scrollTop=0 from the
     // DOM. Because xterm's rendering is rAF-debounced, the revert lands in
@@ -537,7 +534,6 @@ export function TerminalCard({
     })
 
     terminalRef.current = term
-    fitAddonRef.current = fitAddon
     terminalSelectionGetters.set(id, () => term.getSelection())
     terminalSearchOpeners.set(id, () => {
       if (searchOpenRef.current) {
@@ -717,6 +713,20 @@ export function TerminalCard({
       terminalPlanJumpers.get(id)?.()
     }
   }, [focused, xtermReady, claudeState, id])
+
+  // Follow the node's size while mounted. A resize can land on a focused card
+  // from anywhere — another client, an undo, or the emergency terminal — and
+  // the server has already resized the PTY by the time the patch arrives, so
+  // the grid here has to match or output wraps against the wrong width. The
+  // mount effect keys off [focused, sessionId] and deliberately does not
+  // remount for this: xterm resizes in place, and a remount would discard the
+  // scrollback and replay it.
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    if (term.cols === cols && term.rows === rows) return
+    term.resize(cols, rows)
+  }, [cols, rows, xtermReady])
 
   // Notify parent when focused node size is known (mount or resize)
   useEffect(() => {
@@ -1060,6 +1070,7 @@ export function TerminalCard({
   } : undefined
 
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const resizingNodeId = useResizeStore(s => s.resizingNodeId)
 
   return (
     <CardShell
@@ -1105,6 +1116,7 @@ export function TerminalCard({
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
+      onStartResize={onStartResize}
       onFork={agentType !== 'cursor' && agentType !== 'codex' && claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
       // Cursor/Codex often lack SessionStart history; gate on agentType so restart stays available.
       onExtraCliArgs={
@@ -1117,6 +1129,7 @@ export function TerminalCard({
       onDiffPlans={handleDiffPlans}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
+      isResizing={resizingNodeId === id}
       className={`terminal-card ${focusClass}${focused && proportionalFont ? ' terminal-card--proportional' : ''}`}
       style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 16px 4px ${focusGlowColor}` } : undefined}
       cardRef={cardRef}

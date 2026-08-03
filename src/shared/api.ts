@@ -51,7 +51,6 @@ export interface PtyApi {
   list(): Promise<SessionInfo[]>
   attach(sessionId: PtySessionId): Promise<AttachResult>
   write(sessionId: PtySessionId, data: string): void
-  resize(sessionId: PtySessionId, cols: number, rows: number): void
   destroy(sessionId: PtySessionId): Promise<void>
   onData(sessionId: PtySessionId, callback: (data: string) => void): () => void
   onExit(sessionId: PtySessionId, callback: (exitCode: number) => void): () => void

@@ -13,9 +13,12 @@
 /** Best-effort runtime description of an off-union value, for log messages. */
 function describe(value: unknown): string {
   if (value === null || value === undefined) return String(value)
-  if (typeof value === 'object' && 'type' in value) {
-    const t = (value as { type: unknown }).type
-    return typeof t === 'string' ? t : String(t)
+  // `type` for the wire unions, `kind` for the undo buffer's.
+  for (const discriminant of ['type', 'kind'] as const) {
+    if (typeof value === 'object' && discriminant in value) {
+      const t = (value as Record<string, unknown>)[discriminant]
+      return typeof t === 'string' ? t : String(t)
+    }
   }
   return typeof value === 'string' ? value : JSON.stringify(value)
 }

@@ -103,6 +103,10 @@ async function harness(options: HarnessOptions = {}) {
   })
 
   const respawnDeps: TerminalRespawnDeps = {
+    sizeOf: (nodeId) => {
+      const node = stateManager.getNode(nodeId)
+      return node?.type === 'terminal' ? { cols: node.cols, rows: node.rows } : undefined
+    },
     addSnapshotSession: () => {},
     seedTitleHistory: (sessionId, titles) => sessionManager.seedTitleHistory(sessionId, titles),
     titleHistoryOf: (nodeId) => {

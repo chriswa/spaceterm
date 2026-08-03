@@ -40,10 +40,12 @@ interface CardShellProps {
   onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
   onMouseDown?: (e: React.MouseEvent) => void
   onStartReparent?: (id: NodeId) => void
+  onStartResize?: (id: NodeId) => void
   onShipIt?: (id: NodeId) => void
   onFork?: (id: NodeId) => void
   onDiffPlans?: () => void
   isReparenting?: boolean
+  isResizing?: boolean
   onPostSync?: (id: NodeId) => void
   onWtSpawn?: (id: NodeId, branchName: string) => void
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
@@ -66,7 +68,7 @@ export function CardShell({
   showClose = true, showColorPicker = true,
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
-  onMouseDown, onStartReparent, onShipIt, onFork, onDiffPlans, isReparenting,
+  onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
   onPostSync, onWtSpawn, onAddNode, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, overlay, children
 }: CardShellProps) {
@@ -94,6 +96,7 @@ export function CardShell({
     archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
     onPostSync, onWtSpawn,
     onStartReparent, isReparenting,
+    onStartResize, isResizing,
     onAddNode, showClose, onClose,
   }
 

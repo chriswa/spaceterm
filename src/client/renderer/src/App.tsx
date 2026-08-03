@@ -18,6 +18,7 @@ import { SearchModal } from './components/SearchModal'
 import { HelpModal } from './components/HelpModal'
 import { KeycastOverlay } from './components/KeycastOverlay'
 import { PeerCameraOverlay } from './components/PeerCameraOverlay'
+import { ResizeGhost } from './components/ResizeGhost'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
@@ -26,7 +27,7 @@ import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
-import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
+import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, terminalSizeFromCorner, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
@@ -34,6 +35,7 @@ import { DEFAULT_PRESET } from './lib/color-presets'
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useSavedViewportStore } from './stores/savedViewportStore'
 import { useReparentStore } from './stores/reparentStore'
+import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
 import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
@@ -41,7 +43,8 @@ import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
 import { pushUndo, peekUndo, peekRedo, undoStep, redoStep, getCursor, getConfirmation, setConfirmation, clearConfirmation, setUndoInProgress, getUndoInProgress } from './lib/undo-buffer'
 import { nodeUndoDescription } from './lib/node-title'
-import type { UndoEntry, UndoMoveEntry, UndoArchiveEntry, UndoUnarchiveEntry } from '../../../shared/undo-types'
+import type { UndoEntry, UndoMoveEntry, UndoArchiveEntry, UndoUnarchiveEntry, UndoResizeEntry } from '../../../shared/undo-types'
+import { undoNeedsConfirmation, undoConfirmationVerb } from '../../../shared/undo-types'
 import type { ClaudeSessionEntry } from '../../../shared/protocol'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
@@ -221,6 +224,10 @@ export function App() {
   // Reparent mode state
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const reparentHoveredNodeId = useReparentStore(s => s.hoveredNodeId)
+
+  // Resize mode state. Only the node id, deliberately: the draft size changes
+  // with every pointer move and only the preview needs to re-render for it.
+  const resizingNodeId = useResizeStore(s => s.resizingNodeId)
 
   // Update reparent edge ref for WebGL rendering (node-to-node hover)
   useEffect(() => {
@@ -1188,8 +1195,22 @@ export function App() {
         }
         break
       }
+
+      case 'resize': {
+        // Symmetric: both directions are the same mutation with a different
+        // size. The server clamps, so an entry recorded under wider limits
+        // lands on whatever is legal now rather than being rejected.
+        const cols = direction === 'undo' ? entry.cols : entry.afterCols
+        const rows = direction === 'undo' ? entry.rows : entry.afterRows
+        if (!useNodeStore.getState().nodes[entry.nodeId]) {
+          shakeCamera()
+          break
+        }
+        sendTerminalResize(entry.nodeId, cols, rows)
+        break
+      }
     }
-  }, [flyTo, navigateToNode])
+  }, [flyTo, navigateToNode, shakeCamera])
 
   const handleShipIt = useCallback((nodeId: NodeId) => {
     const { nodes } = useNodeStore.getState()
@@ -1524,9 +1545,115 @@ export function App() {
     sendSetColor(id, colorPresetId)
   }, [setNodeColor])
 
-  const handleResizeTerminal = useCallback((id: NodeId, cols: number, rows: number) => {
+  /**
+   * Settle resize mode on a size.
+   *
+   * The only place a terminal resize is sent from user action — one mutation
+   * per gesture, at the end of it, because each one is a SIGWINCH the agent
+   * redraws for. The undo entry records both sides, so undo and redo are the
+   * same mutation with different numbers.
+   */
+  const commitResize = useCallback((id: NodeId, cols: number, rows: number) => {
+    const node = useNodeStore.getState().nodes[id]
+    if (!node || node.type !== 'terminal') return
+    // Clicking without moving is a cancel, not a no-op resize with an undo
+    // entry nobody can see the effect of.
+    if (cols === node.cols && rows === node.rows) return
+    const entry: UndoResizeEntry = {
+      kind: 'resize',
+      ts: Date.now(),
+      description: nodeUndoDescription(node),
+      nodeId: id,
+      cols: node.cols,
+      rows: node.rows,
+      afterCols: cols,
+      afterRows: rows
+    }
+    pushUndo(entry)
+    sendUndoPush(entry)
     sendTerminalResize(id, cols, rows)
   }, [])
+
+  const handleStartResize = useCallback((nodeId: NodeId) => {
+    // Same shape as reparent: unfocus and pull the camera back, because the
+    // whole point is to judge the new size against its surroundings. Unfocusing
+    // also unmounts the xterm, so what stays on screen underneath the preview
+    // is the snapshot at the current size — the reference to grow from.
+    useResizeStore.getState().startResize(nodeId)
+    handleUnfocus()
+    flyToUnfocusZoom()
+  }, [handleUnfocus, flyToUnfocusZoom])
+
+  // Resize mode: the pointer drives the preview, a click settles it.
+  //
+  // Everything is bound on `window` in the capture phase so a click anywhere —
+  // over a card, over empty canvas — settles rather than doing what it normally
+  // would. Nothing reaches the server until that click.
+  useEffect(() => {
+    if (!resizingNodeId) return
+
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+
+    const centerOf = (): { x: number; y: number } | null => {
+      const node = useNodeStore.getState().nodes[resizingNodeId]
+      return node && node.type === 'terminal' ? { x: node.x, y: node.y } : null
+    }
+
+    const sizeAt = (e: MouseEvent): { cols: number; rows: number } | null => {
+      const center = centerOf()
+      if (!center) return null
+      const cam = cameraRef.current
+      const rect = viewport.getBoundingClientRect()
+      return terminalSizeFromCorner(center, {
+        x: (e.clientX - rect.left - cam.x) / cam.z,
+        y: (e.clientY - rect.top - cam.y) / cam.z
+      })
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      const size = sizeAt(e)
+      if (size) useResizeStore.getState().setDraft(size)
+    }
+
+    const onMouseDown = (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // Any button other than the left one cancels — right-drag is zoom, and
+      // committing a size because someone reached for the camera would be rude.
+      if (e.button === 0) {
+        const size = sizeAt(e) ?? useResizeStore.getState().draft
+        if (size) commitResize(resizingNodeId, size.cols, size.rows)
+      }
+      useResizeStore.getState().reset()
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      useResizeStore.getState().reset()
+    }
+
+    window.addEventListener('mousemove', onMouseMove, { capture: true })
+    window.addEventListener('mousedown', onMouseDown, { capture: true })
+    window.addEventListener('keydown', onKeyDown, { capture: true })
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove, { capture: true })
+      window.removeEventListener('mousedown', onMouseDown, { capture: true })
+      window.removeEventListener('keydown', onKeyDown, { capture: true })
+    }
+  }, [resizingNodeId, cameraRef, commitResize])
+
+  // Leaving resize mode armed while its surface is being archived would settle
+  // on a node that no longer exists.
+  useEffect(() => {
+    if (!resizingNodeId) return
+    return useNodeStore.subscribe((state) => {
+      if (!state.nodes[resizingNodeId]) useResizeStore.getState().reset()
+    })
+  }, [resizingNodeId])
 
   const handleResizeMarkdown = useCallback((id: NodeId, width: number, height: number) => {
     sendMarkdownResize(id, width, height)
@@ -1766,16 +1893,13 @@ export function App() {
           return
         }
 
-        if (entry.kind === 'move') {
-          // Move undo: execute immediately
+        if (undoNeedsConfirmation(entry)) {
+          showToast(`Undo again: ${undoConfirmationVerb(entry, 'undo')} ${entry.description}`)
+          setConfirmation(entry, 'undo')
+        } else {
           undoStep()
           sendUndoSetCursor(getCursor())
           executeUndoRedo(entry, 'undo')
-        } else {
-          // Archive or unarchive: require confirmation via toast
-          const verb = entry.kind === 'archive' ? 'Unarchive' : 'Archive'
-          showToast(`Undo again: ${verb} ${entry.description}`)
-          setConfirmation(entry, 'undo')
         }
         return
       }
@@ -1807,16 +1931,13 @@ export function App() {
           return
         }
 
-        if (entry.kind === 'move') {
-          // Move redo: execute immediately
+        if (undoNeedsConfirmation(entry)) {
+          showToast(`Redo again: ${undoConfirmationVerb(entry, 'redo')} ${entry.description}`)
+          setConfirmation(entry, 'redo')
+        } else {
           redoStep()
           sendUndoSetCursor(getCursor())
           executeUndoRedo(entry, 'redo')
-        } else {
-          // Archive or unarchive: require confirmation via toast
-          const verb = entry.kind === 'archive' ? 'Archive' : 'Unarchive'
-          showToast(`Redo again: ${verb} ${entry.description}`)
-          setConfirmation(entry, 'redo')
         }
         return
       }
@@ -2211,6 +2332,7 @@ export function App() {
     <div className="app">
       <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <PeerCameraOverlay />
+        <ResizeGhost />
         <RootNode
           focused={focusedId === ROOT_NODE_ID}
           selected={selection === ROOT_NODE_ID}
@@ -2250,7 +2372,6 @@ export function App() {
             onForwardWheelToCanvas={handleCanvasWheel}
             onClose={handleRemoveNode}
             onMove={handleMove}
-            onResize={handleResizeTerminal}
             onRename={handleRename}
             archivedChildren={t.archivedChildren}
             onColorChange={handleColorChange}
@@ -2265,6 +2386,7 @@ export function App() {
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
             onStartReparent={handleStartReparent}
+            onStartResize={handleStartResize}
             onReparentTarget={handleReparentTarget}
             terminalSessions={t.terminalSessions}
             onSessionRevive={handleSessionRevive}

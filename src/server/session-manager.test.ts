@@ -3,6 +3,7 @@ import { DaemonClient } from './daemon-client'
 import { SessionManager, type SessionManagerDeps } from './session-manager'
 import { FakeDaemon } from './testing/fake-daemon'
 import { asNodeId as nid, asPtySessionId as pid, asClaudeSessionId as cid } from '../shared/ids'
+import { DEFAULT_COLS, DEFAULT_ROWS, MAX_COLS, MIN_ROWS } from '../shared/node-size'
 
 /**
  * Drives the session lifecycle end to end against an in-memory daemon: create,
@@ -109,6 +110,30 @@ describe('SessionManager create', () => {
     const { daemon, manager, client } = await setup()
     manager.create({ cwd: process.cwd() })
     expect(sent(daemon, 'create')[0].cwd).toBe(process.cwd())
+    client.dispose()
+  })
+
+  it('spawns at the default size when none is requested', async () => {
+    const { manager, client } = await setup()
+    expect(manager.create()).toMatchObject({ cols: DEFAULT_COLS, rows: DEFAULT_ROWS })
+    client.dispose()
+  })
+
+  it('spawns at the requested size, so a rebind restores a resized surface', async () => {
+    // Reincarnation writes the new pty's size back onto the node, so spawning
+    // at the default here would quietly undo the user's resize on every
+    // restart, revive and unarchive.
+    const { daemon, manager, client } = await setup()
+    const info = manager.create({ cols: 220, rows: 70 })
+    expect(info).toMatchObject({ cols: 220, rows: 70 })
+    expect(sent(daemon, 'create')[0]).toMatchObject({ cols: 220, rows: 70 })
+    client.dispose()
+  })
+
+  it('clamps a requested size — one may have been persisted under older limits', async () => {
+    const { daemon, manager, client } = await setup()
+    manager.create({ cols: 5000, rows: 1 })
+    expect(sent(daemon, 'create')[0]).toMatchObject({ cols: MAX_COLS, rows: MIN_ROWS })
     client.dispose()
   })
 })

@@ -2009,6 +2009,38 @@ html, body, #root {
   background: rgba(166, 108, 255, 0.4);
 }
 
+/* Resize mode: the preview outline and its size readout.
+   Drawn in world space, so every length here is scaled by the camera — the
+   readout is deliberately huge because resize mode pulls the camera back. */
+.resize-ghost {
+  border: 4px dashed #a66cff;
+  border-radius: 8px;
+  background: rgba(166, 108, 255, 0.08);
+  box-shadow: 0 0 40px 8px rgba(166, 108, 255, 0.25);
+}
+
+.resize-ghost__readout {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 12px;
+  padding: 4px 16px;
+  border-radius: 8px;
+  background: #a66cff;
+  color: #11111b;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 56px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+/* Shrinking is the direction that loses something, so it does not look the
+   same as growing. */
+.resize-ghost__readout--shrinking {
+  background: #f9e2af;
+}
+
 /* Markdown/title card reparent button overrides */
 .markdown-card .node-titlebar__reparent-btn,
 .title-card .node-titlebar__reparent-btn {

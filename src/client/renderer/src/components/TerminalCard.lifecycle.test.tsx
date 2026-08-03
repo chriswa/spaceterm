@@ -72,7 +72,6 @@ function props(overrides: Record<string, unknown> = {}): TerminalCardProps {
     onForwardWheelToCanvas: vi.fn(),
     onClose: vi.fn(),
     onMove: vi.fn(),
-    onResize: vi.fn(),
     onRename: vi.fn(),
     onColorChange: vi.fn(),
     onUnarchive: vi.fn(),
@@ -246,5 +245,36 @@ describe('what the registries hand back', () => {
     render(<TerminalCard {...props({ focused: true })} />)
     const closer = terminalSearchClosers.get(nid('term-1'))!
     expect(typeof closer()).toBe('boolean')
+  })
+})
+
+describe('the terminal grid', () => {
+  /** How many rows xterm actually laid out, as evidence of its grid size. */
+  function renderedRows(container: HTMLElement): number {
+    return container.querySelectorAll('.xterm-rows > div').length
+  }
+
+  it('is built at the node’s stored size', () => {
+    // The node's cols/rows are the single source of truth: the card is drawn
+    // from them and the server sized the PTY to them. xterm used to start at
+    // its own 80x24 default and be corrected by FitAddon measuring the
+    // container, which is a second opinion derived from cell-width rounding —
+    // and one column of disagreement wraps every line early.
+    const { container } = render(<TerminalCard {...props({ focused: true, cols: 100, rows: 31 })} />)
+    expect(renderedRows(container)).toBe(31)
+  })
+
+  it('follows the node when the size changes under it', async () => {
+    // A resize can land on a focused card from another client, an undo, or the
+    // emergency terminal. The server has already resized the PTY by then.
+    const { container, rerender } = render(<TerminalCard {...props({ focused: true, cols: 100, rows: 31 })} />)
+    await act(async () => {
+      rerender(<TerminalCard {...props({ focused: true, cols: 120, rows: 40 })} />)
+      // Let xterm's viewport-sync timer run while the terminal is still alive.
+      // It reads render dimensions jsdom never computes, and firing after
+      // teardown makes it throw from a timer with no test to attribute it to.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(renderedRows(container)).toBe(40)
   })
 })

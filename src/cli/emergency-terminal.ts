@@ -18,6 +18,8 @@ import * as net from 'net'
 import * as path from 'path'
 import { execFileSync, spawnSync } from 'child_process'
 import { SOCKET_PATH, DAEMON_SOCKET_PATH } from '../shared/protocol'
+import { MIN_COLS, MIN_ROWS, MAX_COLS, MAX_ROWS } from '../shared/node-size'
+import { parseSizeArg, sizeThatFitsHere } from './terminal-size-advice'
 import type { ServerState, TerminalNodeData } from '../shared/state'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -125,6 +127,51 @@ const GREEN = '\x1b[32m'
 const YELLOW = '\x1b[33m'
 const MAGENTA = '\x1b[35m'
 const RED = '\x1b[31m'
+
+/**
+ * What to print when the host window cannot hold the surface.
+ *
+ * A surface can be made bigger than any physical terminal, so this is a
+ * reachable dead end rather than a curiosity — and the way out (shrink the
+ * surface) is not discoverable unless it is spelled out with the exact command.
+ */
+function tooSmallMessage(
+  target: string,
+  ptyCols: number,
+  ptyRows: number,
+  localCols: number,
+  localRows: number,
+  canResize: boolean
+): string {
+  const suggestion = sizeThatFitsHere(localCols, localRows)
+  const lines = [
+    `${RED}${BOLD}Terminal too small.${RESET}`,
+    `  Surface needs: ${ptyCols}x${ptyRows} (+1 row for tmux status = ${ptyRows + 1})`,
+    `  Your terminal: ${localCols}x${localRows}`,
+    ''
+  ]
+  if (!suggestion.fits) {
+    lines.push(
+      `Your window cannot hold the ${MIN_COLS}x${MIN_ROWS} minimum a surface can be shrunk to,`,
+      `so resizing will not help. Make the window bigger and retry.`
+    )
+  } else if (canResize) {
+    lines.push(
+      `Resize your window, or shrink the surface to fit:`,
+      `  ${CYAN}npm run et -- ${target} --resize ${suggestion.cols}x${suggestion.rows}${RESET}`,
+      `${DIM}  (surfaces accept ${MIN_COLS}x${MIN_ROWS} to ${MAX_COLS}x${MAX_ROWS}; the resize is permanent`,
+      `   and shows up in the GUI immediately)${RESET}`
+    )
+  } else {
+    lines.push(
+      `Resizing a surface needs the server, which is not running — that is why`,
+      `you are in daemon-direct mode. Either make the window bigger, or start the`,
+      `server and use:`,
+      `  ${CYAN}npm run et -- <id> --resize ${suggestion.cols}x${suggestion.rows}${RESET}`
+    )
+  }
+  return lines.join('\n')
+}
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, '')
@@ -313,12 +360,24 @@ function rawConnect(sessionId: string): void {
 
 // ── Connect via tmux viewport ────────────────────────────────────────
 
-async function connectTerminal(target: string): Promise<void> {
+async function connectTerminal(target: string, resize?: { cols: number; rows: number }): Promise<void> {
   const resolved = await resolveTarget(target)
   const sessionId = resolved.sessionId
-  const ptyCols = resolved.cols
-  const ptyRows = resolved.rows
+  let ptyCols = resolved.cols
+  let ptyRows = resolved.rows
   const label = resolved.name || sessionId.slice(0, 8)
+
+  if (resize) {
+    // The server clamps and is the only thing that updates the node, the pty
+    // and the snapshot emulator together — so ask it, rather than talking to
+    // the daemon directly, and read the size back from the state it broadcasts
+    // rather than assuming the request survived the clamp.
+    await oneshot({ type: 'terminal-resize', seq: ++seq, nodeId: resolved.id, cols: resize.cols, rows: resize.rows }, 'mutation-ack')
+    const after = (await fetchLiveTerminals()).find((t) => t.id === resolved.id)
+    ptyCols = after?.cols ?? resize.cols
+    ptyRows = after?.rows ?? resize.rows
+    console.error(`${DIM}Resized ${label} to ${ptyCols}x${ptyRows}.${RESET}`)
+  }
 
   // Check tmux is available
   try {
@@ -334,12 +393,7 @@ async function connectTerminal(target: string): Promise<void> {
   const neededRows = ptyRows + 1 // +1 for tmux status bar
 
   if (localCols < ptyCols || localRows < neededRows) {
-    console.error(
-      `${RED}${BOLD}Terminal too small.${RESET}\n` +
-        `  Session needs: ${ptyCols}x${ptyRows} (+1 row for status = ${neededRows})\n` +
-        `  Your terminal: ${localCols}x${localRows}\n` +
-        `  Resize your window and retry.`
-    )
+    console.error(tooSmallMessage(target, ptyCols, ptyRows, localCols, localRows, true))
     process.exit(1)
   }
 
@@ -606,12 +660,7 @@ async function connectDaemonTerminal(target: string): Promise<void> {
   const neededRows = ptyRows + 1
 
   if (localCols < ptyCols || localRows < neededRows) {
-    console.error(
-      `${RED}${BOLD}Terminal too small.${RESET}\n` +
-        `  Session needs: ${ptyCols}x${ptyRows} (+1 row for status = ${neededRows})\n` +
-        `  Your terminal: ${localCols}x${localRows}\n` +
-        `  Resize your window and retry.`
-    )
+    console.error(tooSmallMessage(target, ptyCols, ptyRows, localCols, localRows, false))
     process.exit(1)
   }
 
@@ -654,6 +703,26 @@ async function connectDaemonTerminal(target: string): Promise<void> {
 
 const args = process.argv.slice(2)
 
+/**
+ * Pull `--resize COLSxROWS` out of the arguments, leaving the rest for the
+ * normal target parsing below. Exits on a malformed size rather than silently
+ * connecting without resizing — the user asked for a specific grid.
+ */
+function takeResizeFlag(argv: string[]): { cols: number; rows: number } | undefined {
+  const i = argv.indexOf('--resize')
+  if (i === -1) return undefined
+  const value = argv[i + 1]
+  const parsed = value ? parseSizeArg(value) : null
+  if (!parsed) {
+    console.error(`${RED}--resize needs a size like ${MIN_COLS}x${MIN_ROWS}${RESET}`)
+    process.exit(1)
+  }
+  argv.splice(i, 2)
+  return parsed
+}
+
+const resizeTo = args.includes('--resize') ? takeResizeFlag(args) : undefined
+
 if (args[0] === '--raw' && args[1]) {
   // Inner mode: raw pipe connection (called by tmux, not by the user)
   rawConnect(args[1])
@@ -686,6 +755,12 @@ ${YELLOW}Usage:${RESET}
   npm run et -- <id>            Connect by session ID (prefix match)
   npm run et -- <n>             Connect by index number from list
 
+${YELLOW}Resizing a surface${RESET} (permanent; shows up in the GUI immediately):
+  npm run et -- <id> --resize 120x39
+                                Resize before connecting — the way out when a
+                                surface is too big for this window. Sizes are
+                                clamped to ${MIN_COLS}x${MIN_ROWS}–${MAX_COLS}x${MAX_ROWS}.
+
 ${YELLOW}Daemon-direct mode${RESET} (bypasses server, works even if server is down):
   npm run et -- --daemon        List daemon sessions
   npm run et -- --daemon <id>   Connect to daemon session by ID prefix
@@ -699,7 +774,7 @@ ${YELLOW}Re-attach to a detached session:${RESET}
   tmux attach -t et-<id-prefix>
 `)
 } else {
-  connectTerminal(args[0]).catch((err) => {
+  connectTerminal(args[0], resizeTo).catch((err) => {
     console.error(err.message)
     process.exit(1)
   })

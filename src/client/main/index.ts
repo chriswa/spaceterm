@@ -222,10 +222,6 @@ function setupIPC(): void {
     client!.write(sessionId, data)
   })
 
-  ipcMain.on('pty:resize', (_event, sessionId: PtySessionId, cols: number, rows: number) => {
-    client!.resize(sessionId, cols, rows)
-  })
-
   ipcMain.on('log', (_event, message: string) => {
     logger.log(message)
   })

@@ -11,7 +11,7 @@ import type { DaemonClient } from './daemon-client'
 import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
 import type { ClaudeState } from '../shared/state'
 import { asPtySessionId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
-import { DEFAULT_COLS, DEFAULT_ROWS } from '../shared/node-size'
+import { DEFAULT_COLS, DEFAULT_ROWS, clampTerminalSize } from '../shared/node-size'
 
 const MAX_TITLE_HISTORY = 50
 const MAX_CLAUDE_SESSION_HISTORY = 20
@@ -81,8 +81,13 @@ export class SessionManager {
 
   create(options?: CreateOptions): SessionInfo {
     const sessionId = asPtySessionId(randomUUID())
-    const cols = DEFAULT_COLS
-    const rows = DEFAULT_ROWS
+    // A rebind carries the node's stored size so a resized surface comes back
+    // the size the user left it; a fresh surface gets the default. Clamped
+    // either way — a size from disk predates the current limits.
+    const { cols, rows } = clampTerminalSize(
+      options?.cols ?? DEFAULT_COLS,
+      options?.rows ?? DEFAULT_ROWS
+    )
     const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
     const home = process.env.HOME || '/'
 

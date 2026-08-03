@@ -322,10 +322,6 @@ export class ServerClient extends EventEmitter {
     this.sendFireAndForget({ type: 'write', sessionId, data })
   }
 
-  resize(sessionId: PtySessionId, cols: number, rows: number): void {
-    this.sendFireAndForget({ type: 'resize', sessionId, cols, rows })
-  }
-
   // --- Node state mutations ---
 
   async nodeSyncRequest(): Promise<ServerMessage> {

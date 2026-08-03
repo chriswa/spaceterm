@@ -14,8 +14,6 @@ const ptyApi: PtyApi = {
 
   write: (sessionId, data) => ipcRenderer.send('pty:write', sessionId, data),
 
-  resize: (sessionId, cols, rows) => ipcRenderer.send('pty:resize', sessionId, cols, rows),
-
   destroy: (sessionId) => ipcRenderer.invoke('pty:destroy', sessionId),
 
   onData: (sessionId, callback) => {
