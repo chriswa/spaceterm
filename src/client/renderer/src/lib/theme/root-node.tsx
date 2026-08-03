@@ -15,6 +15,17 @@ export interface RootNodeVisualProps {
   focused: boolean
 }
 
+/**
+ * Label size as a fraction of the box, not a pixel count.
+ *
+ * `ROOT_NODE_RADIUS` is the one knob for how big the root node is; a facet with
+ * a hard-coded font size would answer a change to it with a speck of text in a
+ * large circle. The two fractions are the sizes the labels used to have at the
+ * radius they were tuned at.
+ */
+const CENTRED_LABEL_FRACTION = 22 / 126
+const RETICLE_LABEL_FRACTION = 11 / 126
+
 /* ------------------------------------------------------------------ */
 /*  Disc — a CSS circle                                                */
 /* ------------------------------------------------------------------ */
@@ -31,6 +42,9 @@ export function DiscRootNode({ size, focused }: RootNodeVisualProps) {
         height: size,
         borderRadius: '50%',
         background: '#000',
+        // The rim and its hover colour live in CSS; only the width scales, or
+        // the outline of a label-scale disc would be a hairline.
+        borderWidth: Math.max(1, size / 126),
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -40,7 +54,7 @@ export function DiscRootNode({ size, focused }: RootNodeVisualProps) {
         <span
           style={{
             color: '#fff',
-            fontSize: 22,
+            fontSize: size * CENTRED_LABEL_FRACTION,
             fontWeight: 600,
             letterSpacing: '0.05em',
             userSelect: 'none',
@@ -58,14 +72,15 @@ export function DiscRootNode({ size, focused }: RootNodeVisualProps) {
 /* ------------------------------------------------------------------ */
 
 /**
- * One open ring, with the label under it.
+ * One ring on a black disc, with the label centred inside it.
  *
- * Deliberately not filled: on a grid the axes run *through* the origin, and a
- * solid disc would cut them, which reads as the root node covering the mark
- * instead of being it. Everything else a reticle usually has — crosshair
- * ticks, a centre dot, a second ring — was tried and removed: against a grid
- * that is already full of fine lines, more marks read as clutter rather than
- * as precision. The ring alone is enough to say "here".
+ * The fill is what separates the mark from the grid: the axes run *through*
+ * the origin, and an open ring let them cross the label, which read as the
+ * grid running over the root node rather than the node sitting on it.
+ * Everything else a reticle usually has — crosshair ticks, a centre dot, a
+ * second ring — was tried and removed: against a grid that is already full of
+ * fine lines, more marks read as clutter rather than as precision. The ring
+ * alone is enough to say "here".
  */
 export function ReticleRootNode({ size, focused }: RootNodeVisualProps) {
   const stroke = focused ? '#e8edf7' : '#9aa4bd'
@@ -81,22 +96,23 @@ export function ReticleRootNode({ size, focused }: RootNodeVisualProps) {
         style={{ display: 'block', transition: 'stroke 0.15s' }}
       >
         {/* r=44 leaves room for the 2-unit stroke inside the 100 viewBox. */}
-        <circle cx="50" cy="50" r="44" strokeWidth="2" opacity="0.85" />
+        <circle cx="50" cy="50" r="44" strokeWidth="2" opacity="0.85" fill="#000" />
       </svg>
       {focused && (
         <span
           style={{
             position: 'absolute',
-            // Below the ring rather than inside it: the ring now fills the box.
-            top: '100%',
-            left: 0,
-            right: 0,
-            marginTop: 6,
-            textAlign: 'center',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             color: '#e8edf7',
-            fontSize: 11,
+            fontSize: size * RETICLE_LABEL_FRACTION,
             fontWeight: 600,
             letterSpacing: '0.18em',
+            // Letter-spacing also trails the last glyph, so centring the box
+            // leaves the word a hair left. Half of it back as padding cancels.
+            paddingLeft: '0.18em',
             textTransform: 'uppercase',
             userSelect: 'none',
             pointerEvents: 'none',
@@ -112,6 +128,9 @@ export function ReticleRootNode({ size, focused }: RootNodeVisualProps) {
 /* ------------------------------------------------------------------ */
 /*  Orb — an animated WebGL fireball                                   */
 /* ------------------------------------------------------------------ */
+
+/** Ceiling on the orb's backing store, in device pixels. See the cap in use. */
+const ORB_MAX_PX = 512
 
 const ORB_VERT_SRC = `
 attribute vec2 a_position;
@@ -192,7 +211,11 @@ export function OrbRootNode({ size, focused }: RootNodeVisualProps) {
 
     // Capped at 2: past that the orb is paying for pixels nobody can see.
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    const px = Math.round(size * dpr)
+    // Capped again in absolute pixels: seven octaves of 3D noise per pixel per
+    // frame makes cost quadratic in the node's size, and the root node is now
+    // label-scale. The orb is a soft blob, so the browser's upscale to `size`
+    // costs nothing visible where the shader would cost a lot.
+    const px = Math.min(Math.round(size * dpr), ORB_MAX_PX)
     canvas.width = px
     canvas.height = px
 
@@ -275,7 +298,7 @@ export function OrbRootNode({ size, focused }: RootNodeVisualProps) {
             alignItems: 'center',
             justifyContent: 'center',
             color: '#fff',
-            fontSize: 22,
+            fontSize: size * CENTRED_LABEL_FRACTION,
             fontWeight: 600,
             letterSpacing: '0.05em',
             userSelect: 'none',

@@ -26,7 +26,7 @@ import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
-import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
+import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
@@ -719,7 +719,7 @@ export function App() {
       let maxZoom = focusZoomCeiling(null)
 
       if (nodeId === 'root') {
-        bounds = { x: -200, y: -200, width: 400, height: 400 }
+        bounds = { x: -ROOT_FOCUS_RADIUS, y: -ROOT_FOCUS_RADIUS, width: ROOT_FOCUS_RADIUS * 2, height: ROOT_FOCUS_RADIUS * 2 }
         padding = 0.05
       } else {
         const node = useNodeStore.getState().nodes[nodeId]!

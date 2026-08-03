@@ -4,14 +4,13 @@ import type { ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
-import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import { NodeActionBar } from './NodeActionBar'
 import type { NodeActionBarProps } from './NodeActionBar'
 import { nodeActionRegistry } from '../lib/action-registry'
-import { cardChromeScale } from '../../../../shared/card-types'
+import { cardChromeScale, ROOT_CHROME_SCALE } from '../../../../shared/card-types'
 import { useNodeStore } from '../stores/nodeStore'
 import type { NodeAlert } from '../../../../shared/state'
-import { type NodeId } from '../../../../shared/ids'
+import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
 const EMPTY_ALERTS: NodeAlert[] = []
 
@@ -74,8 +73,11 @@ export function CardShell({
 
   // Chrome that must stay legible at the card type's focus zoom. Published as a
   // custom property so the stylesheet can size buttons and their offsets from
-  // one number, and so every card kind gets it without a per-card prop.
-  const chromeScale = cardChromeScale(useNodeStore(s => s.nodes[nodeId]?.type))
+  // one number, and so every card kind gets it without a per-card prop. The
+  // root node is the one node with no card type to derive it from, and it needs
+  // the scale most: it is drawn at label scale.
+  const nodeType = useNodeStore(s => s.nodes[nodeId]?.type)
+  const chromeScale = nodeId === ROOT_NODE_ID ? ROOT_CHROME_SCALE : cardChromeScale(nodeType)
 
   // Alert badge (visible when unfocused)
   const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
@@ -218,8 +220,13 @@ export function CardShell({
         {hiddenHeadActions}
         <div className="card-shell__body-wrapper">
           {headVariant === 'hidden' && hiddenAddNodeOpen && onAddNode && (
-            <div className={`card-shell__add-node-body${width < ARCHIVE_BODY_MIN_WIDTH ? ' card-shell__popup--centered' : ''}`} ref={hiddenAddNodeBodyRef}>
+            <div className="card-shell__add-node-body" ref={hiddenAddNodeBodyRef}>
               <AddNodeBody onSelect={handleHiddenAddNodeSelect} />
+          {/* The popup is centred by its own rule whatever the node's width:
+              the hidden-head buttons are centred above the node, so what one of
+              them opens belongs under it. The width test this used to carry
+              picked the same answer only while the root node was narrower than
+              a popup. */}
             </div>
           )}
           {children}

@@ -27,6 +27,9 @@ interface RootNodeProps {
  * this height. We compensate with a negative top so the circle is centred on
  * the world origin.
  *   height = padding-top (4) + button (20) + padding-bottom (4) = 28
+ * The row is enlarged by `--card-chrome-scale`, but with a transform, which
+ * layout does not see — so this stays one number rather than two that have to
+ * agree.
  */
 const HIDDEN_ACTIONS_HEIGHT = 28
 

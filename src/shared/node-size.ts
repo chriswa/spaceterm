@@ -24,8 +24,6 @@ export const CHROME_H_NO_FOOTER =
   BODY_PADDING_TOP
 export const CHROME_H = CHROME_H_NO_FOOTER + FOOTER_HEIGHT
 
-export const ROOT_NODE_RADIUS = 90
-
 // Markdown node dimensions
 export const MARKDOWN_DEFAULT_WIDTH = 400
 export const MARKDOWN_DEFAULT_HEIGHT = 300
@@ -89,6 +87,31 @@ export type NodeLike =
   | { type: 'file' }
   | { type: 'title'; text: string }
   | { type: 'markdown'; width: number; height: number }
+
+/**
+ * Half the root node's footprint on the canvas.
+ *
+ * Label scale, for the same reason directories and titles are: the root is a
+ * landmark you steer by from far out, not something you read up close. At 90
+ * it was a bead the tree hung off, invisible by the time enough of the tree
+ * was on screen to need it.
+ *
+ * The `rootNode` facets size their own contents from the box they are handed
+ * (`RootNodeVisualProps.size`), so this is the only number to change, whichever
+ * theme is on.
+ */
+export const ROOT_NODE_RADIUS = 90 * LABEL_NODE_SCALE
+
+/**
+ * Half-extent of the box the camera frames when the root node is focused.
+ *
+ * Wider than the node itself so its nearest children stay in shot — flying to
+ * the hub of the tree and finding nothing but the hub tells you nothing. A
+ * multiple of the radius rather than a number of its own, so resizing the node
+ * reframes the shot with it; the ratio is the one the old fixed ±200 box had
+ * around the old radius.
+ */
+export const ROOT_FOCUS_RADIUS = ROOT_NODE_RADIUS * (200 / 90)
 
 /** Compute the auto-scaled folder width for a directory node from its text content. */
 export function directoryFolderWidth(cwd: string, gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null): number {

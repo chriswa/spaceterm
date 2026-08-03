@@ -10,6 +10,7 @@ import {
   TITLE_CHAR_WIDTH,
   TITLE_H_PADDING,
   TITLE_MIN_WIDTH,
+  LABEL_NODE_SCALE,
   DEFAULT_COLS,
   DEFAULT_ROWS,
   terminalPixelSize,
@@ -157,12 +158,24 @@ export function tieredZIndex(type: CardType, zIndex: number): number {
  * the factor from the ceiling rather than tuning a second number keeps the two
  * from drifting apart when either is retuned.
  *
- * Returns 1 for the root node and anything else without a card type.
+ * Returns 1 for anything without a card type; the root node has none but is
+ * drawn at label scale, so it passes `ROOT_CHROME_SCALE` explicitly.
  */
 export function cardChromeScale(type: CardType | null | undefined): number {
   const ceiling = type ? CARD_TYPE_SPECS[type].focusMaxZoom : null
   return ceiling === null ? 1 : 1 / ceiling
 }
+
+/**
+ * The root node's chrome scale, which no card type can supply.
+ *
+ * Focusing the root fits its own box rather than stopping at a ceiling, so its
+ * focus zoom fell by exactly the factor its radius grew by when it went to
+ * label scale (see `ROOT_NODE_RADIUS`). Handing that factor back leaves the
+ * buttons above it the on-screen size they had at the old radius, and leaves
+ * them the same size *relative to the disc* at every other zoom.
+ */
+export const ROOT_CHROME_SCALE = LABEL_NODE_SCALE
 
 /**
  * Pixel footprint of a card, from its content.
