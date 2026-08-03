@@ -116,6 +116,9 @@ function createWindow(): void {
     height,
     show: false,
     frame: false,
+    // macOS rounds the corners of frameless windows by default, which clips the grid
+    // against the screen edges it is meant to fill flush.
+    roundedCorners: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
