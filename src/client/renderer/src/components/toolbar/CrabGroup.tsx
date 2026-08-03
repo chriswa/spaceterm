@@ -6,10 +6,10 @@ import terminalIcon from '../../assets/terminal.png'
 import type { AgentIndicatorKind, CrabEntry } from '../../lib/crab-nav'
 import { CrabDance } from '../../lib/crab-dance'
 import { useHoveredCardStore } from '../../stores/hoveredCardStore'
-import { useSpeakingStore } from '../../stores/speakingStore'
 import { useSummaryChatStore } from '../../stores/summaryChatStore'
-import { useSummaryBubble } from '../../mods/summary-chat/bubble-facet'
+import { useSummaryBubble, type SummaryBubbleState } from '../../mods/summary-chat/bubble-facet'
 import { asNodeId, type NodeId } from '../../../../../shared/ids'
+import type { SummaryChatPhase } from '../../../../../shared/api'
 
 /**
  * The row of per-surface indicators at the right of the toolbar.
@@ -31,6 +31,13 @@ function indicatorIconUrl(kind: AgentIndicatorKind): string {
   return crabIcon
 }
 
+/** The mod's mark names the phase in its own vocabulary; this is the mapping. */
+const BUBBLE_STATE: Record<SummaryChatPhase, SummaryBubbleState> = {
+  thinking: 'thinking',
+  speaking: 'talking',
+  ready: 'idle',
+}
+
 function indicatorKindClass(kind: AgentIndicatorKind): string {
   if (kind === 'cursor') return ' toolbar__crab--cursor'
   if (kind === 'codex') return ' toolbar__crab--codex'
@@ -47,9 +54,8 @@ export interface CrabGroupProps {
 
 export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: CrabGroupProps) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
-  const speakingSessions = useSpeakingStore(s => s.speaking)
   const summaryTargetNodeId = useSummaryChatStore(s => s.targetNodeId)
-  const summaryThinking = useSummaryChatStore(s => s.thinking)
+  const summaryPhase = useSummaryChatStore(s => s.phase)
   // Supplied by the summary-chat mod, not by the base theme system — the
   // active theme may swap it for a different mark entirely.
   const { Component: SummaryBubble } = useSummaryBubble()
@@ -415,10 +421,11 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
   return (
     <div className="toolbar__crabs" ref={containerRef}>
       {crabs.map((crab, i) => {
-          const speaking = speakingSessions[crab.nodeId]
-          const thinking = crab.nodeId in summaryThinking
           const summaryTarget = crab.nodeId === summaryTargetNodeId
-          const summaryState = speaking ? 'talking' : thinking ? 'thinking' : 'idle'
+          // One phase in, one mark out. This used to pick between two
+          // independent flags (`speaking ? … : thinking ? …`), which quietly
+          // hid the fact that the server could report both at once.
+          const summaryState = BUBBLE_STATE[summaryPhase[crab.nodeId] ?? 'ready']
           return (
           <div
             key={crab.nodeId}

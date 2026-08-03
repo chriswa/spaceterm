@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 // The bridge contract lives in src/shared/api.ts so the renderer type-checks
 // against the same declaration this file implements. Do not restate it here.
-import type { Api, NodeApi, PtyApi } from '../../shared/api'
+import type { Api, NodeApi, PtyApi, SummaryChatUiState } from '../../shared/api'
 import type { NodeId, PtySessionId } from '../../shared/ids'
 import type { SystemMetricsSample } from '../../shared/system-metrics'
 
@@ -146,7 +146,7 @@ const nodeApi: NodeApi = {
     return () => ipcRenderer.removeListener('speaking-changed', listener)
   },
   onSummaryChatStatus: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => callback(nodeId, state, message)
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, state: SummaryChatUiState, message?: string) => callback(nodeId, state, message)
     ipcRenderer.on('summary-chat-status', listener)
     return () => ipcRenderer.removeListener('summary-chat-status', listener)
   },

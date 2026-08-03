@@ -77,6 +77,11 @@ function harness(options: {
   voiceOperatorRunning?: boolean
   oauthToken?: () => string
   sleepSpy?: (ms: number) => void
+  /**
+   * Park the speech monitor on its inter-poll sleep instead of resolving it,
+   * so a test can observe a surface mid-job rather than racing the loop.
+   */
+  stallBetweenPolls?: boolean
   configure?: (http: FakeHttp) => void
 } = {}): Harness {
   const http = new FakeHttp()
@@ -105,7 +110,10 @@ function harness(options: {
       return () => { refresh = undefined }
     },
     // Resolve immediately: the poll floor exists to bound CPU, not to be waited on.
-    sleep: (ms) => { options.sleepSpy?.(ms); return Promise.resolve() }
+    sleep: (ms) => {
+      options.sleepSpy?.(ms)
+      return options.stallBetweenPolls ? new Promise<void>(() => {}) : Promise.resolve()
+    }
   }
 
   const chat = new SummaryChat(
@@ -351,6 +359,146 @@ describe('speech monitoring', () => {
 
     expect(sleeps.length).toBeGreaterThanOrEqual(3)
     expect(sleeps.every((ms) => ms > 0)).toBe(true)
+  })
+
+  it('leaves the thinking phase the moment audio starts, not when the job ends', async () => {
+    // The waiting cue is a pure function of this phase. While `thinking`
+    // persisted for the whole spoken answer, the echo played over the speech.
+    let poll = 0
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress' }
+          poll++
+          return poll <= 3
+            ? { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+            : { id: 'speech-1', state: 'completed' }
+        })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(states(h)).toEqual(['target', 'thinking', 'speaking', 'ready'])
+  })
+
+  it('does not long-poll while it is tracking playback', async () => {
+    // Measured against the real service: `?wait=N` wakes only at a *terminal*
+    // state — never on queued → speaking. Long-polling while playback matters
+    // is therefore asking a question that can only be answered once the answer
+    // no longer matters, and it is what pinned the indicator on "thinking" for
+    // the whole spoken answer.
+    let poll = 0
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress' }
+          poll++
+          if (poll === 1) return { id: 'speech-1', state: 'in_progress', playback_state: 'queued' }
+          if (poll <= 4) return { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+          return { id: 'speech-1', state: 'completed' }
+        })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    const waits = h.http.calls
+      .filter((c) => c.method === 'GET' && c.url.includes('/v1/speech/'))
+      .map((c) => new URL(c.url).searchParams.get('wait'))
+    expect(waits.every((wait) => wait === '0')).toBe(true)
+  })
+
+  it('hands the waiting back to the service while nothing is audible', async () => {
+    // The other side of the same rule: `waiting_for_user` can last
+    // indefinitely and shows nothing, so it must not be short-polled.
+    let poll = 0
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress' }
+          poll++
+          if (poll <= 2) return { id: 'speech-1', state: 'in_progress', playback_state: 'waiting_for_user' }
+          return { id: 'speech-1', state: 'completed' }
+        })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    const waits = h.http.calls
+      .filter((c) => c.method === 'GET' && c.url.includes('/v1/speech/'))
+      .map((c) => new URL(c.url).searchParams.get('wait'))
+    // First poll tracks playback; the rest wait on a job with nothing to show.
+    expect(waits[0]).toBe('0')
+    expect(waits.slice(1).some((wait) => wait !== '0')).toBe(true)
+  })
+
+  it('does not fall back to thinking between an answer\'s own sentences', async () => {
+    // Voice Operator's queue is sentence-at-a-time: playback_state returns to
+    // `queued` at each handoff inside one job. Polling fast enough to see the
+    // transitions means also seeing those gaps, and a literal reading flickers
+    // the indicator and re-arms the waiting cue mid-answer.
+    let poll = 0
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress' }
+          poll++
+          const playback = poll === 1 ? 'queued'
+            : poll === 4 || poll === 7 ? 'queued'   // sentence handoffs
+            : 'speaking'
+          if (poll > 9) return { id: 'speech-1', state: 'completed' }
+          return { id: 'speech-1', state: 'in_progress', playback_state: playback }
+        })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(states(h)).toEqual(['target', 'thinking', 'speaking', 'ready'])
+  })
+
+  it('does not report thinking while Voice Operator waits for the user', async () => {
+    // `waiting_for_user` keeps the job `in_progress` indefinitely. Counting it
+    // as "still waiting" is how a cue could run forever after an answer had
+    // already been spoken.
+    let poll = 0
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress' }
+          poll++
+          if (poll === 1) return { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+          if (poll <= 4) return { id: 'speech-1', state: 'in_progress', playback_state: 'waiting_for_user' }
+          return { id: 'speech-1', state: 'completed' }
+        })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(states(h).lastIndexOf('thinking')).toBeLessThan(states(h).indexOf('speaking'))
+    expect(states(h).at(-1)).toBe('ready')
+  })
+
+  it('settles the surface when a speech job is cancelled', async () => {
+    // dispose() and a restart both cancel mid-job. The monitor loop exits
+    // silently once its speech id is stale, so cancelling must settle the
+    // phase itself — otherwise the surface is stuck thinking for good, and the
+    // cue with it.
+    const h = harness({
+      stallBetweenPolls: true,
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) =>
+          method === 'POST'
+            ? { id: 'speech-1', state: 'in_progress' }
+            : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+        )
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(3)
+    expect(states(h)).toEqual(['target', 'thinking', 'speaking'])
+
+    h.chat.dispose()
+
+    expect(states(h).at(-1)).toBe('ready')
+    expect(h.speaking.at(-1)).toMatchObject({ speaking: false })
   })
 
   it('settles to ready when the service disappears mid-job', async () => {

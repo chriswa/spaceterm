@@ -117,10 +117,9 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onSummaryChatStatus((nodeId, state, message) => {
       useSummaryChatStore.getState().setStatus(nodeId, state)
-      // The cue is intentionally driven by the same state as the cyan bubble,
-      // rather than by request timing. In particular, this hard-stops any
-      // active echo before the yellow speaking indicator can appear.
-      setSummaryChatWaiting(nodeId, state === 'thinking')
+      // The cue tracks the surface's phase, not request timing — and `target`
+      // is not a phase, so it must not silence a cue that is already running.
+      if (state !== 'target') setSummaryChatWaiting(nodeId, state === 'thinking')
       if (state === 'error') showToast(message ?? 'Summary Chat could not start.')
     })
   )

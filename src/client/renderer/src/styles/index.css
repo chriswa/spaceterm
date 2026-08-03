@@ -2200,10 +2200,19 @@ html, body, #root {
   top: 32px;
 }
 
+/* The archive + add-node buttons above a head-less card — in practice the root
+   node's. Scaled by `--card-chrome-scale` (see ROOT_CHROME_SCALE in
+   shared/card-types.ts) because the root is drawn at label scale, which is also
+   the factor its focus zoom fell by. A transform rather than resized rules:
+   RootNode offsets its visual by this row's *layout* height, and keeping the
+   scale out of layout keeps that offset a constant. Grown from the bottom so
+   the row rises clear of the node instead of over it. */
 .card-shell__hidden-head-actions {
   display: flex;
   justify-content: center;
   padding: 4px 0;
+  transform: scale(var(--card-chrome-scale, 1));
+  transform-origin: bottom center;
 }
 
 .card-shell__archive-btn {
@@ -2232,19 +2241,10 @@ html, body, #root {
 .archive-body__card {
   padding: 8px 10px;
   background: rgba(88, 91, 112, 0.1);
-/* The archive + add-node buttons above a head-less card — in practice the root
-   node's. Scaled by `--card-chrome-scale` (see ROOT_CHROME_SCALE in
-   shared/card-types.ts) because the root is drawn at label scale, which is also
-   the factor its focus zoom fell by. A transform rather than resized rules:
-   RootNode offsets its visual by this row's *layout* height, and keeping the
-   scale out of layout keeps that offset a constant. Grown from the bottom so
-   the row rises clear of the node instead of over it. */
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s;
 }
-  transform: scale(var(--card-chrome-scale, 1));
-  transform-origin: bottom center;
 
 .archive-body__card:hover {
   background: rgba(88, 91, 112, 0.25);
@@ -2716,12 +2716,18 @@ html, body, #root {
 }
 
 /* Add-node dropdown positioning */
+/* Opened by the hidden-head add button, so it hangs under the centre of the
+   node and takes the same `--card-chrome-scale` as the button that opened it —
+   otherwise a label-scale root node shows a popup too small to read at the
+   zoom focusing it lands on. */
 .card-shell__add-node-body {
   position: absolute;
   top: 0;
-  right: 0;
+  left: 50%;
   min-width: 200px;
   z-index: 50;
+  transform: translateX(-50%) scale(var(--card-chrome-scale, 1));
+  transform-origin: top center;
 }
 
 /* Extra CLI args popup positioning */
@@ -2746,20 +2752,14 @@ html, body, #root {
 .card-shell__alerts-body {
   position: absolute;
   top: 0;
-  left: 50%;
+  right: 0;
   min-width: 320px;
-/* Opened by the hidden-head add button, so it hangs under the centre of the
-   node and takes the same `--card-chrome-scale` as the button that opened it —
-   otherwise a label-scale root node shows a popup too small to read at the
-   zoom focusing it lands on. */
   max-width: 420px;
   z-index: 50;
 }
 
 /* Alerts button */
 .node-titlebar__alerts-btn {
-  transform: translateX(-50%) scale(var(--card-chrome-scale, 1));
-  transform-origin: top center;
   width: 20px;
   height: 20px;
   border: none;

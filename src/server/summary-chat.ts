@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import { execFileSync } from 'child_process'
 import { serverLog } from './server-log'
 import type { NodeId } from '../shared/ids'
+import type { SummaryChatPhase, SummaryChatUiState } from '../shared/protocol'
 
 const DISCOVERY_PATH = path.join(homedir(), 'Library', 'Application Support', 'VoiceOperator', 'speech-service.json')
 const MAX_MESSAGES = 24
@@ -16,15 +17,21 @@ const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_HAIKU_HISTORY_MESSAGES = 12
 const BLOCKED_VOICE_IDS = new Set(['af_nicole'])
 const SPEECH_LONG_POLL_TIMEOUT_MS = 5 * 60_000
+/** How long Voice Operator holds a long poll open, in seconds. */
+const SPEECH_LONG_POLL_SECONDS = 30
 const VOICE_REFRESH_MS = 5_000
 /**
- * Floor between speech-status polls. The loop is normally paced by the `?wait=`
- * long poll, but that is the *service's* promise, not ours: a Voice Operator
- * that answers immediately — an older build, or one that has lost its job
- * queue — would otherwise spin this loop as fast as the event loop allows.
- * Invisible next to a 30s long poll; caps a degenerate service at 4 polls/sec.
+ * Time between speech-status polls.
+ *
+ * Two jobs. While the monitor is tracking playback it is the *cadence*, and so
+ * the worst-case lag on cyan → yellow → idle: 250ms is under the threshold
+ * where an indicator reads as late, and keeps the waiting cue from being
+ * audible past the first syllable. While the monitor is long-polling it is a
+ * *floor* — a Voice Operator that answers `?wait=` immediately (an older
+ * build, or one that has lost its job queue) would otherwise spin this loop as
+ * fast as the event loop allows.
  */
-const SPEECH_POLL_FLOOR_MS = 250
+const SPEECH_POLL_INTERVAL_MS = 250
 const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Speak in two to four concise sentences of plain English. Later messages supersede earlier ones. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words to speak.`
 
 export type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
@@ -43,7 +50,13 @@ interface Conversation {
   haikuHistory: HaikuMessage[]
   voice?: string
   speechId?: string
-  isSpeaking: boolean
+  /**
+   * The single answer to "what is this surface doing". Every listener — the
+   * bubble, the waiting cue, the card's speaking glow — is derived from this
+   * one value, so none of them can disagree about whether a surface is still
+   * waiting while it is already talking.
+   */
+  phase: SummaryChatPhase
   /**
    * Where the listener cut off the last spoken answer, recorded by
    * monitorSpeech at the moment it observed the interruption. Consumed by the
@@ -138,7 +151,7 @@ export class SummaryChat {
 
   constructor(
     private readonly onSpeakingChanged: (nodeId: NodeId, speaking: boolean, voice?: string) => void,
-    private readonly onStatusChanged: (nodeId: NodeId, state: 'thinking' | 'ready' | 'target' | 'error', message?: string) => void,
+    private readonly onStatusChanged: (nodeId: NodeId, state: SummaryChatUiState, message?: string) => void,
     private readonly deps: SummaryChatDeps = REAL_SUMMARY_CHAT_DEPS,
   ) {
     this.cancelVoiceRefresh = this.deps.scheduleInterval(() => { void this.refreshVoices() }, VOICE_REFRESH_MS)
@@ -177,7 +190,7 @@ export class SummaryChat {
       sourceAgentSessionId,
       haikuHistory: [],
       voice: this.voiceFor(nodeId),
-      isSpeaking: false,
+      phase: 'ready',
       lastUsedSeq: ++this.useCounter,
     }
     this.conversations.set(nodeId, conversation)
@@ -201,9 +214,26 @@ export class SummaryChat {
     await this.ask(conversation, `${context}The listener asks: ${text}`, 'follow-up')
   }
 
+  /**
+   * The one place a surface's phase changes.
+   *
+   * Both public signals are emitted from here, in a fixed order, so a listener
+   * that watches only one of them still sees a coherent lifecycle. In
+   * particular `speaking` cancels `thinking` at the same instant, which is what
+   * lets the renderer's waiting cue be a pure function of the phase.
+   */
+  private setPhase(conversation: Conversation, phase: SummaryChatPhase): void {
+    if (conversation.phase === phase) return
+    const wasSpeaking = conversation.phase === 'speaking'
+    conversation.phase = phase
+    if (phase === 'speaking') this.onSpeakingChanged(conversation.nodeId, true, conversation.voice)
+    else if (wasSpeaking) this.onSpeakingChanged(conversation.nodeId, false)
+    this.onStatusChanged(conversation.nodeId, phase)
+  }
+
   private async ask(conversation: Conversation, prompt: string, kind: 'initial' | 'follow-up'): Promise<void> {
     conversation.lastUsedSeq = ++this.useCounter
-    this.onStatusChanged(conversation.nodeId, 'thinking')
+    this.setPhase(conversation, 'thinking')
     let waitingForSpeech = false
     try {
       const text = await this.askHaiku(conversation, prompt)
@@ -218,9 +248,9 @@ export class SummaryChat {
       const speech = await this.speak(text, conversation.voice)
       conversation.speechId = speech?.id
       if (speech?.id) {
-        // Keep the cyan waiting indicator until Voice Operator confirms that
-        // audio is actually speaking; a successful POST only means it accepted
-        // the job, which may still be queued.
+        // Stay in `thinking` until Voice Operator confirms that audio is
+        // actually speaking; a successful POST only means it accepted the job,
+        // which may still be queued.
         waitingForSpeech = true
         void this.monitorSpeech(conversation, speech.id)
       }
@@ -229,7 +259,7 @@ export class SummaryChat {
       serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} Haiku failed: ${err instanceof Error ? err.message : String(err)}`)
       this.onStatusChanged(conversation.nodeId, 'error', 'Summary Chat could not reach Haiku.')
     } finally {
-      if (!waitingForSpeech) this.onStatusChanged(conversation.nodeId, 'ready')
+      if (!waitingForSpeech) this.setPhase(conversation, 'ready')
     }
   }
 
@@ -303,26 +333,27 @@ export class SummaryChat {
     return status.character_offset ?? 0
   }
 
+  /**
+   * Drop a speech job and settle the surface.
+   *
+   * The phase must be settled here rather than left to `monitorSpeech`: the
+   * monitor's loop exits silently once `speechId` no longer matches, so a
+   * cancelled job used to strand the surface in `thinking` forever — which is
+   * how a waiting cue could outlive the thing it was waiting for.
+   */
   private async cancelSpeech(conversation: Conversation): Promise<void> {
     const speechId = conversation.speechId
     if (!speechId) return
     conversation.speechId = undefined
+    this.setPhase(conversation, 'ready')
     await this.speechRequest(`/v1/speech/${encodeURIComponent(speechId)}`, { method: 'DELETE' })
-    if (conversation.isSpeaking) {
-      conversation.isSpeaking = false
-      this.onSpeakingChanged(conversation.nodeId, false)
-    }
   }
 
   private async monitorSpeech(conversation: Conversation, speechId: string): Promise<void> {
-    let firstPoll = true
     while (conversation.speechId === speechId) {
-      // Voice Operator exposes a stable job-level lifecycle: `in_progress`
-      // covers all sentence handoffs, while a long poll wakes only at a
-      // terminal state (or its 30-second timeout). The public indicator is
-      // therefore tied to the job, not fragile per-sentence playback events.
-      const wait = firstPoll ? 0 : 30
-      firstPoll = false
+      // How long to poll for is a question about the phase we are in, not
+      // about which iteration this is — see pollWaitSeconds.
+      const wait = pollWaitSeconds(conversation.phase)
       // The default request timeout is intentionally short for one-shot
       // operations. A speech monitor, however, must tolerate a stalled local
       // service without falsely declaring the job finished.
@@ -334,29 +365,17 @@ export class SummaryChat {
       if (!status) {
         if (conversation.speechId === speechId) {
           conversation.speechId = undefined
-          if (conversation.isSpeaking) {
-            conversation.isSpeaking = false
-            this.onSpeakingChanged(conversation.nodeId, false)
-          }
-          this.onStatusChanged(conversation.nodeId, 'ready')
+          this.setPhase(conversation, 'ready')
         }
         return
       }
       if (status.state === 'in_progress') {
-        // `in_progress` is the lifecycle of the whole Voice Operator job. Its
-        // playback state is the precise distinction between an accepted/queued
-        // job (cyan) and audible output (yellow). Older services did not send
-        // playback_state, so treat that as speaking for compatibility.
-        const isAudiblySpeaking = status.playback_state === undefined || status.playback_state === 'speaking'
-        if (isAudiblySpeaking && !conversation.isSpeaking) {
-          conversation.isSpeaking = true
-          this.onSpeakingChanged(conversation.nodeId, true, conversation.voice)
-        }
-        if (!isAudiblySpeaking && conversation.isSpeaking) {
-          conversation.isSpeaking = false
-          this.onSpeakingChanged(conversation.nodeId, false)
-        }
-        await this.deps.sleep(SPEECH_POLL_FLOOR_MS)
+        // `in_progress` is the lifecycle of the whole Voice Operator job, and
+        // covers everything from "accepted, still queued" to "talking". Its
+        // playback state is what distinguishes those (see playbackPhase), so
+        // the surface's phase is driven from there rather than from the job.
+        this.setPhase(conversation, playbackPhase(status.playback_state, conversation.phase))
+        await this.deps.sleep(SPEECH_POLL_INTERVAL_MS)
         continue
       }
       if (conversation.speechId === speechId) {
@@ -367,11 +386,7 @@ export class SummaryChat {
           conversation.interruptedAtCharacter = status.character_offset ?? 0
         }
         conversation.speechId = undefined
-        if (conversation.isSpeaking) {
-          conversation.isSpeaking = false
-          this.onSpeakingChanged(conversation.nodeId, false)
-        }
-        this.onStatusChanged(conversation.nodeId, 'ready')
+        this.setPhase(conversation, 'ready')
       }
       return
     }
@@ -418,6 +433,52 @@ export class SummaryChat {
       return undefined
     }
   }
+}
+
+/**
+ * How long to ask Voice Operator to hold the next status poll open.
+ *
+ * Measured, not assumed: `?wait=N` wakes **only** at a terminal state. It does
+ * not wake when playback moves from `queued` to `speaking`, which is why the
+ * indicator used to sit on "thinking" for the whole spoken answer and then
+ * jump straight to idle — the app asked a question that could only be answered
+ * after the answer no longer mattered.
+ *
+ * So: while the surface is showing something that tracks the audio, poll
+ * immediately and let SPEECH_POLL_INTERVAL_MS set the cadence. Once Voice
+ * Operator is merely listening (`waiting_for_user`, mapped to `ready`) there
+ * is nothing to track, and a job can sit there indefinitely — hand the waiting
+ * back to the service rather than spinning on it.
+ */
+function pollWaitSeconds(phase: SummaryChatPhase): number {
+  return phase === 'ready' ? SPEECH_LONG_POLL_SECONDS : 0
+}
+
+/**
+ * What an `in_progress` speech job's playback state means for the surface.
+ *
+ * `waiting_for_user` deliberately maps to `ready`, not `thinking`: the job is
+ * still open, but Voice Operator is listening rather than producing audio, and
+ * a job can sit there indefinitely. Treating it as "still waiting" is what let
+ * the waiting cue run forever after an answer had already been spoken.
+ *
+ * `queued` is read *relative to the phase we are already in*, which is the one
+ * piece of hysteresis here. Voice Operator's queue is sentence-at-a-time: it
+ * drops back to `queued` at every sentence handoff within a single job and
+ * only returns to `speaking` once the next sentence's audio actually starts.
+ * Now that this monitor polls fast enough to see those handoffs, a literal
+ * reading would flicker the indicator and re-arm the waiting cue in the gaps
+ * between an answer's own sentences. An answer that has begun is speaking
+ * until it stops or ends, however its synthesis is paced.
+ */
+function playbackPhase(
+  playbackState: SpeechStatus['playback_state'],
+  current: SummaryChatPhase,
+): SummaryChatPhase {
+  // Older services did not send playback_state; assume audible for compatibility.
+  if (playbackState === undefined || playbackState === 'speaking') return 'speaking'
+  if (playbackState === 'waiting_for_user') return 'ready'
+  return current === 'speaking' ? 'speaking' : 'thinking'
 }
 
 function initialPrompt(messages: TranscriptMessage[]): string {

@@ -847,11 +847,27 @@ export interface SpeakingChangedMessage {
   voice?: string
 }
 
+/**
+ * What a Summary Chat surface is doing.
+ *
+ * `thinking`, `speaking` and `ready` are one *phase*: the server emits them
+ * from a single transition point, so exactly one is true at a time and no
+ * consumer has to reconcile overlapping signals. `target` and `error` are
+ * notifications about a surface that leave the phase alone.
+ *
+ * This mattered: the waiting cue used to be driven by "is thinking" while the
+ * server left a surface in `thinking` for the whole duration of its spoken
+ * answer, so the cue played *over* the speech — and never stopped at all if
+ * the speech job never reached a terminal state.
+ */
+export type SummaryChatPhase = 'thinking' | 'speaking' | 'ready'
+export type SummaryChatUiState = SummaryChatPhase | 'target' | 'error'
+
 /** Summary Chat lifecycle for the toolbar's thinking and target indicators. */
 export interface SummaryChatStatusMessage {
   type: 'summary-chat-status'
   nodeId: NodeId
-  state: 'thinking' | 'ready' | 'target' | 'error'
+  state: SummaryChatUiState
   message?: string
 }
 

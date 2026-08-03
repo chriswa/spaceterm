@@ -222,14 +222,14 @@ export function CardShell({
         {headVariant === 'overlay' && <NodeActionBar {...actionBarProps} />}
         {hiddenHeadActions}
         <div className="card-shell__body-wrapper">
-          {headVariant === 'hidden' && hiddenAddNodeOpen && onAddNode && (
-            <div className="card-shell__add-node-body" ref={hiddenAddNodeBodyRef}>
-              <AddNodeBody onSelect={handleHiddenAddNodeSelect} />
           {/* The popup is centred by its own rule whatever the node's width:
               the hidden-head buttons are centred above the node, so what one of
               them opens belongs under it. The width test this used to carry
               picked the same answer only while the root node was narrower than
               a popup. */}
+          {headVariant === 'hidden' && hiddenAddNodeOpen && onAddNode && (
+            <div className="card-shell__add-node-body" ref={hiddenAddNodeBodyRef}>
+              <AddNodeBody onSelect={handleHiddenAddNodeSelect} />
             </div>
           )}
           {children}

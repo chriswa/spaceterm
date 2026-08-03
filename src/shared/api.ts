@@ -25,6 +25,7 @@ import type {
   GhRateLimitData,
   SessionInfo,
   SnapshotMessage,
+  SummaryChatUiState,
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { NodeData, ServerState } from './state'
@@ -138,7 +139,7 @@ export interface NodeApi {
 }
 
 /** Status the toolbar renders for a surface's summary-chat session. */
-export type SummaryChatUiState = 'thinking' | 'ready' | 'target' | 'error'
+export type { SummaryChatPhase, SummaryChatUiState } from './protocol'
 
 export interface TtsApi {
   speak(text: string): Promise<{ available: boolean }>
