@@ -25,7 +25,7 @@ import { useRtsSelect } from './hooks/useRtsSelect'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
 import { loadClientMods } from './mods'
-import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude } from './lib/camera'
+import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
@@ -716,6 +716,7 @@ export function App() {
 
       let bounds: { x: number; y: number; width: number; height: number }
       let padding = 0
+      let maxZoom = focusZoomCeiling(null)
 
       if (nodeId === 'root') {
         bounds = { x: -200, y: -200, width: 400, height: 400 }
@@ -724,6 +725,7 @@ export function App() {
         const node = useNodeStore.getState().nodes[nodeId]!
         const size = nodePixelSize(node)
         bounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
+        maxZoom = focusZoomCeiling(node.type)
       }
 
       const vw = viewport.clientWidth
@@ -738,7 +740,7 @@ export function App() {
           flyTo(expanded, computeFlyToSpeed(dist))
         }
       } else {
-        const targetCamera = cameraToFitBounds(bounds, vw, vh, padding)
+        const targetCamera = cameraToFitBounds(bounds, vw, vh, padding, maxZoom)
         const sourceCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, cameraRef.current)
         const targetCenter = screenToCanvas({ x: vw / 2, y: vh / 2 }, targetCamera)
         const dist = Math.hypot(targetCenter.x - sourceCenter.x, targetCenter.y - sourceCenter.y)
@@ -772,7 +774,7 @@ export function App() {
 
     const size = nodePixelSize(node)
     const targetBounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
-    const targetCamera = cameraToFitBounds(targetBounds, viewport.clientWidth, viewport.clientHeight, 0)
+    const targetCamera = cameraToFitBounds(targetBounds, viewport.clientWidth, viewport.clientHeight, 0, focusZoomCeiling(node.type))
 
     setScrollMode(node.type === 'terminal' && node.alive)
     sendBringToFront(nodeId)
@@ -2030,7 +2032,7 @@ export function App() {
       const expanded = expandCameraToInclude(bounds, cameraRef.current, vw, vh, 0)
       if (expanded) flyTo(expanded)
     } else {
-      flyTo(cameraToFitBounds(bounds, vw, vh, 0))
+      flyTo(cameraToFitBounds(bounds, vw, vh, 0, focusZoomCeiling(useNodeStore.getState().nodes[nodeId]?.type)))
     }
   }, [flyTo, cameraRef])
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   CARD_TYPES,
   CARD_TYPE_SPECS,
+  cardChromeScale,
   isCardType,
   measureCard,
   tieredZIndex,
@@ -198,5 +199,34 @@ describe('tieredZIndex', () => {
     for (let i = 1; i < tiers.length; i++) {
       expect(tiers[i] - tiers[i - 1]).toBeGreaterThanOrEqual(1_000_000)
     }
+  })
+})
+
+describe('cardChromeScale', () => {
+  it('cancels a focus ceiling exactly, and leaves uncapped cards alone', () => {
+    // This is the whole point of deriving the scale instead of tuning a second
+    // number: focus zoom × chrome scale = 1 means the buttons land at the size
+    // they were drawn at, whatever the ceiling is later retuned to.
+    for (const type of CARD_TYPES) {
+      const ceiling = CARD_TYPE_SPECS[type].focusMaxZoom
+      if (ceiling === null) {
+        expect(cardChromeScale(type), type).toBe(1)
+      } else {
+        expect(cardChromeScale(type) * ceiling, type).toBeCloseTo(1)
+      }
+    }
+  })
+
+  it('enlarges the capped types enough to matter', () => {
+    // A ceiling that barely scales the chrome would mean the cap is doing
+    // nothing either — the two move together by construction.
+    expect(cardChromeScale('title')).toBeGreaterThan(2)
+    expect(cardChromeScale('directory')).toBeGreaterThan(2)
+  })
+
+  it('leaves chrome unscaled when there is no card type', () => {
+    // The root node, and any card rendered before its node reaches the store.
+    expect(cardChromeScale(null)).toBe(1)
+    expect(cardChromeScale(undefined)).toBe(1)
   })
 })

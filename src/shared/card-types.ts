@@ -68,10 +68,26 @@ export interface CardTypeSpec {
    * identity for their types.
    */
   readonly zIndexTier: number
+  /**
+   * Zoom ceiling used when focusing a card of this type.
+   *
+   * Fitting the card to the viewport is right for cards you read the inside of.
+   * Titles and directories are labels for their neighbourhood: blowing one word
+   * or one path up to fill the screen tells you nothing and throws away the
+   * context that made you click it, so they stop well short.
+   *
+   * `null` means "no type-specific ceiling" — only the camera's absolute
+   * MAX_ZOOM applies. Declared here rather than as a card-type check at each
+   * focus call site, of which there are three.
+   */
+  readonly focusMaxZoom: number | null
 }
 
 /** Tiers are a million apart so a node's own z-index can never cross one. */
 const TIER = { base: 0, directory: 1_000_000, title: 2_000_000 } as const
+
+/** Focusing a label-ish card zooms no closer than this. See `focusMaxZoom`. */
+const LABEL_FOCUS_MAX_ZOOM = 0.15
 
 export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
   terminal: {
@@ -79,14 +95,16 @@ export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
     label: 'Terminal',
     defaultSize: terminalPixelSize(DEFAULT_COLS, DEFAULT_ROWS),
     contentSized: true,
-    zIndexTier: TIER.base
+    zIndexTier: TIER.base,
+    focusMaxZoom: null
   },
   markdown: {
     type: 'markdown',
     label: 'Markdown',
     defaultSize: { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT },
     contentSized: false,
-    zIndexTier: TIER.base
+    zIndexTier: TIER.base,
+    focusMaxZoom: null
   },
   directory: {
     type: 'directory',
@@ -94,21 +112,24 @@ export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
     // Width is derived from the path and git status; only the height is fixed.
     defaultSize: { width: directoryFolderWidth(''), height: DIRECTORY_HEIGHT },
     contentSized: true,
-    zIndexTier: TIER.directory
+    zIndexTier: TIER.directory,
+    focusMaxZoom: LABEL_FOCUS_MAX_ZOOM
   },
   file: {
     type: 'file',
     label: 'File',
     defaultSize: { width: FILE_WIDTH, height: FILE_HEIGHT },
     contentSized: false,
-    zIndexTier: TIER.base
+    zIndexTier: TIER.base,
+    focusMaxZoom: null
   },
   title: {
     type: 'title',
     label: 'Title',
     defaultSize: { width: TITLE_MIN_WIDTH, height: TITLE_HEIGHT },
     contentSized: true,
-    zIndexTier: TIER.title
+    zIndexTier: TIER.title,
+    focusMaxZoom: LABEL_FOCUS_MAX_ZOOM
   }
 }
 
@@ -121,6 +142,26 @@ export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
  */
 export function tieredZIndex(type: CardType, zIndex: number): number {
   return zIndex + CARD_TYPE_SPECS[type].zIndexTier
+}
+
+/**
+ * How much a card's chrome — the action buttons that appear on focus, and the
+ * popups they open — must be enlarged in canvas pixels to read at its designed
+ * size once the card is focused.
+ *
+ * Chrome lives inside the camera transform, so its on-screen size is
+ * `zoom × css px`. Cards with no focus ceiling are fitted to the viewport, which
+ * lands near 1:1, and the buttons were drawn for that. A card capped at 15%
+ * renders those same buttons at 15% of their intended size — which is exactly
+ * what happened the first time titles and directories got a ceiling. Deriving
+ * the factor from the ceiling rather than tuning a second number keeps the two
+ * from drifting apart when either is retuned.
+ *
+ * Returns 1 for the root node and anything else without a card type.
+ */
+export function cardChromeScale(type: CardType | null | undefined): number {
+  const ceiling = type ? CARD_TYPE_SPECS[type].focusMaxZoom : null
+  return ceiling === null ? 1 : 1 / ceiling
 }
 
 /**

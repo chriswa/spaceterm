@@ -8,6 +8,7 @@ import { ARCHIVE_BODY_MIN_WIDTH } from '../lib/constants'
 import { NodeActionBar } from './NodeActionBar'
 import type { NodeActionBarProps } from './NodeActionBar'
 import { nodeActionRegistry } from '../lib/action-registry'
+import { cardChromeScale } from '../../../../shared/card-types'
 import { useNodeStore } from '../stores/nodeStore'
 import type { NodeAlert } from '../../../../shared/state'
 import { type NodeId } from '../../../../shared/ids'
@@ -70,6 +71,11 @@ export function CardShell({
   onPostSync, onWtSpawn, onAddNode, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, overlay, children
 }: CardShellProps) {
+
+  // Chrome that must stay legible at the card type's focus zoom. Published as a
+  // custom property so the stylesheet can size buttons and their offsets from
+  // one number, and so every card kind gets it without a per-card prop.
+  const chromeScale = cardChromeScale(useNodeStore(s => s.nodes[nodeId]?.type))
 
   // Alert badge (visible when unfocused)
   const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
@@ -175,7 +181,8 @@ export function CardShell({
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-      }}
+        '--card-chrome-scale': chromeScale,
+      } as CSSProperties}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >

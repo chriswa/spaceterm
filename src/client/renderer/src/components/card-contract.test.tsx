@@ -7,6 +7,7 @@ import { FileCard } from './FileCard'
 import { DirectoryCard } from './DirectoryCard'
 import { MarkdownCard } from './MarkdownCard'
 import { useNodeStore } from '../stores/nodeStore'
+import { cardChromeScale, type CardType } from '../../../../shared/card-types'
 import { asNodeId, ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 import type { Camera } from '../lib/camera'
 
@@ -82,6 +83,8 @@ function sharedProps(overrides: Partial<SharedProps> = {}): SharedProps {
 /** One card kind, and how to build it from the shared props. */
 interface CardCase {
   name: string
+  /** The card type the node store would hold for this card. */
+  nodeType: CardType
   /** The distinguishing text the card should show. */
   visibleText: string
   build(shared: SharedProps): ReactElement
@@ -90,21 +93,25 @@ interface CardCase {
 const CARDS: CardCase[] = [
   {
     name: 'TitleCard',
+    nodeType: 'title',
     visibleText: 'A Section Title',
     build: (s) => <TitleCard {...s} text="A Section Title" onTextChange={vi.fn()} />
   },
   {
     name: 'FileCard',
+    nodeType: 'file',
     visibleText: 'notes.md',
     build: (s) => <FileCard {...s} filePath="/work/notes.md" onFilePathChange={vi.fn()} />
   },
   {
     name: 'DirectoryCard',
+    nodeType: 'directory',
     visibleText: 'project',
     build: (s) => <DirectoryCard {...s} cwd="/work/project" onCwdChange={vi.fn()} />
   },
   {
     name: 'MarkdownCard',
+    nodeType: 'markdown',
     visibleText: 'hello from markdown',
     build: (s) => (
       <MarkdownCard
@@ -302,6 +309,29 @@ describe('the cards as a set', () => {
     }
     const serverCalls = bridge.calls.filter((c) => c.method.startsWith('node.') || c.method.startsWith('pty.'))
     expect(serverCalls.map((c) => c.method)).toEqual([])
+  })
+})
+
+describe('action-bar chrome scale', () => {
+  // The buttons that appear on focus are drawn inside the camera transform, so
+  // a card whose focus zoom is capped renders them at a fraction of their
+  // designed size. The stylesheet compensates via `--card-chrome-scale`, which
+  // only works if the shell actually publishes it.
+  it.each(CARDS)('$name publishes its type’s scale on the shell', ({ nodeType, build }) => {
+    const id = nid('scaled')
+    // CardShell only reads `type` and `alerts` off the node.
+    useNodeStore.setState({ nodes: { [id]: { type: nodeType } as never } })
+
+    const { container } = render(build(sharedProps({ id, focused: true })))
+    expect(shellOf(container).style.getPropertyValue('--card-chrome-scale'))
+      .toBe(String(cardChromeScale(nodeType)))
+  })
+
+  it('falls back to unscaled chrome for a node the store has never heard of', () => {
+    // The ordinary case on first sync: the card renders before its node
+    // arrives. Scaling to NaN would collapse the buttons to nothing.
+    const { container } = render(CARDS[0].build(sharedProps({ id: nid('unknown-to-store') })))
+    expect(shellOf(container).style.getPropertyValue('--card-chrome-scale')).toBe('1')
   })
 })
 

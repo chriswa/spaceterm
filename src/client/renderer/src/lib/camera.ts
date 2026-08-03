@@ -1,4 +1,17 @@
 import { MIN_ZOOM, MAX_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SENSITIVITY, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW, FOCUS_SPEED, FLY_TO_BASE_DURATION, FLY_TO_HALF_RANGE, FLY_TO_MAX_DURATION } from './constants'
+import { CARD_TYPE_SPECS, type CardType } from '../../../../shared/card-types'
+
+/**
+ * How far focusing a card is allowed to zoom in.
+ *
+ * Every "fly to this node" path goes through here, so the ceiling can't drift
+ * between clicking a card, navigating to it from a crab, and the re-fit that
+ * happens once the card reports its measured size. Pass `null` for the root
+ * node, which has no card type and so no type-specific ceiling.
+ */
+export function focusZoomCeiling(type: CardType | null | undefined): number {
+  return (type ? CARD_TYPE_SPECS[type].focusMaxZoom : null) ?? MAX_ZOOM
+}
 
 export interface Camera {
   x: number
