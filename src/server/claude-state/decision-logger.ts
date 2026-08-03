@@ -9,6 +9,14 @@ export interface DecisionLogEntry {
   event: string
   prevState: string
   newState: string
+  /**
+   * Epoch ms of the event that caused this decision (absent for client events,
+   * which are applied directly rather than queued). Logged alongside the local
+   * `timestamp` (when we decided) because the gap between the two IS the bug in
+   * every ordering problem — a stale-suppressed transition is only legible if
+   * you can see how far behind the event was.
+   */
+  sourceTime?: number
   detail?: string
   unread?: boolean
   suppressed?: boolean

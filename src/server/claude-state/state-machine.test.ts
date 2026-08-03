@@ -242,6 +242,61 @@ const cases: Case[] = [
     },
   },
   {
+    // The stuck-orange bug: Claude wrote its final assistant message, the Stop
+    // hook fired 544ms later (already outside the queue's 500ms window), and the
+    // JSONL watcher delivered that assistant entry ~1.4s after it was written.
+    // Stop applied first, then the stale entry applied out of order and put the
+    // surface back to 'working' — with the turn over, nothing ever corrected it.
+    name: 'a JSONL entry delivered after the Stop it predates does not resurrect working',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      const finalMessageTime = now()   // Claude wrote its last message here…
+      hook(sm, 'Stop')                 // …and the Stop hook fired after it
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      // Only now does the watcher deliver the assistant entry. It is already
+      // past the delay cutoff, so it drains alone, out of order.
+      jsonl(sm, [{ type: 'assistant', timestamp: new Date(finalMessageTime).toISOString() }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      assertEq(deps.getClaudeStatusUnread(S), true)
+      // …and the watermark must not wedge the surface: the next real event lands.
+      hook(sm, 'UserPromptSubmit')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    // The watermark must never become a fifth way for a waiting state to get
+    // stuck: those states have no self-correcting sweep behind them.
+    name: 'a late-delivered permission-resolved still clears waiting_plan',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'PreToolUse', { tool_use_id: 'tu1' })
+      const approvalTime = now()
+      hook(sm, 'PermissionRequest', { tool_name: 'ExitPlanMode' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_plan')
+      jsonl(sm, [{ ...toolResult('tu1', 'User has approved your plan.'), timestamp: new Date(approvalTime).toISOString() }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    name: 'an assistant entry newer than the Stop still resumes working',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      // Claude resumed on its own (e.g. after auto-compaction) — this entry is
+      // genuinely later than the Stop, so it must win.
+      jsonl(sm, [{ type: 'assistant' }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
     name: 'a stray bg-drained is suppressed when not yellow (stays working)',
     run: (sm, deps) => {
       hook(sm, 'UserPromptSubmit')

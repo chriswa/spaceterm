@@ -89,13 +89,20 @@ export class ClaudeStateMachine {
   /** surfaceId → Set of tool_use_ids awaiting PostToolUse confirmation */
   private pendingPermissionIds = new Map<PtySessionId, Set<string>>()
 
+  /**
+   * surfaceId → source timestamp of the last transition actually applied.
+   * The watermark that makes ordering total rather than window-limited; see the
+   * stale-event guard in applyTransition.
+   */
+  private lastAppliedSourceTime = new Map<PtySessionId, number>()
+
   constructor(deps: StateMachineDeps, backgroundLedger: BackgroundLedger = new BackgroundLedger()) {
     this.deps = deps
     this.decisionLogger = new DecisionLogger()
     this.backgroundLedger = backgroundLedger
     this.transitionQueue = new TransitionQueue(
-      (surfaceId, newState, source, event, detail) =>
-        this.applyTransition(surfaceId, newState, source, event, detail)
+      (surfaceId, newState, source, event, sourceTime, detail) =>
+        this.applyTransition(surfaceId, newState, source, event, sourceTime, detail)
     )
     // .catch keeps a probe failure from ever surfacing as an unhandled rejection
     // that could crash the server process.
@@ -541,9 +548,68 @@ export class ClaudeStateMachine {
     newState: ClaudeState,
     source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
     event: string,
+    sourceTime: number,
     detail?: string
   ): void {
     const prevState = this.deps.getClaudeState(surfaceId) ?? 'stopped'
+
+    // Computed before the staleness guard because that guard must not be able to
+    // block a waiting state's only exits — see both guards below.
+    const isWaitingState = prevState === 'waiting_permission' || prevState === 'waiting_question' || prevState === 'waiting_plan'
+    const isTargetedWaitingClear =
+      isWaitingState && newState === 'working' && (
+        event === 'hook:UserPromptSubmit' ||
+        event === 'hook:PostToolUse' ||
+        event === 'hook:PostToolUseFailure' ||
+        event === 'jsonl:permission-resolved'
+      )
+
+    // ── Guard: a transition older than the last applied one is stale ──────────
+    // The transition queue sorts by source timestamp, but it can only sort the
+    // events it is holding at drain time. An event delivered more than
+    // TRANSITION_DELAY_MS after it happened is already past the cutoff when it
+    // arrives, so it drains alone on the next tick and lands out of order.
+    //
+    // This is not hypothetical: it is how a finished surface got stuck orange.
+    // Claude wrote its final assistant message at T, the Stop hook fired at
+    // T+544ms (already outside the 500ms window), and the JSONL watcher did not
+    // deliver the assistant entry until T+1.4s. Stop applied first → 'stopped',
+    // then the stale 'jsonl:assistant' applied → 'working'. The turn was over,
+    // so nothing ever corrected it: no further hooks, no further transcript
+    // entries, and the reconciliation sweep only re-probes yellow surfaces.
+    //
+    // The watermark advances only when a transition is APPLIED, never when one
+    // is suppressed below. A suppressed event is one we deliberately ignored;
+    // letting it move the watermark would let it swallow a slightly-older event
+    // that we do want (e.g. a suppressed jsonl:assistant at T+1 hiding the
+    // ID-matched PostToolUse at T+0.5 that is the only thing able to clear a
+    // waiting state).
+    //
+    // Rejected alternatives: (a) raising TRANSITION_DELAY_MS — it only moves the
+    // threshold, at the cost of visible latency on every transition; (b) making
+    // the JSONL watcher faster — delivery lag is unbounded in principle (fs.watch
+    // coalescing, a busy event loop), so correctness must not depend on it;
+    // (c) scoping the rule to jsonl-vs-Stop — every source can be late, and
+    // narrow exemptions are how this class of bug came back each time.
+    //
+    // The one exemption is a targeted waiting-state clear. A waiting state has
+    // exactly four exits to 'working' and no self-correcting sweep behind them,
+    // so a watermark that could suppress all four would create a second immortal
+    // state — the same shape of bug as invariant 13's stuck-yellow. All four are
+    // causally later than the PermissionRequest that set the waiting state (the
+    // user cannot respond before being asked) and two are additionally
+    // tool_use_id-matched, so exempting them cannot let an unrelated stale event
+    // through. A stale-but-exempt transition therefore must not drag the
+    // watermark backwards either — hence the Math.max below.
+    const watermark = this.lastAppliedSourceTime.get(surfaceId)
+    if (!isTargetedWaitingClear && watermark !== undefined && sourceTime < watermark) {
+      this.decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, sourceTime,
+        detail: `${detail ? detail + ' ' : ''}(stale: ${watermark - sourceTime}ms older than the last applied transition)`,
+        suppressed: true
+      })
+      return
+    }
 
     // ── Guard: background drain-to-idle only fires from 'working_background' ──
     // A ':bg-drained' transition is enqueued whenever the ledger empties, from
@@ -556,7 +622,7 @@ export class ClaudeStateMachine {
     // drain is applied, 'working_background' is the prevState.
     if (event.endsWith(BG_DRAINED_SUFFIX) && prevState !== 'working_background') {
       this.decisionLogger.log(surfaceId, {
-        timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, detail, suppressed: true
+        timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, sourceTime, detail, suppressed: true
       })
       return
     }
@@ -576,7 +642,8 @@ export class ClaudeStateMachine {
     //    Parallel tool_use blocks in a single response produce JSONL entries
     //    AFTER the PermissionRequest hook, which would clobber waiting → working.
     //
-    // Only these targeted signals can clear waiting → working:
+    // Only these targeted signals can clear waiting → working (the
+    // isTargetedWaitingClear set computed at the top of this method):
     // - hook:PostToolUse/PostToolUseFailure (ID-matched: permission resolved)
     // - hook:UserPromptSubmit (user started a new turn)
     // - jsonl:permission-resolved (the transcript wrote the tool_result for the
@@ -584,26 +651,26 @@ export class ClaudeStateMachine {
     //   that replaced the old client:promptSubmit Enter-keypress path)
     // Other exits from waiting states use newState !== 'working' (e.g.
     // Stop → stopped, jsonl:user:rejected → stopped) and bypass this guard.
-    const isWaitingState = prevState === 'waiting_permission' || prevState === 'waiting_question' || prevState === 'waiting_plan'
-    if (isWaitingState && newState === 'working') {
-      const canClearWaiting =
-        event === 'hook:UserPromptSubmit' ||
-        event === 'hook:PostToolUse' ||
-        event === 'hook:PostToolUseFailure' ||
-        event === 'jsonl:permission-resolved'
-      if (!canClearWaiting) {
-        this.decisionLogger.log(surfaceId, {
-          timestamp: localISOTimestamp(),
-          source,
-          event,
-          prevState,
-          newState: prevState,
-          detail,
-          suppressed: true
-        })
-        return
-      }
+    if (isWaitingState && newState === 'working' && !isTargetedWaitingClear) {
+      this.decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(),
+        source,
+        event,
+        prevState,
+        newState: prevState,
+        sourceTime,
+        detail,
+        suppressed: true
+      })
+      return
     }
+
+    // Past every guard — this transition is being applied, so it becomes the
+    // ordering watermark for anything that arrives late from any source. Math.max
+    // because the one transition that can be applied while older than the
+    // watermark (a targeted waiting-state clear) must not lower the bar for
+    // everything after it.
+    this.lastAppliedSourceTime.set(surfaceId, Math.max(sourceTime, watermark ?? sourceTime))
 
     // ── Stopped-with-an-API-error upgrade ──────────────────────────────────
     // Applied here rather than by the caller so it is an ordinary transition:
@@ -644,6 +711,7 @@ export class ClaudeStateMachine {
       event,
       prevState,
       newState: effectiveState,
+      sourceTime,
       detail: effectiveState === newState ? detail : `${detail ? detail + ' ' : ''}(upgraded from stopped: potential API error)`,
       unread
     })

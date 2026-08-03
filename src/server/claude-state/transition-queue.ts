@@ -27,6 +27,12 @@ export type ApplyFn = (
   newState: ClaudeState,
   source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
   event: string,
+  /**
+   * When the event actually happened. Passed through so applyTransition can
+   * enforce ordering for events that arrive AFTER their own delay window has
+   * already elapsed — the queue can only sort what it is holding at drain time.
+   */
+  sourceTime: number,
   detail?: string
 ) => void
 
@@ -79,10 +85,16 @@ export class TransitionQueue {
     this.queue.length = 0
     this.queue.push(...remaining)
 
-    // Process in source-timestamp order so causally-later events win
+    // Process in source-timestamp order so causally-later events win.
+    //
+    // This sort only orders events that happen to be in the queue together. An
+    // event delivered later than TRANSITION_DELAY_MS after its own source
+    // timestamp (a slow JSONL file-watcher delivery) is already past the cutoff
+    // on arrival and drains alone, out of order. applyTransition's stale-event
+    // guard is what covers that case — see the source-timestamp watermark there.
     ready.sort((a, b) => a.sourceTime - b.sourceTime)
     for (const t of ready) {
-      this.applyFn(t.surfaceId, t.newState, t.source, t.event, t.detail)
+      this.applyFn(t.surfaceId, t.newState, t.source, t.event, t.sourceTime, t.detail)
     }
   }
 

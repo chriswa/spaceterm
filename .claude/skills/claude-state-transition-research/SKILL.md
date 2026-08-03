@@ -19,7 +19,7 @@ The *current* session's IDs are available as environment variables: `SPACETERM_S
 ```
 ~/.spaceterm/decision-logs/{surfaceId}.jsonl
 ```
-The authoritative record of every state transition. Each line has: `timestamp`, `source` (hook/jsonl/client), `event`, `prevState`, `newState`, `unread`, and optionally `detail` or `suppressed`. This is the fastest way to see what happened.
+The authoritative record of every state transition. Each line has: `timestamp` (when we decided), `source` (hook/jsonl/client), `event`, `prevState`, `newState`, `sourceTime` (epoch ms of the causing event — absent for client events), `unread`, and optionally `detail` or `suppressed`. This is the fastest way to see what happened. The gap between `sourceTime` and `timestamp` is the delivery lag: a large gap means that source was late, which is what ordering bugs look like.
 
 ### 2. Hook Log
 ```
@@ -81,6 +81,7 @@ ledger in `src/server/claude-state/background-ledger.ts`.
 - JSONL `user` array entries (tool results) that aren't interrupts/rejections/pending-permission resolutions — hooks handle this
 
 ### Guard logic
+- **Stale events are dropped.** `applyTransition` keeps a per-surface watermark of the last *applied* transition's source timestamp; anything strictly older is suppressed (`detail: "(stale: Nms older…)"`). The 500ms queue only sorts events it holds at the same moment, so an event delivered later than that window lands out of order — this is the guard that catches it. Targeted waiting-state clears are exempt so the watermark can't strand a waiting surface.
 - Waiting states are sticky — only `hook:PostToolUse`/`hook:PostToolUseFailure` (ID-matched), `hook:UserPromptSubmit`, and `jsonl:permission-resolved` can transition waiting → working. All other working signals are suppressed.
 - A `:bg-drained` transition (ledger emptied) only takes effect from `working_background` — gated in applyTransition so hook/queue ordering can't force a spurious stopped.
 
