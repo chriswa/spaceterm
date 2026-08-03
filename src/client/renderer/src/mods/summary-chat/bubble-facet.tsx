@@ -23,7 +23,7 @@ import { useModFacet } from '../../hooks/useFacet'
  * - The **default is registered here**, not added to the base's
  *   `DEFAULT_FACETS`, so uninstalling the mod removes the facet entirely
  *   rather than leaving a stub behind.
- * - **Per-theme variants live in `byTheme`.** The grid theme gets a flatter,
+ * - **Per-theme variants live in `byTheme`.** The concentric theme gets a flatter,
  *   monochrome mark without the base repo's theme definition importing
  *   anything from here — which it could not do anyway, since a mod may be
  *   absent. The dependency points mod → base, only.
@@ -107,7 +107,7 @@ export function registerBubbleFacet(): void {
     // never heard of gets the default, and no theme has to know this mod
     // exists.
     byTheme: {
-      grid: SUMMARY_BUBBLES.technical,
+      concentric: SUMMARY_BUBBLES.technical,
     },
   })
 }

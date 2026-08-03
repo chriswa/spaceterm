@@ -40,9 +40,10 @@
  * background field, and it is the only pairing that is not free to mix.
  */
 
+import { ROOT_DISC_RADIUS } from '../../../../../shared/node-size'
 import { glslVec3, LINEAR_TO_SRGB_GLSL, linearEmission, rgbToLinear, type Rgb } from './srgb'
 
-/** OKLab → sRGB, for the shaders that tint by polar angle. The grid does not. */
+/** OKLab → sRGB, for the shaders that tint by polar angle. Concentric does not. */
 const OKLAB_GLSL = `
 const float PI = 3.14159265358979;
 
@@ -338,230 +339,223 @@ void main() {
 `
 
 /* ------------------------------------------------------------------ */
-/*  Grid — a logarithmic technical grid                                */
+/*  Concentric — a radial ramp that resets at each root radius         */
 /* ------------------------------------------------------------------ */
 
-/** The unlit background of the grid theme, as sRGB. */
-export const GRID_BASE: Rgb = [0.055, 0.058, 0.075]
-/** The colour a line would reach at tone 1.0 is `GRID_BASE + GRID_LINE`. */
-export const GRID_LINE: Rgb = [0.62, 0.67, 0.8]
+/**
+ * The two greys the ramp runs between, as sRGB.
+ *
+ * Both are dark, and neither is black: a black trough next to a grey crest
+ * makes the crest read as *lit*, which is exactly the sort of thing a
+ * background should not be doing behind a canvas full of cards. Two shades of
+ * the same cool grey read instead as one surface with a gradient in it.
+ *
+ * The step between them (about 0.045 in sRGB, a little over 4% of the range)
+ * is the only thing on screen with no meaning attached to it, so it is set to
+ * the smallest one that still resolves as an edge at the cliff rather than as
+ * a banding artefact on a wide flat area. Both carry the same slight blue cast
+ * the rest of the theme's neutrals do — the hue must match, or the ramp reads
+ * as a shift in material rather than in tone.
+ *
+ * Given as endpoints rather than as `base` plus a tone: a gradient between two
+ * colours is what this is, and a pair is what you actually pick when tuning it.
+ */
+export const CONCENTRIC_DARK: Rgb = [0.098, 0.110, 0.133]
+export const CONCENTRIC_PALE: Rgb = [0.141, 0.157, 0.188]
+
+/** Linear light the top of the ramp adds to the bottom. */
+const rampEmission = (): Rgb => linearEmission(CONCENTRIC_DARK, CONCENTRIC_PALE)
 
 /**
- * How far each kind of line lifts the base toward `GRID_LINE`.
+ * A radial ramp: the grey brightens smoothly with distance from the origin,
+ * then drops back in one step at every whole multiple of the root node's
+ * radius. Concentric, evenly spaced, and only one hard edge per period — with
+ * the brightening held back until near the cliff, so most of the canvas is the
+ * darker grey. See `EASE`.
  *
- * Deliberately in sRGB, which is the space these are legible and tunable in —
- * `bright` at 0.29 looks about twice as far from the background as `mid` at
- * 0.19, which is what you want when picking them, and is not at all what the
- * corresponding linear-light numbers (0.119 and 0.059) would suggest. The
- * decode to light happens in `gridEmission`, once, at module load.
+ * ## The geometry
  *
- * The spread between them is the whole hierarchy, so they move together: the
- * grid reads by *contrast* between tiers, not by absolute brightness, and
- * three tiers plus a brighter axis was more competing bright lines than a
- * background should put in front of someone all day.
+ * `r = |world|`, and the tone is `fract(r / PERIOD)` eased by `EASE` — 0 at
+ * the bottom of each ramp, approaching 1 just before the next cliff. The
+ * period is constant, so the cliffs are evenly spaced from the origin out
+ * however far you pan, and there is no tier structure because there are no
+ * decades to mark.
+ *
+ * The asymmetry is the point. A symmetric gradient (out and back) reads as
+ * soft concentric blur with no fixed features in it; a ramp that resets hard
+ * gives every period one crisp circle to locate yourself against, and the
+ * gradient between them tells you which way is out.
+ *
+ * ## Why `PERIOD` is the root node's radius
+ *
+ * The root node is a disc at the origin, and it is the one fixed landmark on
+ * the canvas — so the ramp is hung off it rather than off a number picked to
+ * look right on its own. At `PERIOD = ROOT_DISC_RADIUS` the first cliff lands
+ * exactly on the node's rim: the ramp under the node brightens out to its
+ * edge, and the step down happens precisely where the node ends. Every cliff
+ * after that is a whole number of root radii out, so the background reads as
+ * *that circle, repeated*, instead of as a pattern the node happens to sit in
+ * front of.
+ *
+ * `ROOT_DISC_RADIUS`, not `ROOT_NODE_RADIUS`: the latter is the node's *box*,
+ * which is larger than the circle drawn in it, and hanging the ramp off it put
+ * every cliff about 40% too far out. Anything aligning to what is on screen
+ * wants the disc.
+ *
+ * It also means resizing the root node rescales the background with it, which
+ * is the behaviour `ROOT_FOCUS_RADIUS` already has for the camera.
+ *
+ * ## What a fixed pitch costs
+ *
+ * The log grid this replaced was scale-free — it looked the same at every
+ * zoom, because its spacing grew with radius. A fixed pitch cannot be, so the
+ * ramp has a zoom range and `MIN_PX` fades it out below it. A root radius
+ * happens to suit the comfortable range (`ZOOM_SNAP_LOW` to `ZOOM_SNAP_HIGH`):
+ * a couple of periods across the screen zoomed in, tens of them zoomed out,
+ * and flat only in the rubber-band region past `MIN_ZOOM` where nothing else
+ * is readable either.
+ *
+ * ## Why the cliff does not crawl
+ *
+ * The first version of this background point-sampled a `smoothstep` of the
+ * distance to the nearest line, which is the usual way and is wrong: it asks
+ * "what colour is this pixel's centre" when the question is "what is the
+ * average colour over this pixel". Those differ as an edge drifts against the
+ * pixel grid, so the boundary shimmered as you zoomed.
+ *
+ * The ramp is integrated analytically over the pixel footprint instead — an
+ * exact box filter along the radial direction, where all the variation is.
+ * `rampIntegral` is the antiderivative of the sawtooth, so a pixel's tone is
+ * the difference of two evaluations over its footprint. That spends exactly
+ * one pixel on the cliff wherever it falls, and it degrades correctly: once a
+ * period is thinner than a pixel the integral converges on the ramp's mean
+ * rather than turning into moiré.
+ *
+ * The footprint is exact rather than an `fwidth`, for the same reason.
+ * `fwidth` is a finite difference across a 2×2 quad, so it quantises the
+ * transition in 2-pixel blocks; `|grad r| = 1` everywhere away from the
+ * origin, so the exact figure is just the pixel size in world units and the
+ * shader does not need the derivatives extension at all.
+ *
+ * ## Why the gradient does not band
+ *
+ * An exact tone is necessary and not sufficient. It says where in the ramp a
+ * pixel sits; turning that into a colour is a second step, and the obvious way
+ * to do it — `mix(DARK, PALE, tone)`, written straight to the framebuffer —
+ * mixes *encoded* values, not light. Against colours this dark that bends the
+ * ramp away from a straight line in light, which over a gradient this wide and
+ * this shallow is exactly the condition that shows up as contour banding.
+ *
+ * So the pair is decoded to linear light once, in TypeScript, as the amount
+ * the top of the ramp *adds* to the bottom. A pixel emits
+ * `DARK_LIN + tone * emission`, which is affine in the tone and therefore
+ * averages correctly, and the shader encodes to sRGB once at the end. See
+ * `./srgb`.
  */
-export const GRID_TONES = {
-  dim: 0.11,
-  mid: 0.19,
-  bright: 0.29,
-  /** Only just above `bright`: an axis is a decade line with a wider stroke. */
-  axis: 0.33,
-} as const
-
-/** sRGB colour of a fully covered line at the given tone. */
-export const gridTone = (tone: number): Rgb => [
-  GRID_BASE[0] + GRID_LINE[0] * tone,
-  GRID_BASE[1] + GRID_LINE[1] * tone,
-  GRID_BASE[2] + GRID_LINE[2] * tone,
-]
-
-/** Linear light a fully covered line at the given tone adds to the background. */
-const gridEmission = (tone: number): Rgb => linearEmission(GRID_BASE, gridTone(tone))
-
-/**
- * A true logarithmic grid: line positions are evenly spaced in log space, so
- * they crowd toward the origin and spread without limit going out.
- *
- * ## The warp
- *
- * Each axis is mapped through `u = sign(w) * log(1 + |w| / S0) / log(B)`, and
- * a line is drawn wherever `u` hits an integer. Near the origin that map is
- * very nearly linear, so the lines there look like ordinary graph paper; far
- * out each successive line sits `B` times further than the last. There is no
- * level set and no threshold to cross — the spacing is one continuous
- * function, which is what an earlier version of this shader got wrong by
- * switching between fixed-spacing levels at a radius.
- *
- * `B` is the tenth root of ten, so ten lines make a decade and the bright ones
- * land on powers of ten.
- *
- * ## The three tones
- *
- * One family of lines, not three layers: every line has an integer index, and
- * the index decides its tone — every tenth bright, every fifth mid, the rest
- * dim. Because spacing grows exponentially, the tiers also fade at different
- * radii on their own: approaching the origin the dim lines crowd below a pixel
- * and drop out, then the mid ones, leaving the decade lines. The hierarchy of
- * detail comes out of the geometry rather than being scheduled.
- *
- * A log grid also bounds its own cost: a viewport spanning a million world
- * units contains about forty lines per axis, not a million.
- *
- * ## Why the lines do not flicker
- *
- * The first version drew each line by point-sampling a `smoothstep` of the
- * distance to it, which is the usual way and is wrong: it asks "how bright is
- * this line at the pixel's centre" when the question is "how much of this
- * pixel does the line cover". Those differ as the line drifts against the
- * pixel grid, so a line's total brightness pulsed as you zoomed — brightest
- * when it sat on a pixel centre, dimmest when it straddled two.
- *
- * Both grid and axis lines are now integrated analytically over the pixel
- * footprint — an exact box filter. `boxIntegral` is the antiderivative of the
- * periodic line indicator, so coverage is the difference of two evaluations,
- * and adjacent pixels perpendicular to a line always sum to the same total
- * (`2 * HALF_PX`) no matter where the line falls between them. It also
- * degrades correctly: once lines are closer together than a pixel the integral
- * converges on their average density, so a crowded grid greys out smoothly
- * instead of turning into moiré.
- *
- * The derivative of the warp is taken in closed form rather than with
- * `fwidth`, for the same reason. `fwidth` is a finite difference across a 2×2
- * quad, so it quantises the line width in 2-pixel blocks and spikes on the
- * quad straddling an axis, where the warp's sign flips. The exact derivative
- * has neither problem, and the shader no longer needs the derivatives
- * extension at all.
- *
- * ## Why the lines do not pulse either
- *
- * Exact coverage is necessary and not sufficient. Coverage says what fraction
- * of a pixel a line lights; turning that into a colour is a second step, and
- * the obvious way to do it — `BASE + LINE * coverage`, written straight to the
- * framebuffer — mixes *encoded* values, not light. Against a background this
- * dark that costs a decade line about a fifth of its output when it lands
- * between two pixels rather than on one, which is a visible pulse while
- * panning even with coverage exact to floating point.
- *
- * So the tones below are decoded to linear light once, in TypeScript, as the
- * amount a fully covered line *adds* to the base. A pixel emits
- * `BASE_LIN + coverage * emission`, which is affine in coverage and therefore
- * sums to the same total however the line is split, and the shader encodes to
- * sRGB once at the end. See `./srgb`.
- *
- * ## The axes
- *
- * The axes are lines of this same family — index 0 is a multiple of ten, so an
- * axis always sits on a decade line — drawn in linear pixel space rather than
- * through the warp, and only slightly brighter than the decade lines they lie
- * on. They used to be a separate paler colour composited on top, which made
- * them by some way the brightest thing on the canvas; with three tiers plus an
- * axis tone that was one bright line too many to read anything against.
- *
- * `AXIS_HALF_PX >= HALF_PX` is load-bearing rather than aesthetic: it means an
- * axis's coverage is never less than that of the decade line beneath it, so
- * the `max` below always resolves to the axis term there. Two conserved terms
- * crossing over would not be conserved through the crossing.
- */
-export const GRID_BG_FRAG = `
+export const CONCENTRIC_BG_FRAG = `
 precision highp float;
 uniform vec2 uOrigin;
 uniform float uZoom;
 uniform float uDpr;
 
-/** The unlit background, in linear light. */
-const vec3 BASE_LIN = ${glslVec3(rgbToLinear(GRID_BASE))};
-/** Linear light a fully covered line of each tone adds to it. */
-const vec3 E_DIM    = ${glslVec3(gridEmission(GRID_TONES.dim))};
-const vec3 E_MID    = ${glslVec3(gridEmission(GRID_TONES.mid))};
-const vec3 E_BRIGHT = ${glslVec3(gridEmission(GRID_TONES.bright))};
-const vec3 E_AXIS   = ${glslVec3(gridEmission(GRID_TONES.axis))};
+/** The bottom of the ramp, in linear light. */
+const vec3 DARK_LIN = ${glslVec3(rgbToLinear(CONCENTRIC_DARK))};
+/** Linear light the top of the ramp adds to it. */
+const vec3 E_RAMP   = ${glslVec3(rampEmission())};
 
-/** World units at the first line out from the origin; sets the near-origin pitch. */
-const float S0         = 120.0;
-/** 1 / ln(10^(1/10)): ten line indices per decade. */
-const float INV_LN_B   = 4.342944819;
-/** Half-width of a grid line, in device pixels. */
-const float HALF_PX    = 0.5;
-/** Half-width of an axis, in device pixels. Never below HALF_PX — see above. */
-const float AXIS_HALF_PX = 0.6;
-/** Screen pixels below which a tier is faded out rather than left as a wash. */
-const float MIN_PX     = 6.0;
+/** World units per ramp: the root node's radius — see above. */
+const float PERIOD     = ${ROOT_DISC_RADIUS.toFixed(1)};
+/** Device pixels per ramp below which the pattern fades out. */
+const float MIN_PX     = 3.0;
 
 ${LINEAR_TO_SRGB_GLSL}
 
-/** World coordinate to line-index space. Signed, so it is symmetric about 0. */
-vec2 logCoord(vec2 w) {
-    return sign(w) * log(1.0 + abs(w) / S0) * INV_LN_B;
+/**
+ * Mean tone over one period, and so the average brightness of the entire
+ * background. 1 / (EASE + 1) for the cubic below — turn the easing and this
+ * turns with it.
+ */
+const float MEAN = 0.25;
+
+/**
+ * Antiderivative of the ramp, which is the cubic f^3 — the tone sits near the
+ * dark grey for most of a period and swings to the pale one only as it
+ * approaches the cliff.
+ *
+ * A linear ramp spent half of every period above the midpoint, which read as a
+ * pale canvas with dark rings cut into it: the gradient was the figure and the
+ * dark was the gap. Easing it moves the balance the other way, so the canvas
+ * *is* the dark grey and each cliff gets a highlight leaning into it.
+ *
+ * ## Why the exponent is spelled out rather than a constant
+ *
+ * The integral of f^3 is f^4/4, written here as two multiplications. Raising f
+ * to a constant exponent reads better and costs a transcendental — and this is
+ * called three times per fragment, on a full-screen quad, plus once more per
+ * fragment of every card mask. Some drivers strength-reduce a constant exponent
+ * to multiplications and some do not, and there is no way to tell which one a
+ * user got.
+ *
+ * The price is that the easing now lives in two places: change the curve and
+ * MEAN, this function, and the port in the tests all move together. Three lines
+ * in exchange for the shader's cost not depending on the driver.
+ *
+ * The constant term is dropped because this is only ever used as a difference.
+ */
+float rampIntegral(float x) {
+    float i = floor(x);
+    float f = x - i;
+    float f2 = f * f;
+    return (i + f2 * f2) * MEAN;
 }
 
 /**
- * Antiderivative of the periodic line indicator: lines of half-width w
- * centred on every integer. The constant term is dropped because this is only
- * ever used as a difference.
+ * Exact average tone over one pixel. u is the radius in periods, du the pixel
+ * footprint in periods.
  */
-float boxIntegral(float x, float w) {
-    float i = floor(x + 0.5);
-    return i * 2.0 * w + clamp(x - i, -w, w);
-}
+float rampTone(float u, float du) {
+    float h  = 0.5 * du;
+    float lo = u - h;
+    float hi = u + h;
 
-/**
- * Exact fraction of one pixel covered by a unit-spaced family of lines.
- * t is the coordinate in units where lines sit on integers, dt the pixel
- * footprint in those units, w the half-width in those units.
- */
-float lineCoverage(float t, float dt, float w) {
-    // Measured from the nearest line, so the integer term cancels exactly
-    // instead of being recovered by subtracting two large numbers.
-    float f = t - floor(t + 0.5);
-    float h = 0.5 * dt;
-    return clamp((boxIntegral(f + h, w) - boxIntegral(f - h, w)) / dt, 0.0, 1.0);
-}
+    // The pixel on the origin has no negative radius to average over: its
+    // footprint folds back on itself, and the part that would sit at r < 0
+    // reads the same ramp outward again. Without this the centre pixel
+    // averages in the period *behind* the origin — the bright end of a ramp
+    // that is not there — and the origin picks up a lit speck.
+    float folded = max(-lo, 0.0);
+    lo = max(lo, 0.0);
 
-/** Exact coverage by a single line at 0, with everything measured in pixels. */
-float axisCoverage(float xPx, float halfPx) {
-    return clamp(xPx + 0.5, -halfPx, halfPx) - clamp(xPx - 0.5, -halfPx, halfPx);
-}
+    // Both ends shifted by the same whole period, so the arithmetic stays near
+    // zero however far out the pixel is instead of differencing two large
+    // numbers. Sound because the ramp has period 1 in u, which is also what
+    // makes this continuous where the shift changes.
+    float n = floor(lo);
 
-/** Coverage by the lines whose index is a multiple of period, both axes. */
-float tier(vec2 u, vec2 du, float period) {
-    vec2 dt = du / period;
-    vec2 w = dt * HALF_PX;
-    vec2 cov = vec2(
-        lineCoverage(u.x / period, dt.x, w.x),
-        lineCoverage(u.y / period, dt.y, w.y)
-    );
-    // Aesthetic, not an aliasing fix: the integral above already handles
-    // crowding by converging on the average. This is what makes a tier drop
-    // out so the coarser one reads, instead of leaving a grey wash.
-    vec2 legible = smoothstep(vec2(MIN_PX), vec2(MIN_PX * 2.5), vec2(period) / du);
-    return max(cov.x * legible.x, cov.y * legible.y);
+    float area = rampIntegral(hi - n) - rampIntegral(lo - n) + rampIntegral(folded);
+    return clamp(area / du, 0.0, 1.0);
 }
 
 void main() {
     float worldPerPx = 1.0 / (uZoom * uDpr);
     vec2 world = (gl_FragCoord.xy - uOrigin) * worldPerPx;
-    vec2 u = logCoord(world);
 
-    // d(logCoord)/d(world) in closed form. Continuous through zero, unlike the
-    // fwidth of the same quantity.
-    vec2 du = INV_LN_B * worldPerPx / (S0 + abs(world));
+    // |grad r| = 1, so a pixel's footprint in periods is its world size over
+    // the period — exact, and the same everywhere.
+    float u    = length(world) / PERIOD;
+    float du   = worldPerPx / PERIOD;
+    float tone = rampTone(u, du);
 
-    vec2 axisPx = gl_FragCoord.xy - uOrigin;
-    float axis = max(
-        axisCoverage(axisPx.x, AXIS_HALF_PX),
-        axisCoverage(axisPx.y, AXIS_HALF_PX)
-    );
+    // Aesthetic, not an aliasing fix: the integral above already handles
+    // periods thinner than a pixel by converging on the ramp's mean. But a
+    // canvas that settles to a flat wash as you zoom out is worse than one
+    // that goes quiet, so past that point it fades to the bottom of the ramp
+    // instead.
+    tone *= smoothstep(MIN_PX, MIN_PX * 2.5, PERIOD / worldPerPx);
 
-    // Coverage scales emission, not an encoded colour: each term is affine in
-    // its coverage, so a line's total output is the same however it falls
-    // between pixels. Brightest tone wins where lines coincide — the max is
-    // componentwise, which is exact here because the tones share a hue.
-    vec3 emission = max(
-        max(tier(u, du,  1.0) * E_DIM,    tier(u, du, 5.0) * E_MID),
-        max(tier(u, du, 10.0) * E_BRIGHT, axis             * E_AXIS)
-    );
-
-    gl_FragColor = vec4(linearToSrgb(BASE_LIN + emission), 1.0);
+    // The tone scales emission, not an encoded colour: the term is affine in
+    // it, so the gradient is a straight line in light from one grey to the other.
+    gl_FragColor = vec4(linearToSrgb(DARK_LIN + tone * E_RAMP), 1.0);
 }
 `
 
@@ -575,20 +569,18 @@ void main() {
  *
  * ## Why these are outlined and the other themes' are not
  *
- * A pale chevron over a pale grid line is invisible, and on the decade lines
- * and axes — the brightest lines on the canvas, and the ones edges most often
- * run along — that is exactly where it happened. An accent hue would fix it
+ * A pale chevron over a pale band is invisible, and half the canvas is a pale
+ * band. An accent hue would fix it
  * and would also be the only chromatic thing in a theme whose whole point is
  * that colour means what you say it means, so it would read as significant
  * when it is not.
  *
  * A dark rim fixes it achromatically: the same chevron is drawn twice, once
  * grown by `OUTLINE_W`, and the difference between the two coverages is the
- * outline. The arrow is then legible against a bright line and against the
- * dark field alike, which is what an accent colour would have bought without
- * spending the theme's one meaningful signal on it.
+ * outline. The arrow is then legible against either band alike, which is what an accent colour would have bought without spending the
+ * theme's one meaningful signal on it.
  */
-export const GRID_EDGE_FRAG = `
+export const CONCENTRIC_EDGE_FRAG = `
 #extension GL_OES_standard_derivatives : enable
 precision highp float;
 varying vec2 vUV;
@@ -597,12 +589,12 @@ uniform float uIntensity;
 ${CHEVRON_GLSL}
 
 /**
- * Opaque, so brightness is set by the colour rather than by how much grid
- * shows through.
+ * Opaque, so brightness is set by the colour rather than by how much of the
+ * background shows through.
  *
  * An earlier version carried its weight in alpha, which made the chevrons
- * translucent — the grid read straight through them, and their apparent colour
- * changed depending on whether a grid line happened to be underneath. Alpha is
+ * translucent — the bands read straight through them, and their apparent colour
+ * changed depending on which band happened to be underneath. Alpha is
  * now coverage only: antialiasing at the silhouette, fully opaque inside. The
  * core is therefore about the luminance the translucent version *averaged* to,
  * not the value it was written with.
@@ -633,7 +625,7 @@ void main() {
   //
   // uIntensity (3.0 on the selected edge) brightens the core rather than the
   // alpha, since alpha is no longer free to carry it. The rim stays black, so
-  // a highlighted edge is still legible over a bright grid line.
+  // a highlighted edge is still legible over a pale band.
   vec3 rgb = mix(OUTLINE, min(CORE * uIntensity, vec3(1.0)), core);
 
   gl_FragColor = vec4(rgb, outline);

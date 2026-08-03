@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_FACETS, FACET_IDS, type FacetId } from './facets'
+import {
+  BACKGROUNDS,
+  DEFAULT_FACETS,
+  EDGES,
+  FACET_IDS,
+  type BackgroundFacet,
+  type EdgeFacet,
+  type FacetId,
+} from './facets'
+import { EDGE_VERT_SRC } from './shaders'
 import { DEFAULT_THEME_ID, themes, resolveFacet, resolveFacets, resolveTheme } from './themes'
 
 /**
@@ -58,10 +67,10 @@ describe('sparse override', () => {
     // Guards the trap this test fell into once: asserting on a facet id that
     // the default happens to share makes a broken lookup pass. Identity, and a
     // theme whose override differs from the default, are what actually check it.
-    const grid = resolveFacets('grid')
-    expect(grid.nodeTint).not.toBe(DEFAULT_FACETS.nodeTint)
-    expect(grid.nodeTint.id).toBe('neutral')
-    expect(grid.background.id).toBe('grid')
+    const concentric = resolveFacets('concentric')
+    expect(concentric.nodeTint).not.toBe(DEFAULT_FACETS.nodeTint)
+    expect(concentric.nodeTint.id).toBe('neutral')
+    expect(concentric.background.id).toBe('concentric')
   })
 })
 
@@ -69,15 +78,67 @@ describe('the edges facet', () => {
   it('lets a theme replace the vertex shader, and most do not', () => {
     // The chevron scroll lives in the vertex stage, so "still edges" is only
     // expressible as a different vertex shader.
-    expect(resolveFacet('grid', 'edges').vert).toBeTruthy()
+    expect(resolveFacet('concentric', 'edges').vert).toBeTruthy()
     expect(resolveFacet('default', 'edges').vert).toBeUndefined()
     expect(resolveFacet('nebula', 'edges').vert).toBeUndefined()
   })
 })
 
+/**
+ * `static` is a *promise* the renderer acts on: `CanvasFrameGate` stops drawing
+ * entirely when every facet in play declares it. A facet that claims it and
+ * then reads a clock does not look slightly wrong — it freezes. Nothing in the
+ * type system can check the claim, so these read the shader source instead.
+ */
+describe('the static promise', () => {
+  // Widened from the `as const` literals on purpose: an optional property is
+  // absent from the narrowed type of a facet that omits it, so reading
+  // `.static` off the literals would not compile — and, worse, would let these
+  // tests only ever see the facets that already declare it.
+  const backgrounds: readonly BackgroundFacet[] = Object.values(BACKGROUNDS)
+  const edges: readonly EdgeFacet[] = Object.values(EDGES)
+
+  it('is kept by every background that makes it', () => {
+    for (const facet of backgrounds) {
+      if (!facet.static) continue
+      expect(facet.frag, `background "${facet.id}"`).not.toMatch(/\biTime\b/)
+    }
+  })
+
+  it('is kept by every edge facet that makes it', () => {
+    for (const facet of edges) {
+      if (!facet.static) continue
+      // The default vertex shader scrolls vUV with uTime, so a static edge
+      // facet has to bring its own — its fragment shader cannot opt out.
+      expect(facet.vert, `edge "${facet.id}" vert`).toBeTruthy()
+      expect(facet.vert, `edge "${facet.id}" vert`).not.toBe(EDGE_VERT_SRC)
+      expect(facet.vert, `edge "${facet.id}" vert`).not.toMatch(/\buTime\b/)
+      // ...and it must not sample the animated background either, which is
+      // what makes the nebula's edges non-static despite holding still.
+      expect(facet.frag, `edge "${facet.id}" frag`).not.toMatch(/\buBgTime\b/)
+    }
+  })
+
+  it('defaults to animated, so an undeclared facet is never frozen', () => {
+    // The safe direction for a facet from a mod that has not considered this.
+    const animated = [...backgrounds, ...edges].filter((f) => f.id !== 'concentric')
+    expect(animated).not.toHaveLength(0)
+    for (const facet of animated) {
+      expect(facet.static, `facet "${facet.id}"`).toBeUndefined()
+    }
+  })
+
+  it('is what the concentric theme is for', () => {
+    // Both halves, or the gate cannot skip a frame: the edges composite over
+    // the background, so neither repaints alone.
+    expect(resolveFacet('concentric', 'background').static).toBe(true)
+    expect(resolveFacet('concentric', 'edges').static).toBe(true)
+  })
+})
+
 describe('node tint', () => {
-  it('gives every node the same neutral preset under the grid theme', () => {
-    const tint = resolveFacet('grid', 'nodeTint')
+  it('gives every node the same neutral preset under the concentric theme', () => {
+    const tint = resolveFacet('concentric', 'nodeTint')
     expect(tint.presetFor(0, 0)).toBe(tint.presetFor(9999, -4321))
   })
 

@@ -25,9 +25,9 @@ describe('the summary-chat bubble facet', () => {
     }
   })
 
-  it('gives the grid theme the mod\'s own variant', () => {
+  it('gives the concentric theme the mod\'s own variant', () => {
     // The mod names the theme; the theme knows nothing about the mod.
-    expect(bubbleFor('grid')).toBe(SUMMARY_BUBBLES.technical)
+    expect(bubbleFor('concentric')).toBe(SUMMARY_BUBBLES.technical)
   })
 
   it('gives every other theme the default', () => {

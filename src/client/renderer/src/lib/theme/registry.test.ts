@@ -50,7 +50,7 @@ describe('resolution', () => {
     registerFacet({
       id: 'summary-chat:bubble',
       defaultValue: 'speech',
-      byTheme: { grid: 'technical' },
+      byTheme: { concentric: 'technical' },
     })
   })
   afterEach(resetFacetRegistryForTests)
@@ -61,11 +61,11 @@ describe('resolution', () => {
 
   it('uses the mod\'s own per-theme variant when it has one', () => {
     // The dependency arrow: the mod names a base theme, never the reverse.
-    expect(resolveRegisteredFacet('summary-chat:bubble', 'grid', undefined)).toBe('technical')
+    expect(resolveRegisteredFacet('summary-chat:bubble', 'concentric', undefined)).toBe('technical')
   })
 
   it('lets a theme override beat the mod\'s variant', () => {
-    expect(resolveRegisteredFacet('summary-chat:bubble', 'grid', 'custom')).toBe('custom')
+    expect(resolveRegisteredFacet('summary-chat:bubble', 'concentric', 'custom')).toBe('custom')
   })
 })
 

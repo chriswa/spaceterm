@@ -6,6 +6,7 @@ import { useThemeStore } from '../stores/themeStore'
 import { resolveFacets } from '../lib/theme/themes'
 import type { BackgroundFacet, EdgeFacet } from '../lib/theme/facets'
 import { BG_VERT_SRC, EDGE_VERT_SRC } from '../lib/theme/shaders'
+import { CanvasFrameGate } from '../lib/canvas-frame-gate'
 
 export interface TreeLineNode {
   id: NodeId
@@ -227,6 +228,10 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     const bgT0 = performance.now() - (Math.random() * 2_000_000 - 1_000_000)
     const edgeT0 = performance.now()
 
+    // What lets a fully static theme stop repainting a still canvas. See
+    // `canvas-frame-gate` for why this is a comparison and not a dirty flag.
+    const gate = new CanvasFrameGate()
+
     // Handle resize
     const resize = () => {
       const w = Math.round(canvas.clientWidth * dpr)
@@ -245,14 +250,41 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       resize()
 
       const cam = cameraRef.current
+      const bgTime = (now - bgT0) / 1666
+      const edgeTime = (now - edgeT0) / 2000
+      const themeId = themeIdRef.current
+      const facets = resolveFacets(themeId)
+      const bg = bgCache.get(facets.background)
+      const edge = edgeCache.get(facets.edges)
+
+      // A facet that declares itself static takes its clock out of the frame's
+      // inputs; with both out, a canvas nobody is moving stops being redrawn at
+      // all. One animated facet is enough to put a clock back in and redraw
+      // every frame, which is the honest answer — the edges are composited over
+      // the background, so neither can be repainted alone.
+      if (!gate.shouldDraw({
+        width: canvas.width,
+        height: canvas.height,
+        clientWidth: canvas.clientWidth,
+        clientHeight: canvas.clientHeight,
+        camX: cam.x,
+        camY: cam.y,
+        camZ: cam.z,
+        bgTime: facets.background.static ? null : bgTime,
+        edgeTime: facets.edges.static ? null : edgeTime,
+        themeId,
+        edges: edgesRef.current,
+        maskRects: maskRectsRef.current,
+        selection: selectionRef.current,
+        reparentEdge: reparentEdgeRef.current,
+      })) {
+        rafRef.current = requestAnimationFrame(tick)
+        return
+      }
+
       gl.viewport(0, 0, canvas.width, canvas.height)
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
-
-      const bgTime = (now - bgT0) / 1666
-      const facets = resolveFacets(themeIdRef.current)
-      const bg = bgCache.get(facets.background)
-      const edge = edgeCache.get(facets.edges)
 
       // Both the full-screen pass and the card masks bind the background
       // program identically; only the vertex buffer and draw call differ.
@@ -294,7 +326,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           gl.uniform2f(edge.pan, cam.x, cam.y)
           gl.uniform1f(edge.zoom, cam.z)
           gl.uniform2f(edge.res, canvas.clientWidth, canvas.clientHeight)
-          gl.uniform1f(edge.time, (now - edgeT0) / 2000)
+          gl.uniform1f(edge.time, edgeTime)
           gl.uniform1f(edge.bgTime, bgTime)
           gl.uniform2f(edge.bgOrigin, cam.x * dpr, canvas.height - cam.y * dpr)
           gl.uniform1f(edge.dpr, dpr)
@@ -433,7 +465,13 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       rafRef.current = requestAnimationFrame(tick)
     }
 
-    const startLoop = () => { if (!rafRef.current) rafRef.current = requestAnimationFrame(tick) }
+    // The drawing buffer's contents do not survive being hidden, and the gate
+    // would otherwise skip the first frame back as "nothing changed".
+    const startLoop = () => {
+      if (rafRef.current) return
+      gate.invalidate()
+      rafRef.current = requestAnimationFrame(tick)
+    }
     const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
 
     // Subscribe to visibility changes

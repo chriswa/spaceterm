@@ -3,8 +3,8 @@ import {
   EDGE_VERT_STATIC_SRC,
   EMBER_BG_FRAG,
   EMBER_EDGE_FRAG,
-  GRID_BG_FRAG,
-  GRID_EDGE_FRAG,
+  CONCENTRIC_BG_FRAG,
+  CONCENTRIC_EDGE_FRAG,
   NEBULA_BG_FRAG,
   NEBULA_EDGE_FRAG,
 } from './shaders'
@@ -53,6 +53,19 @@ interface FacetBase {
 /** A fragment shader for the full-screen canvas background. See `./shaders`. */
 export interface BackgroundFacet extends FacetBase {
   readonly frag: string
+  /**
+   * True when the shader's output depends only on the camera, never on time.
+   *
+   * A promise, not a hint: `CanvasBackground` skips the whole frame when both
+   * this and the edge facet are static and nothing else moved, so a shader that
+   * declares this and then animates will simply freeze. `iTime` is still bound
+   * — the uniform is free — but reading it makes the claim false.
+   *
+   * Optional, defaulting to *animated*, because that is the safe direction: a
+   * facet from a mod that has not thought about this redraws every frame and
+   * looks right, rather than being silently frozen.
+   */
+  readonly static?: boolean
 }
 
 /**
@@ -66,6 +79,17 @@ export interface BackgroundFacet extends FacetBase {
 export interface EdgeFacet extends FacetBase {
   readonly frag: string
   readonly vert?: string
+  /**
+   * True when the shader pair's output depends only on the camera and the edge
+   * geometry, never on time. See `BackgroundFacet.static` — same promise, same
+   * safe default.
+   *
+   * Both halves have to hold. The default `vert` scrolls `vUV` with `uTime`, so
+   * an edge facet is only static if it also supplies `EDGE_VERT_STATIC_SRC`;
+   * and a fragment shader that samples the animated background (as the nebula's
+   * does) is not static however still its own geometry is.
+   */
+  readonly static?: boolean
 }
 
 /** What is drawn in the circle at the world origin. */
@@ -108,14 +132,23 @@ export const FACET_IDS = ['background', 'edges', 'rootNode', 'cardChrome', 'node
 export const BACKGROUNDS = {
   ember: { id: 'ember', label: 'Ember', frag: EMBER_BG_FRAG },
   nebula: { id: 'nebula', label: 'Nebula', frag: NEBULA_BG_FRAG },
-  grid: { id: 'grid', label: 'Log grid', frag: GRID_BG_FRAG },
+  // The only static one: a ramp in world space, so it changes when the camera
+  // does and at no other time.
+  concentric: { id: 'concentric', label: 'Concentric', frag: CONCENTRIC_BG_FRAG, static: true },
 } as const satisfies Record<string, BackgroundFacet>
 
 export const EDGES = {
   ember: { id: 'ember', label: 'Translucent', frag: EMBER_EDGE_FRAG },
   nebula: { id: 'nebula', label: 'Soft-light', frag: NEBULA_EDGE_FRAG },
-  // The only edge facet that overrides the vertex shader, to hold still.
-  grid: { id: 'grid', label: 'Static', frag: GRID_EDGE_FRAG, vert: EDGE_VERT_STATIC_SRC },
+  // The only edge facet that overrides the vertex shader, to hold still — and
+  // therefore the only one that can promise `static`.
+  concentric: {
+    id: 'concentric',
+    label: 'Static',
+    frag: CONCENTRIC_EDGE_FRAG,
+    vert: EDGE_VERT_STATIC_SRC,
+    static: true,
+  },
 } as const satisfies Record<string, EdgeFacet>
 
 export const ROOT_NODES = {

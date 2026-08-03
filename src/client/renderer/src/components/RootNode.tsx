@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { ROOT_NODE_RADIUS } from '../lib/constants'
+import { ROOT_NODE_RADIUS, ROOT_DISC_RADIUS, ROOT_DISC_INSET } from '../lib/constants'
 import { useFacet } from '../hooks/useFacet'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
@@ -35,7 +35,7 @@ const HIDDEN_ACTIONS_HEIGHT = 28
 
 export function RootNode({ focused, selected, onClick, archivedChildren, onUnarchive, onArchiveDelete, onOpenArchiveSearch, onAddNode, onReparentTarget }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
-  const visualSize = size * 0.7
+  const visualSize = ROOT_DISC_RADIUS * 2
   const { Component: RootNodeVisual } = useFacet('rootNode')
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const handleMouseDown = useCallback(
@@ -81,8 +81,8 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       <div
         style={{
           position: 'absolute',
-          left: size * 0.15,
-          top: size * 0.15 - HIDDEN_ACTIONS_HEIGHT,
+          left: ROOT_DISC_INSET,
+          top: ROOT_DISC_INSET - HIDDEN_ACTIONS_HEIGHT,
           width: visualSize,
           height: visualSize,
           pointerEvents: 'none',

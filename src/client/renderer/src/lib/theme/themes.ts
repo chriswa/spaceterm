@@ -77,12 +77,12 @@ const FALLBACK_THEME: Theme = {
 const BUILT_IN_THEMES: readonly Theme[] = [
   FALLBACK_THEME,
   {
-    id: 'grid',
-    label: 'Grid',
-    blurb: 'Logarithmic grid, still chevrons, colour only where you set it',
+    id: 'concentric',
+    label: 'Concentric',
+    blurb: 'Rings off the root node, nothing animated — repaints only when you move',
     facets: {
-      background: BACKGROUNDS.grid,
-      edges: EDGES.grid,
+      background: BACKGROUNDS.concentric,
+      edges: EDGES.concentric,
       rootNode: ROOT_NODES.reticle,
       cardChrome: CARD_CHROMES.technical,
       nodeTint: NODE_TINTS.neutral,
