@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
 import { attachWebGLRenderer } from '../lib/webgl-renderer'
+import { alignTerminalCellWidth, watchDevicePixelRatio } from '../lib/cell-metrics'
 import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '../lib/constants'
 import { classifyWheelEvent } from '../lib/wheel-gesture'
 import { type ColorPreset } from '../lib/color-presets'
@@ -368,6 +369,16 @@ export function TerminalCard({
     // renderer choice affects anything the user sees.
     const disposeRenderer = attachWebGLRenderer(term)
 
+    // Must come after the renderer is chosen: the two round a cell differently,
+    // and this is what stops either of them disagreeing with the CELL_WIDTH the
+    // card, the snapshot canvas and the overlay are all sized from. Re-run on a
+    // display change, which re-rounds every cell against the new pixel ratio.
+    const alignCells = (): void => {
+      alignTerminalCellWidth(term, (message) => window.api.log(`[TerminalCard ${id.slice(0, 8)}] ${message}`))
+    }
+    alignCells()
+    const unwatchDpr = watchDevicePixelRatio(alignCells)
+
     // Clean clipboard text on copy (when the toolbar toggle is enabled): strip
     // trailing whitespace, Claude Code prefixes, and common indent. When the
     // toggle is off we let the browser's default copy run so the raw xterm
@@ -522,14 +533,6 @@ export function TerminalCard({
       }
       return true
     })
-
-    // Log actual cell dimensions from xterm's renderer for calibration
-    try {
-      const dims = (term as any)._core._renderService.dimensions
-      window.api.log(`[TerminalCard ${id.slice(0, 8)}] cell dimensions: cellWidth=${dims.css.cell.width} cellHeight=${dims.css.cell.height} constantCellWidth=${CELL_WIDTH} constantCellHeight=${CELL_HEIGHT} termCols=${term.cols} termRows=${term.rows}`)
-    } catch {
-      // Renderer not ready yet
-    }
 
     // Switch to live mode (stop receiving snapshots, start receiving raw data)
     window.api.node.setTerminalMode(sessionId, 'live')
@@ -774,6 +777,7 @@ export function TerminalCard({
       searchAddonRef.current = null
       cleanupData()
       cleanupExit()
+      unwatchDpr()
       disposeRenderer()
       term.dispose()
     }

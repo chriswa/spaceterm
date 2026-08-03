@@ -4,7 +4,7 @@ import { ResizeGhost } from './ResizeGhost'
 import { terminalSnapshotCanvases } from './TerminalCard'
 import { useNodeStore } from '../stores/nodeStore'
 import { useResizeStore } from '../stores/resizeStore'
-import { terminalPixelSize } from '../lib/constants'
+import { terminalPixelSize, CELL_WIDTH, CELL_HEIGHT } from '../lib/constants'
 import type { NodeData } from '../../../../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../../../../shared/ids'
 
@@ -114,6 +114,11 @@ describe('the content ResizeGhost previews', () => {
     return { source, draws, ctx }
   }
 
+  /** The snapshot bitmap a card of this grid size would have registered. */
+  function bitmapFor(cols: number, rows: number): [number, number] {
+    return [Math.ceil(cols * CELL_WIDTH), Math.ceil(rows * CELL_HEIGHT)]
+  }
+
   function withCanvas(width: number, height: number) {
     const { source, draws, ctx } = fakeSource(width, height)
     terminalSnapshotCanvases.set(NODE, source)
@@ -131,7 +136,7 @@ describe('the content ResizeGhost previews', () => {
   it('copies the surface’s current screen into the preview at 1:1', () => {
     // Whatever the size being previewed, the copy is never scaled: a stretched
     // screen would misrepresent exactly the thing the preview exists to show.
-    const { draws, restore } = withCanvas(1350, 720)
+    const { draws, restore } = withCanvas(...bitmapFor(160, 45))
     try {
       useResizeStore.getState().startResize(NODE)
       useResizeStore.getState().setDraft({ cols: 300, rows: 80 })
@@ -143,32 +148,34 @@ describe('the content ResizeGhost previews', () => {
   })
 
   it('truncates rather than shrinks when the new size is smaller', () => {
-    const { draws, restore } = withCanvas(1350, 720)
+    const [sourceW, sourceH] = bitmapFor(160, 45)
+    const { draws, restore } = withCanvas(sourceW, sourceH)
     try {
       useResizeStore.getState().startResize(NODE)
       useResizeStore.getState().setDraft({ cols: 80, rows: 24 })
       render(<ResizeGhost />)
       const [, , , sw, sh] = draws.at(-1) as number[]
       // Only as much of the old screen as the smaller grid can hold.
-      expect(sw).toBeLessThan(1350)
-      expect(sh).toBeLessThan(720)
-      expect(sw).toBeCloseTo(Math.ceil(80 * 8.4375), 0)
+      expect(sw).toBeLessThan(sourceW)
+      expect(sh).toBeLessThan(sourceH)
+      expect(sw).toBeCloseTo(bitmapFor(80, 24)[0], 0)
     } finally { restore() }
   })
 
   it('copies the whole screen and leaves the rest bare when growing', () => {
-    const { draws, restore } = withCanvas(675, 360)
+    const [sourceW, sourceH] = bitmapFor(80, 24)
+    const { draws, restore } = withCanvas(sourceW, sourceH)
     try {
       useResizeStore.getState().startResize(NODE)
       useResizeStore.getState().setDraft({ cols: 300, rows: 80 })
       render(<ResizeGhost />)
       const [, , , sw, sh] = draws.at(-1) as number[]
-      expect([sw, sh]).toEqual([675, 360])
+      expect([sw, sh]).toEqual([sourceW, sourceH])
     } finally { restore() }
   })
 
   it('draws nothing when the card has no canvas registered', () => {
-    const { draws, restore } = withCanvas(1350, 720)
+    const { draws, restore } = withCanvas(...bitmapFor(160, 45))
     try {
       terminalSnapshotCanvases.delete(NODE)
       useResizeStore.getState().startResize(NODE)
