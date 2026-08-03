@@ -74,6 +74,20 @@ export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'"
 }
 
+/**
+ * Tools withheld from every Claude surface. `--disallowed-tools` removes a tool
+ * from the model's tool list outright rather than denying it at call time, so
+ * the agent never sees it and cannot weigh it against an alternative.
+ *
+ * `EndConversation` ends the *chat* but leaves the CLI running, which on a
+ * surface means a terminal sitting at a prompt with a dead conversation in it —
+ * nothing an agent wanting to stop itself would choose on purpose. Ending a
+ * surface is spaceterm's job, via a self-terminate MCP tool, and that one works
+ * for Cursor and Codex too. Leaving both on offer only invites an agent to
+ * reach for the inert one.
+ */
+const CLAUDE_WITHHELD_TOOLS = ['EndConversation']
+
 function claudeDriver(provisioning: AgentProvisioning): AgentDriver {
   return {
     type: 'claude',
@@ -91,7 +105,15 @@ function claudeDriver(provisioning: AgentProvisioning): AgentDriver {
           command: path.join(pluginDir, 'scripts/statusline-handler.sh')
         }
       })
-      const args = ['--plugin-dir', pluginDir, '--settings', statusLineSettings, '--dangerously-skip-permissions']
+      const args = [
+        '--plugin-dir', pluginDir,
+        '--settings', statusLineSettings,
+        // `--disallowed-tools` is variadic, so it has to be followed by another
+        // flag — put it before `--dangerously-skip-permissions`, never last,
+        // where it would swallow the leading entry of `extraArgs`.
+        '--disallowed-tools', ...CLAUDE_WITHHELD_TOOLS,
+        '--dangerously-skip-permissions'
+      ]
       if (extraArgs && extraArgs.length > 0) {
         args.push(...extraArgs)
       }

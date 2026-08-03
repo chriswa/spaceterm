@@ -89,6 +89,20 @@ describe('claude driver', () => {
     })
   })
 
+  it('withholds EndConversation, which self-terminates nothing on a surface', () => {
+    const options = drivers().claude.buildCreateOptions({})
+    expect(options.args![at(options.args!, '--disallowed-tools') + 1]).toBe('EndConversation')
+  })
+
+  it('never leaves --disallowed-tools last, where it would eat an extra arg', () => {
+    // The flag is variadic: whatever follows it is consumed as another tool name
+    // until the next `--flag`. A bare extraArgs value landing there would be
+    // silently swallowed instead of reaching claude.
+    const options = drivers().claude.buildCreateOptions({ extraArgs: ['bare-value'] })
+    const args = options.args!
+    expect(args[at(args, '--disallowed-tools') + 2]).toMatch(/^--/)
+  })
+
   it('resumes with -r', () => {
     const options = drivers().claude.buildCreateOptions({ resumeSessionId: 'sess-1' })
     expect(options.args![at(options.args!, '-r') + 1]).toBe('sess-1')
