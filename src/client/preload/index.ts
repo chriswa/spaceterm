@@ -173,7 +173,7 @@ const api: Api = {
   pty: ptyApi,
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
-  startSummaryChat: (nodeId: NodeId) => ipcRenderer.send('summary-chat:start', nodeId),
+  toggleSummaryChat: (nodeId: NodeId | undefined) => ipcRenderer.invoke('summary-chat:toggle', nodeId),
   restartSpaceterm: (): Promise<void> => ipcRenderer.invoke('app:restart-spaceterm'),
   writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),

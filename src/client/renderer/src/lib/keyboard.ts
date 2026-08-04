@@ -58,6 +58,22 @@ export function shouldYieldToFocusedEditor(
 }
 
 /**
+ * True when this keystroke is the Summary Chat chord.
+ *
+ * Control is neither required nor rejected, so both Cmd+P and Cmd+Ctrl+P work —
+ * they always have, and people have the one they have in their fingers.
+ *
+ * Autorepeat is excluded rather than left to the caller. The chord is a toggle,
+ * so a held key would start an answer, cancel it, start another, and so on for
+ * as long as the finger stays down.
+ */
+export function isSummaryChatChord(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'repeat'>
+): boolean {
+  return event.metaKey && event.key === 'p' && !event.repeat
+}
+
+/**
  * The viewport slot a Cmd+digit chord addresses, or null if it is not one.
  *
  * Reads `event.code`, not `event.key`: on macOS, Option+digit and Shift+digit

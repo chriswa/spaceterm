@@ -201,7 +201,7 @@ const restartRecovery = new RestartRecoveryLedger()
 // this distinct from an ordinary shutdown for the current launcher and any
 // future dedicated supervisor.
 const SERVER_RESTART_EXIT_CODE = 75
-let shutdownServer: ((exitCode?: number) => void) | null = null
+let shutdownServer: ((exitCode?: number) => Promise<void>) | null = null
 let serverRestartScheduled = false
 
 const clients = new Set<ClientConnection>()
@@ -868,22 +868,29 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       send(client.socket, { type: 'server-restarted', seq: msg.seq })
       // Give the acknowledgement a chance to leave the Unix socket before the
       // graceful shutdown closes all client connections.
-      setTimeout(() => shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+      setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
       break
     }
 
-    case 'summary-chat-start': {
-      const node = stateManager.getNode(msg.nodeId)
-      if (!node || node.type !== 'terminal') {
-        serverLog(`[summary-chat] rejected node=${msg.nodeId.slice(0, 8)} (not a terminal)`)
-        broadcastToAll({ type: 'summary-chat-status', nodeId: msg.nodeId, state: 'error', message: 'Focus an agent terminal before starting Summary Chat.' })
-        break
-      }
-      void summaryChat.start(
-        node.id,
-        transcriptPathForNode(node.id),
-        node.claudeSessionHistory.at(-1)?.claudeSessionId,
-      )
+    case 'summary-chat-toggle': {
+      // A node that is not a terminal is treated as no node at all: the press
+      // can still be a cancellation, and only SummaryChat knows whether it is.
+      const node = msg.nodeId ? stateManager.getNode(msg.nodeId) : undefined
+      const terminal = node?.type === 'terminal' ? node : undefined
+      void summaryChat.toggle(
+        terminal?.id,
+        terminal && transcriptPathForNode(terminal.id),
+        terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
+      ).then((result) => {
+        // Back to the client that pressed the key, not to every peer: the
+        // chirp, the shake and the toast belong to one person.
+        send(client.socket, {
+          type: 'summary-chat-toggle-result',
+          seq: msg.seq,
+          outcome: result.outcome,
+          ...(result.outcome === 'rejected' ? { message: result.message } : {}),
+        })
+      })
       break
     }
     case 'create': {
@@ -2450,7 +2457,7 @@ async function startServer(): Promise<void> {
   // Graceful shutdown
   let socketWatchdog: ReturnType<typeof setInterval> | null = null
   let shuttingDown = false
-  const shutdown = (exitCode = 0) => {
+  const shutdown = async (exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
     console.log('\nShutting down...')
@@ -2462,7 +2469,10 @@ async function startServer(): Promise<void> {
     sessionFileWatcher.dispose()
     codexSessionFileWatcher.dispose()
     cursorSessionFileWatcher.dispose()
-    summaryChat.dispose()
+    // Awaited: Voice Operator is a separate process, so quitting mid-answer
+    // without waiting for the cancellation to land leaves it talking on behalf
+    // of an app that no longer exists. Bounded by the request timeout.
+    await summaryChat.dispose()
     snapshotManager.dispose()
     stateManager.persistImmediate()
     sessionManager.destroyAll() // Cleans local state only — daemon PTYs persist
@@ -2479,8 +2489,8 @@ async function startServer(): Promise<void> {
 
   // Node passes the signal name to listeners; keep it out of shutdown's
   // numeric exit-code parameter so Ctrl+C exits cleanly with code 0.
-  process.on('SIGTERM', () => shutdown())
-  process.on('SIGINT', () => shutdown())
+  process.on('SIGTERM', () => void shutdown())
+  process.on('SIGINT', () => void shutdown())
 
   // Socket watchdog — detect if our socket files disappear (e.g. another server
   // stole them, accidental rm). Without the files on disk, hook-handler.sh can't
@@ -2490,7 +2500,7 @@ async function startServer(): Promise<void> {
   socketWatchdog = setInterval(() => {
     if (!fs.existsSync(SOCKET_PATH) || !fs.existsSync(HOOKS_SOCKET_PATH) || !fs.existsSync(SCRIPTS_SOCKET_PATH)) {
       console.error('Socket file disappeared — another server may have taken over. Shutting down.')
-      shutdown()
+      void shutdown()
     }
   }, SOCKET_WATCHDOG_INTERVAL_MS)
 }

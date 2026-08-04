@@ -50,8 +50,8 @@ import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
 import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
-import { playSummaryChatStartedCue } from './lib/summary-chat-wait-cue'
-import { shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
+import { pressSummaryChatChord, REAL_CHORD_CUES } from './lib/summary-chat-chord'
+import { isSummaryChatChord, shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
 import { tieredZIndex } from '../../../shared/card-types'
 import type { NodeData } from '../../../shared/state'
 
@@ -1812,20 +1812,26 @@ export function App() {
         }
       }
 
-      // Cmd+P: start a spoken summary chat for the focused agent transcript.
-      if (e.metaKey && e.key === 'p') {
-        const focusedNode = focusRef.current ? useNodeStore.getState().nodes[focusRef.current] : undefined
-        if (focusedNode?.type === 'terminal') {
-          e.preventDefault()
-          e.stopPropagation()
-          playSummaryChatStartedCue()
-          window.api.startSummaryChat(focusedNode.id)
-          return
-        }
+      // Cmd+P: one press of the Summary Chat chord. It summarizes the focused
+      // agent transcript, or cuts off whatever Summary Chat is producing — the
+      // server decides which, and its answer picks the feedback. See
+      // lib/summary-chat-chord.ts.
+      //
+      // The press is sent even with nothing eligible focused: stopping an
+      // answer must not depend on where the listener happens to be looking.
+      if (isSummaryChatChord(e)) {
         e.preventDefault()
         e.stopPropagation()
-        shakeCamera()
-        showToast('Focus an agent terminal to start Summary Chat.')
+        const focusedNode = focusRef.current ? useNodeStore.getState().nodes[focusRef.current] : undefined
+        // Deliberately not awaited before the next press can arrive: two quick
+        // presses mean "stop that, now start this", and serializing them here
+        // would drop the second.
+        void pressSummaryChatChord(focusedNode?.type === 'terminal' ? focusedNode.id : undefined, {
+          toggle: (nodeId) => window.api.toggleSummaryChat(nodeId),
+          ...REAL_CHORD_CUES,
+          rejected: (message) => { shakeCamera(); showToast(message) },
+        })
+        return
       }
 
       // Don't steal keys a focused text-editing control needs. See

@@ -24,6 +24,7 @@ import type {
   CreateOptions,
   SessionInfo,
   SnapshotMessage,
+  SummaryChatToggleOutcome,
   SummaryChatUiState,
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
@@ -135,7 +136,19 @@ export interface NodeApi {
 }
 
 /** Status the toolbar renders for a surface's summary-chat session. */
-export type { SummaryChatPhase, SummaryChatUiState } from './protocol'
+export type { SummaryChatPhase, SummaryChatUiState, SummaryChatToggleOutcome } from './protocol'
+
+/**
+ * What one press of the Summary Chat chord did.
+ *
+ * The press is a toggle whose meaning the server decides, so the outcome is the
+ * only way the renderer knows which feedback to give: a confirming chirp, an
+ * abort chirp, or a shake and a toast carrying `message`.
+ */
+export interface SummaryChatToggleResult {
+  outcome: SummaryChatToggleOutcome
+  message?: string
+}
 
 export interface TtsApi {
   speak(text: string): Promise<{ available: boolean }>
@@ -196,7 +209,12 @@ export interface Api {
   pty: PtyApi
   node: NodeApi
   log(message: string): void
-  startSummaryChat(nodeId: NodeId): void
+  /**
+   * Press the Summary Chat chord. Pass the focused terminal surface, or
+   * undefined when nothing eligible is focused — a press with nothing focused
+   * still cancels whatever is speaking.
+   */
+  toggleSummaryChat(nodeId: NodeId | undefined): Promise<SummaryChatToggleResult>
   restartSpaceterm(): Promise<void>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>

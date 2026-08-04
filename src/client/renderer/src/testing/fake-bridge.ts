@@ -1,6 +1,6 @@
 import type {
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
-  SessionInfo, SummaryChatUiState, SystemApi, TtsApi, WindowApi
+  SessionInfo, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
@@ -376,7 +376,12 @@ export class FakeBridge implements Api {
   }
 
   log = (message: string): void => this.record('log', message)
-  startSummaryChat = (nodeId: NodeId): void => this.record('startSummaryChat', nodeId)
+  /** Outcome the next chord press resolves with. Tests override per case. */
+  summaryChatToggleResult: SummaryChatToggleResult = { outcome: 'started' }
+  toggleSummaryChat = async (nodeId: NodeId | undefined): Promise<SummaryChatToggleResult> => {
+    this.record('toggleSummaryChat', nodeId)
+    return this.summaryChatToggleResult
+  }
   restartSpaceterm = (): Promise<void> => this.reply('restartSpaceterm', undefined)
   writeDebugLog = (content: string): Promise<string> =>
     this.reply('writeDebugLog', '/tmp/fake-debug.log', content)

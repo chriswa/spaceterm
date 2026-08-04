@@ -23,9 +23,23 @@ interface HttpCall {
   url: string
   method: string
   body?: unknown
+  /** The caller's abort signal, so a test can assert a request was dropped. */
+  signal?: AbortSignal
 }
 
 type RouteHandler = (call: HttpCall) => unknown
+
+/** A reply a test releases by hand, for observing the app mid-request. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (err: Error) => void } {
+  let resolve!: (value: T) => void
+  let reject!: (err: Error) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+
+function isThenable(value: unknown): value is Promise<unknown> {
+  return typeof (value as { then?: unknown } | undefined)?.then === 'function'
+}
 
 class FakeHttp {
   readonly calls: HttpCall[] = []
@@ -47,13 +61,17 @@ class FakeHttp {
     // rather than fail it. Fail loudly instead.
     if (this.calls.length > 500) throw new Error('FakeHttp: runaway polling — a route never terminates')
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
-    this.calls.push({ url, method, body })
+    const call: HttpCall = { url, method, body, signal: init?.signal ?? undefined }
+    this.calls.push(call)
 
     // Last matching route wins, so a test can override an earlier default.
     const route = [...this.routes].reverse().find((r) => url.includes(r.match))
     if (!route) return new Response('not found', { status: 404 })
 
-    const result = route.handler({ url, method, body })
+    // Awaited only when the route actually deferred, so routes that answer
+    // straight away keep their original microtask timing.
+    const raw = route.handler(call)
+    const result = isThenable(raw) ? await raw : raw
     if (result instanceof Response) return result
     return new Response(JSON.stringify(result), {
       status: 200,
@@ -166,30 +184,33 @@ function newestPrompt(h: Harness): string {
 }
 
 describe('start', () => {
-  it('reports an error when the surface has no transcript path', async () => {
+  // A surface that cannot be summarized is an answer to the press, not an event
+  // about the surface: it is reported back to whoever pressed the key rather
+  // than broadcast to every client, so nothing is announced at all.
+  it('rejects a surface with no transcript path', async () => {
     const h = harness()
-    await h.chat.start(NODE, undefined)
+    const result = await h.chat.start(NODE, undefined)
 
-    expect(h.statuses).toEqual([
-      { nodeId: NODE, state: 'error', message: 'This surface has no transcript to summarize yet.' }
-    ])
+    expect(result).toEqual({ outcome: 'rejected', message: 'This surface has no transcript to summarize yet.' })
+    expect(h.statuses).toEqual([])
     expect(haikuCalls(h)).toHaveLength(0)
   })
 
-  it('reports an error when the transcript is empty', async () => {
+  it('rejects an empty transcript', async () => {
     const h = harness({ transcript: [] })
-    await h.chat.start(NODE, '/t.jsonl')
+    const result = await h.chat.start(NODE, '/t.jsonl')
 
-    expect(h.statuses[0].state).toBe('error')
-    expect(h.statuses[0].message).toMatch(/no user messages/)
+    expect(result.outcome).toBe('rejected')
+    expect(result).toMatchObject({ message: expect.stringMatching(/no user messages/) })
+    expect(h.statuses).toEqual([])
   })
 
-  it('reports an error when the transcript has only assistant messages', async () => {
+  it('rejects a transcript with only assistant messages', async () => {
     // Summarising a turn requires a user request to anchor it.
     const h = harness({ transcript: [{ role: 'assistant', text: 'hello' }] })
-    await h.chat.start(NODE, '/t.jsonl')
+    const result = await h.chat.start(NODE, '/t.jsonl')
 
-    expect(h.statuses[0].state).toBe('error')
+    expect(result.outcome).toBe('rejected')
   })
 
   it('runs target → thinking → ready on a successful summary', async () => {
@@ -312,6 +333,9 @@ describe('speech monitoring', () => {
             : { id: 'speech-1', state: 'completed' }
         })
     })
+    // The voice is picked from a list fetched in the background. Wait for it
+    // rather than racing the constructor's refresh.
+    await h.tickVoiceRefresh()
     await h.chat.start(NODE, '/t.jsonl')
     await flush()
 
@@ -514,6 +538,317 @@ describe('speech monitoring', () => {
     await flush()
 
     expect(states(h)).toContain('ready')
+  })
+})
+
+/**
+ * Cancellation is the one behaviour here with no natural resting point: it can
+ * arrive at any instant between "the listener asked for a summary" and "the
+ * last syllable played". Each test below picks one of those instants — and
+ * several of them are instants that only exist between two awaits.
+ */
+describe('cancelAll', () => {
+  const speaking = (http: FakeHttp, offset = 61) =>
+    http.on('/v1/speech', ({ method }) => {
+      if (method === 'POST') return { id: 'speech-1', state: 'in_progress' }
+      if (method === 'DELETE') {
+        // 410 is what Voice Operator answers a successful cancellation with,
+        // and it carries how far the listener got.
+        return new Response(
+          JSON.stringify({ id: 'speech-1', state: 'cancelled_by_client', character_offset: offset }),
+          { status: 410 }
+        )
+      }
+      return { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+    })
+
+  it('does nothing, and says so, when no surface is producing', async () => {
+    const h = harness()
+    expect(await h.chat.cancelAll()).toBe(false)
+  })
+
+  it('drops a summary that is still waiting on Haiku', async () => {
+    const gate = deferred<unknown>()
+    const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
+    void h.chat.start(NODE, '/t.jsonl')
+    await flush(3)
+    expect(states(h)).toEqual(['target', 'thinking'])
+
+    expect(await h.chat.cancelAll()).toBe(true)
+    expect(states(h).at(-1)).toBe('ready')
+    // The request itself is dropped, not merely ignored — an answer nobody
+    // will hear is not worth paying for.
+    expect(haikuCalls(h)[0].signal?.aborted).toBe(true)
+
+    // Even if the reply arrives anyway, nothing is spoken and nothing settles
+    // a surface that has already been settled by someone else.
+    gate.resolve({ content: [{ type: 'text', text: 'too late' }] })
+    await flush()
+    expect(h.http.calls.some((c) => c.method === 'POST' && c.url.includes('/v1/speech'))).toBe(false)
+    expect(states(h).filter((s) => s === 'ready')).toHaveLength(1)
+  })
+
+  it('reports no error for an answer the listener deliberately cut off', async () => {
+    // The Haiku request is aborted, which surfaces as a rejected fetch. That is
+    // not a failure to report: it would put an error toast on screen every
+    // single time the chord was used to stop something.
+    const gate = deferred<unknown>()
+    const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
+    const started = h.chat.start(NODE, '/t.jsonl')
+    await flush(2)
+
+    await h.chat.cancelAll()
+    gate.reject(new Error('This operation was aborted'))
+    await started
+    await flush()
+
+    expect(states(h)).not.toContain('error')
+  })
+
+  it('drops a speech job that was created after the cancel landed', async () => {
+    // The window this closes: Haiku has answered and the speech POST is in
+    // flight, so there is a job about to exist that no monitor will ever adopt.
+    // Left alone it speaks a whole answer at someone who asked for silence.
+    const gate = deferred<unknown>()
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) =>
+          method === 'POST' ? gate.promise : { id: 'speech-1', state: 'completed' }
+        )
+    })
+    void h.chat.start(NODE, '/t.jsonl')
+    await flush(6)
+    expect(h.http.calls.some((c) => c.method === 'POST' && c.url.includes('/v1/speech'))).toBe(true)
+
+    expect(await h.chat.cancelAll()).toBe(true)
+    gate.resolve({ id: 'speech-1', state: 'in_progress' })
+    await flush()
+
+    expect(h.http.calls.some((c) => c.method === 'DELETE' && c.url.includes('speech-1'))).toBe(true)
+    expect(states(h).at(-1)).toBe('ready')
+  })
+
+  it('cuts off an answer that is already speaking', async () => {
+    const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http) })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+    expect(states(h).at(-1)).toBe('speaking')
+
+    expect(await h.chat.cancelAll()).toBe(true)
+
+    expect(h.http.calls.some((c) => c.method === 'DELETE' && c.url.includes('speech-1'))).toBe(true)
+    expect(states(h).at(-1)).toBe('ready')
+    expect(h.speaking.at(-1)).toMatchObject({ speaking: false })
+  })
+
+  it('tells the next follow-up how far the answer got', async () => {
+    // Reading this at all depends on the DELETE's 410 being treated as an
+    // answer rather than a failure.
+    const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http) })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+    await h.chat.cancelAll()
+    h.http.calls.length = 0
+
+    await h.chat.followUp('what was that?')
+    expect(newestPrompt(h)).toContain('character 61')
+  })
+
+  it('says nothing about an interruption before the first sentence finished', async () => {
+    // Voice Operator counts whole sentences, so a zero means the listener heard
+    // no complete sentence — there is nothing there to tell Haiku.
+    const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http, 0) })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+    await h.chat.cancelAll()
+    h.http.calls.length = 0
+
+    await h.chat.followUp('what was that?')
+    expect(newestPrompt(h)).not.toContain('interrupted')
+  })
+
+  it('settles every surface that is producing, not just one', async () => {
+    const other = asNodeId('node-99999999')
+    const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http) })
+    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(other, '/t.jsonl')
+    await flush(4)
+    h.statuses.length = 0
+
+    expect(await h.chat.cancelAll()).toBe(true)
+
+    for (const nodeId of [NODE, other]) {
+      expect(h.statuses.filter((s) => s.nodeId === nodeId).at(-1)?.state).toBe('ready')
+    }
+  })
+
+  it('leaves a surface alone when Voice Operator is merely listening', async () => {
+    // `waiting_for_user` keeps the job open but produces nothing. There is no
+    // sound to stop, so a press there is a request to start.
+    const h = harness({
+      stallBetweenPolls: true,
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) =>
+          method === 'POST'
+            ? { id: 'speech-1', state: 'in_progress' }
+            : { id: 'speech-1', state: 'in_progress', playback_state: 'waiting_for_user' }
+        )
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+    expect(states(h).at(-1)).toBe('ready')
+
+    expect(await h.chat.cancelAll()).toBe(false)
+  })
+})
+
+describe('toggle', () => {
+  it('starts a summary when nothing is happening', async () => {
+    const h = harness()
+    const result = await h.chat.toggle(NODE, '/t.jsonl', 'claude-session-7')
+    await flush()
+
+    expect(result).toEqual({ outcome: 'started' })
+    expect(haikuCalls(h)).toHaveLength(1)
+    // The surface the summary came from is part of the audit trail, so the
+    // press has to carry it all the way through.
+    expect(h.audits[0]).toMatchObject({ event: 'started', sourceAgentSessionId: 'claude-session-7' })
+  })
+
+  it('answers the press without waiting for the answer it starts', async () => {
+    // The chirp confirms a gesture. One that waited for Haiku would arrive
+    // seconds after the key, by which time a second press has its own meaning.
+    const gate = deferred<unknown>()
+    const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
+
+    expect(await h.chat.toggle(NODE, '/t.jsonl')).toEqual({ outcome: 'started' })
+
+    gate.resolve({ content: [{ type: 'text', text: 'A concise summary.' }] })
+    await flush()
+  })
+
+  it('rejects a press with nothing eligible focused and nothing to stop', async () => {
+    const h = harness()
+    const result = await h.chat.toggle(undefined)
+
+    expect(result.outcome).toBe('rejected')
+    expect(haikuCalls(h)).toHaveLength(0)
+  })
+
+  it('cancels rather than starting while an answer is in flight', async () => {
+    const h = harness({ stallBetweenPolls: true, configure: (http) =>
+      http.on('/v1/speech', ({ method }) =>
+        method === 'POST'
+          ? { id: 'speech-1', state: 'in_progress' }
+          : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+      )
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+
+    expect(await h.chat.toggle(NODE, '/t.jsonl')).toEqual({ outcome: 'cancelled' })
+    // The press meant "stop", so it must not also have queued another answer.
+    expect(haikuCalls(h)).toHaveLength(1)
+  })
+
+  it('cancels whatever is speaking even with nothing focused', async () => {
+    // Silence must not depend on which surface the listener is looking at.
+    const h = harness({ stallBetweenPolls: true, configure: (http) =>
+      http.on('/v1/speech', ({ method }) =>
+        method === 'POST'
+          ? { id: 'speech-1', state: 'in_progress' }
+          : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+      )
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+
+    expect(await h.chat.toggle(undefined)).toEqual({ outcome: 'cancelled' })
+  })
+
+  it('starts on a different surface on the press right after a cancel', async () => {
+    // The whole point of the gesture: listening to one surface, cut it off,
+    // press again, and be summarizing the surface now in front of you.
+    const other = asNodeId('node-99999999')
+    const h = harness({ stallBetweenPolls: true, configure: (http) =>
+      http.on('/v1/speech', ({ method }) =>
+        method === 'POST'
+          ? { id: 'speech-1', state: 'in_progress' }
+          : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
+      )
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+
+    expect(await h.chat.toggle(other, '/t.jsonl')).toEqual({ outcome: 'cancelled' })
+    expect(await h.chat.toggle(other, '/t.jsonl')).toEqual({ outcome: 'started' })
+    await flush()
+
+    expect(h.chat.getTargetNodeId()).toBe(other)
+    expect(h.statuses.filter((s) => s.nodeId === NODE).at(-1)?.state).toBe('ready')
+  })
+})
+
+describe('when Voice Operator refuses the job', () => {
+  it('says that speech is muted rather than falling silent', async () => {
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', () => new Response(JSON.stringify({ error: 'speech_muted' }), { status: 503 }))
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(h.statuses.find((s) => s.state === 'error')?.message).toMatch(/muted/i)
+    expect(states(h).at(-1)).toBe('ready')
+  })
+})
+
+describe('change-cursor polling', () => {
+  it('follows the job by cursor when the service offers one', async () => {
+    // `?since=` is the only way to observe queued → speaking. Without it this
+    // monitor has to spin; with it, the service does the waiting.
+    let poll = 0
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress', playback_state: 'queued', version: 1 }
+          poll++
+          return poll === 1
+            ? { id: 'speech-1', state: 'in_progress', playback_state: 'speaking', version: 2 }
+            : { id: 'speech-1', state: 'completed', version: 3 }
+        })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    const polls = h.http.calls.filter((c) => c.method === 'GET' && c.url.includes('/v1/speech/'))
+    expect(polls.map((c) => new URL(c.url).searchParams.get('since'))).toEqual(['1', '2'])
+    expect(polls.every((c) => new URL(c.url).searchParams.get('wait') !== '0')).toBe(true)
+    expect(states(h)).toEqual(['target', 'thinking', 'speaking', 'ready'])
+  })
+
+  it('does not spin when a service reports a version but ignores the cursor', async () => {
+    // A long poll is only a pace if the service honours it. One that answers
+    // immediately with the same version told us nothing, so fall back to the
+    // floor rather than trusting it.
+    let poll = 0
+    const sleeps: number[] = []
+    const h = harness({
+      sleepSpy: (ms) => sleeps.push(ms),
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress', version: 7 }
+          poll++
+          return poll < 4
+            ? { id: 'speech-1', state: 'in_progress', playback_state: 'speaking', version: 7 }
+            : { id: 'speech-1', state: 'completed', version: 7 }
+        })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(sleeps.length).toBeGreaterThanOrEqual(3)
+    expect(sleeps.every((ms) => ms > 0)).toBe(true)
   })
 })
 

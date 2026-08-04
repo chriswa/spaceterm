@@ -136,15 +136,31 @@ function playEchoTone(): () => void {
   }
 }
 
-/** A small confirmation that Cmd+P accepted a Summary Chat request. */
+/** A small confirmation that the chord started a Summary Chat. */
 export function playSummaryChatStartedCue(): void {
+  playChirp(587, 740)
+}
+
+/**
+ * The same chord's other meaning: an answer was cut off.
+ *
+ * Falling rather than rising, and a little lower, so the two outcomes of one
+ * key are told apart by ear. It matters here more than most confirmations do —
+ * the press that cancels is usually made *while* something is talking, and the
+ * listener needs to know it landed without waiting to hear silence.
+ */
+export function playSummaryChatCancelledCue(): void {
+  playChirp(494, 370)
+}
+
+function playChirp(fromHz: number, toHz: number): void {
   const context = getAudioContext()
   const start = context.currentTime
   const oscillator = context.createOscillator()
   const gain = context.createGain()
   oscillator.type = 'sine'
-  oscillator.frequency.setValueAtTime(587, start)
-  oscillator.frequency.linearRampToValueAtTime(740, start + 0.07)
+  oscillator.frequency.setValueAtTime(fromHz, start)
+  oscillator.frequency.linearRampToValueAtTime(toHz, start + 0.07)
   gain.gain.setValueAtTime(0.035, start)
   gain.gain.linearRampToValueAtTime(0, start + 0.08)
   oscillator.connect(gain).connect(context.destination)

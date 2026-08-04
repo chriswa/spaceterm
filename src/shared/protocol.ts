@@ -503,9 +503,23 @@ export interface FocusClaudeSessionMessage {
   claudeSessionId: ClaudeSessionId
 }
 
-export interface SummaryChatStartMessage {
-  type: 'summary-chat-start'
-  nodeId: NodeId
+/**
+ * One press of the Summary Chat chord. Deliberately an *intent*, not a verb.
+ *
+ * Whether a press starts an answer or cuts one off is a question about the
+ * conversations the server owns, and the client's view of those lags by a
+ * broadcast hop. A client that decided for itself would send a second `start`
+ * for a press made milliseconds after the first — exactly the press that is
+ * meant to cancel. So the client reports what is focused and the server rules.
+ *
+ * `nodeId` is the focused terminal surface, absent when nothing eligible is
+ * focused. A press with nothing focused still cancels: silencing an answer must
+ * not depend on which surface the listener happens to be looking at.
+ */
+export interface SummaryChatToggleMessage {
+  type: 'summary-chat-toggle'
+  seq: number
+  nodeId?: NodeId
 }
 
 export interface VoiceCommandMessage {
@@ -652,7 +666,7 @@ export type ClientMessage =
   | CameraBoundsMessage
   | FocusSurfaceRequestMessage
   | FocusClaudeSessionMessage
-  | SummaryChatStartMessage
+  | SummaryChatToggleMessage
   | SaveViewportMessage
 
 // --- Server → Client messages ---
@@ -854,6 +868,25 @@ export interface SummaryChatStatusMessage {
   type: 'summary-chat-status'
   nodeId: NodeId
   state: SummaryChatUiState
+  message?: string
+}
+
+/** What one press of the chord turned out to mean. */
+export type SummaryChatToggleOutcome = 'started' | 'cancelled' | 'rejected'
+
+/**
+ * The answer to one `summary-chat-toggle`, sent to the client that pressed the
+ * key rather than broadcast.
+ *
+ * The press produces feedback that belongs to a person — a confirming chirp, an
+ * abort chirp, a shake and a toast — and there is exactly one person it belongs
+ * to. Phase changes stay broadcast, because every client draws them.
+ */
+export interface SummaryChatToggleResultMessage {
+  type: 'summary-chat-toggle-result'
+  seq: number
+  outcome: SummaryChatToggleOutcome
+  /** Why the press was rejected. Present only for `rejected`. */
   message?: string
 }
 
@@ -1115,6 +1148,7 @@ export type ServerMessage =
   | SpeakServerMessage
   | SpeakingChangedMessage
   | SummaryChatStatusMessage
+  | SummaryChatToggleResultMessage
   | PeerConnectedMessage
   | PeerDisconnectedMessage
   | PeerCameraBoundsMessage

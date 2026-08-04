@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 import { execFileSync } from 'child_process'
 import { serverLog } from './server-log'
 import type { NodeId } from '../shared/ids'
-import type { SummaryChatPhase, SummaryChatUiState } from '../shared/protocol'
+import type { SummaryChatPhase, SummaryChatToggleOutcome, SummaryChatUiState } from '../shared/protocol'
 
 const DISCOVERY_PATH = path.join(homedir(), 'Library', 'Application Support', 'VoiceOperator', 'speech-service.json')
 const MAX_MESSAGES = 24
@@ -41,6 +41,59 @@ type SpeechStatus = {
   state: 'in_progress' | 'completed' | 'interrupted_by_user' | 'cancelled_by_client' | 'synthesis_failed'
   playback_state?: 'queued' | 'speaking' | 'waiting_for_user'
   character_offset?: number
+  /**
+   * Voice Operator's change cursor for this job, bumped on every observable
+   * change. Absent on services predating it — see `monitorSpeech`, which falls
+   * back to the polling cadence that cursor replaced.
+   */
+  version?: number
+}
+
+/** What one press of the chord did, and why, if it did nothing. */
+export type ToggleResult =
+  | { outcome: Exclude<SummaryChatToggleOutcome, 'rejected'> }
+  | { outcome: 'rejected'; message: string }
+
+/**
+ * One run of `ask` — a Haiku request, the speech job it produces, and the
+ * monitor that watches that job play out.
+ *
+ * Every `await` in that chain resumes into a world which may have moved on: the
+ * listener may have cancelled, or started a newer answer on the same surface.
+ * The point of this object is that all of those resumption points ask the *same
+ * question of the same thing*. They used to each invent their own staleness
+ * test, and only some of them had one at all — which is how a cancel arriving
+ * between Haiku answering and the speech POST returning produced a job nobody
+ * owned, still talking at a listener who had asked for silence.
+ */
+class Attempt {
+  private readonly controller = new AbortController()
+
+  constructor(private readonly conversation: Conversation) {}
+
+  /** Cancels the in-flight HTTP request this attempt is waiting on, if any. */
+  get signal(): AbortSignal { return this.controller.signal }
+
+  /**
+   * Whether this attempt still owns its conversation. False once it has been
+   * cancelled, superseded, or has settled — so a resumption point that reads
+   * false must touch nothing, because someone else already has.
+   */
+  get isCurrent(): boolean { return this.conversation.attempt === this }
+
+  /** Give up ownership. Aborting is what unblocks a parked long poll. */
+  abandon(): void {
+    if (this.isCurrent) this.conversation.attempt = undefined
+    this.controller.abort()
+  }
+}
+
+/** A validated summary request, ready to commit to. */
+interface Prepared {
+  nodeId: NodeId
+  transcriptPath: string
+  sourceAgentSessionId?: string
+  messages: TranscriptMessage[]
 }
 
 interface Conversation {
@@ -50,6 +103,8 @@ interface Conversation {
   haikuHistory: HaikuMessage[]
   voice?: string
   speechId?: string
+  /** The run currently allowed to act on this conversation. See `Attempt`. */
+  attempt?: Attempt
   /**
    * The single answer to "what is this surface doing". Every listener — the
    * bubble, the waiting cue, the card's speaking glow — is derived from this
@@ -158,9 +213,12 @@ export class SummaryChat {
     void this.refreshVoices()
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.cancelVoiceRefresh()
-    for (const conversation of Array.from(this.conversations.values())) void this.cancelSpeech(conversation)
+    // Awaited, unlike before: quitting mid-answer used to race the process
+    // exit against the DELETE, and losing that race leaves Voice Operator
+    // talking on behalf of an app that no longer exists.
+    await this.cancelAll()
   }
 
   /** The conversation unqualified Voice Operator commands currently target. */
@@ -169,21 +227,90 @@ export class SummaryChat {
       .sort((a, b) => b.lastUsedSeq - a.lastUsedSeq)[0]?.nodeId
   }
 
-  async start(nodeId: NodeId, transcriptPath: string | undefined, sourceAgentSessionId?: string): Promise<void> {
+  /**
+   * One press of the chord: cut off whatever is being produced, or — when
+   * nothing is — summarize the focused surface.
+   *
+   * Cancelling wins whenever anything is audible or on its way to being
+   * audible, whatever surface it belongs to and whatever is focused. That is
+   * the whole point of the gesture: it is the listener saying "stop", and a
+   * stop that only worked on the surface you happened to be looking at would
+   * leave them hunting for the one that is talking.
+   */
+  async toggle(nodeId: NodeId | undefined, transcriptPath?: string, sourceAgentSessionId?: string): Promise<ToggleResult> {
+    if (await this.cancelAll()) return { outcome: 'cancelled' }
+    if (!nodeId) return { outcome: 'rejected', message: 'Focus an agent terminal to start Summary Chat.' }
+    const prepared = this.prepare(nodeId, transcriptPath, sourceAgentSessionId)
+    if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
+    // Answer the press now rather than when the answer is ready. The exchange
+    // takes seconds; a confirmation that waited for it would land long after
+    // the gesture it is confirming, and a second press in the meantime would
+    // find nothing to cancel.
+    void this.run(prepared)
+    return { outcome: 'started' }
+  }
+
+  /**
+   * Stop every surface that is producing an answer.
+   *
+   * "Producing" is read off the phase, which is already the one value the whole
+   * app derives from. A surface parked in `waiting_for_user` reads `ready`: the
+   * job is still open but nothing is audible and nothing is pending, so a press
+   * there is a request to *start*, not a request for silence that has already
+   * arrived.
+   *
+   * Returns whether there was anything to stop — which is what makes the press
+   * a toggle.
+   */
+  async cancelAll(): Promise<boolean> {
+    const busy = Array.from(this.conversations.values()).filter(isBusy)
+    if (!busy.length) return false
+    // Concurrently, not in sequence: cancelling a speaking job promotes the
+    // next one in Voice Operator's queue, so a serial walk gives a queued job a
+    // window to start talking before its own DELETE arrives.
+    await Promise.all(busy.map(conversation => this.cancel(conversation)))
+    return true
+  }
+
+  /**
+   * Summarize a surface, awaiting the whole exchange.
+   *
+   * `toggle` is the gesture; this is the operation, and it is split from the
+   * gesture because they want opposite things from time. A press must be
+   * answered immediately, while a caller that wants to *observe* the answer —
+   * every test here — wants to await it.
+   */
+  async start(nodeId: NodeId, transcriptPath: string | undefined, sourceAgentSessionId?: string): Promise<ToggleResult> {
+    const prepared = this.prepare(nodeId, transcriptPath, sourceAgentSessionId)
+    if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
+    await this.run(prepared)
+    return { outcome: 'started' }
+  }
+
+  /** Everything a summary needs before it commits to anything, or why it can't. */
+  private prepare(
+    nodeId: NodeId,
+    transcriptPath: string | undefined,
+    sourceAgentSessionId?: string,
+  ): Prepared | { message: string } {
     if (!transcriptPath) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} has no resolved transcript`)
-      this.onStatusChanged(nodeId, 'error', 'This surface has no transcript to summarize yet.')
-      return
+      return { message: 'This surface has no transcript to summarize yet.' }
     }
     const messages = this.deps.readTranscript(transcriptPath)
     if (!messages.length || !messages.some(message => message.role === 'user')) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} transcript has no user-facing messages`)
-      this.onStatusChanged(nodeId, 'error', 'This transcript has no user messages to summarize yet.')
-      return
+      return { message: 'This transcript has no user messages to summarize yet.' }
     }
+    return { nodeId, transcriptPath, sourceAgentSessionId, messages }
+  }
 
+  private async run({ nodeId, transcriptPath, sourceAgentSessionId, messages }: Prepared): Promise<void> {
+    // A previous conversation on this surface may still hold an open speech job
+    // even when it was idle enough not to count as busy — Voice Operator parked
+    // on `waiting_for_user`, say. Nothing should outlive the answer it belongs to.
     const previous = this.conversations.get(nodeId)
-    if (previous) await this.cancelSpeech(previous)
+    if (previous) await this.cancel(previous)
     const conversation: Conversation = {
       auditId: randomUUID(),
       nodeId,
@@ -233,34 +360,74 @@ export class SummaryChat {
 
   private async ask(conversation: Conversation, prompt: string, kind: 'initial' | 'follow-up'): Promise<void> {
     conversation.lastUsedSeq = ++this.useCounter
+    // Supersede any run already under way on this surface before announcing a
+    // new phase, so there is never a moment where two attempts both believe
+    // they own the conversation.
+    conversation.attempt?.abandon()
+    const attempt = new Attempt(conversation)
+    conversation.attempt = attempt
     this.setPhase(conversation, 'thinking')
-    let waitingForSpeech = false
+    let monitoring = false
     try {
-      const text = await this.askHaiku(conversation, prompt)
+      const text = await this.askHaiku(conversation, prompt, attempt)
+      // Audited before the ownership check: the request was made and the tokens
+      // were spent, whether or not anyone still wants the answer.
       this.deps.audit.append({
         event: 'haiku-response', auditId: conversation.auditId, nodeId: conversation.nodeId,
         kind, provider: 'messages-api', responseCharacters: text.length,
       })
-      if (!text) return
+      if (!attempt.isCurrent || !text) return
       // The Voice Operator may have appeared after this chat started. Lock a
       // deterministic voice as soon as its voice list becomes available.
       conversation.voice ??= this.voiceFor(conversation.nodeId)
       const speech = await this.speak(text, conversation.voice)
-      conversation.speechId = speech?.id
-      if (speech?.id) {
+      if (!attempt.isCurrent) {
+        // Cancelled while the POST was in flight. The job now exists and no
+        // monitor will ever adopt it, so it has to be dropped right here — this
+        // is the window that used to speak a whole answer at a listener who had
+        // already asked for silence.
+        if (speech.job) void this.dropSpeech(speech.job.id)
+        return
+      }
+      if (speech.error) {
+        serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} speech refused: ${speech.error}`)
+        this.onStatusChanged(conversation.nodeId, 'error', speechErrorMessage(speech.error))
+        return
+      }
+      if (speech.job) {
+        conversation.speechId = speech.job.id
         // Stay in `thinking` until Voice Operator confirms that audio is
         // actually speaking; a successful POST only means it accepted the job,
         // which may still be queued.
-        waitingForSpeech = true
-        void this.monitorSpeech(conversation, speech.id)
+        monitoring = true
+        void this.monitorSpeech(conversation, attempt, speech.job)
       }
       serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} spoke ${text.length} chars`)
     } catch (err) {
+      // A cancelled request is not a failure. Reporting one would put an error
+      // toast on screen every time the listener deliberately cut an answer off.
+      if (!attempt.isCurrent) return
       serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} Haiku failed: ${err instanceof Error ? err.message : String(err)}`)
       this.onStatusChanged(conversation.nodeId, 'error', 'Summary Chat could not reach Haiku.')
     } finally {
-      if (!waitingForSpeech) this.setPhase(conversation, 'ready')
+      // Only the owner settles. A superseded or cancelled attempt leaves the
+      // phase to whoever took the conversation from it.
+      if (!monitoring && attempt.isCurrent) this.settle(conversation, attempt)
     }
+  }
+
+  /**
+   * End an attempt, returning its surface to idle.
+   *
+   * Silently does nothing for an attempt that no longer owns the conversation,
+   * so every path out of `ask` and `monitorSpeech` can simply call it rather
+   * than first working out whether it is still entitled to.
+   */
+  private settle(conversation: Conversation, attempt: Attempt): void {
+    if (!attempt.isCurrent) return
+    conversation.speechId = undefined
+    conversation.attempt = undefined
+    this.setPhase(conversation, 'ready')
   }
 
   /**
@@ -268,7 +435,7 @@ export class SummaryChat {
    * directly with the Claude Code OAuth credential kept in the macOS Keychain.
    * Keep a bounded history locally because this endpoint is stateless.
    */
-  private async askHaiku(conversation: Conversation, prompt: string): Promise<string> {
+  private async askHaiku(conversation: Conversation, prompt: string, attempt: Attempt): Promise<string> {
     const pending: HaikuMessage = { role: 'user', content: prompt }
     const messages = boundedHaikuHistory([...conversation.haikuHistory, pending])
     const response = await this.deps.fetch(HAIKU_URL, {
@@ -289,7 +456,10 @@ export class SummaryChat {
         ],
         messages,
       }),
-      signal: AbortSignal.timeout(30_000),
+      // Two ways to stop waiting: the request took too long, or nobody wants
+      // the answer any more. Cancelling mid-summary drops the Haiku call rather
+      // than paying for a reply that will be thrown away.
+      signal: AbortSignal.any([attempt.signal, AbortSignal.timeout(30_000)]),
     })
     if (!response.ok) throw new Error(`Messages API returned ${response.status}`)
     const payload = await response.json() as { content?: Array<{ type?: string; text?: string }> }
@@ -328,45 +498,70 @@ export class SummaryChat {
     if (recorded !== undefined) return recorded
     // Still-live job: the follow-up beat the monitor to the terminal status.
     if (!conversation.speechId) return undefined
-    const status = await this.speechRequest<SpeechStatus>(`/v1/speech/${encodeURIComponent(conversation.speechId)}?wait=0`)
-    if (!status || status.state !== 'interrupted_by_user') return undefined
+    const status = speechStatus(await this.speechRequest(`/v1/speech/${encodeURIComponent(conversation.speechId)}?wait=0`))
+    if (status?.state !== 'interrupted_by_user') return undefined
     return status.character_offset ?? 0
   }
 
   /**
-   * Drop a speech job and settle the surface.
+   * Stop a conversation producing, and settle its surface.
    *
-   * The phase must be settled here rather than left to `monitorSpeech`: the
-   * monitor's loop exits silently once `speechId` no longer matches, so a
-   * cancelled job used to strand the surface in `thinking` forever — which is
-   * how a waiting cue could outlive the thing it was waiting for.
+   * The phase is settled here rather than left to `monitorSpeech`: the monitor
+   * returns silently once it no longer owns the conversation, so a cancelled
+   * job used to strand the surface in `thinking` forever — which is how a
+   * waiting cue could outlive the thing it was waiting for.
    */
-  private async cancelSpeech(conversation: Conversation): Promise<void> {
+  private async cancel(conversation: Conversation): Promise<void> {
     const speechId = conversation.speechId
-    if (!speechId) return
+    const attempt = conversation.attempt
     conversation.speechId = undefined
+    conversation.attempt = undefined
+    // Abandoning aborts the request the attempt is parked on, which is what
+    // frees a monitor sitting in a thirty-second long poll.
+    attempt?.abandon()
     this.setPhase(conversation, 'ready')
-    await this.speechRequest(`/v1/speech/${encodeURIComponent(speechId)}`, { method: 'DELETE' })
+    if (!speechId) return
+    const status = speechStatus(await this.dropSpeech(speechId))
+    // Being cut off is exactly the situation the interruption offset exists to
+    // describe, so record it for the next follow-up. Voice Operator counts in
+    // whole sentences: a zero means the listener heard no complete sentence,
+    // which is nothing worth telling Haiku about.
+    if (status?.character_offset) conversation.interruptedAtCharacter = status.character_offset
   }
 
-  private async monitorSpeech(conversation: Conversation, speechId: string): Promise<void> {
-    while (conversation.speechId === speechId) {
-      // How long to poll for is a question about the phase we are in, not
-      // about which iteration this is — see pollWaitSeconds.
-      const wait = pollWaitSeconds(conversation.phase)
+  /** Ask Voice Operator to drop a job, wherever it is in its lifecycle. */
+  private dropSpeech(speechId: string): Promise<SpeechResponse> {
+    return this.speechRequest(`/v1/speech/${encodeURIComponent(speechId)}`, { method: 'DELETE' })
+  }
+
+  /**
+   * Follow one speech job until it stops, keeping the surface's phase in step.
+   *
+   * Two polling strategies, chosen by whether Voice Operator offers a change
+   * cursor. With one, this parks in a long poll that the service wakes on *any*
+   * observable change — including the cancellation we issue ourselves, so a
+   * cancel and its monitor never have to race. Without one (an older service),
+   * it falls back to the short-poll cadence that cursor replaced; see
+   * `pollWaitSeconds` for why that cadence had to exist at all.
+   */
+  private async monitorSpeech(conversation: Conversation, attempt: Attempt, job: SpeechStatus): Promise<void> {
+    const speechId = job.id
+    let cursor = job.version
+    while (attempt.isCurrent) {
+      // A cursor poll is paced by the service; a legacy poll is paced by us.
+      const wait = cursor === undefined ? pollWaitSeconds(conversation.phase) : SPEECH_LONG_POLL_SECONDS
+      const since = cursor === undefined ? '' : `&since=${cursor}`
       // The default request timeout is intentionally short for one-shot
       // operations. A speech monitor, however, must tolerate a stalled local
       // service without falsely declaring the job finished.
-      const status = await this.speechRequest<SpeechStatus>(
-        `/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}`,
-        undefined,
+      const status = speechStatus(await this.speechRequest(
+        `/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}${since}`,
+        { signal: attempt.signal },
         wait === 0 ? 3_000 : SPEECH_LONG_POLL_TIMEOUT_MS,
-      )
+      ))
+      if (!attempt.isCurrent) return
       if (!status) {
-        if (conversation.speechId === speechId) {
-          conversation.speechId = undefined
-          this.setPhase(conversation, 'ready')
-        }
+        this.settle(conversation, attempt)
         return
       }
       if (status.state === 'in_progress') {
@@ -375,26 +570,28 @@ export class SummaryChat {
         // playback state is what distinguishes those (see playbackPhase), so
         // the surface's phase is driven from there rather than from the job.
         this.setPhase(conversation, playbackPhase(status.playback_state, conversation.phase))
-        await this.deps.sleep(SPEECH_POLL_INTERVAL_MS)
+        // A poll that did not advance the cursor told us nothing, so fall back
+        // to the floor rather than trust the service to pace us. Without this a
+        // service that ignores `since` — while still reporting a version —
+        // would spin this loop as fast as the event loop allows.
+        const advanced = cursor !== undefined && status.version !== undefined && status.version > cursor
+        cursor = status.version
+        if (!advanced) await this.deps.sleep(SPEECH_POLL_INTERVAL_MS)
         continue
       }
-      if (conversation.speechId === speechId) {
-        // Capture the cut-off point now. By the time a follow-up voice command
-        // arrives the job is already terminal, and a terminal job's offset is
-        // no longer queryable — so asking later only ever returned undefined.
-        if (status.state === 'interrupted_by_user') {
-          conversation.interruptedAtCharacter = status.character_offset ?? 0
-        }
-        conversation.speechId = undefined
-        this.setPhase(conversation, 'ready')
+      // Capture the cut-off point now, while the job is fresh in hand.
+      if (status.state === 'interrupted_by_user') {
+        conversation.interruptedAtCharacter = status.character_offset ?? 0
       }
+      this.settle(conversation, attempt)
       return
     }
   }
 
   private async refreshVoices(): Promise<void> {
-    const response = await this.speechRequest<{ voices?: Array<{ id?: string }> }>('/v1/voices')
-    const voices = response?.voices
+    const response = await this.speechRequest('/v1/voices')
+    const body = response?.status === 200 ? response.body as { voices?: Array<{ id?: string }> } : undefined
+    const voices = body?.voices
       ?.map(voice => voice.id)
       .filter((id): id is string => id !== undefined && id !== '' && !BLOCKED_VOICE_IDS.has(id))
       .sort() ?? []
@@ -408,13 +605,36 @@ export class SummaryChat {
     return this.voices[hash % this.voices.length]
   }
 
-  private async speak(text: string, voice: string | undefined): Promise<SpeechStatus | undefined> {
-    return this.speechRequest<SpeechStatus>('/v1/speech', {
+  /**
+   * Queue an answer for speaking.
+   *
+   * Refusals come back named rather than as a silent absence: Voice Operator
+   * declines a job when the user has muted speech, and a listener who pressed
+   * the chord and then heard nothing deserves to be told which of "muted" and
+   * "broken" they are looking at.
+   */
+  private async speak(text: string, voice: string | undefined): Promise<{ job?: SpeechStatus; error?: string }> {
+    const response = await this.speechRequest('/v1/speech', {
       method: 'POST', body: JSON.stringify({ text, ...(voice ? { voice } : {}) }),
     })
+    const job = speechStatus(response)
+    if (job?.id) return { job }
+    const error = (response?.body as { error?: unknown } | undefined)?.error
+    return { error: typeof error === 'string' ? error : undefined }
   }
 
-  private async speechRequest<T>(endpoint: string, init?: RequestInit, timeoutMs = 3_000): Promise<T | undefined> {
+  /**
+   * One call to Voice Operator. Returns undefined only when the service could
+   * not be reached at all — an HTTP status is an *answer*, not a failure.
+   *
+   * The status is handed back rather than filtered here, because this service
+   * uses status codes as outcomes: 409 is "the listener interrupted it", 410 is
+   * "cancelled, here is how far it got", 503 is "speech is muted". A
+   * transport-level allowlist can only ever get that wrong, and it did — a
+   * DELETE that successfully stopped speech answers 410, so the old allowlist
+   * discarded the response along with the character offset it carried.
+   */
+  private async speechRequest(endpoint: string, init?: RequestInit, timeoutMs = 3_000): Promise<SpeechResponse> {
     const discovery = this.deps.readDiscovery()
     if (!discovery) return undefined
     const port = typeof discovery.port === 'number' && discovery.port > 0 && discovery.port < 65536
@@ -425,10 +645,11 @@ export class SummaryChat {
       const response = await this.deps.fetch(`http://127.0.0.1:${port}${endpoint}`, {
         ...init,
         headers: { 'content-type': 'application/json', ...init?.headers },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: init?.signal
+          ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+          : AbortSignal.timeout(timeoutMs),
       })
-      if (!response.ok && response.status !== 202 && response.status !== 409) return undefined
-      return await response.json() as T
+      return { status: response.status, body: await response.json().catch(() => undefined) }
     } catch {
       return undefined
     }
@@ -436,19 +657,51 @@ export class SummaryChat {
 }
 
 /**
- * How long to ask Voice Operator to hold the next status poll open.
+ * Whether a surface is producing an answer, and so has something to interrupt.
  *
- * Measured, not assumed: `?wait=N` wakes **only** at a terminal state. It does
- * not wake when playback moves from `queued` to `speaking`, which is why the
- * indicator used to sit on "thinking" for the whole spoken answer and then
- * jump straight to idle — the app asked a question that could only be answered
- * after the answer no longer mattered.
+ * Read off the phase rather than tracked separately, because the phase is
+ * already the one value every other consumer derives from — see
+ * `Conversation.phase`. A second notion of "busy" alongside it is a second
+ * thing to keep in step, and the cancel gesture would be exactly where the two
+ * drifting apart is felt.
+ */
+function isBusy(conversation: Conversation): boolean {
+  return conversation.phase === 'thinking' || conversation.phase === 'speaking'
+}
+
+/** A Voice Operator reply, or undefined when the service could not be reached. */
+type SpeechResponse = { status: number; body: unknown } | undefined
+
+/** The speech job in a reply, if the reply carries one at all. */
+function speechStatus(response: SpeechResponse): SpeechStatus | undefined {
+  const body = response?.body as SpeechStatus | undefined
+  return typeof body?.id === 'string' && typeof body.state === 'string' ? body : undefined
+}
+
+/** What a named refusal from Voice Operator means to the listener. */
+function speechErrorMessage(error: string | undefined): string {
+  if (error === 'speech_muted') return 'Voice Operator has speech muted, so there is nothing to hear.'
+  return 'Voice Operator would not speak the summary.'
+}
+
+/**
+ * How long to ask Voice Operator to hold the next status poll open, on a
+ * service too old to offer a change cursor.
+ *
+ * Measured, not assumed: a bare `?wait=N` wakes **only** at a terminal state.
+ * It does not wake when playback moves from `queued` to `speaking`, which is
+ * why the indicator used to sit on "thinking" for the whole spoken answer and
+ * then jump straight to idle — the app asked a question that could only be
+ * answered after the answer no longer mattered.
  *
  * So: while the surface is showing something that tracks the audio, poll
  * immediately and let SPEECH_POLL_INTERVAL_MS set the cadence. Once Voice
  * Operator is merely listening (`waiting_for_user`, mapped to `ready`) there
  * is nothing to track, and a job can sit there indefinitely — hand the waiting
  * back to the service rather than spinning on it.
+ *
+ * A service that reports `version` needs none of this: `?since=` wakes on every
+ * change, so `monitorSpeech` long-polls throughout and this is not consulted.
  */
 function pollWaitSeconds(phase: SummaryChatPhase): number {
   return phase === 'ready' ? SPEECH_LONG_POLL_SECONDS : 0

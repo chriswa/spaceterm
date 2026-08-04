@@ -8,6 +8,7 @@ import type {
   SessionInfo,
   CameraBounds
 } from '../../shared/protocol'
+import type { SummaryChatToggleResult } from '../../shared/api'
 import { LineParser } from '../../server/line-parser'
 import { unhandledVariant } from '../../shared/exhaustive'
 import type { NodeId, PtySessionId } from '../../shared/ids'
@@ -199,6 +200,7 @@ export class ServerClient extends EventEmitter {
       case 'validate-directory-result':
       case 'validate-file-result':
       case 'client-hello-result':
+      case 'summary-chat-toggle-result':
         this.resolvePending(msg.seq, msg)
         return
 
@@ -481,8 +483,15 @@ export class ServerClient extends EventEmitter {
     this.sendFireAndForget({ type: 'focus-surface-request', surfaceId })
   }
 
-  startSummaryChat(nodeId: NodeId): void {
-    this.sendFireAndForget({ type: 'summary-chat-start', nodeId })
+  /**
+   * One press of the Summary Chat chord. Request/reply rather than
+   * fire-and-forget, because only the server can say whether a press started an
+   * answer or cut one off — and the key deserves an answer either way.
+   */
+  async toggleSummaryChat(nodeId: NodeId | undefined): Promise<SummaryChatToggleResult> {
+    const resp = await this.sendRequest({ type: 'summary-chat-toggle', ...(nodeId ? { nodeId } : {}) })
+    if (resp.type === 'summary-chat-toggle-result') return { outcome: resp.outcome, message: resp.message }
+    throw new Error('Unexpected response')
   }
 
   isConnected(): boolean {

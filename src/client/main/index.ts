@@ -269,9 +269,11 @@ function setupIPC(): void {
     setTimeout(() => app.exit(CLIENT_RESTART_EXIT_CODE), 50)
   })
 
-  ipcMain.on('summary-chat:start', (_event, nodeId: NodeId) => {
-    logger.log(`[summary-chat] requested for node=${nodeId.slice(0, 8)}`)
-    client!.startSummaryChat(nodeId)
+  ipcMain.handle('summary-chat:toggle', async (_event, nodeId: NodeId | undefined) => {
+    logger.log(`[summary-chat] chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}`)
+    const result = await client!.toggleSummaryChat(nodeId)
+    logger.log(`[summary-chat] chord ${result.outcome}${result.message ? `: ${result.message}` : ''}`)
+    return result
   })
 
   // --- Node state mutations ---
