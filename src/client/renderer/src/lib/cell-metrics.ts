@@ -5,11 +5,11 @@ import { CELL_WIDTH } from './constants'
  * Hold a live xterm to the grid the rest of the app draws on.
  *
  * `CELL_WIDTH` is the unit every terminal-shaped thing in this app is sized
- * from: the card box (`terminalPixelSize`), the snapshot canvas, the resize
- * ghost and the proportional-font overlay. Nothing here measures a cell — they
- * all multiply. So the one thing that *does* have its own opinion, xterm's
- * renderer, has to be brought onto the same unit, or the two step at different
- * rates and the difference accumulates across the row.
+ * from: the card box (`terminalPixelSize`), the snapshot canvas and the resize
+ * ghost. Nothing here measures a cell — they all multiply. So the one thing
+ * that *does* have its own opinion, xterm's renderer, has to be brought onto
+ * the same unit, or the two step at different rates and the difference
+ * accumulates across the row.
  *
  * That is not hypothetical. xterm measures Menlo 14px at 8.4375px per column;
  * the DOM renderer honours the fraction, but the WebGL renderer floors each

@@ -1,6 +1,7 @@
 /**
  * Resolve xterm IBufferCell color attributes to hex strings.
- * Shared by the server snapshot-manager and the client proportional overlay.
+ * Used by the server snapshot-manager; kept in `shared/` because the interface
+ * below is deliberately renderer-agnostic (`@xterm/xterm` or `@xterm/headless`).
  */
 import { ANSI_COLORS, DEFAULT_FG, DEFAULT_BG, CUBE_STEPS } from './theme'
 

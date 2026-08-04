@@ -31,8 +31,6 @@ import { deriveToolbarIndicator, CRAB_COLORS } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
-import { useFontStore, type FontTheme } from '../stores/fontStore'
-import { useProportionalOverlay, isBoxDrawing, isAlphanumeric, boxDrawingAlignment } from '../hooks/useProportionalOverlay'
 import { cleanTerminalCopy } from '../lib/cleanTerminalCopy'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
 import { type NodeId, type PtySessionId } from '../../../../shared/ids'
@@ -83,103 +81,28 @@ function paintSnapshotRow(
   ctx: CanvasRenderingContext2D,
   row: SnapshotRow,
   y: number,
-  termBg: string,
-  useProportional: boolean,
-  fontTheme: FontTheme
+  termBg: string
 ): void {
   let xOffset = 0
-  let proportional = false
-  let col = 0 // terminal column counter
 
   for (const span of row) {
-    if (useProportional) {
-      const weight = span.bold ? fontTheme.boldWeight : fontTheme.fontWeight
-      ctx.font = `${weight} ${fontTheme.fontSize}px ${fontTheme.fontFamily}`
+    const spanWidth = span.text.length * CELL_WIDTH
 
-      // Check if span starts with box-drawing: process char-by-char to split
-      // at box-drawing boundaries and snap those to the grid
-      let i = 0
-      while (i < span.text.length) {
-        if (isBoxDrawing(span.text[i])) {
-          // Run of box-drawing chars: snap to grid
-          const start = i
-          while (i < span.text.length && isBoxDrawing(span.text[i])) i++
-          const segment = span.text.slice(start, i)
-          xOffset = (col + start) * CELL_WIDTH
-          for (let j = 0; j < segment.length; j++) {
-            const cx = xOffset + j * CELL_WIDTH
-            if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-              ctx.fillStyle = span.bg
-              ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
-            }
-            // Align box-drawing glyph within its cell
-            const align = boxDrawingAlignment(segment[j])
-            let drawX = cx
-            if (align === 'center') drawX = cx + (CELL_WIDTH - ctx.measureText(segment[j]).width) / 2
-            else if (align === 'right') drawX = cx + CELL_WIDTH - ctx.measureText(segment[j]).width
-            ctx.fillStyle = span.fg
-            ctx.textBaseline = 'top'
-            ctx.fillText(segment[j], drawX, y * CELL_HEIGHT + fontTheme.verticalOffset)
-          }
-          xOffset += segment.length * CELL_WIDTH
-        } else if (!proportional && !isAlphanumeric(span.text[i])) {
-          // Fixed-width prefix (leading symbols/spaces)
-          const start = i
-          while (i < span.text.length && !isAlphanumeric(span.text[i]) && !isBoxDrawing(span.text[i])) i++
-          const segment = span.text.slice(start, i)
-          for (let j = 0; j < segment.length; j++) {
-            const cx = xOffset + j * CELL_WIDTH
-            if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-              ctx.fillStyle = span.bg
-              ctx.fillRect(cx, y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)
-            }
-            if (segment[j] !== ' ') {
-              ctx.fillStyle = span.fg
-              ctx.textBaseline = 'top'
-              ctx.fillText(segment[j], cx, y * CELL_HEIGHT + fontTheme.verticalOffset)
-            }
-          }
-          xOffset += segment.length * CELL_WIDTH
-        } else {
-          // Proportional text: consume until next box-drawing char
-          proportional = true
-          const start = i
-          while (i < span.text.length && !isBoxDrawing(span.text[i])) i++
-          const segment = span.text.slice(start, i)
-          const tw = ctx.measureText(segment).width
-          if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-            ctx.fillStyle = span.bg
-            ctx.fillRect(xOffset, y * CELL_HEIGHT, tw, CELL_HEIGHT)
-          }
-          if (segment.trim().length > 0) {
-            ctx.fillStyle = span.fg
-            ctx.textBaseline = 'top'
-            ctx.fillText(segment, xOffset, y * CELL_HEIGHT + fontTheme.verticalOffset)
-          }
-          xOffset += tw
-        }
-      }
-      col += span.text.length
-    } else {
-      // Monospace: fixed grid, character by character
-      const spanWidth = span.text.length * CELL_WIDTH
-
-      if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
-        ctx.fillStyle = span.bg
-        ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
-      }
-      if (span.text.trim().length > 0) {
-        ctx.fillStyle = span.fg
-        ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
-        ctx.textBaseline = 'top'
-        for (let i = 0; i < span.text.length; i++) {
-          if (span.text[i] !== ' ') {
-            ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
-          }
-        }
-      }
-      xOffset += spanWidth
+    if (span.bg !== DEFAULT_BG && span.bg !== termBg) {
+      ctx.fillStyle = span.bg
+      ctx.fillRect(xOffset, y * CELL_HEIGHT, spanWidth, CELL_HEIGHT)
     }
+    if (span.text.trim().length > 0) {
+      ctx.fillStyle = span.fg
+      ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
+      ctx.textBaseline = 'top'
+      for (let i = 0; i < span.text.length; i++) {
+        if (span.text[i] !== ' ') {
+          ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
+        }
+      }
+    }
+    xOffset += spanWidth
   }
 }
 
@@ -264,7 +187,6 @@ export function TerminalCard({
   const snapshotRef = useRef<SnapshotMessage | null>(null)
   const autoJumpedRef = useRef(false)
   const behindCrabRef = useRef<HTMLDivElement>(null)
-  const proportionalCanvasRef = useRef<HTMLCanvasElement>(null)
 
   // Keep current props in refs for event handlers
   const propsRef = useRef({ x, y, zoom, cols, rows, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady })
@@ -425,11 +347,7 @@ export function TerminalCard({
         term.scrollToLine(line)
       }
       pixelOffsetRef.current = remainder
-      const transformVal = remainder !== 0 ? `translateY(${-remainder}px)` : ''
-      screenEl.style.transform = transformVal
-      // Also transform the proportional overlay canvas so it scrolls in sync
-      const overlayCanvas = proportionalCanvasRef.current
-      if (overlayCanvas) overlayCanvas.style.transform = transformVal
+      screenEl.style.transform = remainder !== 0 ? `translateY(${-remainder}px)` : ''
     }
 
     // After every data write, if the user isn't reading scrollback, force
@@ -822,11 +740,6 @@ export function TerminalCard({
     term.options.theme = { ...term.options.theme, background: bg }
   }, [preset])
 
-  // Proportional font overlay
-  const proportionalFont = useFontStore(s => s.proportional)
-  const termBg = preset?.terminalBg ?? DEFAULT_BG
-  useProportionalOverlay(terminalRef, proportionalCanvasRef, proportionalFont && focused && xtermReady, cols, rows, termBg)
-
   // Keyboard focus management
   useEffect(() => {
     const term = terminalRef.current
@@ -904,16 +817,15 @@ export function TerminalCard({
     }
 
     const termBg = preset?.terminalBg ?? DEFAULT_BG
-    const { proportional: useProportional, theme: fontTheme, themeId } = useFontStore.getState()
 
-    const key = `${cw}x${ch}|${termBg}|${useProportional ? 'p' : 'm'}|${themeId}|${snapshot.lines.length}`
+    const key = `${cw}x${ch}|${termBg}|${snapshot.lines.length}`
     const plan = planRepaint(paintedRef.current, key, snapshot.lines, resized)
 
     if (plan.kind === 'full') {
       ctx.fillStyle = termBg
       ctx.fillRect(0, 0, cw, ch)
       for (let y = 0; y < snapshot.lines.length; y++) {
-        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg, useProportional, fontTheme)
+        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg)
       }
     } else {
       for (const y of plan.rows) {
@@ -922,7 +834,7 @@ export function TerminalCard({
         // through wherever the new text is shorter.
         ctx.fillStyle = termBg
         ctx.fillRect(0, y * CELL_HEIGHT, cw, CELL_HEIGHT)
-        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg, useProportional, fontTheme)
+        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg)
       }
     }
 
@@ -1004,10 +916,9 @@ export function TerminalCard({
   }, [id])
 
   // Repaint the snapshot canvas whenever what it should look like changes:
-  // font, colours, or the grid it is drawn on. Without the size here, a resize
+  // colours, or the grid it is drawn on. Without the size here, a resize
   // leaves the last-painted bitmap at the old dimensions until the next
   // snapshot arrives — visible as a stretched image for a tick.
-  const fontThemeId = useFontStore(s => s.themeId)
   useEffect(() => {
     if (focused) return
     const snapshot = snapshotRef.current
@@ -1016,7 +927,7 @@ export function TerminalCard({
     // nothing to repaint for, and the flush above will catch it later.
     if (canPaint()) paintCanvasRef.current(snapshot)
     else paintDeferredRef.current = true
-  }, [proportionalFont, fontThemeId, preset, cols, rows, focused, canPaint])
+  }, [preset, cols, rows, focused, canPaint])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.
@@ -1272,7 +1183,7 @@ export function TerminalCard({
       // the preview copies pixels from this card's snapshot canvas, and the two
       // are centred on the same point at different sizes, so leaving both
       // visible shows the same content twice, offset.
-      className={`terminal-card ${focusClass}${focused && proportionalFont ? ' terminal-card--proportional' : ''}${resizingNodeId === id ? ' terminal-card--resize-source' : ''}`}
+      className={`terminal-card ${focusClass}${resizingNodeId === id ? ' terminal-card--resize-source' : ''}`}
       style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 16px 4px ${focusGlowColor}` } : undefined}
       cardRef={cardRef}
       onMouseEnter={() => {
@@ -1320,18 +1231,6 @@ export function TerminalCard({
           }}
         />
       </div>
-      {focused && proportionalFont && (
-        <div style={{ position: 'absolute' as const, top: BODY_PADDING_TOP, left: 0, right: 0, bottom: 0, pointerEvents: 'none' as const, overflow: 'hidden', padding: '0 2px' }}>
-          <canvas
-            ref={proportionalCanvasRef}
-            style={{
-              width: Math.ceil(cols * CELL_WIDTH),
-              height: Math.ceil(rows * CELL_HEIGHT),
-              display: 'block',
-            }}
-          />
-        </div>
-      )}
       {(() => {
         const pct = lastClaudeSession ? Math.max(0, Math.min(100, claudeContextPercent ?? 100)) : 100
         const bright = preset ? preset.titleBarBg : '#6c7086'

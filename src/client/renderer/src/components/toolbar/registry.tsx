@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import type { NodeId } from '../../../../../shared/ids'
 import type { CrabEntry } from '../../lib/crab-nav'
 import { CrabGroup, type CrabNavEvent } from './CrabGroup'
-import { GhRateLimitIndicator } from './GhRateLimitIndicator'
 import { PowerMonitor } from './PowerMonitor'
 import {
   CameraLockToggle,
@@ -13,7 +12,6 @@ import {
   HelpButton,
   KeycastToggle,
   NotificationSoundToggle,
-  ProportionalFontToggle,
   RestartButton,
   ThemePicker,
   ZoomMetric
@@ -36,7 +34,7 @@ import {
  * two, and the split was sharper than expected.
  *
  * - **Standalone widgets** own their state — a zustand store, `localStorage`,
- *   `window.api`. There are nine of them, and they take *no props at all*.
+ *   `window.api`. There are seven of them, and they take *no props at all*.
  * - **Host widgets** need something that lives in `App.tsx`: an overlay
  *   toggled by a keyboard shortcut, an in-flight server restart, the crab-nav
  *   selection.
@@ -46,7 +44,7 @@ import {
  * declared `() => ReactNode`, and TypeScript refuses a function that takes the
  * host. Not a comment, a compile error.
  *
- * The nine standalone widgets are the evidence that a widget contract is
+ * The seven standalone widgets are the evidence that a widget contract is
  * viable at all. Before this file it was not obvious there were any — every
  * button looked like it belonged to the toolbar because it was written inside
  * it.
@@ -138,13 +136,11 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   },
   { id: 'notification-sound', slot: 'buttons', kind: 'standalone', render: () => <NotificationSoundToggle /> },
   { id: 'copy-cleanup', slot: 'buttons', kind: 'standalone', render: () => <CopyCleanupToggle /> },
-  { id: 'proportional-font', slot: 'buttons', kind: 'standalone', render: () => <ProportionalFontToggle /> },
 
   { id: 'fps', slot: 'status', kind: 'standalone', render: () => <FpsMetric /> },
   { id: 'zoom', slot: 'status', kind: 'host', render: (h) => <ZoomMetric zoom={h.zoom} /> },
   // Renders nothing unless switched on from the debug menu.
   { id: 'power-monitor', slot: 'status', kind: 'standalone', render: () => <PowerMonitor /> },
-  { id: 'gh-rate-limit', slot: 'status', kind: 'standalone', render: () => <GhRateLimitIndicator /> },
 
   {
     id: 'crab-group',

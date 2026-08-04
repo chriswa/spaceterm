@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
 import { usePerfStore } from '../../stores/perfStore'
-import { useFontStore, FONT_THEMES } from '../../stores/fontStore'
 import { useCameraLockStore } from '../../stores/cameraLockStore'
 import { useNotificationSoundStore } from '../../stores/notificationSoundStore'
 import { useCopyCleanupStore } from '../../stores/copyCleanupStore'
@@ -202,56 +201,6 @@ export function FullscreenToggle() {
     </button>
   )
 }
-
-export function ProportionalFontToggle() {
-  const proportional = useFontStore(s => s.proportional)
-  const toggle = useFontStore(s => s.toggle)
-  const themeId = useFontStore(s => s.themeId)
-  const setThemeId = useFontStore(s => s.setThemeId)
-  const menu = useToolbarMenu()
-
-  return (
-    <div className="toolbar__font-group" ref={menu.ref}>
-      <button
-        className={'toolbar__btn' + (proportional ? ' toolbar__btn--active' : '')}
-        onClick={toggle}
-        data-tooltip={proportional ? 'Proportional — Switch to monospace font' : 'Proportional — Switch to proportional font'}
-        data-tooltip-no-flip
-      >
-        Aa
-      </button>
-      <button
-        className={'toolbar__font-dropdown-btn' + (menu.open ? ' toolbar__font-dropdown-btn--open' : '')}
-        onClick={menu.toggle}
-        data-tooltip="Font theme"
-        data-tooltip-no-flip
-      >
-        ▾
-      </button>
-      {menu.open && (
-        <div className="toolbar__font-menu">
-          {FONT_THEMES.map(t => (
-            <button
-              key={t.id}
-              className={'toolbar__font-menu-item' + (t.id === themeId ? ' toolbar__font-menu-item--active' : '')}
-              onClick={() => {
-                setThemeId(t.id)
-                if (!proportional) toggle()
-                menu.close()
-              }}
-            >
-              <span className="toolbar__font-menu-label">{t.label}</span>
-              <span className="toolbar__font-menu-preview" style={{ fontFamily: t.fontFamily, fontSize: t.fontSize, fontWeight: t.fontWeight }}>
-                Abc 123
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 
 export function NotificationSoundToggle() {
   const enabled = useNotificationSoundStore(s => s.enabled)
