@@ -14,12 +14,34 @@ import type {
 } from '../shared/state'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { StatePersister } from './persistence'
+import { serverLog } from './server-log'
 import { abbreviateCwd, scanCwdMismatches, scanDescendantCwdMismatches } from './cwd-alerts'
 import { asNodeId, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import type { AgentType } from '../shared/agent-type'
 import { isDisposable } from '../shared/node-utils'
 import { findAncestor, lookupIn } from '../shared/node-ancestry'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
+
+/**
+ * How long a freshly spawned pty is protected from archiving its surface. A pty
+ * that survives this long started successfully; one that dies sooner failed to
+ * launch, and the surface stays visible as a dead remnant the user can retry.
+ */
+export const ARCHIVAL_PROTECTION_MS = 30_000
+
+/**
+ * Why an exit must not archive its surface.
+ *
+ *  - `restart`   the pty was replaced on purpose; the surface already has a new
+ *                one, so its exit is bookkeeping and nothing else.
+ *  - `protected` the pty was spawned to bring a surface back (startup revival,
+ *                unarchive). Dying inside {@link ARCHIVAL_PROTECTION_MS} means
+ *                it failed to launch, so the surface is kept as a dead remnant
+ *                rather than archived out from under the user.
+ */
+type ExitOverride =
+  | { kind: 'restart' }
+  | { kind: 'protected'; until: number }
 
 export type NodeUpdateCallback = (nodeId: NodeId, fields: Partial<NodeData>) => void
 export type NodeAddCallback = (node: NodeData) => void
@@ -74,11 +96,17 @@ export class StateManager {
   private persister: StatePersister
   /** Maps active PTY session ID → node ID (they diverge after reincarnation) */
   private sessionToNodeId = new Map<PtySessionId, NodeId>()
-  /** Tracks node IDs mid-restart — prevents terminalExited from archiving the node */
-  private restartingNodes = new Set<NodeId>()
-  /** Tracks node IDs spawned by startup revival — terminalExited skips archival so the
-   *  surface stays visible as a dead remnant the user can manually retry. */
-  private revivingNodes = new Set<NodeId>()
+  /**
+   * Exits that must not archive their surface, keyed by the pty they apply to.
+   *
+   * Keying by pty — not by node — is the invariant that keeps this honest. An
+   * override recorded against a node id outlives the exit it was meant for, so
+   * the surface's *next* exit, however many hours later, reads as "that restart"
+   * or "that failed revival" and the surface is stranded on the canvas instead
+   * of being archived. Keyed by pty, an override that is never consumed can only
+   * ever match a session id that will not come back.
+   */
+  private exitOverrides = new Map<PtySessionId, ExitOverride>()
 
   constructor(deps: StateManagerDeps, options: StateManagerOptions = {}) {
     this.onNodeUpdate = deps.onNodeUpdate
@@ -181,26 +209,45 @@ export class StateManager {
     this.archiveNode(nodeId)
   }
 
-  /** Mark a node as mid-restart so terminalExited skips archival. */
-  markRestarting(nodeId: NodeId): void {
-    this.restartingNodes.add(nodeId)
-    console.log(`[restart] Marking node ${nodeId.slice(0, 8)} as restarting`)
+  /**
+   * Record that `ptySessionId` is being replaced on purpose, so its exit is
+   * bookkeeping rather than the surface dying. Pass the *outgoing* pty: the
+   * replacement is a different session and must archive normally when it exits.
+   */
+  suppressArchivalForRestart(ptySessionId: PtySessionId): void {
+    this.exitOverrides.set(ptySessionId, { kind: 'restart' })
+    serverLog(`[restart] Suppressing archival for outgoing pty ${ptySessionId.slice(0, 8)}`)
   }
 
-  /** Mark a node as spawned by startup revival.  If the PTY exits,
-   *  terminalExited will leave it as a dead remnant instead of archiving. */
-  markReviving(nodeId: NodeId): void {
-    this.revivingNodes.add(nodeId)
+  /**
+   * Protect a freshly spawned pty from archiving its surface for
+   * {@link ARCHIVAL_PROTECTION_MS}, so a revival that fails to launch leaves a
+   * dead remnant the user can retry. The window is a deadline rather than a flag
+   * someone has to remember to clear, so it cannot outlive its purpose.
+   */
+  protectFromArchival(ptySessionId: PtySessionId, now: number = Date.now()): void {
+    this.pruneExitOverrides(now)
+    this.exitOverrides.set(ptySessionId, { kind: 'protected', until: now + ARCHIVAL_PROTECTION_MS })
   }
 
-  /** Clear the reviving flag (called once the PTY is confirmed stable). */
-  clearReviving(nodeId: NodeId): void {
-    this.revivingNodes.delete(nodeId)
+  /**
+   * Drop overrides that can no longer change any decision: their pty is no
+   * longer mapped to a node (so its exit already early-returns), or the
+   * protection window has passed. Behaviour-preserving housekeeping, so a
+   * restart whose outgoing pty never reports an exit leaves nothing behind.
+   */
+  private pruneExitOverrides(now: number): void {
+    for (const [sessionId, override] of this.exitOverrides) {
+      const orphaned = !this.sessionToNodeId.has(sessionId)
+      const expired = override.kind === 'protected' && now >= override.until
+      if (orphaned || expired) this.exitOverrides.delete(sessionId)
+    }
   }
 
-  /** Check if a node was spawned by startup revival and is still in the protection window. */
-  isReviving(nodeId: NodeId): boolean {
-    return this.revivingNodes.has(nodeId)
+  /** Whether this pty is still inside its post-spawn protection window. */
+  isArchivalProtected(ptySessionId: PtySessionId, now: number = Date.now()): boolean {
+    const override = this.exitOverrides.get(ptySessionId)
+    return override?.kind === 'protected' && now < override.until
   }
 
   /** Update extra CLI args on a terminal node, broadcast, and persist. */
@@ -376,24 +423,33 @@ export class StateManager {
 
   /**
    * Handle terminal PTY exit: update metadata then immediately archive.
+   *
+   * An exit archives its surface unless the pty carries an override — see
+   * {@link ExitOverride}. Overrides are single-use: consumed here whether or not
+   * they still apply, so no surface is left permanently immune to archival.
    */
-  terminalExited(ptySessionId: PtySessionId, exitCode: number): void {
+  terminalExited(ptySessionId: PtySessionId, exitCode: number, now: number = Date.now()): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
 
-    // If the node is mid-restart, skip archival — the new PTY is already running
-    if (this.restartingNodes.has(node.id)) {
-      console.log(`[restart] terminalExited session=${ptySessionId.slice(0, 8)} node=${node.id.slice(0, 8)} exitCode=${exitCode} — skipping archival (mid-restart)`)
+    const override = this.exitOverrides.get(ptySessionId)
+    this.exitOverrides.delete(ptySessionId)
+    this.pruneExitOverrides(now)
+    const label = `session=${ptySessionId.slice(0, 8)} node=${node.id.slice(0, 8)} exitCode=${exitCode}`
+
+    // Replaced on purpose: the surface already has its new pty, so there is
+    // nothing to mark dead and nothing to archive.
+    if (override?.kind === 'restart') {
+      serverLog(`[exit] terminalExited ${label} — skipping archival (mid-restart)`)
       this.sessionToNodeId.delete(ptySessionId)
-      this.restartingNodes.delete(node.id)
       return
     }
 
-    // If spawned by startup revival, leave as dead remnant so the user can retry
-    const isReviving = this.revivingNodes.has(node.id)
-    if (isReviving) this.revivingNodes.delete(node.id)
+    // Died inside its post-spawn window: it failed to launch, so leave a dead
+    // remnant the user can retry rather than archiving the surface away.
+    const failedToLaunch = override?.kind === 'protected' && now < override.until
 
-    console.log(`[exit] terminalExited session=${ptySessionId.slice(0, 8)} node=${node.id.slice(0, 8)} exitCode=${exitCode} — ${isReviving ? 'keeping as remnant (revival)' : 'archiving'}`)
+    serverLog(`[exit] terminalExited ${label} — ${failedToLaunch ? 'keeping as remnant (failed to launch)' : 'archiving'}`)
 
     node.alive = false
     node.exitCode = exitCode
@@ -402,10 +458,10 @@ export class StateManager {
     // End the current terminal session
     const currentSession = node.terminalSessions[node.terminalSessions.length - 1]
     if (currentSession && !currentSession.endedAt) {
-      currentSession.endedAt = new Date().toISOString()
+      currentSession.endedAt = new Date(now).toISOString()
     }
 
-    if (isReviving) {
+    if (failedToLaunch) {
       // Keep as dead remnant — the surface stays visible and can be manually restarted.
       // Preserve sessionToNodeId so asleep toggles can still resolve the node.
       this.patchNode(node, { alive: false, exitCode, claudeState: 'stopped' })
@@ -424,7 +480,7 @@ export class StateManager {
   reincarnateTerminal(nodeId: NodeId, newPtySessionId: PtySessionId, cols: number, rows: number): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'terminal') return
-    console.log(`[restart] Reincarnated node ${nodeId.slice(0, 8)} → session ${newPtySessionId.slice(0, 8)}`)
+    serverLog(`[restart] Reincarnated node ${nodeId.slice(0, 8)} → session ${newPtySessionId.slice(0, 8)}`)
 
     // Clean up old session mapping (may still exist if the PTY died as a remnant)
     if (node.sessionId !== newPtySessionId) {
@@ -572,7 +628,7 @@ export class StateManager {
   archiveNode(nodeId: NodeId): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
-    console.log(`[archive] Archiving node ${nodeId.slice(0, 8)}`)
+    serverLog(`[archive] Archiving node ${nodeId.slice(0, 8)}`)
 
     const parentId = node.parentId
 

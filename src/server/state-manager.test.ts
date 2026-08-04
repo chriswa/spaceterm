@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { StateManager, type StateManagerDeps } from './state-manager'
+import { StateManager, ARCHIVAL_PROTECTION_MS, type StateManagerDeps } from './state-manager'
 import { StatePersister } from './persistence'
 import { CURRENT_STATE_VERSION } from './state-migrations'
 import { FakePersistenceIO } from './testing/fake-persistence'
@@ -242,7 +242,7 @@ describe('session id vs node id', () => {
     const { sm } = harness()
     createTerminal(sm, 't1')
 
-    sm.markReviving(nid('t1'))
+    sm.protectFromArchival(pid('t1'))
     sm.terminalExited(pid('t1'), 1)
     sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 100, 40)
 
@@ -260,7 +260,7 @@ describe('session id vs node id', () => {
   it('routes updates addressed by session id to the node id', () => {
     const { sm, updates } = harness()
     createTerminal(sm, 't1')
-    sm.markReviving(nid('t1'))
+    sm.protectFromArchival(pid('t1'))
     sm.terminalExited(pid('t1'), 0)
     sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
 
@@ -284,7 +284,7 @@ describe('resolveNodeIdForPtySession', () => {
   it('falls back to node data for a restarted terminal the map has forgotten', () => {
     const { sm, io } = harness()
     createTerminal(sm, 't1')
-    sm.markReviving(nid('t1'))
+    sm.protectFromArchival(pid('t1'))
     sm.terminalExited(pid('t1'), 0)
     sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
     sm.persistImmediate()
@@ -321,12 +321,12 @@ describe('terminalExited', () => {
     expect(sm.getNode(nid('t1'))).toBeUndefined()
   })
 
-  it('keeps a revived terminal as a dead remnant instead of archiving it', () => {
+  it('keeps a pty that dies inside its launch window as a dead remnant', () => {
     const { sm, removes } = harness()
     createTerminal(sm, 't1')
-    sm.markReviving(nid('t1'))
+    sm.protectFromArchival(pid('t1'), 1000)
 
-    sm.terminalExited(pid('t1'), 127)
+    sm.terminalExited(pid('t1'), 127, 1000 + ARCHIVAL_PROTECTION_MS - 1)
 
     expect(removes).not.toContain('t1')
     const node = sm.getNode(nid('t1')) as TerminalNodeData
@@ -334,18 +334,46 @@ describe('terminalExited', () => {
     expect(node.exitCode).toBe(127)
   })
 
-  it('skips archival while a node is mid-restart', () => {
+  it('archives a restored surface that exits long after it came back', () => {
+    // The bug: protection was armed per node with no expiry, so unarchiving a
+    // surface made it immune to archival for the rest of the server's life —
+    // Ctrl-D hours later left a dead card on the canvas instead of archiving it.
     const { sm, removes } = harness()
     createTerminal(sm, 't1')
-    sm.markRestarting(nid('t1'))
+    sm.protectFromArchival(pid('t1'), 1000)
+
+    sm.terminalExited(pid('t1'), 0, 1000 + ARCHIVAL_PROTECTION_MS)
+
+    expect(removes).toContain('t1')
+    expect(sm.getNode(nid('t1'))).toBeUndefined()
+  })
+
+  it('skips archival for the pty a restart is replacing', () => {
+    const { sm, removes } = harness()
+    createTerminal(sm, 't1')
+    sm.suppressArchivalForRestart(pid('t1'))
 
     sm.terminalExited(pid('t1'), 0)
 
     expect(removes).not.toContain('t1')
     expect(sm.getNode(nid('t1'))).toBeDefined()
-    // The mid-restart flag is one-shot: the next exit archives normally.
+    // Scoped to that one pty: the replacement archives normally.
     sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
     sm.terminalExited(pid('pty-2'), 0)
+    expect(removes).toContain('t1')
+  })
+
+  it('archives the replacement pty even when the outgoing one never reports an exit', () => {
+    // Restarting a dead remnant destroys no pty, so the suppression armed for the
+    // outgoing session is never consumed. Keyed by node it would have been spent
+    // on the *new* pty's exit, leaving the surface un-archivable.
+    const { sm, removes } = harness()
+    createTerminal(sm, 't1')
+    sm.suppressArchivalForRestart(pid('t1'))
+    sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
+
+    sm.terminalExited(pid('pty-2'), 0)
+
     expect(removes).toContain('t1')
   })
 
@@ -540,7 +568,7 @@ describe('patched fields are broadcast exactly as applied', () => {
     // stale exit code on the client while the server showed none.
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.markReviving(nid('t1'))
+    h.sm.protectFromArchival(pid('t1'))
     h.sm.terminalExited(pid('t1'), 3)
     h.updates.length = 0
 
@@ -639,7 +667,7 @@ describe('live agent state has one owner', () => {
     createTerminal(h.sm, 't1')
     h.sm.updateClaudeStatusAsleep(pid('t1'), true)
 
-    h.sm.markReviving(nid('t1'))
+    h.sm.protectFromArchival(pid('t1'))
     h.sm.terminalExited(pid('t1'), 0)
     h.sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
 
@@ -651,7 +679,7 @@ describe('live agent state has one owner', () => {
     // surfaces so this keeps working.
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.markReviving(nid('t1'))
+    h.sm.protectFromArchival(pid('t1'))
     h.sm.terminalExited(pid('t1'), 1)
 
     h.sm.updateClaudeStatusAsleep(pid('t1'), true)

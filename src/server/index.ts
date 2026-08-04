@@ -1077,8 +1077,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           break
         }
         try {
-          // Protect against immediate PTY exit re-archiving (bad resume / slow start).
-          stateManager.markReviving(msg.archivedNodeId)
           const restoreExtra = parseExtraCliArgs(restoredNode.extraCliArgs)
           const restoreOptions = {
             ...agentDriver(agentType).buildCreateOptions({
@@ -1090,13 +1088,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           }
           const { sessionId: newPtyId, cols, rows } = respawnTerminal(
             msg.archivedNodeId, (size) => sessionManager.create({ ...restoreOptions, ...size }), RESPAWN_DEPS)
+          // A bad resume or a slow start must not re-archive the surface the user
+          // just restored. The window belongs to this pty and expires on its own.
+          stateManager.protectFromArchival(newPtyId)
           client.attachedSessions.add(newPtyId)
           send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols, rows })
           const agentLabel = agentDriver(agentType).label
           serverLog(`[unarchive] Reincarnated terminal ${msg.archivedNodeId.slice(0, 8)} with ${agentLabel} session ${resumeId ? resumeId.slice(0, 8) : '(fresh)'}`)
         } catch (err: any) {
           console.error(`[unarchive] Failed to reincarnate terminal ${msg.archivedNodeId.slice(0, 8)}: ${err.message}`)
-          stateManager.clearReviving(msg.archivedNodeId)
           stateManager.archiveTerminal(msg.archivedNodeId)
           send(client.socket, { type: 'mutation-ack', seq: msg.seq })
         }
@@ -1708,11 +1708,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // Update extraCliArgs on the node
         stateManager.updateExtraCliArgs(msg.nodeId, msg.extraCliArgs)
 
-        // Mark as restarting so terminalExited skips archival
-        stateManager.markRestarting(msg.nodeId)
-
         // Capture resume target BEFORE destroying the PTY (in-memory last id dies with it).
         const oldSessionId = restartNode.sessionId
+
+        // The outgoing pty's exit is bookkeeping, not the surface dying, so it
+        // must not archive. Scoped to that pty: the replacement archives normally.
+        stateManager.suppressArchivalForRestart(oldSessionId)
         const restartHistory = restartNode.claudeSessionHistory ?? []
         const liveAgentSessionId = sessionManager.getLastClaudeSessionId(oldSessionId)
         const extraArgs = parseExtraCliArgs(msg.extraCliArgs)
@@ -1864,14 +1865,6 @@ async function cleanStaleSocket(socketPath: string, exitIfAlive: boolean): Promi
   }
   try { fs.unlinkSync(socketPath) } catch { /* stale file already gone */ }
 }
-
-/**
- * How long a freshly revived surface is immune to being archived by its own
- * exit. A pty that survives this long is stable; one that dies sooner should
- * stay visible as a dead remnant the user can retry, rather than being archived
- * out from under them.
- */
-const REVIVAL_PROTECTION_MS = 30_000
 
 /**
  * One-shot daemon requests, phrased as promises.
@@ -2036,8 +2029,8 @@ async function startServer(): Promise<void> {
           const elapsed = recovery.elapsedMs
           console.log(`[restart-recovery] PTY exited after ${elapsed}ms (exitCode=${exitCode}), recovering node ${nodeId.slice(0, 8)} with previous args`)
 
-          // Prevent terminalExited from archiving
-          stateManager.markRestarting(nodeId)
+          // This exit is the start of a relaunch, not the surface dying.
+          stateManager.suppressArchivalForRestart(sessionId)
           stateManager.terminalExited(sessionId, exitCode)
 
           // Revert extraCliArgs and spawn new PTY
@@ -2092,18 +2085,18 @@ async function startServer(): Promise<void> {
         }
       }
 
-      // Log diagnostic info when a startup-revived PTY fails
-      if (nodeId && stateManager.isReviving(nodeId)) {
-        const node = stateManager.getNode(nodeId)
-        const claudeHistory = (node?.type === 'terminal' && node.claudeSessionHistory) || []
-        const claudeSessionId = claudeHistory.length > 0 ? claudeHistory[claudeHistory.length - 1].claudeSessionId : 'unknown'
+      // A pty that dies inside its post-spawn window failed to launch — the
+      // surface it was bringing back (startup revival, unarchive) stays as a dead
+      // remnant, so say why while its output is still around.
+      if (stateManager.isArchivalProtected(sessionId)) {
+        const node = nodeId ? stateManager.getNode(nodeId) : undefined
+        const agentHistory = (node?.type === 'terminal' && node.claudeSessionHistory) || []
+        const agentSessionId = agentHistory.length > 0 ? agentHistory[agentHistory.length - 1].claudeSessionId : 'unknown'
         const output = sessionManager.getScrollback(sessionId)
-        console.error(`[startup] Revival failed for Claude session ${claudeSessionId} (pty=${sessionId.slice(0, 8)}, exitCode=${exitCode})`)
-        if (output) {
-          console.error(`[startup] Revival output:\n${sanitizeForLog(output)}`)
-        } else {
-          console.error(`[startup] Revival output: (none)`)
-        }
+        serverLog(
+          `[launch-failed] pty=${sessionId.slice(0, 8)} exitCode=${exitCode} resuming session ${agentSessionId} — ` +
+          (output ? `output:\n${sanitizeForLog(output)}` : 'no output')
+        )
       }
 
       stateManager.terminalExited(sessionId, exitCode)
@@ -2251,8 +2244,7 @@ async function startServer(): Promise<void> {
     takeRecoverableTerminals: () => stateManager.processDeadTerminals(),
     getNode: (nodeId) => stateManager.getNode(nodeId),
     archiveTerminal: (nodeId) => stateManager.archiveTerminal(nodeId),
-    markReviving: (nodeId) => stateManager.markReviving(nodeId),
-    clearReviving: (nodeId) => stateManager.clearReviving(nodeId),
+    protectFromArchival: (sessionId) => stateManager.protectFromArchival(sessionId),
 
     resolveResumeTarget(node, recorded) {
       if (node.type !== 'terminal') return undefined
@@ -2314,16 +2306,6 @@ async function startServer(): Promise<void> {
 
     log: (line) => console.log(line),
   })
-
-  // Revival protection stays armed for 30s: a pty that survives that long is
-  // stable, and one that dies sooner should stay visible as a dead remnant the
-  // user can retry rather than being archived out from under them.
-  if (recoveryOutcome.revived.length > 0) {
-    setTimeout(() => {
-      for (const nodeId of recoveryOutcome.revived) stateManager.clearReviving(nodeId)
-      console.log(`[startup] Cleared revival protection for ${recoveryOutcome.revived.length} terminal(s)`)
-    }, REVIVAL_PROTECTION_MS)
-  }
 
   // --- Git status polling for directory nodes ---
   gitStatusPoller = new GitStatusPoller(

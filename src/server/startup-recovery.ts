@@ -55,9 +55,12 @@ export interface StartupRecoveryDeps {
   takeRecoverableTerminals(): RecoverableTerminal[]
   getNode(nodeId: NodeId): NodeData | undefined
   archiveTerminal(nodeId: NodeId): void
-  /** Protect a node from being archived if its fresh pty exits immediately. */
-  markReviving(nodeId: NodeId): void
-  clearReviving(nodeId: NodeId): void
+  /**
+   * Keep a freshly spawned pty from archiving its surface if it exits
+   * immediately. Scoped to the pty and self-expiring, so it protects the launch
+   * it was armed for and nothing later.
+   */
+  protectFromArchival(sessionId: PtySessionId): void
 
   // --- bringing a surface back ---
   /** Which agent session to resume for this node, already verified. */
@@ -82,7 +85,7 @@ export interface StartupRecoveryDeps {
 /** What happened, for the log and for tests. */
 export interface StartupRecoveryOutcome {
   reattached: PtySessionId[]
-  /** Nodes given a fresh pty. Their revival protection is still armed. */
+  /** Nodes given a fresh pty. */
   revived: NodeId[]
   archived: NodeId[]
   /** Daemon sessions destroyed because no surface claimed them. */
@@ -98,9 +101,10 @@ export interface StartupRecoveryOutcome {
  * the pty it failed to adopt is cleaned up as an orphan rather than left
  * running forever.
  *
- * Revival protection is *not* cleared here. A pty that exits seconds after
- * being revived must not re-archive the node, and how long to wait is a policy
- * question for the caller; `outcome.revived` is the list to disarm later.
+ * Every revived pty is handed to `protectFromArchival`, because one that exits
+ * seconds after being spawned failed to launch and must not archive the surface
+ * it was bringing back. The window expires on its own — nothing here, and
+ * nothing in the caller, has to remember to disarm it.
  */
 export async function recoverSurfaces(deps: StartupRecoveryDeps): Promise<StartupRecoveryOutcome> {
   const daemonSessions = await deps.listDaemonSessions()
@@ -153,8 +157,8 @@ export async function recoverSurfaces(deps: StartupRecoveryDeps): Promise<Startu
 
     // Revive — either planned, or fallen through from a failed reattach.
     try {
-      deps.markReviving(terminal.nodeId)
       const sessionId = deps.reviveSurface(terminal, resumeSessionId)
+      deps.protectFromArchival(sessionId)
       if (resumeSessionId) deps.watchTranscript(sessionId, terminal.nodeId, resumeSessionId)
       outcome.revived.push(terminal.nodeId)
       deps.log(
@@ -162,9 +166,8 @@ export async function recoverSurfaces(deps: StartupRecoveryDeps): Promise<Startu
         `${resumeSessionId ? resumeSessionId.slice(0, 8) : '(fresh)'}`
       )
     } catch (err: any) {
-      // The protection has to come off, or the node stays permanently immune to
-      // archival while having no pty at all.
-      deps.clearReviving(terminal.nodeId)
+      // Nothing to disarm: protection is armed against a pty, and this one never
+      // came into existence.
       deps.archiveTerminal(terminal.nodeId)
       outcome.archived.push(terminal.nodeId)
       deps.log(`[startup] Failed to revive terminal ${terminal.nodeId.slice(0, 8)}: ${err.message}`)

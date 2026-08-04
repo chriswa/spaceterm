@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { recoverSurfaces, type DaemonSessionInfo, type RecoverableTerminal, type StartupRecoveryDeps } from './startup-recovery'
-import { StateManager } from './state-manager'
+import { StateManager, ARCHIVAL_PROTECTION_MS } from './state-manager'
 import { StatePersister } from './persistence'
 import { SessionManager } from './session-manager'
 import { DaemonClient } from './daemon-client'
@@ -139,8 +139,7 @@ async function harness(options: HarnessOptions = {}) {
     takeRecoverableTerminals: () => stateManager.processDeadTerminals(),
     getNode: (nodeId) => stateManager.getNode(nodeId),
     archiveTerminal: (nodeId) => stateManager.archiveTerminal(nodeId),
-    markReviving: (nodeId) => stateManager.markReviving(nodeId),
-    clearReviving: (nodeId) => stateManager.clearReviving(nodeId),
+    protectFromArchival: (sessionId) => stateManager.protectFromArchival(sessionId),
 
     resolveResumeTarget: (node) => {
       const target = resumeTargets[node.id]
@@ -267,12 +266,16 @@ describe('a surface whose pty is gone', () => {
     h.dispose()
   })
 
-  it('stays protected from archival until the caller disarms it', async () => {
+  it('protects the pty it spawned, and only for the launch window', async () => {
     // A pty that dies seconds after revival must not archive the node out from
-    // under the user; the 30-second window is the caller's policy.
+    // under the user. The protection belongs to that pty and expires on its own,
+    // so no caller can leave a surface permanently immune to archival.
     const h = await harness({ nodes: [terminal('t1')] })
     await recoverSurfaces(h.deps)
-    expect(h.stateManager.isReviving(nid('t1'))).toBe(true)
+
+    const revivedPty = (h.stateManager.getNode(nid('t1')) as { sessionId: PtySessionId }).sessionId
+    expect(h.stateManager.isArchivalProtected(revivedPty)).toBe(true)
+    expect(h.stateManager.isArchivalProtected(revivedPty, Date.now() + ARCHIVAL_PROTECTION_MS)).toBe(false)
     h.dispose()
   })
 
@@ -380,12 +383,12 @@ describe('when a revive fails', () => {
     h.dispose()
   })
 
-  it('disarms revival protection first', async () => {
-    // Otherwise the node is permanently immune to archival while having no pty
-    // at all — a state nothing can ever clean up.
+  it('leaves no archival protection behind, since the pty never existed', async () => {
+    // The node is archived here, and it has to stay archivable: protection armed
+    // for a spawn that threw would otherwise outlive it.
     const h = await harness({ nodes: [terminal('t1')], reviveFailures: [nid('t1')] })
     await recoverSurfaces(h.deps)
-    expect(h.stateManager.isReviving(nid('t1'))).toBe(false)
+    expect(h.stateManager.isArchivalProtected(pid('t1'))).toBe(false)
     h.dispose()
   })
 
