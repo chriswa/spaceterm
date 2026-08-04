@@ -1,5 +1,4 @@
 import { useNodeStore } from '../stores/nodeStore'
-import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { usePeerStore } from '../stores/peerStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
@@ -81,12 +80,6 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onFileContent((nodeId: NodeId, content: string) => {
       useNodeStore.getState().applyFileContent(nodeId, content)
-    })
-  )
-
-  cleanupFns.push(
-    window.api.node.onGhRateLimit((data, usedHistory, slotMinutes) => {
-      useGhRateLimitStore.getState().update(data, usedHistory, slotMinutes)
     })
   )
 

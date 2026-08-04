@@ -9,11 +9,10 @@ import { SOCKET_DIR } from '../shared/protocol'
  * without each one.
  *
  * Several features are best-effort by design: Summary Chat needs a Claude Code
- * OAuth credential from the macOS Keychain and a running Voice Operator, the
- * toolbar sparkline needs `gh`, and background-work reconciliation needs
- * `pgrep`. Each already fails softly — which is right, but means a user on a
- * machine without them sees a feature that quietly does nothing and no
- * indication why.
+ * OAuth credential from the macOS Keychain and a running Voice Operator, and
+ * background-work reconciliation needs `pgrep`. Each already fails softly —
+ * which is right, but means a user on a machine without them sees a feature
+ * that quietly does nothing and no indication why.
  *
  * Probing once at startup and writing the result to the log turns "silently
  * broken" into "here is what is missing and what it costs you", which is the
@@ -37,10 +36,10 @@ export interface CapabilityDeps {
   /**
    * True when `command` runs and exits zero.
    *
-   * Only for probes where the exit code means something — `gh auth status`
-   * fails when unauthenticated, and `security find-generic-password` fails
-   * when the credential is absent. Not a presence check: a tool that exits
-   * non-zero on "no match" would be reported missing when it is fine.
+   * Only for probes where the exit code means something — `security
+   * find-generic-password` fails when the credential is absent. Not a presence
+   * check: a tool that exits non-zero on "no match" would be reported missing
+   * when it is fine.
    */
   canRun(command: string, args: string[]): boolean
   /** True when a path exists and is executable. */
@@ -87,15 +86,6 @@ const VOICE_OPERATOR_DISCOVERY = path.join(
 
 export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): Capability[] {
   const capabilities: Capability[] = []
-
-  const gh = deps.canRun('gh', ['auth', 'status'])
-  capabilities.push({
-    id: 'gh-cli',
-    name: 'GitHub CLI (authenticated)',
-    available: gh,
-    detail: gh ? 'gh auth status succeeded' : 'gh is missing or not authenticated (`gh auth login`)',
-    affects: gh ? '' : 'the toolbar API rate-limit sparkline stays empty'
-  })
 
   // macOS Keychain. Summary Chat reuses Claude Code's own OAuth credential
   // rather than asking for a separate API key.

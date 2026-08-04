@@ -50,7 +50,8 @@ intercepting `fs` or `child_process`, so the test exercises behaviour instead of
 implementation.
 
 - **Don't inject wall-clock time.** Take an optional `now` parameter
-  (`RingBuffer.record/build`) or expose a flush hook (`ClaudeStateMachine.flushForTest`).
+  (`PlanCache.snapshot`, `StateManager.setAlert`) or expose a flush hook
+  (`ClaudeStateMachine.flushForTest`).
 - **The PTY daemon is fakeable.** It's a separate Go process, but it speaks a
   stable JSON-lines protocol, so `src/server/testing/fake-daemon.ts` stands in
   for the socket. That's what makes the whole session lifecycle testable

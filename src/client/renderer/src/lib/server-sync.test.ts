@@ -5,7 +5,6 @@ import {
   sendMove, sendRename, sendArchive, sendTerminalCreate, sendMarkdownContent
 } from './server-sync'
 import { useNodeStore } from '../stores/nodeStore'
-import { useGhRateLimitStore } from '../stores/ghRateLimitStore'
 import { usePeerStore } from '../stores/peerStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
@@ -121,12 +120,6 @@ describe('server events reach the stores', () => {
     bridge.emit.nodeAdded(terminal('t1'))
     bridge.emit.nodeRemoved(nid('t1'))
     expect(useNodeStore.getState().nodes.t1).toBeUndefined()
-  })
-
-  it('routes rate-limit readings to the sparkline store', () => {
-    bridge.emit.ghRateLimit({ limit: 5000, used: 800, resetAt: 'T' }, [1, 2, 3], 1)
-    expect(useGhRateLimitStore.getState().data).toEqual({ limit: 5000, used: 800, resetAt: 'T' })
-    expect(useGhRateLimitStore.getState().usedHistory).toEqual([1, 2, 3])
   })
 
   it('tracks peers connecting and disconnecting', () => {

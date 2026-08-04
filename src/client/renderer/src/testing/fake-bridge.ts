@@ -4,7 +4,7 @@ import type {
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
-import type { GhRateLimitData, SnapshotMessage } from '../../../../shared/protocol'
+import type { SnapshotMessage } from '../../../../shared/protocol'
 import type { NodeData, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
@@ -128,7 +128,6 @@ export class FakeBridge implements Api {
   private readonly removed = new Set<(nodeId: NodeId) => void>()
   private readonly fileContent = new Set<(nodeId: NodeId, content: string) => void>()
   private readonly serverError = new Set<(message: string) => void>()
-  private readonly ghRateLimit = new Set<(d: GhRateLimitData, h: (number | null)[], m: number) => void>()
   private readonly playSound = new Set<(sound: string) => void>()
   private readonly speak = new Set<(text: string) => void>()
   private readonly speakingChanged = new Set<(nodeId: NodeId, speaking: boolean, voice?: string) => void>()
@@ -200,9 +199,6 @@ export class FakeBridge implements Api {
       for (const fn of this.fileContent) fn(nodeId, content)
     },
     serverError: (message: string): void => { for (const fn of this.serverError) fn(message) },
-    ghRateLimit: (data: GhRateLimitData, usedHistory: (number | null)[], slotMinutes: number): void => {
-      for (const fn of this.ghRateLimit) fn(data, usedHistory, slotMinutes)
-    },
     playSound: (sound: string): void => { for (const fn of this.playSound) fn(sound) },
     speak: (text: string): void => { for (const fn of this.speak) fn(text) },
     speakingChanged: (nodeId: NodeId, speaking: boolean, voice?: string): void => {
@@ -331,7 +327,6 @@ export class FakeBridge implements Api {
     onRemoved: (cb) => subscribe(this.removed, cb),
     onFileContent: (cb) => subscribe(this.fileContent, cb),
     onServerError: (cb) => subscribe(this.serverError, cb),
-    onGhRateLimit: (cb) => subscribe(this.ghRateLimit, cb),
     onPlaySound: (cb) => subscribe(this.playSound, cb),
     onSpeak: (cb) => subscribe(this.speak, cb),
     onSpeakingChanged: (cb) => subscribe(this.speakingChanged, cb),

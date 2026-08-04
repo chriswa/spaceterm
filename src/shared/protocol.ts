@@ -810,20 +810,6 @@ export interface ServerErrorMessage {
   seq?: number
 }
 
-export interface GhRateLimitData {
-  limit: number
-  used: number
-  resetAt: string  // ISO 8601
-}
-
-export interface GhRateLimitMessage {
-  type: 'gh-rate-limit'
-  data: GhRateLimitData
-  usedHistory: (number | null)[]
-  /** Minutes per history slot (matches the server's polling interval). */
-  slotMinutes: number
-}
-
 export interface PlaySoundServerMessage {
   type: 'play-sound'
   sound: SoundName
@@ -1125,7 +1111,6 @@ export type ServerMessage =
   | FileContentMessage
   | PlanCacheUpdateMessage
   | ServerErrorMessage
-  | GhRateLimitMessage
   | PlaySoundServerMessage
   | SpeakServerMessage
   | SpeakingChangedMessage

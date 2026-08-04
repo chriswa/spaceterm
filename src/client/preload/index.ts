@@ -125,11 +125,6 @@ const nodeApi: NodeApi = {
     ipcRenderer.on('server:error', listener)
     return () => ipcRenderer.removeListener('server:error', listener)
   },
-  onGhRateLimit: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, data: any, usedHistory: (number | null)[], slotMinutes: number) => callback(data, usedHistory, slotMinutes)
-    ipcRenderer.on('gh-rate-limit', listener)
-    return () => ipcRenderer.removeListener('gh-rate-limit', listener)
-  },
   onPlaySound: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, sound: string) => callback(sound)
     ipcRenderer.on('play-sound', listener)

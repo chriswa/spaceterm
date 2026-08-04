@@ -259,17 +259,17 @@ exists and nine first-party widgets already satisfy it". What is still missing
 is the transport: a standalone widget is a React component in this bundle, and
 a mod's widget is not. The realistic first step is not arbitrary components but
 a **declarative widget** — the mod supplies data over the scripts socket and
-picks from a small set of renderers spaceterm already has (a metric, a
-sparkline, a toggle). `DeltaSparkline` is already generic over any minute-keyed
-monotonic series precisely so this is possible.
+picks from a small set of renderers spaceterm has (a metric, a toggle, and
+whatever chart renderer the first such mod needs). The renderers are the easy
+half; the transport is the tier.
 
 That is a much smaller thing than "renderer-side mods", and it covers the
-sparkline case, which is the one that motivated the tier.
+poller-with-a-readout case, which is the one that motivated the tier.
 
 ### Tier 3 — feature mods that span processes
 
-Tiers 1 and 2 each describe half a mod, and the halves could not talk. A
-sparkline is a poller *and* a widget. Summary chat is a subprocess that calls an
+Tiers 1 and 2 each describe half a mod, and the halves could not talk. A status
+readout is a poller *and* a widget. Summary chat is a subprocess that calls an
 external service *and* a speech bubble *and* a halo around a card. Every mod
 worth writing is a Tier 1 mod and a Tier 2 mod with a wire between them, and
 that wire is the thing that was missing.
@@ -496,20 +496,18 @@ informed by a mod that exists.
 
 ## Pilot conversions, in order
 
-**1. The GitHub rate-limit sparkline.** Still the best first mod, and now four
-fifths extracted. `RingBuffer` is its own module with 20 tests; the poller is
-`gh-rate-limit.ts` with a deps seam and 24 tests; `DeltaSparkline` is generic
-over any minute-keyed monotonic series; `GhRateLimitIndicator` is a standalone
-toolbar widget that takes no props. What is left is exactly the mod lifecycle —
-spawn the poller as a separate process and let it push readings over
-`scripts.sock` — plus the declarative-widget step in Tier 2. That is the whole
-point: the conversion is now *only* the parts a mod system has to provide.
+**1. `git-status-poller`.** Data-only; it feeds `DirectoryCard` rather than
+owning a widget, so it exercises Tier 1 and Tier 3 without waiting on the
+declarative-widget step. Deps seam and 22 tests, so the "don't extract before it
+has tests" rule below is satisfied.
 
-**2. `git-status-poller`.** Data-only; it feeds `DirectoryCard` rather than
-owning a widget. Easier than the sparkline but proves less. Deps seam and 22
-tests, so the "don't extract before it has tests" rule below is satisfied.
+The GitHub rate-limit sparkline used to head this list, and it was the example
+that shaped Tiers 2 and 3 — a poller plus a widget plus a wire between them. It
+has since been removed from spaceterm entirely (see git history for
+`gh-rate-limit.ts`, `ring-buffer.ts` and `DeltaSparkline.tsx`), so the argument
+survives but the code to convert does not.
 
-**3. Voice / summary chat.** Already talks HTTP to an external service (Voice
+**2. Voice / summary chat.** Already talks HTTP to an external service (Voice
 Operator on `127.0.0.1`), already ~450 lines with its own lifecycle. The most
 natural out-of-process citizen in the codebase. Deps seam and 37 tests. It is
 also the feature that most needs the treatment for a *different* reason: it is
@@ -517,7 +515,7 @@ unavailable on any machine without the macOS Keychain and a running Voice
 Operator, so making it a mod is also how it stops being a button that silently
 does nothing for most users.
 
-**4. Agent types.** `AgentDriver` exists and `AgentProvisioning` now owns the
+**3. Agent types.** `AgentDriver` exists and `AgentProvisioning` now owns the
 plugin directories and config merges (`agent-provisioning.ts`, 47 tests), so
 both halves are behind interfaces. A mod that adds an agent is the most
 compelling demo and is now unblocked end to end.
@@ -612,7 +610,7 @@ Two consequences worth stating now rather than discovering later:
   registers into is just a slower array. Make each mutable when the first mod
   needs it — the change is small and the shape is already right.
 - **Do not extract a feature into a mod before it has tests.** You lose the only
-  signal that the conversion preserved behaviour. `RingBuffer` was extracted and
-  tested first, on purpose; do it in that order.
+  signal that the conversion preserved behaviour. Every extraction so far got
+  its deps seam and its tests first, on purpose; do it in that order.
 - **Do not add a mod API to `index.ts`.** It is the file the mod system exists to
   shrink.

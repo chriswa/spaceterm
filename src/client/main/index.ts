@@ -647,12 +647,6 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('gh-rate-limit', (data: Record<string, unknown>, usedHistory: (number | null)[], slotMinutes: number) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('gh-rate-limit', data, usedHistory, slotMinutes)
-    }
-  })
-
   client!.on('play-sound', (sound: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('play-sound', sound)

@@ -13,9 +13,9 @@ export type { CrabNavEvent } from './toolbar/CrabGroup'
  * The toolbar is now the arrangement of its slots and nothing else.
  *
  * Everything it used to contain — nine inline SVG icons, five self-owned
- * toggles, a 416-line crab-nav group, a sparkline and a rate-limit meter —
- * lives in `toolbar/`, and *what appears where* lives in `toolbar/registry`.
- * See that file for why widgets are split into standalone and host-driven.
+ * toggles, a 416-line crab-nav group — lives in `toolbar/`, and *what appears
+ * where* lives in `toolbar/registry`. See that file for why widgets are split
+ * into standalone and host-driven.
  */
 
 export type ToolbarProps = ToolbarHost
@@ -25,7 +25,7 @@ export function Toolbar(props: ToolbarProps) {
   // the stylesheet selects the final *element* in the status slot, and a
   // wrapper — even at `display: contents` — would win that match and drop the
   // rule on the floor. It would also match when the last widget renders
-  // nothing, which the rate-limit meter does whenever `gh` is unavailable.
+  // nothing, which the power monitor does unless it is switched on.
   const render = (widget: ToolbarWidget) => (
     <Fragment key={widget.id}>{renderToolbarWidget(widget, props)}</Fragment>
   )

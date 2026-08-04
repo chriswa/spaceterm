@@ -22,7 +22,6 @@ import type {
   CameraBounds,
   ClaudeSessionEntry,
   CreateOptions,
-  GhRateLimitData,
   SessionInfo,
   SnapshotMessage,
   SummaryChatUiState,
@@ -121,9 +120,6 @@ export interface NodeApi {
   onRemoved(callback: (nodeId: NodeId) => void): () => void
   onFileContent(callback: (nodeId: NodeId, content: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
-  onGhRateLimit(
-    callback: (data: GhRateLimitData, usedHistory: (number | null)[], slotMinutes: number) => void,
-  ): () => void
   onPlaySound(callback: (sound: string) => void): () => void
   onSpeak(callback: (text: string) => void): () => void
   onSpeakingChanged(

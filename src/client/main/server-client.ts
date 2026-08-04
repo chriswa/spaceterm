@@ -146,9 +146,6 @@ export class ServerClient extends EventEmitter {
       case 'plan-cache-update':
         this.emit('plan-cache-update', msg.sessionId, msg.count, msg.files)
         return
-      case 'gh-rate-limit':
-        this.emit('gh-rate-limit', msg.data, msg.usedHistory, msg.slotMinutes)
-        return
       case 'play-sound':
         this.emit('play-sound', msg.sound)
         return

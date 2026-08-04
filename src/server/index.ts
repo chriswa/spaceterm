@@ -5,7 +5,7 @@ import { execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
-import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, GhRateLimitData, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
@@ -21,7 +21,6 @@ import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import type { AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
-import { GhRateLimitPoller } from './gh-rate-limit'
 import { probeCapabilities, formatCapabilityReport } from './capabilities'
 import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirstPtySession, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
@@ -36,7 +35,6 @@ import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DE
 import { measureCard as nodePixelSize } from '../shared/card-types'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
-import { RingBuffer } from './ring-buffer'
 import { SessionFileWatcher } from './session-file-watcher'
 import { CodexSessionFileWatcher } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher } from './cursor-session-file-watcher'
@@ -222,7 +220,6 @@ let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
 let summaryChat: SummaryChat
-let ghRateLimitPoller: GhRateLimitPoller | undefined
 
 /**
  * Point the right transcript watcher at a surface's agent session.
@@ -2327,12 +2324,6 @@ async function startServer(): Promise<void> {
     (nodeId, gitStatus) => stateManager.updateDirectoryGitStatus(nodeId, gitStatus)
   )
 
-  // --- GitHub GraphQL rate limit polling ---
-  ghRateLimitPoller = new GhRateLimitPoller((report) => {
-    broadcastToAll({ type: 'gh-rate-limit', ...report })
-  })
-  void ghRateLimitPoller.start()
-
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes
   for (const node of Object.values(allStartupNodes)) {
@@ -2381,13 +2372,6 @@ async function startServer(): Promise<void> {
     const summaryTargetNodeId = summaryChat.getTargetNodeId()
     if (summaryTargetNodeId) {
       send(socket, { type: 'summary-chat-status', nodeId: summaryTargetNodeId, state: 'target' })
-    }
-
-    // Send the latest GitHub rate-limit reading immediately so the client
-    // doesn't wait a full poll interval for a sparkline.
-    const ghReport = ghRateLimitPoller?.current()
-    if (ghReport) {
-      send(socket, { type: 'gh-rate-limit', ...ghReport })
     }
 
     socket.on('data', (data) => {

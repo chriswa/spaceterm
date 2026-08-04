@@ -26,7 +26,7 @@ function byId(capabilities: Capability[], id: string): Capability {
 describe('probeCapabilities', () => {
   it('reports every optional integration', () => {
     const ids = probeCapabilities(deps()).map((c) => c.id)
-    expect(ids).toEqual(['gh-cli', 'claude-oauth', 'voice-operator', 'pgrep', 'lsof', 'pty-daemon'])
+    expect(ids).toEqual(['claude-oauth', 'voice-operator', 'pgrep', 'lsof', 'pty-daemon'])
   })
 
   it('marks everything available on a fully equipped machine', () => {
@@ -54,22 +54,6 @@ describe('probeCapabilities', () => {
       expect(c.available).toBe(false)
       expect(c.affects, `${c.id} should say what breaks`).toBeTruthy()
     }
-  })
-
-  describe('gh', () => {
-    it('is probed by its auth status, not merely its presence', () => {
-      // An installed-but-unauthenticated gh produces an empty sparkline just as
-      // surely as a missing one.
-      const calls: Array<[string, string[]]> = []
-      probeCapabilities(deps({ canRun: (c, a) => { calls.push([c, a]); return true } }))
-      expect(calls).toContainEqual(['gh', ['auth', 'status']])
-    })
-
-    it('names the sparkline as what degrades', () => {
-      const c = byId(probeCapabilities(deps({ canRun: (cmd) => cmd !== 'gh' })), 'gh-cli')
-      expect(c.available).toBe(false)
-      expect(c.affects).toMatch(/sparkline/)
-    })
   })
 
   describe('the Claude Code credential', () => {
@@ -142,8 +126,8 @@ describe('formatCapabilityReport', () => {
       probeCapabilities(deps({ canRun: () => false, isExecutable: () => false, exists: () => false }))
     )
     const summary = lines[lines.length - 1]
-    expect(summary).toMatch(/6 of 6 unavailable/)
-    expect(summary).toContain('gh-cli')
+    expect(summary).toMatch(/5 of 5 unavailable/)
+    expect(summary).toContain('claude-oauth')
     expect(summary).toContain('voice-operator')
   })
 

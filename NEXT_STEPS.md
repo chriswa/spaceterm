@@ -54,7 +54,7 @@ renderer entry and fails if anything reachable needs Node — the invariant that
 keeps that possible, previously unguarded. 211 renderer tests where there were
 zero.
 
-**Extractions from `index.ts`** (3007 → 2466): `gh-rate-limit.ts`,
+**Extractions from `index.ts`** (3007 → 2466):
 `script-api.ts`, `resume-target.ts`, `terminal-respawn.ts`,
 `restart-recovery.ts`, `startup-reconciliation.ts`, `startup-recovery.ts`. The
 last of those is driven end to end against an in-memory daemon — real
@@ -131,8 +131,8 @@ Three corollaries worth stating, all learned the hard way:
 
 ### Tier C — extract before testing
 
-- **`server/index.ts`** (2490, down from 3087). Six tenants have moved out
-  (`agent-provisioning`, `gh-rate-limit`, `script-api`, `resume-target`,
+- **`server/index.ts`** (2490, down from 3087). Five tenants have moved out
+  (`agent-provisioning`, `script-api`, `resume-target`,
   `restart-recovery`, `startup-reconciliation`). What remains is `handleMessage` — a ~990-line switch over
   49 client message types — plus socket setup plus startup reconciliation.
   Those are three files.
@@ -278,10 +278,8 @@ done last session; kept so the reasoning is not lost.
     array.
 18. **A declarative widget contract** is the cheapest route to Tier 2. A mod
     supplies data over the scripts socket and picks from renderers spaceterm
-    already has (a metric, a sparkline, a toggle). `DeltaSparkline` is already
-    generic over any minute-keyed monotonic series precisely so this is
-    possible, and nine of fourteen toolbar widgets already satisfy the
-    standalone contract.
+    already has (a metric, a toggle), and nine of thirteen toolbar widgets
+    already satisfy the standalone contract.
 
 ## Things deliberately not done
 
