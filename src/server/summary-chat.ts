@@ -32,7 +32,16 @@ const VOICE_REFRESH_MS = 5_000
  * fast as the event loop allows.
  */
 const SPEECH_POLL_INTERVAL_MS = 250
-const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Speak in two to four concise sentences of plain English. Later messages supersede earlier ones. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words to speak.`
+const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Your first task is to summarize the coding-agent's messages in the latest "turn", which starts at the user's latest substantial message. A bare request to continue is not substantial; a short answer such as "yes" is substantial. Speak at most three concise sentences of plain English. The user can ask follow up questions, so make it clear where more info is available. Do not self-identify as the coding-agent, instead refer to it as "the agent". By default, skip summarizing the user's messages, since they probably already know what they wrote. Note that you have a chunk of conversation and earlier messages may be invalidated by later ones. Focus on what the agent concluded, accomplished, is blocked on, or needs next in response to that current request. Do not recap earlier work unless it is essential to make the current-turn answer intelligible. If the agent needs something from the user, make certain to include that information last. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words which can be spoken.`
+
+/**
+ * Marks where a spoken answer was cut off, in the history resent to Haiku.
+ *
+ * The Messages API is stateless: every turn resends the whole conversation, so
+ * an answer the listener never heard the end of would otherwise come back
+ * verbatim and be treated as delivered. See `redactUnheard`.
+ */
+const INTERRUPTED_MARKER = '*INTERRUPTED*'
 
 export type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
 type HaikuMessage = { role: 'user' | 'assistant'; content: string }
@@ -335,10 +344,36 @@ export class SummaryChat {
       return
     }
     const heard = await this.heardPrefix(conversation)
-    const context = heard === undefined
-      ? ''
-      : `\nThe listener interrupted your previous answer after character ${heard}; do not assume they heard the rest. `
+    const redacted = heard !== undefined && this.redactLastAnswer(conversation, heard)
+    const context = redacted
+      ? `Your previous answer was cut off where it now reads ${INTERRUPTED_MARKER}; the listener never heard the rest, and it has been removed. `
+      : ''
     await this.ask(conversation, `${context}The listener asks: ${text}`, 'follow-up')
+  }
+
+  /**
+   * Trim the last answer in the resent history down to what was audible.
+   *
+   * Done to the stored history rather than described in the prompt: the model
+   * cannot mistake an answer it can no longer see for one the listener heard,
+   * whereas it demonstrably could ignore a note about a character offset while
+   * the full text sat right there above it.
+   *
+   * Returns whether anything was actually removed.
+   */
+  private redactLastAnswer(conversation: Conversation, heard: number): boolean {
+    const index = conversation.haikuHistory.map(message => message.role).lastIndexOf('assistant')
+    if (index < 0) return false
+    const spoken = conversation.haikuHistory[index].content
+    const audible = redactUnheard(spoken, heard)
+    if (audible === spoken) return false
+    conversation.haikuHistory[index] = { role: 'assistant', content: audible }
+    this.deps.audit.append({
+      event: 'answer-redacted', auditId: conversation.auditId, nodeId: conversation.nodeId,
+      spokenCharacters: spoken.length, heardCharacters: heard, keptCharacters: audible.length,
+    })
+    serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} redacted ${spoken.length - audible.length} unheard chars`)
+    return true
   }
 
   /**
@@ -523,10 +558,13 @@ export class SummaryChat {
     if (!speechId) return
     const status = speechStatus(await this.dropSpeech(speechId))
     // Being cut off is exactly the situation the interruption offset exists to
-    // describe, so record it for the next follow-up. Voice Operator counts in
-    // whole sentences: a zero means the listener heard no complete sentence,
-    // which is nothing worth telling Haiku about.
-    if (status?.character_offset) conversation.interruptedAtCharacter = status.character_offset
+    // describe, so record it for the next follow-up. A reported zero is a real
+    // answer — the listener heard no complete sentence — and has to be told
+    // apart from an absent field, or the whole unheard answer stays in the
+    // history as though it had been delivered.
+    if (typeof status?.character_offset === 'number') {
+      conversation.interruptedAtCharacter = status.character_offset
+    }
   }
 
   /** Ask Voice Operator to drop a job, wherever it is in its lifecycle. */
@@ -741,9 +779,7 @@ function initialPrompt(messages: TranscriptMessage[]): string {
   const format = (items: TranscriptMessage[]) => items
     .map(message => `${message.role.toUpperCase()}: ${message.text}`)
     .join('\n\n')
-  return `You are a fast voice companion helping a user understand a coding-agent conversation. Summarize ONLY the CURRENT TURN for text-to-speech in two to four concise sentences. The current turn starts at the user's latest substantial message and includes everything after it. A bare request to continue is not substantial; a short answer such as "yes" is substantial. Focus on what the agent concluded, accomplished, is blocked on, or needs next in response to that current request. Do not recap earlier work unless it is essential to make the current-turn answer intelligible.
-
-BACKGROUND CONTEXT is only for disambiguation and for preparing to answer follow-up voice questions. It is not the subject of the summary. Later messages supersede earlier ones. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words to speak.
+  return `BACKGROUND CONTEXT is only for disambiguation and for preparing to answer follow-up voice questions.
 
 BACKGROUND CONTEXT:
 ${format(background) || '(none)'}
@@ -767,6 +803,41 @@ function latestSubstantialUserMessage(messages: TranscriptMessage[]): number {
 
 function isBareContinuation(text: string): boolean {
   return /^(?:please\s+)?(?:continue|keep going|go on|proceed)(?:\s+please)?[.!…]*$/i.test(text.trim())
+}
+
+/**
+ * Rewrite a spoken answer to only the part the listener actually heard.
+ *
+ * The Messages API is stateless — `askHaiku` resends the whole history on every
+ * turn — so an answer that was cut off mid-flow would keep being presented to
+ * Haiku as though all of it had been delivered. It would then answer "as I
+ * said…" about words nobody heard. Redacting the tail is what makes the resent
+ * history match the listener's experience.
+ *
+ * The cut is backed up to the last sentence boundary at or before `heard`, so a
+ * sentence that was half out of the speaker's mouth is dropped rather than
+ * presented as delivered. Voice Operator already reports whole sentences, but
+ * relying on that would put the correctness of the transcript in another
+ * process's hands for no gain.
+ */
+export function redactUnheard(text: string, heard: number): string {
+  if (heard >= text.length) return text
+  const audible = text.slice(0, Math.max(0, heard))
+  const spoken = audible.slice(0, lastSentenceEnd(audible)).trim()
+  return spoken ? `${spoken} ${INTERRUPTED_MARKER}` : INTERRUPTED_MARKER
+}
+
+/**
+ * Where the last complete sentence in `text` ends, or 0 if there is none.
+ * Terminators only count when followed by whitespace or the end of the string,
+ * which keeps decimals and version numbers from reading as sentence ends.
+ */
+function lastSentenceEnd(text: string): number {
+  let end = 0
+  for (const match of text.matchAll(/[.!?…]["')\]]*(?=\s|$)/g)) {
+    end = (match.index ?? 0) + match[0].length
+  }
+  return end
 }
 
 function boundedHaikuHistory(history: HaikuMessage[]): HaikuMessage[] {

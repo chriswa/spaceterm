@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   SummaryChat,
   parseTranscript,
+  redactUnheard,
   type SummaryChatDeps,
   type TranscriptMessage
 } from './summary-chat'
@@ -181,6 +182,22 @@ function newestPrompt(h: Harness): string {
   const calls = haikuCalls(h)
   const body = calls[calls.length - 1].body as { messages: Array<{ content: string }> }
   return body.messages[body.messages.length - 1].content
+}
+
+/**
+ * The previous answer as Haiku sees it on the newest request. Because the
+ * Messages API is stateless the whole history is resent every turn, so this is
+ * where an unheard tail would resurface if it were not redacted.
+ */
+function lastAnswerSent(h: Harness): string | undefined {
+  const calls = haikuCalls(h)
+  const body = calls[calls.length - 1].body as { messages: Array<{ role: string; content: string }> }
+  return [...body.messages].reverse().find((m) => m.role === 'assistant')?.content
+}
+
+/** Script what Haiku answers, when a test needs a specific number of sentences. */
+function answers(http: FakeHttp, text: string): void {
+  http.on('api.anthropic.com', { content: [{ type: 'text', text }] })
 }
 
 describe('start', () => {
@@ -641,22 +658,47 @@ describe('cancelAll', () => {
     expect(h.speaking.at(-1)).toMatchObject({ speaking: false })
   })
 
-  it('tells the next follow-up how far the answer got', async () => {
-    // Reading this at all depends on the DELETE's 410 being treated as an
+  it('strips the unheard tail of the answer out of the resent history', async () => {
+    // Reading the offset at all depends on the DELETE's 410 being treated as an
     // answer rather than a failure.
-    const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http) })
+    const h = harness({
+      stallBetweenPolls: true,
+      configure: (http) => {
+        answers(http, 'First sentence. Second sentence. Third sentence.')
+        speaking(http, 32) // Through "Second sentence.", partway into the third.
+      }
+    })
     await h.chat.start(NODE, '/t.jsonl')
     await flush(4)
     await h.chat.cancelAll()
     h.http.calls.length = 0
 
     await h.chat.followUp('what was that?')
-    expect(newestPrompt(h)).toContain('character 61')
+
+    expect(lastAnswerSent(h)).toBe('First sentence. Second sentence. *INTERRUPTED*')
+    expect(newestPrompt(h)).toContain('*INTERRUPTED*')
   })
 
-  it('says nothing about an interruption before the first sentence finished', async () => {
+  it('drops a sentence that was only half spoken', async () => {
+    const h = harness({
+      stallBetweenPolls: true,
+      configure: (http) => {
+        answers(http, 'First sentence. Second sentence.')
+        speaking(http, 24) // Mid-way through "Second sentence."
+      }
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(4)
+    await h.chat.cancelAll()
+    h.http.calls.length = 0
+
+    await h.chat.followUp('what was that?')
+    expect(lastAnswerSent(h)).toBe('First sentence. *INTERRUPTED*')
+  })
+
+  it('redacts the whole answer when no sentence finished', async () => {
     // Voice Operator counts whole sentences, so a zero means the listener heard
-    // no complete sentence — there is nothing there to tell Haiku.
+    // nothing at all — none of the answer may be resent as though delivered.
     const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http, 0) })
     await h.chat.start(NODE, '/t.jsonl')
     await flush(4)
@@ -664,7 +706,18 @@ describe('cancelAll', () => {
     h.http.calls.length = 0
 
     await h.chat.followUp('what was that?')
-    expect(newestPrompt(h)).not.toContain('interrupted')
+    expect(lastAnswerSent(h)).toBe('*INTERRUPTED*')
+  })
+
+  it('leaves an answer that played to the end intact', async () => {
+    const h = harness({ configure: (http) => answers(http, 'First sentence. Second sentence.') })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+    h.http.calls.length = 0
+
+    await h.chat.followUp('what was that?')
+    expect(lastAnswerSent(h)).toBe('First sentence. Second sentence.')
+    expect(newestPrompt(h)).not.toContain('*INTERRUPTED*')
   })
 
   it('settles every surface that is producing, not just one', async () => {
@@ -872,14 +925,16 @@ describe('followUp', () => {
     expect(JSON.stringify(haiku?.body)).toContain('why did it fail?')
   })
 
-  it('tells Haiku how much of the previous answer was actually heard', async () => {
+  it('redacts what the listener never heard, and says the answer was cut off', async () => {
     const h = harness({
-      configure: (http) =>
+      configure: (http) => {
+        answers(http, 'First sentence. Second sentence.')
         http.on('/v1/speech', ({ method }) =>
           method === 'POST'
             ? { id: 'speech-1', state: 'in_progress' }
-            : { id: 'speech-1', state: 'interrupted_by_user', character_offset: 42 }
+            : { id: 'speech-1', state: 'interrupted_by_user', character_offset: 16 }
         )
+      }
     })
     await h.chat.start(NODE, '/t.jsonl')
     await flush()
@@ -887,13 +942,15 @@ describe('followUp', () => {
 
     await h.chat.followUp('wait, repeat that')
 
-    expect(newestPrompt(h)).toContain('character 42')
+    expect(lastAnswerSent(h)).toBe('First sentence. *INTERRUPTED*')
+    expect(newestPrompt(h)).toContain('cut off')
   })
 
   it('consumes the interruption once — a later answer that played out gets no context', async () => {
     let jobs = 0
     const h = harness({
-      configure: (http) =>
+      configure: (http) => {
+        answers(http, 'First sentence. Second sentence.')
         http.on('/v1/speech', ({ method }) => {
           if (method === 'POST') {
             jobs++
@@ -901,9 +958,10 @@ describe('followUp', () => {
           }
           // Only the first answer is cut off; later ones play to the end.
           return jobs === 1
-            ? { id: 'speech-1', state: 'interrupted_by_user', character_offset: 42 }
+            ? { id: 'speech-1', state: 'interrupted_by_user', character_offset: 16 }
             : { id: `speech-${jobs}`, state: 'completed' }
         })
+      }
     })
     await h.chat.start(NODE, '/t.jsonl')
     await flush()
@@ -913,7 +971,10 @@ describe('followUp', () => {
     await h.chat.followUp('second question')
 
     expect(newestPrompt(h)).toContain('second question')
-    expect(newestPrompt(h)).not.toContain('interrupted')
+    expect(newestPrompt(h)).not.toContain('*INTERRUPTED*')
+    // The first answer stays redacted — the listener never un-hears it — but
+    // the answer that did play out is resent whole.
+    expect(lastAnswerSent(h)).toBe('First sentence. Second sentence.')
   })
 
   it('adds no interruption context when the answer played to the end', async () => {
@@ -922,7 +983,7 @@ describe('followUp', () => {
     await flush()
 
     await h.chat.followUp('go on')
-    expect(newestPrompt(h)).not.toContain('interrupted')
+    expect(newestPrompt(h)).not.toContain('*INTERRUPTED*')
   })
 
   it('keeps prior exchanges in the Haiku history', async () => {
@@ -992,6 +1053,42 @@ describe('dispose', () => {
 
     await h.tickVoiceRefresh()
     expect(h.http.calls).toHaveLength(0)
+  })
+})
+
+describe('redactUnheard', () => {
+  it('keeps whole sentences and marks the cut', () => {
+    expect(redactUnheard('One. Two. Three.', 9)).toBe('One. Two. *INTERRUPTED*')
+  })
+
+  it('drops a sentence that was still being spoken', () => {
+    expect(redactUnheard('One. Two. Three.', 12)).toBe('One. Two. *INTERRUPTED*')
+  })
+
+  it('keeps nothing when the first sentence never finished', () => {
+    expect(redactUnheard('One. Two.', 0)).toBe('*INTERRUPTED*')
+    expect(redactUnheard('One. Two.', 2)).toBe('*INTERRUPTED*')
+  })
+
+  it('leaves an answer heard to the end untouched', () => {
+    expect(redactUnheard('One. Two.', 9)).toBe('One. Two.')
+    expect(redactUnheard('One. Two.', 500)).toBe('One. Two.')
+  })
+
+  // A summary is spoken prose, so its terminators sit next to real text. These
+  // are the shapes that would otherwise cut mid-sentence or not cut at all.
+  it('does not treat a decimal point as the end of a sentence', () => {
+    expect(redactUnheard('It bumped it to 3.5 today. Then it stopped.', 26))
+      .toBe('It bumped it to 3.5 today. *INTERRUPTED*')
+  })
+
+  it('cuts after punctuation that closes a quote or bracket', () => {
+    expect(redactUnheard('It failed (twice.) Then it stopped.', 20))
+      .toBe('It failed (twice.) *INTERRUPTED*')
+  })
+
+  it('handles the terminators a voice answer actually uses', () => {
+    expect(redactUnheard('Did it? Yes! Wait…  more', 12)).toBe('Did it? Yes! *INTERRUPTED*')
   })
 })
 
