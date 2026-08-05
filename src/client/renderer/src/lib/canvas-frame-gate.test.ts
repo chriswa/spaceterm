@@ -27,6 +27,7 @@ const base = (): FrameInputs => ({
   height: 900,
   clientWidth: 800,
   clientHeight: 450,
+  dpr: 2,
   camX: 10,
   camY: 20,
   camZ: 1,
@@ -39,33 +40,52 @@ const base = (): FrameInputs => ({
   reparentEdge: null,
 })
 
+const MAX_SKIP_MS = 1_000
+
+/**
+ * A gate driven by an explicit clock.
+ *
+ * Every case but the backstop's own wants time to stand still: the gate forces a
+ * redraw when nothing has been drawn for `MAX_SKIP_MS`, so a suite that let the
+ * wall clock run would see that as a flake on a slow machine.
+ */
+function clocked(maxSkipMs: number = MAX_SKIP_MS) {
+  const gate = new CanvasFrameGate(maxSkipMs)
+  let now = 0
+  return {
+    draw: (inputs: FrameInputs = base()): boolean => gate.shouldDraw(inputs, now),
+    advance: (ms: number): void => { now += ms },
+    invalidate: (): void => gate.invalidate(),
+  }
+}
+
 /** A gate that has already drawn `base()`, which is the interesting state. */
-function settled(): CanvasFrameGate {
-  const gate = new CanvasFrameGate()
-  gate.shouldDraw(base())
+function settled(): ReturnType<typeof clocked> {
+  const gate = clocked()
+  gate.draw()
   return gate
 }
 
 describe('CanvasFrameGate', () => {
   it('always draws the first frame', () => {
-    expect(new CanvasFrameGate().shouldDraw(base())).toBe(true)
+    expect(clocked().draw()).toBe(true)
   })
 
   it('skips a still canvas under a fully static theme', () => {
     // The whole point. Both clocks null, nothing else moving.
     const gate = settled()
-    expect(gate.shouldDraw(base())).toBe(false)
-    expect(gate.shouldDraw(base())).toBe(false)
+    expect(gate.draw()).toBe(false)
+    expect(gate.draw()).toBe(false)
   })
 
   it('never skips while either facet is animated', () => {
     // One live clock is enough: the edges composite over the background, so
     // neither can be repainted without the other.
     for (const clock of ['bgTime', 'edgeTime'] as const) {
-      const gate = new CanvasFrameGate()
+      const gate = clocked()
       for (let frame = 0; frame < 4; frame++) {
         const inputs = { ...base(), [clock]: frame * 0.016 }
-        expect(gate.shouldDraw(inputs), `${clock} frame ${frame}`).toBe(true)
+        expect(gate.draw(inputs), `${clock} frame ${frame}`).toBe(true)
       }
     }
   })
@@ -76,6 +96,9 @@ describe('CanvasFrameGate', () => {
       { height: 901 },
       { clientWidth: 801 },
       { clientHeight: 451 },
+      // A display change moves this and nothing else — the buffer size is
+      // computed from it, so the two agree on a new value at the same moment.
+      { dpr: 1 },
       { camX: 10.5 },
       { camY: 20.5 },
       { camZ: 1.0001 },
@@ -86,7 +109,7 @@ describe('CanvasFrameGate', () => {
     ]
     for (const change of changes) {
       const gate = settled()
-      expect(gate.shouldDraw({ ...base(), ...change }), JSON.stringify(change)).toBe(true)
+      expect(gate.draw({ ...base(), ...change }), JSON.stringify(change)).toBe(true)
     }
   })
 
@@ -100,17 +123,17 @@ describe('CanvasFrameGate', () => {
     }
     for (const [name, edges] of Object.entries(cases)) {
       const gate = settled()
-      expect(gate.shouldDraw({ ...base(), edges }), name).toBe(true)
+      expect(gate.draw({ ...base(), edges }), name).toBe(true)
     }
   })
 
   it('draws again when the edge order changes', () => {
     // Quads are emitted in array order, so a reorder is a different draw even
     // though the set is identical — and blending makes that visible.
-    const gate = new CanvasFrameGate()
+    const gate = clocked()
     const edges = [edge('a', 'root', 1, 2), edge('b', 'root', 3, 4)]
-    gate.shouldDraw({ ...base(), edges })
-    expect(gate.shouldDraw({ ...base(), edges: [edges[1], edges[0]] })).toBe(true)
+    gate.draw({ ...base(), edges })
+    expect(gate.draw({ ...base(), edges: [edges[1], edges[0]] })).toBe(true)
   })
 
   it('draws again when a card moves or resizes under the mask', () => {
@@ -125,18 +148,18 @@ describe('CanvasFrameGate', () => {
     }
     for (const [name, maskRects] of Object.entries(cases)) {
       const gate = settled()
-      expect(gate.shouldDraw({ ...base(), maskRects }), name).toBe(true)
+      expect(gate.draw({ ...base(), maskRects }), name).toBe(true)
     }
   })
 
   it('draws again when the reparent preview appears, moves, or clears', () => {
     const edge = { fromX: 0, fromY: 0, toX: 10, toY: 10 }
-    const gate = new CanvasFrameGate()
-    gate.shouldDraw(base())
-    expect(gate.shouldDraw({ ...base(), reparentEdge: edge })).toBe(true)
-    expect(gate.shouldDraw({ ...base(), reparentEdge: { ...edge } })).toBe(false)
-    expect(gate.shouldDraw({ ...base(), reparentEdge: { ...edge, toX: 11 } })).toBe(true)
-    expect(gate.shouldDraw({ ...base(), reparentEdge: null })).toBe(true)
+    const gate = clocked()
+    gate.draw()
+    expect(gate.draw({ ...base(), reparentEdge: edge })).toBe(true)
+    expect(gate.draw({ ...base(), reparentEdge: { ...edge } })).toBe(false)
+    expect(gate.draw({ ...base(), reparentEdge: { ...edge, toX: 11 } })).toBe(true)
+    expect(gate.draw({ ...base(), reparentEdge: null })).toBe(true)
   })
 
   it('survives the caller mutating the arrays it was handed', () => {
@@ -144,25 +167,62 @@ describe('CanvasFrameGate', () => {
     // writes through. Holding the caller's reference would compare a frame
     // against itself and skip for ever — which is a frozen canvas, not a
     // wasted frame, so it is the one aliasing bug that must not exist here.
-    const gate = new CanvasFrameGate()
+    const gate = clocked()
     const edges = [edge('a', 'root', 0, 0)]
     const maskRects = [{ x: 0, y: 0, width: 10, height: 10 }]
-    gate.shouldDraw({ ...base(), edges, maskRects })
+    gate.draw({ ...base(), edges, maskRects })
 
     edges[0].x = 999
-    expect(gate.shouldDraw({ ...base(), edges, maskRects })).toBe(true)
+    expect(gate.draw({ ...base(), edges, maskRects })).toBe(true)
 
     maskRects[0].width = 999
-    expect(gate.shouldDraw({ ...base(), edges, maskRects })).toBe(true)
+    expect(gate.draw({ ...base(), edges, maskRects })).toBe(true)
   })
 
   it('redraws once after being invalidated', () => {
     // For state outside FrameInputs — the window coming back into view, where
     // the inputs are unchanged but the drawing buffer's contents are not.
     const gate = settled()
-    expect(gate.shouldDraw(base())).toBe(false)
+    expect(gate.draw()).toBe(false)
     gate.invalidate()
-    expect(gate.shouldDraw(base())).toBe(true)
-    expect(gate.shouldDraw(base())).toBe(false)
+    expect(gate.draw()).toBe(true)
+    expect(gate.draw()).toBe(false)
+  })
+
+  /**
+   * The backstop is what keeps a gap in the other two guards to one second
+   * rather than until the app is reloaded: Chromium can discard the composited
+   * frame for reasons the renderer is never told about, and only the app can
+   * repaint a canvas.
+   */
+  describe('the periodic backstop', () => {
+    it('draws a frame nothing else asked for, once the skip runs long', () => {
+      const gate = settled()
+      gate.advance(MAX_SKIP_MS - 1)
+      expect(gate.draw()).toBe(false)
+      gate.advance(1)
+      expect(gate.draw()).toBe(true)
+    })
+
+    it('fires at its own period, not once per frame after the deadline', () => {
+      const gate = settled()
+      gate.advance(MAX_SKIP_MS)
+      expect(gate.draw()).toBe(true)
+      // The forced frame restarts the clock — otherwise every frame after the
+      // first deadline would draw, and the optimisation would be gone.
+      expect(gate.draw()).toBe(false)
+      gate.advance(MAX_SKIP_MS - 1)
+      expect(gate.draw()).toBe(false)
+      gate.advance(1)
+      expect(gate.draw()).toBe(true)
+    })
+
+    it('is deferred by a frame drawn for any other reason', () => {
+      const gate = settled()
+      gate.advance(MAX_SKIP_MS - 1)
+      expect(gate.draw({ ...base(), camX: 11 })).toBe(true)
+      gate.advance(1)
+      expect(gate.draw({ ...base(), camX: 11 })).toBe(false)
+    })
   })
 })

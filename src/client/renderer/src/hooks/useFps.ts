@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { isWindowVisible } from './useWindowVisible'
+import { isWindowVisible, onWindowVisibleChange } from './useWindowVisible'
 
 const RING_SIZE = 180
 const WINDOW_MS = 1000
@@ -54,7 +54,7 @@ export function useFps(elRef: React.RefObject<HTMLSpanElement | null>) {
     const startLoop = () => { if (!rafRef.current) rafRef.current = requestAnimationFrame(tick) }
     const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
 
-    const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
+    const unsubVisibility = onWindowVisibleChange((visible) => {
       if (visible) { reset(); startLoop() } else { stopLoop(); if (elRef.current) elRef.current.textContent = '0' }
     })
 

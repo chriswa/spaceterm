@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { isWindowVisible } from '../../hooks/useWindowVisible'
+import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVisible'
 
 /**
  * Implementations of the `rootNode` facet.
@@ -271,7 +271,7 @@ export function OrbRootNode({ size, focused }: RootNodeVisualProps) {
     const startLoop = () => { if (!rafRef.current) rafRef.current = requestAnimationFrame(tick) }
     const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
 
-    const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
+    const unsubVisibility = onWindowVisibleChange((visible) => {
       if (visible) startLoop(); else stopLoop()
     })
     if (isWindowVisible()) startLoop()

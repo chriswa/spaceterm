@@ -235,6 +235,17 @@ done last session; kept so the reasoning is not lost.
 9. **`SummaryChat` and the pollers all own their own retry policy.** Three
    different backoff shapes, none shared. Not urgent, but it is the same
    many-copies-of-one-decision signature that produced `terminal-respawn.ts`.
+10. **Two render loops still capture `devicePixelRatio` once.**
+    `KeycastOverlay` and the orb root node read it at setup and size their
+    buffers from it for the life of the context, so moving the window to a
+    display with a different scale factor leaves both drawing at the old
+    resolution. Neither can *freeze* the way `CanvasBackground` could — they
+    animate, so every frame is redrawn — which is why they were left: the fix is
+    not a live read but a reallocation path (the overlay's wave simulation owns
+    three ping-pong textures sized from it), and that is its own piece of work.
+    `CanvasBackground` reads it per frame and `CanvasFrameGate` treats it as a
+    frame input; `watchDevicePixelRatio` in `cell-metrics.ts` is the other
+    precedent.
 
 ### Productization — supporting users who are not the author
 

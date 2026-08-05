@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { helpGroups } from '../lib/help-registry'
-import { isWindowVisible } from '../hooks/useWindowVisible'
+import { isWindowVisible, onWindowVisibleChange } from '../hooks/useWindowVisible'
 
 const MODIFIER_KEYS = new Set(['Meta', 'Shift', 'Alt', 'Control'])
 
@@ -470,7 +470,7 @@ export function KeycastOverlay() {
     const startLoop = () => { if (!waveRafId) waveRafId = requestAnimationFrame(tick) }
     const stopLoop = () => { if (waveRafId) { cancelAnimationFrame(waveRafId); waveRafId = 0 } }
 
-    const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
+    const unsubVisibility = onWindowVisibleChange((visible) => {
       if (visible) startLoop(); else stopLoop()
     })
 

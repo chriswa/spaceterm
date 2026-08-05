@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Camera } from '../lib/camera'
-import { isWindowVisible } from '../hooks/useWindowVisible'
+import { isWindowVisible, onWindowVisibleChange } from '../hooks/useWindowVisible'
 import type { NodeId } from '../../../../shared/ids'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveFacets } from '../lib/theme/themes'
@@ -145,6 +145,11 @@ function buildEdgeStage(gl: WebGLRenderingContext, frag: string, vert: string): 
   }
 }
 
+interface StageCache<F, S> {
+  get(facet: F): S | null
+  values(): (S | null)[]
+}
+
 /**
  * Compile-once-per-shader cache.
  *
@@ -154,7 +159,7 @@ function buildEdgeStage(gl: WebGLRenderingContext, frag: string, vert: string): 
  * compiled yet" from "compiled and failed", so a broken shader is not retried
  * every frame.
  */
-function makeStageCache<F extends { id: string }, S>(build: (facet: F) => S | null) {
+function makeStageCache<F extends { id: string }, S>(build: (facet: F) => S | null): StageCache<F, S> {
   const cache = new Map<string, S | null>()
   return {
     get(facet: F): S | null {
@@ -163,6 +168,22 @@ function makeStageCache<F extends { id: string }, S>(build: (facet: F) => S | nu
     },
     values: (): (S | null)[] => [...cache.values()],
   }
+}
+
+/**
+ * Everything that dies with the GL context, and so has to be rebuilt when one
+ * is restored.
+ *
+ * Grouped rather than held as separate `let`s so that "the context went away"
+ * is one assignment — `resources = null` — and every user of them has to say
+ * what it does without a context instead of reaching for a stale program id.
+ */
+interface GlResources {
+  bgCache: StageCache<BackgroundFacet, BgStage>
+  edgeCache: StageCache<EdgeFacet, EdgeStage>
+  bgBuf: WebGLBuffer | null
+  edgeBuf: WebGLBuffer | null
+  maskBuf: WebGLBuffer | null
 }
 
 /* ------------------------------------------------------------------ */
@@ -190,8 +211,6 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const dpr = window.devicePixelRatio
-
     const gl = canvas.getContext('webgl', {
       alpha: true,
       premultipliedAlpha: false,
@@ -199,41 +218,59 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     })
     if (!gl) return
 
-    gl.getExtension('OES_standard_derivatives') // required for fwidth() in edge SDF
-
-    // Compiled lazily and kept: switching themes back and forth must not
-    // recompile, and a shader the user never selects must never cost anything.
-    const bgCache = makeStageCache<BackgroundFacet, BgStage>((f) => buildBgStage(gl, f.frag))
-    // An edge facet may bring its own vertex shader; most take the animated default.
-    const edgeCache = makeStageCache<EdgeFacet, EdgeStage>(
-      (f) => buildEdgeStage(gl, f.frag, f.vert ?? EDGE_VERT_SRC),
-    )
-
-    const bgBuf = gl.createBuffer()
-    gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf)
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
-
-    const edgeBuf = gl.createBuffer()
-
-    // --- Mask buffer (reuses the background program to paint over edges behind transparent cards) ---
-    const maskBuf = gl.createBuffer()
+    // --- CPU-side vertex staging. Outlives the context; only the GPU buffers
+    //     it is uploaded into do not. ---
     let maskVerts = new Float32Array(64 * 12) // 6 verts × 2 floats per rect
-
-    // Reusable vertex array for edges — grows as needed
     let edgeVerts = new Float32Array(64 * FLOATS_PER_EDGE)
 
-    gl.enable(gl.BLEND)
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    const createResources = (): GlResources => {
+      gl.getExtension('OES_standard_derivatives') // required for fwidth() in edge SDF
+      gl.enable(gl.BLEND)
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+      const bgBuf = gl.createBuffer()
+      gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf)
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
+
+      return {
+        // Compiled lazily and kept: switching themes back and forth must not
+        // recompile, and a shader the user never selects must never cost anything.
+        bgCache: makeStageCache<BackgroundFacet, BgStage>((f) => buildBgStage(gl, f.frag)),
+        // An edge facet may bring its own vertex shader; most take the animated default.
+        edgeCache: makeStageCache<EdgeFacet, EdgeStage>(
+          (f) => buildEdgeStage(gl, f.frag, f.vert ?? EDGE_VERT_SRC),
+        ),
+        bgBuf,
+        edgeBuf: gl.createBuffer(),
+        // Reuses the background program to paint over edges behind transparent cards.
+        maskBuf: gl.createBuffer(),
+      }
+    }
+
+    const destroyResources = (res: GlResources): void => {
+      for (const stage of [...res.bgCache.values(), ...res.edgeCache.values()]) {
+        if (stage) gl.deleteProgram(stage.prog)
+      }
+      gl.deleteBuffer(res.bgBuf)
+      gl.deleteBuffer(res.edgeBuf)
+      gl.deleteBuffer(res.maskBuf)
+    }
+
+    let resources: GlResources | null = createResources()
 
     const bgT0 = performance.now() - (Math.random() * 2_000_000 - 1_000_000)
     const edgeT0 = performance.now()
 
     // What lets a fully static theme stop repainting a still canvas. See
-    // `canvas-frame-gate` for why this is a comparison and not a dirty flag.
+    // `canvas-frame-gate` for why this is a comparison and not a dirty flag,
+    // and for the backstop that bounds how long a skip can last.
     const gate = new CanvasFrameGate()
 
-    // Handle resize
-    const resize = () => {
+    // Handle resize. `dpr` is read live rather than captured with the context:
+    // it changes when the window moves to a display with a different scale
+    // factor, and a stale one sizes the drawing buffer for the display the app
+    // started on.
+    const resize = (dpr: number) => {
       const w = Math.round(canvas.clientWidth * dpr)
       const h = Math.round(canvas.clientHeight * dpr)
       if (canvas.width !== w || canvas.height !== h) {
@@ -242,20 +279,29 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       }
     }
 
-    const observer = new ResizeObserver(resize)
+    const observer = new ResizeObserver(() => resize(window.devicePixelRatio))
     observer.observe(canvas)
-    resize()
+    resize(window.devicePixelRatio)
 
     const tick = (now: number) => {
-      resize()
+      const res = resources
+      if (!res) {
+        // Context lost; `webglcontextrestored` restarts the loop. Clearing the
+        // handle keeps it honest as the "loop is running" flag `startLoop` reads.
+        rafRef.current = 0
+        return
+      }
+
+      const dpr = window.devicePixelRatio
+      resize(dpr)
 
       const cam = cameraRef.current
       const bgTime = (now - bgT0) / 1666
       const edgeTime = (now - edgeT0) / 2000
       const themeId = themeIdRef.current
       const facets = resolveFacets(themeId)
-      const bg = bgCache.get(facets.background)
-      const edge = edgeCache.get(facets.edges)
+      const bg = res.bgCache.get(facets.background)
+      const edge = res.edgeCache.get(facets.edges)
 
       // A facet that declares itself static takes its clock out of the frame's
       // inputs; with both out, a canvas nobody is moving stops being redrawn at
@@ -267,6 +313,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
         height: canvas.height,
         clientWidth: canvas.clientWidth,
         clientHeight: canvas.clientHeight,
+        dpr,
         camX: cam.x,
         camY: cam.y,
         camZ: cam.z,
@@ -277,7 +324,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
         maskRects: maskRectsRef.current,
         selection: selectionRef.current,
         reparentEdge: reparentEdgeRef.current,
-      })) {
+      }, now)) {
         rafRef.current = requestAnimationFrame(tick)
         return
       }
@@ -302,7 +349,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
 
       // 1. Draw the background quad
       if (bg) {
-        bindBackground(bgBuf)
+        bindBackground(res.bgBuf)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
         gl.disableVertexAttribArray(bg.pos)
       }
@@ -314,7 +361,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
         const drawEdgeBatch = (vertexCount: number, intensity: number) => {
           if (vertexCount === 0) return
           gl.useProgram(edge.prog)
-          gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf)
+          gl.bindBuffer(gl.ARRAY_BUFFER, res.edgeBuf)
           gl.bufferData(gl.ARRAY_BUFFER, edgeVerts.subarray(0, vertexCount * FLOATS_PER_VERTEX), gl.DYNAMIC_DRAW)
 
           const stride = FLOATS_PER_VERTEX * 4 // 16 bytes
@@ -455,7 +502,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
             maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nt
           }
 
-          bindBackground(maskBuf)
+          bindBackground(res.maskBuf)
           gl.bufferData(gl.ARRAY_BUFFER, maskVerts.subarray(0, mOffset), gl.DYNAMIC_DRAW)
           gl.drawArrays(gl.TRIANGLES, 0, mOffset / 2)
           gl.disableVertexAttribArray(bg.pos)
@@ -465,8 +512,9 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       rafRef.current = requestAnimationFrame(tick)
     }
 
-    // The drawing buffer's contents do not survive being hidden, and the gate
-    // would otherwise skip the first frame back as "nothing changed".
+    // A frame composited before the window went away is not there when it comes
+    // back, and the gate would otherwise skip the first frame back as "nothing
+    // changed".
     const startLoop = () => {
       if (rafRef.current) return
       gate.invalidate()
@@ -474,23 +522,45 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     }
     const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
 
-    // Subscribe to visibility changes
-    const unsubVisibility = window.api.window.onVisibilityChanged((visible) => {
+    // Hidden, minimised, or occluded — see `useWindowVisible` for why occlusion
+    // is the case this must not miss.
+    const unsubVisibility = onWindowVisibleChange((visible) => {
       if (visible) startLoop(); else stopLoop()
     })
 
     if (isWindowVisible()) startLoop()
 
+    /**
+     * A context is lost when the driver resets, when the GPU process restarts,
+     * or when Chromium reclaims the least recently created one — and every
+     * program and buffer id in `resources` dies with it. `preventDefault` is
+     * what makes the loss recoverable at all: without it the browser never
+     * fires `webglcontextrestored`, and the canvas stays empty until the app is
+     * reloaded.
+     */
+    const onContextLost = (event: Event) => {
+      event.preventDefault()
+      window.api.log('[CanvasBackground] GL context lost; waiting for restore')
+      stopLoop()
+      resources = null
+    }
+
+    const onContextRestored = () => {
+      window.api.log('[CanvasBackground] GL context restored; rebuilding programs')
+      resources = createResources()
+      if (isWindowVisible()) startLoop()
+    }
+
+    canvas.addEventListener('webglcontextlost', onContextLost)
+    canvas.addEventListener('webglcontextrestored', onContextRestored)
+
     return () => {
       stopLoop()
       unsubVisibility()
+      canvas.removeEventListener('webglcontextlost', onContextLost)
+      canvas.removeEventListener('webglcontextrestored', onContextRestored)
       observer.disconnect()
-      for (const stage of [...bgCache.values(), ...edgeCache.values()]) {
-        if (stage) gl.deleteProgram(stage.prog)
-      }
-      gl.deleteBuffer(bgBuf)
-      gl.deleteBuffer(edgeBuf)
-      gl.deleteBuffer(maskBuf)
+      if (resources) destroyResources(resources)
     }
   }, [])
 

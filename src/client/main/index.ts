@@ -163,22 +163,28 @@ function createWindow(): void {
   })
 }
 
+/**
+ * Report window state the renderer's render loops throttle themselves against.
+ *
+ * Window *state* only — hidden and minimised. Occlusion, where the window is
+ * covered by another or sits on a Space that is not on screen, is not reported
+ * here because `BrowserWindow` emits no event for it; the renderer reads it from
+ * `document.visibilityState`, which is Chromium's own belief and covers it. See
+ * `useWindowVisible`, which ANDs the two.
+ */
 function setupVisibilityTracking(): void {
   if (!mainWindow) return
 
   let isHidden = false
   let isMinimized = false
-  let isOccluded = false
   let wasVisible = true
 
   const update = () => {
-    const visible = !isHidden && !isMinimized && !isOccluded
+    const visible = !isHidden && !isMinimized
     if (visible === wasVisible) return
     wasVisible = visible
-    const ts = new Date().toISOString()
-    const reason = isHidden ? 'hidden' : isMinimized ? 'minimized' : isOccluded ? 'occluded' : 'restored'
-    console.log(`[${ts}] visibility ${visible ? 'ON' : 'OFF'} (${reason})`)
-    logger.log(`[visibility] visible=${visible} (hidden=${isHidden} minimized=${isMinimized} occluded=${isOccluded})`)
+    const reason = isHidden ? 'hidden' : isMinimized ? 'minimized' : 'restored'
+    logger.log(`[visibility] visible=${visible} (${reason})`)
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('window:visibility-changed', visible)
@@ -189,12 +195,6 @@ function setupVisibilityTracking(): void {
   mainWindow.on('show', () => { isHidden = false; update() })
   mainWindow.on('minimize', () => { isMinimized = true; update() })
   mainWindow.on('restore', () => { isMinimized = false; update() })
-
-  // macOS: fires when window is obscured by another window or on a non-visible Space
-  if (process.platform === 'darwin') {
-    mainWindow.on('occluded' as any, () => { isOccluded = true; update() })
-    mainWindow.on('unoccluded' as any, () => { isOccluded = false; update() })
-  }
 }
 
 function setupIPC(): void {

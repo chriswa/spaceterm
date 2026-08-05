@@ -27,6 +27,15 @@ export interface FrameInputs {
    */
   clientWidth: number
   clientHeight: number
+  /**
+   * Device pixels per CSS pixel, as of this frame.
+   *
+   * A live reading, not a value captured when the context was created: it
+   * changes when the window moves to a display with a different scale factor,
+   * and it reaches the shaders as `uDpr` and scales `uOrigin`, so a frame drawn
+   * at the wrong one is drawn at the wrong size.
+   */
+  dpr: number
   camX: number
   camY: number
   camZ: number
@@ -49,16 +58,47 @@ export interface FrameInputs {
 }
 
 /**
+ * How long the canvas may go without a draw before one is forced anyway.
+ *
+ * The backstop for everything `FrameInputs` and `invalidate` between them do not
+ * catch. Long enough that an idle canvas is idle — one full-screen shader pass a
+ * second is not a battery cost anyone can measure — and short enough that a
+ * frame the compositor dropped is back before it can be reported as a bug.
+ */
+const MAX_SKIP_MS = 1_000
+
+/**
  * Whether the canvas has to be redrawn, given what it drew last time.
  *
- * ## Why skipping is safe
+ * ## What skipping actually relies on
  *
- * The loop clears and redraws the whole canvas every frame, so a frame is
- * either drawn in full or not at all — there is no partial state to corrupt.
- * Issuing no GL commands leaves the last composited frame on screen, which is
- * exactly the previous frame's contents, which is exactly what this frame would
- * have produced. (Skipping would *not* be safe with incremental drawing on a
- * context created without `preserveDrawingBuffer`; that is a different design.)
+ * The loop clears and redraws the whole canvas every frame, so a frame is either
+ * drawn in full or not at all — there is no partial state to corrupt. Issuing no
+ * GL commands therefore leaves the right *pixels* on screen, provided they are
+ * still on screen at all.
+ *
+ * That proviso is the whole difficulty. Without `preserveDrawingBuffer` the
+ * drawing buffer is cleared once presented, so what the user keeps seeing is
+ * Chromium's cached composited frame — and that cache is not ours. Chromium
+ * discards it when the surface is hidden or occluded, when the device scale
+ * factor changes, and when the GL context is reset. The DOM repaints itself
+ * after any of those; a WebGL canvas cannot, because only its own loop can
+ * redraw it. A loop that has decided nothing changed will therefore sit in front
+ * of a canvas with no frame in it — indefinitely, and looking like whatever the
+ * compositor puts where a missing frame goes.
+ *
+ * So skipping is guarded three ways, in order of how specific they are:
+ *
+ * 1. `FrameInputs` — everything that changes what would be drawn, `dpr`
+ *    included, which is what makes a scale-factor change a redraw rather than a
+ *    frozen canvas at the old scale.
+ * 2. `invalidate()` — for known events that void the frame without changing the
+ *    inputs: coming back from hidden or occluded, a restored context.
+ * 3. `MAX_SKIP_MS` — for the ones not on that list. The list is not provably
+ *    complete and the cost of a gap in it is a canvas that stays wrong until the
+ *    app is reloaded, so a redraw is forced once a second regardless. This is
+ *    the guard that makes the other two optimisations rather than correctness
+ *    conditions.
  *
  * The rAF loop keeps running either way. What is saved is the draw, which for a
  * full-screen fragment shader plus a mask quad per card is essentially the whole
@@ -79,15 +119,21 @@ export interface FrameInputs {
  */
 export class CanvasFrameGate {
   private previous: FrameInputs | null = null
+  private lastDrawnAt: number | null = null
+
+  /** `maxSkipMs` is a parameter so a test can pin the backstop without waiting for it. */
+  constructor(private readonly maxSkipMs: number = MAX_SKIP_MS) {}
 
   /**
-   * Record `next` and report whether it differs from the last frame drawn.
+   * Record `next` and report whether it has to be drawn.
    *
    * Callers must draw when this returns true and must not when it returns
    * false: the recorded state assumes the frame it approved was actually
    * rendered.
+   *
+   * `now` is the rAF timestamp, and only feeds the `MAX_SKIP_MS` backstop.
    */
-  shouldDraw(next: FrameInputs): boolean {
+  shouldDraw(next: FrameInputs, now: number = performance.now()): boolean {
     const previous = this.previous
     // Copied, not aliased: `edges` and `maskRects` are live arrays the renderer
     // mutates in place, so holding the caller's reference would compare a frame
@@ -98,15 +144,21 @@ export class CanvasFrameGate {
       maskRects: next.maskRects.map((r) => ({ ...r })),
       reparentEdge: next.reparentEdge ? { ...next.reparentEdge } : null,
     }
-    return previous === null || differs(previous, next)
+
+    const overdue = this.lastDrawnAt === null || now - this.lastDrawnAt >= this.maxSkipMs
+    const draw = previous === null || overdue || differs(previous, next)
+    // Only a drawn frame resets the clock, so the backstop fires at its period
+    // rather than at whatever rate the inputs happen to be changing.
+    if (draw) this.lastDrawnAt = now
+    return draw
   }
 
   /**
    * Force the next frame to draw.
    *
    * For state changes outside `FrameInputs` — a shader finishing compilation,
-   * the window becoming visible again — where the inputs are unchanged but the
-   * drawing buffer's contents are not to be trusted.
+   * the window becoming visible again, a context restored — where the inputs are
+   * unchanged but the drawing buffer's contents are not to be trusted.
    */
   invalidate(): void {
     this.previous = null
@@ -119,6 +171,7 @@ function differs(a: FrameInputs, b: FrameInputs): boolean {
     a.height !== b.height ||
     a.clientWidth !== b.clientWidth ||
     a.clientHeight !== b.clientHeight ||
+    a.dpr !== b.dpr ||
     a.camX !== b.camX ||
     a.camY !== b.camY ||
     a.camZ !== b.camZ ||

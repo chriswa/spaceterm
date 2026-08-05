@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { e2eBlocker, launchApp, type LaunchedApp } from './electron-app'
 
@@ -97,6 +97,47 @@ describeE2E('launching Spaceterm', () => {
     }))
 
     expect(leaked).toEqual({ require: 'undefined', process: 'undefined', module: 'undefined' })
+  })
+
+  it('rebuilds the background canvas after its GL context is lost', async () => {
+    // The one thing only the real app can answer. A lost context invalidates
+    // every program and buffer id the background holds, and nothing below this
+    // layer has a GL context to lose — jsdom hands back null and takes the
+    // early return. The failure being guarded is specific: without
+    // `preventDefault` on the loss event the browser never offers a restore, so
+    // the canvas stays empty for the life of the window and the only cure is a
+    // reload.
+    const errors: string[] = []
+    launched = await launchApp()
+    launched.window.on('pageerror', (err) => errors.push(err.message))
+    await launched.window.waitForSelector('.canvas-viewport', { timeout: 30_000 })
+
+    const outcome = await launched.window.evaluate(() => {
+      // The background is the viewport's first child; overlays come after it.
+      const canvas = document.querySelector('.canvas-viewport > canvas')
+      if (!(canvas instanceof HTMLCanvasElement)) return 'no canvas'
+      // Returns the context the component is already drawing with, not a new one.
+      const gl = canvas.getContext('webgl')
+      if (!gl) return 'no webgl'
+      const ext = gl.getExtension('WEBGL_lose_context')
+      if (!ext) return 'no extension'
+      ext.loseContext()
+      // Must not run inside the lost handler, or the restore is ignored.
+      setTimeout(() => ext.restoreContext(), 250)
+      return 'ok'
+    })
+    expect(outcome, 'could not reach the background canvas to lose its context').toBe('ok')
+
+    const log = join(launched.home, 'electron.log')
+    let contents = ''
+    for (let attempt = 0; attempt < 40 && !contents.includes('context restored'); attempt++) {
+      await launched.window.waitForTimeout(250)
+      contents = existsSync(log) ? readFileSync(log, 'utf-8') : ''
+    }
+
+    expect(contents, 'the loss was never reported').toContain('GL context lost')
+    expect(contents, 'the context was never restored').toContain('GL context restored')
+    expect(errors, `page errors during the rebuild:\n  ${errors.join('\n  ')}`).toEqual([])
   })
 
   it('keeps its state inside the isolated SPACETERM_HOME', async () => {
