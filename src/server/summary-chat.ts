@@ -884,7 +884,9 @@ export function parseTranscript(raw: string): TranscriptMessage[] {
     } catch { /* Ignore a partial JSONL write. */ }
   }
   // Always retain the latest user request, then fill backwards with as much
-  // context as fits. This is deliberately message-based, never tool/thinking.
+  // context as fits. Ordinary tool calls and thinking stay out; plan bodies
+  // carried in CreatePlan / ExitPlanMode are kept because they *are* the
+  // assistant's answer when the agent is waiting on plan approval.
   const latestUser = result.map(message => message.role).lastIndexOf('user')
   if (latestUser < 0) return []
   const selected: TranscriptMessage[] = []
@@ -926,12 +928,45 @@ function extractMessage(entry: Record<string, any>): TranscriptMessage | undefin
   return undefined
 }
 
+/**
+ * Tools whose input *is* the user-facing answer. Cursor writes plans via
+ * CreatePlan; Claude via ExitPlanMode. Everything else (Bash, Grep, …) stays
+ * out of the spoken summary.
+ */
+const PLAN_TOOL_NAMES = new Set(['CreatePlan', 'ExitPlanMode'])
+
 function contentText(content: unknown): string {
   if (typeof content === 'string') return content.trim()
   if (!Array.isArray(content)) return ''
-  return content
-    .filter((block: any) => block?.type === 'text' || block?.type === 'input_text' || block?.type === 'output_text')
-    .map((block: any) => typeof block.text === 'string' ? block.text : '')
-    .join('\n')
-    .trim()
+  const parts: string[] = []
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue
+    const type = (block as { type?: unknown }).type
+    if (type === 'text' || type === 'input_text' || type === 'output_text') {
+      const text = (block as { text?: unknown }).text
+      if (typeof text === 'string' && text.trim()) parts.push(text.trim())
+      continue
+    }
+    if (type === 'tool_use') {
+      const plan = planTextFromToolUse(block as { name?: unknown; input?: unknown })
+      if (plan) parts.push(plan)
+    }
+  }
+  return parts.join('\n\n').trim()
+}
+
+function planTextFromToolUse(block: { name?: unknown; input?: unknown }): string | undefined {
+  if (typeof block.name !== 'string' || !PLAN_TOOL_NAMES.has(block.name)) return undefined
+  const input = block.input
+  if (!input || typeof input !== 'object') return undefined
+  const plan = (input as { plan?: unknown }).plan
+  if (typeof plan !== 'string' || !plan.trim()) return undefined
+  const name = (input as { name?: unknown }).name
+  const overview = (input as { overview?: unknown }).overview
+  const sections: string[] = [
+    typeof name === 'string' && name.trim() ? `Plan: ${name.trim()}` : 'Plan',
+  ]
+  if (typeof overview === 'string' && overview.trim()) sections.push(overview.trim())
+  sections.push(plan.trim())
+  return sections.join('\n\n')
 }

@@ -1125,12 +1125,68 @@ describe('parseTranscript', () => {
     ])
   })
 
-  it('skips tool calls and thinking blocks', () => {
+  it('skips ordinary tool calls and thinking blocks', () => {
     const raw = line({
       type: 'assistant',
       message: { content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'tool_use', name: 'Bash' }] }
     })
     expect(parseTranscript(raw)).toEqual([])
+  })
+
+  it('includes Cursor CreatePlan bodies — that is the answer while waiting on approval', () => {
+    const raw = [
+      line({ role: 'user', message: { content: 'fix the stop cue' } }),
+      line({
+        role: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'Drafting the fix plan.' },
+            {
+              type: 'tool_use',
+              name: 'CreatePlan',
+              input: {
+                name: 'Always play stop cue',
+                overview: 'Pair the close cue to a played start cue.',
+                plan: '# Root cause\n\nShort silent taps skip the finish cue.\n\n## Verification\n\n- Quick Fn tap hears both cues.',
+              },
+            },
+          ],
+        },
+      }),
+    ].join('\n')
+
+    const parsed = parseTranscript(raw)
+    expect(parsed).toHaveLength(2)
+    expect(parsed[1].role).toBe('assistant')
+    expect(parsed[1].text).toContain('Drafting the fix plan.')
+    expect(parsed[1].text).toContain('Plan: Always play stop cue')
+    expect(parsed[1].text).toContain('Pair the close cue to a played start cue.')
+    expect(parsed[1].text).toContain('Short silent taps skip the finish cue.')
+    expect(parsed[1].text).toContain('Quick Fn tap hears both cues.')
+  })
+
+  it('includes Claude ExitPlanMode plan bodies the same way', () => {
+    const raw = [
+      line({ type: 'user', message: { content: 'plan the viewport slots' } }),
+      line({
+        type: 'assistant',
+        message: {
+          content: [{
+            type: 'tool_use',
+            name: 'ExitPlanMode',
+            input: { plan: '# Saved viewport slots\n\nBookmark with Cmd+Shift+N.' },
+          }],
+        },
+      }),
+    ].join('\n')
+
+    expect(parseTranscript(raw)).toEqual([{
+      role: 'user',
+      text: 'plan the viewport slots',
+    }, {
+      role: 'assistant',
+      text: 'Plan\n\n# Saved viewport slots\n\nBookmark with Cmd+Shift+N.',
+    }])
   })
 
   it('ignores a partially written final line', () => {
