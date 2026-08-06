@@ -110,6 +110,21 @@ export class PollingTranscriptWatcher {
     this.resolveAndWatch(surfaceId, sessionId, 0)
   }
 
+  /**
+   * Tail a path the agent already told us about.
+   *
+   * Prefer this over {@link watch} whenever a hook/status-line carries
+   * `transcript_path`: Cursor advertises that path before creating the file,
+   * and SessionFileWatcher can wait on the parent directory indefinitely.
+   * The search-and-retry path in {@link watch} has a finite budget, so using
+   * it for a known path is how we used to give up ~30s before the JSONL
+   * appeared and then never look again.
+   */
+  watchPath(surfaceId: PtySessionId, filePath: string): void {
+    this.unwatch(surfaceId)
+    this.watcher.watchPath(surfaceId, filePath)
+  }
+
   unwatch(surfaceId: PtySessionId): void {
     const retry = this.retries.get(surfaceId)
     if (retry) clearTimeout(retry)

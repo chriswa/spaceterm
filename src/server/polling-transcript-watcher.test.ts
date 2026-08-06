@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { findNewestTranscript } from './polling-transcript-watcher'
+import { findNewestTranscript, PollingTranscriptWatcher } from './polling-transcript-watcher'
 import { CURSOR_TRANSCRIPTS } from './cursor-session-file-watcher'
 import { CODEX_TRANSCRIPTS } from './codex-session-file-watcher'
+import { asClaudeSessionId, asPtySessionId } from '../shared/ids'
 
 /**
  * Transcript resolution against a real temporary tree. These walk the filesystem
@@ -125,5 +126,47 @@ describe('codex transcript layout', () => {
   it('does not match a cursor-style bare name', () => {
     write(`2026/${ID}.jsonl`)
     expect(findNewestTranscript(CODEX_TRANSCRIPTS, ID, root)).toBeUndefined()
+  })
+})
+
+describe('PollingTranscriptWatcher.watchPath', () => {
+  it('remembers a known path even when the file does not exist yet', () => {
+    // Cursor status-line advertises transcript_path before creating the JSONL.
+    // Summarize must be able to resolve that path from the watcher cache.
+    const surfaceId = asPtySessionId('surface-aaaa-bbbb-cccc-ddddeeee0001')
+    const filePath = path.join(root, `proj/${ID}/${ID}.jsonl`)
+    const watcher = new PollingTranscriptWatcher(
+      { ...CURSOR_TRANSCRIPTS, rootDir: root },
+      () => {},
+    )
+    try {
+      watcher.watchPath(surfaceId, filePath)
+      expect(watcher.getFilePath(surfaceId)).toBe(filePath)
+    } finally {
+      watcher.dispose()
+    }
+  })
+
+  it('stops a failing search once a known path arrives', () => {
+    vi.useFakeTimers()
+    const surfaceId = asPtySessionId('surface-aaaa-bbbb-cccc-ddddeeee0002')
+    const filePath = path.join(root, `proj/${ID}/${ID}.jsonl`)
+    const watcher = new PollingTranscriptWatcher(
+      { ...CURSOR_TRANSCRIPTS, rootDir: root },
+      () => {},
+      { retryMs: 500, maxRetries: 2 },
+    )
+    try {
+      watcher.watch(surfaceId, asClaudeSessionId(ID))
+      expect(watcher.getFilePath(surfaceId)).toBeUndefined()
+      watcher.watchPath(surfaceId, filePath)
+      expect(watcher.getFilePath(surfaceId)).toBe(filePath)
+      // Retries from the abandoned search must not clear the known path.
+      vi.advanceTimersByTime(5_000)
+      expect(watcher.getFilePath(surfaceId)).toBe(filePath)
+    } finally {
+      watcher.dispose()
+      vi.useRealTimers()
+    }
   })
 })

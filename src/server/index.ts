@@ -36,8 +36,8 @@ import { measureCard as nodePixelSize } from '../shared/card-types'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
-import { CodexSessionFileWatcher } from './codex-session-file-watcher'
-import { CursorSessionFileWatcher } from './cursor-session-file-watcher'
+import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
+import { CursorSessionFileWatcher, findCursorTranscript } from './cursor-session-file-watcher'
 import { ClaudeStateMachine } from './claude-state'
 import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
@@ -233,6 +233,7 @@ function watchAgentTranscript(
   agentType: AgentType | undefined,
   sessionId: ClaudeSessionId,
   cwd: string | undefined,
+  transcriptPath?: string,
 ): void {
   const driver = agentDriver(agentType)
   switch (driver.type) {
@@ -245,7 +246,14 @@ function watchAgentTranscript(
       codexSessionFileWatcher.watch(surfaceId, sessionId)
       return
     case 'cursor':
-      cursorSessionFileWatcher.watch(surfaceId, sessionId)
+      // A known path beats a search: Cursor often names the file before
+      // creating it. Do not clobber an already-resolved path with a fresh
+      // search when SessionStart arrives without transcript_path.
+      if (transcriptPath) {
+        cursorSessionFileWatcher.watchPath(surfaceId, transcriptPath)
+      } else if (!cursorSessionFileWatcher.getFilePath(surfaceId)) {
+        cursorSessionFileWatcher.watch(surfaceId, sessionId)
+      }
       return
     default:
       assertNever(driver.type, 'watchAgentTranscript')
@@ -267,11 +275,20 @@ function surfaceAgentType(surfaceId: PtySessionId): AgentType | undefined {
 function transcriptPathForNode(nodeId: NodeId): string | undefined {
   const node = stateManager.getNode(nodeId)
   if (!node || node.type !== 'terminal') return undefined
+  // The watcher cache is the fast path, but it can be empty after a search
+  // budget expires before Cursor creates the JSONL. Fall back to an on-demand
+  // locate using the conversation id we already persisted.
+  const latestAgentSessionId = node.claudeSessionHistory.at(-1)?.claudeSessionId
   switch (node.agentType) {
-    case 'codex': return codexSessionFileWatcher.getFilePath(node.sessionId)
-    case 'cursor': return cursorSessionFileWatcher.getFilePath(node.sessionId)
+    case 'codex':
+      return codexSessionFileWatcher.getFilePath(node.sessionId)
+        ?? (latestAgentSessionId ? findCodexSessionFile(latestAgentSessionId) : undefined)
+    case 'cursor':
+      return cursorSessionFileWatcher.getFilePath(node.sessionId)
+        ?? (latestAgentSessionId ? findCursorTranscript(latestAgentSessionId) : undefined)
     case 'claude':
-    default: return sessionFileWatcher.getFilePath(node.sessionId)
+    default:
+      return sessionFileWatcher.getFilePath(node.sessionId)
   }
 }
 
@@ -288,9 +305,22 @@ function ensureNonClaudeSessionRecorded(
   if (!isNonClaudeAgent(surfaceAgentType(surfaceId))) return
   const sid = agentSessionIdFromPayload(payload)
   if (!sid) return
-  if (sessionManager.getLastClaudeSessionId(surfaceId) === sid) return
-  sessionManager.handleClaudeSessionStart(surfaceId, sid, source)
-  if (surfaceAgentType(surfaceId) === 'cursor') cursorSessionFileWatcher.watch(surfaceId, sid)
+  const transcriptPath = typeof payload?.transcript_path === 'string' && payload.transcript_path
+    ? payload.transcript_path
+    : undefined
+  if (sessionManager.getLastClaudeSessionId(surfaceId) !== sid) {
+    sessionManager.handleClaudeSessionStart(surfaceId, sid, source)
+  }
+  // Cursor: keep attaching a transcript watcher until we have a path. The old
+  // early-return on a already-recorded id left surfaces permanently unresolved
+  // when the first search gave up before the JSONL existed.
+  if (surfaceAgentType(surfaceId) !== 'cursor') return
+  const resolved = cursorSessionFileWatcher.getFilePath(surfaceId)
+  if (transcriptPath) {
+    if (resolved !== transcriptPath) cursorSessionFileWatcher.watchPath(surfaceId, transcriptPath)
+    return
+  }
+  if (!resolved) cursorSessionFileWatcher.watch(surfaceId, sid)
 }
 
 /** After reincarnating a PTY, keep in-memory session history aligned with the node. */
@@ -570,6 +600,9 @@ function handleIngestMessage(msg: IngestMessage): void {
       if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
         const claudeSessionId = 'session_id' in msg.payload ? asClaudeSessionId(String(msg.payload.session_id)) : ''
         const source = 'source' in msg.payload ? String(msg.payload.source) : 'startup'
+        const transcriptPath = typeof msg.payload.transcript_path === 'string' && msg.payload.transcript_path
+          ? msg.payload.transcript_path
+          : undefined
         if (claudeSessionId) {
           sessionManager.handleClaudeSessionStart(msg.surfaceId, claudeSessionId, source)
           watchAgentTranscript(
@@ -577,6 +610,7 @@ function handleIngestMessage(msg: IngestMessage): void {
             surfaceAgentType(msg.surfaceId),
             claudeSessionId,
             sessionManager.getCwd(msg.surfaceId),
+            transcriptPath,
           )
         }
       }

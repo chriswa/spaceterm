@@ -6,8 +6,6 @@ import {
   type EntriesCallback,
   type TranscriptLocator,
 } from './polling-transcript-watcher'
-import type { PtySessionId } from '../shared/ids'
-
 /**
  * Codex names a rollout `<timestamp-ish-prefix>-<sessionUuid>.jsonl` under a
  * dated directory layout. Matching on the id suffix rather than the whole name
@@ -21,7 +19,7 @@ export const CODEX_TRANSCRIPTS: TranscriptLocator = {
 }
 
 /** Locate one Codex rollout by its globally unique session UUID. */
-export function findCodexSessionFile(sessionId: PtySessionId, rootDir?: string): string | undefined {
+export function findCodexSessionFile(sessionId: string, rootDir?: string): string | undefined {
   return findNewestTranscript(CODEX_TRANSCRIPTS, sessionId, rootDir)
 }
 
