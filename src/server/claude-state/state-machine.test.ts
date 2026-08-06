@@ -176,17 +176,71 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'UserPromptSubmit clears the ledger — a later Stop is not yellow',
+    name: 'typed UserPromptSubmit clears the ledger — a later Stop is not yellow',
     run: (sm, deps) => {
-      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'UserPromptSubmit', { prompt: 'keep going' })
       hook(sm, 'SubagentStart', { agent_id: 'a1' })
       hook(sm, 'Stop')
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'working_background')
-      hook(sm, 'UserPromptSubmit')     // new turn — clears ledger
+      hook(sm, 'UserPromptSubmit', { prompt: 'ok next' })     // typed turn — clears ledger
       hook(sm, 'Stop')
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'stopped')
+    },
+  },
+  {
+    // Regression: a persistent monitor's per-event ping arrives as
+    // UserPromptSubmit with a <task-notification> body (no <status>). That used
+    // to clear the ledger, so the wake turn's Stop went to stopped/white while
+    // the monitor was still armed.
+    name: 'task-notification UserPromptSubmit does not clear the ledger',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'watch that' })
+      jsonl(sm, [toolResult('tuM', 'Monitor started (task mon12345)')])
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      hook(sm, 'UserPromptSubmit', {
+        prompt:
+          '<task-notification>\n' +
+          '<task-id>mon12345</task-id>\n' +
+          '<summary>Monitor event: "x"</summary>\n' +
+          '<event>still running</event>\n' +
+          '</task-notification>',
+      })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+    },
+  },
+  {
+    // Completions also arrive as task-notification UserPromptSubmits. Clearing
+    // on those would drop sibling outstanding work; the jsonl path drains the
+    // finished id specifically.
+    name: 'task-notification completion UserPromptSubmit keeps sibling ledger entries',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'run both' })
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      jsonl(sm, [toolResult('tuB', 'Command running in background with ID: bash99. Output is being written to: /tmp/bash99.output')])
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      hook(sm, 'UserPromptSubmit', {
+        prompt:
+          '<task-notification>\n' +
+          '<task-id>bash99</task-id>\n' +
+          '<status>completed</status>\n' +
+          '<summary>Background command done</summary>\n' +
+          '</task-notification>',
+      })
+      // No jsonl ingest of the completion — only the hook. Sibling subagent
+      // must still keep the surface yellow after this wake turn ends.
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
     },
   },
   {

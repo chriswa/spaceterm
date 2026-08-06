@@ -1,5 +1,5 @@
 import { describe, it } from 'vitest'
-import { BackgroundLedger, agentTranscriptVerdict, type LivenessProbes, type LivenessVerdict } from './background-ledger'
+import { BackgroundLedger, agentTranscriptVerdict, isTaskNotificationPrompt, type LivenessProbes, type LivenessVerdict } from './background-ledger'
 import type { SessionFileEntry } from '../session-file-watcher'
 import { asPtySessionId, asPtySessionId as pid, asClaudeSessionId as cid } from '../../shared/ids'
 
@@ -139,6 +139,17 @@ const cases: Case[] = [
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
       l.clear(SURFACE)
       assertEq(l.outstandingCount(SURFACE), 0)
+    },
+  },
+  {
+    name: 'isTaskNotificationPrompt recognizes Claude system deliveries only',
+    run: () => {
+      assertEq(isTaskNotificationPrompt('<task-notification>\n<task-id>x</task-id>\n</task-notification>'), true)
+      assertEq(isTaskNotificationPrompt('  <task-notification><task-id>x</task-id></task-notification>'), true)
+      assertEq(isTaskNotificationPrompt('please look at <task-notification> in the docs'), false)
+      assertEq(isTaskNotificationPrompt('keep going'), false)
+      assertEq(isTaskNotificationPrompt(undefined), false)
+      assertEq(isTaskNotificationPrompt(null), false)
     },
   },
   {

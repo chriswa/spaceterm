@@ -21,7 +21,7 @@ import type { StateMachineDeps, ClaudeState } from './types'
 import type { SessionFileEntry } from '../session-file-watcher'
 import { TransitionQueue } from './transition-queue'
 import { DecisionLogger } from './decision-logger'
-import { BackgroundLedger } from './background-ledger'
+import { BackgroundLedger, isTaskNotificationPrompt } from './background-ledger'
 import { localISOTimestamp } from '../timestamp'
 import { asClaudeSessionId, type PtySessionId } from '../../shared/ids'
 
@@ -255,15 +255,24 @@ export class ClaudeStateMachine {
         if (agentId) this.backgroundLedger.registerAgent(surfaceId, agentId)
       }
       if (hookType === 'UserPromptSubmit') {
+        // Claude also fires UserPromptSubmit for system-delivered
+        // `<task-notification>` blocks (monitor pings, bash/agent/workflow
+        // completions). Those are not the human typing — see
+        // isTaskNotificationPrompt. Permission + ledger resets below only
+        // apply to a real new turn; a notification wake must keep the ledger
+        // so a still-running monitor stays yellow after the wake turn stops.
+        const taskNotification = isTaskNotificationPrompt(payload?.prompt)
         // A new user prompt invalidates all pending permissions — the user
         // is starting a fresh turn, so any unresolved permission requests
         // from the previous turn are stale.
-        this.pendingPermissionIds.delete(surfaceId)
-        this.lastPreToolUseId.delete(surfaceId)
-        // A new turn also makes prior background context moot, and clearing the
-        // ledger here bounds any leak from a missed completion to "until the
-        // next prompt".
-        this.backgroundLedger.clear(surfaceId)
+        if (!taskNotification) {
+          this.pendingPermissionIds.delete(surfaceId)
+          this.lastPreToolUseId.delete(surfaceId)
+          // A typed turn also makes prior background context moot, and clearing
+          // the ledger here bounds any leak from a missed completion to "until
+          // the next prompt".
+          this.backgroundLedger.clear(surfaceId)
+        }
       }
       this.transitionQueue.enqueue(surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
     }

@@ -158,6 +158,23 @@ const WORKFLOW_RUN_ID = /Run ID: (wf_[a-z0-9-]+)/
  */
 const DONE_TASK_ID = /<task-id>([a-z0-9]+)<\/task-id>/g
 
+/**
+ * Claude Code re-invokes the agent for background-task deliveries by firing a
+ * `UserPromptSubmit` whose `prompt` is a `<task-notification>…` block — monitor
+ * event pings, bash/agent/workflow completions, etc. That is not the human
+ * typing. Across ~13.5k UserPromptSubmit hooks on this machine, every
+ * system-delivered synthetic prompt that was not ordinary user text used this
+ * wrapper (978 hits); the hook payload does not carry the transcript's
+ * `origin.kind` / `promptSource` fields, so the prompt text is the seam.
+ *
+ * Used to decide whether a UserPromptSubmit should clear the background ledger:
+ * a real typed prompt may, a task-notification must not (it would drop still-
+ * running monitors the moment they ping).
+ */
+export function isTaskNotificationPrompt(prompt: unknown): boolean {
+  return typeof prompt === 'string' && prompt.trimStart().startsWith('<task-notification>')
+}
+
 // ─── Default (real) probes ──────────────────────────────────────────────────
 
 const PROBE_TIMEOUT_MS = 2000
@@ -384,9 +401,12 @@ export class BackgroundLedger {
   }
 
   /**
-   * Clear all tracking for a surface. Called on UserPromptSubmit (a new turn
-   * makes prior background context moot, and bounds any leak from a missed
-   * completion to "until the next prompt") and on SessionEnd.
+   * Clear all tracking for a surface. Called on a *human* UserPromptSubmit (a
+   * new typed turn makes prior background context moot, and bounds any leak
+   * from a missed completion to "until the next prompt") and on SessionEnd.
+   * Not called for `<task-notification>` UserPromptSubmits — those are Claude
+   * re-invoking itself for background deliveries, and clearing would drop
+   * still-running work (especially persistent monitors) the moment they ping.
    */
   clear(surfaceId: PtySessionId): void {
     this.surfaces.get(surfaceId)?.launches.clear()
