@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, cleanup, screen } from '@testing-library/react'
+import { render, cleanup, fireEvent, screen } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { installFakeBridge } from '../testing/fake-bridge'
 import { TitleCard } from './TitleCard'
@@ -50,6 +50,7 @@ interface SharedProps {
   onUnarchive: (p: NodeId, a: NodeId) => void
   onArchiveDelete: (p: NodeId, a: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
+  onAddNode: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
   /**
    * Live camera, read imperatively during a drag so the handler sees the
    * current zoom rather than the zoom at mount. Required by every card, which
@@ -75,6 +76,7 @@ function sharedProps(overrides: Partial<SharedProps> = {}): SharedProps {
     onUnarchive: vi.fn(),
     onArchiveDelete: vi.fn(),
     onOpenArchiveSearch: vi.fn(),
+    onAddNode: vi.fn(),
     cameraRef: { current: { x: 0, y: 0, z: 1 } },
     ...overrides
   }
@@ -337,6 +339,24 @@ describe('action-bar chrome scale', () => {
     const { container } = render(CARDS[0].build(sharedProps({ id: nid('unknown-to-store') })))
     expect(shellOf(container).style.getPropertyValue('--card-chrome-scale')).toBe('1')
   })
+})
+
+describe('label-card add-node menus', () => {
+  it.each(CARDS.filter(({ nodeType }) => nodeType === 'title' || nodeType === 'directory'))(
+    '$name inherits its action bar scale rather than applying it again',
+    ({ nodeType, build }) => {
+      const id = nid(`add-menu-${nodeType}`)
+      useNodeStore.setState({ nodes: { [id]: { type: nodeType } as never } })
+      const { container } = render(build(sharedProps({ id, focused: true })))
+
+      fireEvent.click(container.querySelector('.node-titlebar__add-btn')!)
+
+      const popup = container.querySelector('.card-shell__add-node-body')
+      expect(popup).not.toBeNull()
+      expect(popup?.classList.contains('card-shell__add-node-body--scaled')).toBe(false)
+      expect(popup?.parentElement?.classList.contains('node-titlebar__actions')).toBe(true)
+    }
+  )
 })
 
 describe('the parent id used for archived children', () => {

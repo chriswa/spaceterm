@@ -231,7 +231,7 @@ export function CardShell({
               picked the same answer only while the root node was narrower than
               a popup. */}
           {headVariant === 'hidden' && hiddenAddNodeOpen && onAddNode && (
-            <div className="card-shell__add-node-body" ref={hiddenAddNodeBodyRef}>
+            <div className="card-shell__add-node-body card-shell__add-node-body--scaled" ref={hiddenAddNodeBodyRef}>
               <AddNodeBody onSelect={handleHiddenAddNodeSelect} />
             </div>
           )}

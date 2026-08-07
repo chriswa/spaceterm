@@ -2673,18 +2673,23 @@ html, body, #root {
 }
 
 /* Add-node dropdown positioning */
-/* Opened by the hidden-head add button, so it hangs under the centre of the
-   node and takes the same `--card-chrome-scale` as the button that opened it —
-   otherwise a label-scale root node shows a popup too small to read at the
-   zoom focusing it lands on. */
+/* Opened from an action bar, so it hangs under that bar's centre. Label-card
+   action bars are already scaled to compensate for their capped focus zoom;
+   this popup inherits that transform and must not scale itself again. The root
+   popup is outside its separately-scaled hidden action row, so it opts into
+   the one scale it needs with the modifier below. */
 .card-shell__add-node-body {
   position: absolute;
   top: 0;
   left: 50%;
   min-width: 200px;
   z-index: 50;
-  transform: translateX(-50%) scale(var(--card-chrome-scale, 1));
+  transform: translateX(-50%);
   transform-origin: top center;
+}
+
+.card-shell__add-node-body--scaled {
+  transform: translateX(-50%) scale(var(--card-chrome-scale, 1));
 }
 
 /* Extra CLI args popup positioning */

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { render, cleanup } from '@testing-library/react'
+import { fireEvent, render, cleanup } from '@testing-library/react'
 import { RootNode } from './RootNode'
 import { ROOT_NODE_RADIUS } from '../lib/constants'
 import { ROOT_CHROME_SCALE } from '../../../../shared/card-types'
@@ -79,5 +79,15 @@ describe('the root node’s buttons', () => {
     // the row were unmounted rather than faded, the node would jump on focus.
     const { container } = renderRoot(false)
     expect(container.querySelectorAll('.card-shell__hidden-head-actions button').length).toBe(2)
+  })
+
+  it('gives its add-child menu the one scale it cannot inherit from the action row', () => {
+    // Unlike a card action bar, the root popup is a sibling of the transformed
+    // hidden row. The modifier preserves its one required compensation scale;
+    // adding it to ordinary card popups would apply that scale twice.
+    const { container } = renderRoot(true)
+    fireEvent.click(container.querySelector('.card-shell__add-btn')!)
+    const popup = container.querySelector('.card-shell__add-node-body')
+    expect(popup?.classList.contains('card-shell__add-node-body--scaled')).toBe(true)
   })
 })
