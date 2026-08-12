@@ -64,6 +64,8 @@ ledger in `src/server/claude-state/background-ledger.ts`.
 | `SubagentStop` hook | hook | drops the subagent from the ledger; if it empties, drains working_background → stopped |
 | `SessionEnd` hook | hook | stopped (clears the ledger) |
 | `SessionStart` hook (any source, incl. compact) | hook | **no state change** — compaction fires mid-turn and Claude auto-resumes; treating it as idle caused a spurious tone/white flash (42/42 historical compacts were mid-turn resumes) |
+| `PreCompact` hook (trigger=manual) | hook | working, and marks the surface as inside a user-typed `/compact` |
+| JSONL `<local-command-stdout>` while that mark is set | jsonl | **working_background** if the ledger is non-empty, else stopped (`jsonl:compact-finished:turn-idle`) — a manual compact ends with no Stop hook |
 | JSONL `assistant` entry | jsonl | working (suppressed when in waiting state) |
 | JSONL `user` string entry | jsonl | working (suppressed when in waiting state) |
 | JSONL `user` array, tool_result for a pending permission id | jsonl | working (clears waiting states — `jsonl:permission-resolved`) |
@@ -74,13 +76,14 @@ ledger in `src/server/claude-state/background-ledger.ts`.
 
 ### Signals that DON'T change state
 - `PostToolUse` / `PostToolUseFailure` with non-matching tool_use_id — ignored (prevents subagent events from clobbering main agent state)
-- `Notification` hooks — intentionally not handled (always redundant with PermissionRequest)
+- `Notification` hooks, all kinds — intentionally not handled (permission_prompt is always redundant with PermissionRequest; `idle_prompt` was evaluated as a turn-idle backstop and rejected, see invariant 17)
 - `Status-line` heartbeats — no longer drive state (the stale-sweep/`stuck` heuristic was removed)
 - `client:interact` (any terminal keystroke) — only clears the `unread` flag, never changes state
 - `client:markRead` / `client:markUnread` — only toggles the `unread` flag, never changes state
 - JSONL `user` array entries (tool results) that aren't interrupts/rejections/pending-permission resolutions — hooks handle this
 
 ### Guard logic
+- **Inferred turn-idle events never override a waiting state.** Events ending in `:turn-idle` (currently just `jsonl:compact-finished`) mean "the turn looks over" — which is also what an open permission/plan/question prompt looks like from outside. Only the real `Stop` hook may end a waiting state.
 - **Stale events are dropped.** `applyTransition` keeps a per-surface watermark of the last *applied* transition's source timestamp; anything strictly older is suppressed (`detail: "(stale: Nms older…)"`). The 500ms queue only sorts events it holds at the same moment, so an event delivered later than that window lands out of order — this is the guard that catches it. Targeted waiting-state clears are exempt so the watermark can't strand a waiting surface.
 - Waiting states are sticky — only `hook:PostToolUse`/`hook:PostToolUseFailure` (ID-matched), `hook:UserPromptSubmit`, and `jsonl:permission-resolved` can transition waiting → working. All other working signals are suppressed.
 - A `:bg-drained` transition (ledger emptied) only takes effect from `working_background` — gated in applyTransition so hook/queue ordering can't force a spurious stopped.

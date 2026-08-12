@@ -296,6 +296,88 @@ const cases: Case[] = [
     },
   },
   {
+    // A user-typed /compact runs for minutes and hands the prompt back with no
+    // Stop hook, so the surface used to sit orange until the user next typed.
+    // The local command's own stdout entry is what closes it out.
+    name: 'finished manual /compact → stopped (+unread, tone fires)',
+    run: (sm, deps) => {
+      hook(sm, 'PreCompact', { trigger: 'manual' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      jsonl(sm, [{ type: 'user', message: { content: '<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>' } }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      assertEq(deps.getClaudeStatusUnread(S), true)
+    },
+  },
+  {
+    // Compaction does not stop backgrounded work, so the surface owes the user
+    // yellow, not the completion tone.
+    name: 'finished manual /compact with background work → working_background',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'PreCompact', { trigger: 'manual' })
+      jsonl(sm, [{ type: 'user', message: { content: '<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>' } }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      assertEq(deps.getClaudeStatusUnread(S), false)
+    },
+  },
+  {
+    // Auto-compaction fires mid-turn and Claude resumes on its own; it is not a
+    // local command, so nothing may close it out as idle.
+    name: 'auto-compaction stdout lookalike does not idle the surface',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'PreCompact', { trigger: 'auto' })
+      jsonl(sm, [{ type: 'user', message: { content: '<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>' } }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      assertEq(deps.getClaudeStatusUnread(S), false)
+    },
+  },
+  {
+    // The flag is single-use: a second, unrelated local command later in the
+    // session must not replay the idle.
+    name: 'manual-compact flag is consumed once',
+    run: (sm, deps) => {
+      // Also pins the deliberate wording-independence: the "Compacted…" prose is
+      // version-dependent and has no probe behind it, so the manual-specific
+      // evidence is the hook's `trigger` field, not this text.
+      hook(sm, 'PreCompact', { trigger: 'manual' })
+      jsonl(sm, [{ type: 'user', message: { content: '<local-command-stdout>(some future wording)</local-command-stdout>' } }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      hook(sm, 'UserPromptSubmit', { prompt: 'next' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      jsonl(sm, [{ type: 'user', message: { content: '<local-command-stdout>Compacted</local-command-stdout>' } }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    // No Notification kind drives state. idle_prompt in particular was evaluated
+    // as a backstop for turns ending without a Stop and rejected: it is Claude
+    // Code's generic "needs your attention at the prompt" signal, so an attention
+    // state we don't model would arrive here as 'working' (past the waiting-state
+    // guard) and get relabelled a plain completion — white + tone over the real
+    // reason. Everything it would have caught is covered by the watermark
+    // (invariant 16) and compact-finished.
+    name: 'Notification hooks do not drive state (any kind)',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      sm.flushForTest()
+      for (const kind of ['idle_prompt', 'permission_prompt', 'auth_success']) {
+        hook(sm, 'Notification', { notification_type: kind, message: 'Claude is waiting for your input' })
+      }
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      assertEq(deps.getClaudeStatusUnread(S), false)
+    },
+  },
+  {
     // The stuck-orange bug: Claude wrote its final assistant message, the Stop
     // hook fired 544ms later (already outside the queue's 500ms window), and the
     // JSONL watcher delivered that assistant entry ~1.4s after it was written.

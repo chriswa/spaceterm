@@ -49,6 +49,19 @@ const BACKGROUND_RECONCILE_INTERVAL_MS = 5_000
 /** Drain-to-idle transitions carry this suffix so applyTransition can gate them (see the guard there). */
 const BG_DRAINED_SUFFIX = ':bg-drained'
 
+/**
+ * Turn-idle transitions carry this suffix so applyTransition can gate them.
+ *
+ * These are the "the main turn ended, but no Stop hook said so" signals —
+ * currently just a finished manual `/compact`. They resolve to
+ * stopped/working_background exactly like a Stop, but unlike a Stop they are
+ * *inferred*, so they must never override a waiting state: a surface blocked on
+ * a permission/plan/question prompt IS idle by any outside measure, and turning
+ * that white would both lose the prompt's colour and hand the sticky-waiting
+ * invariant (10) a back door that isn't a targeted clear.
+ */
+const TURN_IDLE_SUFFIX = ':turn-idle'
+
 // ─── ClaudeStateMachine ─────────────────────────────────────────────────────
 
 export class ClaudeStateMachine {
@@ -88,6 +101,17 @@ export class ClaudeStateMachine {
   private lastPreToolUseId = new Map<PtySessionId, string>()
   /** surfaceId → Set of tool_use_ids awaiting PostToolUse confirmation */
   private pendingPermissionIds = new Map<PtySessionId, Set<string>>()
+
+  /**
+   * Surfaces currently inside a user-typed `/compact`.
+   *
+   * Set by PreCompact(trigger: 'manual'), consumed by the command's
+   * `<local-command-stdout>` entry in the transcript — see the compact-finished
+   * branch in handleJsonlEntries for why that pairing is the signal. Cleared on
+   * Stop / SessionEnd / a typed prompt so a compaction we never saw finish can't
+   * leak into a later turn.
+   */
+  private manualCompactPending = new Set<PtySessionId>()
 
   /**
    * surfaceId → source timestamp of the last transition actually applied.
@@ -161,17 +185,10 @@ export class ClaudeStateMachine {
     // NOT the ledger (its work continues past this turn).
     if (hookType === 'Stop') {
       this.deps.handleClaudeStop(surfaceId)
-      const outstanding = this.backgroundLedger.outstandingCount(surfaceId)
-      this.transitionQueue.enqueue(
-        surfaceId,
-        outstanding > 0 ? 'working_background' : 'stopped',
-        'hook',
-        'hook:Stop',
-        hookTime,
-        outstanding > 0 ? `bg:${outstanding}` : undefined
-      )
+      this.enqueueTurnIdle(surfaceId, 'hook', 'hook:Stop', hookTime)
       this.pendingPermissionIds.delete(surfaceId)
       this.lastPreToolUseId.delete(surfaceId)
+      this.manualCompactPending.delete(surfaceId)
     }
 
     // ── SubagentStop: a backgrounded subagent finished ──
@@ -221,6 +238,19 @@ export class ClaudeStateMachine {
     // Removing this handler also eliminates the need for the waiting_plan →
     // waiting_permission downgrade guard that existed solely to block the
     // late-arriving notification from clobbering waiting_plan state.
+    //
+    // idle_prompt ("Claude is waiting for your input", fired 60s into an empty
+    // prompt) was evaluated as a general backstop for turns that end without a
+    // Stop hook, and REJECTED. It looked clean — 137 historical firings, zero
+    // counterexamples — but of the 3 that landed on a 'working' surface, one was
+    // the out-of-order Stop already fixed by the watermark (invariant 16), one
+    // was the manual compact now fixed by compact-finished, and the third was a
+    // cosmetic orange-that-should-be-yellow. Nothing left to earn, against a bad
+    // failure mode: idle_prompt is Claude Code's generic "needs your attention
+    // at the prompt" signal, so any attention state we do NOT model would leave
+    // us in 'working' (where the waiting-state guard cannot help) and get
+    // relabelled as a plain completion — white + tone, hiding the real reason.
+    // Staying orange is the better failure.
 
     // ── Working signals: Claude is actively processing ──
     // UserPromptSubmit: user just sent a message, Claude will start working
@@ -237,6 +267,13 @@ export class ClaudeStateMachine {
       // agent spawned a subagent, so it stays a working signal + registers.
       if ((hookType === 'PreToolUse' || hookType === 'PreCompact') && agentId) {
         return
+      }
+      if (hookType === 'PreCompact' && payload?.trigger === 'manual') {
+        // A user-typed /compact. Unlike auto-compaction it is not part of a turn:
+        // Claude was idle before it and goes back to idle after it, with no Stop
+        // hook on either side. Remember it so the command's stdout entry in the
+        // transcript can close it out — see handleJsonlEntries.
+        this.manualCompactPending.add(surfaceId)
       }
       if (hookType === 'PreToolUse') {
         // Track the tool_use_id so PermissionRequest can associate it.
@@ -268,6 +305,10 @@ export class ClaudeStateMachine {
         if (!taskNotification) {
           this.pendingPermissionIds.delete(surfaceId)
           this.lastPreToolUseId.delete(surfaceId)
+          // The user is typing again, so any compaction they started is over as
+          // far as the indicator is concerned — bound the flag's lifetime here
+          // the same way the ledger is bounded (invariant 13).
+          this.manualCompactPending.delete(surfaceId)
           // A typed turn also makes prior background context moot, and clearing
           // the ledger here bounds any leak from a missed completion to "until
           // the next prompt".
@@ -300,6 +341,7 @@ export class ClaudeStateMachine {
       this.transitionQueue.enqueue(surfaceId, 'stopped', 'hook', 'hook:SessionEnd', hookTime)
       this.pendingPermissionIds.delete(surfaceId)
       this.lastPreToolUseId.delete(surfaceId)
+      this.manualCompactPending.delete(surfaceId)
       this.backgroundLedger.clear(surfaceId)
     }
 
@@ -314,6 +356,10 @@ export class ClaudeStateMachine {
     // SessionStart entirely for state: a genuine idle is signalled by the Stop
     // hook, and a resume by the transcript's next assistant entry. (Session
     // lifecycle/history tracking still happens in the ingest handler.)
+    //
+    // The one compaction that DOES end in idle — a user-typed /compact — is
+    // recognised by its own transcript stdout entry instead, which is specific
+    // to the manual kind. See the compact-finished branch in handleJsonlEntries.
   }
 
   /**
@@ -381,6 +427,39 @@ export class ClaudeStateMachine {
           // They must be invisible to the state machine: if Claude was stopped
           // it stays stopped, if working it stays working.
           if (/^<(?:command-name|bash-input|local-command-(?:stdout|stderr|caveat)|bash-std(?:out|err))>/.test(msg.content)) {
+            // ── …except the stdout that ends a manual /compact ──
+            // A user-typed /compact is a local command that runs for minutes and
+            // then hands the prompt back with no Stop hook and no assistant
+            // entry, so the surface sat orange until the user next typed
+            // (observed twice: 8 minutes, then 45+). Its stdout entry
+            // ("Compacted (ctrl+o to see full summary)") is the transcript's
+            // record of the command returning — the one signal that says the
+            // compaction is over AND that it was the manual kind.
+            //
+            // Rejected: SessionStart(source=compact). It fires for auto-compaction
+            // too, mid-turn, where Claude resumes on its own — routing it to idle
+            // gave a spurious tone on 42/42 historical compacts (invariant 11).
+            // Gating it on the manual flag would work, but the flag would then be
+            // the only thing separating a genuine idle from that regression;
+            // pairing the flag with the *command's own* stdout means both halves
+            // of the evidence are manual-specific.
+            //
+            // Deliberately NOT matched on the "Compacted…" wording. That prose is
+            // Claude-Code-version dependent, and unlike the ledger's ack strings
+            // it has no probe or sweep behind it — a silent drift would put the
+            // surface straight back to stuck-orange with nothing to notice.
+            // Everything manual-specific already comes from the hook's structured
+            // `trigger` field, so the transcript only has to answer "has the
+            // command returned yet", and the first stdout entry while the flag is
+            // set is that answer. The flag is set at PreCompact and cleared here,
+            // so the window is one in-flight local command wide.
+            if (
+              this.manualCompactPending.has(surfaceId) &&
+              msg.content.startsWith('<local-command-stdout>')
+            ) {
+              this.manualCompactPending.delete(surfaceId)
+              this.enqueueTurnIdle(surfaceId, 'jsonl', `jsonl:compact-finished${TURN_IDLE_SUFFIX}`, entryTime)
+            }
             continue
           }
           this.transitionQueue.enqueue(surfaceId, 'working', 'jsonl', 'jsonl:user:string', entryTime)
@@ -636,6 +715,23 @@ export class ClaudeStateMachine {
       return
     }
 
+    // ── Guard: an inferred turn-idle never overrides a waiting state ──────────
+    // A TURN_IDLE_SUFFIX event (a finished manual /compact) infers "the turn
+    // ended" from something other than a Stop. A surface waiting on a permission
+    // / plan / question prompt looks exactly like an idle one from the outside,
+    // so without this the indicator could drop the waiting colour and the user
+    // would lose the only cue that Claude needs an answer. The real Stop hook is
+    // exempt: it is direct evidence, not an inference, and a Stop over a waiting
+    // state has always meant the prompt is moot. The guard stays even though the
+    // one current signal cannot realistically fire mid-prompt — it is what keeps
+    // "inferred idle" a safe category to add to.
+    if (event.endsWith(TURN_IDLE_SUFFIX) && isWaitingState) {
+      this.decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, sourceTime, detail, suppressed: true
+      })
+      return
+    }
+
     // ── Guard: only targeted signals can exit waiting states to working ──
     // Waiting states are "sticky" — most working signals are suppressed.
     // Two categories of untargeted signals would incorrectly clear them:
@@ -727,6 +823,32 @@ export class ClaudeStateMachine {
   }
 
   // ─── Background drain / reconciliation ──────────────────────────────────────
+
+  /**
+   * Enqueue "the main turn is over": 'working_background' (yellow) if the ledger
+   * still holds outstanding launches, else 'stopped' (white + tone).
+   *
+   * Shared by every end-of-turn signal so they can't drift apart — the Stop hook
+   * (authoritative) and the inferred ones (currently just a finished manual
+   * /compact), which pass an event carrying TURN_IDLE_SUFFIX so applyTransition
+   * can hold them back from waiting states.
+   */
+  private enqueueTurnIdle(
+    surfaceId: PtySessionId,
+    source: 'hook' | 'jsonl',
+    event: string,
+    time: number
+  ): void {
+    const outstanding = this.backgroundLedger.outstandingCount(surfaceId)
+    this.transitionQueue.enqueue(
+      surfaceId,
+      outstanding > 0 ? 'working_background' : 'stopped',
+      source,
+      event,
+      time,
+      outstanding > 0 ? `bg:${outstanding}` : undefined
+    )
+  }
 
   /**
    * If the surface is (or is about to be) showing 'working_background' and its
