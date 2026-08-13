@@ -60,17 +60,18 @@ export function shouldYieldToFocusedEditor(
 /**
  * True when this keystroke is the Summary Chat chord.
  *
- * Control is neither required nor rejected, so both Cmd+P and Cmd+Ctrl+P work —
- * they always have, and people have the one they have in their fingers.
+ * Cmd+Ctrl+X. Control is required, not optional as it was for the old Cmd+P
+ * chord: bare Cmd+X is Cut, and a global binding that swallowed it would break
+ * cutting text everywhere in the app.
  *
  * Autorepeat is excluded rather than left to the caller. The chord is a toggle,
  * so a held key would start an answer, cancel it, start another, and so on for
  * as long as the finger stays down.
  */
 export function isSummaryChatChord(
-  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'repeat'>
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'repeat'>
 ): boolean {
-  return event.metaKey && event.key === 'p' && !event.repeat
+  return event.metaKey && event.ctrlKey && event.key === 'x' && !event.repeat
 }
 
 /**

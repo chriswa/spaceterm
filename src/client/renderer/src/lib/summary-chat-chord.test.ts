@@ -63,14 +63,14 @@ describe('pressSummaryChatChord', () => {
 
 describe('isSummaryChatChord', () => {
   const event = (over: Partial<KeyboardEvent> = {}) =>
-    ({ key: 'p', metaKey: true, repeat: false, ...over }) as KeyboardEvent
+    ({ key: 'x', metaKey: true, ctrlKey: true, repeat: false, ...over }) as KeyboardEvent
 
-  it('matches Cmd+P', () => {
+  it('matches Cmd+Ctrl+X', () => {
     expect(isSummaryChatChord(event())).toBe(true)
   })
 
-  it('matches Cmd+Ctrl+P, which is the same chord to anyone holding Control', () => {
-    expect(isSummaryChatChord(event({ ctrlKey: true }))).toBe(true)
+  it('leaves bare Cmd+X alone, because that is Cut', () => {
+    expect(isSummaryChatChord(event({ ctrlKey: false }))).toBe(false)
   })
 
   it('ignores autorepeat, which would otherwise toggle for as long as the key is held', () => {
@@ -79,6 +79,10 @@ describe('isSummaryChatChord', () => {
 
   it('needs the Command key', () => {
     expect(isSummaryChatChord(event({ metaKey: false }))).toBe(false)
+  })
+
+  it('is no longer the old Cmd+P chord', () => {
+    expect(isSummaryChatChord(event({ key: 'p' }))).toBe(false)
   })
 
   it('is not any other letter', () => {

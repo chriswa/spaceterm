@@ -10,7 +10,7 @@
   --label-node-scale: 5;
 }
 
-/* Cmd+P plan-jump flash highlight — 4× ping-pong */
+/* Plan-jump flash highlight — 4× ping-pong */
 @keyframes plan-jump-flash {
   0%      { opacity: 0.3; }
   12.5%   { opacity: 1; }

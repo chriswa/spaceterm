@@ -1812,7 +1812,7 @@ export function App() {
         }
       }
 
-      // Cmd+P: one press of the Summary Chat chord. It summarizes the focused
+      // Cmd+Ctrl+X: one press of the Summary Chat chord. It summarizes the focused
       // agent transcript, or cuts off whatever Summary Chat is producing — the
       // server decides which, and its answer picks the feedback. See
       // lib/summary-chat-chord.ts.
