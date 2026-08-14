@@ -883,21 +883,43 @@ export function parseTranscript(raw: string): TranscriptMessage[] {
       if (message) result.push(message)
     } catch { /* Ignore a partial JSONL write. */ }
   }
-  // Always retain the latest user request, then fill backwards with as much
-  // context as fits. Ordinary tool calls and thinking stay out; plan bodies
-  // carried in CreatePlan / ExitPlanMode are kept because they *are* the
-  // assistant's answer when the agent is waiting on plan approval.
-  const latestUser = result.map(message => message.role).lastIndexOf('user')
-  if (latestUser < 0) return []
-  const selected: TranscriptMessage[] = []
-  let chars = 0
-  for (let i = result.length - 1; i >= 0 && selected.length < MAX_MESSAGES; i--) {
-    const message = result[i]
-    if (i < latestUser && chars + message.text.length > MAX_CHARS) break
-    selected.push(message)
-    chars += message.text.length
+  return selectSpeakable(result)
+}
+
+/**
+ * Narrow a whole transcript to the window Haiku is handed.
+ *
+ * One message is not optional: the latest user message. It is the *anchor* —
+ * what `initialPrompt` splits the turn on, and what `prepare` looks for before
+ * it will summarize anything at all. Everything else is history, and history
+ * competes for a budget newest-first: the agent's most recent output, which is
+ * what the listener is asking about, then older background if room remains.
+ *
+ * The anchor used to be exempt from `MAX_CHARS` only, which read as that
+ * invariant without being it — `MAX_MESSAGES` still applied to it. A surface
+ * whose latest turn ran past 24 agent messages, which is exactly the long
+ * unattended run a spoken summary is most useful for, therefore selected 24
+ * assistant messages and no user message, and the chord rejected it as having
+ * "no user messages to summarize yet". Exempting the anchor from *both* caps is
+ * what makes the invariant true, and holding every other message to the same
+ * two caps is what keeps the rule small enough to state.
+ */
+function selectSpeakable(all: TranscriptMessage[]): TranscriptMessage[] {
+  const anchor = all.map(message => message.role).lastIndexOf('user')
+  if (anchor < 0) return []
+  const kept = new Set<number>([anchor])
+  let chars = all[anchor].text.length
+  /** Take one message if both budgets allow; false means this direction is done. */
+  const admit = (index: number): boolean => {
+    if (kept.size >= MAX_MESSAGES) return false
+    if (chars + all[index].text.length > MAX_CHARS) return false
+    kept.add(index)
+    chars += all[index].text.length
+    return true
   }
-  return selected.reverse()
+  for (let i = all.length - 1; i > anchor; i--) if (!admit(i)) break
+  for (let i = anchor - 1; i >= 0; i--) if (!admit(i)) break
+  return Array.from(kept).sort((a, b) => a - b).map(index => all[index])
 }
 
 function extractMessage(entry: Record<string, any>): TranscriptMessage | undefined {

@@ -1210,6 +1210,38 @@ describe('parseTranscript', () => {
     expect(parsed[parsed.length - 1]).toEqual({ role: 'user', text: 'the latest request' })
   })
 
+  // A long unattended run: the human spoke once, hours ago, and the agent has
+  // been answering ever since. The message cap used to be spent entirely on
+  // that trailing output, leaving no user message to anchor a turn, and the
+  // chord rejected the surface as having nothing to summarize.
+  it('retains the latest user message when the turn since it outran the message cap', () => {
+    const lines = [line({ type: 'user', message: { content: 'the latest request' } })]
+    for (let i = 0; i < 200; i++) {
+      lines.push(line({ type: 'assistant', message: { content: `step ${i}` } }))
+    }
+
+    const parsed = parseTranscript(lines.join('\n'))
+    expect(parsed[0]).toEqual({ role: 'user', text: 'the latest request' })
+    expect(parsed.length).toBeLessThanOrEqual(24)
+    // The tail of the turn, not its opening: what the agent just did is the answer.
+    expect(parsed[parsed.length - 1]).toEqual({ role: 'assistant', text: 'step 199' })
+  })
+
+  it('spends the budget on the current turn before older background', () => {
+    const lines = []
+    for (let i = 0; i < 40; i++) {
+      lines.push(line({ type: 'assistant', message: { content: `background ${i}` } }))
+    }
+    lines.push(line({ type: 'user', message: { content: 'the latest request' } }))
+    for (let i = 0; i < 40; i++) {
+      lines.push(line({ type: 'assistant', message: { content: `turn ${i}` } }))
+    }
+
+    const parsed = parseTranscript(lines.join('\n'))
+    expect(parsed[0]).toEqual({ role: 'user', text: 'the latest request' })
+    expect(parsed.some(message => message.text.startsWith('background'))).toBe(false)
+  })
+
   it('bounds how much history it keeps', () => {
     const lines = []
     for (let i = 0; i < 200; i++) {
