@@ -484,10 +484,23 @@ export interface CameraBoundsMessage {
   bounds: CameraBounds
 }
 
-/** Request the server to focus the surface with this SPACETERM_SURFACE_ID on one client. */
-export interface FocusSurfaceRequestMessage {
-  type: 'focus-surface-request'
-  surfaceId: PtySessionId
+/**
+ * Request the server to raise whichever surface an id names, without the sender
+ * claiming to know what kind of id it is.
+ *
+ * Carried by the `spaceterm-surface://` deep link, where the id arrives from
+ * outside as an opaque string: whoever wrote the URL used whatever they had —
+ * a `SPACETERM_SURFACE_ID`, or an agent session id from Claude, Codex, or
+ * Cursor. Both are UUIDs, so the kind cannot be told from the value, and it is
+ * the server holding node state that can answer. Deliberately `string` rather
+ * than a branded id: branding it either way here would be a claim about where
+ * the value came from that this sender is in no position to make.
+ *
+ * See `StateManager.resolveNodeIdForFocus` for the resolution order.
+ */
+export interface FocusIdRequestMessage {
+  type: 'focus-id-request'
+  id: string
 }
 
 /**
@@ -497,6 +510,10 @@ export interface FocusSurfaceRequestMessage {
  * node's persisted `claudeSessionHistory` (see `getNodeIdForClaudeSession`),
  * the same restart-surviving matching the speaking indicator uses. Keeps
  * spaceterm's internal id vocabulary out of external clients.
+ *
+ * Distinct from {@link FocusIdRequestMessage}, which guesses: this one is for a
+ * sender that *knows* it holds an agent session id and wants only that reading,
+ * so a stray match against the surface namespace can never raise a wrong card.
  */
 export interface FocusClaudeSessionMessage {
   type: 'focus-claude-session'
@@ -664,7 +681,7 @@ export type ClientMessage =
   | UndoBufferPushMessage
   | UndoBufferSetCursorMessage
   | CameraBoundsMessage
-  | FocusSurfaceRequestMessage
+  | FocusIdRequestMessage
   | FocusClaudeSessionMessage
   | SummaryChatToggleMessage
   | SaveViewportMessage

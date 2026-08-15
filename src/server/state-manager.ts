@@ -16,7 +16,16 @@ import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { StatePersister } from './persistence'
 import { serverLog } from './server-log'
 import { abbreviateCwd, scanCwdMismatches, scanDescendantCwdMismatches } from './cwd-alerts'
-import { asNodeId, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
+import {
+  asNodeId,
+  asPtySessionId,
+  asClaudeSessionId,
+  nodeIdFromFirstPtySession,
+  ROOT_NODE_ID,
+  type NodeId,
+  type PtySessionId,
+  type ClaudeSessionId
+} from '../shared/ids'
 import type { AgentType } from '../shared/agent-type'
 import { isDisposable } from '../shared/node-utils'
 import { findAncestor, lookupIn } from '../shared/node-ancestry'
@@ -57,6 +66,19 @@ export interface StateManagerDeps {
 export interface StateManagerOptions {
   /** Defaults to a `StatePersister` writing to `~/.spaceterm/state.json`. */
   persister?: StatePersister
+}
+
+/**
+ * Which reading of an opaque focus id turned out to be the right one. Reported
+ * back rather than discarded so the log line can say how a link resolved — the
+ * two kinds are indistinguishable on the wire, both being UUID strings, and
+ * "which lookup answered" is the first thing worth knowing when one misfires.
+ */
+export type FocusIdKind = 'surface' | 'agent-session'
+
+export interface FocusResolution {
+  nodeId: NodeId
+  matchedAs: FocusIdKind
 }
 
 /**
@@ -419,6 +441,31 @@ export class StateManager {
       fallback ??= node.id
     }
     return fallback
+  }
+
+  /**
+   * Resolve an id whose kind the sender did not know — as carried by a
+   * `spaceterm-surface://` deep link — to the node it should raise.
+   *
+   * The id in a deep link is opaque. Whoever built the URL had whichever id was
+   * to hand: a surface id (`SPACETERM_SURFACE_ID`) or an agent session id — what
+   * Claude, Codex, or Cursor each call their own conversation, all three of
+   * which land in the same node fields. Both kinds are UUID strings, so nothing
+   * about the value says which it is; only a lookup can tell. Surface first,
+   * because that is the narrower namespace and the one the scheme was built
+   * for, then the agent reading.
+   *
+   * Archived nodes are excluded from both readings for free: archiving removes
+   * the node from `state.nodes`, so a link naming one simply finds nothing. A
+   * remnant — pty exited, card still on the canvas — does resolve, since it is
+   * still something the user asked to be shown.
+   */
+  resolveNodeIdForFocus(id: string): FocusResolution | undefined {
+    const surface = this.resolveNodeIdForPtySession(asPtySessionId(id))
+    if (surface) return { nodeId: surface, matchedAs: 'surface' }
+    const agentSession = this.getNodeIdForClaudeSession(asClaudeSessionId(id))
+    if (agentSession) return { nodeId: agentSession, matchedAs: 'agent-session' }
+    return undefined
   }
 
   /**

@@ -362,8 +362,8 @@ function send(socket: net.Socket, msg: ServerMessage): void {
 /**
  * Tell one client to raise/focus a node. Routes to the first-connected client so
  * the choice is deterministic regardless of which client the OS handed a URL to.
- * `tag` names the caller for the log line. Shared by both focus paths
- * (surface-id and claude-session-id resolution).
+ * `tag` names the caller for the log line. Shared by both focus paths: the deep
+ * link's guess-the-id-kind resolution and the external claude-session one.
  */
 function raiseNodeOnClient(focusNodeId: NodeId, tag: string): void {
   const target = clients.values().next().value
@@ -1832,19 +1832,20 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'focus-surface-request': {
-      // Internal path (e.g. the spaceterm:// deep link): the sender already knows
-      // a surface (pty session) id. Resolve it via the live pty-session map.
-      const focusNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
-      if (!focusNodeId) {
+    case 'focus-id-request': {
+      // Deep-link path: the id is opaque, so try it as a surface id and then as
+      // an agent session id (Claude/Codex/Cursor alike).
+      const resolved = stateManager.resolveNodeIdForFocus(msg.id)
+      if (!resolved) {
         // Use serverLog (not console.error) so this reaches electron.log — the
-        // requester passed a surfaceId that no live pty session owns (a stale or
-        // rotated id, or a node that was closed). Log the full id so it can be
-        // cross-referenced with the sender's own log.
-        serverLog(`[focus-surface] Unknown surfaceId: ${msg.surfaceId} (${clients.size} clients connected)`)
+        // requester passed an id that neither reading claims: a stale or rotated
+        // surface id, an agent session on a node that has since been archived,
+        // or simply a typo. Log the full id so it can be cross-referenced with
+        // the sender's own log.
+        serverLog(`[focus-id] No surface or agent session matches id: ${msg.id} (${clients.size} clients connected)`)
         break
       }
-      raiseNodeOnClient(focusNodeId, `focus-surface surfaceId=${msg.surfaceId.slice(0, 8)}`)
+      raiseNodeOnClient(resolved.nodeId, `focus-id ${resolved.matchedAs}=${msg.id.slice(0, 8)}`)
       break
     }
 

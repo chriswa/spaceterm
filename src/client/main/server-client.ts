@@ -479,8 +479,13 @@ export class ServerClient extends EventEmitter {
     this.sendFireAndForget({ type: 'save-viewport', slot, bounds })
   }
 
-  focusSurface(surfaceId: PtySessionId): void {
-    this.sendFireAndForget({ type: 'focus-surface-request', surfaceId })
+  /**
+   * Raise whichever surface `id` names. Takes an opaque string because the deep
+   * link it comes from does not say whether it holds a surface id or an agent
+   * session id; the server resolves that against node state.
+   */
+  requestFocusById(id: string): void {
+    this.sendFireAndForget({ type: 'focus-id-request', id })
   }
 
   /**

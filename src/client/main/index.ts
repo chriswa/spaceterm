@@ -12,7 +12,8 @@ import { loadWindowState, saveWindowState, findTargetDisplay } from './window-st
 import { startSystemMetrics, stopSystemMetrics } from './system-metrics'
 import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
 import type { LaunchPrefs } from '../../shared/launch-prefs'
-import { asPtySessionId, type NodeId, type PtySessionId } from '../../shared/ids'
+import type { NodeId, PtySessionId } from '../../shared/ids'
+import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
 
 /**
  * What this process launched with.
@@ -30,25 +31,18 @@ let client: ServerClient | null = null
 // Ctrl+C returns control to the terminal instead of relaunching Electron.
 const CLIENT_RESTART_EXIT_CODE = 75
 
-// Surface id from a `spaceterm-surface://` link that arrived before the server
-// connection was ready (cold launch). Flushed once the client connects.
-let pendingFocusSurfaceId: PtySessionId | null = null
+// Id from a `spaceterm-surface://` link that arrived before the server
+// connection was ready (cold launch). Flushed once the client connects. Opaque:
+// the server decides whether it names a surface or an agent session.
+let pendingFocusId: string | null = null
 // Node id to focus once the renderer has finished loading (cold launch).
 let pendingFocusNodeId: string | null = null
 
-/** A `spaceterm-surface://<id>` deep link carries a pty session id. */
-function parseSurfaceUrl(url: string): PtySessionId | null {
-  const prefix = 'spaceterm-surface://'
-  if (!url.startsWith(prefix)) return null
-  const id = decodeURIComponent(url.slice(prefix.length).replace(/^\/+/, '').replace(/\/+$/, ''))
-  return id ? asPtySessionId(id) : null
-}
-
-function requestFocusSurface(surfaceId: PtySessionId): void {
+function requestFocus(id: string): void {
   if (client?.isConnected()) {
-    client.focusSurface(surfaceId)
+    client.requestFocusById(id)
   } else {
-    pendingFocusSurfaceId = surfaceId
+    pendingFocusId = id
   }
 }
 
@@ -77,13 +71,13 @@ function raiseAndFocusNode(nodeId: NodeId): void {
 
 // Register the OS-level URL scheme. Registered at module load (before app ready)
 // so a cold-launch `open-url` is captured.
-app.setAsDefaultProtocolClient('spaceterm-surface')
+app.setAsDefaultProtocolClient(FOCUS_URL_SCHEME)
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  const surfaceId = parseSurfaceUrl(url)
-  if (surfaceId) {
-    logger.log(`Deep link focus request: surface=${surfaceId}`)
-    requestFocusSurface(surfaceId)
+  const id = parseFocusUrl(url)
+  if (id) {
+    logger.log(`Deep link focus request: id=${id}`)
+    requestFocus(id)
   }
 })
 
@@ -828,9 +822,9 @@ app.whenReady().then(async () => {
   }
 
   // Flush a deep-link focus request that arrived before the server connection.
-  if (connected && pendingFocusSurfaceId) {
-    client.focusSurface(pendingFocusSurfaceId)
-    pendingFocusSurfaceId = null
+  if (connected && pendingFocusId) {
+    client.requestFocusById(pendingFocusId)
+    pendingFocusId = null
   }
 
   createWindow()

@@ -4,7 +4,7 @@ import { StatePersister } from './persistence'
 import { CURRENT_STATE_VERSION } from './state-migrations'
 import { FakePersistenceIO } from './testing/fake-persistence'
 import type { NodeData, ServerState, TerminalNodeData } from '../shared/state'
-import { asNodeId as nid, asPtySessionId as pid, ROOT_NODE_ID } from '../shared/ids'
+import { asNodeId as nid, asPtySessionId as pid, asClaudeSessionId as cid, ROOT_NODE_ID } from '../shared/ids'
 import type { NodeId } from '../shared/ids'
 
 const DEBOUNCE = 1000
@@ -307,6 +307,121 @@ describe('resolveNodeIdForPtySession', () => {
     const { sm } = harness()
     createTerminal(sm, 't1')
     expect(sm.resolveNodeIdForPtySession(pid('nobody'))).toBeUndefined()
+  })
+})
+
+describe('resolveNodeIdForFocus', () => {
+  // What a `spaceterm-surface://<id>` deep link resolves against. The id is
+  // opaque — a surface id and an agent session id are both UUIDs — so these
+  // pin the order the two readings are tried in, and that a miss is a miss
+  // rather than a wrong card raised.
+  function recordAgentSession(sm: StateManager, ptySessionId: string, agentSessionId: string): void {
+    sm.updateClaudeSessionHistory(pid(ptySessionId), [
+      { claudeSessionId: cid(agentSessionId), reason: 'startup', timestamp: '2026-01-01T00:00:00.000Z' }
+    ])
+  }
+
+  it('resolves a surface id', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    expect(sm.resolveNodeIdForFocus('t1')).toEqual({ nodeId: 't1', matchedAs: 'surface' })
+  })
+
+  it('falls back to the agent session reading when no surface owns the id', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    recordAgentSession(sm, 't1', 'agent-abc')
+
+    expect(sm.resolveNodeIdForFocus('agent-abc')).toEqual({ nodeId: 't1', matchedAs: 'agent-session' })
+  })
+
+  it('prefers the surface reading when both would match', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'shared-id')
+    createTerminal(sm, 't2')
+    recordAgentSession(sm, 't2', 'shared-id')
+
+    expect(sm.resolveNodeIdForFocus('shared-id')).toEqual({ nodeId: 'shared-id', matchedAs: 'surface' })
+  })
+
+  it('still finds an agent session after its terminal restarted onto a new pty', () => {
+    // The case the surface-only lookup could never serve: an agent session id
+    // outlives the pty session id a link was built from.
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    recordAgentSession(sm, 't1', 'agent-abc')
+    sm.protectFromArchival(pid('t1'))
+    sm.terminalExited(pid('t1'), 0)
+    sm.reincarnateTerminal(nid('t1'), pid('pty-2'), 80, 24)
+
+    expect(sm.resolveNodeIdForFocus('t1')).toBeUndefined()
+    expect(sm.resolveNodeIdForFocus('agent-abc')).toEqual({ nodeId: 't1', matchedAs: 'agent-session' })
+  })
+
+  it('does not care which agent CLI recorded the session', () => {
+    // Claude, Codex and Cursor all write their conversation id to the same
+    // node fields, so this needs no per-agent branching — and must not grow any.
+    const { sm } = harness()
+    for (const agentType of ['claude', 'codex', 'cursor'] as const) {
+      sm.createTerminal({
+        sessionId: pid(`pty-${agentType}`),
+        parentId: ROOT_NODE_ID,
+        x: 0,
+        y: 0,
+        cols: 80,
+        rows: 24,
+        agentType
+      })
+      recordAgentSession(sm, `pty-${agentType}`, `chat-${agentType}`)
+    }
+
+    for (const agentType of ['claude', 'codex', 'cursor'] as const) {
+      expect(sm.resolveNodeIdForFocus(`chat-${agentType}`)).toEqual({
+        nodeId: `pty-${agentType}`,
+        matchedAs: 'agent-session'
+      })
+    }
+  })
+
+  it('resolves a remnant, whose card is still on the canvas', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    recordAgentSession(sm, 't1', 'agent-abc')
+    sm.protectFromArchival(pid('t1'))
+    sm.terminalExited(pid('t1'), 0)
+
+    expect(sm.resolveNodeIdForFocus('agent-abc')).toEqual({ nodeId: 't1', matchedAs: 'agent-session' })
+  })
+
+  it('prefers a live node over a remnant hosting the same agent session', () => {
+    // A session id reaches two nodes via a fork or a resume. The one the user
+    // can still type into wins.
+    const { sm } = harness()
+    createTerminal(sm, 'dead')
+    recordAgentSession(sm, 'dead', 'agent-abc')
+    sm.protectFromArchival(pid('dead'))
+    sm.terminalExited(pid('dead'), 0)
+
+    createTerminal(sm, 'live')
+    recordAgentSession(sm, 'live', 'agent-abc')
+
+    expect(sm.resolveNodeIdForFocus('agent-abc')).toEqual({ nodeId: 'live', matchedAs: 'agent-session' })
+  })
+
+  it('ignores an archived node, so the link is a no-op rather than a resurrection', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    recordAgentSession(sm, 't1', 'agent-abc')
+    sm.archiveNode(nid('t1'))
+
+    expect(sm.resolveNodeIdForFocus('t1')).toBeUndefined()
+    expect(sm.resolveNodeIdForFocus('agent-abc')).toBeUndefined()
+  })
+
+  it('returns undefined for an id neither reading claims', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    expect(sm.resolveNodeIdForFocus('nobody')).toBeUndefined()
   })
 })
 
