@@ -18,6 +18,23 @@ export const AGENT_LABELS: Record<AgentType, string> = {
   codex: 'Codex'
 }
 
+/**
+ * The executable each agent is launched as, and therefore the `comm` its
+ * process reports. `AgentDriver.buildCreateOptions` spawns these as the PTY's
+ * top-level process, so on an agent surface this name identifies the PTY root.
+ *
+ * Named here rather than written inline in the drivers because the MCP server
+ * runs out-of-process and has to recognise these names without importing any
+ * server code — two copies of the list would drift the first time a CLI is
+ * renamed, and the failure would be a self-terminate that silently finds
+ * nothing.
+ */
+export const AGENT_PTY_COMMANDS: Record<AgentType, string> = {
+  claude: 'claude',
+  cursor: 'agent',
+  codex: 'codex'
+}
+
 export function isAgentType(value: unknown): value is AgentType {
   return typeof value === 'string' && (AGENT_TYPES as readonly string[]).includes(value)
 }

@@ -1,6 +1,6 @@
 import * as path from 'path'
 import type { CreateOptions } from '../shared/protocol'
-import { type AgentType, AGENT_LABELS, agentTypeOrDefault } from '../shared/agent-type'
+import { type AgentType, AGENT_LABELS, AGENT_PTY_COMMANDS, agentTypeOrDefault } from '../shared/agent-type'
 import { expandTilde } from './cwd'
 
 /**
@@ -130,7 +130,7 @@ function claudeDriver(provisioning: AgentProvisioning): AgentDriver {
         const footer = ' The preceding was appended to the system prompt '
         // Normalize newlines to \r\n for terminal display (CRLF)
         const termPrompt = prompt.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
-        const claudeCmd = ['claude', ...args].map(a => shellQuote(a)).join(' ')
+        const claudeCmd = [AGENT_PTY_COMMANDS.claude, ...args].map(a => shellQuote(a)).join(' ')
         const script = [
           'stty -echo',
           `printf '\\x1b[30;47m${header}\\x1b[0m\\r\\n'`,
@@ -143,7 +143,7 @@ function claudeDriver(provisioning: AgentProvisioning): AgentDriver {
       } else if (prompt) {
         args.push('--', prompt)
       }
-      return { cwd, command: 'claude', args }
+      return { cwd, command: AGENT_PTY_COMMANDS.claude, args }
     }
   }
 }
@@ -180,7 +180,7 @@ function cursorDriver(provisioning: AgentProvisioning): AgentDriver {
       if (prompt) {
         args.push(prompt)
       }
-      return { cwd: resolvedCwd, command: 'agent', args }
+      return { cwd: resolvedCwd, command: AGENT_PTY_COMMANDS.cursor, args }
     }
   }
 }
@@ -229,7 +229,7 @@ function codexDriver(provisioning: AgentProvisioning): AgentDriver {
       if (prompt) {
         args.push(prompt)
       }
-      return { cwd: resolvedCwd, command: 'codex', args }
+      return { cwd: resolvedCwd, command: AGENT_PTY_COMMANDS.codex, args }
     }
   }
 }
