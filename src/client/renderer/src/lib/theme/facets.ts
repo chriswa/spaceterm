@@ -5,6 +5,7 @@ import {
   EMBER_EDGE_FRAG,
   CONCENTRIC_BG_FRAG,
   CONCENTRIC_EDGE_FRAG,
+  MEDALLION_BG_FRAG,
   NEBULA_BG_FRAG,
   NEBULA_EDGE_FRAG,
 } from './shaders'
@@ -148,9 +149,10 @@ export const BACKGROUNDS = {
   // rates below are still an order of magnitude finer than either needs.
   ember: { id: 'ember', label: 'Ember', frag: EMBER_BG_FRAG, animatedHz: 10 },
   nebula: { id: 'nebula', label: 'Nebula', frag: NEBULA_BG_FRAG, animatedHz: 20 },
-  // The only static one: a ramp in world space, so it changes when the camera
+  // The static ones: patterns in world space, so they change when the camera
   // does and at no other time.
   concentric: { id: 'concentric', label: 'Concentric', frag: CONCENTRIC_BG_FRAG, animatedHz: 0 },
+  medallion: { id: 'medallion', label: 'Medallion', frag: MEDALLION_BG_FRAG, animatedHz: 0 },
 } as const satisfies Record<string, BackgroundFacet>
 
 export const EDGES = {

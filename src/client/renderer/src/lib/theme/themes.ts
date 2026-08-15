@@ -89,6 +89,21 @@ const BUILT_IN_THEMES: readonly Theme[] = [
     },
   },
   {
+    id: 'medallion',
+    // Concentric's navigation cues without concentric's rings: rings and spokes
+    // interlaced, leaned into a spiral so they never close, and still repainting
+    // only when the camera moves.
+    label: 'Medallion',
+    blurb: 'Indigo cloth woven around the root node — still, like Concentric',
+    facets: {
+      background: BACKGROUNDS.medallion,
+      edges: EDGES.concentric,
+      rootNode: ROOT_NODES.reticle,
+      cardChrome: CARD_CHROMES.technical,
+      nodeTint: NODE_TINTS.neutral,
+    },
+  },
+  {
     id: 'nebula',
     label: 'Nebula',
     blurb: '7 octaves of 3D noise, twice per edge pixel — animated orb',
