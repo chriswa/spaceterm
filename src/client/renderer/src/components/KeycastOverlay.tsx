@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { helpGroups } from '../lib/help-registry'
 import { isWindowVisible, onWindowVisibleChange } from '../hooks/useWindowVisible'
+import { FrameLimiter } from '../lib/frame-policy'
 
 const MODIFIER_KEYS = new Set(['Meta', 'Shift', 'Alt', 'Control'])
 
@@ -103,6 +104,19 @@ const DRAG_THRESHOLD_PX = 8
 // Zoom debounce — how long after the last pinch wheel event before fading
 const ZOOM_DEBOUNCE_MS = 300
 
+/**
+ * Wave damping, held here rather than in the GLSL because the loop needs them
+ * too: its idle check estimates how much displacement is left in the field, and
+ * that estimate is only trustworthy if it is derived from the same numbers the
+ * simulation runs on. Interpolated into the shader below so there is one copy.
+ *
+ * `toFixed` rather than raw interpolation because GLSL wants a decimal point:
+ * a value that happened to be integral would emit `1` into a `float` initialiser.
+ */
+const FRICTION = 0.06        // velocity damping — kills centre oscillation
+const AMPLITUDE_DAMP = 0.998 // gentle global amplitude decay
+const glslFloat = (n: number): string => n.toFixed(6)
+
 // Wave simulation resolution scale (fraction of screen resolution)
 const SIM_SCALE = 0.5
 // Fraction of sim texture that extends beyond the visible screen on each side.
@@ -135,8 +149,8 @@ uniform float uImpulseI[8]; // intensity
 uniform float uImpulseR[8]; // radius
 
 const float WAVE_SPEED = 0.25;   // must be <= 0.25 for stability
-const float FRICTION = 0.06;     // velocity damping — kills center oscillation
-const float AMPLITUDE_DAMP = 0.998; // gentle global amplitude decay
+const float FRICTION = ${glslFloat(FRICTION)};
+const float AMPLITUDE_DAMP = ${glslFloat(AMPLITUDE_DAMP)};
 
 out vec4 fragColor;
 
@@ -399,9 +413,65 @@ export function KeycastOverlay() {
 
     // --- Animation loop ---
     let waveRafId = 0
+    const limiter = new FrameLimiter()
+
+    /**
+     * A conservative upper bound on the largest displacement still in the field.
+     *
+     * The point of tracking it is that a calm pond costs exactly as much to
+     * simulate and composite as a stormy one — two full-screen passes, one of
+     * them at full device resolution — while putting nothing on screen at all.
+     * Reading the real answer back off the GPU would stall the pipeline every
+     * frame to avoid work that costs less than the stall, so this estimates it
+     * on the CPU instead, and errs upward at every step so the estimate outlives
+     * the wave rather than cutting it off mid-flight.
+     */
+    let energy = 0
+
+    /**
+     * Per-step amplitude decay, derived from the simulation rather than guessed,
+     * so retuning the sim retunes this with it.
+     *
+     * The recurrence in `WAVE_SIM_FRAG_SRC` is `next = (2-F)·c - (1-F)·prev`,
+     * whose characteristic roots have modulus `sqrt(1-F)` — so an oscillating
+     * point keeps that fraction of its amplitude each step, with
+     * `AMPLITUDE_DAMP` taking its share on top. `1 - F/2` is the first-order
+     * expansion of that root, used in preference to the exact value because it
+     * is very slightly *larger*: erring toward a slower decay means the estimate
+     * outlives the wave rather than cutting it off mid-flight. Dispersion and
+     * the sponge layer at the border drain the real field faster still, neither
+     * of which this accounts for.
+     */
+    const ENERGY_DECAY = (1 - FRICTION / 2) * AMPLITUDE_DAMP
+
+    /**
+     * Amplitude below which the render pass cannot put a visible pixel on screen.
+     *
+     * The render shader emits `clamp(grad * 12, 0, 1)²`, and the gradient across
+     * a wave of amplitude A is well under `A * 12`; a tenth of a percent of full
+     * scale therefore lands two orders of magnitude below one 8-bit level. The
+     * settling tail is exponential, so a threshold this conservative costs a
+     * fraction of a second of extra simulation, not seconds.
+     */
+    const ENERGY_FLOOR = 1e-3
 
     const tick = () => {
       waveRafId = requestAnimationFrame(tick)
+
+      const queued = impulseQueue.current.length > 0
+      // Nothing in the field and nothing arriving: no pass would change a pixel.
+      // The last frame drawn was the calm one, and a transparent overlay whose
+      // composited frame Chromium later discards looks exactly like a
+      // transparent overlay — so unlike the canvas background, this needs no
+      // periodic repaint to stay correct.
+      if (energy < ENERGY_FLOOR && !queued) {
+        energy = 0
+        limiter.reset()
+        return
+      }
+
+      if (!limiter.shouldRun()) return
+
       resize()
 
       if (simW === 0 || simH === 0) return
@@ -432,6 +502,14 @@ export function KeycastOverlay() {
         gl.uniform1f(simImpulseILocs[i], impulses[i].intensity)
         gl.uniform1f(simImpulseRLocs[i], impulses[i].radius)
       }
+
+      // Decay first, then add what this step injects: an impulse applied to the
+      // field on this step has not been damped yet. Summing intensities rather
+      // than taking a maximum is the over-estimate the floor is chosen against —
+      // two impulses in one step cannot actually add to more than they would
+      // overlapping, and usually land nowhere near each other.
+      energy *= ENERGY_DECAY
+      for (const impulse of impulses) energy += impulse.intensity
 
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
       gl.enableVertexAttribArray(simPosLoc)
@@ -739,12 +817,17 @@ export function KeycastOverlay() {
     }
 
     // --- Animation loop (SVG text opacity) ---
+    // Idle almost all the time — the overlay is blank until a key goes down —
+    // so it exits on the state rather than running a fade nothing is fading.
     const tick = () => {
       rafId.current = requestAnimationFrame(tick)
       const el = svgRef.current
       if (!el) return
 
       const state = fadeState.current
+      // Already at rest and already written as such; nothing to recompute.
+      if (state === 'idle' && el.style.opacity === '0') return
+
       let opacity = 0
 
       if (state === 'idle') {

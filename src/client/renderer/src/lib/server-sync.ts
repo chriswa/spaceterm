@@ -11,6 +11,7 @@ import { playSound } from './sounds'
 import { speakText } from './tts-player'
 import { setSummaryChatWaiting } from './summary-chat-wait-cue'
 import { showToast } from './toast'
+import { pokeFrames } from './frame-policy'
 import type { CreateOptions, SoundName } from '../../../../shared/protocol'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
 
@@ -41,6 +42,14 @@ let cleanupFns: Array<() => void> = []
  */
 export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor): Promise<void> {
   const store = useNodeStore.getState()
+
+  // Anything that changes the picture changes this store, so one subscription
+  // is the whole of "a viewer would want to see this now" — the alternative
+  // being a `pokeFrames()` next to every one of the dozen `on*` handlers below,
+  // which is a list that would be incomplete within a month. An unfocused
+  // window runs at `REDUCED_HZ` until this fires and at full rate for a second
+  // after, which is what keeps a second display live without keeping it hot.
+  cleanupFns.push(useNodeStore.subscribe(() => pokeFrames()))
 
   // Subscribe to server node state events
   cleanupFns.push(

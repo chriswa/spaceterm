@@ -2739,11 +2739,20 @@ html, body, #root {
   color: #cdd6f4 !important;
 }
 
+/* Opacity, not colour. `color` is a paint property: animating it invalidates
+   the paint of whatever layer the badge sits in — a whole card — sixty times a
+   second, for every unread badge on the surface, forever. Opacity is handled by
+   the compositor, which animates it without repainting anything at all.
+
+   The pulse used to run #000 → #fff; against the dark chrome these sit at
+   ranges the eye reads much the same way, and the signal — something here is
+   pulsing for attention — is identical. */
 @keyframes alert-pulse {
-  0%, 100% { color: #000; }
-  50% { color: #fff; }
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 .node-titlebar__alerts-btn--unread {
+  color: #fff;
   animation: alert-pulse 2s ease-in-out infinite;
 }
 

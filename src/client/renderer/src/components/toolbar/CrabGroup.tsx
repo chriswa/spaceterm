@@ -1,11 +1,14 @@
-import { useRef, useEffect, useLayoutEffect, useState } from 'react'
+import { useRef, useEffect, useLayoutEffect } from 'react'
 import crabIcon from '../../assets/crab.png'
 import cursorAgentIcon from '../../assets/cursor-agent.png'
 import codexAgentIcon from '../../assets/codex-agent.png'
 import terminalIcon from '../../assets/terminal.png'
 import type { AgentIndicatorKind, CrabEntry } from '../../lib/crab-nav'
 import { CrabDance } from '../../lib/crab-dance'
+import { FrameLimiter } from '../../lib/frame-policy'
+import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVisible'
 import { useHoveredCardStore } from '../../stores/hoveredCardStore'
+import { usePowerMonitorStore } from '../../stores/powerMonitorStore'
 import { useSummaryChatStore } from '../../stores/summaryChatStore'
 import { useSummaryBubble, type SummaryBubbleState } from '../../mods/summary-chat/bubble-facet'
 import { asNodeId, type NodeId } from '../../../../../shared/ids'
@@ -20,6 +23,16 @@ import type { SummaryChatPhase } from '../../../../../shared/api'
  * anything to do with a toolbar. It is here so the toolbar itself can be read
  * in one screen.
  */
+
+/**
+ * How often the dance recomputes.
+ *
+ * The whole animation is a 0.5 Hz breath — a sine glow, a rock and a bounce —
+ * so thirty samples a second is already sixty per cycle. What it costs at any
+ * rate is a `drop-shadow` blur re-rastered per crab, which is why the number
+ * matters at all.
+ */
+const DANCE_HZ = 30
 
 /** A crab-nav jump, used to animate the indicator triangle between surfaces. */
 export type CrabNavEvent = { fromNodeId: string | null; toNodeId: string; ts: number } | null
@@ -181,37 +194,72 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
   useEffect(() => {
     let rafId = 0
     const dance = new CrabDance()
+    const limiter = new FrameLimiter(DANCE_HZ)
     let logCounter = 0
+    // What was last written to the DOM, so an unchanged frame writes nothing.
+    let lastGlow = ''
 
     const tick = () => {
       rafId = requestAnimationFrame(tick)
+      if (!limiter.shouldRun()) return
+
       const el = containerRef.current
       if (!el) return
 
-      const { glowPulse, rock, bounce } = dance.tick()
-      const glowRadius = 2 + 4 * glowPulse
-
       // Target inner crab buttons, skipping exit phantoms
       const crabButtons = el.querySelectorAll<HTMLElement>('.toolbar__crab-slot .toolbar__crab')
+      if (crabButtons.length === 0) return
+
+      const { glowPulse, rock, bounce } = dance.tick()
+      // Quantised to the tenth of a pixel the shadow is actually drawn at.
+      // Assigning `style.filter` invalidates the element's paint whether or not
+      // the string differs, and re-rastering a blur is the expensive half of
+      // this loop — so the comparison below is worth the rounding.
+      const glow = `drop-shadow(0 0 ${(2 + 4 * glowPulse).toFixed(1)}px currentColor)`
+      const glowChanged = glow !== lastGlow
+      lastGlow = glow
+
       for (const child of crabButtons) {
-        child.style.filter = `drop-shadow(0 0 ${glowRadius}px currentColor)`
+        if (glowChanged) child.style.filter = glow
         if (child.classList.contains('toolbar__crab--attention')) {
           child.style.translate = `0 ${-bounce}px`
           child.style.rotate = `${rock}deg`
-        } else {
+        } else if (child.style.translate !== '' || child.style.rotate !== '') {
+          // Both tested, not just one: they are written as a pair above, and a
+          // guard that assumes it would leave the other stuck the moment that
+          // stopped being true.
           child.style.translate = ''
           child.style.rotate = ''
         }
       }
 
+      // Only while someone is actually measuring. This ran unconditionally and
+      // forever, appending a line to `~/.spaceterm/electron.log` every couple of
+      // seconds for the life of the app.
       logCounter++
-      if (logCounter % 120 === 0) {
+      if (logCounter % 120 === 0 && usePowerMonitorStore.getState().enabled) {
         window.api.log(`[crab-dance] rock=${rock.toFixed(1)} bounce=${bounce.toFixed(1)}`)
       }
     }
 
-    rafId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafId)
+    // Unlike every other loop in the app this had no visibility gate, so the
+    // glow kept being recomputed and rewritten behind a hidden window.
+    const startLoop = () => {
+      if (rafId) return
+      limiter.reset()
+      rafId = requestAnimationFrame(tick)
+    }
+    const stopLoop = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0 } }
+
+    const unsubVisibility = onWindowVisibleChange((visible) => {
+      if (visible) startLoop(); else stopLoop()
+    })
+    if (isWindowVisible()) startLoop()
+
+    return () => {
+      stopLoop()
+      unsubVisibility()
+    }
   }, [])
 
   const handleCrabMouseDown = (e: React.MouseEvent, crabIndex: number) => {

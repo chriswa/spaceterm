@@ -14,6 +14,7 @@ import {
   NotificationSoundToggle,
   RestartButton,
   ThemePicker,
+  UnfocusedFramesToggle,
   ZoomMetric
 } from './buttons'
 
@@ -134,6 +135,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
     kind: 'host',
     render: (h) => <KeycastToggle enabled={h.keycastEnabled} onToggle={h.onKeycastToggle} />
   },
+  { id: 'unfocused-frames', slot: 'buttons', kind: 'standalone', render: () => <UnfocusedFramesToggle /> },
   { id: 'notification-sound', slot: 'buttons', kind: 'standalone', render: () => <NotificationSoundToggle /> },
   { id: 'copy-cleanup', slot: 'buttons', kind: 'standalone', render: () => <CopyCleanupToggle /> },
 

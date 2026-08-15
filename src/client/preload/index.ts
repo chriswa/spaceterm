@@ -186,6 +186,11 @@ const api: Api = {
       ipcRenderer.on('window:visibility-changed', listener)
       return () => ipcRenderer.removeListener('window:visibility-changed', listener)
     },
+    onFocusChanged: (callback: (focused: boolean) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, focused: boolean) => callback(focused)
+      ipcRenderer.on('window:focus-changed', listener)
+      return () => ipcRenderer.removeListener('window:focus-changed', listener)
+    },
     onFocusNode: (callback: (nodeId: NodeId) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId) => callback(nodeId)
       ipcRenderer.on('window:focus-node', listener)

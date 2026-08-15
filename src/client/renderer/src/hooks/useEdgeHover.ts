@@ -3,6 +3,7 @@ import type { Camera } from '../lib/camera'
 import type { TreeLineNode } from '../components/CanvasBackground'
 import { EDGE_HOVER_THRESHOLD_PX, EDGE_SPLIT_NODE_MARGIN_PX, ROOT_NODE_RADIUS } from '../lib/constants'
 import { useNodeStore, nodePixelSize } from '../stores/nodeStore'
+import { isWindowVisible, onWindowVisibleChange } from './useWindowVisible'
 import { type NodeId } from '../../../../shared/ids'
 
 export interface HoveredEdge {
@@ -154,7 +155,7 @@ export function useEdgeHover(
       return
     }
 
-    let rafId: number
+    let rafId = 0
 
     const tick = () => {
       rafId = requestAnimationFrame(tick)
@@ -205,8 +206,21 @@ export function useEdgeHover(
       }
     }
 
-    rafId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafId)
+    // Hit-testing every edge against a cursor behind a hidden window is work
+    // for a hover that cannot be seen and a click that cannot be made. This
+    // loop was the one that never gated on visibility.
+    const startLoop = () => { if (!rafId) rafId = requestAnimationFrame(tick) }
+    const stopLoop = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0 } }
+
+    const unsubVisibility = onWindowVisibleChange((visible) => {
+      if (visible) startLoop(); else stopLoop()
+    })
+    if (isWindowVisible()) startLoop()
+
+    return () => {
+      stopLoop()
+      unsubVisibility()
+    }
   }, [cameraRef, edgesRef, reparentActive])
 
   const clearHoveredEdge = useCallback(() => {

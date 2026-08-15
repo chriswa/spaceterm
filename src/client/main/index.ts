@@ -166,11 +166,17 @@ function createWindow(): void {
 /**
  * Report window state the renderer's render loops throttle themselves against.
  *
- * Window *state* only — hidden and minimised. Occlusion, where the window is
- * covered by another or sits on a Space that is not on screen, is not reported
- * here because `BrowserWindow` emits no event for it; the renderer reads it from
- * `document.visibilityState`, which is Chromium's own belief and covers it. See
- * `useWindowVisible`, which ANDs the two.
+ * Two separate signals, which the renderer uses for two different decisions:
+ *
+ * - **Visibility** — hidden and minimised. Whether to draw *at all*. Window
+ *   state only: occlusion, where the window is covered by another or sits on a
+ *   Space that is not on screen, is not reported here because `BrowserWindow`
+ *   emits no event for it; the renderer reads it from
+ *   `document.visibilityState`, which is Chromium's own belief and covers it.
+ *   See `useWindowVisible`, which ANDs the two.
+ * - **Focus** — how *fast* to draw. Not a visibility input, and must never be
+ *   treated as one: an unfocused window on a second display is fully on screen
+ *   and is often the one being watched. See `frame-policy`.
  */
 function setupVisibilityTracking(): void {
   if (!mainWindow) return
@@ -195,6 +201,22 @@ function setupVisibilityTracking(): void {
   mainWindow.on('show', () => { isHidden = false; update() })
   mainWindow.on('minimize', () => { isMinimized = true; update() })
   mainWindow.on('restore', () => { isMinimized = false; update() })
+
+  const sendFocus = (focused: boolean) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:focus-changed', focused)
+    }
+  }
+  mainWindow.on('focus', () => sendFocus(true))
+  mainWindow.on('blur', () => sendFocus(false))
+  // The renderer assumes focused until told otherwise, and `blur` does not fire
+  // for a window that was never focused — so a window that opens in the
+  // background, or a reload while the app is not frontmost, would sit at full
+  // rate forever. Sent on load rather than now because a send before the page
+  // exists goes nowhere.
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) sendFocus(mainWindow.isFocused())
+  })
 }
 
 function setupIPC(): void {

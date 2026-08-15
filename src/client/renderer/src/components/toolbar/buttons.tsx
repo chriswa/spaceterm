@@ -5,6 +5,8 @@ import { useNotificationSoundStore } from '../../stores/notificationSoundStore'
 import { useCopyCleanupStore } from '../../stores/copyCleanupStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { usePowerMonitorStore } from '../../stores/powerMonitorStore'
+import { useFramePolicyStore } from '../../stores/framePolicyStore'
+import { REDUCED_HZ } from '../../lib/frame-policy'
 import { resolveTheme } from '../../lib/theme/themes'
 import { useThemes } from '../../hooks/useFacet'
 import { useFps } from '../../hooks/useFps'
@@ -317,6 +319,31 @@ export function KeycastToggle({ enabled, onToggle }: { enabled: boolean; onToggl
       data-tooltip-no-flip
     >
       <KeycastIcon />
+    </button>
+  )
+}
+
+/**
+ * Whether an unfocused window keeps drawing at full rate.
+ *
+ * Active means "full" — the more expensive setting — so the lit button is the
+ * one costing you something, which is the direction that makes a power toggle
+ * readable at a glance.
+ */
+export function UnfocusedFramesToggle() {
+  const unfocused = useFramePolicyStore(s => s.unfocused)
+  const toggle = useFramePolicyStore(s => s.toggle)
+  const full = unfocused === 'full'
+  return (
+    <button
+      className={'toolbar__btn' + (full ? ' toolbar__btn--active' : '')}
+      onClick={toggle}
+      data-tooltip={full
+        ? 'Background Frames: Full — draws at full rate even when another app has focus'
+        : `Background Frames: Reduced — drops to ${REDUCED_HZ} fps when unfocused, full rate for a moment whenever something changes`}
+      data-tooltip-no-flip
+    >
+      <GaugeIcon />
     </button>
   )
 }

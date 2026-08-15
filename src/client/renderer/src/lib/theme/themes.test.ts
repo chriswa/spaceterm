@@ -85,29 +85,30 @@ describe('the edges facet', () => {
 })
 
 /**
- * `static` is a *promise* the renderer acts on: `CanvasFrameGate` stops drawing
- * entirely when every facet in play declares it. A facet that claims it and
- * then reads a clock does not look slightly wrong — it freezes. Nothing in the
- * type system can check the claim, so these read the shader source instead.
+ * `animatedHz` is a *promise* the renderer acts on: `CanvasBackground` quantises
+ * the shader's clock to it, so `CanvasFrameGate` skips every frame in between. A
+ * facet that declares `0` and then reads a clock does not look slightly wrong —
+ * it freezes. Nothing in the type system can check the claim, so these read the
+ * shader source instead.
  */
-describe('the static promise', () => {
+describe('the animation-rate promise', () => {
   // Widened from the `as const` literals on purpose: an optional property is
   // absent from the narrowed type of a facet that omits it, so reading
-  // `.static` off the literals would not compile — and, worse, would let these
-  // tests only ever see the facets that already declare it.
+  // `.animatedHz` off the literals would not compile — and, worse, would let
+  // these tests only ever see the facets that already declare it.
   const backgrounds: readonly BackgroundFacet[] = Object.values(BACKGROUNDS)
   const edges: readonly EdgeFacet[] = Object.values(EDGES)
 
-  it('is kept by every background that makes it', () => {
+  it('is kept by every background that promises stillness', () => {
     for (const facet of backgrounds) {
-      if (!facet.static) continue
+      if (facet.animatedHz !== 0) continue
       expect(facet.frag, `background "${facet.id}"`).not.toMatch(/\biTime\b/)
     }
   })
 
-  it('is kept by every edge facet that makes it', () => {
+  it('is kept by every edge facet that promises stillness', () => {
     for (const facet of edges) {
-      if (!facet.static) continue
+      if (facet.animatedHz !== 0) continue
       // The default vertex shader scrolls vUV with uTime, so a static edge
       // facet has to bring its own — its fragment shader cannot opt out.
       expect(facet.vert, `edge "${facet.id}" vert`).toBeTruthy()
@@ -119,20 +120,30 @@ describe('the static promise', () => {
     }
   })
 
-  it('defaults to animated, so an undeclared facet is never frozen', () => {
-    // The safe direction for a facet from a mod that has not considered this.
-    const animated = [...backgrounds, ...edges].filter((f) => f.id !== 'concentric')
-    expect(animated).not.toHaveLength(0)
-    for (const facet of animated) {
-      expect(facet.static, `facet "${facet.id}"`).toBeUndefined()
+  it('only lets a facet that reads a clock declare a rate above zero', () => {
+    // The other direction of the same claim: a rate is a statement that time is
+    // an input, so a facet whose shaders never mention one should say `0` and
+    // let the gate stop drawing it.
+    for (const facet of backgrounds) {
+      if (facet.animatedHz === 0) continue
+      expect(facet.frag, `background "${facet.id}"`).toMatch(/\biTime\b/)
+    }
+  })
+
+  it('accepts only a usable rate, never a negative or a fraction of a frame', () => {
+    for (const facet of [...backgrounds, ...edges]) {
+      const hz = facet.animatedHz
+      if (hz === undefined) continue
+      expect(Number.isFinite(hz), `facet "${facet.id}"`).toBe(true)
+      expect(hz, `facet "${facet.id}"`).toBeGreaterThanOrEqual(0)
     }
   })
 
   it('is what the concentric theme is for', () => {
     // Both halves, or the gate cannot skip a frame: the edges composite over
     // the background, so neither repaints alone.
-    expect(resolveFacet('concentric', 'background').static).toBe(true)
-    expect(resolveFacet('concentric', 'edges').static).toBe(true)
+    expect(resolveFacet('concentric', 'background').animatedHz).toBe(0)
+    expect(resolveFacet('concentric', 'edges').animatedHz).toBe(0)
   })
 })
 

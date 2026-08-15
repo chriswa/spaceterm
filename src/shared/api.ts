@@ -201,6 +201,12 @@ export interface WindowApi {
   isFullScreen(): Promise<boolean>
   setFullScreen(enabled: boolean): Promise<void>
   onVisibilityChanged(callback: (visible: boolean) => void): () => void
+  /**
+   * Keyboard focus, which is *not* visibility: an unfocused window is still on
+   * screen and may be the one being watched. Consumed by `frame-policy` to pick
+   * a frame rate, never to decide whether to draw at all.
+   */
+  onFocusChanged(callback: (focused: boolean) => void): () => void
   onFocusNode(callback: (nodeId: NodeId) => void): () => void
 }
 

@@ -54,18 +54,26 @@ interface FacetBase {
 export interface BackgroundFacet extends FacetBase {
   readonly frag: string
   /**
-   * True when the shader's output depends only on the camera, never on time.
+   * How many times a second this shader's output actually changes.
    *
-   * A promise, not a hint: `CanvasBackground` skips the whole frame when both
-   * this and the edge facet are static and nothing else moved, so a shader that
-   * declares this and then animates will simply freeze. `iTime` is still bound
-   * — the uniform is free — but reading it makes the claim false.
+   * A promise, not a hint. `CanvasBackground` quantises `iTime` to this rate
+   * (see `quantizeClock`), which hands the shader the *same* number across the
+   * frames in between — so `CanvasFrameGate`, which skips a frame whose inputs
+   * all match the last one, skips them too. Declaring a rate a shader exceeds
+   * therefore does not look slightly wrong, it looks like a stutter; declaring
+   * `0` for a shader that reads `iTime` freezes it outright.
    *
-   * Optional, defaulting to *animated*, because that is the safe direction: a
-   * facet from a mod that has not thought about this redraws every frame and
-   * looks right, rather than being silently frozen.
+   * - **`0`** — output depends only on the camera. `iTime` is still bound (the
+   *   uniform is free) but reading it makes the claim false.
+   * - **omitted** — fully animated, redrawing as fast as `frame-policy` allows.
+   *   The safe default, so a facet from a mod that has not thought about this
+   *   looks right rather than being silently frozen.
+   * - **a number** — the honest rate for motion far slower than the display.
+   *   `ember`'s streaks drift at 0.03 units a second; ten steps a second is
+   *   already thirty times finer than the eye can follow there, and costs a
+   *   sixth of what 60 did.
    */
-  readonly static?: boolean
+  readonly animatedHz?: number
 }
 
 /**
@@ -80,16 +88,21 @@ export interface EdgeFacet extends FacetBase {
   readonly frag: string
   readonly vert?: string
   /**
-   * True when the shader pair's output depends only on the camera and the edge
-   * geometry, never on time. See `BackgroundFacet.static` — same promise, same
-   * safe default.
+   * How many times a second this shader pair's output changes. See
+   * `BackgroundFacet.animatedHz` — same promise, same safe default, same `0`
+   * for "depends only on the camera and the edge geometry".
    *
-   * Both halves have to hold. The default `vert` scrolls `vUV` with `uTime`, so
-   * an edge facet is only static if it also supplies `EDGE_VERT_STATIC_SRC`;
-   * and a fragment shader that samples the animated background (as the nebula's
-   * does) is not static however still its own geometry is.
+   * Both halves have to hold for `0`. The default `vert` scrolls `vUV` with
+   * `uTime`, so an edge facet is only static if it also supplies
+   * `EDGE_VERT_STATIC_SRC`; and a fragment shader that samples the animated
+   * background (as the nebula's does) is not static however still its own
+   * geometry is.
+   *
+   * The chevron crawl is real motion rather than an imperceptible drift, so the
+   * rates here are higher than the backgrounds': 30 reads as continuous for
+   * something moving this slowly, and is half of what it cost before.
    */
-  readonly static?: boolean
+  readonly animatedHz?: number
 }
 
 /** What is drawn in the circle at the world origin. */
@@ -130,24 +143,27 @@ export const FACET_IDS = ['background', 'edges', 'rootNode', 'cardChrome', 'node
 /* ------------------------------------------------------------------ */
 
 export const BACKGROUNDS = {
-  ember: { id: 'ember', label: 'Ember', frag: EMBER_BG_FRAG },
-  nebula: { id: 'nebula', label: 'Nebula', frag: NEBULA_BG_FRAG },
+  // Both noise backgrounds drift far slower than they were being redrawn: the
+  // ember streaks at 0.03 units a second, the nebula's field at 0.05/9. The
+  // rates below are still an order of magnitude finer than either needs.
+  ember: { id: 'ember', label: 'Ember', frag: EMBER_BG_FRAG, animatedHz: 10 },
+  nebula: { id: 'nebula', label: 'Nebula', frag: NEBULA_BG_FRAG, animatedHz: 20 },
   // The only static one: a ramp in world space, so it changes when the camera
   // does and at no other time.
-  concentric: { id: 'concentric', label: 'Concentric', frag: CONCENTRIC_BG_FRAG, static: true },
+  concentric: { id: 'concentric', label: 'Concentric', frag: CONCENTRIC_BG_FRAG, animatedHz: 0 },
 } as const satisfies Record<string, BackgroundFacet>
 
 export const EDGES = {
-  ember: { id: 'ember', label: 'Translucent', frag: EMBER_EDGE_FRAG },
-  nebula: { id: 'nebula', label: 'Soft-light', frag: NEBULA_EDGE_FRAG },
+  ember: { id: 'ember', label: 'Translucent', frag: EMBER_EDGE_FRAG, animatedHz: 30 },
+  nebula: { id: 'nebula', label: 'Soft-light', frag: NEBULA_EDGE_FRAG, animatedHz: 30 },
   // The only edge facet that overrides the vertex shader, to hold still — and
-  // therefore the only one that can promise `static`.
+  // therefore the only one that can promise `0`.
   concentric: {
     id: 'concentric',
     label: 'Static',
     frag: CONCENTRIC_EDGE_FRAG,
     vert: EDGE_VERT_STATIC_SRC,
-    static: true,
+    animatedHz: 0,
   },
 } as const satisfies Record<string, EdgeFacet>
 

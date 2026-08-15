@@ -137,6 +137,7 @@ export class FakeBridge implements Api {
   private readonly peerCameraBounds = new Set<(clientId: string, bounds: CameraBounds) => void>()
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
+  private readonly focusChanged = new Set<(focused: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
@@ -217,6 +218,9 @@ export class FakeBridge implements Api {
     },
     visibilityChanged: (visible: boolean): void => {
       for (const fn of this.visibilityChanged) fn(visible)
+    },
+    focusChanged: (focused: boolean): void => {
+      for (const fn of this.focusChanged) fn(focused)
     },
     focusNode: (nodeId: NodeId): void => { for (const fn of this.focusNode) fn(nodeId) },
     systemMetrics: (sample: SystemMetricsSample): void => {
@@ -351,6 +355,7 @@ export class FakeBridge implements Api {
     isFullScreen: () => this.reply('window.isFullScreen', this.responses.isFullScreen),
     setFullScreen: (enabled) => this.reply('window.setFullScreen', undefined, enabled),
     onVisibilityChanged: (cb) => subscribe(this.visibilityChanged, cb),
+    onFocusChanged: (cb) => subscribe(this.focusChanged, cb),
     onFocusNode: (cb) => subscribe(this.focusNode, cb)
   }
 

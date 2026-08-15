@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { setWindowVisible } from '../lib/frame-policy'
 
 /**
  * Whether the window is worth drawing for.
@@ -33,6 +34,9 @@ function recompute(): void {
   const next = ipcVisible && documentVisible
   if (next === _visible) return
   _visible = next
+  // Pushed rather than pulled, so this module stays the single owner of what
+  // "visible" means and `frame-policy` does not grow a second opinion.
+  setWindowVisible(next)
   for (const cb of listeners) cb(next)
 }
 
@@ -47,6 +51,7 @@ if (typeof window !== 'undefined') {
   if (typeof document !== 'undefined') {
     documentVisible = document.visibilityState !== 'hidden'
     _visible = ipcVisible && documentVisible
+    setWindowVisible(_visible)
     document.addEventListener('visibilitychange', () => {
       documentVisible = document.visibilityState !== 'hidden'
       recompute()

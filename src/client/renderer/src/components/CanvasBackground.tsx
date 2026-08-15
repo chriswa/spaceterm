@@ -7,6 +7,9 @@ import { resolveFacets } from '../lib/theme/themes'
 import type { BackgroundFacet, EdgeFacet } from '../lib/theme/facets'
 import { BG_VERT_SRC, EDGE_VERT_SRC } from '../lib/theme/shaders'
 import { CanvasFrameGate } from '../lib/canvas-frame-gate'
+import { FrameLimiter, quantizeClock } from '../lib/frame-policy'
+import { chromeNeedsEdgeMask } from '../lib/card-surface'
+import { isCardOnScreen } from '../lib/viewport'
 
 export interface TreeLineNode {
   id: NodeId
@@ -198,6 +201,32 @@ const ZOOM_WIDTH_EXP = Math.log(5) / Math.log(10) // ≈ 0.699
 /** Intensity for the selected-edge and reparent-preview highlight passes. */
 const HIGHLIGHT_INTENSITY = 3.0
 
+/** Shared empty list, so "no masking this frame" allocates nothing. */
+const NO_MASK_RECTS: readonly MaskRect[] = []
+
+/**
+ * The mask rects that can actually change a pixel this frame.
+ *
+ * A mask quad's cost is its area in fragments of the *background* shader, and a
+ * card off the side of the screen contributes none — but it was still being
+ * uploaded, drawn, and (more expensively) counted by `CanvasFrameGate` as a
+ * reason the frame differed from the last one. `margin` is zero here, unlike
+ * the card-freshness use of `isCardOnScreen`: this is about what is on screen
+ * now, not about what needs to be kept current for a pan that has not happened.
+ */
+function visibleMaskRects(
+  rects: readonly MaskRect[],
+  camera: Camera,
+  cssWidth: number,
+  cssHeight: number
+): readonly MaskRect[] {
+  const viewport = { width: cssWidth, height: cssHeight }
+  const visible = rects.filter((rect) => isCardOnScreen(rect, camera, viewport, 0))
+  // Nothing culled is the common case when zoomed in on a small surface; hand
+  // back the original so the gate's copy is the only allocation.
+  return visible.length === rects.length ? rects : visible
+}
+
 export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionRef, reparentEdgeRef }: CanvasBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)
@@ -265,23 +294,47 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     // `canvas-frame-gate` for why this is a comparison and not a dirty flag,
     // and for the backstop that bounds how long a skip can last.
     const gate = new CanvasFrameGate()
+    // The ceiling and the unfocused rate. No intrinsic rate of its own: what
+    // this canvas's *content* needs is already declared per facet as
+    // `animatedHz` and enforced by quantising their clocks, so a second opinion
+    // here would only be able to disagree with it.
+    const limiter = new FrameLimiter()
 
-    // Handle resize. `dpr` is read live rather than captured with the context:
-    // it changes when the window moves to a display with a different scale
-    // factor, and a stale one sizes the drawing buffer for the display the app
-    // started on.
-    const resize = (dpr: number) => {
-      const w = Math.round(canvas.clientWidth * dpr)
-      const h = Math.round(canvas.clientHeight * dpr)
+    /**
+     * Layout size in CSS pixels, and the DPR the drawing buffer was sized for.
+     *
+     * Cached rather than read per frame. `clientWidth` is a layout read, and the
+     * crab-dance loop writes DOM styles from its own rAF callback, so a read
+     * here forced a synchronous layout of a document holding every card on the
+     * surface — every frame, whether or not anything had resized.
+     */
+    let cssWidth = 0
+    let cssHeight = 0
+    let sizedForDpr = 0
+
+    /**
+     * Re-read layout and resize the drawing buffer to match.
+     *
+     * Called from the `ResizeObserver` (where layout has already been done, so
+     * the read is free) and when the DPR changes underneath us — which happens
+     * when the window moves to a display with a different scale factor, and
+     * which nothing else would notice.
+     */
+    const measure = (dpr: number) => {
+      cssWidth = canvas.clientWidth
+      cssHeight = canvas.clientHeight
+      sizedForDpr = dpr
+      const w = Math.round(cssWidth * dpr)
+      const h = Math.round(cssHeight * dpr)
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w
         canvas.height = h
       }
     }
 
-    const observer = new ResizeObserver(() => resize(window.devicePixelRatio))
+    const observer = new ResizeObserver(() => measure(window.devicePixelRatio))
     observer.observe(canvas)
-    resize(window.devicePixelRatio)
+    measure(window.devicePixelRatio)
 
     const tick = (now: number) => {
       const res = resources
@@ -292,36 +345,65 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
         return
       }
 
+      // Before the gate, and before anything is measured: a frame the policy
+      // has not allowed must leave no trace, and `shouldDraw` records the frame
+      // it approves.
+      if (!limiter.shouldRun(now)) {
+        rafRef.current = requestAnimationFrame(tick)
+        return
+      }
+
       const dpr = window.devicePixelRatio
-      resize(dpr)
+      if (dpr !== sizedForDpr) measure(dpr)
 
       const cam = cameraRef.current
-      const bgTime = (now - bgT0) / 1666
-      const edgeTime = (now - edgeT0) / 2000
       const themeId = themeIdRef.current
       const facets = resolveFacets(themeId)
       const bg = res.bgCache.get(facets.background)
       const edge = res.edgeCache.get(facets.edges)
 
-      // A facet that declares itself static takes its clock out of the frame's
-      // inputs; with both out, a canvas nobody is moving stops being redrawn at
-      // all. One animated facet is enough to put a clock back in and redraw
-      // every frame, which is the honest answer — the edges are composited over
-      // the background, so neither can be repainted alone.
+      // Each facet's clock is stepped down to the rate it declared, so the
+      // frames in between are handed an identical value and the gate skips them.
+      // `null` means the facet promised its output does not depend on time at
+      // all; with both clocks out, a canvas nobody is moving stops being redrawn
+      // entirely.
+      const bgClock = quantizeClock(now - bgT0, facets.background.animatedHz)
+      const bgTime = (bgClock ?? 0) / 1666
+      // The edges composite over the background, so a frame drawn for either
+      // clock has to redraw both — which is why quantising them separately is
+      // sound but skipping only one of the two passes would not be.
+      const edgeClock = quantizeClock(now - edgeT0, facets.edges.animatedHz)
+      const edgeTime = (edgeClock ?? 0) / 2000
+
+      // Opaque card chrome hides whatever is behind it without any help from
+      // us, so the masking pass is pure overdraw — one full evaluation of the
+      // background shader per card. See `chromeNeedsEdgeMask`.
+      const masking = chromeNeedsEdgeMask(facets.cardChrome)
+      // Culled here rather than in the draw so the gate sees the same list: a
+      // card that is off screen cannot change a pixel, and treating its
+      // movement as a redraw reason is what kept the canvas repainting while
+      // cards drifted about out of view.
+      const maskRects = masking
+        ? visibleMaskRects(maskRectsRef.current, cam, cssWidth, cssHeight)
+        : NO_MASK_RECTS
+
       if (!gate.shouldDraw({
         width: canvas.width,
         height: canvas.height,
-        clientWidth: canvas.clientWidth,
-        clientHeight: canvas.clientHeight,
+        clientWidth: cssWidth,
+        clientHeight: cssHeight,
         dpr,
         camX: cam.x,
         camY: cam.y,
         camZ: cam.z,
-        bgTime: facets.background.static ? null : bgTime,
-        edgeTime: facets.edges.static ? null : edgeTime,
+        // The edge clock is only an input when there is an edge to draw it on.
+        // A surface with no edges yet would otherwise repaint forever for a
+        // chevron crawl nothing is crawling along.
+        bgTime: bgClock === null ? null : bgTime,
+        edgeTime: edgeClock === null || edgesRef.current.length === 0 ? null : edgeTime,
         themeId,
         edges: edgesRef.current,
-        maskRects: maskRectsRef.current,
+        maskRects,
         selection: selectionRef.current,
         reparentEdge: reparentEdgeRef.current,
       }, now)) {
@@ -372,7 +454,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
 
           gl.uniform2f(edge.pan, cam.x, cam.y)
           gl.uniform1f(edge.zoom, cam.z)
-          gl.uniform2f(edge.res, canvas.clientWidth, canvas.clientHeight)
+          gl.uniform2f(edge.res, cssWidth, cssHeight)
           gl.uniform1f(edge.time, edgeTime)
           gl.uniform1f(edge.bgTime, bgTime)
           gl.uniform2f(edge.bgOrigin, cam.x * dpr, canvas.height - cam.y * dpr)
@@ -468,8 +550,9 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       // 3. Paint over edges behind transparent cards using the background shader.
       //    The bg fragment shader uses gl_FragCoord, so quads at any position
       //    produce seamless background — effectively erasing the edges underneath.
+      //    Empty when the theme's chrome is opaque, or when no card is on screen.
       if (bg) {
-        const rects = maskRectsRef.current
+        const rects = maskRects
         if (rects.length > 0) {
           const needed = rects.length * 12 // 6 verts × 2 floats
           if (maskVerts.length < needed) {
@@ -477,8 +560,8 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           }
 
           let mOffset = 0
-          const w = canvas.clientWidth
-          const h = canvas.clientHeight
+          const w = cssWidth
+          const h = cssHeight
 
           for (const rect of rects) {
             // World → screen → NDC  (same transform as edge vertex shader)
@@ -518,6 +601,9 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     const startLoop = () => {
       if (rafRef.current) return
       gate.invalidate()
+      // However long the window was away is not information about when the next
+      // frame is wanted, and the first one back is the one that must not wait.
+      limiter.reset()
       rafRef.current = requestAnimationFrame(tick)
     }
     const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }

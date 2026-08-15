@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVisible'
+import { FrameLimiter } from '../frame-policy'
 
 /**
  * Implementations of the `rootNode` facet.
@@ -132,6 +133,9 @@ export function ReticleRootNode({ size, focused }: RootNodeVisualProps) {
 /** Ceiling on the orb's backing store, in device pixels. See the cap in use. */
 const ORB_MAX_PX = 512
 
+/** See `FrameLimiter` in the orb's loop for why this is well below the display's. */
+const ORB_HZ = 30
+
 const ORB_VERT_SRC = `
 attribute vec2 a_position;
 void main() {
@@ -259,16 +263,26 @@ export function OrbRootNode({ size, focused }: RootNodeVisualProps) {
     // Random phase so two windows do not animate in lockstep.
     const t0 = performance.now() - (Math.random() * 2_000_000 - 1_000_000)
 
+    // Seven octaves of 3D noise per pixel, so this is worth rate-limiting even
+    // at `ORB_MAX_PX`. The orb's own motion is a slow roil; 30 is well above
+    // what it resolves to.
+    const limiter = new FrameLimiter(ORB_HZ)
+
     const tick = (now: number) => {
+      rafRef.current = requestAnimationFrame(tick)
+      if (!limiter.shouldRun(now)) return
       gl.uniform1f(timeLoc, (now - t0) / 3333)
       gl.viewport(0, 0, px, px)
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
-      rafRef.current = requestAnimationFrame(tick)
     }
 
-    const startLoop = () => { if (!rafRef.current) rafRef.current = requestAnimationFrame(tick) }
+    const startLoop = () => {
+      if (rafRef.current) return
+      limiter.reset()
+      rafRef.current = requestAnimationFrame(tick)
+    }
     const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
 
     const unsubVisibility = onWindowVisibleChange((visible) => {
