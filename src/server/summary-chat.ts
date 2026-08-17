@@ -15,7 +15,26 @@ const AUDIT_PATH = path.join(SUMMARY_CHAT_DIR, 'sessions.jsonl')
 const HAIKU_URL = 'https://api.anthropic.com/v1/messages'
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_HAIKU_HISTORY_MESSAGES = 12
+/**
+ * Voices Summary Chat will never pick.
+ *
+ * Two lists because the two reasons age differently. A blocked *id* is a
+ * judgement about one voice. A blocked *language* excludes a whole accent
+ * group, and has to keep excluding it: Kokoro ids are `<language><gender>_<name>`,
+ * so `h` is Hindi, and a Hindi voice added in a later Kokoro release should be
+ * excluded on arrival rather than the next time someone notices one speaking.
+ */
 const BLOCKED_VOICE_IDS = new Set(['af_nicole'])
+const BLOCKED_VOICE_LANGUAGES = new Set(['h'])
+
+const isBlockedVoice = (id: string): boolean => {
+  if (BLOCKED_VOICE_IDS.has(id)) return true
+  // Only ids that actually follow the convention are read as language-tagged;
+  // anything else is left to the id list, so an unrecognised naming scheme
+  // cannot be silently blocked by its first letter.
+  const language = /^([a-z])[fm]_/.exec(id)?.[1]
+  return language !== undefined && BLOCKED_VOICE_LANGUAGES.has(language)
+}
 const SPEECH_LONG_POLL_TIMEOUT_MS = 5 * 60_000
 /** How long Voice Operator holds a long poll open, in seconds. */
 const SPEECH_LONG_POLL_SECONDS = 30
@@ -32,6 +51,21 @@ const VOICE_REFRESH_MS = 5_000
  * fast as the event loop allows.
  */
 const SPEECH_POLL_INTERVAL_MS = 250
+/**
+ * How long a job may sit accepted-but-silent before the monitor says so.
+ *
+ * Voice Operator answering `queued` forever is a real failure with no natural
+ * end: the surface keeps its waiting cue, the menu bar keeps its synthesizing
+ * colour, and nothing times out.
+ *
+ * Necessarily longer than one long-poll cycle. The monitor learns nothing until
+ * a poll returns, and a poll parks for `SPEECH_LONG_POLL_SECONDS` when nothing
+ * changes — so a threshold below that can never be reached, and the first
+ * observation would report the transition instead. This has to mean "still
+ * queued after a full cycle went by with no change", which is the shape of the
+ * failure worth a line of its own.
+ */
+const SPEECH_STALL_REPORT_MS = (SPEECH_LONG_POLL_SECONDS + 15) * 1_000
 const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Your first task is to summarize the coding-agent's messages in the latest "turn", which starts at the user's latest substantial message. A bare request to continue is not substantial; a short answer such as "yes" is substantial. Speak at most three concise sentences of plain English. The user can ask follow up questions, so make it clear where more info is available. Do not self-identify as the coding-agent, instead refer to it as "the agent". By default, skip summarizing the user's messages, since they probably already know what they wrote. Note that you have a chunk of conversation and earlier messages may be invalidated by later ones. Focus on what the agent concluded, accomplished, is blocked on, or needs next in response to that current request. Do not recap earlier work unless it is essential to make the current-turn answer intelligible. If the agent needs something from the user, make certain to include that information last. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words which can be spoken.`
 
 /**
@@ -410,6 +444,10 @@ export class SummaryChat {
       this.deps.audit.append({
         event: 'haiku-response', auditId: conversation.auditId, nodeId: conversation.nodeId,
         kind, provider: 'messages-api', responseCharacters: text.length,
+        // The text itself, not just its length. Whether the answer was worth
+        // hearing is the first question asked when nothing comes out of the
+        // speakers, and a character count cannot answer it.
+        responseText: text,
       })
       if (!attempt.isCurrent || !text) return
       // The Voice Operator may have appeared after this chat started. Lock a
@@ -435,9 +473,15 @@ export class SummaryChat {
         // actually speaking; a successful POST only means it accepted the job,
         // which may still be queued.
         monitoring = true
+        // "Queued", not "spoke". This point in the flow only knows that Voice
+        // Operator took the job — the old wording claimed the summary had been
+        // read out, and it logged that just as loudly on the presses where not
+        // one word was ever synthesized.
+        serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} queued ${text.length} chars as speech ${speech.job.id}`)
         void this.monitorSpeech(conversation, attempt, speech.job)
+      } else {
+        serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} summarised ${text.length} chars; Voice Operator is not running, so nothing was spoken`)
       }
-      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} spoke ${text.length} chars`)
     } catch (err) {
       // A cancelled request is not a failure. Reporting one would put an error
       // toast on screen every time the listener deliberately cut an answer off.
@@ -584,7 +628,11 @@ export class SummaryChat {
    */
   private async monitorSpeech(conversation: Conversation, attempt: Attempt, job: SpeechStatus): Promise<void> {
     const speechId = job.id
+    const label = conversation.nodeId.slice(0, 8)
+    const startedAt = Date.now()
     let cursor = job.version
+    let reportedPlayback: string | undefined
+    let stallReported = false
     while (attempt.isCurrent) {
       // A cursor poll is paced by the service; a legacy poll is paced by us.
       const wait = cursor === undefined ? pollWaitSeconds(conversation.phase) : SPEECH_LONG_POLL_SECONDS
@@ -599,10 +647,23 @@ export class SummaryChat {
       ))
       if (!attempt.isCurrent) return
       if (!status) {
+        // Voice Operator stopped answering about a job it had already accepted.
+        // Settling is right — the surface must not hang on it — but it is not
+        // the same as an answer that finished, and it left no trace at all.
+        serverLog(`[summary-chat] ${label} lost track of speech ${speechId} after ${sinceSeconds(startedAt)}`)
         this.settle(conversation, attempt)
         return
       }
       if (status.state === 'in_progress') {
+        const playback = status.playback_state ?? 'unknown'
+        if (playback !== reportedPlayback) {
+          serverLog(`[summary-chat] ${label} speech ${speechId} ${playback} at ${sinceSeconds(startedAt)}`)
+          reportedPlayback = playback
+        } else if (!stallReported && playback === 'queued'
+                   && Date.now() - startedAt >= SPEECH_STALL_REPORT_MS) {
+          serverLog(`[summary-chat] ${label} speech ${speechId} still queued after ${sinceSeconds(startedAt)} — accepted but silent`)
+          stallReported = true
+        }
         // `in_progress` is the lifecycle of the whole Voice Operator job, and
         // covers everything from "accepted, still queued" to "talking". Its
         // playback state is what distinguishes those (see playbackPhase), so
@@ -617,9 +678,17 @@ export class SummaryChat {
         if (!advanced) await this.deps.sleep(SPEECH_POLL_INTERVAL_MS)
         continue
       }
+      serverLog(`[summary-chat] ${label} speech ${speechId} ended as ${status.state} after ${sinceSeconds(startedAt)}`)
       // Capture the cut-off point now, while the job is fresh in hand.
       if (status.state === 'interrupted_by_user') {
         conversation.interruptedAtCharacter = status.character_offset ?? 0
+      }
+      // A job that died in synthesis made no sound and offered no reason, yet
+      // used to settle down exactly the same path as a summary read out in
+      // full. To a listener those two are the same event — silence — so the
+      // one that is a fault has to say so.
+      if (status.state === 'synthesis_failed') {
+        this.onStatusChanged(conversation.nodeId, 'error', 'Voice Operator could not turn the summary into speech.')
       }
       this.settle(conversation, attempt)
       return
@@ -631,7 +700,7 @@ export class SummaryChat {
     const body = response?.status === 200 ? response.body as { voices?: Array<{ id?: string }> } : undefined
     const voices = body?.voices
       ?.map(voice => voice.id)
-      .filter((id): id is string => id !== undefined && id !== '' && !BLOCKED_VOICE_IDS.has(id))
+      .filter((id): id is string => id !== undefined && id !== '' && !isBlockedVoice(id))
       .sort() ?? []
     if (voices.length) this.voices = voices
   }
@@ -657,8 +726,18 @@ export class SummaryChat {
     })
     const job = speechStatus(response)
     if (job?.id) return { job }
-    const error = (response?.body as { error?: unknown } | undefined)?.error
-    return { error: typeof error === 'string' ? error : undefined }
+    // An absent response covers two different situations, and reporting both as
+    // silence is what let a press that never reached Voice Operator log itself
+    // as spoken. No discovery file means Voice Operator is simply not running,
+    // which is a supported way to use Summary Chat — the surface still gets its
+    // text summary and stays quiet about the audio it was never going to make.
+    // Discovery present and the request still failing is the other thing
+    // entirely: the service is there and did not answer.
+    if (response === undefined) {
+      return this.deps.readDiscovery() ? { error: 'unreachable' } : {}
+    }
+    const error = (response.body as { error?: unknown } | undefined)?.error
+    return { error: typeof error === 'string' ? error : 'rejected' }
   }
 
   /**
@@ -710,6 +789,11 @@ function isBusy(conversation: Conversation): boolean {
 /** A Voice Operator reply, or undefined when the service could not be reached. */
 type SpeechResponse = { status: number; body: unknown } | undefined
 
+/** Elapsed time since `startedAt`, for a log line. */
+function sinceSeconds(startedAt: number): string {
+  return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+}
+
 /** The speech job in a reply, if the reply carries one at all. */
 function speechStatus(response: SpeechResponse): SpeechStatus | undefined {
   const body = response?.body as SpeechStatus | undefined
@@ -719,6 +803,7 @@ function speechStatus(response: SpeechResponse): SpeechStatus | undefined {
 /** What a named refusal from Voice Operator means to the listener. */
 function speechErrorMessage(error: string | undefined): string {
   if (error === 'speech_muted') return 'Voice Operator has speech muted, so there is nothing to hear.'
+  if (error === 'unreachable') return 'Voice Operator is not answering, so the summary could not be spoken.'
   return 'Voice Operator would not speak the summary.'
 }
 

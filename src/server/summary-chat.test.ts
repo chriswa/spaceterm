@@ -301,6 +301,18 @@ describe('start', () => {
     })
     expect(h.audits.some((a) => a.event === 'haiku-response')).toBe(true)
   })
+
+  it('records the answer text, not just how long it was', async () => {
+    // "Was the text any good?" is the first question asked when nothing comes
+    // out of the speakers, and a character count cannot answer it.
+    const h = harness()
+    await h.chat.start(NODE, '/t.jsonl')
+
+    expect(h.audits.find((a) => a.event === 'haiku-response')).toMatchObject({
+      responseText: 'A concise summary.',
+      responseCharacters: 'A concise summary.'.length
+    })
+  })
 })
 
 describe('when Voice Operator is not running', () => {
@@ -313,6 +325,51 @@ describe('when Voice Operator is not running', () => {
     expect(states(h)).toContain('ready')
     // Nothing was ever spoken, so the speaking indicator must stay silent.
     expect(h.speaking).toEqual([])
+  })
+
+  it('does report an error when it is running but will not answer', async () => {
+    // The distinction the surface has to make: no Voice Operator at all is a
+    // supported setup and stays quiet (above), whereas one that is discoverable
+    // and then fails to answer is a fault. Both used to look like success.
+    const h = harness({
+      configure: (http) => http.on('/v1/speech', () => { throw new Error('connection refused') })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(h.statuses.find((s) => s.state === 'error')?.message).toContain('not answering')
+    expect(states(h)).toContain('ready')
+  })
+})
+
+describe('when speech fails after Voice Operator accepted it', () => {
+  it('reports the failure rather than settling as though it had been spoken', async () => {
+    // A job that dies in synthesis makes no sound and gives no reason, and used
+    // to settle down the same path as a summary read out in full. To a listener
+    // those are the same event, so the one that is a fault has to say so.
+    const h = harness({
+      configure: (http) =>
+        http.on('/v1/speech', ({ method }) =>
+          method === 'POST'
+            ? { id: 'speech-1', state: 'in_progress' }
+            : { id: 'speech-1', state: 'synthesis_failed', error: 'synthesis_failed' })
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(h.statuses.find((s) => s.state === 'error')?.message)
+      .toContain('could not turn the summary into speech')
+    // Still settles: a reported fault must not leave the surface spinning.
+    expect(states(h)).toContain('ready')
+    expect(h.speaking).toEqual([])
+  })
+
+  it('stays quiet when the job merely finishes', async () => {
+    const h = harness()
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    expect(states(h)).not.toContain('error')
   })
 })
 
@@ -1042,6 +1099,32 @@ describe('voice selection', () => {
 
     const speak = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
     expect(speak.voice).toBeUndefined()
+  })
+
+  // The point of blocking by language rather than by id: a Hindi voice nobody
+  // has seen before is blocked the first time Kokoro offers it.
+  it('never selects a voice from a blocked language, whatever it is named', async () => {
+    const h = harness({
+      configure: (http) => http.on('/v1/voices', {
+        voices: [{ id: 'hf_alpha' }, { id: 'hm_psi' }, { id: 'hf_voice_from_a_later_release' }],
+      })
+    })
+    await h.tickVoiceRefresh()
+    await h.chat.start(NODE, '/t.jsonl')
+
+    const speak = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
+    expect(speak.voice).toBeUndefined()
+  })
+
+  it('keeps voices whose ids merely start with a blocked language letter', async () => {
+    const h = harness({
+      configure: (http) => http.on('/v1/voices', { voices: [{ id: 'harmony' }] })
+    })
+    await h.tickVoiceRefresh()
+    await h.chat.start(NODE, '/t.jsonl')
+
+    const speak = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
+    expect(speak.voice).toBe('harmony')
   })
 })
 
