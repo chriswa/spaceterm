@@ -699,6 +699,25 @@ const MEDALLION_SHADE_HI = 1.42
 const MEDALLION_SECTORS = 6
 
 /**
+ * The lean given to both thread families, in lattice cells per cell — the twist
+ * that turns a ring into a shallow spiral and a spoke into a leaning ray.
+ *
+ * At zero there is no twist at all: rings are exact circles and spokes exact
+ * rays, and the weave reads as a bullseye broken up only by the interlace and by
+ * the four nested octaves.
+ *
+ * The only other value that works is `1 / MEDALLION_SECTORS` — a ring then gains
+ * exactly one thread of radius per turn, about ten degrees off circular. That is
+ * the value at which the sheared lattice still closes on itself at every octave:
+ * a full turn advances the lattice by `SECTORS * 2^k` cells, so the ring
+ * coordinate advances by `SWIRL * SECTORS * 2^k`, and unless that is a whole
+ * number of threads the rings miss where the angle wraps and one ragged seam
+ * runs out to infinity. Zero clears that trivially; anything between the two
+ * does not.
+ */
+export const MEDALLION_SWIRL = 0
+
+/**
  * How fast the weave coarsens with distance from the origin: cell size goes as
  * `r ** MEDALLION_GROWTH`.
  *
@@ -780,8 +799,9 @@ const MEDALLION_OCTAVES = 4
  * skeleton the concentric theme is liked for. Three things then stop it reading
  * as a bullseye, none of which the concentric theme could do:
  *
- * - **Both families lean** by `SWIRL`, so a ring is a shallow spiral that gains
- *   a thread of radius per turn rather than an exact circle.
+ * - **Both families lean** by `MEDALLION_SWIRL`, so a ring is a shallow spiral
+ *   rather than an exact circle — currently set to zero, which turns the lean
+ *   off and leaves the other two to do the work.
  * - **They interlace.** Ring and spoke pass over and under alternately, so no
  *   ring is ever a continuous line — it is a run of segments ducking behind
  *   every spoke it meets.
@@ -877,17 +897,9 @@ const float WINDOW = ${MEDALLION_OCTAVES}.0;
  */
 const float STRAP = 0.42;
 
-/**
- * The lean given to both families, in lattice cells per cell.
- *
- * One over SECTORS exactly: a ring then gains one thread of radius per turn,
- * which is a lean of about ten degrees off circular — enough that following a
- * ring visibly spirals rather than closing, and little enough that it still
- * reads as going *around*. It is also the value at which the sheared lattice
- * closes on itself at every octave; see weaveOctave.
- */
-const float SWIRL = 1.0 / ${MEDALLION_SECTORS}.0;
-const float SHEAR_LEN = ${Math.hypot(1, 1 / MEDALLION_SECTORS).toFixed(6)};
+/** The lean given to both families, in lattice cells per cell — see MEDALLION_SWIRL. */
+const float SWIRL = ${MEDALLION_SWIRL.toFixed(6)};
+const float SHEAR_LEN = ${Math.hypot(1, MEDALLION_SWIRL).toFixed(6)};
 
 /** How far the rings' highlight is pushed onto the face turned toward home. */
 const float RING_BIAS = 0.75;
@@ -927,18 +939,18 @@ ${LINEAR_TO_SRGB_GLSL}
  * for, restored, and then broken up three ways so it never reads as a bullseye:
  *
  * - **Sheared.** Both families are tilted by SWIRL in lattice space, so a ring
- *   is a shallow spiral that gains one thread of radius per turn rather than an
- *   exact circle, and a spoke leans with it.
+ *   is a shallow spiral rather than an exact circle and a spoke leans with it.
+ *   At SWIRL = 0 — where it currently sits — the shear is off.
  * - **Interrupted.** Ring and spoke cross over and under alternately, so no ring
  *   is ever a continuous line — it is a run of segments passing behind every
  *   spoke it meets.
  * - **Nested.** Four octaves at once, so a ring at one scale is subdivided by
  *   rings at the next.
  *
- * SWIRL is one over SECTORS exactly, which is what makes the sheared lattice
- * still close on itself: a full turn advances the lattice by SECTORS * 2^k
- * cells, so the ring coordinate advances by 2^k — a whole number of threads, at
- * every octave.
+ * SWIRL has to leave the sheared lattice closing on itself: a full turn advances
+ * the lattice by SECTORS * 2^k cells, so the ring coordinate advances by
+ * SWIRL * SECTORS * 2^k, and that must be a whole number of threads at every
+ * octave. Zero and one over SECTORS are the values that do — see MEDALLION_SWIRL.
  */
 vec2 weaveOctave(vec2 q, float fq) {
   // Rings and spokes, each leaning by SWIRL so neither is a circle or a ray.

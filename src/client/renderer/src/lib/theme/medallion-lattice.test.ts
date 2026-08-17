@@ -5,6 +5,7 @@ import {
   MEDALLION_HIGH,
   MEDALLION_MID,
   MEDALLION_SHADOW,
+  MEDALLION_SWIRL,
 } from './shaders'
 import { srgbToLinear } from './srgb'
 
@@ -30,7 +31,8 @@ import { srgbToLinear } from './srgb'
 
 const TAU = Math.PI * 2
 const SECTORS = 6
-const SWIRL = 1 / SECTORS
+/** The lean, which is a knob the design deliberately allows at zero. */
+const SWIRL = MEDALLION_SWIRL
 const OCTAVES = 4
 const WINDOW = OCTAVES
 const GROWTH = 0.25
@@ -94,12 +96,14 @@ describe('the two thread families', () => {
     }
   })
 
-  it('leans both families, so neither is a circle or a ray', () => {
-    // Enough lean that following a ring visibly spirals instead of closing —
-    // which is what stops the weave reading as a bullseye — and little enough
-    // that it still reads as going around.
-    expect(degrees(ring, [1, 0])).toBeGreaterThan(4)
-    expect(degrees(spoke, [0, 1])).toBeGreaterThan(4)
+  it('leans both families by the same amount, and by no more than a lean', () => {
+    // The lean is what makes a ring a shallow spiral rather than a circle. It is
+    // allowed to be off (SWIRL = 0, exact circles and rays), but if it is on it
+    // has to stay small enough that a ring still reads as going *around* — the
+    // failure this whole family split exists to avoid is a 45-degree spiral with
+    // no circumferential structure at all.
+    expect(degrees(ring, [1, 0])).toBe(degrees(spoke, [0, 1]))
+    expect(degrees(ring, [1, 0])).toBeLessThan(15)
   })
 
   it('keeps them square to each other', () => {
@@ -111,8 +115,8 @@ describe('the two thread families', () => {
     // A full turn advances the lattice by SECTORS * 2^k cells, so the ring
     // coordinate advances by SWIRL * SECTORS * 2^k. Unless that is a whole
     // number of threads the rings do not meet where the angle wraps, and one
-    // ragged seam runs out to infinity. SWIRL = 1 / SECTORS is exactly the
-    // value that makes it one.
+    // ragged seam runs out to infinity. Zero clears that trivially, and
+    // 1 / SECTORS is the only lean that also does.
     for (let k = 0; k < 24; k++) {
       const advance = SWIRL * SECTORS * 2 ** k
       expect(Number.isInteger(advance), `octave ${k}`).toBe(true)
@@ -323,7 +327,7 @@ describe('the medallion background', () => {
   it('is what the port above assumes', () => {
     expect(code).toContain('float s = q.y + SWIRL * q.x;')
     expect(code).toContain('float d = q.x - SWIRL * q.y;')
-    expect(code).toContain(`const float SWIRL = 1.0 / ${SECTORS}.0;`)
+    expect(code).toContain(`const float SWIRL = ${SWIRL.toFixed(6)};`)
     expect(code).toContain(`const float FOLLOW = ${FOLLOW.toFixed(4)};`)
     expect(code).toContain(`const float KBIAS = ${KBIAS.toFixed(6)};`)
     expect(code).toContain('float kf = max(FOLLOW * log2(r) + KBIAS, WINDOW - 1.0);')

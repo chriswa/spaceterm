@@ -9,6 +9,7 @@ import {
   NEBULA_BG_FRAG,
   NEBULA_EDGE_FRAG,
 } from './shaders'
+import { KILIM_BG_FRAG, SERRATION_BG_FRAG, SUNBURST_BG_FRAG } from './rug-backgrounds'
 import { DiscRootNode, OrbRootNode, ReticleRootNode, type RootNodeVisualProps } from './root-node'
 import { NODE_TINTS, type NodeTintFacet } from './node-tint'
 import { registerFacet } from './registry'
@@ -153,6 +154,11 @@ export const BACKGROUNDS = {
   // does and at no other time.
   concentric: { id: 'concentric', label: 'Concentric', frag: CONCENTRIC_BG_FRAG, animatedHz: 0 },
   medallion: { id: 'medallion', label: 'Medallion', frag: MEDALLION_BG_FRAG, animatedHz: 0 },
+  // The rug family — one lattice, three motifs. See `./rug-backgrounds`. Static
+  // for the same reason the two above are: they are paintings in world space.
+  kilim: { id: 'kilim', label: 'Kilim', frag: KILIM_BG_FRAG, animatedHz: 0 },
+  serration: { id: 'serration', label: 'Serration', frag: SERRATION_BG_FRAG, animatedHz: 0 },
+  sunburst: { id: 'sunburst', label: 'Sunburst', frag: SUNBURST_BG_FRAG, animatedHz: 0 },
 } as const satisfies Record<string, BackgroundFacet>
 
 export const EDGES = {

@@ -103,6 +103,47 @@ const BUILT_IN_THEMES: readonly Theme[] = [
       nodeTint: NODE_TINTS.neutral,
     },
   },
+  // The rug family. Three motifs on one lattice — concentric rows that open up
+  // outward, a whole number of cells around each of them, and no octave sum
+  // anywhere. They wear Concentric's furniture for the same reason Medallion
+  // does: a still background wants still edges, and a reticle is the root node
+  // that reads against ornament.
+  {
+    id: 'kilim',
+    label: 'Kilim',
+    blurb: 'Stepped lozenges in madder and indigo — still, and cheaper than Medallion',
+    facets: {
+      background: BACKGROUNDS.kilim,
+      edges: EDGES.concentric,
+      rootNode: ROOT_NODES.reticle,
+      cardChrome: CARD_CHROMES.technical,
+      nodeTint: NODE_TINTS.neutral,
+    },
+  },
+  {
+    id: 'serration',
+    label: 'Serration',
+    blurb: 'Jagged rings braided into a chain, verdigris on slate — still',
+    facets: {
+      background: BACKGROUNDS.serration,
+      edges: EDGES.concentric,
+      rootNode: ROOT_NODES.reticle,
+      cardChrome: CARD_CHROMES.technical,
+      nodeTint: NODE_TINTS.neutral,
+    },
+  },
+  {
+    id: 'sunburst',
+    label: 'Sunburst',
+    blurb: 'Interlocking saw-tooth crowns in ochre and plum — still',
+    facets: {
+      background: BACKGROUNDS.sunburst,
+      edges: EDGES.concentric,
+      rootNode: ROOT_NODES.reticle,
+      cardChrome: CARD_CHROMES.technical,
+      nodeTint: NODE_TINTS.neutral,
+    },
+  },
   {
     id: 'nebula',
     label: 'Nebula',
