@@ -138,7 +138,7 @@ export class FakeBridge implements Api {
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusChanged = new Set<(focused: boolean) => void>()
-  private readonly focusNode = new Set<(nodeId: NodeId) => void>()
+  private readonly focusNode = new Set<(nodeId: NodeId | null) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -222,7 +222,8 @@ export class FakeBridge implements Api {
     focusChanged: (focused: boolean): void => {
       for (const fn of this.focusChanged) fn(focused)
     },
-    focusNode: (nodeId: NodeId): void => { for (const fn of this.focusNode) fn(nodeId) },
+    /** `null` stands for a deep link whose id matched nothing. */
+    focusNode: (nodeId: NodeId | null): void => { for (const fn of this.focusNode) fn(nodeId) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
