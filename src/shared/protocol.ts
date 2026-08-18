@@ -867,17 +867,25 @@ export interface SpeakingChangedMessage {
 /**
  * What a Summary Chat surface is doing.
  *
- * `thinking`, `speaking` and `ready` are one *phase*: the server emits them
- * from a single transition point, so exactly one is true at a time and no
- * consumer has to reconcile overlapping signals. `target` and `error` are
- * notifications about a surface that leave the phase alone.
+ * `thinking`, `synthesizing`, `speaking` and `ready` are one *phase*: the
+ * server emits them from a single transition point, so exactly one is true at
+ * a time and no consumer has to reconcile overlapping signals. `target` and
+ * `error` are notifications about a surface that leave the phase alone.
  *
  * This mattered: the waiting cue used to be driven by "is thinking" while the
  * server left a surface in `thinking` for the whole duration of its spoken
  * answer, so the cue played *over* the speech — and never stopped at all if
  * the speech job never reached a terminal state.
+ *
+ * `synthesizing` exists for the same reason, one handoff earlier. It is the
+ * stretch after Voice Operator has accepted the speech job and before any
+ * sound comes out of it — a wait that *is* still a wait, but not spaceterm's
+ * any more. Voice Operator runs its own echo and its own menu-bar colour
+ * across exactly this window, so a surface that stayed `thinking` here put two
+ * different waiting cues on top of each other. The rule the phase encodes:
+ * spaceterm is audible only while Haiku is the thing being waited on.
  */
-export type SummaryChatPhase = 'thinking' | 'speaking' | 'ready'
+export type SummaryChatPhase = 'thinking' | 'synthesizing' | 'speaking' | 'ready'
 export type SummaryChatUiState = SummaryChatPhase | 'target' | 'error'
 
 /** Summary Chat lifecycle for the toolbar's thinking and target indicators. */
@@ -923,10 +931,21 @@ export interface PeerCameraBoundsMessage {
   bounds: CameraBounds
 }
 
-/** Sent to exactly one client, instructing it to raise its window and focus this node. */
+/**
+ * Sent to exactly one client, instructing it to raise its window and show what
+ * a focus request named.
+ *
+ * `nodeId: null` is the answer to a request whose id matched nothing — a stale
+ * surface id, or an agent session whose surface has since been archived. The
+ * client still raises, but zooms out to the whole canvas instead of flying to a
+ * node, so the user sees that they landed in spaceterm without their surface
+ * rather than being left staring at whatever they happened to be zoomed into.
+ * Silence would be indistinguishable from a successful focus on the surface
+ * already under the camera.
+ */
 export interface FocusSurfaceMessage {
   type: 'focus-surface'
-  nodeId: NodeId
+  nodeId: NodeId | null
 }
 
 /** Full set of saved viewport slots (slot -> bounds). Sent on connect and broadcast on every save. */

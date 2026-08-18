@@ -360,18 +360,21 @@ function send(socket: net.Socket, msg: ServerMessage): void {
 }
 
 /**
- * Tell one client to raise/focus a node. Routes to the first-connected client so
- * the choice is deterministic regardless of which client the OS handed a URL to.
- * `tag` names the caller for the log line. Shared by both focus paths: the deep
- * link's guess-the-id-kind resolution and the external claude-session one.
+ * Tell one client to raise itself and show `focusNodeId` — or, when that is
+ * null, to raise and zoom out to the whole canvas because nothing matched the
+ * request. Routes to the first-connected client so the choice is deterministic
+ * regardless of which client the OS handed a URL to. `tag` names the caller for
+ * the log line. Shared by both focus paths: the deep link's guess-the-id-kind
+ * resolution and the external claude-session one.
  */
-function raiseNodeOnClient(focusNodeId: NodeId, tag: string): void {
+function raiseNodeOnClient(focusNodeId: NodeId | null, tag: string): void {
   const target = clients.values().next().value
   if (!target) {
     serverLog(`[${tag}] No connected clients to raise`)
     return
   }
-  serverLog(`[${tag}] node=${focusNodeId.slice(0, 8)} -> client=${target.id.slice(0, 8)}`)
+  const what = focusNodeId ? `node=${focusNodeId.slice(0, 8)}` : 'no match (zoom out)'
+  serverLog(`[${tag}] ${what} -> client=${target.id.slice(0, 8)}`)
   send(target.socket, { type: 'focus-surface', nodeId: focusNodeId })
 }
 
@@ -1843,6 +1846,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // or simply a typo. Log the full id so it can be cross-referenced with
         // the sender's own log.
         serverLog(`[focus-id] No surface or agent session matches id: ${msg.id} (${clients.size} clients connected)`)
+        // Still raise a client, with no node to fly to: it zooms out to the
+        // whole canvas, which reads as "you are in spaceterm, and what you
+        // asked for is not here". Doing nothing would leave the user looking at
+        // whatever surface was already under the camera, easily misread as the
+        // one they clicked through to.
+        raiseNodeOnClient(null, `focus-id unmatched=${msg.id.slice(0, 8)}`)
         break
       }
       raiseNodeOnClient(resolved.nodeId, `focus-id ${resolved.matchedAs}=${msg.id.slice(0, 8)}`)

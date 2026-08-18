@@ -395,6 +395,57 @@ describe('speech monitoring', () => {
     expect(h.speaking).toEqual([])
   })
 
+  it('stops reporting thinking once Voice Operator has the job, even if it never speaks', async () => {
+    // The whole point of `synthesizing`. Voice Operator starts its own waiting
+    // echo the instant it accepts a job, and runs it until the first sound —
+    // which on a contended synthesizer can be tens of seconds, or never. A
+    // surface that stayed `thinking` across that window played a second echo
+    // underneath the first one, and this is the case where it ran longest.
+    const h = harness({
+      configure: (http) => {
+        let poll = 0
+        http.on('/v1/speech', ({ method }) => {
+          if (method === 'POST') return { id: 'speech-1', state: 'in_progress' }
+          poll++
+          // Queued and silent throughout, then it dies in synthesis.
+          return poll <= 5
+            ? { id: 'speech-1', state: 'in_progress', playback_state: 'queued' }
+            : { id: 'speech-1', state: 'synthesis_failed' }
+        })
+      }
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush()
+
+    // One `thinking`, for the Haiku round trip, and nothing audible after it.
+    expect(states(h).filter((state) => state === 'thinking')).toHaveLength(1)
+    expect(states(h).indexOf('synthesizing')).toBeGreaterThan(states(h).lastIndexOf('thinking'))
+    // Silent on this side is not the same as fine: the failure still surfaces.
+    expect(states(h)).toContain('error')
+    expect(h.speaking).toEqual([])
+  })
+
+  it('cancels a surface that is still synthesizing', async () => {
+    // `synthesizing` is the longest phase on a slow synthesizer, so it is where
+    // a listener is most likely to press the chord — and it must read as busy,
+    // or the press starts a second answer instead of stopping the first.
+    const h = harness({
+      stallBetweenPolls: true,
+      configure: (http) => {
+        http.on('/v1/speech', ({ method }) => method === 'POST'
+          ? { id: 'speech-1', state: 'in_progress' }
+          : { id: 'speech-1', state: 'in_progress', playback_state: 'queued' })
+      }
+    })
+    await h.chat.start(NODE, '/t.jsonl')
+    await flush(3)
+    expect(states(h).at(-1)).toBe('synthesizing')
+
+    expect((await h.chat.toggle(NODE)).outcome).toBe('cancelled')
+    await flush(3)
+    expect(states(h).at(-1)).toBe('ready')
+  })
+
   it('lights the indicator with the chosen voice once audio is actually speaking', async () => {
     let poll = 0
     const h = harness({
@@ -459,9 +510,12 @@ describe('speech monitoring', () => {
     expect(sleeps.every((ms) => ms > 0)).toBe(true)
   })
 
-  it('leaves the thinking phase the moment audio starts, not when the job ends', async () => {
-    // The waiting cue is a pure function of this phase. While `thinking`
-    // persisted for the whole spoken answer, the echo played over the speech.
+  it('leaves the thinking phase at the handoff, not when audio starts or the job ends', async () => {
+    // The waiting cue is a pure function of this phase, and `thinking` is the
+    // only phase that makes a sound on this side. It used to persist for the
+    // whole spoken answer (echo over the speech), then for the whole synthesis
+    // (echo under Voice Operator's own echo). It now ends where spaceterm's
+    // share of the wait does: the moment Voice Operator accepts the job.
     let poll = 0
     const h = harness({
       configure: (http) =>
@@ -476,7 +530,7 @@ describe('speech monitoring', () => {
     await h.chat.start(NODE, '/t.jsonl')
     await flush()
 
-    expect(states(h)).toEqual(['target', 'thinking', 'speaking', 'ready'])
+    expect(states(h)).toEqual(['target', 'thinking', 'synthesizing', 'speaking', 'ready'])
   })
 
   it('does not long-poll while it is tracking playback', async () => {
@@ -533,7 +587,8 @@ describe('speech monitoring', () => {
     // Voice Operator's queue is sentence-at-a-time: playback_state returns to
     // `queued` at each handoff inside one job. Polling fast enough to see the
     // transitions means also seeing those gaps, and a literal reading flickers
-    // the indicator and re-arms the waiting cue mid-answer.
+    // the indicator once per sentence. The `queued` before the first sound is
+    // different — nothing has been spoken yet, so it reads as `synthesizing`.
     let poll = 0
     const h = harness({
       configure: (http) =>
@@ -550,7 +605,7 @@ describe('speech monitoring', () => {
     await h.chat.start(NODE, '/t.jsonl')
     await flush()
 
-    expect(states(h)).toEqual(['target', 'thinking', 'speaking', 'ready'])
+    expect(states(h)).toEqual(['target', 'thinking', 'synthesizing', 'speaking', 'ready'])
   })
 
   it('does not report thinking while Voice Operator waits for the user', async () => {
@@ -591,7 +646,7 @@ describe('speech monitoring', () => {
     })
     await h.chat.start(NODE, '/t.jsonl')
     await flush(3)
-    expect(states(h)).toEqual(['target', 'thinking', 'speaking'])
+    expect(states(h)).toEqual(['target', 'thinking', 'synthesizing', 'speaking'])
 
     h.chat.dispose()
 
@@ -934,7 +989,7 @@ describe('change-cursor polling', () => {
     const polls = h.http.calls.filter((c) => c.method === 'GET' && c.url.includes('/v1/speech/'))
     expect(polls.map((c) => new URL(c.url).searchParams.get('since'))).toEqual(['1', '2'])
     expect(polls.every((c) => new URL(c.url).searchParams.get('wait') !== '0')).toBe(true)
-    expect(states(h)).toEqual(['target', 'thinking', 'speaking', 'ready'])
+    expect(states(h)).toEqual(['target', 'thinking', 'synthesizing', 'speaking', 'ready'])
   })
 
   it('does not spin when a service reports a version but ignores the cursor', async () => {

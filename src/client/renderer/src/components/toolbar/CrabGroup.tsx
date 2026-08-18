@@ -44,9 +44,17 @@ function indicatorIconUrl(kind: AgentIndicatorKind): string {
   return crabIcon
 }
 
-/** The mod's mark names the phase in its own vocabulary; this is the mapping. */
+/**
+ * The mod's mark names the phase in its own vocabulary; this is the mapping.
+ *
+ * `synthesizing` shares the `thinking` mark on purpose. The bubble answers
+ * "is this surface working on something for me", and it still is — the work
+ * has just moved to Voice Operator. What the two phases must *not* share is
+ * the waiting cue, and that is decided by the phase itself rather than here.
+ */
 const BUBBLE_STATE: Record<SummaryChatPhase, SummaryBubbleState> = {
   thinking: 'thinking',
+  synthesizing: 'thinking',
   speaking: 'talking',
   ready: 'idle',
 }
