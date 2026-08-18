@@ -935,13 +935,17 @@ export interface PeerCameraBoundsMessage {
  * Sent to exactly one client, instructing it to raise its window and show what
  * a focus request named.
  *
- * `nodeId: null` is the answer to a request whose id matched nothing — a stale
- * surface id, or an agent session whose surface has since been archived. The
- * client still raises, but zooms out to the whole canvas instead of flying to a
- * node, so the user sees that they landed in spaceterm without their surface
- * rather than being left staring at whatever they happened to be zoomed into.
- * Silence would be indistinguishable from a successful focus on the surface
- * already under the camera.
+ * `nodeId: null` is the answer to a request whose id matched nothing — not on
+ * the canvas and not in the archive either, so a stale or rotated surface id, a
+ * deleted surface, or a typo. The client still raises, but zooms out to the
+ * whole canvas instead of flying to a node, so the user sees that they landed
+ * in spaceterm without their surface rather than being left staring at whatever
+ * they happened to be zoomed into. Silence would be indistinguishable from a
+ * successful focus on the surface already under the camera.
+ *
+ * An id the server found in the archive arrives here as an ordinary node id:
+ * the server restores that surface first, so by the time this message is sent
+ * the node exists and is focused like any other.
  */
 export interface FocusSurfaceMessage {
   type: 'focus-surface'

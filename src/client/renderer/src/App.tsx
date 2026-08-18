@@ -1242,11 +1242,11 @@ export function App() {
   // Focus a surface in response to an external `spaceterm-surface://` deep link.
   // The main process raises this window first; navigateToNode handles the rest.
   //
-  // A null id is the server saying the link matched no surface and no agent
-  // session. Zoom out to the whole canvas — the same view a double-click on the
-  // background gives — so the raise is visibly not a focus. Doing nothing would
-  // leave the camera on whichever surface it was already on, which reads as
-  // having arrived at the linked one.
+  // A null id is the server saying the link matched nothing — not on the canvas,
+  // and not in the archive it searches before giving up. Zoom out to the whole
+  // canvas — the same view a double-click on the background gives — so the raise
+  // is visibly not a focus. Doing nothing would leave the camera on whichever
+  // surface it was already on, which reads as having arrived at the linked one.
   //
   // Declared after fitAllNodes so the dependency array is not a TDZ reference.
   useEffect(() => {

@@ -209,9 +209,10 @@ export interface WindowApi {
   onFocusChanged(callback: (focused: boolean) => void): () => void
   /**
    * An external focus request (a `spaceterm-surface://` deep link) reached this
-   * window. `null` means the id it carried matched no surface and no agent
-   * session: the renderer zooms out to the whole canvas so the miss is visible,
-   * rather than silently leaving the camera where it was.
+   * window. `null` means the id it carried matched nothing — no live surface, no
+   * agent session, and nothing in the archive the server could restore: the
+   * renderer zooms out to the whole canvas so the miss is visible, rather than
+   * silently leaving the camera where it was.
    */
   onFocusNode(callback: (nodeId: NodeId | null) => void): () => void
 }
