@@ -206,7 +206,14 @@ export interface WindowApi {
    * a frame rate, never to decide whether to draw at all.
    */
   onFocusChanged(callback: (focused: boolean) => void): () => void
-  onFocusNode(callback: (nodeId: NodeId) => void): () => void
+  /**
+   * An external focus request (a `spaceterm-surface://` deep link) reached this
+   * window. `null` means the id it carried matched nothing — no live surface, no
+   * agent session, and nothing in the archive the server could restore: the
+   * renderer zooms out to the whole canvas so the miss is visible, rather than
+   * silently leaving the camera where it was.
+   */
+  onFocusNode(callback: (nodeId: NodeId | null) => void): () => void
 }
 
 /** The object exposed as `window.api` by `src/client/preload/index.ts`. */

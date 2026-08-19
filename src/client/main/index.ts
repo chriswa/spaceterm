@@ -35,8 +35,10 @@ const CLIENT_RESTART_EXIT_CODE = 75
 // connection was ready (cold launch). Flushed once the client connects. Opaque:
 // the server decides whether it names a surface or an agent session.
 let pendingFocusId: string | null = null
-// Node id to focus once the renderer has finished loading (cold launch).
-let pendingFocusNodeId: string | null = null
+// What to show once the renderer has finished loading (cold launch): a node id,
+// or `null` for "the request matched nothing — zoom out". Undefined means
+// nothing is pending, which `null` can no longer stand for.
+let pendingFocus: { nodeId: NodeId | null } | undefined
 
 function requestFocus(id: string): void {
   if (client?.isConnected()) {
@@ -46,9 +48,10 @@ function requestFocus(id: string): void {
   }
 }
 
-// Bring this window to the foreground and tell the renderer to focus the node.
+// Bring this window to the foreground and tell the renderer what to show: the
+// node, or — for `null` — the whole canvas, because the request matched nothing.
 // The server has already decided this client should be the one to raise.
-function raiseAndFocusNode(nodeId: NodeId): void {
+function raiseAndFocusNode(nodeId: NodeId | null): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -57,11 +60,11 @@ function raiseAndFocusNode(nodeId: NodeId): void {
 
   const wc = mainWindow.webContents
   if (wc.isLoadingMainFrame()) {
-    pendingFocusNodeId = nodeId
+    pendingFocus = { nodeId }
     wc.once('did-finish-load', () => {
-      if (pendingFocusNodeId && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('window:focus-node', pendingFocusNodeId)
-        pendingFocusNodeId = null
+      if (pendingFocus && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('window:focus-node', pendingFocus.nodeId)
+        pendingFocus = undefined
       }
     })
   } else {
@@ -588,7 +591,7 @@ function markRendererResyncNeeded(): void {
 }
 
 function wireClientEvents(): void {
-  client!.on('focus-surface', (nodeId: NodeId) => {
+  client!.on('focus-surface', (nodeId: NodeId | null) => {
     raiseAndFocusNode(nodeId)
   })
 

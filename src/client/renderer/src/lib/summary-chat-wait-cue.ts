@@ -1,14 +1,20 @@
 import type { NodeId } from '../../../../shared/ids'
 /**
- * Audible progress cue for Summary Chat while it is waiting on an answer. It
- * mirrors Voice Operator's decaying echo timing, but uses a lower note so the
- * two waiting states remain distinguishable.
+ * Audible progress cue for Summary Chat while it is waiting on Haiku.
  *
  * The cue is a pure function of the surface's phase (see `SummaryChatPhase`):
  * it plays while, and only while, at least one surface is `thinking`. Anything
- * else — speaking, ready, error — silences it. It used to be driven by a
- * `thinking` flag that the server left set for the whole duration of the spoken
- * answer, so the echo played underneath the speech.
+ * else — synthesizing, speaking, ready, error — silences it. It used to be
+ * driven by a `thinking` flag that the server left set for the whole duration
+ * of the spoken answer, so the echo played underneath the speech.
+ *
+ * Which is why `thinking` stops at Voice Operator's door rather than at the
+ * first syllable. Voice Operator runs a decaying echo of its own for exactly
+ * the stretch between accepting a speech job and making a sound — a stretch
+ * that can run to tens of seconds on a slow or contended synthesizer — so a
+ * cue that kept playing across it would be a second echo over the top of the
+ * first, not a progress signal. One waiter, one cue: spaceterm owns the wait
+ * until the answer is handed over, and Voice Operator owns it after.
  */
 const INITIAL_DELAY_MS = 1_500
 const CUE_DURATION_MS = 1_500

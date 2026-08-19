@@ -7,7 +7,7 @@ import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
-import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
+import { respawnTerminal, type TerminalRespawnDeps, type SpawnedPty } from './terminal-respawn'
 import { RestartRecoveryLedger } from './restart-recovery'
 import { recoverSurfaces, type DaemonSessionInfo } from './startup-recovery'
 import {
@@ -45,7 +45,7 @@ import { GitStatusPoller } from './git-status-poller'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import type { NodeData } from '../shared/state'
+import type { NodeData, TerminalNodeData } from '../shared/state'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
@@ -360,19 +360,112 @@ function send(socket: net.Socket, msg: ServerMessage): void {
 }
 
 /**
- * Tell one client to raise/focus a node. Routes to the first-connected client so
- * the choice is deterministic regardless of which client the OS handed a URL to.
- * `tag` names the caller for the log line. Shared by both focus paths: the deep
- * link's guess-the-id-kind resolution and the external claude-session one.
+ * Tell one client to raise itself and show `focusNodeId` — or, when that is
+ * null, to raise and zoom out to the whole canvas because nothing matched the
+ * request. Routes to the first-connected client so the choice is deterministic
+ * regardless of which client the OS handed a URL to. `tag` names the caller for
+ * the log line. Shared by both focus paths: the deep link's guess-the-id-kind
+ * resolution and the external claude-session one.
  */
-function raiseNodeOnClient(focusNodeId: NodeId, tag: string): void {
+function raiseNodeOnClient(focusNodeId: NodeId | null, tag: string): void {
   const target = clients.values().next().value
   if (!target) {
     serverLog(`[${tag}] No connected clients to raise`)
     return
   }
-  serverLog(`[${tag}] node=${focusNodeId.slice(0, 8)} -> client=${target.id.slice(0, 8)}`)
+  const what = focusNodeId ? `node=${focusNodeId.slice(0, 8)}` : 'no match (zoom out)'
+  serverLog(`[${tag}] ${what} -> client=${target.id.slice(0, 8)}`)
   send(target.socket, { type: 'focus-surface', nodeId: focusNodeId })
+}
+
+/**
+ * Where a restored node goes: back where it was if that spot is still clear,
+ * otherwise auto-placed beside the parent it is being restored under.
+ *
+ * Shared by the two paths that bring an archived node back — the user's
+ * unarchive gesture and the deep-link revive — so a surface lands the same way
+ * whichever asked for it.
+ */
+function placementForRestore(archived: NodeData, parentNodeId: NodeId): { x: number; y: number } {
+  const size = nodePixelSize(archived)
+  const nodes = stateManager.getState().nodes
+  return canFitAt(nodes, { x: archived.x, y: archived.y }, size)
+    ? { x: archived.x, y: archived.y }
+    : computePlacement(nodes, parentNodeId, size)
+}
+
+/**
+ * Bring the agent back on a terminal that was just restored from the archive:
+ * resume its recorded session on a fresh pty.
+ *
+ * Returns the new pty, or undefined when the surface could not come back — no
+ * resumable session, or a spawn that threw. Either way the surface is archived
+ * again rather than left as a card whose agent silently never returned, which
+ * is what the caller reports on.
+ */
+function reincarnateRestoredTerminal(restored: TerminalNodeData): SpawnedPty | undefined {
+  const agentType = restored.agentType
+  const isCursorOrCodex = !agentDriver(agentType).capabilities.claudeTranscript
+  const resumeId = isCursorOrCodex
+    ? resolveNonClaudeResumeId(restored)
+    : findValidClaudeSession(restored.claudeSessionHistory ?? [], restored.cwd)
+  // Claude still requires a resumable JSONL session. Cursor/Codex can come
+  // back fresh if we never recorded a chat id (same class of bug as restart).
+  if (!resumeId && !isCursorOrCodex) {
+    serverLog(`[unarchive] No valid Claude session for ${restored.id.slice(0, 8)}; re-archiving`)
+    stateManager.archiveTerminal(restored.id)
+    return undefined
+  }
+  try {
+    const restoreOptions = {
+      ...agentDriver(agentType).buildCreateOptions({
+        cwd: restored.cwd,
+        resumeSessionId: resumeId,
+        extraArgs: parseExtraCliArgs(restored.extraCliArgs),
+      }),
+      nodeId: restored.id,
+    }
+    const pty = respawnTerminal(
+      restored.id, (size) => sessionManager.create({ ...restoreOptions, ...size }), RESPAWN_DEPS)
+    // A bad resume or a slow start must not re-archive the surface the user
+    // just restored. The window belongs to this pty and expires on its own.
+    stateManager.protectFromArchival(pty.sessionId)
+    serverLog(`[unarchive] Reincarnated terminal ${restored.id.slice(0, 8)} with ${agentDriver(agentType).label} session ${resumeId ? resumeId.slice(0, 8) : '(fresh)'}`)
+    return pty
+  } catch (err: any) {
+    console.error(`[unarchive] Failed to reincarnate terminal ${restored.id.slice(0, 8)}: ${err.message}`)
+    stateManager.archiveTerminal(restored.id)
+    return undefined
+  }
+}
+
+/**
+ * Last resort for a deep link no live surface answers: the surface it names may
+ * have been archived rather than lost.
+ *
+ * Archiving is how surfaces leave the canvas, not how they end, so a link to a
+ * conversation someone tidied away a week ago still names something real. The
+ * archive forest is searched to any depth, the match is restored as a child of
+ * the nearest node that is not itself archived, and its agent is resumed — the
+ * same restore the unarchive gesture performs, just reached by id.
+ *
+ * Returns the node to raise, or undefined if nothing matched (or the match
+ * could not be resumed and went back into the archive), leaving the caller to
+ * fall back to zooming out.
+ */
+function reviveArchivedSurfaceForFocus(id: string): NodeId | undefined {
+  const match = stateManager.findArchivedNodeForFocus(id)
+  if (!match) return undefined
+  serverLog(
+    `[focus-id] ${match.matchedAs}=${id.slice(0, 8)} found in archive: node=${match.data.id.slice(0, 8)} ` +
+    `depth=${match.path.length} host=${match.hostNodeId.slice(0, 8)} archivedAt=${match.archivedAt}`
+  )
+
+  const restored = stateManager.unarchiveNodeAtPath(
+    match.hostNodeId, match.path, placementForRestore(match.data, match.hostNodeId))
+  if (!restored) return undefined
+  if (restored.type !== 'terminal') return restored.id
+  return reincarnateRestoredTerminal(restored) ? restored.id : undefined
 }
 
 function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void {
@@ -1098,62 +1191,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-unarchive': {
-      // Compute auto-placement for the unarchived node
       const archivedData = stateManager.peekArchivedNode(msg.parentNodeId, msg.archivedNodeId)
-      let unarchivePosition: { x: number; y: number } | undefined
-      if (archivedData) {
-        const size = nodePixelSize(archivedData)
-        const nodes = stateManager.getState().nodes
-        if (canFitAt(nodes, { x: archivedData.x, y: archivedData.y }, size)) {
-          unarchivePosition = { x: archivedData.x, y: archivedData.y }
-        } else {
-          unarchivePosition = computePlacement(nodes, msg.parentNodeId, size)
-        }
-      }
-
-      stateManager.unarchiveNode(msg.parentNodeId, msg.archivedNodeId, unarchivePosition)
+      stateManager.unarchiveNode(
+        msg.parentNodeId, msg.archivedNodeId,
+        archivedData && placementForRestore(archivedData, msg.parentNodeId))
 
       // Auto-reincarnate if the restored node is a terminal
       const restoredNode = stateManager.getNode(msg.archivedNodeId)
-      if (restoredNode && restoredNode.type === 'terminal') {
-        const history = restoredNode.claudeSessionHistory ?? []
-        const agentType = restoredNode.agentType
-        const isCursorOrCodex = !agentDriver(agentType).capabilities.claudeTranscript
-        const resumeId = isCursorOrCodex
-          ? resolveNonClaudeResumeId(restoredNode)
-          : findValidClaudeSession(history, restoredNode.cwd)
-        // Claude still requires a resumable JSONL session. Cursor/Codex can come
-        // back fresh if we never recorded a chat id (same class of bug as restart).
-        if (!resumeId && !isCursorOrCodex) {
-          serverLog(`[unarchive] No valid Claude session for ${msg.archivedNodeId.slice(0, 8)}; re-archiving`)
-          stateManager.archiveTerminal(msg.archivedNodeId)
-          send(client.socket, { type: 'mutation-ack', seq: msg.seq })
-          break
-        }
-        try {
-          const restoreExtra = parseExtraCliArgs(restoredNode.extraCliArgs)
-          const restoreOptions = {
-            ...agentDriver(agentType).buildCreateOptions({
-              cwd: restoredNode.cwd,
-              resumeSessionId: resumeId,
-              extraArgs: restoreExtra,
-            }),
-            nodeId: msg.archivedNodeId,
-          }
-          const { sessionId: newPtyId, cols, rows } = respawnTerminal(
-            msg.archivedNodeId, (size) => sessionManager.create({ ...restoreOptions, ...size }), RESPAWN_DEPS)
-          // A bad resume or a slow start must not re-archive the surface the user
-          // just restored. The window belongs to this pty and expires on its own.
-          stateManager.protectFromArchival(newPtyId)
-          client.attachedSessions.add(newPtyId)
-          send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols, rows })
-          const agentLabel = agentDriver(agentType).label
-          serverLog(`[unarchive] Reincarnated terminal ${msg.archivedNodeId.slice(0, 8)} with ${agentLabel} session ${resumeId ? resumeId.slice(0, 8) : '(fresh)'}`)
-        } catch (err: any) {
-          console.error(`[unarchive] Failed to reincarnate terminal ${msg.archivedNodeId.slice(0, 8)}: ${err.message}`)
-          stateManager.archiveTerminal(msg.archivedNodeId)
-          send(client.socket, { type: 'mutation-ack', seq: msg.seq })
-        }
+      const pty = restoredNode?.type === 'terminal' ? reincarnateRestoredTerminal(restoredNode) : undefined
+      if (pty) {
+        client.attachedSessions.add(pty.sessionId)
+        send(client.socket, { type: 'created', seq: msg.seq, sessionId: pty.sessionId, cols: pty.cols, rows: pty.rows })
       } else {
         send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       }
@@ -1804,16 +1852,31 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Deep-link path: the id is opaque, so try it as a surface id and then as
       // an agent session id (Claude/Codex/Cursor alike).
       const resolved = stateManager.resolveNodeIdForFocus(msg.id)
-      if (!resolved) {
-        // Use serverLog (not console.error) so this reaches electron.log — the
-        // requester passed an id that neither reading claims: a stale or rotated
-        // surface id, an agent session on a node that has since been archived,
-        // or simply a typo. Log the full id so it can be cross-referenced with
-        // the sender's own log.
-        serverLog(`[focus-id] No surface or agent session matches id: ${msg.id} (${clients.size} clients connected)`)
+      if (resolved) {
+        raiseNodeOnClient(resolved.nodeId, `focus-id ${resolved.matchedAs}=${msg.id.slice(0, 8)}`)
         break
       }
-      raiseNodeOnClient(resolved.nodeId, `focus-id ${resolved.matchedAs}=${msg.id.slice(0, 8)}`)
+
+      // Nothing on the canvas answers to it. serverLog (not console.error) so
+      // this reaches electron.log, with the full id so it can be
+      // cross-referenced against the sender's own log.
+      serverLog(`[focus-id] No live surface or agent session matches id: ${msg.id} (${clients.size} clients connected)`)
+
+      // An archived surface is still a surface, so look there before giving up.
+      const revived = reviveArchivedSurfaceForFocus(msg.id)
+      if (revived) {
+        raiseNodeOnClient(revived, `focus-id revived=${msg.id.slice(0, 8)}`)
+        break
+      }
+
+      // Genuinely gone: a stale or rotated surface id, a surface deleted rather
+      // than archived, an archived one whose agent could not be resumed, or a
+      // typo. Raise a client anyway with no node to fly to — it zooms out to the
+      // whole canvas, which reads as "you are in spaceterm, and what you asked
+      // for is not here". Doing nothing would leave the user looking at whatever
+      // surface was already under the camera, easily misread as the one they
+      // clicked through to.
+      raiseNodeOnClient(null, `focus-id unmatched=${msg.id.slice(0, 8)}`)
       break
     }
 

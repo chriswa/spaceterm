@@ -46,6 +46,17 @@ function createTerminal(sm: StateManager, sessionId: string, parentId = ROOT_NOD
   return sm.createTerminal({ sessionId: pid(sessionId), parentId, x: 0, y: 0, cols: 80, rows: 24 })
 }
 
+/**
+ * Record an agent session against a terminal — which is also what makes it
+ * worth archiving: a terminal that never hosted one is disposable, and
+ * archiving drops it instead of snapshotting it.
+ */
+function recordAgentSession(sm: StateManager, ptySessionId: string, agentSessionId: string): void {
+  sm.updateClaudeSessionHistory(pid(ptySessionId), [
+    { claudeSessionId: cid(agentSessionId), reason: 'startup', timestamp: '2026-01-01T00:00:00.000Z' }
+  ])
+}
+
 describe('StateManager construction', () => {
   it('starts from an empty state when nothing is persisted', () => {
     const { sm } = harness()
@@ -315,12 +326,6 @@ describe('resolveNodeIdForFocus', () => {
   // opaque — a surface id and an agent session id are both UUIDs — so these
   // pin the order the two readings are tried in, and that a miss is a miss
   // rather than a wrong card raised.
-  function recordAgentSession(sm: StateManager, ptySessionId: string, agentSessionId: string): void {
-    sm.updateClaudeSessionHistory(pid(ptySessionId), [
-      { claudeSessionId: cid(agentSessionId), reason: 'startup', timestamp: '2026-01-01T00:00:00.000Z' }
-    ])
-  }
-
   it('resolves a surface id', () => {
     const { sm } = harness()
     createTerminal(sm, 't1')
@@ -586,6 +591,128 @@ describe('archive and unarchive', () => {
     expect(sm.peekArchivedNode(nid('parent'), child.id)).toBeUndefined()
     sm.unarchiveNode(nid('parent'), child.id)
     expect(sm.getNode(child.id)).toBeUndefined()
+  })
+})
+
+describe('findArchivedNodeForFocus', () => {
+  // The deep-link fallback: a link whose surface is no longer on the canvas is
+  // not a dead link, because archiving is how surfaces leave rather than end.
+  it('finds an agent session archived directly under a live node', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'parent')
+    createTerminal(sm, 'child', nid('parent'))
+    recordAgentSession(sm, 'child', 'agent-abc')
+    sm.archiveNode(nid('child'))
+
+    const match = sm.findArchivedNodeForFocus('agent-abc')
+    expect(match).toMatchObject({ hostNodeId: 'parent', path: ['child'], matchedAs: 'agent-session' })
+  })
+
+  it('finds one buried inside archived ancestors, hosted by the nearest live node', () => {
+    // parent archived after child, so the child's snapshot rides along inside
+    // the parent's — the case a single-level scan cannot see.
+    const { sm } = harness()
+    createTerminal(sm, 'grandparent')
+    createTerminal(sm, 'parent', nid('grandparent'))
+    createTerminal(sm, 'child', nid('parent'))
+    recordAgentSession(sm, 'child', 'agent-abc')
+    sm.archiveNode(nid('child'))
+    sm.archiveNode(nid('parent'))
+
+    const match = sm.findArchivedNodeForFocus('agent-abc')
+    expect(match).toMatchObject({ hostNodeId: 'grandparent', path: ['parent', 'child'] })
+  })
+
+  it('finds an archived surface by its pty session id', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    // An agent session is also what keeps the snapshot: a bare terminal with no
+    // session is disposable and archiving drops it entirely.
+    recordAgentSession(sm, 't1', 'agent-abc')
+    sm.archiveNode(nid('t1'))
+
+    expect(sm.findArchivedNodeForFocus('t1')).toMatchObject({
+      hostNodeId: ROOT_NODE_ID, path: ['t1'], matchedAs: 'surface'
+    })
+  })
+
+  it('prefers the surface reading when both would match, as the live lookup does', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'shared-id')
+    createTerminal(sm, 't2')
+    recordAgentSession(sm, 'shared-id', 'agent-abc')
+    recordAgentSession(sm, 't2', 'shared-id')
+    sm.archiveNode(nid('t2'))
+    sm.archiveNode(nid('shared-id'))
+
+    expect(sm.findArchivedNodeForFocus('shared-id')).toMatchObject({
+      path: ['shared-id'], matchedAs: 'surface'
+    })
+  })
+
+  it('prefers the most recently archived match when several claim the id', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'old')
+    createTerminal(sm, 'new')
+    recordAgentSession(sm, 'old', 'agent-abc')
+    recordAgentSession(sm, 'new', 'agent-abc')
+    sm.archiveNode(nid('new'), Date.parse('2026-02-01T00:00:00.000Z'))
+    sm.archiveNode(nid('old'), Date.parse('2026-01-01T00:00:00.000Z'))
+
+    expect(sm.findArchivedNodeForFocus('agent-abc')?.path).toEqual(['new'])
+  })
+
+  it('is undefined when no archived node claims the id', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    sm.archiveNode(nid('t1'))
+
+    expect(sm.findArchivedNodeForFocus('nobody')).toBeUndefined()
+  })
+})
+
+describe('unarchiveNodeAtPath', () => {
+  it('pops a buried node out to its host and leaves the chain otherwise intact', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'grandparent')
+    createTerminal(sm, 'parent', nid('grandparent'))
+    createTerminal(sm, 'child', nid('parent'))
+    recordAgentSession(sm, 'child', 'agent-abc')
+    recordAgentSession(sm, 'parent', 'agent-def')
+    sm.archiveNode(nid('child'))
+    sm.archiveNode(nid('parent'))
+
+    const restored = sm.unarchiveNodeAtPath(nid('grandparent'), [nid('parent'), nid('child')])
+
+    // Reparented to the nearest node that is not itself archived — its recorded
+    // parent is still archived and would have been nothing to attach to.
+    expect(restored?.id).toBe('child')
+    expect(sm.getNode(nid('child'))?.parentId).toBe('grandparent')
+    // Gone from the nested archive, while the parent's own entry stays put.
+    expect(sm.findArchivedNodeForFocus('child')).toBeUndefined()
+    expect(sm.peekArchivedNode(nid('grandparent'), nid('parent'))?.id).toBe('parent')
+  })
+
+  it('carries the restored node\'s own archived children back with it', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'grandparent')
+    createTerminal(sm, 'parent', nid('grandparent'))
+    createTerminal(sm, 'child', nid('parent'))
+    recordAgentSession(sm, 'child', 'agent-abc')
+    sm.archiveNode(nid('child'))
+    sm.archiveNode(nid('parent'))
+
+    sm.unarchiveNodeAtPath(nid('grandparent'), [nid('parent')])
+
+    expect(sm.getNode(nid('parent'))?.id).toBe('parent')
+    expect(sm.peekArchivedNode(nid('parent'), nid('child'))?.id).toBe('child')
+  })
+
+  it('reports undefined for a path that names nothing', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'parent')
+
+    expect(sm.unarchiveNodeAtPath(nid('parent'), [nid('ghost')])).toBeUndefined()
   })
 })
 

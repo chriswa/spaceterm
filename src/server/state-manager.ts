@@ -9,6 +9,7 @@ import type {
   FileNodeData,
   TitleNodeData,
   TerminalSessionEntry,
+  ArchivedNode,
   GitStatus,
   AlertType
 } from '../shared/state'
@@ -79,6 +80,73 @@ export type FocusIdKind = 'surface' | 'agent-session'
 export interface FocusResolution {
   nodeId: NodeId
   matchedAs: FocusIdKind
+}
+
+/**
+ * The surface reading of an opaque focus id: the pty a link was built from.
+ *
+ * `SPACETERM_SURFACE_ID` is the pty session id, so only a node's *current*
+ * `sessionId` can answer it. Reincarnation rotates that value and past ptys are
+ * recorded nowhere that could match, which is exactly why the agent-session
+ * reading below exists.
+ */
+function isSurfaceFor(node: NodeData, id: string): node is TerminalNodeData {
+  return node.type === 'terminal' && node.sessionId === id
+}
+
+/**
+ * The agent-session reading: a Claude/Codex/Cursor conversation id, which
+ * outlives the ptys that ran it.
+ *
+ * Both places an id can be recorded are checked — `claudeSessionHistory` keeps
+ * only the latest per session while `terminalSessions` retains the full
+ * per-session history — so an id matches under whichever it was last written to.
+ */
+function hostsAgentSession(node: NodeData, id: string): node is TerminalNodeData {
+  return node.type === 'terminal' && (
+    node.claudeSessionHistory.some((e) => e.claudeSessionId === id) ||
+    node.terminalSessions.some((sess) => sess.claudeSessionId === id)
+  )
+}
+
+/** One archive entry plus the route back to it. Internal: callers get {@link ArchivedFocusMatch}. */
+interface LocatedArchive {
+  hostNodeId: NodeId
+  path: NodeId[]
+  entry: ArchivedNode
+}
+
+/**
+ * An archived node that answers to a focus id, and where in the archive forest
+ * it sits.
+ *
+ * Archives nest: archiving a node snapshots its own `archivedChildren` along
+ * with it, so a surface can end up buried inside an archived parent inside an
+ * archived grandparent. `hostNodeId` is the nearest node that is *not* archived
+ * — the live node (or the root) whose `archivedChildren` holds the top of that
+ * chain — and is where a restore puts the node, since its recorded parent may
+ * no longer exist on the canvas.
+ */
+export interface ArchivedFocusMatch {
+  /** Live node (or `ROOT_NODE_ID`) owning the top-level archive entry. */
+  hostNodeId: NodeId
+  /** Archived node ids from the host's own entry down to the match; length 1 when it sits directly under the host. */
+  path: NodeId[]
+  /** The matched snapshot, for reading only — restoring goes through {@link StateManager.unarchiveNodeAtPath}. */
+  data: NodeData
+  /** When this entry was archived (ISO 8601), for the log line that reports the match. */
+  archivedAt: string
+  matchedAs: FocusIdKind
+}
+
+function toFocusMatch(located: LocatedArchive, matchedAs: FocusIdKind): ArchivedFocusMatch {
+  return {
+    hostNodeId: located.hostNodeId,
+    path: located.path,
+    data: located.entry.data,
+    archivedAt: located.entry.archivedAt,
+    matchedAs
+  }
 }
 
 /**
@@ -227,8 +295,8 @@ export class StateManager {
   /**
    * Archive a specific terminal node (public wrapper for archiveNode).
    */
-  archiveTerminal(nodeId: NodeId): void {
-    this.archiveNode(nodeId)
+  archiveTerminal(nodeId: NodeId, now: number = Date.now()): void {
+    this.archiveNode(nodeId, now)
   }
 
   /**
@@ -399,7 +467,7 @@ export class StateManager {
     const mapped = this.sessionToNodeId.get(ptySessionId)
     if (mapped) return mapped
     for (const node of Object.values(this.state.nodes)) {
-      if (node.type === 'terminal' && node.sessionId === ptySessionId) return node.id
+      if (isSurfaceFor(node, ptySessionId)) return node.id
     }
     return undefined
   }
@@ -432,11 +500,7 @@ export class StateManager {
   getNodeIdForClaudeSession(claudeSessionId: ClaudeSessionId): NodeId | undefined {
     let fallback: NodeId | undefined
     for (const node of Object.values(this.state.nodes)) {
-      if (node.type !== 'terminal') continue
-      const hosts =
-        node.claudeSessionHistory.some((e) => e.claudeSessionId === claudeSessionId) ||
-        node.terminalSessions.some((s) => s.claudeSessionId === claudeSessionId)
-      if (!hosts) continue
+      if (!hostsAgentSession(node, claudeSessionId)) continue
       if (node.alive) return node.id
       fallback ??= node.id
     }
@@ -465,6 +529,64 @@ export class StateManager {
     if (surface) return { nodeId: surface, matchedAs: 'surface' }
     const agentSession = this.getNodeIdForClaudeSession(asClaudeSessionId(id))
     if (agentSession) return { nodeId: agentSession, matchedAs: 'agent-session' }
+    return undefined
+  }
+
+  /**
+   * Every archived node in the forest, paired with where it sits.
+   *
+   * Two things make this a forest rather than a list. Archives hang off each
+   * live node (plus the root), and an archived node keeps its own
+   * `archivedChildren`, so archiving a parent buries whatever was already
+   * archived beneath it. Both directions are walked, depth-first, and every
+   * entry reports the same `hostNodeId`: nesting does not change which live
+   * node ultimately holds the chain.
+   *
+   * `archivedChildren` is defaulted because snapshots deep-copied under older
+   * state versions can predate the field.
+   */
+  private archivedNodesWithLocation(): LocatedArchive[] {
+    const found: LocatedArchive[] = []
+    const walk = (hostNodeId: NodeId, entries: ArchivedNode[], prefix: NodeId[]): void => {
+      for (const entry of entries) {
+        const path = [...prefix, entry.data.id]
+        found.push({ hostNodeId, path, entry })
+        walk(hostNodeId, entry.data.archivedChildren ?? [], path)
+      }
+    }
+    walk(ROOT_NODE_ID, this.state.rootArchivedChildren, [])
+    for (const node of Object.values(this.state.nodes)) {
+      walk(node.id, node.archivedChildren ?? [], [])
+    }
+    return found
+  }
+
+  /**
+   * Find an archived surface answering to an opaque focus id — the fallback for
+   * a `spaceterm-surface://` link that {@link resolveNodeIdForFocus} could not
+   * place, because the surface it names has since been archived.
+   *
+   * Same two readings in the same order as the live lookup, so a link resolves
+   * to the same kind of thing whether or not its surface is still on the canvas.
+   * Within one reading the most recently archived match wins: a session id can
+   * appear in several snapshots via forks and restarts, and the newest is the
+   * one the sender most plausibly means — the archived counterpart of the live
+   * lookup preferring an alive node over a dead one.
+   */
+  findArchivedNodeForFocus(id: string): ArchivedFocusMatch | undefined {
+    const all = this.archivedNodesWithLocation()
+    const newest = (reading: (node: NodeData, id: string) => boolean): LocatedArchive | undefined =>
+      all
+        .filter((m) => reading(m.entry.data, id))
+        .reduce<LocatedArchive | undefined>(
+          (best, m) => (!best || m.entry.archivedAt > best.entry.archivedAt ? m : best),
+          undefined
+        )
+
+    const surface = newest(isSurfaceFor)
+    if (surface) return toFocusMatch(surface, 'surface')
+    const agentSession = newest(hostsAgentSession)
+    if (agentSession) return toFocusMatch(agentSession, 'agent-session')
     return undefined
   }
 
@@ -671,8 +793,13 @@ export class StateManager {
 
   /**
    * Archive a node: snapshot into parent's archivedChildren, reparent children, remove node.
+   *
+   * `now` stamps the snapshot. Defaulted rather than read inside so a test can
+   * archive two nodes at known, distinct times — which reading of the wall clock
+   * cannot guarantee within one tick, and {@link findArchivedNodeForFocus}
+   * breaks ties on exactly that stamp.
    */
-  archiveNode(nodeId: NodeId): void {
+  archiveNode(nodeId: NodeId, now: number = Date.now()): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
     serverLog(`[archive] Archiving node ${nodeId.slice(0, 8)}`)
@@ -688,7 +815,7 @@ export class StateManager {
     // Only snapshot into archive if the node has meaningful content
     if (!isDisposable(node)) {
       const snapshot = {
-        archivedAt: new Date().toISOString(),
+        archivedAt: new Date(now).toISOString(),
         data: JSON.parse(JSON.stringify(node)) // deep copy
       }
       if (parentId === ROOT_NODE_ID) {
@@ -720,46 +847,75 @@ export class StateManager {
   }
 
   /**
+   * The `archivedChildren` array a host node owns directly — the root's, or a
+   * live node's. Undefined when the node is gone.
+   */
+  private archiveArrayOf(hostNodeId: NodeId): ArchivedNode[] | undefined {
+    if (hostNodeId === ROOT_NODE_ID) return this.state.rootArchivedChildren
+    return this.state.nodes[hostNodeId]?.archivedChildren
+  }
+
+  /**
+   * Follow `path` — archived node ids, outermost first — down `hostNodeId`'s
+   * archive tree to the entry it names, reporting the array that holds it so a
+   * caller can splice it out. Undefined if any hop is missing.
+   */
+  private archiveEntryAt(
+    hostNodeId: NodeId,
+    path: NodeId[]
+  ): { list: ArchivedNode[]; index: number; entry: ArchivedNode } | undefined {
+    const hostArchive = this.archiveArrayOf(hostNodeId)
+    if (!hostArchive || path.length === 0) return undefined
+    let list: ArchivedNode[] = hostArchive
+    for (let depth = 0; ; depth++) {
+      const index = list.findIndex((e) => e.data.id === path[depth])
+      if (index === -1) return undefined
+      const entry = list[index]
+      if (depth === path.length - 1) return { list, index, entry }
+      list = entry.data.archivedChildren ?? []
+    }
+  }
+
+  /**
    * Read archived node data without modifying state.
    */
   peekArchivedNode(parentNodeId: NodeId, archivedNodeId: NodeId): NodeData | undefined {
-    let archiveArray: import('../shared/state').ArchivedNode[]
-    if (parentNodeId === ROOT_NODE_ID) {
-      archiveArray = this.state.rootArchivedChildren
-    } else {
-      const parent = this.state.nodes[parentNodeId]
-      if (!parent) return undefined
-      archiveArray = parent.archivedChildren
-    }
-    const entry = archiveArray.find(e => e.data.id === archivedNodeId)
-    return entry ? entry.data : undefined
+    return this.archiveEntryAt(parentNodeId, [archivedNodeId])?.entry.data
   }
 
   /**
    * Unarchive a node: restore from parent's archivedChildren back into the node tree.
    */
   unarchiveNode(parentNodeId: NodeId, archivedNodeId: NodeId, positionOverride?: { x: number; y: number }): void {
-    // Find the archive array
-    let archiveArray: import('../shared/state').ArchivedNode[]
-    if (parentNodeId === ROOT_NODE_ID) {
-      archiveArray = this.state.rootArchivedChildren
-    } else {
-      const parent = this.state.nodes[parentNodeId]
-      if (!parent) return
-      archiveArray = parent.archivedChildren
-    }
+    this.unarchiveNodeAtPath(parentNodeId, [archivedNodeId], positionOverride)
+  }
 
-    // Find and remove the archived entry
-    const idx = archiveArray.findIndex(e => e.data.id === archivedNodeId)
-    if (idx === -1) return
-    const entry = archiveArray[idx]
-    archiveArray.splice(idx, 1)
+  /**
+   * Restore an archived node from anywhere in `hostNodeId`'s archive tree, as a
+   * direct child of that host.
+   *
+   * Depth is the whole point. An entry nested inside archived ancestors has a
+   * `parentId` pointing at a node that is no longer on the canvas, so restoring
+   * it in place would attach it to nothing; it is reparented to the host, which
+   * is by construction the nearest node that is not itself archived. Its own
+   * `archivedChildren` ride along in the snapshot, so unarchiving a parent does
+   * not strand what was archived beneath it.
+   *
+   * Returns the restored node, or undefined if `path` names nothing.
+   */
+  unarchiveNodeAtPath(
+    hostNodeId: NodeId,
+    path: NodeId[],
+    positionOverride?: { x: number; y: number }
+  ): NodeData | undefined {
+    const found = this.archiveEntryAt(hostNodeId, path)
+    if (!found) return undefined
+    found.list.splice(found.index, 1)
 
     // Restore node data
-    const restoredNode = JSON.parse(JSON.stringify(entry.data)) as import('../shared/state').NodeData
+    const restoredNode = JSON.parse(JSON.stringify(found.entry.data)) as NodeData
     restoredNode.zIndex = this.state.nextZIndex++
-    restoredNode.parentId = parentNodeId
-    // Preserve nested archived children from the snapshot so they survive unarchive
+    restoredNode.parentId = hostNodeId
 
     if (positionOverride) {
       restoredNode.x = positionOverride.x
@@ -775,45 +931,28 @@ export class StateManager {
     this.state.nodes[restoredNode.id] = restoredNode
     this.onNodeAdd(restoredNode)
 
-    // Broadcast updated archivedChildren on the parent
-    if (parentNodeId === ROOT_NODE_ID) {
-      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren })
-    } else {
-      const parent = this.state.nodes[parentNodeId]
-      if (parent) {
-        this.onNodeUpdate(parentNodeId, { archivedChildren: parent.archivedChildren })
-      }
+    // Broadcast the host's archive, which changed at whatever depth the entry sat.
+    const hostArchive = this.archiveArrayOf(hostNodeId)
+    if (hostArchive) this.onNodeUpdate(hostNodeId, { archivedChildren: hostArchive })
+
+    if (path.length > 1) {
+      serverLog(`[archive] Restored ${restoredNode.id.slice(0, 8)} from ${path.length} levels deep -> parent=${hostNodeId.slice(0, 8)}`)
     }
 
     this.schedulePersist()
+    return restoredNode
   }
 
   /**
    * Delete an archived node entry permanently.
    */
   deleteArchivedNode(parentNodeId: NodeId, archivedNodeId: NodeId): void {
-    let archiveArray: import('../shared/state').ArchivedNode[]
-    if (parentNodeId === ROOT_NODE_ID) {
-      archiveArray = this.state.rootArchivedChildren
-    } else {
-      const parent = this.state.nodes[parentNodeId]
-      if (!parent) return
-      archiveArray = parent.archivedChildren
-    }
+    const found = this.archiveEntryAt(parentNodeId, [archivedNodeId])
+    if (!found) return
+    found.list.splice(found.index, 1)
 
-    const idx = archiveArray.findIndex(e => e.data.id === archivedNodeId)
-    if (idx === -1) return
-    archiveArray.splice(idx, 1)
-
-    // Broadcast updated archivedChildren on the parent
-    if (parentNodeId === ROOT_NODE_ID) {
-      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren })
-    } else {
-      const parent = this.state.nodes[parentNodeId]
-      if (parent) {
-        this.onNodeUpdate(parentNodeId, { archivedChildren: parent.archivedChildren })
-      }
-    }
+    const hostArchive = this.archiveArrayOf(parentNodeId)
+    if (hostArchive) this.onNodeUpdate(parentNodeId, { archivedChildren: hostArchive })
 
     this.schedulePersist()
   }

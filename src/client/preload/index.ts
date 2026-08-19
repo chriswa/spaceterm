@@ -189,8 +189,8 @@ const api: Api = {
       ipcRenderer.on('window:focus-changed', listener)
       return () => ipcRenderer.removeListener('window:focus-changed', listener)
     },
-    onFocusNode: (callback: (nodeId: NodeId) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId) => callback(nodeId)
+    onFocusNode: (callback: (nodeId: NodeId | null) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId | null) => callback(nodeId)
       ipcRenderer.on('window:focus-node', listener)
       return () => ipcRenderer.removeListener('window:focus-node', listener)
     }

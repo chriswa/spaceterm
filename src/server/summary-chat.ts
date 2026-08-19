@@ -43,20 +43,21 @@ const VOICE_REFRESH_MS = 5_000
  * Time between speech-status polls.
  *
  * Two jobs. While the monitor is tracking playback it is the *cadence*, and so
- * the worst-case lag on cyan → yellow → idle: 250ms is under the threshold
- * where an indicator reads as late, and keeps the waiting cue from being
- * audible past the first syllable. While the monitor is long-polling it is a
- * *floor* — a Voice Operator that answers `?wait=` immediately (an older
- * build, or one that has lost its job queue) would otherwise spin this loop as
- * fast as the event loop allows.
+ * the worst-case lag on synthesizing → speaking → idle: 250ms is under the
+ * threshold where an indicator reads as late. While the monitor is
+ * long-polling it is a *floor* — a Voice Operator that answers `?wait=`
+ * immediately (an older build, or one that has lost its job queue) would
+ * otherwise spin this loop as fast as the event loop allows.
  */
 const SPEECH_POLL_INTERVAL_MS = 250
 /**
  * How long a job may sit accepted-but-silent before the monitor says so.
  *
  * Voice Operator answering `queued` forever is a real failure with no natural
- * end: the surface keeps its waiting cue, the menu bar keeps its synthesizing
- * colour, and nothing times out.
+ * end: the surface sits in `synthesizing`, the menu bar keeps its cyan, and
+ * nothing times out. It is also a *silent* failure on this side now — the
+ * waiting cue belongs to Voice Operator from the handoff on — so the log line
+ * is the only place it surfaces at all.
  *
  * Necessarily longer than one long-poll cycle. The monitor learns nothing until
  * a poll returns, and a poll parks for `SPEECH_LONG_POLL_SECONDS` when nothing
@@ -424,8 +425,13 @@ export class SummaryChat {
    *
    * Both public signals are emitted from here, in a fixed order, so a listener
    * that watches only one of them still sees a coherent lifecycle. In
-   * particular `speaking` cancels `thinking` at the same instant, which is what
-   * lets the renderer's waiting cue be a pure function of the phase.
+   * particular every phase that is not `thinking` cancels `thinking` at the
+   * same instant, which is what lets the renderer's waiting cue be a pure
+   * function of the phase.
+   *
+   * The speaking indicator stays tied to `speaking` alone. `synthesizing` is a
+   * wait, not sound, and lighting the indicator on it would claim a surface was
+   * talking through the seconds before it makes any noise.
    */
   private setPhase(conversation: Conversation, phase: SummaryChatPhase): void {
     if (conversation.phase === phase) return
@@ -478,9 +484,12 @@ export class SummaryChat {
       }
       if (speech.job) {
         conversation.speechId = speech.job.id
-        // Stay in `thinking` until Voice Operator confirms that audio is
-        // actually speaking; a successful POST only means it accepted the job,
-        // which may still be queued.
+        // Hand the wait over here, at the moment Voice Operator takes the job.
+        // It is not `speaking` — nothing has made a sound yet, and it may not
+        // for many seconds — but it is no longer ours to announce: Voice
+        // Operator's own waiting echo starts now, and a surface left in
+        // `thinking` would play a second one underneath it.
+        this.setPhase(conversation, 'synthesizing')
         monitoring = true
         // "Queued", not "spoke". This point in the flow only knows that Voice
         // Operator took the job — the old wording claimed the summary had been
@@ -790,9 +799,16 @@ export class SummaryChat {
  * `Conversation.phase`. A second notion of "busy" alongside it is a second
  * thing to keep in step, and the cancel gesture would be exactly where the two
  * drifting apart is felt.
+ *
+ * Stated as "not idle" rather than by listing the busy phases, so that adding
+ * a phase cannot quietly remove a state from the cancel gesture. Adding
+ * `synthesizing` to a list of busy phases would have been an easy omission to
+ * make and a hard one to notice: it is the *longest* phase on a slow
+ * synthesizer, which makes it the one a listener is most likely to be in when
+ * they press the chord to shut it up.
  */
 function isBusy(conversation: Conversation): boolean {
-  return conversation.phase === 'thinking' || conversation.phase === 'speaking'
+  return conversation.phase !== 'ready'
 }
 
 /** A Voice Operator reply, or undefined when the service could not be reached. */
@@ -852,9 +868,14 @@ function pollWaitSeconds(phase: SummaryChatPhase): number {
  * drops back to `queued` at every sentence handoff within a single job and
  * only returns to `speaking` once the next sentence's audio actually starts.
  * Now that this monitor polls fast enough to see those handoffs, a literal
- * reading would flicker the indicator and re-arm the waiting cue in the gaps
- * between an answer's own sentences. An answer that has begun is speaking
- * until it stops or ends, however its synthesis is paced.
+ * reading would flicker the indicator in the gaps between an answer's own
+ * sentences. An answer that has begun is speaking until it stops or ends,
+ * however its synthesis is paced.
+ *
+ * Before the first sound, though, `queued` is exactly what it says — Voice
+ * Operator is synthesizing — and the surface reports `synthesizing`. Note what
+ * it never returns: `thinking`. Once a speech job exists, Haiku is done, and
+ * `thinking` is the one phase that makes spaceterm audible.
  */
 function playbackPhase(
   playbackState: SpeechStatus['playback_state'],
@@ -863,7 +884,7 @@ function playbackPhase(
   // Older services did not send playback_state; assume audible for compatibility.
   if (playbackState === undefined || playbackState === 'speaking') return 'speaking'
   if (playbackState === 'waiting_for_user') return 'ready'
-  return current === 'speaking' ? 'speaking' : 'thinking'
+  return current === 'speaking' ? 'speaking' : 'synthesizing'
 }
 
 function initialPrompt(messages: TranscriptMessage[]): string {

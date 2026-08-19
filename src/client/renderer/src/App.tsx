@@ -823,14 +823,6 @@ export function App() {
     }
   }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef, inertiaBlock])
 
-  // Focus a surface in response to an external `spaceterm-surface://` deep link.
-  // The main process raises this window first; navigateToNode handles the rest.
-  useEffect(() => {
-    return window.api.window.onFocusNode((nodeId) => {
-      navigateToNode(nodeId)
-    })
-  }, [navigateToNode])
-
   // Initialize server sync on mount — placed after getParentCwd/navigateToNode/cwdMapRef
   // so the fork-detection interceptor closure can reference them.
   useEffect(() => {
@@ -1246,6 +1238,23 @@ export function App() {
     const target = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM)
     flyTo(target)
   }, [flyTo])
+
+  // Focus a surface in response to an external `spaceterm-surface://` deep link.
+  // The main process raises this window first; navigateToNode handles the rest.
+  //
+  // A null id is the server saying the link matched nothing — not on the canvas,
+  // and not in the archive it searches before giving up. Zoom out to the whole
+  // canvas — the same view a double-click on the background gives — so the raise
+  // is visibly not a focus. Doing nothing would leave the camera on whichever
+  // surface it was already on, which reads as having arrived at the linked one.
+  //
+  // Declared after fitAllNodes so the dependency array is not a TDZ reference.
+  useEffect(() => {
+    return window.api.window.onFocusNode((nodeId) => {
+      if (nodeId === null) fitAllNodes()
+      else navigateToNode(nodeId)
+    })
+  }, [navigateToNode, fitAllNodes])
 
   const handleUnfocus = useCallback(() => {
     focusRef.current = null
