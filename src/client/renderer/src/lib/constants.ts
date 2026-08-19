@@ -76,7 +76,6 @@ export const PINCH_ZOOM_THRESHOLD = 2
 export const CHILD_PLACEMENT_DISTANCE = 1250
 
 // Archive body sizing
-export const ARCHIVE_BODY_MIN_WIDTH = 380
 export const ARCHIVE_BODY_MAX_WIDTH = 500
 export const ARCHIVE_POPUP_MAX_HEIGHT = 310
 

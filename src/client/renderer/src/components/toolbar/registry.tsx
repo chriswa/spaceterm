@@ -7,8 +7,8 @@ import {
   CameraLockToggle,
   CopyCleanupToggle,
   DebugDropdown,
+  FitToMonitorButton,
   FpsMetric,
-  FullscreenToggle,
   HelpButton,
   KeycastToggle,
   NotificationSoundToggle,
@@ -114,7 +114,7 @@ export type ToolbarWidget = StandaloneToolbarWidget | HostToolbarWidget
  */
 export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   { id: 'help', slot: 'buttons', kind: 'host', render: (h) => <HelpButton onClick={h.onHelpClick} /> },
-  { id: 'fullscreen', slot: 'buttons', kind: 'standalone', render: () => <FullscreenToggle /> },
+  { id: 'fit-to-monitor', slot: 'buttons', kind: 'standalone', render: () => <FitToMonitorButton /> },
   {
     id: 'restart',
     slot: 'buttons',

@@ -37,7 +37,7 @@ import { useSavedViewportStore } from './stores/savedViewportStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendDirectoryWtSpawn, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -1739,25 +1739,6 @@ export function App() {
     await navigateToNode(nodeId)
   }, [createChildNode, navigateToNode])
 
-  const handlePostSync = useCallback(async (dirNodeId: NodeId) => {
-    const node = useNodeStore.getState().nodes[dirNodeId]
-    if (!node || node.type !== 'directory') return
-    const cwd = node.cwd
-    const termSize = terminalPixelSize(DEFAULT_COLS, DEFAULT_ROWS)
-    const gap = 20
-    const spawnX = node.x
-    const spawnY = node.y + DIRECTORY_HEIGHT / 2 + gap + termSize.height / 2
-    const result = await sendTerminalCreate(dirNodeId, cwd ? { cwd } : undefined, undefined, 'post-sync', spawnX, spawnY, 'pnpm post-sync')
-    if (cwd) cwdMapRef.current.set(nodeIdFromFirstPtySession(result.sessionId), cwd)
-    await navigateToNode(nodeIdFromFirstPtySession(result.sessionId))
-  }, [navigateToNode])
-
-  const handleWtSpawn = useCallback(async (dirNodeId: NodeId, branchName: string) => {
-    const result = await sendDirectoryWtSpawn(dirNodeId, branchName)
-    useNodeStore.getState().markFreshlyCreated(result.nodeId)
-    await navigateToNode(result.nodeId)
-  }, [navigateToNode])
-
   const handleEdgeSplitSelect = useCallback(async (type: AddNodeType) => {
     const split = edgeSplit
     if (!split) return
@@ -2461,8 +2442,6 @@ export function App() {
             cwd={d.cwd}
             gitStatus={d.gitStatus}
             onCwdChange={handleDirectoryCwdChange}
-            onPostSync={handlePostSync}
-            onWtSpawn={handleWtSpawn}
           />
         ))}
         {files.map((f) => (

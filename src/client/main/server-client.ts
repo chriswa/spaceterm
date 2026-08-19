@@ -399,10 +399,6 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'directory-git-fetch', nodeId })
   }
 
-  async directoryWtSpawn(nodeId: NodeId, branchName: string): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'directory-wt-spawn', nodeId, branchName })
-  }
-
   async validateDirectory(path: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'validate-directory', path })
   }

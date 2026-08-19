@@ -213,21 +213,24 @@ describe('start', () => {
     expect(haikuCalls(h)).toHaveLength(0)
   })
 
-  it('rejects an empty transcript', async () => {
+  it('rejects an empty or unreadable transcript as having no transcript', async () => {
+    // An empty read means the resolved path is wrong or unwritten — distinct
+    // from a transcript that exists but has no user turn to anchor a summary.
     const h = harness({ transcript: [] })
+    const result = await h.chat.start(NODE, '/t.jsonl')
+
+    expect(result.outcome).toBe('rejected')
+    expect(result).toMatchObject({ message: 'This surface has no transcript to summarize yet.' })
+    expect(h.statuses).toEqual([])
+  })
+
+  it('rejects a transcript that exists but has no user turn', async () => {
+    const h = harness({ transcript: [{ role: 'assistant', text: 'hello' }] })
     const result = await h.chat.start(NODE, '/t.jsonl')
 
     expect(result.outcome).toBe('rejected')
     expect(result).toMatchObject({ message: expect.stringMatching(/no user messages/) })
     expect(h.statuses).toEqual([])
-  })
-
-  it('rejects a transcript with only assistant messages', async () => {
-    // Summarising a turn requires a user request to anchor it.
-    const h = harness({ transcript: [{ role: 'assistant', text: 'hello' }] })
-    const result = await h.chat.start(NODE, '/t.jsonl')
-
-    expect(result.outcome).toBe('rejected')
   })
 
   it('runs target → thinking → ready on a successful summary', async () => {

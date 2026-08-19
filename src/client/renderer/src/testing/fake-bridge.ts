@@ -78,7 +78,6 @@ export interface FakeBridgeResponses {
   attach: AttachResult
   validate: { valid: boolean; error?: string }
   newNodeId: NodeId
-  isFullScreen: boolean
   ttsAvailable: boolean
   /** What the next launch would use. `setLaunchPrefs` mutates this. */
   launchPrefs: LaunchPrefs
@@ -107,7 +106,6 @@ export class FakeBridge implements Api {
     attach: { scrollback: '' },
     validate: { valid: true },
     newNodeId: 'node-fake' as NodeId,
-    isFullScreen: false,
     ttsAvailable: true,
     launchPrefs: { ...DEFAULT_LAUNCH_PREFS },
     activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS }
@@ -295,8 +293,6 @@ export class FakeBridge implements Api {
       this.reply('node.directoryAdd', { nodeId: this.responses.newNodeId }, parentId, cwd, x, y),
     directoryCwd: (nodeId, cwd) => this.reply('node.directoryCwd', undefined, nodeId, cwd),
     directoryGitFetch: (nodeId) => this.reply('node.directoryGitFetch', undefined, nodeId),
-    directoryWtSpawn: (nodeId, branchName) =>
-      this.reply('node.directoryWtSpawn', { nodeId: this.responses.newNodeId }, nodeId, branchName),
     validateDirectory: (p) => this.reply('node.validateDirectory', this.responses.validate, p),
 
     fileAdd: (parentId, filePath, x, y) =>
@@ -352,8 +348,7 @@ export class FakeBridge implements Api {
   }
 
   readonly window: WindowApi = {
-    isFullScreen: () => this.reply('window.isFullScreen', this.responses.isFullScreen),
-    setFullScreen: (enabled) => this.reply('window.setFullScreen', undefined, enabled),
+    fitToWorkArea: () => this.reply('window.fitToWorkArea', undefined),
     onVisibilityChanged: (cb) => subscribe(this.visibilityChanged, cb),
     onFocusChanged: (cb) => subscribe(this.focusChanged, cb),
     onFocusNode: (cb) => subscribe(this.focusNode, cb)

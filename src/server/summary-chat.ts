@@ -341,7 +341,16 @@ export class SummaryChat {
       return { message: 'This surface has no transcript to summarize yet.' }
     }
     const messages = this.deps.readTranscript(transcriptPath)
-    if (!messages.length || !messages.some(message => message.role === 'user')) {
+    // Two failures used to share one message, which hid the one that matters:
+    // an empty read means the resolved path is wrong or the file has not been
+    // written yet, and the path is logged so that case is diagnosable at a
+    // glance. A non-empty transcript with no user turn is the genuinely
+    // different "nothing to anchor a summary on" case.
+    if (!messages.length) {
+      serverLog(`[summary-chat] ${nodeId.slice(0, 8)} transcript ${transcriptPath} is empty or unreadable`)
+      return { message: 'This surface has no transcript to summarize yet.' }
+    }
+    if (!messages.some(message => message.role === 'user')) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} transcript has no user-facing messages`)
       return { message: 'This transcript has no user messages to summarize yet.' }
     }

@@ -76,7 +76,6 @@ const nodeApi: NodeApi = {
   directoryAdd: (parentId, cwd, x?, y?) => ipcRenderer.invoke('node:directory-add', parentId, cwd, x, y),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
   directoryGitFetch: (nodeId) => ipcRenderer.invoke('node:directory-git-fetch', nodeId),
-  directoryWtSpawn: (nodeId, branchName) => ipcRenderer.invoke('node:directory-wt-spawn', nodeId, branchName),
   validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
   fileAdd: (parentId, filePath, x?, y?) => ipcRenderer.invoke('node:file-add', parentId, filePath, x, y),
   filePath: (nodeId, filePath) => ipcRenderer.invoke('node:file-path', nodeId, filePath),
@@ -179,8 +178,7 @@ const api: Api = {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   diffFiles: (fileA: string, fileB: string) => ipcRenderer.invoke('shell:diffFiles', fileA, fileB),
   window: {
-    isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:is-fullscreen'),
-    setFullScreen: (enabled: boolean) => ipcRenderer.invoke('window:set-fullscreen', enabled),
+    fitToWorkArea: (): Promise<void> => ipcRenderer.invoke('window:fit-to-work-area'),
     onVisibilityChanged: (callback: (visible: boolean) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible)
       ipcRenderer.on('window:visibility-changed', listener)

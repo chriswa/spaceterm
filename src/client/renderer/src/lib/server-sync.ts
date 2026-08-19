@@ -227,10 +227,6 @@ export async function sendDirectoryCwd(nodeId: NodeId, cwd: string): Promise<voi
   await window.api.node.directoryCwd(nodeId, cwd)
 }
 
-export async function sendDirectoryWtSpawn(nodeId: NodeId, branchName: string): Promise<{ nodeId: NodeId }> {
-  return window.api.node.directoryWtSpawn(nodeId, branchName)
-}
-
 export async function sendFileAdd(parentId: NodeId, filePath: string, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
   return window.api.node.fileAdd(parentId, filePath, x, y)
 }

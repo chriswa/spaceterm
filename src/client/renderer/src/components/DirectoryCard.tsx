@@ -88,8 +88,6 @@ interface DirectoryCardProps {
   onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
   onDragEnd?: (id: NodeId) => void
-  onPostSync?: (id: NodeId) => void
-  onWtSpawn?: (id: NodeId, branchName: string) => void
   onStartReparent?: (id: NodeId) => void
   onReparentTarget?: (id: NodeId) => void
   onAddNode?: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
@@ -100,7 +98,7 @@ export function DirectoryCard({
   id, x, y, zIndex, zoom, cwd, gitStatus, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onUnarchive, onArchiveDelete, onOpenArchiveSearch, onNodeReady,
-  onDragStart, onDragEnd, onPostSync, onWtSpawn, onStartReparent, onReparentTarget, onAddNode, cameraRef
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: DirectoryCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
   const nodeTint = useFacet('nodeTint')
@@ -311,8 +309,6 @@ export function DirectoryCard({
       onArchiveDelete={onArchiveDelete}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
-      onPostSync={onPostSync}
-      onWtSpawn={onWtSpawn}
       onStartReparent={onStartReparent}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}

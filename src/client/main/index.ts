@@ -81,19 +81,26 @@ app.on('open-url', (event, url) => {
   }
 })
 
-// Fill the display's work area — the screen minus the menu bar and dock — instead of
-// using native fullscreen. Combined with a frameless window this gives chrome-free
-// terminal space while leaving the menu bar (and its status items) permanently visible;
-// native fullscreen hides the menu bar unless the OS is configured otherwise, and that
-// setting varies per machine.
-function fitToWorkArea(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  if (mainWindow.isFullScreen()) return
+// The display the window's centre currently sits on. Centre rather than a corner
+// so a window filling one monitor is attributed to that monitor even when its
+// top-left has drifted a pixel over a shared edge.
+function currentDisplay(): Electron.Display | null {
+  if (!mainWindow || mainWindow.isDestroyed()) return null
   const bounds = mainWindow.getBounds()
-  const display = screen.getDisplayNearestPoint({
+  return screen.getDisplayNearestPoint({
     x: bounds.x + Math.floor(bounds.width / 2),
     y: bounds.y + Math.floor(bounds.height / 2)
   })
+}
+
+// Fill the display's work area — the screen minus the menu bar and dock — instead of
+// using native fullscreen. Combined with a frameless window this gives chrome-free
+// terminal space while leaving the menu bar (and its status items) permanently visible;
+// native fullscreen would hide the menu bar unless the OS is configured otherwise, and
+// that setting varies per machine.
+function fitToWorkArea(): void {
+  const display = currentDisplay()
+  if (!mainWindow || !display) return
   mainWindow.setBounds(display.workArea)
 }
 
@@ -130,22 +137,27 @@ function createWindow(): void {
 
   mainWindow.show()
 
-  // The work area moves under us when the dock resizes or the display mode changes,
-  // and native fullscreen restores pre-fullscreen bounds on exit rather than refitting.
+  // The work area moves under us when the dock resizes or the display mode changes.
   const onDisplayMetricsChanged = () => fitToWorkArea()
   screen.on('display-metrics-changed', onDisplayMetricsChanged)
-  mainWindow.on('leave-full-screen', fitToWorkArea)
 
-  // Save display on move (debounced) — handles user dragging to a different monitor
+  // Dragging the window to another monitor doesn't resize it — the window keeps its
+  // old bounds on the new display. Refit to the new display's work area so the window
+  // fills whatever monitor it lands on, matching how it launches. Debounced so the
+  // refit happens once the drag settles, not on every intermediate `move` event.
+  let lastDisplayId = currentDisplay()?.id ?? null
   let moveTimer: ReturnType<typeof setTimeout> | null = null
   mainWindow.on('move', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return
     if (moveTimer !== null) clearTimeout(moveTimer)
     moveTimer = setTimeout(() => {
       moveTimer = null
-      if (!mainWindow || mainWindow.isDestroyed()) return
-      const bounds = mainWindow.getBounds()
-      const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y })
+      const display = currentDisplay()
+      if (!display) return
+      if (display.id !== lastDisplayId) {
+        lastDisplayId = display.id
+        fitToWorkArea()
+      }
       saveWindowState(display.bounds)
     }, 1000)
   })
@@ -386,12 +398,6 @@ function setupIPC(): void {
     await client!.directoryGitFetch(nodeId)
   })
 
-  ipcMain.handle('node:directory-wt-spawn', async (_event, nodeId: NodeId, branchName: string) => {
-    const resp = await client!.directoryWtSpawn(nodeId, branchName)
-    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
-    throw new Error('wt-spawn failed')
-  })
-
   ipcMain.handle('node:validate-directory', async (_event, path: string) => {
     const resp = await client!.validateDirectory(path)
     if (resp.type === 'validate-directory-result') return { valid: resp.valid, error: resp.error }
@@ -498,13 +504,8 @@ function setupIPC(): void {
 
   // --- Window mode ---
 
-  ipcMain.handle('window:is-fullscreen', () => {
-    return mainWindow?.isFullScreen() ?? false
-  })
-
-  ipcMain.handle('window:set-fullscreen', (_event, enabled: boolean) => {
-    if (!mainWindow) return
-    mainWindow.setFullScreen(enabled)
+  ipcMain.handle('window:fit-to-work-area', () => {
+    fitToWorkArea()
   })
 
   // --- Perf capture ---

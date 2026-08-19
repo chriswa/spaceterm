@@ -94,7 +94,6 @@ export interface NodeApi {
   directoryAdd(parentId: NodeId, cwd: string, x?: number, y?: number): Promise<{ nodeId: NodeId }>
   directoryCwd(nodeId: NodeId, cwd: string): Promise<void>
   directoryGitFetch(nodeId: NodeId): Promise<void>
-  directoryWtSpawn(nodeId: NodeId, branchName: string): Promise<{ nodeId: NodeId }>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
 
   fileAdd(parentId: NodeId, filePath: string, x?: number, y?: number): Promise<{ nodeId: NodeId }>
@@ -198,8 +197,8 @@ export interface SystemApi {
 }
 
 export interface WindowApi {
-  isFullScreen(): Promise<boolean>
-  setFullScreen(enabled: boolean): Promise<void>
+  /** Resize the window to fill the current display's work area (screen minus menu bar and dock). */
+  fitToWorkArea(): Promise<void>
   onVisibilityChanged(callback: (visible: boolean) => void): () => void
   /**
    * Keyboard focus, which is *not* visibility: an unfocused window is still on

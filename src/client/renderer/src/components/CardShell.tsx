@@ -46,8 +46,6 @@ interface CardShellProps {
   onDiffPlans?: () => void
   isReparenting?: boolean
   isResizing?: boolean
-  onPostSync?: (id: NodeId) => void
-  onWtSpawn?: (id: NodeId, branchName: string) => void
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
@@ -69,7 +67,7 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
-  onPostSync, onWtSpawn, onAddNode, onExtraCliArgs, extraCliArgs,
+  onAddNode, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, overlay, children
 }: CardShellProps) {
 
@@ -89,12 +87,11 @@ export function CardShell({
 
   // Build NodeActionBar props and register in the action registry
   const actionBarProps: NodeActionBarProps = {
-    nodeId, preset, focused, width,
+    nodeId, preset, focused,
     onShipIt, onFork, onExtraCliArgs, extraCliArgs,
     onDiffPlans, showColorPicker, onColorChange,
     pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
     archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
-    onPostSync, onWtSpawn,
     onStartReparent, isReparenting,
     onStartResize, isResizing,
     onAddNode, showClose, onClose,

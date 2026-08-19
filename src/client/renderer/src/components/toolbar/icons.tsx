@@ -117,7 +117,7 @@ export function ScrollIcon() {
   )
 }
 
-export function FullscreenIcon() {
+export function FitToMonitorIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
       <polyline points="1,5 1,1 5,1" />

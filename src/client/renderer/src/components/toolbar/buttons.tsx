@@ -12,7 +12,7 @@ import { useThemes } from '../../hooks/useFacet'
 import { useFps } from '../../hooks/useFps'
 import { useToolbarMenu } from './useToolbarMenu'
 import { showToast } from '../../lib/toast'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FullscreenIcon, LockIcon, BellIcon, DustpanIcon, KeycastIcon, GaugeIcon, ChipIcon } from './icons'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, DustpanIcon, KeycastIcon, GaugeIcon, ChipIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -166,40 +166,19 @@ export function CameraLockToggle() {
   )
 }
 
-// The window fills the display's work area by default — frameless, but with the menu
-// bar still showing. This toggles native fullscreen on top of that, which covers the
-// menu bar too. Stored under a v2 key: under the old default the window launched
-// fullscreen, so a legacy `true` doesn't mean the user asked to hide the menu bar.
-const FULLSCREEN_KEY = 'toolbar.fullscreen.v2'
-
-export function FullscreenToggle() {
-  const [on, setOn] = useState(false)
-
-  useEffect(() => {
-    localStorage.removeItem('toolbar.fullscreen')
-    const saved = localStorage.getItem(FULLSCREEN_KEY)
-    if (saved !== null) {
-      const desired = saved === 'true'
-      window.api.window.setFullScreen(desired).then(() => setOn(desired))
-    } else {
-      window.api.window.isFullScreen().then(setOn)
-    }
-  }, [])
-
-  const toggle = () => {
-    const next = !on
-    localStorage.setItem(FULLSCREEN_KEY, String(next))
-    window.api.window.setFullScreen(next).then(() => setOn(next))
-  }
-
+// The window fills the display's work area — frameless, with the menu bar still
+// showing. Dragging it to another monitor doesn't resize it automatically (the OS
+// keeps the old bounds), so this button refits the window to whatever display it now
+// sits on. It's a one-shot action, not a mode, so there's no toggle state.
+export function FitToMonitorButton() {
   return (
     <button
-      className={'toolbar__btn' + (on ? ' toolbar__btn--active' : '')}
-      onClick={toggle}
-      data-tooltip={on ? 'Fullscreen — Exit fullscreen' : 'Fullscreen — Enter fullscreen'}
+      className="toolbar__btn"
+      onClick={() => window.api.window.fitToWorkArea()}
+      data-tooltip="Fit window to this monitor"
       data-tooltip-no-flip
     >
-      <FullscreenIcon />
+      <FitToMonitorIcon />
     </button>
   )
 }
