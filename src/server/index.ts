@@ -51,6 +51,7 @@ import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
 import { SummaryChat } from './summary-chat'
+import { PendingTurnCache } from './pending-turn'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -270,6 +271,33 @@ function surfaceAgentType(surfaceId: PtySessionId): AgentType | undefined {
   const node = stateManager.getNode(nodeId)
   if (node && node.type === 'terminal') return node.agentType
   return undefined
+}
+
+const pendingTurnCache = new PendingTurnCache()
+
+/**
+ * Maintain `pendingTurnCache` from the hook stream.
+ *
+ * Cleared on every event that ends a turn, not just on the tool's own
+ * PostToolUse: a turn can also end by the listener interrupting it or by
+ * starting a new prompt, and an entry that outlived its turn would be injected
+ * into a later summary as though the surface were still waiting on it.
+ */
+function trackPendingTurn(
+  surfaceId: PtySessionId,
+  hookType: string,
+  payload: Record<string, unknown> | undefined,
+  hookTime: number,
+): void {
+  if (hookType === 'PreToolUse') {
+    const toolName = typeof payload?.tool_name === 'string' ? payload.tool_name : ''
+    pendingTurnCache.record(surfaceId, toolName, payload?.tool_input, hookTime)
+    return
+  }
+  if (hookType === 'PostToolUse' || hookType === 'Stop' || hookType === 'UserPromptSubmit'
+      || hookType === 'SessionStart' || hookType === 'SessionEnd') {
+    pendingTurnCache.clear(surfaceId)
+  }
 }
 
 function transcriptPathForNode(nodeId: NodeId): string | undefined {
@@ -700,6 +728,13 @@ function handleIngestMessage(msg: IngestMessage): void {
       // Delegate state transition logic to the state machine
       claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
 
+      // Keep the input of an interactive tool while it is unresolved. Claude
+      // Code does not write the turn that called it to the transcript until it
+      // resolves, so for as long as the surface sits in waiting_question or
+      // waiting_plan this cache is the only readable copy of what it is asking.
+      // See `pending-turn.ts`.
+      trackPendingTurn(msg.surfaceId, hookType, msg.payload as Record<string, unknown> | undefined, hookTime)
+
       // Process SessionStart hooks for agent session history tracking
       // (session lifecycle management stays here — not state machine concern)
       if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
@@ -1024,11 +1059,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // can still be a cancellation, and only SummaryChat knows whether it is.
       const node = msg.nodeId ? stateManager.getNode(msg.nodeId) : undefined
       const terminal = node?.type === 'terminal' ? node : undefined
-      void summaryChat.toggle(
-        terminal?.id,
-        terminal && transcriptPathForNode(terminal.id),
-        terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
-      ).then((result) => {
+      void summaryChat.toggle(terminal?.id, {
+        transcriptPath: terminal && transcriptPathForNode(terminal.id),
+        sourceAgentSessionId: terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
+        claudeState: terminal?.claudeState,
+        pendingTurn: terminal && pendingTurnCache.get(terminal.sessionId),
+      }).then((result) => {
         // Back to the client that pressed the key, not to every peer: the
         // chirp, the shake and the toast belong to one person.
         send(client.socket, {
@@ -2085,6 +2121,7 @@ async function startServer(): Promise<void> {
       codexSessionFileWatcher.unwatch(sessionId)
       cursorSessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
+      pendingTurnCache.clear(sessionId)
 
       // If this pty was spawned by a manual restart and died quickly, the new
       // CLI args are the likely cause: revert them and relaunch once.

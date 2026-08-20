@@ -1,0 +1,40 @@
+{
+  "askUserQuestion": {
+    "questions": [
+      {
+        "question": "Retries are enabled in production, which makes the backlog's queue-race item live rather than theoretical: when two jobs race, the loser exits 1, and the dashboard can't tell that from \"this job is bad\" — so it stops choosing a good job whose only fault was arriving second. The fix is a distinct exit code the dashboard treats as no evidence, mirroring a pattern that already exists. It shares this unit's maintenance window and test run. Include it?",
+        "header": "Scope",
+        "options": [
+          {
+            "label": "Include it (Recommended)",
+            "description": "Adds about an hour: a constant in the queue module, one exit path, a `declined` flag through the two callers, and tests with a negative control. Separate commit, so it rolls back independently. The alternative is paying the test run and the maintenance window twice."
+          },
+          {
+            "label": "Recovery only",
+            "description": "Keep the diff to worker lifecycle. The queue race stays open; it bites only when two jobs actually collide, and the cost is one good job the dashboard refuses until someone retries it by hand."
+          }
+        ],
+        "multiSelect": false
+      },
+      {
+        "question": "The supervisor will restart workers unattended. Should those restarts be recorded where the dashboard can show them?",
+        "header": "Visibility",
+        "options": [
+          {
+            "label": "Record and show in History (Recommended)",
+            "description": "Append to a log file and merge into the History tab beside the other lifecycle events. That tab's stated job is \"was the service up\", and an unattended restart is exactly that. Costs a small dashboard change."
+          },
+          {
+            "label": "Journal only",
+            "description": "Restarts go to the system journal via stdout and nowhere else. Cheaper and no dashboard change, but the only way to learn a worker restarted itself is to log in and look."
+          }
+        ],
+        "multiSelect": false
+      }
+    ]
+  },
+  "exitPlanMode": {
+    "plan": "# Dashboard: offline mode and blocklists\n\n## Context\n\nThe service has a control dashboard for **local** development only. It has never been reachable from outside the machine it runs on, which is why it has no authentication and why every action it exposes assumes a trusted operator is the one clicking.\n\nThis plan adds two things that need it to keep assuming that.\n\n## 1. Offline mode\n\nA switch that takes the service down for maintenance without stopping the process.",
+    "planFilePath": "/Users/example/.claude/plans/sorted-toasting-blanket.md"
+  }
+}

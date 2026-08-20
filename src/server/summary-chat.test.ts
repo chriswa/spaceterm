@@ -8,6 +8,8 @@ import {
 } from './summary-chat'
 import { asNodeId } from '../shared/ids'
 import type { NodeId } from '../shared/ids'
+import type { ClaudeState } from '../shared/state'
+import type { PendingTurn } from './pending-turn'
 
 const NODE = asNodeId('node-1234abcd')
 
@@ -195,6 +197,12 @@ function lastAnswerSent(h: Harness): string | undefined {
   return [...body.messages].reverse().find((m) => m.role === 'assistant')?.content
 }
 
+/** The text handed to Voice Operator — what the listener actually hears. */
+function spokenText(h: Harness): string {
+  const post = h.http.calls.filter((c) => c.url.includes('/v1/speech') && c.method === 'POST')
+  return (post[post.length - 1]?.body as { text: string } | undefined)?.text ?? ''
+}
+
 /** Script what Haiku answers, when a test needs a specific number of sentences. */
 function answers(http: FakeHttp, text: string): void {
   http.on('api.anthropic.com', { content: [{ type: 'text', text }] })
@@ -206,7 +214,7 @@ describe('start', () => {
   // than broadcast to every client, so nothing is announced at all.
   it('rejects a surface with no transcript path', async () => {
     const h = harness()
-    const result = await h.chat.start(NODE, undefined)
+    const result = await h.chat.start(NODE, {})
 
     expect(result).toEqual({ outcome: 'rejected', message: 'This surface has no transcript to summarize yet.' })
     expect(h.statuses).toEqual([])
@@ -217,7 +225,7 @@ describe('start', () => {
     // An empty read means the resolved path is wrong or unwritten — distinct
     // from a transcript that exists but has no user turn to anchor a summary.
     const h = harness({ transcript: [] })
-    const result = await h.chat.start(NODE, '/t.jsonl')
+    const result = await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     expect(result.outcome).toBe('rejected')
     expect(result).toMatchObject({ message: 'This surface has no transcript to summarize yet.' })
@@ -226,7 +234,7 @@ describe('start', () => {
 
   it('rejects a transcript that exists but has no user turn', async () => {
     const h = harness({ transcript: [{ role: 'assistant', text: 'hello' }] })
-    const result = await h.chat.start(NODE, '/t.jsonl')
+    const result = await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     expect(result.outcome).toBe('rejected')
     expect(result).toMatchObject({ message: expect.stringMatching(/no user messages/) })
@@ -235,7 +243,7 @@ describe('start', () => {
 
   it('runs target → thinking → ready on a successful summary', async () => {
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(states(h).slice(0, 2)).toEqual(['target', 'thinking'])
@@ -245,7 +253,7 @@ describe('start', () => {
 
   it('sends the transcript to Haiku with the OAuth credential', async () => {
     const h = harness({ transcript: [{ role: 'user', text: 'fix the parser' }] })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     const haiku = h.http.calls.find((c) => c.url.includes('api.anthropic.com'))
     expect(haiku?.method).toBe('POST')
@@ -256,7 +264,7 @@ describe('start', () => {
     const h = harness({
       configure: (http) => http.on('api.anthropic.com', { content: [{ type: 'text', text: 'All done.' }] })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     const speak = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')
     expect(speak?.body).toMatchObject({ text: 'All done.' })
@@ -267,7 +275,7 @@ describe('start', () => {
       configure: (http) =>
         http.on('api.anthropic.com', () => new Response('nope', { status: 500 }))
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     expect(states(h)).toContain('error')
     // The finally block must still run — otherwise the surface is stuck thinking.
@@ -278,7 +286,7 @@ describe('start', () => {
     const h = harness({
       oauthToken: () => { throw new Error('Claude Code OAuth credential is unavailable') }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     expect(h.statuses.find((s) => s.state === 'error')?.message).toMatch(/could not reach Haiku/)
   })
@@ -287,14 +295,14 @@ describe('start', () => {
     const h = harness({
       configure: (http) => http.on('api.anthropic.com', { content: [] })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     expect(states(h)).toContain('error')
   })
 
   it('records the start and the response in the audit trail', async () => {
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl', 'agent-session-1')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl', sourceAgentSessionId: 'agent-session-1' })
 
     const started = h.audits.find((a) => a.event === 'started')
     expect(started).toMatchObject({
@@ -309,7 +317,7 @@ describe('start', () => {
     // "Was the text any good?" is the first question asked when nothing comes
     // out of the speakers, and a character count cannot answer it.
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     expect(h.audits.find((a) => a.event === 'haiku-response')).toMatchObject({
       responseText: 'A concise summary.',
@@ -321,7 +329,7 @@ describe('start', () => {
 describe('when Voice Operator is not running', () => {
   it('still produces a summary rather than erroring', async () => {
     const h = harness({ voiceOperatorRunning: false })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(states(h)).not.toContain('error')
@@ -337,7 +345,7 @@ describe('when Voice Operator is not running', () => {
     const h = harness({
       configure: (http) => http.on('/v1/speech', () => { throw new Error('connection refused') })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(h.statuses.find((s) => s.state === 'error')?.message).toContain('not answering')
@@ -357,7 +365,7 @@ describe('when speech fails after Voice Operator accepted it', () => {
             ? { id: 'speech-1', state: 'in_progress' }
             : { id: 'speech-1', state: 'synthesis_failed', error: 'synthesis_failed' })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(h.statuses.find((s) => s.state === 'error')?.message)
@@ -369,7 +377,7 @@ describe('when speech fails after Voice Operator accepted it', () => {
 
   it('stays quiet when the job merely finishes', async () => {
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(states(h)).not.toContain('error')
@@ -392,7 +400,7 @@ describe('speech monitoring', () => {
         })
       }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(h.speaking).toEqual([])
@@ -417,7 +425,7 @@ describe('speech monitoring', () => {
         })
       }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     // One `thinking`, for the Haiku round trip, and nothing audible after it.
@@ -440,7 +448,7 @@ describe('speech monitoring', () => {
           : { id: 'speech-1', state: 'in_progress', playback_state: 'queued' })
       }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(3)
     expect(states(h).at(-1)).toBe('synthesizing')
 
@@ -464,7 +472,7 @@ describe('speech monitoring', () => {
     // The voice is picked from a list fetched in the background. Wait for it
     // rather than racing the constructor's refresh.
     await h.tickVoiceRefresh()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(h.speaking[0]).toMatchObject({ nodeId: NODE, speaking: true })
@@ -483,7 +491,7 @@ describe('speech monitoring', () => {
           return poll === 1 ? { id: 'speech-1', state: 'in_progress' } : { id: 'speech-1', state: 'completed' }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(h.speaking.some((e) => e.speaking)).toBe(true)
@@ -506,7 +514,7 @@ describe('speech monitoring', () => {
             : { id: 'speech-1', state: 'completed' }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(sleeps.length).toBeGreaterThanOrEqual(3)
@@ -530,7 +538,7 @@ describe('speech monitoring', () => {
             : { id: 'speech-1', state: 'completed' }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(states(h)).toEqual(['target', 'thinking', 'synthesizing', 'speaking', 'ready'])
@@ -553,7 +561,7 @@ describe('speech monitoring', () => {
           return { id: 'speech-1', state: 'completed' }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     const waits = h.http.calls
@@ -575,7 +583,7 @@ describe('speech monitoring', () => {
           return { id: 'speech-1', state: 'completed' }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     const waits = h.http.calls
@@ -605,7 +613,7 @@ describe('speech monitoring', () => {
           return { id: 'speech-1', state: 'in_progress', playback_state: playback }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(states(h)).toEqual(['target', 'thinking', 'synthesizing', 'speaking', 'ready'])
@@ -626,7 +634,7 @@ describe('speech monitoring', () => {
           return { id: 'speech-1', state: 'completed' }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(states(h).lastIndexOf('thinking')).toBeLessThan(states(h).indexOf('speaking'))
@@ -647,7 +655,7 @@ describe('speech monitoring', () => {
             : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
         )
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(3)
     expect(states(h)).toEqual(['target', 'thinking', 'synthesizing', 'speaking'])
 
@@ -666,7 +674,7 @@ describe('speech monitoring', () => {
             : new Response('gone', { status: 500 })
         )
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(states(h)).toContain('ready')
@@ -702,7 +710,7 @@ describe('cancelAll', () => {
   it('drops a summary that is still waiting on Haiku', async () => {
     const gate = deferred<unknown>()
     const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
-    void h.chat.start(NODE, '/t.jsonl')
+    void h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(3)
     expect(states(h)).toEqual(['target', 'thinking'])
 
@@ -726,7 +734,7 @@ describe('cancelAll', () => {
     // single time the chord was used to stop something.
     const gate = deferred<unknown>()
     const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
-    const started = h.chat.start(NODE, '/t.jsonl')
+    const started = h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(2)
 
     await h.chat.cancelAll()
@@ -748,7 +756,7 @@ describe('cancelAll', () => {
           method === 'POST' ? gate.promise : { id: 'speech-1', state: 'completed' }
         )
     })
-    void h.chat.start(NODE, '/t.jsonl')
+    void h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(6)
     expect(h.http.calls.some((c) => c.method === 'POST' && c.url.includes('/v1/speech'))).toBe(true)
 
@@ -762,7 +770,7 @@ describe('cancelAll', () => {
 
   it('cuts off an answer that is already speaking', async () => {
     const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http) })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
     expect(states(h).at(-1)).toBe('speaking')
 
@@ -783,7 +791,7 @@ describe('cancelAll', () => {
         speaking(http, 32) // Through "Second sentence.", partway into the third.
       }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
     await h.chat.cancelAll()
     h.http.calls.length = 0
@@ -802,7 +810,7 @@ describe('cancelAll', () => {
         speaking(http, 24) // Mid-way through "Second sentence."
       }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
     await h.chat.cancelAll()
     h.http.calls.length = 0
@@ -815,7 +823,7 @@ describe('cancelAll', () => {
     // Voice Operator counts whole sentences, so a zero means the listener heard
     // nothing at all — none of the answer may be resent as though delivered.
     const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http, 0) })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
     await h.chat.cancelAll()
     h.http.calls.length = 0
@@ -826,7 +834,7 @@ describe('cancelAll', () => {
 
   it('leaves an answer that played to the end intact', async () => {
     const h = harness({ configure: (http) => answers(http, 'First sentence. Second sentence.') })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
     h.http.calls.length = 0
 
@@ -838,8 +846,8 @@ describe('cancelAll', () => {
   it('settles every surface that is producing, not just one', async () => {
     const other = asNodeId('node-99999999')
     const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http) })
-    await h.chat.start(NODE, '/t.jsonl')
-    await h.chat.start(other, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
+    await h.chat.start(other, { transcriptPath: '/t.jsonl' })
     await flush(4)
     h.statuses.length = 0
 
@@ -862,7 +870,7 @@ describe('cancelAll', () => {
             : { id: 'speech-1', state: 'in_progress', playback_state: 'waiting_for_user' }
         )
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
     expect(states(h).at(-1)).toBe('ready')
 
@@ -873,7 +881,7 @@ describe('cancelAll', () => {
 describe('toggle', () => {
   it('starts a summary when nothing is happening', async () => {
     const h = harness()
-    const result = await h.chat.toggle(NODE, '/t.jsonl', 'claude-session-7')
+    const result = await h.chat.toggle(NODE, { transcriptPath: '/t.jsonl', sourceAgentSessionId: 'claude-session-7' })
     await flush()
 
     expect(result).toEqual({ outcome: 'started' })
@@ -889,7 +897,7 @@ describe('toggle', () => {
     const gate = deferred<unknown>()
     const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
 
-    expect(await h.chat.toggle(NODE, '/t.jsonl')).toEqual({ outcome: 'started' })
+    expect(await h.chat.toggle(NODE, { transcriptPath: '/t.jsonl' })).toEqual({ outcome: 'started' })
 
     gate.resolve({ content: [{ type: 'text', text: 'A concise summary.' }] })
     await flush()
@@ -911,10 +919,10 @@ describe('toggle', () => {
           : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
       )
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
 
-    expect(await h.chat.toggle(NODE, '/t.jsonl')).toEqual({ outcome: 'cancelled' })
+    expect(await h.chat.toggle(NODE, { transcriptPath: '/t.jsonl' })).toEqual({ outcome: 'cancelled' })
     // The press meant "stop", so it must not also have queued another answer.
     expect(haikuCalls(h)).toHaveLength(1)
   })
@@ -928,7 +936,7 @@ describe('toggle', () => {
           : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
       )
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
 
     expect(await h.chat.toggle(undefined)).toEqual({ outcome: 'cancelled' })
@@ -945,11 +953,11 @@ describe('toggle', () => {
           : { id: 'speech-1', state: 'in_progress', playback_state: 'speaking' }
       )
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
 
-    expect(await h.chat.toggle(other, '/t.jsonl')).toEqual({ outcome: 'cancelled' })
-    expect(await h.chat.toggle(other, '/t.jsonl')).toEqual({ outcome: 'started' })
+    expect(await h.chat.toggle(other, { transcriptPath: '/t.jsonl' })).toEqual({ outcome: 'cancelled' })
+    expect(await h.chat.toggle(other, { transcriptPath: '/t.jsonl' })).toEqual({ outcome: 'started' })
     await flush()
 
     expect(h.chat.getTargetNodeId()).toBe(other)
@@ -963,7 +971,7 @@ describe('when Voice Operator refuses the job', () => {
       configure: (http) =>
         http.on('/v1/speech', () => new Response(JSON.stringify({ error: 'speech_muted' }), { status: 503 }))
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(h.statuses.find((s) => s.state === 'error')?.message).toMatch(/muted/i)
@@ -986,7 +994,7 @@ describe('change-cursor polling', () => {
             : { id: 'speech-1', state: 'completed', version: 3 }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     const polls = h.http.calls.filter((c) => c.method === 'GET' && c.url.includes('/v1/speech/'))
@@ -1012,7 +1020,7 @@ describe('change-cursor polling', () => {
             : { id: 'speech-1', state: 'completed', version: 7 }
         })
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     expect(sleeps.length).toBeGreaterThanOrEqual(3)
@@ -1031,7 +1039,7 @@ describe('followUp', () => {
 
   it('carries the question through to Haiku', async () => {
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     h.http.calls.length = 0
 
     await h.chat.followUp('why did it fail?')
@@ -1051,7 +1059,7 @@ describe('followUp', () => {
         )
       }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
     h.http.calls.length = 0
 
@@ -1078,7 +1086,7 @@ describe('followUp', () => {
         })
       }
     })
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     await h.chat.followUp('first question')
@@ -1094,7 +1102,7 @@ describe('followUp', () => {
 
   it('adds no interruption context when the answer played to the end', async () => {
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush()
 
     await h.chat.followUp('go on')
@@ -1103,7 +1111,7 @@ describe('followUp', () => {
 
   it('keeps prior exchanges in the Haiku history', async () => {
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await h.chat.followUp('and then?')
 
     const haiku = h.http.calls.filter((c) => c.url.includes('api.anthropic.com'))
@@ -1115,8 +1123,8 @@ describe('followUp', () => {
   it('targets the most recently used conversation', async () => {
     const other = asNodeId('node-99999999')
     const h = harness()
-    await h.chat.start(NODE, '/t.jsonl')
-    await h.chat.start(other, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
+    await h.chat.start(other, { transcriptPath: '/t.jsonl' })
 
     expect(h.chat.getTargetNodeId()).toBe(other)
 
@@ -1137,11 +1145,11 @@ describe('voice selection', () => {
     const h = harness()
     await h.tickVoiceRefresh()
 
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     const first = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
 
     h.http.calls.length = 0
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     const second = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
 
     expect(first.voice).toBeTruthy()
@@ -1153,7 +1161,7 @@ describe('voice selection', () => {
       configure: (http) => http.on('/v1/voices', { voices: [{ id: 'af_nicole' }] })
     })
     await h.tickVoiceRefresh()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     const speak = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
     expect(speak.voice).toBeUndefined()
@@ -1168,7 +1176,7 @@ describe('voice selection', () => {
       })
     })
     await h.tickVoiceRefresh()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     const speak = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
     expect(speak.voice).toBeUndefined()
@@ -1179,7 +1187,7 @@ describe('voice selection', () => {
       configure: (http) => http.on('/v1/voices', { voices: [{ id: 'harmony' }] })
     })
     await h.tickVoiceRefresh()
-    await h.chat.start(NODE, '/t.jsonl')
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
     const speak = h.http.calls.find((c) => c.url.includes('/v1/speech') && c.method === 'POST')?.body as { voice?: string }
     expect(speak.voice).toBe('harmony')
@@ -1403,5 +1411,144 @@ describe('parseTranscript', () => {
 
   it('handles an empty document', () => {
     expect(parseTranscript('')).toEqual([])
+  })
+})
+
+/**
+ * Claude Code appends an assistant turn to its transcript only once that turn's
+ * *interactive* tool resolves. `waiting_question` and `waiting_plan` are defined
+ * by such a tool being unresolved, so in exactly those states the message the
+ * listener wants summarized is not on disk — measured as a session file frozen
+ * for the whole time a question sat on screen, then written 40ms after it was
+ * answered. The hook payload is the only readable copy until then.
+ */
+describe('a surface parked on an interactive tool', () => {
+  const QUESTION: PendingTurn = {
+    tool: 'AskUserQuestion',
+    text: 'The agent is asking the user to decide:\n\nQuestion (Scope): Fold in the retry fix?',
+    capturedAt: 1_000,
+  }
+  const PLAN: PendingTurn = { tool: 'ExitPlanMode', text: 'Plan\n\nSupervise the workers.', capturedAt: 1_000 }
+
+  /** The transcript as it reads while the turn is still buffered. */
+  const beforeFlush: TranscriptMessage[] = [
+    { role: 'user', text: 'look at the backlog and propose something' },
+    { role: 'assistant', text: "I'll start by reading the backlog." },
+  ]
+
+  const parked = (pendingTurn: PendingTurn, claudeState: ClaudeState) => ({
+    transcriptPath: '/t.jsonl',
+    claudeState,
+    pendingTurn,
+  })
+
+  // The bug this whole change exists for: without the injection Haiku is handed
+  // a conversation that stops before the question, and confidently reports that
+  // the agent has not decided anything.
+  it('sends the pending question to Haiku', async () => {
+    const h = harness({ transcript: beforeFlush })
+    await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+    expect(newestPrompt(h)).toContain('Fold in the retry fix?')
+  })
+
+  it('sends the pending plan to Haiku', async () => {
+    const h = harness({ transcript: beforeFlush })
+    await h.chat.start(NODE, parked(PLAN, 'waiting_plan'))
+    expect(newestPrompt(h)).toContain('Supervise the workers.')
+  })
+
+  // Appended after selectSpeakable has chosen its window, so the one message
+  // the listener is waiting on cannot be the message the budget drops.
+  it('keeps the pending turn even when the transcript already fills the budget', async () => {
+    const full: TranscriptMessage[] = [{ role: 'user', text: 'go' }]
+    for (let i = 0; i < 40; i++) full.push({ role: 'assistant', text: `step ${i} `.repeat(400) })
+    const h = harness({ transcript: full })
+    await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+    expect(newestPrompt(h)).toContain('Fold in the retry fix?')
+  })
+
+  it('places the pending turn last, so it reads as the current turn', async () => {
+    const h = harness({ transcript: beforeFlush })
+    await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+    const prompt = newestPrompt(h)
+    expect(prompt.indexOf('Fold in the retry fix?')).toBeGreaterThan(prompt.indexOf('reading the backlog'))
+  })
+
+  /**
+   * A chord pressed just after the listener answers finds the cache still
+   * populated and the transcript finally written. Both render through
+   * `speakableToolText`, so the strings match and the duplicate is dropped —
+   * otherwise Haiku is handed the question twice and may report two of them.
+   */
+  it('does not repeat a pending turn the transcript has caught up with', async () => {
+    const flushed = [...beforeFlush, { role: 'assistant' as const, text: QUESTION.text }]
+    const h = harness({ transcript: flushed })
+    await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+    const prompt = newestPrompt(h)
+    expect(prompt.split('Fold in the retry fix?').length - 1).toBe(1)
+  })
+
+  describe('the caution note', () => {
+    // The hook recovers the tool's input. Nothing recovers the prose the agent
+    // wrote above it — measured for both tools — so a summary built from the
+    // question alone must not read as a complete account of the turn.
+    it('warns that the agent\'s message before a question is missing', async () => {
+      const h = harness({ transcript: beforeFlush })
+      await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+      const spoken = spokenText(h)
+      expect(spoken.startsWith('Note: only the question is available')).toBe(true)
+      expect(spoken).toContain('A concise summary.')
+    })
+
+    it('warns for a pending plan too, naming the plan', async () => {
+      const h = harness({ transcript: beforeFlush })
+      await h.chat.start(NODE, parked(PLAN, 'waiting_plan'))
+      expect(spokenText(h).startsWith('Note: only the plan is available')).toBe(true)
+    })
+
+    it('stays quiet when the surface is not parked on anything', async () => {
+      const h = harness({ transcript: beforeFlush })
+      await h.chat.start(NODE, { transcriptPath: '/t.jsonl', claudeState: 'working' })
+      expect(spokenText(h)).toBe('A concise summary.')
+    })
+
+    // Nothing was injected, so nothing is missing — warning here would train the
+    // listener to ignore the warning.
+    it('stays quiet when the transcript already had the pending turn', async () => {
+      const flushed = [...beforeFlush, { role: 'assistant' as const, text: QUESTION.text }]
+      const h = harness({ transcript: flushed })
+      await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+      expect(spokenText(h)).toBe('A concise summary.')
+    })
+
+    /**
+     * `redactUnheard` maps Voice Operator's `character_offset` onto the stored
+     * answer. If the note were spoken but not stored, every interruption offset
+     * would shift by its length — silently, and only when a listener cut an
+     * answer off. One string for both is what prevents that.
+     */
+    it('is part of the stored answer, not a separate preamble', async () => {
+      const h = harness({ transcript: beforeFlush })
+      await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+      const spokenInitially = spokenText(h)
+      await h.chat.followUp('what did it decide?')
+      // What the follow-up request resends as the previous answer is the exact
+      // string that was spoken — which is what keeps character offsets honest.
+      expect(lastAnswerSent(h)?.startsWith('Note: only the question is available')).toBe(true)
+      expect(lastAnswerSent(h)).toBe(spokenInitially)
+    })
+
+    // Already warned. Repeating it every turn costs the warning its meaning.
+    it('is not repeated on follow-ups', async () => {
+      const h = harness({ transcript: beforeFlush })
+      await h.chat.start(NODE, parked(QUESTION, 'waiting_question'))
+      const first = h.http.calls.filter((c) => c.url.includes('/v1/speech') && c.method === 'POST').length
+      await h.chat.followUp('and then?')
+      const bodies = h.http.calls
+        .filter((c) => c.url.includes('/v1/speech') && c.method === 'POST')
+        .map((c) => (c.body as { text: string }).text)
+      expect(first).toBeGreaterThan(0)
+      expect(bodies[bodies.length - 1].startsWith('Note:')).toBe(false)
+    })
   })
 })

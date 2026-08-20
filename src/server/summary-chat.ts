@@ -5,6 +5,9 @@ import { randomUUID } from 'crypto'
 import { execFileSync } from 'child_process'
 import { serverLog } from './server-log'
 import type { NodeId } from '../shared/ids'
+import type { ClaudeState } from '../shared/state'
+import type { PendingTurn } from './pending-turn'
+import { speakableToolText } from './speakable-tool-text'
 import type { SummaryChatPhase, SummaryChatToggleOutcome, SummaryChatUiState } from '../shared/protocol'
 
 const DISCOVERY_PATH = path.join(homedir(), 'Library', 'Application Support', 'VoiceOperator', 'speech-service.json')
@@ -78,6 +81,26 @@ const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user und
  */
 const INTERRUPTED_MARKER = '*INTERRUPTED*'
 
+/**
+ * What the listener is told when the injected turn is all we have.
+ *
+ * Claude Code does not write an assistant turn to its transcript until that
+ * turn's interactive tool resolves, so a surface parked on a question or a plan
+ * has its final message only inside the running process. The hook payload
+ * recovers the question or the plan — the tool's input — but nothing recovers
+ * the prose the agent wrote above it. Both tools were measured; both lose it.
+ *
+ * Without this note a summary built from the question alone reads as a complete
+ * account of the turn, which is precisely the failure that started this: a
+ * spoken answer that said the agent "hadn't decided anything yet" while a fully
+ * reasoned proposal sat on screen. Short, because it is spoken before every
+ * word the listener actually asked for.
+ */
+const PENDING_TURN_CAUTION: Partial<Record<ClaudeState, string>> = {
+  waiting_question: "Note: only the question is available; the agent's message before it isn't saved yet.",
+  waiting_plan: "Note: only the plan is available; the agent's message before it isn't saved yet.",
+}
+
 export type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
 type HaikuMessage = { role: 'user' | 'assistant'; content: string }
 type SpeechStatus = {
@@ -132,12 +155,33 @@ class Attempt {
   }
 }
 
+/**
+ * Everything about a surface that a summary is built from, gathered by the
+ * caller because only the server has it all.
+ *
+ * A bundle rather than four positional arguments: `prepare` took three and this
+ * change would have made it five, at which point the call site stops being
+ * readable and a transposed pair of optional strings compiles fine.
+ */
+export type SurfaceSnapshot = {
+  transcriptPath?: string
+  sourceAgentSessionId?: string
+  /** Drives the caution note. See `PENDING_TURN_CAUTION`. */
+  claudeState?: ClaudeState
+  /** The un-flushed final turn, when the surface is parked on one. */
+  pendingTurn?: PendingTurn
+}
+
 /** A validated summary request, ready to commit to. */
 interface Prepared {
   nodeId: NodeId
   transcriptPath: string
   sourceAgentSessionId?: string
   messages: TranscriptMessage[]
+  /** Prefixed to the initial answer when set. See `PENDING_TURN_CAUTION`. */
+  caution?: string
+  /** Which interactive tool's input was injected, if any. Audited. */
+  injectedTool?: PendingTurn['tool']
 }
 
 interface Conversation {
@@ -145,6 +189,8 @@ interface Conversation {
   nodeId: NodeId
   sourceAgentSessionId?: string
   haikuHistory: HaikuMessage[]
+  /** Prefixed to this conversation's first answer only. See `PENDING_TURN_CAUTION`. */
+  caution?: string
   voice?: string
   speechId?: string
   /** The run currently allowed to act on this conversation. See `Attempt`. */
@@ -281,10 +327,10 @@ export class SummaryChat {
    * stop that only worked on the surface you happened to be looking at would
    * leave them hunting for the one that is talking.
    */
-  async toggle(nodeId: NodeId | undefined, transcriptPath?: string, sourceAgentSessionId?: string): Promise<ToggleResult> {
+  async toggle(nodeId: NodeId | undefined, snapshot: SurfaceSnapshot = {}): Promise<ToggleResult> {
     if (await this.cancelAll()) return { outcome: 'cancelled' }
     if (!nodeId) return { outcome: 'rejected', message: 'Focus an agent terminal to start Summary Chat.' }
-    const prepared = this.prepare(nodeId, transcriptPath, sourceAgentSessionId)
+    const prepared = this.prepare(nodeId, snapshot)
     if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
     // Answer the press now rather than when the answer is ready. The exchange
     // takes seconds; a confirmation that waited for it would land long after
@@ -324,19 +370,16 @@ export class SummaryChat {
    * answered immediately, while a caller that wants to *observe* the answer —
    * every test here — wants to await it.
    */
-  async start(nodeId: NodeId, transcriptPath: string | undefined, sourceAgentSessionId?: string): Promise<ToggleResult> {
-    const prepared = this.prepare(nodeId, transcriptPath, sourceAgentSessionId)
+  async start(nodeId: NodeId, snapshot: SurfaceSnapshot = {}): Promise<ToggleResult> {
+    const prepared = this.prepare(nodeId, snapshot)
     if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
     await this.run(prepared)
     return { outcome: 'started' }
   }
 
   /** Everything a summary needs before it commits to anything, or why it can't. */
-  private prepare(
-    nodeId: NodeId,
-    transcriptPath: string | undefined,
-    sourceAgentSessionId?: string,
-  ): Prepared | { message: string } {
+  private prepare(nodeId: NodeId, snapshot: SurfaceSnapshot): Prepared | { message: string } {
+    const { transcriptPath, sourceAgentSessionId, claudeState, pendingTurn } = snapshot
     if (!transcriptPath) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} has no resolved transcript`)
       return { message: 'This surface has no transcript to summarize yet.' }
@@ -355,10 +398,25 @@ export class SummaryChat {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} transcript has no user-facing messages`)
       return { message: 'This transcript has no user messages to summarize yet.' }
     }
-    return { nodeId, transcriptPath, sourceAgentSessionId, messages }
+    // Appended after `selectSpeakable` has already chosen its window, so the
+    // one message the listener is actually waiting on can never be the message
+    // the budget drops — the same reasoning that exempts the anchor.
+    const withPending = appendPendingTurn(messages, pendingTurn)
+    const injected = withPending.length > messages.length
+    if (injected) {
+      serverLog(`[summary-chat] ${nodeId.slice(0, 8)} injected pending ${pendingTurn?.tool} turn (${pendingTurn?.text.length} chars)`)
+    }
+    return {
+      nodeId,
+      transcriptPath,
+      sourceAgentSessionId,
+      messages: withPending,
+      caution: injected && claudeState ? PENDING_TURN_CAUTION[claudeState] : undefined,
+      injectedTool: injected ? pendingTurn?.tool : undefined,
+    }
   }
 
-  private async run({ nodeId, transcriptPath, sourceAgentSessionId, messages }: Prepared): Promise<void> {
+  private async run({ nodeId, transcriptPath, sourceAgentSessionId, messages, caution, injectedTool }: Prepared): Promise<void> {
     // A previous conversation on this surface may still hold an open speech job
     // even when it was idle enough not to count as busy — Voice Operator parked
     // on `waiting_for_user`, say. Nothing should outlive the answer it belongs to.
@@ -369,6 +427,7 @@ export class SummaryChat {
       nodeId,
       sourceAgentSessionId,
       haikuHistory: [],
+      caution,
       voice: this.voiceFor(nodeId),
       phase: 'ready',
       lastUsedSeq: ++this.useCounter,
@@ -376,7 +435,7 @@ export class SummaryChat {
     this.conversations.set(nodeId, conversation)
     this.onStatusChanged(nodeId, 'target')
     const prompt = initialPrompt(messages)
-    this.recordInitialSnapshot(conversation, transcriptPath, messages, prompt)
+    this.recordInitialSnapshot(conversation, transcriptPath, messages, prompt, injectedTool)
     await this.ask(conversation, prompt, 'initial')
   }
 
@@ -453,7 +512,11 @@ export class SummaryChat {
     this.setPhase(conversation, 'thinking')
     let monitoring = false
     try {
-      const text = await this.askHaiku(conversation, prompt, attempt)
+      // Initial only. On a follow-up the listener has already been warned, and
+      // repeating it every turn would cost them the warning's meaning.
+      const text = await this.askHaiku(
+        conversation, prompt, attempt, kind === 'initial' ? conversation.caution : undefined,
+      )
       // Audited before the ownership check: the request was made and the tokens
       // were spent, whether or not anyone still wants the answer.
       this.deps.audit.append({
@@ -532,7 +595,9 @@ export class SummaryChat {
    * directly with the Claude Code OAuth credential kept in the macOS Keychain.
    * Keep a bounded history locally because this endpoint is stateless.
    */
-  private async askHaiku(conversation: Conversation, prompt: string, attempt: Attempt): Promise<string> {
+  private async askHaiku(
+    conversation: Conversation, prompt: string, attempt: Attempt, caution?: string,
+  ): Promise<string> {
     const pending: HaikuMessage = { role: 'user', content: prompt }
     const messages = boundedHaikuHistory([...conversation.haikuHistory, pending])
     const response = await this.deps.fetch(HAIKU_URL, {
@@ -566,11 +631,29 @@ export class SummaryChat {
       .join('')
       .trim()
     if (!text) throw new Error('Messages API returned no text')
-    conversation.haikuHistory = boundedHaikuHistory([...conversation.haikuHistory, pending, { role: 'assistant', content: text }])
-    return text
+    // The caution joins the answer here, before it is either stored or spoken,
+    // so the stored string and the spoken string stay the same string.
+    // `redactUnheard` maps Voice Operator's `character_offset` onto the stored
+    // answer; speaking a prefix that the history does not contain would shift
+    // every interruption offset by its length, silently.
+    const answer = caution ? `${caution} ${text}` : text
+    conversation.haikuHistory = boundedHaikuHistory([...conversation.haikuHistory, pending, { role: 'assistant', content: answer }])
+    return answer
   }
 
-  private recordInitialSnapshot(conversation: Conversation, transcriptPath: string, messages: TranscriptMessage[], prompt: string): void {
+  /**
+   * Persist what this summary was built from.
+   *
+   * `messageCount` against a snapshot of the prompt is what made the un-flushed
+   * turn diagnosable at all — a surface mid-proposal audited as two messages,
+   * and the prompt file proved Haiku had never been shown the question. Naming
+   * the injected tool keeps that diagnosis a field lookup rather than an
+   * investigation the next time a spoken answer sounds wrong.
+   */
+  private recordInitialSnapshot(
+    conversation: Conversation, transcriptPath: string, messages: TranscriptMessage[], prompt: string,
+    injectedTool?: PendingTurn['tool'],
+  ): void {
     try {
       const snapshotPath = this.deps.audit.writeSnapshot(conversation.auditId, prompt)
       const messageCharacters = messages.reduce((total, message) => total + message.text.length, 0)
@@ -579,6 +662,7 @@ export class SummaryChat {
         sourceAgentSessionId: conversation.sourceAgentSessionId ?? null,
         transcriptPath, snapshotPath, messageCount: messages.length,
         messageCharacters, promptCharacters: prompt.length,
+        injectedTool: injectedTool ?? null, caution: conversation.caution ?? null,
       })
     } catch (err) {
       serverLog(`[summary-chat] failed to record audit snapshot: ${err instanceof Error ? err.message : String(err)}`)
@@ -1037,6 +1121,25 @@ function selectSpeakable(all: TranscriptMessage[]): TranscriptMessage[] {
   return Array.from(kept).sort((a, b) => a - b).map(index => all[index])
 }
 
+/**
+ * Add the un-flushed turn to the window, unless the transcript already has it.
+ *
+ * The dedupe is not defensive padding: a chord pressed just after the listener
+ * answers finds the cache still populated *and* the transcript finally written,
+ * and appending then would hand Haiku the same question twice and invite it to
+ * report two of them. Matching on rendered text is what makes that comparable
+ * at all — `speakableToolText` renders the hook payload and the transcript
+ * block through one function precisely so these two strings are identical.
+ */
+function appendPendingTurn(
+  messages: TranscriptMessage[],
+  pending: PendingTurn | undefined,
+): TranscriptMessage[] {
+  if (!pending) return messages
+  if (messages.some(message => message.role === 'assistant' && message.text === pending.text)) return messages
+  return [...messages, { role: 'assistant', text: pending.text }]
+}
+
 function extractMessage(entry: Record<string, any>): TranscriptMessage | undefined {
   // Claude's transcript shape.
   if ((entry.type === 'user' || entry.type === 'assistant') && entry.message) {
@@ -1065,13 +1168,6 @@ function extractMessage(entry: Record<string, any>): TranscriptMessage | undefin
   return undefined
 }
 
-/**
- * Tools whose input *is* the user-facing answer. Cursor writes plans via
- * CreatePlan; Claude via ExitPlanMode. Everything else (Bash, Grep, …) stays
- * out of the spoken summary.
- */
-const PLAN_TOOL_NAMES = new Set(['CreatePlan', 'ExitPlanMode'])
-
 function contentText(content: unknown): string {
   if (typeof content === 'string') return content.trim()
   if (!Array.isArray(content)) return ''
@@ -1085,25 +1181,12 @@ function contentText(content: unknown): string {
       continue
     }
     if (type === 'tool_use') {
-      const plan = planTextFromToolUse(block as { name?: unknown; input?: unknown })
-      if (plan) parts.push(plan)
+      const spoken = speakableToolText(
+        (block as { name?: unknown }).name,
+        (block as { input?: unknown }).input,
+      )
+      if (spoken) parts.push(spoken)
     }
   }
   return parts.join('\n\n').trim()
-}
-
-function planTextFromToolUse(block: { name?: unknown; input?: unknown }): string | undefined {
-  if (typeof block.name !== 'string' || !PLAN_TOOL_NAMES.has(block.name)) return undefined
-  const input = block.input
-  if (!input || typeof input !== 'object') return undefined
-  const plan = (input as { plan?: unknown }).plan
-  if (typeof plan !== 'string' || !plan.trim()) return undefined
-  const name = (input as { name?: unknown }).name
-  const overview = (input as { overview?: unknown }).overview
-  const sections: string[] = [
-    typeof name === 'string' && name.trim() ? `Plan: ${name.trim()}` : 'Plan',
-  ]
-  if (typeof overview === 'string' && overview.trim()) sections.push(overview.trim())
-  sections.push(plan.trim())
-  return sections.join('\n\n')
 }
