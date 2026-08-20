@@ -19,6 +19,25 @@ const HAIKU_URL = 'https://api.anthropic.com/v1/messages'
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_HAIKU_HISTORY_MESSAGES = 12
 /**
+ * How many of a run's tool calls are named individually.
+ *
+ * The tail, not the head: "what is it doing now" is the question a spoken
+ * summary answers, and the newest calls are the ones that answer it. The rest
+ * are counted rather than dropped silently — a trace that quietly truncated
+ * would read as a complete account of a much smaller run.
+ */
+const TOOL_RUN_LISTED = 10
+/** Per-call budget. Long enough to identify a target, short enough to stay speakable. */
+const TOOL_TARGET_CHARS = 90
+/**
+ * Marks a synthetic message as a record of what the agent *did*.
+ *
+ * Explicit because these lines enter the same list as things the agent *said*,
+ * and a summary that reports a shell command as a statement is worse than one
+ * that omits it. `SUMMARY_SYSTEM_PROMPT` tells Haiku what the marker means.
+ */
+const TOOL_ACTIVITY_MARKER = '[agent tool activity, not speech]'
+/**
  * Voices Summary Chat will never pick.
  *
  * Two lists because the two reasons age differently. A blocked *id* is a
@@ -70,7 +89,7 @@ const SPEECH_POLL_INTERVAL_MS = 250
  * failure worth a line of its own.
  */
 const SPEECH_STALL_REPORT_MS = (SPEECH_LONG_POLL_SECONDS + 15) * 1_000
-const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Your first task is to summarize the coding-agent's messages in the latest "turn", which starts at the user's latest substantial message. A bare request to continue is not substantial; a short answer such as "yes" is substantial. Speak at most three concise sentences of plain English. The user can ask follow up questions, so make it clear where more info is available. Do not self-identify as the coding-agent, instead refer to it as "the agent". By default, skip summarizing the user's messages, since they probably already know what they wrote. Note that you have a chunk of conversation and earlier messages may be invalidated by later ones. Focus on what the agent concluded, accomplished, is blocked on, or needs next in response to that current request. Do not recap earlier work unless it is essential to make the current-turn answer intelligible. If the agent needs something from the user, make certain to include that information last. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words which can be spoken.`
+const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Your first task is to summarize the coding-agent's messages in the latest "turn", which starts at the user's latest substantial message. A bare request to continue is not substantial; a short answer such as "yes" is substantial. Speak at most three concise sentences of plain English. The user can ask follow up questions, so make it clear where more info is available. Do not self-identify as the coding-agent, instead refer to it as "the agent". By default, skip summarizing the user's messages, since they probably already know what they wrote. Note that you have a chunk of conversation and earlier messages may be invalidated by later ones. Focus on what the agent concluded, accomplished, is blocked on, or needs next in response to that current request. Do not recap earlier work unless it is essential to make the current-turn answer intelligible. If the agent needs something from the user, make certain to include that information last. A message beginning "${TOOL_ACTIVITY_MARKER}" is a record of actions the agent took, not words it said: describe what it was working on and never read a command, path, or pattern aloud verbatim. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words which can be spoken.`
 
 /**
  * Marks where a spoken answer was cut off, in the history resent to Haiku.
@@ -1073,16 +1092,117 @@ export function readTranscript(filePath: string): TranscriptMessage[] {
  * fixture text rather than files on disk.
  */
 export function parseTranscript(raw: string): TranscriptMessage[] {
-  const result: TranscriptMessage[] = []
+  const extracted: Extracted[] = []
   for (const line of raw.split('\n')) {
     if (!line) continue
     try {
-      const entry = JSON.parse(line) as Record<string, any>
-      const message = extractMessage(entry)
-      if (message) result.push(message)
+      extracted.push(...extractEntry(JSON.parse(line) as Record<string, any>))
     } catch { /* Ignore a partial JSONL write. */ }
   }
-  return selectSpeakable(result)
+  return selectSpeakable(coalesceToolRuns(extracted))
+}
+
+/**
+ * One tool call, reduced to what a listener would want to hear about it.
+ *
+ * The name alone is nearly useless — "the agent ran thirty-five Bash commands"
+ * describes a night of work and a typo equally well. The target is what carries
+ * the meaning, so it is kept and bounded rather than dropped.
+ */
+type ToolCall = { name: string; target?: string }
+
+/**
+ * What one transcript entry yields.
+ *
+ * Two kinds because tool calls have to be *coalesced* before they can become
+ * messages, and coalescing needs to see the run. An entry can yield both: an
+ * agent that says something and then calls a tool writes one entry per block,
+ * but older transcripts put them together.
+ */
+type Extracted =
+  | { kind: 'message'; role: 'user' | 'assistant'; text: string }
+  | { kind: 'tools'; calls: ToolCall[] }
+
+/**
+ * Turn runs of tool calls into one synthetic assistant message each.
+ *
+ * Coalescing is the whole point. A long unattended run is exactly what a spoken
+ * summary is most useful for, and it is also the run with the least prose: one
+ * observed turn spent six minutes on 35 shell calls and 24 thinking blocks
+ * while emitting a single sentence, so the transcript offered two speakable
+ * messages and Haiku correctly reported that nothing had been decided. Emitting
+ * one message *per call* would have been worse than nothing — 35 messages would
+ * have consumed the entire budget and pushed the prose out of the window.
+ *
+ * Thinking blocks cannot help here: the transcript stores a signature with the
+ * text empty, so there is nothing in them to read.
+ */
+function coalesceToolRuns(items: Extracted[]): TranscriptMessage[] {
+  const messages: TranscriptMessage[] = []
+  let run: ToolCall[] = []
+  const flush = (): void => {
+    if (!run.length) return
+    messages.push({ role: 'assistant', text: renderToolRun(run) })
+    run = []
+  }
+  for (const item of items) {
+    if (item.kind === 'tools') { run.push(...item.calls); continue }
+    // Prose closes the run it follows, so the trace stays in step with the
+    // narration around it rather than collapsing a whole turn into one blob.
+    flush()
+    messages.push({ role: item.role, text: item.text })
+  }
+  flush()
+  return messages
+}
+
+function renderToolRun(calls: ToolCall[]): string {
+  const counts = new Map<string, number>()
+  for (const call of calls) counts.set(call.name, (counts.get(call.name) ?? 0) + 1)
+  const tally = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, count]) => (count > 1 ? `${name} x${count}` : name))
+    .join(', ')
+  const listed = calls.slice(-TOOL_RUN_LISTED)
+  const omitted = calls.length - listed.length
+  const plural = (n: number): string => (n === 1 ? 'call' : 'calls')
+  const header = `${TOOL_ACTIVITY_MARKER} ${calls.length} ${plural(calls.length)}: ${tally}.`
+  const elision = omitted ? `\n(${omitted} earlier ${plural(omitted)} not listed.)` : ''
+  const lines = listed.map(call => (call.target ? `- ${call.name}: ${call.target}` : `- ${call.name}`))
+  return `${header}${elision}\n${lines.join('\n')}`
+}
+
+/**
+ * The most identifying string in a tool's input.
+ *
+ * A priority-ordered key sweep rather than a per-tool table: the table would be
+ * a second list of tool names to keep in step with Claude Code, and would go
+ * quietly wrong for every tool added after it was written. This ordering reads
+ * the right field for each of the tools that actually appear — `file_path` for
+ * Read and Edit, `pattern` for Grep and Glob, `command` for Bash, `url` for
+ * WebFetch, `description` for Task — and degrades to "no target" rather than to
+ * a wrong one.
+ */
+const TOOL_TARGET_KEYS = [
+  'file_path', 'notebook_path', 'pattern', 'command', 'url', 'path', 'description', 'query', 'prompt',
+]
+
+function toolTarget(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  for (const key of TOOL_TARGET_KEYS) {
+    const raw = (input as Record<string, unknown>)[key]
+    // Codex passes a shell invocation as an argv array; everything else is a
+    // string. Both describe one target, so both render as one.
+    const value = Array.isArray(raw)
+      ? raw.filter((part): part is string => typeof part === 'string').join(' ')
+      : raw
+    if (typeof value !== 'string' || !value.trim()) continue
+    // Commands are routinely multi-line. A trace that kept the newlines would
+    // break the one-line-per-call shape this is readable because of.
+    const collapsed = value.trim().replace(/\s+/g, ' ')
+    return collapsed.length > TOOL_TARGET_CHARS ? `${collapsed.slice(0, TOOL_TARGET_CHARS)}…` : collapsed
+  }
+  return undefined
 }
 
 /**
@@ -1140,53 +1260,84 @@ function appendPendingTurn(
   return [...messages, { role: 'assistant', text: pending.text }]
 }
 
-function extractMessage(entry: Record<string, any>): TranscriptMessage | undefined {
-  // Claude's transcript shape.
-  if ((entry.type === 'user' || entry.type === 'assistant') && entry.message) {
-    const text = contentText(entry.message.content)
-    return text ? { role: entry.type, text } : undefined
-  }
-  // Cursor's JSONL uses role at the top level rather than type.
-  if ((entry.role === 'user' || entry.role === 'assistant') && entry.message) {
-    const text = contentText(entry.message.content)
-    return text ? { role: entry.role, text } : undefined
-  }
+function extractEntry(entry: Record<string, any>): Extracted[] {
+  // Claude's transcript shape, and Cursor's, which differ only in whether the
+  // role sits on `type` or `role`.
+  const role = entry.type === 'user' || entry.type === 'assistant' ? entry.type
+    : entry.role === 'user' || entry.role === 'assistant' ? entry.role
+      : undefined
+  if (role && entry.message) return fromContent(role, entry.message.content)
   // Codex writes a separate canonical user_message event. Using it avoids
   // accidentally treating its injected environment/developer context as human
   // speech. Assistant output remains in response_item messages.
   if (entry.type === 'event_msg' && entry.payload?.type === 'user_message' && typeof entry.payload.message === 'string') {
     const text = entry.payload.message.trim()
-    return text ? { role: 'user', text } : undefined
+    return text ? [{ kind: 'message', role: 'user', text }] : []
   }
-  // Codex rollout shape. Ignore developer/system messages and tool calls.
+  // Codex rollout shape. Ignore developer/system messages.
   if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-    const role = entry.payload.role
-    if (role !== 'assistant') return undefined
-    const text = contentText(entry.payload.content)
-    return text ? { role, text } : undefined
+    if (entry.payload.role !== 'assistant') return []
+    return fromContent('assistant', entry.payload.content)
   }
-  return undefined
+  // Codex records a tool call as its own entry, with the input as a JSON string
+  // rather than an object — the one shape difference that matters here.
+  if (entry.type === 'response_item' && entry.payload?.type === 'function_call') {
+    const call = codexFunctionCall(entry.payload)
+    return call ? [{ kind: 'tools', calls: [call] }] : []
+  }
+  return []
 }
 
-function contentText(content: unknown): string {
-  if (typeof content === 'string') return content.trim()
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
+function codexFunctionCall(payload: Record<string, any>): ToolCall | undefined {
+  if (typeof payload.name !== 'string' || !payload.name) return undefined
+  let input: unknown
+  try {
+    input = typeof payload.arguments === 'string' ? JSON.parse(payload.arguments) : payload.arguments
+  } catch { /* An unparseable argument string still leaves a usable tool name. */ }
+  return { name: payload.name, target: toolTarget(input) }
+}
+
+/**
+ * Split one message's content blocks into what was said and what was done.
+ *
+ * The two are separated here rather than downstream because only this point can
+ * see both: `speakableToolText` promotes the handful of tools whose input *is*
+ * the message back into speech, and everything else it declines becomes
+ * activity. Without that split a plan would be filed as a shell command, and a
+ * shell command would be quoted as though the agent had said it.
+ */
+function fromContent(role: 'user' | 'assistant', content: unknown): Extracted[] {
+  if (typeof content === 'string') {
+    const text = content.trim()
+    return text ? [{ kind: 'message', role, text }] : []
+  }
+  if (!Array.isArray(content)) return []
+  const spokenParts: string[] = []
+  const calls: ToolCall[] = []
   for (const block of content) {
     if (!block || typeof block !== 'object') continue
     const type = (block as { type?: unknown }).type
     if (type === 'text' || type === 'input_text' || type === 'output_text') {
       const text = (block as { text?: unknown }).text
-      if (typeof text === 'string' && text.trim()) parts.push(text.trim())
+      if (typeof text === 'string' && text.trim()) spokenParts.push(text.trim())
       continue
     }
-    if (type === 'tool_use') {
-      const spoken = speakableToolText(
-        (block as { name?: unknown }).name,
-        (block as { input?: unknown }).input,
-      )
-      if (spoken) parts.push(spoken)
+    if (type !== 'tool_use') continue
+    const { name, input } = block as { name?: unknown; input?: unknown }
+    const spoken = speakableToolText(name, input)
+    if (spoken) { spokenParts.push(spoken); continue }
+    // Only the agent acts. A `tool_use` under a user role would be a shape this
+    // code does not understand, and inventing activity from it would be worse
+    // than ignoring it.
+    if (role === 'assistant' && typeof name === 'string' && name) {
+      calls.push({ name, target: toolTarget(input) })
     }
   }
-  return parts.join('\n\n').trim()
+  const out: Extracted[] = []
+  // Speech first: an agent narrates, then acts, and the trace reads as the
+  // consequence of the sentence above it.
+  if (spokenParts.length) out.push({ kind: 'message', role, text: spokenParts.join('\n\n') })
+  if (calls.length) out.push({ kind: 'tools', calls })
+  return out
 }
+

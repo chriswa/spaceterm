@@ -1552,3 +1552,184 @@ describe('a surface parked on an interactive tool', () => {
     })
   })
 })
+
+/**
+ * A long unattended run is what a spoken summary is most useful for, and it is
+ * also the run with the least prose. One observed turn spent six minutes on 35
+ * shell calls while emitting a single sentence: the transcript offered two
+ * speakable messages, and Haiku correctly reported that nothing had been
+ * decided. Tool calls are the only record of what actually happened.
+ */
+describe('tool activity in a transcript', () => {
+  const line = (o: unknown): string => JSON.stringify(o)
+  const MARKER = '[agent tool activity, not speech]'
+
+  const toolUse = (name: string, input: unknown): string =>
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } })
+  /** Claude writes one entry per content block, with results interleaved between them. */
+  const toolResult = (): string =>
+    line({ type: 'user', message: { content: [{ type: 'tool_result', content: 'output' }] } })
+  const said = (role: string, text: string): string =>
+    line({ type: role, message: { content: [{ type: 'text', text }] } })
+
+  const run = (...lines: string[]): TranscriptMessage[] => parseTranscript(lines.join('\n'))
+  const activity = (messages: TranscriptMessage[]): TranscriptMessage[] =>
+    messages.filter((m) => m.text.startsWith(MARKER))
+
+  it('records what the agent did when it said almost nothing', () => {
+    const messages = run(
+      said('user', 'find the leak'),
+      toolUse('Bash', { command: 'ps aux | grep worker' }), toolResult(),
+      toolUse('Read', { file_path: 'src/queue.ts' }), toolResult(),
+    )
+    expect(activity(messages)).toHaveLength(1)
+    expect(activity(messages)[0].text).toContain('ps aux | grep worker')
+    expect(activity(messages)[0].text).toContain('src/queue.ts')
+  })
+
+  // Emitting one message per call would be worse than nothing: 35 of them would
+  // consume the whole budget and push the prose out of the window entirely.
+  it('coalesces a run into a single message despite interleaved results', () => {
+    const lines = ['{"type":"user","message":{"content":"go"}}']
+    for (let i = 0; i < 35; i++) { lines.push(toolUse('Bash', { command: `step ${i}` }), toolResult()) }
+    const messages = run(...lines)
+    expect(activity(messages)).toHaveLength(1)
+    expect(activity(messages)[0].text).toContain('35 calls')
+    expect(activity(messages)[0].text).toContain('Bash x35')
+  })
+
+  it('names the newest calls and says how many it left out', () => {
+    const lines = ['{"type":"user","message":{"content":"go"}}']
+    for (let i = 0; i < 35; i++) lines.push(toolUse('Bash', { command: `step ${i}` }))
+    const text = activity(run(...lines))[0].text
+    expect(text).toContain('step 34')
+    expect(text).toContain('step 25')
+    expect(text).not.toContain('step 24')
+    // Silent truncation would read as a complete account of a much smaller run.
+    expect(text).toContain('25 earlier calls not listed')
+  })
+
+  it('keeps a short run whole, with nothing to elide', () => {
+    const text = activity(run(
+      said('user', 'go'),
+      toolUse('Bash', { command: 'ls' }),
+    ))[0].text
+    expect(text).toContain('1 call: Bash.')
+    expect(text).not.toContain('not listed')
+  })
+
+  it('closes a run at each piece of prose, keeping the trace in step', () => {
+    const messages = run(
+      said('user', 'go'),
+      toolUse('Bash', { command: 'first' }),
+      said('assistant', 'Now I will check the other side.'),
+      toolUse('Bash', { command: 'second' }),
+    )
+    expect(messages.map((m) => m.text.startsWith(MARKER)))
+      .toEqual([false, true, false, true])
+    expect(messages[1].text).toContain('first')
+    expect(messages[3].text).toContain('second')
+  })
+
+  it('puts an entry\'s prose before the calls it introduces', () => {
+    const messages = run(
+      said('user', 'go'),
+      line({ type: 'assistant', message: { content: [
+        { type: 'text', text: 'Let me look.' },
+        { type: 'tool_use', name: 'Bash', input: { command: 'ls' } },
+      ] } }),
+    )
+    expect(messages[1].text).toBe('Let me look.')
+    expect(messages[2].text).toContain(MARKER)
+  })
+
+  // The name alone describes a night of work and a typo equally well.
+  describe('the target it picks', () => {
+    const targetOf = (name: string, input: unknown): string =>
+      activity(run(said('user', 'go'), toolUse(name, input)))[0].text
+
+    it.each([
+      ['Read', { file_path: 'src/a.ts' }, 'src/a.ts'],
+      ['Edit', { file_path: 'src/b.ts', old_string: 'x' }, 'src/b.ts'],
+      ['Grep', { pattern: 'applySchema', path: 'src' }, 'applySchema'],
+      ['Glob', { pattern: '**/*.test.ts' }, '**/*.test.ts'],
+      ['Bash', { command: 'npm test', description: 'Run tests' }, 'npm test'],
+      ['WebFetch', { url: 'https://example.com/x' }, 'https://example.com/x'],
+      ['Task', { description: 'Audit the parser', prompt: 'long prompt' }, 'Audit the parser'],
+    ])('reads the identifying field for %s', (name, input, expected) => {
+      expect(targetOf(name, input)).toContain(expected)
+    })
+
+    it('still records a call whose input it cannot read', () => {
+      const text = targetOf('TodoWrite', { todos: [] })
+      expect(text).toContain('TodoWrite')
+    })
+
+    // A trace that kept the newlines would lose the one-line-per-call shape it
+    // is readable because of.
+    it('collapses a multi-line command onto one line and bounds it', () => {
+      const text = targetOf('Bash', { command: `echo one\n${'x'.repeat(400)}` })
+      const traceLines = text.split('\n').filter((l) => l.startsWith('- '))
+      expect(traceLines).toHaveLength(1)
+      expect(traceLines[0].length).toBeLessThan(140)
+      expect(text).toContain('…')
+    })
+  })
+
+  // These carry the message itself, so they stay speech. Filing a plan as a
+  // shell command would bury it.
+  it('leaves the interactive tools as messages rather than activity', () => {
+    const messages = run(
+      said('user', 'go'),
+      toolUse('ExitPlanMode', { plan: 'Supervise the workers.' }),
+      toolUse('AskUserQuestion', { questions: [{ question: 'Ship it?', header: 'Scope' }] }),
+    )
+    expect(activity(messages)).toHaveLength(0)
+    expect(messages.some((m) => m.text.includes('Supervise the workers.'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Ship it?'))).toBe(true)
+  })
+
+  it('ignores a tool call attributed to the user', () => {
+    const messages = run(
+      said('user', 'go'),
+      line({ type: 'user', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'rm -rf /' } }] } }),
+    )
+    expect(activity(messages)).toHaveLength(0)
+  })
+
+  // Thinking is stored as a signature with the text empty, so there is nothing
+  // in it to read and nothing to report.
+  it('reports nothing for thinking blocks', () => {
+    const messages = run(
+      said('user', 'go'),
+      line({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: '', signature: 'abc' }] } }),
+    )
+    expect(messages).toEqual([{ role: 'user', text: 'go' }])
+  })
+
+  it('reads a Codex function call, whose input is a JSON string', () => {
+    const messages = run(
+      line({ type: 'event_msg', payload: { type: 'user_message', message: 'go' } }),
+      line({ type: 'response_item', payload: {
+        type: 'function_call', name: 'shell',
+        arguments: JSON.stringify({ command: ['bash', '-lc', 'ls -la'], timeout_ms: 120000 }),
+      } }),
+    )
+    expect(activity(messages)[0].text).toContain('shell')
+    expect(activity(messages)[0].text).toContain('bash -lc ls -la')
+  })
+
+  it('keeps a Codex call whose arguments will not parse', () => {
+    const messages = run(
+      line({ type: 'event_msg', payload: { type: 'user_message', message: 'go' } }),
+      line({ type: 'response_item', payload: { type: 'function_call', name: 'shell', arguments: '{broken' } }),
+    )
+    expect(activity(messages)[0].text).toContain('shell')
+  })
+
+  // Activity is not speech, so it cannot stand in for the user turn a summary
+  // anchors on. A transcript of pure tool calls still has nothing to summarize.
+  it('does not let activity pass as a user message', () => {
+    expect(run(toolUse('Bash', { command: 'ls' }))).toEqual([])
+  })
+})
