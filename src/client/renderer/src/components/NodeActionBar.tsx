@@ -41,6 +41,12 @@ export interface NodeActionBarProps {
   isResizing?: boolean
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   showClose?: boolean
+  /**
+   * False when the node has live children — archiving is only allowed from
+   * leaf nodes. The X button greys out; clicking it (or Cmd+W) still routes
+   * through `onClose`, which shakes instead of archiving.
+   */
+  canClose?: boolean
   onClose: (id: NodeId) => void
 }
 
@@ -60,7 +66,7 @@ export function NodeActionBar({
   archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
   onStartReparent, isReparenting,
   onStartResize, isResizing,
-  onAddNode, showClose, onClose,
+  onAddNode, showClose, canClose = true, onClose,
   variant = 'card',
   onActionInvoked,
 }: NodeActionBarProps & {
@@ -421,8 +427,8 @@ export function NodeActionBar({
       )}
       {showClose && (
         <button
-          className="node-titlebar__close"
-          data-tooltip="Archive"
+          className={`node-titlebar__close${canClose ? '' : ' node-titlebar__close--disabled'}`}
+          data-tooltip={canClose ? 'Archive' : "Can't archive — has child nodes"}
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); onClose(nodeId); onActionInvoked?.() }}
           onMouseDown={(e) => e.stopPropagation()}

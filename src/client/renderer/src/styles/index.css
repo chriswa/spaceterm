@@ -859,9 +859,16 @@ html, body, #root {
   justify-content: center;
 }
 
-.node-titlebar__close:hover {
+.node-titlebar__close:hover:not(.node-titlebar__close--disabled) {
   background: #181825;
   color: #cdd6f4 !important;
+}
+
+/* Greyed out when the node has child nodes — archiving is leaf-only.
+   Still clickable so the click gives shake feedback rather than nothing. */
+.node-titlebar__close--disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .terminal-card__body {
@@ -2857,7 +2864,7 @@ html, body, #root {
   position: relative;
 }
 
-.floating-toolbar .node-titlebar__close:hover,
+.floating-toolbar .node-titlebar__close:hover:not(.node-titlebar__close--disabled),
 .floating-toolbar .node-titlebar__color-btn:hover,
 .floating-toolbar .node-titlebar__archive-btn:hover:not(:disabled),
 .floating-toolbar .node-titlebar__sessions-btn:hover:not(:disabled),

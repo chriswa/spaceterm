@@ -42,6 +42,18 @@ export function getDescendantIds(
 }
 
 /**
+ * True if any live node has `nodeId` as its parent, i.e. the node is NOT a leaf.
+ * The tree has no forward child links, so leaf-ness is a scan over parentId.
+ * Archived children (`archivedChildren`) don't count — those aren't live nodes.
+ */
+export function hasLiveChildren(
+  nodes: Record<string, NodeData>,
+  nodeId: NodeId
+): boolean {
+  return nodeIdsOf(nodes).some(k => nodes[k].parentId === nodeId)
+}
+
+/**
  * Check if `potentialAncestorId` is an ancestor of `nodeId` by walking up parentId links.
  * Used to prevent reparenting a node to itself or one of its descendants (which would create a cycle).
  */

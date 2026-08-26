@@ -29,7 +29,7 @@ import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset } from './lib/tree-utils'
+import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
@@ -1051,9 +1051,16 @@ export function App() {
   }, [])
 
   const handleRemoveNode = useCallback(async (id: NodeId) => {
-    cwdMapRef.current.delete(id)
     const { nodes } = useNodeStore.getState()
     const node = nodes[id]
+    // Archiving is only allowed from leaf nodes. Archiving a parent would sweep
+    // its whole subtree into archivedChildren — easy to trigger by accident with
+    // Cmd+W or the X button. Refuse and shake instead of silently swallowing a tree.
+    if (node && hasLiveChildren(nodes, id)) {
+      shakeCamera()
+      return
+    }
+    cwdMapRef.current.delete(id)
     if (node && !isDisposable(node) && !getUndoInProgress()) {
       const reparentedChildIds = nodeIdsOf(nodes).filter(k => nodes[k].parentId === id)
       const entry: UndoArchiveEntry = {
@@ -1069,7 +1076,7 @@ export function App() {
     }
     await sendArchive(id)
     // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
-  }, [])
+  }, [shakeCamera])
 
   const executeUndoRedo = useCallback((entry: UndoEntry, direction: 'undo' | 'redo') => {
     switch (entry.kind) {

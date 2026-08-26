@@ -7,6 +7,7 @@ import type { AddNodeType } from './AddNodeBody'
 import { NodeActionBar } from './NodeActionBar'
 import type { NodeActionBarProps } from './NodeActionBar'
 import { nodeActionRegistry } from '../lib/action-registry'
+import { hasLiveChildren } from '../lib/tree-utils'
 import { cardChromeScale, ROOT_CHROME_SCALE } from '../../../../shared/card-types'
 import { useNodeStore } from '../stores/nodeStore'
 import type { NodeAlert } from '../../../../shared/state'
@@ -85,6 +86,11 @@ export function CardShell({
   const hasAlerts = alerts.length > 0
   const hasUnread = hasAlerts && alerts.some(a => a.timestamp > (alertsReadTimestamp ?? 0))
 
+  // Archiving is only allowed from leaf nodes — a node with live children greys
+  // out its X button. Subscribing to a boolean means we only re-render when
+  // leaf-ness actually flips, not on every unrelated store change.
+  const canClose = useNodeStore(s => !hasLiveChildren(s.nodes, nodeId))
+
   // Build NodeActionBar props and register in the action registry
   const actionBarProps: NodeActionBarProps = {
     nodeId, preset, focused,
@@ -94,7 +100,7 @@ export function CardShell({
     archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
     onStartReparent, isReparenting,
     onStartResize, isResizing,
-    onAddNode, showClose, onClose,
+    onAddNode, showClose, canClose, onClose,
   }
 
   // Register action props so FloatingToolbar can read them
