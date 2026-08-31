@@ -66,6 +66,11 @@ export const ZOOM_RUBBER_BAND_LOW = 0.02
 export const ZOOM_SNAP_BACK_SPEED = 15
 export const ZOOM_SNAP_BACK_DELAY = 150
 
+// Fraction of the viewport left as empty margin on each side when shift-drag
+// selecting a region of nodes and flying the camera to fit them. 0.03 keeps a
+// constant ~3% pixel gutter around the fitted content regardless of zoom scale.
+export const RTS_SELECT_FIT_PADDING = 0.03
+
 export const FOCUS_SPEED = 40
 export const UNFOCUS_SPEED = 24
 
