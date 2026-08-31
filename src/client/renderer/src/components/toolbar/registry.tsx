@@ -6,6 +6,7 @@ import { PowerMonitor } from './PowerMonitor'
 import {
   CameraLockToggle,
   CopyCleanupToggle,
+  DimStaleToggle,
   DebugDropdown,
   FitToMonitorButton,
   FpsMetric,
@@ -138,6 +139,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   { id: 'unfocused-frames', slot: 'buttons', kind: 'standalone', render: () => <UnfocusedFramesToggle /> },
   { id: 'notification-sound', slot: 'buttons', kind: 'standalone', render: () => <NotificationSoundToggle /> },
   { id: 'copy-cleanup', slot: 'buttons', kind: 'standalone', render: () => <CopyCleanupToggle /> },
+  { id: 'dim-stale', slot: 'buttons', kind: 'standalone', render: () => <DimStaleToggle /> },
 
   { id: 'fps', slot: 'status', kind: 'standalone', render: () => <FpsMetric /> },
   { id: 'zoom', slot: 'status', kind: 'host', render: (h) => <ZoomMetric zoom={h.zoom} /> },

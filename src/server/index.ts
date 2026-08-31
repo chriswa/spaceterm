@@ -36,6 +36,7 @@ import { measureCard as nodePixelSize } from '../shared/card-types'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
+import { readRestartFlag, clearRestartFlag, watchRestartFlag } from './restart-flag'
 import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher, findCursorTranscript } from './cursor-session-file-watcher'
 import { ClaudeStateMachine } from './claude-state'
@@ -212,6 +213,7 @@ let sessionManager: SessionManager
 let stateManager: StateManager
 let snapshotManager: SnapshotManager
 let sessionFileWatcher: SessionFileWatcher
+let restartFlagWatcher: (() => void) | null = null
 let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
@@ -725,6 +727,12 @@ function handleIngestMessage(msg: IngestMessage): void {
 
       const hookTime = typeof msg.ts === 'number' ? msg.ts : Date.now()
 
+      // Any hook is genuine agent activity on this surface — tool calls, turn
+      // boundaries, and question/notification hooks alike. Recorded here (not in
+      // the state machine) so hook types the state machine ignores, like the
+      // question notification, still count as an interaction.
+      stateManager.recordInteractionBySession(msg.surfaceId, hookTime)
+
       // Delegate state transition logic to the state machine
       claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
 
@@ -1051,6 +1059,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Give the acknowledgement a chance to leave the Unix socket before the
       // graceful shutdown closes all client connections.
       setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+      break
+    }
+
+    case 'restart-flag-query': {
+      const flag = readRestartFlag()
+      send(client.socket, {
+        type: 'restart-flag-result',
+        seq: msg.seq,
+        required: flag !== null,
+        reason: flag?.reason ?? ''
+      })
       break
     }
 
@@ -1473,6 +1492,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'directory-cwd': {
       try {
         stateManager.updateDirectoryCwd(msg.nodeId, msg.cwd)
+        // Human-only path — the PTY-reported cwd writes a terminal node instead.
+        stateManager.recordInteraction(msg.nodeId, Date.now())
         gitStatusPoller.pollNode(msg.nodeId)
         send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
@@ -1605,6 +1626,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       } else {
         stateManager.updateMarkdownContent(msg.nodeId, msg.content)
       }
+      // A human edited this markdown — this handler is the human-only path (an
+      // agent's emit_markdown creates a new node instead). Genuine interaction.
+      stateManager.recordInteraction(msg.nodeId, Date.now())
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -1624,6 +1648,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       } else {
         client.snapshotSessions.delete(msg.sessionId)
       }
+      break
+    }
+
+    case 'node-interaction': {
+      // Genuine user interaction with a node (currently: a keystroke into a
+      // terminal). Server-stamped so the timestamp shares one clock with hook
+      // and transcript activity.
+      stateManager.recordInteraction(msg.nodeId, Date.now())
       break
     }
 
@@ -1651,6 +1683,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'title-text': {
       try {
         stateManager.updateTitleText(msg.nodeId, msg.text)
+        // Human-only path — the auto-title summarizer writes shellTitleHistory instead.
+        stateManager.recordInteraction(msg.nodeId, Date.now())
         send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
         console.error(`title-text failed: ${err.message}`)
@@ -2222,10 +2256,6 @@ async function startServer(): Promise<void> {
     // update state (node-updated broadcast handles client sync)
     onClaudeSessionHistory: (sessionId, history) => {
       stateManager.updateClaudeSessionHistory(sessionId, history)
-    },
-    // track last interaction timestamp for footer display
-    onActivity: (sessionId) => {
-      stateManager.updateLastInteracted(sessionId, Date.now())
     }
   })
 
@@ -2266,6 +2296,20 @@ async function startServer(): Promise<void> {
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
     publishSessionLineCount(surfaceId, totalLineCount)
 
+    // The newest transcript entry's timestamp is genuine agent activity. On
+    // backfill (the whole file re-read when the watch starts) we `reset`, so a
+    // surface's `lastInteractedAt` is re-seeded from real history on load rather
+    // than inheriting a stale persisted value.
+    let newestEntryTime = 0
+    for (const entry of newEntries) {
+      const raw = entry.timestamp
+      const t = typeof raw === 'string' ? new Date(raw).getTime() : NaN
+      if (Number.isFinite(t) && t > newestEntryTime) newestEntryTime = t
+    }
+    if (newestEntryTime > 0) {
+      stateManager.recordInteractionBySession(surfaceId, newestEntryTime, { reset: isBackfill })
+    }
+
     // Plan-cache tracking: scan assistant entries for plan file writes and ExitPlanMode.
     // This runs for both backfill and live entries (plan file paths need to be ready
     // for future snapshots), but ExitPlanMode snapshotting only runs live.
@@ -2305,7 +2349,20 @@ async function startServer(): Promise<void> {
 
   // Codex's hooks expose lifecycle ids, while its rollout JSONL exposes the
   // context-window telemetry. Keep this independent of Claude-only parsing.
-  codexSessionFileWatcher = new CodexSessionFileWatcher((surfaceId, newEntries) => {
+  codexSessionFileWatcher = new CodexSessionFileWatcher((surfaceId, newEntries, _totalLineCount, isBackfill) => {
+    // Codex rollout entries carry a top-level ISO `timestamp`, like Claude's —
+    // so genuine activity feeds `lastInteractedAt` the same way (reset on the
+    // load-time backfill to re-seed from history).
+    let newestEntryTime = 0
+    for (const entry of newEntries) {
+      const raw = entry.timestamp
+      const t = typeof raw === 'string' ? new Date(raw).getTime() : NaN
+      if (Number.isFinite(t) && t > newestEntryTime) newestEntryTime = t
+    }
+    if (newestEntryTime > 0) {
+      stateManager.recordInteractionBySession(surfaceId, newestEntryTime, { reset: isBackfill })
+    }
+
     for (const entry of newEntries) {
       if (entry.type !== 'event_msg') continue
       const payload = entry.payload as Record<string, unknown> | undefined
@@ -2321,7 +2378,14 @@ async function startServer(): Promise<void> {
     }
   })
 
-  cursorSessionFileWatcher = new CursorSessionFileWatcher((surfaceId, newEntries) => {
+  cursorSessionFileWatcher = new CursorSessionFileWatcher((surfaceId, newEntries, _totalLineCount, isBackfill) => {
+    // Cursor transcript entries have no machine-readable timestamp (only a human
+    // string inside the message), so we can't date history. Live growth is
+    // genuine activity now — stamp it Date.now(); skip backfill, which we can't
+    // place in time. (Cursor's hooks already feed the historical picture.)
+    if (!isBackfill && newEntries.length > 0) {
+      stateManager.recordInteractionBySession(surfaceId, Date.now())
+    }
     claudeStateMachine.handleCursorTranscriptEntries(surfaceId, newEntries)
   })
 
@@ -2492,6 +2556,18 @@ async function startServer(): Promise<void> {
     process.exit(1)
   })
 
+  // --- Restart-required flag ---
+  //
+  // This process is starting fresh, so whatever change prompted a pending
+  // restart is now loaded — clear the flag. Then watch for it being raised again
+  // (via `npm run flag-restart`) and broadcast the change so every connected
+  // client's Restart button lights up. Connecting clients read the current state
+  // through `restart-flag-query`, which is authoritative across renderer reloads.
+  clearRestartFlag()
+  restartFlagWatcher = watchRestartFlag((flag) => {
+    broadcastToAll({ type: 'restart-required', required: flag !== null, reason: flag?.reason ?? '' })
+  })
+
   // --- Hooks socket (fire-and-forget ingest from hooks, status-line, MCP tools) ---
   const hooksServer = net.createServer((socket) => {
     socket.setEncoding('utf8')
@@ -2552,6 +2628,7 @@ async function startServer(): Promise<void> {
     gitStatusPoller.dispose()
     fileContentManager.dispose()
     sessionFileWatcher.dispose()
+    if (restartFlagWatcher) restartFlagWatcher()
     codexSessionFileWatcher.dispose()
     cursorSessionFileWatcher.dispose()
     // Awaited: Voice Operator is a separate process, so quitting mid-answer

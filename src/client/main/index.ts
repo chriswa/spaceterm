@@ -300,6 +300,10 @@ function setupIPC(): void {
     setTimeout(() => app.exit(CLIENT_RESTART_EXIT_CODE), 50)
   })
 
+  ipcMain.handle('app:restart-flag', async () => {
+    return client!.restartFlagQuery()
+  })
+
   ipcMain.handle('summary-chat:toggle', async (_event, nodeId: NodeId | undefined) => {
     logger.log(`[summary-chat] chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}`)
     const result = await client!.toggleSummaryChat(nodeId)
@@ -479,6 +483,10 @@ function setupIPC(): void {
 
   ipcMain.handle('node:crab-reorder', async (_event, order: string[]) => {
     await client!.crabReorder(order)
+  })
+
+  ipcMain.on('node:record-interaction', (_event, nodeId: NodeId) => {
+    client!.recordInteraction(nodeId)
   })
 
   ipcMain.on('node:set-terminal-mode', (_event, sessionId: PtySessionId, mode: 'live' | 'snapshot') => {
@@ -714,6 +722,12 @@ function wireClientEvents(): void {
   client!.on('saved-viewports', (viewports: Record<string, { x: number; y: number; width: number; height: number }>) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('viewports:saved', viewports)
+    }
+  })
+
+  client!.on('restart-required', (required: boolean, reason: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('restart:required', required, reason)
     }
   })
 

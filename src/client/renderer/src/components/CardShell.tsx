@@ -10,6 +10,7 @@ import { nodeActionRegistry } from '../lib/action-registry'
 import { hasLiveChildren } from '../lib/tree-utils'
 import { cardChromeScale, ROOT_CHROME_SCALE } from '../../../../shared/card-types'
 import { useNodeStore } from '../stores/nodeStore'
+import { useDimStaleStore } from '../stores/dimStaleStore'
 import type { NodeAlert } from '../../../../shared/state'
 import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
@@ -90,6 +91,13 @@ export function CardShell({
   // out its X button. Subscribing to a boolean means we only re-render when
   // leaf-ness actually flips, not on every unrelated store change.
   const canClose = useNodeStore(s => !hasLiveChildren(s.nodes, nodeId))
+
+  // "Dim stale nodes" view: darken a node whose whole subtree has gone untouched
+  // past the staleness threshold. The focused node is exempt so you can look at
+  // something stale without it fading under you (focusing is not an interaction,
+  // so it doesn't otherwise wake the node). staleIds is empty when the view is
+  // off, so this is false unless the view is on and this node qualifies.
+  const dimmed = useDimStaleStore(s => s.staleIds.has(nodeId)) && !focused
 
   // Build NodeActionBar props and register in the action registry
   const actionBarProps: NodeActionBarProps = {
@@ -192,6 +200,10 @@ export function CardShell({
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
+        // ~60% mixed with black when stale. Transition so toggling the view (and
+        // a node waking on interaction) fades rather than snaps.
+        filter: dimmed ? 'brightness(0.4)' : undefined,
+        transition: 'filter 0.25s ease',
         '--card-chrome-scale': chromeScale,
       } as CSSProperties}
       onMouseEnter={onMouseEnter}

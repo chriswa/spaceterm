@@ -14,6 +14,20 @@ Run `npm run typecheck && npm run lint` after editing files in `src/`.
 - `npm run typecheck` is the important one. Neither `tsx` (server) nor `electron-vite` (client) checks types — they strip them — so nothing else catches contract drift between `src/shared/`, `src/client/preload/`, and the renderer.
 - `npm run lint` catches use-before-define errors (temporal dead zone bugs with `const`/`useCallback` ordering).
 
+### Flag a needed server restart
+
+If your change only takes effect after the Spaceterm server is restarted — editing
+this `CLAUDE.md`, server code under `src/server/`, or the shared protocol — run:
+
+```
+npm run flag-restart -- "why a restart is needed"
+```
+
+This raises a marching-ants animation on the client's ↻ Restart button so the
+human notices the pending restart instead of it getting buried in your prose. Do
+**not** restart the server yourself; the restart is the human's call, and a fresh
+server clears the flag automatically on startup.
+
 Run `npm test` when changing a module that has a `.test.ts` beside it. Tests run on
 Vitest and are discovered by glob, so a new test file needs no registration — just
 put it next to the module it covers. `npm run test:watch` reruns on save, and

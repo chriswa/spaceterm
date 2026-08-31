@@ -41,7 +41,6 @@ export type ExitCallback = (sessionId: PtySessionId, exitCode: number) => void
 export type TitleHistoryCallback = (sessionId: PtySessionId, history: string[]) => void
 export type CwdCallback = (sessionId: PtySessionId, cwd: string) => void
 export type ClaudeSessionHistoryCallback = (sessionId: PtySessionId, history: ClaudeSessionEntry[]) => void
-export type ActivityCallback = (sessionId: PtySessionId) => void
 
 /**
  * Everything SessionManager pushes back out to the rest of the server. Named
@@ -56,7 +55,6 @@ export interface SessionManagerDeps {
   onTitleHistory: TitleHistoryCallback
   onCwd: CwdCallback
   onClaudeSessionHistory: ClaudeSessionHistoryCallback
-  onActivity: ActivityCallback
 }
 
 export class SessionManager {
@@ -67,7 +65,6 @@ export class SessionManager {
   private onTitleHistory: TitleHistoryCallback
   private onCwd: CwdCallback
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
-  private onActivity: ActivityCallback
 
   constructor(daemon: DaemonClient, deps: SessionManagerDeps) {
     this.daemon = daemon
@@ -76,7 +73,6 @@ export class SessionManager {
     this.onTitleHistory = deps.onTitleHistory
     this.onCwd = deps.onCwd
     this.onClaudeSessionHistory = deps.onClaudeSessionHistory
-    this.onActivity = deps.onActivity
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -145,7 +141,6 @@ export class SessionManager {
     if (!session) return
     session.titleParser.write(data)
     session.batcher.write(data)
-    this.onActivity(sessionId)
   }
 
   /** Called by the daemon message router when a PTY exits. */
@@ -178,7 +173,6 @@ export class SessionManager {
   write(sessionId: PtySessionId, data: string): void {
     if (!this.sessions.has(sessionId)) return
     this.daemon.send({ type: 'write', id: sessionId, data })
-    this.onActivity(sessionId)
   }
 
   resize(sessionId: PtySessionId, cols: number, rows: number): void {

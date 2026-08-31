@@ -12,7 +12,9 @@ import { useThemes } from '../../hooks/useFacet'
 import { useFps } from '../../hooks/useFps'
 import { useToolbarMenu } from './useToolbarMenu'
 import { showToast } from '../../lib/toast'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, DustpanIcon, KeycastIcon, GaugeIcon, ChipIcon } from './icons'
+import { useDimStaleStore } from '../../stores/dimStaleStore'
+import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -214,6 +216,21 @@ export function CopyCleanupToggle() {
   )
 }
 
+export function DimStaleToggle() {
+  const enabled = useDimStaleStore(s => s.enabled)
+  const toggle = useDimStaleStore(s => s.toggle)
+  return (
+    <button
+      className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
+      onClick={toggle}
+      data-tooltip={enabled ? 'Dim Stale — Disable to show every node at full brightness' : 'Dim Stale — Dim nodes untouched for a day, unless a descendant is fresh'}
+      data-tooltip-no-flip
+    >
+      <DimIcon />
+    </button>
+  )
+}
+
 /**
  * Pick the theme.
  *
@@ -275,12 +292,26 @@ export function HelpButton({ onClick }: { onClick: () => void }) {
 }
 
 export function RestartButton({ restarting, onRestart }: { restarting: boolean; onRestart: () => void }) {
+  const restartNeeded = useRestartRequiredStore(s => s.required)
+  const reason = useRestartRequiredStore(s => s.reason)
+  // The pending animation is a signal that a restart is *outstanding*; once the
+  // click lands it becomes redundant with the in-progress state, so it drops.
+  const pending = restartNeeded && !restarting
+  const tooltip = restarting
+    ? 'Restarting Spaceterm…'
+    : pending
+      ? `Restart needed${reason ? ` — ${reason}` : ''}`
+      : 'Restart Spaceterm server'
   return (
     <button
-      className={'toolbar__btn' + (restarting ? ' toolbar__btn--active' : '')}
+      className={
+        'toolbar__btn' +
+        (restarting ? ' toolbar__btn--active' : '') +
+        (pending ? ' toolbar__btn--restart-pending' : '')
+      }
       onClick={onRestart}
       disabled={restarting}
-      data-tooltip={restarting ? 'Restarting Spaceterm…' : 'Restart Spaceterm server'}
+      data-tooltip={tooltip}
       data-tooltip-no-flip
     >
       ↻

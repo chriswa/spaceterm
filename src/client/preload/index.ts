@@ -87,6 +87,7 @@ const nodeApi: NodeApi = {
   titleAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:title-add', parentId, x, y),
   titleText: (nodeId, text) => ipcRenderer.invoke('node:title-text', nodeId, text),
 
+  recordInteraction: (nodeId: NodeId) => ipcRenderer.send('node:record-interaction', nodeId),
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
   setClaudeStatusUnread: (sessionId: PtySessionId, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
   setClaudeStatusAsleep: (sessionId: PtySessionId, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
@@ -163,7 +164,13 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, viewports: Record<string, { x: number; y: number; width: number; height: number }>) => callback(viewports)
     ipcRenderer.on('viewports:saved', listener)
     return () => ipcRenderer.removeListener('viewports:saved', listener)
-  }
+  },
+  onRestartRequired: (callback: (required: boolean, reason: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, required: boolean, reason: string) => callback(required, reason)
+    ipcRenderer.on('restart:required', listener)
+    return () => ipcRenderer.removeListener('restart:required', listener)
+  },
+  restartFlagStatus: () => ipcRenderer.invoke('app:restart-flag')
 }
 
 // Annotated rather than passed inline so the object literal is checked against

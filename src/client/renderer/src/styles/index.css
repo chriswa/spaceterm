@@ -404,6 +404,43 @@ html, body, #root {
   cursor: default;
 }
 
+/* Restart-pending: marching ants around the ↻ button, raised when an agent
+   flags that on-disk changes need a server restart (npm run flag-restart). The
+   dashes are a repeating gradient masked to a ring and scrolled by animating
+   background-position — the gradient and mask compose on the GPU, so no layer
+   repaints each frame. The horizontal travel is one gradient period along the
+   45° axis (8px / cos45° ≈ 11.31px), which keeps the loop seamless. */
+.toolbar__btn--restart-pending {
+  position: relative;
+}
+.toolbar__btn--restart-pending::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 5px;
+  padding: 2px;
+  background: repeating-linear-gradient(
+    45deg,
+    #ff5c8a 0,
+    #ff5c8a 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: marching-ants 0.5s linear infinite;
+  pointer-events: none;
+}
+@keyframes marching-ants {
+  to { background-position: 11.314px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__btn--restart-pending::after { animation: none; }
+}
+
 .toolbar__btn:disabled:hover {
   background: rgba(255,255,255,0.06);
 }

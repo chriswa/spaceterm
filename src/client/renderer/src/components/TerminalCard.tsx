@@ -39,14 +39,23 @@ import type { AgentType } from '../../../../shared/agent-type'
 
 function formatElapsed(epochMs: number): string {
   const diff = Date.now() - epochMs
-  const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return '<1m ago'
+  const seconds = Math.floor(diff / 1000)
+  // Show seconds under a minute so a reset is legible as it happens.
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m ago`
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   return `${days}d ago`
 }
+
+// A held modifier on its own is not an interaction — only a key that does
+// something. `attachCustomKeyEventHandler` fires for these bare presses too.
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'])
+// The footer renders minute granularity, so one interaction signal per this
+// window is plenty — keeps a burst of typing from flooding IPC.
+const INTERACTION_THROTTLE_MS = 15_000
 
 const DRAG_THRESHOLD = 5
 
@@ -186,6 +195,7 @@ export function TerminalCard({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const snapshotRef = useRef<SnapshotMessage | null>(null)
   const autoJumpedRef = useRef(false)
+  const lastInteractionSentRef = useRef(0)
   const behindCrabRef = useRef<HTMLDivElement>(null)
 
   // Keep current props in refs for event handlers
@@ -437,6 +447,16 @@ export function TerminalCard({
 
     term.attachCustomKeyEventHandler((ev) => {
       window.api.log(`[KeyHandler] type=${ev.type} key=${ev.key} shiftKey=${ev.shiftKey} code=${ev.code}`)
+      // A real keystroke is the terminal's genuine-interaction signal (hooks and
+      // transcript cover agent activity separately). Fired on keydown, skipping
+      // bare modifier presses, and throttled — see INTERACTION_THROTTLE_MS.
+      if (ev.type === 'keydown' && !MODIFIER_KEYS.has(ev.key)) {
+        const now = Date.now()
+        if (now - lastInteractionSentRef.current >= INTERACTION_THROTTLE_MS) {
+          lastInteractionSentRef.current = now
+          window.api.node.recordInteraction(propsRef.current.id)
+        }
+      }
       if (ev.key === 'Enter' && ev.shiftKey) {
         if (ev.type === 'keydown') {
           // Send ESC + CR (\x1b\r) for Shift+Enter.

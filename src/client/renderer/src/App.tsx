@@ -25,6 +25,7 @@ import { useEdgeHover } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
+import { useDimStaleController } from './hooks/useDimStaleController'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
@@ -91,6 +92,8 @@ export function App() {
   loadClientMods()
   // Publishes the active theme's card-chrome custom properties on :root.
   useCardChromeVars()
+  // Keeps the "dim stale nodes" set current while that view is on.
+  useDimStaleController()
   // Fallback colour for nodes the user has not coloured — see the nodeTint facet.
   const nodeTint = useFacet('nodeTint')
   const [restartingSpaceterm, setRestartingSpaceterm] = useState(false)
