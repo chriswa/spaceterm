@@ -17,7 +17,7 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
   {
     type: 'claude',
     label: 'Claude Code',
-    hint: '\u2318E',
+    hint: '',
     icon: (
       <span
         className="add-node-body__mask-icon"

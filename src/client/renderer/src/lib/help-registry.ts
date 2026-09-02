@@ -64,7 +64,7 @@ export const helpGroups: HelpGroup[] = [
     description: 'You can also use the + button in any node\u2019s title bar to create a child node.',
     entries: [
       { keys: `${MAC_CMD} T`,            name: 'New terminal', notes: 'From markdown parent, sends its content as input' },
-      { keys: `${MAC_CMD} E`,            name: 'New Claude surface' },
+      { keys: `${MAC_CMD} E`,            name: 'Choose agent surface', notes: 'Then press 1 for Claude Code, 2 for Codex, or 3 for Cursor Agent' },
       { keys: `${MAC_CMD} M`,            name: 'New markdown note' },
       { keys: `${MAC_CMD} Click edge`,   name: 'Split an edge', notes: 'Insert a new node between parent and child' },
     ],

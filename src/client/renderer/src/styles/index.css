@@ -404,6 +404,43 @@ html, body, #root {
   cursor: default;
 }
 
+/* Restart-pending: marching ants around the ↻ button, raised when an agent
+   flags that on-disk changes need a server restart (npm run flag-restart). The
+   dashes are a repeating gradient masked to a ring and scrolled by animating
+   background-position — the gradient and mask compose on the GPU, so no layer
+   repaints each frame. The horizontal travel is one gradient period along the
+   45° axis (8px / cos45° ≈ 11.31px), which keeps the loop seamless. */
+.toolbar__btn--restart-pending {
+  position: relative;
+}
+.toolbar__btn--restart-pending::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 5px;
+  padding: 2px;
+  background: repeating-linear-gradient(
+    45deg,
+    #ff5c8a 0,
+    #ff5c8a 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: marching-ants 0.5s linear infinite;
+  pointer-events: none;
+}
+@keyframes marching-ants {
+  to { background-position: 11.314px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__btn--restart-pending::after { animation: none; }
+}
+
 .toolbar__btn:disabled:hover {
   background: rgba(255,255,255,0.06);
 }
@@ -534,6 +571,68 @@ html, body, #root {
   left: 0;
   will-change: transform;
 }
+
+/* Cmd+E's selector is renderer-only: it borrows the canvas visually without
+   becoming a persisted card that cancellation would have to clean up. */
+.agent-selector {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 9001;
+  width: 230px;
+  transform: translate(-50%, -50%);
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.agent-selector__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  color: #cdd6f4;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid #313244;
+}
+
+.agent-selector__header kbd,
+.agent-selector__key {
+  border: 1px solid #585b70;
+  border-radius: 4px;
+  color: #a6adc8;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.agent-selector__header kbd { padding: 0 5px; }
+
+.agent-selector__options { padding: 5px; }
+
+.agent-selector__option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #cdd6f4;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-selector__option:hover { background: rgba(88, 91, 112, 0.4); }
+
+.agent-selector__key { width: 20px; }
 
 /* Peer camera viewport rectangles */
 .peer-camera-rect {
@@ -859,9 +958,16 @@ html, body, #root {
   justify-content: center;
 }
 
-.node-titlebar__close:hover {
+.node-titlebar__close:hover:not(.node-titlebar__close--disabled) {
   background: #181825;
   color: #cdd6f4 !important;
+}
+
+/* Greyed out when the node has child nodes — archiving is leaf-only.
+   Still clickable so the click gives shake feedback rather than nothing. */
+.node-titlebar__close--disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .terminal-card__body {
@@ -2857,7 +2963,7 @@ html, body, #root {
   position: relative;
 }
 
-.floating-toolbar .node-titlebar__close:hover,
+.floating-toolbar .node-titlebar__close:hover:not(.node-titlebar__close--disabled),
 .floating-toolbar .node-titlebar__color-btn:hover,
 .floating-toolbar .node-titlebar__archive-btn:hover:not(:disabled),
 .floating-toolbar .node-titlebar__sessions-btn:hover:not(:disabled),

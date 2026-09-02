@@ -83,6 +83,8 @@ export interface FakeBridgeResponses {
   launchPrefs: LaunchPrefs
   /** What the running process launched with; differs once a change is unapplied. */
   activeLaunchPrefs: LaunchPrefs
+  /** Current restart-required state returned by `restartFlagStatus` (the PULL). */
+  restartFlag: { required: boolean; reason: string }
 }
 
 const EMPTY_STATE: ServerState = {
@@ -108,7 +110,8 @@ export class FakeBridge implements Api {
     newNodeId: 'node-fake' as NodeId,
     ttsAvailable: true,
     launchPrefs: { ...DEFAULT_LAUNCH_PREFS },
-    activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS }
+    activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS },
+    restartFlag: { required: false, reason: '' }
   }
 
   /**
@@ -134,6 +137,7 @@ export class FakeBridge implements Api {
   private readonly peerDisconnected = new Set<(clientId: string) => void>()
   private readonly peerCameraBounds = new Set<(clientId: string, bounds: CameraBounds) => void>()
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
+  private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusChanged = new Set<(focused: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId | null) => void>()
@@ -214,6 +218,9 @@ export class FakeBridge implements Api {
     savedViewports: (viewports: Record<string, CameraBounds>): void => {
       for (const fn of this.savedViewports) fn(viewports)
     },
+    restartRequired: (required: boolean, reason: string): void => {
+      for (const fn of this.restartRequired) fn(required, reason)
+    },
     visibilityChanged: (visible: boolean): void => {
       for (const fn of this.visibilityChanged) fn(visible)
     },
@@ -275,6 +282,7 @@ export class FakeBridge implements Api {
     undoPush: (entry: UndoEntry) => this.reply('node.undoPush', undefined, entry),
     undoSetCursor: (cursor) => this.reply('node.undoSetCursor', undefined, cursor),
     bringToFront: (nodeId) => this.reply('node.bringToFront', undefined, nodeId),
+    recordInteraction: (nodeId) => this.record('node.recordInteraction', nodeId),
     reparent: (nodeId, newParentId) => this.reply('node.reparent', undefined, nodeId, newParentId),
     swapParentChild: (nodeId, childId) => this.reply('node.swapParentChild', undefined, nodeId, childId),
 
@@ -335,7 +343,9 @@ export class FakeBridge implements Api {
     onPeerConnected: (cb) => subscribe(this.peerConnected, cb),
     onPeerDisconnected: (cb) => subscribe(this.peerDisconnected, cb),
     onPeerCameraBounds: (cb) => subscribe(this.peerCameraBounds, cb),
-    onSavedViewports: (cb) => subscribe(this.savedViewports, cb)
+    onSavedViewports: (cb) => subscribe(this.savedViewports, cb),
+    onRestartRequired: (cb) => subscribe(this.restartRequired, cb),
+    restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag)
   }
 
   readonly tts: TtsApi = {

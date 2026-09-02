@@ -99,7 +99,7 @@ async function harness(options: HarnessOptions = {}) {
   await daemonClient.connect()
   const sessionManager = new SessionManager(daemonClient, {
     onData: () => {}, onExit: () => {}, onTitleHistory: () => {},
-    onCwd: () => {}, onClaudeSessionHistory: () => {}, onActivity: () => {}
+    onCwd: () => {}, onClaudeSessionHistory: () => {}
   })
 
   const respawnDeps: TerminalRespawnDeps = {

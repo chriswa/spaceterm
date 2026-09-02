@@ -1274,6 +1274,33 @@ describe('parseTranscript', () => {
     ])
   })
 
+  it('reads current Codex response-item user turns but skips injected environment context', () => {
+    const raw = [
+      line({
+        type: 'response_item',
+        payload: {
+          type: 'message', role: 'user',
+          content: [{ type: 'input_text', text: '<environment_context>injected setup</environment_context>' }],
+          internal_chat_message_metadata_passthrough: { content_item_kinds: ['environments.environment_context'] },
+        },
+      }),
+      line({
+        type: 'response_item',
+        payload: {
+          type: 'message', role: 'user',
+          content: [{ type: 'input_text', text: 'review the current changes' }],
+          internal_chat_message_metadata_passthrough: { content_item_kinds: ['user.text'] },
+        },
+      }),
+      line({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'I found an issue.' }] } }),
+    ].join('\n')
+
+    expect(parseTranscript(raw)).toEqual([
+      { role: 'user', text: 'review the current changes' },
+      { role: 'assistant', text: 'I found an issue.' },
+    ])
+  })
+
   it('skips ordinary tool calls and thinking blocks', () => {
     const raw = line({
       type: 'assistant',

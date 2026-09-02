@@ -4,6 +4,7 @@ import { usePeerStore } from '../stores/peerStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSummaryChatStore } from '../stores/summaryChatStore'
+import { useRestartRequiredStore } from '../stores/restartRequiredStore'
 import type { NodeData } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
@@ -150,6 +151,12 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     })
   )
 
+  cleanupFns.push(
+    window.api.node.onRestartRequired((required, reason) => {
+      useRestartRequiredStore.getState().set(required, reason)
+    })
+  )
+
   // Request full state from server. This PULL is the source of truth on every
   // renderer (re)load — the onSavedViewports PUSH above only fires on a fresh
   // main-process socket connect, which does NOT repeat across a renderer refresh
@@ -159,6 +166,11 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     store.applyServerState(serverState)
     syncUndoBuffer(serverState.undoBuffer ?? [], serverState.undoCursor)
     useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
+
+    // Authoritative on reload: the PUSH above only fires when the flag changes
+    // while the socket stays open, which a renderer refresh does not repeat.
+    const restart = await window.api.node.restartFlagStatus()
+    useRestartRequiredStore.getState().set(restart.required, restart.reason)
   } catch {
     // Server not connected yet — will sync on reconnect
   }

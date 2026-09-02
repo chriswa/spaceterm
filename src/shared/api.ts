@@ -72,6 +72,8 @@ export interface NodeApi {
   undoPush(entry: UndoEntry): Promise<void>
   undoSetCursor(cursor: number): Promise<void>
   bringToFront(nodeId: NodeId): Promise<void>
+  /** Fire-and-forget: record a genuine user interaction (e.g. a keystroke) with a node. */
+  recordInteraction(nodeId: NodeId): void
   reparent(nodeId: NodeId, newParentId: NodeId): Promise<void>
   swapParentChild(nodeId: NodeId, childId: NodeId): Promise<void>
 
@@ -132,6 +134,14 @@ export interface NodeApi {
   onPeerDisconnected(callback: (clientId: string) => void): () => void
   onPeerCameraBounds(callback: (clientId: string, bounds: CameraBounds) => void): () => void
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
+  /** Live changes to the restart-required flag (PUSH). See restartFlagStatus for the PULL. */
+  onRestartRequired(callback: (required: boolean, reason: string) => void): () => void
+  /**
+   * Current restart-required state (PULL). Authoritative on every renderer
+   * (re)load — the PUSH above does not repeat across a reload that keeps the
+   * main-process socket open.
+   */
+  restartFlagStatus(): Promise<{ required: boolean; reason: string }>
 }
 
 /** Status the toolbar renders for a surface's summary-chat session. */

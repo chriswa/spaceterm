@@ -20,7 +20,6 @@ function recorder() {
     onTitleHistory: vi.fn(),
     onCwd: vi.fn(),
     onClaudeSessionHistory: vi.fn(),
-    onActivity: vi.fn(),
   } satisfies SessionManagerDeps
 }
 
@@ -159,16 +158,6 @@ describe('SessionManager PTY output', () => {
     client.dispose()
   })
 
-  it('reports activity synchronously, before the batch flushes', async () => {
-    // The footer's "last interacted" should not wait on a render frame.
-    const { manager, deps, client } = await setup()
-    const { sessionId } = manager.create()
-    manager.handleDaemonData(sessionId, 'x')
-    expect(deps.onActivity).toHaveBeenCalledWith(sessionId)
-    expect(deps.onData).not.toHaveBeenCalled()
-    client.dispose()
-  })
-
   it('extracts a window title from the stream', async () => {
     const { manager, deps, client } = await setup()
     const { sessionId } = manager.create()
@@ -216,7 +205,8 @@ describe('SessionManager PTY output', () => {
   it('ignores output for an unknown session', async () => {
     const { manager, deps, client } = await setup()
     manager.handleDaemonData(pid('never-created'), 'data')
-    expect(deps.onActivity).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(deps.onData).not.toHaveBeenCalled()
     client.dispose()
   })
 })
@@ -252,7 +242,8 @@ describe('SessionManager lifecycle', () => {
     expect(deps.onExit).toHaveBeenCalledWith(sessionId, 3)
     // Output arriving after the exit must not resurrect it.
     manager.handleDaemonData(sessionId, 'late')
-    expect(deps.onActivity).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(deps.onData).not.toHaveBeenCalled()
     client.dispose()
   })
 

@@ -47,6 +47,16 @@ export interface BaseNodeData {
   y: number
   zIndex: number
   lastFocusedAt?: string // ISO 8601, set by server on bringToFront
+  /**
+   * epoch ms — last *genuine* interaction with this node. Initialized to the
+   * node's creation time, then advanced by the server via `recordInteraction`.
+   * Sources depend on node type: an agent surface's real transcript/hook
+   * activity (incl. question hooks), a user keystroke into a terminal, or a
+   * human edit of a markdown/title/directory node. Passive focus, mouse reports,
+   * and background PTY output do NOT count. Monotonic within a session;
+   * re-seeded from transcript history on load. Drives the "dim stale nodes" view.
+   */
+  lastInteractedAt?: number
   name?: string | null
   colorPresetId?: string
   archivedChildren: ArchivedNode[]
@@ -75,7 +85,6 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeContextPercent?: number
   /** Last-known Claude session JSONL line count, persisted so it survives a server restart. */
   claudeSessionLineCount?: number
-  lastInteractedAt?: number  // epoch ms — max of last PTY input and last PTY output
   sortOrder: number
   terminalSessions: TerminalSessionEntry[]
   /** Legacy field — kept for backward compat with existing client code during migration */

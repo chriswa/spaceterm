@@ -834,29 +834,56 @@ describe('patched fields are broadcast exactly as applied', () => {
     expect(h.sm.getNode(md.id)).toMatchObject({ width: 300, height: 200 })
   })
 
-  it('records lastInteractedAt even on the ticks it does not broadcast', () => {
-    // The broadcast is throttled to once a minute, but the persisted value must
-    // stay current — the two used to be written separately.
+  it('records lastInteractedAt even within the same second it does not broadcast', () => {
+    // The broadcast is throttled to the displayed granularity (one second), but
+    // the persisted value must stay current — the two are written separately.
+    // (Baselines use reset because a node is created with lastInteractedAt = now,
+    // which the monotonic guard would otherwise keep ahead of these fixtures.)
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.updateLastInteracted(pid('t1'), 60_000)
+    h.sm.recordInteractionBySession(pid('t1'), 60_000, { reset: true })
     h.updates.length = 0
 
-    h.sm.updateLastInteracted(pid('t1'), 60_001)
+    h.sm.recordInteractionBySession(pid('t1'), 60_400)
 
     expect(h.updates).toHaveLength(0)
-    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(60_001)
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(60_400)
   })
 
-  it('broadcasts again once the displayed minute changes', () => {
+  it('broadcasts again once the displayed second changes', () => {
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.updateLastInteracted(pid('t1'), 60_000)
+    h.sm.recordInteractionBySession(pid('t1'), 60_000, { reset: true })
     h.updates.length = 0
 
-    h.sm.updateLastInteracted(pid('t1'), 120_000)
+    h.sm.recordInteractionBySession(pid('t1'), 61_000)
 
-    expect(patchedFields(h, nid('t1'))).toEqual([{ lastInteractedAt: 120_000 }])
+    expect(patchedFields(h, nid('t1'))).toEqual([{ lastInteractedAt: 61_000 }])
+  })
+
+  it('ignores an interaction older than the one already recorded', () => {
+    // Signals can arrive out of order (a backfilled transcript entry racing a
+    // live keystroke); the value must never move backward.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.recordInteractionBySession(pid('t1'), 120_000, { reset: true })
+    h.updates.length = 0
+
+    h.sm.recordInteractionBySession(pid('t1'), 60_000)
+
+    expect(h.updates).toHaveLength(0)
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(120_000)
+  })
+
+  it('reset overwrites a newer timestamp with an older one, to re-seed from history on load', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.recordInteractionBySession(pid('t1'), 120_000, { reset: true })
+    h.updates.length = 0
+
+    h.sm.recordInteractionBySession(pid('t1'), 60_000, { reset: true })
+
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(60_000)
   })
 
   it('reorderCrabs broadcasts one sortOrder per moved terminal', () => {

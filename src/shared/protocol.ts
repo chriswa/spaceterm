@@ -123,6 +123,17 @@ export interface ServerRestartMessage {
   seq: number
 }
 
+/**
+ * Ask whether a server restart has been flagged as needed. The PULL half of the
+ * restart-required signal — authoritative on every renderer (re)load, since a
+ * PUSH does not repeat across a renderer refresh that keeps the socket open.
+ * See {@link RestartRequiredMessage} and `src/server/restart-flag.ts`.
+ */
+export interface RestartFlagQueryMessage {
+  type: 'restart-flag-query'
+  seq: number
+}
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -428,6 +439,12 @@ export interface SetTerminalModeMessage {
   mode: 'live' | 'snapshot'
 }
 
+/** Fire-and-forget: a genuine user interaction (e.g. a keystroke) with a node. */
+export interface NodeInteractionMessage {
+  type: 'node-interaction'
+  nodeId: NodeId
+}
+
 export interface SetClaudeStatusUnreadMessage {
   type: 'set-claude-status-unread'
   sessionId: PtySessionId
@@ -632,6 +649,7 @@ export type ClientMessage =
   | CreateMessage
   | ListMessage
   | ServerRestartMessage
+  | RestartFlagQueryMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage
@@ -655,6 +673,7 @@ export type ClientMessage =
   | MarkdownSetMaxWidthMessage
   | TerminalReincarnateMessage
   | SetTerminalModeMessage
+  | NodeInteractionMessage
   | SetClaudeStatusUnreadMessage
   | SetClaudeStatusAsleepMessage
   | DirectoryAddMessage
@@ -692,6 +711,27 @@ export interface CreatedMessage {
 export interface ServerRestartedMessage {
   type: 'server-restarted'
   seq: number
+}
+
+/** Reply to {@link RestartFlagQueryMessage}: the current restart-required state. */
+export interface RestartFlagResultMessage {
+  type: 'restart-flag-result'
+  seq: number
+  required: boolean
+  /** Human-readable why, or '' when not required. */
+  reason: string
+}
+
+/**
+ * Unsolicited broadcast: the restart-required flag changed. The PUSH half of the
+ * signal, so a badge appears the moment an agent raises the flag mid-session
+ * without waiting for a reload. See `src/server/restart-flag.ts`.
+ */
+export interface RestartRequiredMessage {
+  type: 'restart-required'
+  required: boolean
+  /** Human-readable why, or '' when not required. */
+  reason: string
 }
 
 export interface ListedMessage {
@@ -1186,3 +1226,5 @@ export type ServerMessage =
   | PeerCameraBoundsMessage
   | FocusSurfaceMessage
   | SavedViewportsMessage
+  | RestartFlagResultMessage
+  | RestartRequiredMessage

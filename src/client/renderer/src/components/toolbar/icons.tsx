@@ -148,6 +148,16 @@ export function BellIcon() {
   )
 }
 
+export function DimIcon() {
+  // A contrast disc — half lit, half in shadow — for the "dim stale nodes" view.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 2 A6 6 0 0 1 8 14 Z" fill="currentColor" />
+    </svg>
+  )
+}
+
 export function DustpanIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>

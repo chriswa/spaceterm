@@ -174,6 +174,9 @@ export class ServerClient extends EventEmitter {
       case 'saved-viewports':
         this.emit('saved-viewports', msg.viewports)
         return
+      case 'restart-required':
+        this.emit('restart-required', msg.required, msg.reason)
+        return
 
       // --- Both: an error is broadcast, and also rejects its request if correlated ---
       case 'server-error':
@@ -190,6 +193,7 @@ export class ServerClient extends EventEmitter {
       // --- Replies: correlated to a request by seq ---
       case 'created':
       case 'server-restarted':
+      case 'restart-flag-result':
       case 'listed':
       case 'attached':
       case 'detached':
@@ -301,6 +305,12 @@ export class ServerClient extends EventEmitter {
   async restartServer(): Promise<void> {
     const resp = await this.sendRequest({ type: 'server-restart' })
     if (resp.type !== 'server-restarted') throw new Error('Unexpected response')
+  }
+
+  async restartFlagQuery(): Promise<{ required: boolean; reason: string }> {
+    const resp = await this.sendRequest({ type: 'restart-flag-query' })
+    if (resp.type !== 'restart-flag-result') throw new Error('Unexpected response')
+    return { required: resp.required, reason: resp.reason }
   }
 
   async attach(sessionId: PtySessionId): Promise<{ scrollback: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
@@ -449,6 +459,10 @@ export class ServerClient extends EventEmitter {
 
   async crabReorder(order: string[]): Promise<ServerMessage> {
     return this.sendRequest({ type: 'crab-reorder', order })
+  }
+
+  recordInteraction(nodeId: NodeId): void {
+    this.sendFireAndForget({ type: 'node-interaction', nodeId } as ClientMessage)
   }
 
   setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot'): void {

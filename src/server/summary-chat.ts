@@ -1274,10 +1274,17 @@ function extractEntry(entry: Record<string, any>): Extracted[] {
     const text = entry.payload.message.trim()
     return text ? [{ kind: 'message', role: 'user', text }] : []
   }
-  // Codex rollout shape. Ignore developer/system messages.
+  // Codex rollout shape. Its current recorder emits a human turn as a
+  // response_item message, rather than the older user_message event above.
+  // Do not accept every `role: user` item: Codex injects environment context
+  // through that same role. `user.text` is the recorder's explicit marker for
+  // text the human supplied, and keeps that setup out of the spoken history.
   if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-    if (entry.payload.role !== 'assistant') return []
-    return fromContent('assistant', entry.payload.content)
+    if (entry.payload.role === 'assistant') return fromContent('assistant', entry.payload.content)
+    if (entry.payload.role === 'user' && isCodexHumanMessage(entry.payload)) {
+      return fromContent('user', entry.payload.content)
+    }
+    return []
   }
   // Codex records a tool call as its own entry, with the input as a JSON string
   // rather than an object — the one shape difference that matters here.
@@ -1286,6 +1293,12 @@ function extractEntry(entry: Record<string, any>): Extracted[] {
     return call ? [{ kind: 'tools', calls: [call] }] : []
   }
   return []
+}
+
+/** Whether a Codex `response_item` user message is actual human input. */
+function isCodexHumanMessage(payload: Record<string, any>): boolean {
+  const kinds = payload.internal_chat_message_metadata_passthrough?.content_item_kinds
+  return Array.isArray(kinds) && kinds.includes('user.text')
 }
 
 function codexFunctionCall(payload: Record<string, any>): ToolCall | undefined {
@@ -1340,4 +1353,3 @@ function fromContent(role: 'user' | 'assistant', content: unknown): Extracted[] 
   if (calls.length) out.push({ kind: 'tools', calls })
   return out
 }
-

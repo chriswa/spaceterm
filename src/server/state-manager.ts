@@ -403,6 +403,7 @@ export class StateManager {
     const node: TerminalNodeData = {
       id: nodeId,
       type: 'terminal',
+      lastInteractedAt: Date.now(),
       alive: true,
       sessionId,
       parentId,
@@ -1119,19 +1120,36 @@ export class StateManager {
     this.patchNode(node, { claudeStatusAsleep: asleep })
   }
 
-  updateLastInteracted(ptySessionId: PtySessionId, timestamp: number): void {
-    const node = this.getTerminalBySession(ptySessionId)
+  /**
+   * Record a genuine interaction with a node at `timestamp` (epoch ms), updating
+   * `lastInteractedAt`. Monotonic by default — an older timestamp is ignored — so
+   * out-of-order signals (a late transcript entry racing a keystroke or hook)
+   * never move the value backward. Pass `reset` to overwrite unconditionally,
+   * which re-seeds the value from transcript history on load.
+   *
+   * Broadcasts only when the displayed value would change — the footer renders
+   * second granularity under a minute — so at most once per second per node,
+   * while always recording in memory and scheduling a persist.
+   */
+  recordInteraction(nodeId: NodeId, timestamp: number, opts?: { reset?: boolean }): void {
+    const node = this.state.nodes[nodeId]
     if (!node) return
-    const prevMinute = node.lastInteractedAt ? Math.floor(node.lastInteractedAt / 60000) : -1
-    const curMinute = Math.floor(timestamp / 60000)
-    // Only broadcast when the displayed minute value changes (or on first
-    // activity) — but always record it, so the persisted value stays current.
-    if (curMinute !== prevMinute) {
+    const prev = node.lastInteractedAt
+    if (!opts?.reset && prev !== undefined && timestamp <= prev) return
+    const prevSecond = prev !== undefined ? Math.floor(prev / 1000) : -1
+    const curSecond = Math.floor(timestamp / 1000)
+    if (curSecond !== prevSecond) {
       this.applyPatch(node, { lastInteractedAt: timestamp })
     } else {
       node.lastInteractedAt = timestamp
     }
     this.schedulePersist()
+  }
+
+  /** {@link recordInteraction} keyed by PTY session — agent hooks and transcript. */
+  recordInteractionBySession(ptySessionId: PtySessionId, timestamp: number, opts?: { reset?: boolean }): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (node) this.recordInteraction(node.id, timestamp, opts)
   }
 
   // --- Directory operations ---
@@ -1145,6 +1163,7 @@ export class StateManager {
     const node: DirectoryNodeData = {
       id,
       type: 'directory',
+      lastInteractedAt: Date.now(),
       parentId,
       x,
       y,
@@ -1190,6 +1209,7 @@ export class StateManager {
     const node: FileNodeData = {
       id,
       type: 'file',
+      lastInteractedAt: Date.now(),
       parentId,
       x,
       y,
@@ -1220,6 +1240,7 @@ export class StateManager {
     const node: MarkdownNodeData = {
       id,
       type: 'markdown',
+      lastInteractedAt: Date.now(),
       parentId,
       x,
       y,
@@ -1266,6 +1287,7 @@ export class StateManager {
     const node: TitleNodeData = {
       id,
       type: 'title',
+      lastInteractedAt: Date.now(),
       parentId,
       x,
       y,
