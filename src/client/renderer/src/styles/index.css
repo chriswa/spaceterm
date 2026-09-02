@@ -572,6 +572,68 @@ html, body, #root {
   will-change: transform;
 }
 
+/* Cmd+E's selector is renderer-only: it borrows the canvas visually without
+   becoming a persisted card that cancellation would have to clean up. */
+.agent-selector {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 9001;
+  width: 230px;
+  transform: translate(-50%, -50%);
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.agent-selector__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  color: #cdd6f4;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid #313244;
+}
+
+.agent-selector__header kbd,
+.agent-selector__key {
+  border: 1px solid #585b70;
+  border-radius: 4px;
+  color: #a6adc8;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.agent-selector__header kbd { padding: 0 5px; }
+
+.agent-selector__options { padding: 5px; }
+
+.agent-selector__option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #cdd6f4;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-selector__option:hover { background: rgba(88, 91, 112, 0.4); }
+
+.agent-selector__key { width: 20px; }
+
 /* Peer camera viewport rectangles */
 .peer-camera-rect {
   border: calc(1px / var(--camera-zoom, 1)) solid rgba(255, 255, 255, 0.5);

@@ -19,6 +19,7 @@ import { HelpModal } from './components/HelpModal'
 import { KeycastOverlay } from './components/KeycastOverlay'
 import { PeerCameraOverlay } from './components/PeerCameraOverlay'
 import { ResizeGhost } from './components/ResizeGhost'
+import { AgentSelector, AGENT_SELECTOR_OPTIONS } from './components/AgentSelector'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
@@ -46,7 +47,7 @@ import { pushUndo, peekUndo, peekRedo, undoStep, redoStep, getCursor, getConfirm
 import { nodeUndoDescription } from './lib/node-title'
 import type { UndoEntry, UndoMoveEntry, UndoArchiveEntry, UndoUnarchiveEntry, UndoResizeEntry } from '../../../shared/undo-types'
 import { undoNeedsConfirmation, undoConfirmationVerb } from '../../../shared/undo-types'
-import type { ClaudeSessionEntry } from '../../../shared/protocol'
+import type { ClaudeSessionEntry, CreateOptions } from '../../../shared/protocol'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
 import { deriveToolbarIndicator } from './lib/crab-nav'
@@ -55,6 +56,15 @@ import { pressSummaryChatChord, REAL_CHORD_CUES } from './lib/summary-chat-chord
 import { isSummaryChatChord, shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
 import { tieredZIndex } from '../../../shared/card-types'
 import type { NodeData } from '../../../shared/state'
+import type { AgentType } from '../../../shared/agent-type'
+
+function agentCreateOptions(agent: AgentType, cwd: string | undefined): CreateOptions {
+  switch (agent) {
+    case 'claude': return { cwd, claude: { appendSystemPrompt: false } }
+    case 'codex': return { cwd, codex: {} }
+    case 'cursor': return { cwd, cursor: {} }
+  }
+}
 
 function getMarkdownSpawnInfo(parentNode: import('../../../shared/state').NodeData | undefined): {
   initialInput?: string; initialName?: string; x?: number; y?: number
@@ -86,6 +96,8 @@ export function App() {
   const [helpVisible, setHelpVisible] = useState(false)
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
+  const [agentSelectorParentId, setAgentSelectorParentId] = useState<NodeId | null>(null)
+  const agentLaunchInFlightRef = useRef(false)
   const [keycastEnabled, setKeycastEnabled] = useState(() => localStorage.getItem('toolbar.keycast') === 'true')
   // Every mod registers, then every mod activates — before the first paint
   // that could read a facet. Idempotent, so strict mode and hot reload are fine.
@@ -1718,22 +1730,44 @@ export function App() {
     create: (parentId: NodeId, cwd: string | undefined) => Promise<NodeId>,
     parentIdOverride?: NodeId
   ) => {
-    const anchor = focusRef.current ?? selectionRef.current
-    if (!anchor) return
-    const parentId = parentIdOverride ?? anchor
+    const parentId = parentIdOverride ?? focusRef.current ?? selectionRef.current
+    if (!parentId) return
     const cwd = getParentCwd(parentId)
     const nodeId = await create(parentId, cwd)
     if (cwd) cwdMapRef.current.set(nodeId, cwd)
     await navigateToNode(nodeId)
   }, [getParentCwd, navigateToNode])
 
+  const toggleAgentSelector = useCallback(() => {
+    const parentId = focusRef.current ?? selectionRef.current
+    if (!parentId) {
+      shakeCamera()
+      return
+    }
+    setAgentSelectorParentId(current => current === parentId ? null : parentId)
+  }, [shakeCamera])
+
+  const launchSelectedAgent = useCallback((agent: AgentType) => {
+    const parentId = agentSelectorParentId
+    if (!parentId || agentLaunchInFlightRef.current) return
+    agentLaunchInFlightRef.current = true
+    setAgentSelectorParentId(null)
+    void spawnNode(
+      async (parent, cwd) => {
+        const result = await sendTerminalCreate(parent, agentCreateOptions(agent, cwd))
+        return nodeIdFromFirstPtySession(result.sessionId)
+      },
+      parentId
+    ).finally(() => { agentLaunchInFlightRef.current = false })
+  }, [agentSelectorParentId, spawnNode])
+
   const createChildNode = useCallback(async (parentNodeId: NodeId, type: AddNodeType, hint?: { x: number; y: number }): Promise<NodeId> => {
     const cwd = getParentCwd(parentNodeId)
     let nodeId: NodeId
     switch (type) {
-      case 'claude': { const r = await sendTerminalCreate(parentNodeId, { cwd, claude: { appendSystemPrompt: false } }, undefined, undefined, hint?.x, hint?.y); nodeId = nodeIdFromFirstPtySession(r.sessionId); break }
-      case 'cursor': { const r = await sendTerminalCreate(parentNodeId, { cwd, cursor: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = nodeIdFromFirstPtySession(r.sessionId); break }
-      case 'codex': { const r = await sendTerminalCreate(parentNodeId, { cwd, codex: {} }, undefined, undefined, hint?.x, hint?.y); nodeId = nodeIdFromFirstPtySession(r.sessionId); break }
+      case 'claude':
+      case 'cursor':
+      case 'codex': { const r = await sendTerminalCreate(parentNodeId, agentCreateOptions(type, cwd), undefined, undefined, hint?.x, hint?.y); nodeId = nodeIdFromFirstPtySession(r.sessionId); break }
       case 'terminal': {
         const parentNode = useNodeStore.getState().nodes[parentNodeId]
         const { initialInput, initialName: mdName, x, y } = getMarkdownSpawnInfo(parentNode)
@@ -1784,6 +1818,26 @@ export function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      // Cmd+E opens this short-lived launcher. Its choices must win before
+      // xterm sees a bare digit as terminal input.
+      if (agentSelectorParentId) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          setAgentSelectorParentId(null)
+          return
+        }
+        const option = !e.metaKey && !e.ctrlKey && !e.altKey
+          ? AGENT_SELECTOR_OPTIONS.find(candidate => candidate.key === e.key)
+          : undefined
+        if (option) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (!e.repeat) launchSelectedAgent(option.type)
+          return
+        }
+      }
+
       // Cmd+K: toggle search modal (before isEditable guard so it works from search input)
       if (e.metaKey && !e.shiftKey && e.key === 'k') {
         e.preventDefault()
@@ -1998,10 +2052,8 @@ export function App() {
       if (e.metaKey && e.key === 'e') {
         e.preventDefault()
         e.stopPropagation()
-        spawnNode(async (parentId, cwd) => {
-          const r = await sendTerminalCreate(parentId, { cwd, claude: { appendSystemPrompt: false } })
-          return nodeIdFromFirstPtySession(r.sessionId)
-        })
+        toggleAgentSelector()
+        return
       }
 
       if (e.metaKey && e.key === 'm') {
@@ -2150,7 +2202,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession])
+  }, [agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -2351,7 +2403,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <PeerCameraOverlay />
         <ResizeGhost />
         <RootNode
