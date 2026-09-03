@@ -96,8 +96,10 @@ export function ReticleRootNode({ size, focused }: RootNodeVisualProps) {
         stroke={stroke}
         style={{ display: 'block', transition: 'stroke 0.15s' }}
       >
-        {/* r=44 leaves room for the 2-unit stroke inside the 100 viewBox. */}
-        <circle cx="50" cy="50" r="44" strokeWidth="2" opacity="0.85" fill="#000" />
+        {/* r=44 leaves room for the 2-unit stroke inside the 100 viewBox. The
+            opacity is on the stroke only: the fill has to stay solid, or the
+            background shows through and the mark reads as a tint, not a node. */}
+        <circle cx="50" cy="50" r="44" strokeWidth="2" strokeOpacity="0.85" fill="#000" />
       </svg>
       {focused && (
         <span
