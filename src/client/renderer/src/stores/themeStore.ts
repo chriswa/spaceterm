@@ -18,8 +18,11 @@ const LEGACY_GOOD_GFX_KEY = 'toolbar.goodGfx'
  * and a migration that writes on load would fire for every window that opens.
  */
 const RENAMED_THEME_IDS: Readonly<Record<string, string>> = {
-  // Was a logarithmic grid; now concentric rings hung off the root node.
-  grid: 'concentric',
+  // Was a logarithmic grid, then concentric rings hung off the root node; the
+  // rings were retired and the paver floor that replaced them is the default.
+  grid: 'default',
+  // The pavers were a theme of their own before they became the default.
+  pavers: 'default',
 }
 
 export function migrateThemeId(id: string): string {

@@ -3,13 +3,12 @@ import {
   EDGE_VERT_STATIC_SRC,
   EMBER_BG_FRAG,
   EMBER_EDGE_FRAG,
-  CONCENTRIC_BG_FRAG,
-  CONCENTRIC_EDGE_FRAG,
   MEDALLION_BG_FRAG,
   NEBULA_BG_FRAG,
   NEBULA_EDGE_FRAG,
+  STATIC_EDGE_FRAG,
 } from './shaders'
-import { KILIM_BG_FRAG, SERRATION_BG_FRAG, SUNBURST_BG_FRAG } from './rug-backgrounds'
+import { PAVER_BG_FRAG } from './paver-background'
 import { DiscRootNode, OrbRootNode, ReticleRootNode, type RootNodeVisualProps } from './root-node'
 import { NODE_TINTS, type NodeTintFacet } from './node-tint'
 import { registerFacet } from './registry'
@@ -152,15 +151,11 @@ export const BACKGROUNDS = {
   // rates below are still an order of magnitude finer than either needs.
   ember: { id: 'ember', label: 'Ember', frag: EMBER_BG_FRAG, animatedHz: 10 },
   nebula: { id: 'nebula', label: 'Nebula', frag: NEBULA_BG_FRAG, animatedHz: 20 },
-  // The static ones: patterns in world space, so they change when the camera
+  // The still ones: paintings in world space, so they change when the camera
   // does and at no other time.
-  concentric: { id: 'concentric', label: 'Concentric', frag: CONCENTRIC_BG_FRAG, animatedHz: 0 },
   medallion: { id: 'medallion', label: 'Medallion', frag: MEDALLION_BG_FRAG, animatedHz: 0 },
-  // The rug family — one lattice, three motifs. See `./rug-backgrounds`. Static
-  // for the same reason the two above are: they are paintings in world space.
-  kilim: { id: 'kilim', label: 'Kilim', frag: KILIM_BG_FRAG, animatedHz: 0 },
-  serration: { id: 'serration', label: 'Serration', frag: SERRATION_BG_FRAG, animatedHz: 0 },
-  sunburst: { id: 'sunburst', label: 'Sunburst', frag: SUNBURST_BG_FRAG, animatedHz: 0 },
+  // Radial stone brickwork. See `./paver-background`.
+  pavers: { id: 'pavers', label: 'Pavers', frag: PAVER_BG_FRAG, animatedHz: 0 },
 } as const satisfies Record<string, BackgroundFacet>
 
 export const EDGES = {
@@ -168,10 +163,10 @@ export const EDGES = {
   nebula: { id: 'nebula', label: 'Soft-light', frag: NEBULA_EDGE_FRAG, animatedHz: 30 },
   // The only edge facet that overrides the vertex shader, to hold still — and
   // therefore the only one that can promise `0`.
-  concentric: {
-    id: 'concentric',
+  static: {
+    id: 'static',
     label: 'Static',
-    frag: CONCENTRIC_EDGE_FRAG,
+    frag: STATIC_EDGE_FRAG,
     vert: EDGE_VERT_STATIC_SRC,
     animatedHz: 0,
   },
@@ -233,16 +228,24 @@ export const CARD_CHROMES = {
  * What every facet resolves to unless a theme says otherwise — and, since the
  * default theme overrides nothing, what the default theme *is*.
  *
- * The background and edges here are the cheapest shaders in the file, chosen
- * after measurement rather than taste: they held 58–60 fps where the nebula
- * managed 27 on the same machine.
+ * The default look is the paver floor with everything a still background
+ * wants around it: still edges, a reticle for the root node — the one that
+ * reads against a patterned ground — flat technical card chrome, and node
+ * colour that means what the user said rather than where the node sits. None
+ * of it reads a clock, so the frame gate skips every frame the camera does not
+ * move in, which is cheaper in practice than any animated shader however
+ * little it costs per frame.
+ *
+ * Changing an entry here changes every theme that does not override it. The
+ * themes in `./themes` that want a different look name every facet they depend
+ * on, so that this is a statement about the default and not about them.
  */
 export const DEFAULT_FACETS: ThemeFacets = {
-  background: BACKGROUNDS.ember,
-  edges: EDGES.ember,
-  rootNode: ROOT_NODES.disc,
-  cardChrome: CARD_CHROMES.standard,
-  nodeTint: NODE_TINTS.angle,
+  background: BACKGROUNDS.pavers,
+  edges: EDGES.static,
+  rootNode: ROOT_NODES.reticle,
+  cardChrome: CARD_CHROMES.technical,
+  nodeTint: NODE_TINTS.neutral,
 }
 
 // Core facets go into the same runtime registry a mod uses, derived from the

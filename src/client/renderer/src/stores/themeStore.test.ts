@@ -12,13 +12,19 @@ import { themes } from '../lib/theme/themes'
  * So the rename table is the thing under test, not the store.
  */
 describe('theme id migration', () => {
-  it('carries the renamed grid theme over to concentric', () => {
-    expect(migrateThemeId('grid')).toBe('concentric')
+  it('carries the pavers theme over to the default it became', () => {
+    // Not only for the look — the picker highlights the saved id, so an
+    // unmapped 'pavers' would draw the right floor with nothing selected.
+    expect(migrateThemeId('pavers')).toBe('default')
+  })
+
+  it('carries the old grid theme over to the default', () => {
+    expect(migrateThemeId('grid')).toBe('default')
   })
 
   it('leaves every other id alone', () => {
     // Including ids this repo has never heard of: a mod theme must survive.
-    for (const id of ['default', 'nebula', 'concentric', 'some-mod:theme', '']) {
+    for (const id of ['default', 'nebula', 'ember', 'some-mod:theme', '']) {
       expect(migrateThemeId(id), id).toBe(id)
     }
   })
@@ -27,6 +33,8 @@ describe('theme id migration', () => {
     // The failure this is really for: renaming twice and leaving the table
     // pointing at the intermediate name, which resolves to the default again.
     const ids = new Set(themes().map((t) => t.id))
-    expect(ids.has(migrateThemeId('grid'))).toBe(true)
+    for (const old of ['grid', 'pavers']) {
+      expect(ids.has(migrateThemeId(old)), old).toBe(true)
+    }
   })
 })

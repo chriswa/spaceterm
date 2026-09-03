@@ -20,7 +20,7 @@ import { srgbToLinear } from './srgb'
  * slides without anything popping.
  *
  * The shader is GLSL, so its arithmetic is ported here — exactly as
- * `concentric-ramp.test.ts` ports the ramp. The GLSL is the source of truth and
+ * `paver-lattice.test.ts` ports the courses. The GLSL is the source of truth and
  * the two move together, with `is what the shader actually does` below pinning
  * the parts a port cannot follow.
  */

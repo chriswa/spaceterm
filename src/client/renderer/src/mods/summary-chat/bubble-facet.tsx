@@ -23,10 +23,12 @@ import { useModFacet } from '../../hooks/useFacet'
  * - The **default is registered here**, not added to the base's
  *   `DEFAULT_FACETS`, so uninstalling the mod removes the facet entirely
  *   rather than leaving a stub behind.
- * - **Per-theme variants live in `byTheme`.** The concentric theme gets a flatter,
+ * - **Per-theme variants live in `byTheme`.** A theme can be given the flatter
  *   monochrome mark without the base repo's theme definition importing
  *   anything from here — which it could not do anyway, since a mod may be
- *   absent. The dependency points mod → base, only.
+ *   absent. The dependency points mod → base, only. The one theme that used
+ *   it was retired, so the table is empty for now and the mark is kept for
+ *   the next one.
  */
 
 export const SUMMARY_BUBBLE_FACET = 'summary-chat:bubble' as const
@@ -105,10 +107,9 @@ export function registerBubbleFacet(): void {
     defaultValue: SUMMARY_BUBBLES.speech,
     // The mod dresses itself for the themes it knows about. A theme it has
     // never heard of gets the default, and no theme has to know this mod
-    // exists.
-    byTheme: {
-      concentric: SUMMARY_BUBBLES.technical,
-    },
+    // exists. Empty since the concentric theme was retired: every theme
+    // this repo ships keeps the speech bubble it always had.
+    byTheme: {},
   })
 }
 

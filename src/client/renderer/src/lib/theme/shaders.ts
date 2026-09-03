@@ -41,7 +41,7 @@
  */
 
 import { ROOT_DISC_RADIUS } from '../../../../../shared/node-size'
-import { glslVec3, LINEAR_TO_SRGB_GLSL, linearEmission, rgbToLinear, type Rgb } from './srgb'
+import { glslVec3, LINEAR_TO_SRGB_GLSL, rgbToLinear, type Rgb } from './srgb'
 
 /** OKLab → sRGB, for the shaders that tint by polar angle. Concentric does not. */
 const OKLAB_GLSL = `
@@ -342,250 +342,8 @@ void main() {
 `
 
 /* ------------------------------------------------------------------ */
-/*  The neutral radial ground, shared by Concentric and Medallion      */
+/*  Still edges, for the backgrounds that hold still                   */
 /* ------------------------------------------------------------------ */
-
-/**
- * The two greys the ramp runs between, as sRGB.
- *
- * Both are dark, and neither is black: a black trough next to a grey crest
- * makes the crest read as *lit*, which is exactly the sort of thing a
- * background should not be doing behind a canvas full of cards. Two shades of
- * the same cool grey read instead as one surface with a gradient in it.
- *
- * The step between them (about 0.045 in sRGB, a little over 4% of the range)
- * is the only thing on screen with no meaning attached to it, so it is set to
- * the smallest one that still resolves as an edge at the cliff rather than as
- * a banding artefact on a wide flat area. Both carry the same slight blue cast
- * the rest of the theme's neutrals do — the hue must match, or the ramp reads
- * as a shift in material rather than in tone.
- *
- * Given as endpoints rather than as `base` plus a tone: a gradient between two
- * colours is what this is, and a pair is what you actually pick when tuning it.
- */
-export const CONCENTRIC_DARK: Rgb = [0.098, 0.110, 0.133]
-export const CONCENTRIC_PALE: Rgb = [0.141, 0.157, 0.188]
-
-/** Linear light the top of the ramp adds to the bottom. */
-const rampEmission = (): Rgb => linearEmission(CONCENTRIC_DARK, CONCENTRIC_PALE)
-
-/**
- * The palette and the world-space period: what a background in this family
- * stands on before it draws anything of its own.
- *
- * Includes `DARK_LIN`, `E_RAMP`, `PERIOD`, `MIN_PX` and `linearToSrgb`. The
- * contract that comes with it is that the shader ends by encoding a tone in
- * `[0, 1]` through this one pair — which is what keeps a whole theme inside a
- * single 4%-of-range step however much ornament it piles on top, and what makes
- * two themes in the family read as the same material.
- *
- * `PERIOD` is the unit of world distance the family measures in, whether a
- * background uses it as a ramp (`CONCENTRIC_BG_FRAG`) or as a lattice pitch
- * (`MEDALLION_BG_FRAG`).
- */
-const NEUTRAL_GROUND_GLSL = `
-/** The bottom of the ramp, in linear light. */
-const vec3 DARK_LIN = ${glslVec3(rgbToLinear(CONCENTRIC_DARK))};
-/** Linear light the top of the ramp adds to it. */
-const vec3 E_RAMP   = ${glslVec3(rampEmission())};
-
-/** World units per ramp: the root node's radius — see above. */
-const float PERIOD     = ${ROOT_DISC_RADIUS.toFixed(1)};
-/** Device pixels per ramp below which the pattern fades out. */
-const float MIN_PX     = 3.0;
-
-${LINEAR_TO_SRGB_GLSL}
-`
-
-/**
- * The antialiased radial ramp: the grey brightens smoothly with distance from
- * the origin, then drops back in one step at every whole multiple of the root
- * node's radius. Concentric, evenly spaced, and only one hard edge per period —
- * with the brightening held back until near the cliff, so most of the canvas is
- * the darker grey. See `EASE`.
- *
- * ## The geometry
- *
- * `r = |world|`, and the tone is `fract(r / PERIOD)` eased by `EASE` — 0 at
- * the bottom of each ramp, approaching 1 just before the next cliff. The
- * period is constant, so the cliffs are evenly spaced from the origin out
- * however far you pan, and there is no tier structure because there are no
- * decades to mark.
- *
- * The asymmetry is the point. A symmetric gradient (out and back) reads as
- * soft concentric blur with no fixed features in it; a ramp that resets hard
- * gives every period one crisp circle to locate yourself against, and the
- * gradient between them tells you which way is out.
- *
- * ## Why `PERIOD` is the root node's radius
- *
- * The root node is a disc at the origin, and it is the one fixed landmark on
- * the canvas — so the ramp is hung off it rather than off a number picked to
- * look right on its own. At `PERIOD = ROOT_DISC_RADIUS` the first cliff lands
- * exactly on the node's rim: the ramp under the node brightens out to its
- * edge, and the step down happens precisely where the node ends. Every cliff
- * after that is a whole number of root radii out, so the background reads as
- * *that circle, repeated*, instead of as a pattern the node happens to sit in
- * front of.
- *
- * `ROOT_DISC_RADIUS`, not `ROOT_NODE_RADIUS`: the latter is the node's *box*,
- * which is larger than the circle drawn in it, and hanging the ramp off it put
- * every cliff about 40% too far out. Anything aligning to what is on screen
- * wants the disc.
- *
- * It also means resizing the root node rescales the background with it, which
- * is the behaviour `ROOT_FOCUS_RADIUS` already has for the camera.
- *
- * ## What a fixed pitch costs
- *
- * The log grid this replaced was scale-free — it looked the same at every
- * zoom, because its spacing grew with radius. A fixed pitch cannot be, so the
- * ramp has a zoom range and `MIN_PX` fades it out below it. A root radius
- * happens to suit the comfortable range (`ZOOM_SNAP_LOW` to `ZOOM_SNAP_HIGH`):
- * a couple of periods across the screen zoomed in, tens of them zoomed out,
- * and flat only in the rubber-band region past `MIN_ZOOM` where nothing else
- * is readable either.
- *
- * ## Why the cliff does not crawl
- *
- * The first version of this background point-sampled a `smoothstep` of the
- * distance to the nearest line, which is the usual way and is wrong: it asks
- * "what colour is this pixel's centre" when the question is "what is the
- * average colour over this pixel". Those differ as an edge drifts against the
- * pixel grid, so the boundary shimmered as you zoomed.
- *
- * The ramp is integrated analytically over the pixel footprint instead — an
- * exact box filter along the radial direction, where all the variation is.
- * `rampIntegral` is the antiderivative of the sawtooth, so a pixel's tone is
- * the difference of two evaluations over its footprint. That spends exactly
- * one pixel on the cliff wherever it falls, and it degrades correctly: once a
- * period is thinner than a pixel the integral converges on the ramp's mean
- * rather than turning into moiré.
- *
- * The footprint is exact rather than an `fwidth`, for the same reason.
- * `fwidth` is a finite difference across a 2×2 quad, so it quantises the
- * transition in 2-pixel blocks; `|grad r| = 1` everywhere away from the
- * origin, so the exact figure is just the pixel size in world units and the
- * shader does not need the derivatives extension at all.
- *
- * ## Why the gradient does not band
- *
- * An exact tone is necessary and not sufficient. It says where in the ramp a
- * pixel sits; turning that into a colour is a second step, and the obvious way
- * to do it — `mix(DARK, PALE, tone)`, written straight to the framebuffer —
- * mixes *encoded* values, not light. Against colours this dark that bends the
- * ramp away from a straight line in light, which over a gradient this wide and
- * this shallow is exactly the condition that shows up as contour banding.
- *
- * So the pair is decoded to linear light once, in TypeScript, as the amount
- * the top of the ramp *adds* to the bottom. A pixel emits
- * `DARK_LIN + tone * emission`, which is affine in the tone and therefore
- * averages correctly, and the shader encodes to sRGB once at the end. See
- * `./srgb`.
- */
-const RADIAL_RAMP_GLSL = `
-/**
- * Mean tone over one period, and so the average brightness of the entire
- * background. 1 / (EASE + 1) for the cubic below — turn the easing and this
- * turns with it.
- */
-const float MEAN = 0.25;
-
-/**
- * Antiderivative of the ramp, which is the cubic f^3 — the tone sits near the
- * dark grey for most of a period and swings to the pale one only as it
- * approaches the cliff.
- *
- * A linear ramp spent half of every period above the midpoint, which read as a
- * pale canvas with dark rings cut into it: the gradient was the figure and the
- * dark was the gap. Easing it moves the balance the other way, so the canvas
- * *is* the dark grey and each cliff gets a highlight leaning into it.
- *
- * ## Why the exponent is spelled out rather than a constant
- *
- * The integral of f^3 is f^4/4, written here as two multiplications. Raising f
- * to a constant exponent reads better and costs a transcendental — and this is
- * called three times per fragment, on a full-screen quad, plus once more per
- * fragment of every card mask. Some drivers strength-reduce a constant exponent
- * to multiplications and some do not, and there is no way to tell which one a
- * user got.
- *
- * The price is that the easing now lives in two places: change the curve and
- * MEAN, this function, and the port in the tests all move together. Three lines
- * in exchange for the shader's cost not depending on the driver.
- *
- * The constant term is dropped because this is only ever used as a difference.
- */
-float rampIntegral(float x) {
-    float i = floor(x);
-    float f = x - i;
-    float f2 = f * f;
-    return (i + f2 * f2) * MEAN;
-}
-
-/**
- * Exact average tone over one pixel. u is the radius in periods, du the pixel
- * footprint in periods.
- */
-float rampTone(float u, float du) {
-    float h  = 0.5 * du;
-    float lo = u - h;
-    float hi = u + h;
-
-    // The pixel on the origin has no negative radius to average over: its
-    // footprint folds back on itself, and the part that would sit at r < 0
-    // reads the same ramp outward again. Without this the centre pixel
-    // averages in the period *behind* the origin — the bright end of a ramp
-    // that is not there — and the origin picks up a lit speck.
-    float folded = max(-lo, 0.0);
-    lo = max(lo, 0.0);
-
-    // Both ends shifted by the same whole period, so the arithmetic stays near
-    // zero however far out the pixel is instead of differencing two large
-    // numbers. Sound because the ramp has period 1 in u, which is also what
-    // makes this continuous where the shift changes.
-    float n = floor(lo);
-
-    float area = rampIntegral(hi - n) - rampIntegral(lo - n) + rampIntegral(folded);
-    return clamp(area / du, 0.0, 1.0);
-}
-`
-
-/**
- * The ramp on its own: nothing but the gradient, one cliff per root radius, and
- * no ornament at all.
- */
-export const CONCENTRIC_BG_FRAG = `
-precision highp float;
-uniform vec2 uOrigin;
-uniform float uZoom;
-uniform float uDpr;
-
-${NEUTRAL_GROUND_GLSL}
-${RADIAL_RAMP_GLSL}
-
-void main() {
-    float worldPerPx = 1.0 / (uZoom * uDpr);
-    vec2 world = (gl_FragCoord.xy - uOrigin) * worldPerPx;
-
-    // |grad r| = 1, so a pixel's footprint in periods is its world size over
-    // the period — exact, and the same everywhere.
-    float u    = length(world) / PERIOD;
-    float du   = worldPerPx / PERIOD;
-    float tone = rampTone(u, du);
-
-    // Aesthetic, not an aliasing fix: the integral above already handles
-    // periods thinner than a pixel by converging on the ramp's mean. But a
-    // canvas that settles to a flat wash as you zoom out is worse than one
-    // that goes quiet, so past that point it fades to the bottom of the ramp
-    // instead.
-    tone *= smoothstep(MIN_PX, MIN_PX * 2.5, PERIOD / worldPerPx);
-
-    // The tone scales emission, not an encoded colour: the term is affine in
-    // it, so the gradient is a straight line in light from one grey to the other.
-    gl_FragColor = vec4(linearToSrgb(DARK_LIN + tone * E_RAMP), 1.0);
-}
-`
 
 /**
  * Chevrons in one neutral tone, held still, outlined in near-black.
@@ -595,20 +353,20 @@ void main() {
  * the motion and the hue are gone. Colour is left to the node presets, which
  * is the only place in this theme where colour means anything.
  *
- * ## Why these are outlined and the other themes' are not
+ * ## Why these are outlined and the animated themes' are not
  *
- * A pale chevron over a pale band is invisible, and half the canvas is a pale
- * band. An accent hue would fix it
- * and would also be the only chromatic thing in a theme whose whole point is
- * that colour means what you say it means, so it would read as significant
- * when it is not.
+ * The still backgrounds are patterned — stone, weave — and a pale chevron over
+ * a pale patch of pattern is invisible. An accent hue would fix it and would
+ * also be the only chromatic thing in a theme whose whole point is that colour
+ * means what you say it means, so it would read as significant when it is not.
  *
  * A dark rim fixes it achromatically: the same chevron is drawn twice, once
  * grown by `OUTLINE_W`, and the difference between the two coverages is the
- * outline. The arrow is then legible against either band alike, which is what an accent colour would have bought without spending the
+ * outline. The arrow is then legible against light and dark ground alike,
+ * which is what an accent colour would have bought without spending the
  * theme's one meaningful signal on it.
  */
-export const CONCENTRIC_EDGE_FRAG = `
+export const STATIC_EDGE_FRAG = `
 #extension GL_OES_standard_derivatives : enable
 precision highp float;
 varying vec2 vUV;

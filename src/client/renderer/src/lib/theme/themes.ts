@@ -49,8 +49,7 @@ export interface Theme {
  * a mod uses, so `allThemes()` is the single list and mod themes appear in the
  * picker alongside these.
  *
- * Ordered cheapest first, since the default leads and the rest are departures
- * from it.
+ * The default leads; the rest are departures from it.
  *
  * `default` deliberately overrides *nothing*: it is `DEFAULT_FACETS` given a
  * name. That is the whole reason the default look and the fall-through cannot
@@ -69,76 +68,46 @@ export const DEFAULT_THEME_ID = 'default'
  */
 const FALLBACK_THEME: Theme = {
   id: DEFAULT_THEME_ID,
-  label: 'Default',
-  blurb: 'Radial glow, drifting chevrons — cheapest to draw',
+  label: 'Pavers',
+  blurb: 'Grey stone pavers laid in rings around the root node — still, textured',
   facets: {},
 }
 
+/**
+ * Every theme below the default names *all five* core facets, even where the
+ * value it wants is the default's. That is deliberate and worth keeping: the
+ * default has changed once already (from the ember glow to the pavers), and a
+ * theme that leaned on the fall-through for, say, its node tint would have
+ * changed look that day without anyone touching it. Spelling the facet out
+ * makes the theme a complete statement about itself, so the default can move
+ * again without dragging the others with it.
+ */
 const BUILT_IN_THEMES: readonly Theme[] = [
   FALLBACK_THEME,
   {
-    id: 'concentric',
-    label: 'Concentric',
-    blurb: 'Rings off the root node, nothing animated — repaints only when you move',
+    // The look this app shipped with, and the cheapest animated one.
+    id: 'ember',
+    label: 'Ember',
+    blurb: 'Radial glow, drifting chevrons — animated, and the cheapest of those',
     facets: {
-      background: BACKGROUNDS.concentric,
-      edges: EDGES.concentric,
-      rootNode: ROOT_NODES.reticle,
-      cardChrome: CARD_CHROMES.technical,
-      nodeTint: NODE_TINTS.neutral,
+      background: BACKGROUNDS.ember,
+      edges: EDGES.ember,
+      rootNode: ROOT_NODES.disc,
+      cardChrome: CARD_CHROMES.standard,
+      nodeTint: NODE_TINTS.angle,
     },
   },
   {
+    // Rings and spokes interlaced, leaned into a spiral so they never close,
+    // repainting only when the camera moves — the same furniture as the
+    // pavers, for the same reason: a still background wants still edges, and
+    // a reticle is the root node that reads against ornament.
     id: 'medallion',
-    // Concentric's navigation cues without concentric's rings: rings and spokes
-    // interlaced, leaned into a spiral so they never close, and still repainting
-    // only when the camera moves.
     label: 'Medallion',
-    blurb: 'Indigo cloth woven around the root node — still, like Concentric',
+    blurb: 'Indigo cloth woven around the root node — still, like Pavers',
     facets: {
       background: BACKGROUNDS.medallion,
-      edges: EDGES.concentric,
-      rootNode: ROOT_NODES.reticle,
-      cardChrome: CARD_CHROMES.technical,
-      nodeTint: NODE_TINTS.neutral,
-    },
-  },
-  // The rug family. Three motifs on one lattice — concentric rows that open up
-  // outward, a whole number of cells around each of them, and no octave sum
-  // anywhere. They wear Concentric's furniture for the same reason Medallion
-  // does: a still background wants still edges, and a reticle is the root node
-  // that reads against ornament.
-  {
-    id: 'kilim',
-    label: 'Kilim',
-    blurb: 'Stepped lozenges in madder and indigo — still, and cheaper than Medallion',
-    facets: {
-      background: BACKGROUNDS.kilim,
-      edges: EDGES.concentric,
-      rootNode: ROOT_NODES.reticle,
-      cardChrome: CARD_CHROMES.technical,
-      nodeTint: NODE_TINTS.neutral,
-    },
-  },
-  {
-    id: 'serration',
-    label: 'Serration',
-    blurb: 'Jagged rings braided into a chain, verdigris on slate — still',
-    facets: {
-      background: BACKGROUNDS.serration,
-      edges: EDGES.concentric,
-      rootNode: ROOT_NODES.reticle,
-      cardChrome: CARD_CHROMES.technical,
-      nodeTint: NODE_TINTS.neutral,
-    },
-  },
-  {
-    id: 'sunburst',
-    label: 'Sunburst',
-    blurb: 'Interlocking saw-tooth crowns in ochre and plum — still',
-    facets: {
-      background: BACKGROUNDS.sunburst,
-      edges: EDGES.concentric,
+      edges: EDGES.static,
       rootNode: ROOT_NODES.reticle,
       cardChrome: CARD_CHROMES.technical,
       nodeTint: NODE_TINTS.neutral,
@@ -153,6 +122,9 @@ const BUILT_IN_THEMES: readonly Theme[] = [
       edges: EDGES.nebula,
       rootNode: ROOT_NODES.orb,
       cardChrome: CARD_CHROMES.hairline,
+      // Nebula has always coloured nodes by where they sit; it inherited that
+      // from the old default and keeps it now that the default has moved.
+      nodeTint: NODE_TINTS.angle,
     },
   },
 ]

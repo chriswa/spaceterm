@@ -25,14 +25,12 @@ describe('the summary-chat bubble facet', () => {
     }
   })
 
-  it('gives the concentric theme the mod\'s own variant', () => {
-    // The mod names the theme; the theme knows nothing about the mod.
-    expect(bubbleFor('concentric')).toBe(SUMMARY_BUBBLES.technical)
-  })
-
-  it('gives every other theme the default', () => {
-    expect(bubbleFor('default')).toBe(SUMMARY_BUBBLES.speech)
-    expect(bubbleFor('nebula')).toBe(SUMMARY_BUBBLES.speech)
+  it('gives every theme this repo ships the speech bubble', () => {
+    // The default moved from the ember glow to the pavers; neither ever had
+    // the technical mark, and nor does anything else now.
+    for (const theme of themes()) {
+      expect(bubbleFor(theme.id), theme.id).toBe(SUMMARY_BUBBLES.speech)
+    }
   })
 
   it('does not appear among the core facets', () => {

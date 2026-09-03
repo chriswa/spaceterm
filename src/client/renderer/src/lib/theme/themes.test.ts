@@ -4,11 +4,13 @@ import {
   DEFAULT_FACETS,
   EDGES,
   FACET_IDS,
+  ROOT_NODES,
   type BackgroundFacet,
   type EdgeFacet,
   type FacetId,
 } from './facets'
 import { EDGE_VERT_SRC } from './shaders'
+import { registerTheme } from './theme-registry'
 import { DEFAULT_THEME_ID, themes, resolveFacet, resolveFacets, resolveTheme } from './themes'
 
 /**
@@ -57,20 +59,48 @@ describe('sparse override', () => {
     expect(nebula.cardChrome.id).toBe('hairline')
   })
 
-  it('falls through to the default where it does not', () => {
-    // Nebula says nothing about node tint, so it keeps the default.
-    expect(resolveTheme('nebula').facets.nodeTint).toBeUndefined()
-    expect(resolveFacet('nebula', 'nodeTint')).toBe(DEFAULT_FACETS.nodeTint)
+  it('falls through to the default where a theme says nothing', () => {
+    // No built-in theme relies on this any more (see below), so a throwaway
+    // registered theme is what exercises it.
+    registerTheme({ id: 'test:sparse', label: 'Sparse', blurb: 'a test theme', facets: { rootNode: ROOT_NODES.orb } })
+    expect(resolveTheme('test:sparse').facets.nodeTint).toBeUndefined()
+    expect(resolveFacet('test:sparse', 'nodeTint')).toBe(DEFAULT_FACETS.nodeTint)
+    expect(resolveFacet('test:sparse', 'rootNode')).toBe(ROOT_NODES.orb)
   })
 
   it('is a real fall-through, not a coincidence of matching ids', () => {
     // Guards the trap this test fell into once: asserting on a facet id that
     // the default happens to share makes a broken lookup pass. Identity, and a
     // theme whose override differs from the default, are what actually check it.
-    const concentric = resolveFacets('concentric')
-    expect(concentric.nodeTint).not.toBe(DEFAULT_FACETS.nodeTint)
-    expect(concentric.nodeTint.id).toBe('neutral')
-    expect(concentric.background.id).toBe('concentric')
+    const ember = resolveFacets('ember')
+    expect(ember.nodeTint).not.toBe(DEFAULT_FACETS.nodeTint)
+    expect(ember.nodeTint.id).toBe('angle')
+    expect(ember.background.id).toBe('ember')
+  })
+})
+
+describe('every built-in theme other than the default', () => {
+  it('names all five core facets, so a change to the default cannot change it', () => {
+    // The default has moved once (ember → pavers). A theme that leaned on the
+    // fall-through for a facet would have changed look that day without anyone
+    // touching it; naming every facet is what makes a theme a complete
+    // statement about itself.
+    for (const theme of themes()) {
+      if (theme.id === DEFAULT_THEME_ID || theme.id.includes(':')) continue
+      for (const facet of FACET_IDS) {
+        expect(theme.facets[facet], `theme "${theme.id}" leaves "${facet}" to the default`).toBeDefined()
+      }
+    }
+  })
+
+  it('keeps the looks the themes had before the default moved', () => {
+    // What each theme inherited from the old default, now spelled out.
+    expect(resolveFacets('nebula').nodeTint.id).toBe('angle')
+    const ember = resolveFacets('ember')
+    expect(ember.edges.id).toBe('ember')
+    expect(ember.rootNode.id).toBe('disc')
+    expect(ember.cardChrome.id).toBe('standard')
+    expect(ember.nodeTint.id).toBe('angle')
   })
 })
 
@@ -78,8 +108,9 @@ describe('the edges facet', () => {
   it('lets a theme replace the vertex shader, and most do not', () => {
     // The chevron scroll lives in the vertex stage, so "still edges" is only
     // expressible as a different vertex shader.
-    expect(resolveFacet('concentric', 'edges').vert).toBeTruthy()
-    expect(resolveFacet('default', 'edges').vert).toBeUndefined()
+    expect(resolveFacet('default', 'edges').vert).toBeTruthy()
+    expect(resolveFacet('medallion', 'edges').vert).toBeTruthy()
+    expect(resolveFacet('ember', 'edges').vert).toBeUndefined()
     expect(resolveFacet('nebula', 'edges').vert).toBeUndefined()
   })
 })
@@ -139,22 +170,22 @@ describe('the animation-rate promise', () => {
     }
   })
 
-  it('is what the concentric theme is for', () => {
+  it('is what the default theme is for', () => {
     // Both halves, or the gate cannot skip a frame: the edges composite over
     // the background, so neither repaints alone.
-    expect(resolveFacet('concentric', 'background').animatedHz).toBe(0)
-    expect(resolveFacet('concentric', 'edges').animatedHz).toBe(0)
+    expect(resolveFacet('default', 'background').animatedHz).toBe(0)
+    expect(resolveFacet('default', 'edges').animatedHz).toBe(0)
   })
 })
 
 describe('node tint', () => {
-  it('gives every node the same neutral preset under the concentric theme', () => {
-    const tint = resolveFacet('concentric', 'nodeTint')
+  it('gives every node the same neutral preset under the default theme', () => {
+    const tint = resolveFacet('default', 'nodeTint')
     expect(tint.presetFor(0, 0)).toBe(tint.presetFor(9999, -4321))
   })
 
-  it('varies by position under the default theme', () => {
-    const tint = resolveFacet('default', 'nodeTint')
+  it('varies by position under the ember theme', () => {
+    const tint = resolveFacet('ember', 'nodeTint')
     expect(tint.borderColor(1000, 0)).not.toBe(tint.borderColor(0, 1000))
   })
 })
