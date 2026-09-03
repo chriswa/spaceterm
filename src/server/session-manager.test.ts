@@ -54,6 +54,28 @@ describe('SessionManager create', () => {
     client.dispose()
   })
 
+  it('strips an enclosing agent session from the PTY environment', async () => {
+    vi.stubEnv('CLAUDE_CODE_CHILD_SESSION', '1')
+    vi.stubEnv('CLAUDECODE', '1')
+    vi.stubEnv('CLAUDE_PID', '123')
+    vi.stubEnv('CLAUDE_CONFIG_DIR', '/cfg')
+    try {
+      const { daemon, manager, client } = await setup()
+      manager.create()
+      manager.create({ command: 'claude', args: [] })
+      for (const create of sent(daemon, 'create')) {
+        const env = create.env as Record<string, string>
+        expect(env).not.toHaveProperty('CLAUDE_CODE_CHILD_SESSION')
+        expect(env).not.toHaveProperty('CLAUDECODE')
+        expect(env).not.toHaveProperty('CLAUDE_PID')
+        expect(env.CLAUDE_CONFIG_DIR).toBe('/cfg')
+      }
+      client.dispose()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('passes the surface id to the PTY environment', async () => {
     const { daemon, manager, client } = await setup()
     const info = manager.create()

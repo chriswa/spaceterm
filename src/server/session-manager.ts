@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
+import { scrubInheritedAgentEnv } from './spawn-env'
 import { serverLog } from './server-log'
 import { expandTilde } from './cwd'
 import { TitleParser } from './title-parser'
@@ -91,13 +92,15 @@ export class SessionManager {
     const resolvedCwd = expandTilde(options?.cwd)
     const cwd = resolvedCwd && existsSync(resolvedCwd) ? resolvedCwd : home
 
-    const baseEnv = process.env as Record<string, string>
+    // Never forward the identity of whichever agent session happened to start
+    // this server — see spawn-env.ts for the failure that causes.
+    const baseEnv = scrubInheritedAgentEnv(process.env)
     const isCommand = !!options?.command
     const executable = isCommand ? options!.command! : shell
     const args = isCommand ? (options!.args || []) : ['-l']
     // Only apply shell integration env when spawning a shell (not a command)
     // Always copy env to avoid mutating process.env
-    const env = isCommand ? { ...baseEnv } : getShellEnv(shell, baseEnv)
+    const env = isCommand ? baseEnv : getShellEnv(shell, baseEnv)
     env.SPACETERM_SURFACE_ID = sessionId
     // Stable node ID — survives reincarnation. Falls back to sessionId for initial creation.
     env.SPACETERM_NODE_ID = options?.nodeId ?? sessionId
