@@ -6,6 +6,9 @@
   need extracting first, and the structural issues worth fixing. Start here.
 - `MODDING.md` — design note on turning features into mods, and why the scripts
   socket is already most of an extension API.
+- `menubar/` — SpacetermBar, the macOS menu bar app that supervises the server
+  and client in place of `npm run dev` (Swift, separate from the npm build).
+  `menubar/README.md` covers its restart policy and how to verify it headless.
 
 ## After making changes
 
