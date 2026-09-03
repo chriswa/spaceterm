@@ -8,11 +8,28 @@ const BUSINESS_END_HOUR = 17
 
 /**
  * How much business time a node's whole subtree can go untouched before the
- * "dim stale nodes" view treats it as stale: 16 business hours — two 8-hour
- * business days. Enough to keep today, the previous business day, and part of
- * the one before it lit. Tune here (a future toolbar control could expose it).
+ * "dim stale nodes" view keeps it at full brightness: 16 business hours — two
+ * 8-hour business days. Enough to keep today, the previous business day, and
+ * part of the one before it lit. Tune here (a future toolbar control could
+ * expose it).
  */
 export const STALE_THRESHOLD_BUSINESS_MS = 16 * 60 * 60 * 1000
+
+const BUSINESS_DAY_MS = (BUSINESS_END_HOUR - BUSINESS_START_HOUR) * 60 * 60 * 1000
+
+// Eight calendar days can contain at most six weekdays. A 31-day calendar
+// month plus one day can contain at most 24 weekdays. Using those maxima keeps
+// an item in a brighter band for the whole requested calendar-sized window,
+// irrespective of where weekends fall.
+export const WEEK_PLUS_DAY_BUSINESS_MS = 6 * BUSINESS_DAY_MS
+export const MONTH_PLUS_DAY_BUSINESS_MS = 24 * BUSINESS_DAY_MS
+
+export const STALE_BRIGHTNESS = {
+  recent: 1,
+  weekPlusDay: 0.6,
+  monthPlusDay: 0.4,
+  older: 0.2,
+} as const
 
 function isWeekday(day: number): boolean {
   return day >= 1 && day <= 5 // 0 = Sunday, 6 = Saturday
@@ -51,21 +68,20 @@ export function businessMillisBetween(from: number, to: number, cap = Infinity):
 }
 
 /**
- * The set of node ids to dim: those whose whole subtree (the node and every
- * descendant) has gone untouched for more than `thresholdBusinessMs` of
- * business time. A node stays lit while any descendant is fresh, so interacting
- * with one leaf keeps its whole ancestor chain lit — the "touch it and its
- * parents wake up" behaviour the dim view is for.
+ * Brightness for each node, based on how long its whole subtree (the node and
+ * every descendant) has gone untouched. A node stays as bright as its freshest
+ * descendant, so interacting with one leaf keeps its whole ancestor chain lit
+ * — the "touch it and its parents wake up" behaviour the dim view is for.
  *
  * O(n): subtree freshness is the max `lastInteractedAt` over a node's subtree,
  * computed once bottom-up with memoization (and a cycle guard, since the tree is
  * derived from `parentId` links rather than trusted structure).
  */
-export function computeStaleNodeIds(
+export function computeNodeBrightness(
   nodes: Record<string, NodeData>,
   now: number,
   thresholdBusinessMs: number = STALE_THRESHOLD_BUSINESS_MS
-): Set<NodeId> {
+): Map<NodeId, number> {
   const childIds = new Map<NodeId, NodeId[]>()
   for (const id of nodeIdsOf(nodes)) {
     const parentId = nodes[id].parentId
@@ -87,19 +103,25 @@ export function computeStaleNodeIds(
     return max
   }
 
-  const stale = new Set<NodeId>()
+  const brightness = new Map<NodeId, number>()
   for (const id of nodeIdsOf(nodes)) {
     const mostRecent = visit(id)
-    if (businessMillisBetween(mostRecent, now, thresholdBusinessMs) > thresholdBusinessMs) {
-      stale.add(id)
-    }
+    const age = businessMillisBetween(mostRecent, now, MONTH_PLUS_DAY_BUSINESS_MS)
+    const level = age <= thresholdBusinessMs
+      ? STALE_BRIGHTNESS.recent
+      : age <= WEEK_PLUS_DAY_BUSINESS_MS
+        ? STALE_BRIGHTNESS.weekPlusDay
+        : age <= MONTH_PLUS_DAY_BUSINESS_MS
+          ? STALE_BRIGHTNESS.monthPlusDay
+          : STALE_BRIGHTNESS.older
+    brightness.set(id, level)
   }
-  return stale
+  return brightness
 }
 
-/** Shallow set equality — used to skip a store update when the stale set is unchanged. */
-export function idSetsEqual(a: Set<NodeId>, b: Set<NodeId>): boolean {
+/** Shallow map equality — used to skip a store update when brightness is unchanged. */
+export function nodeBrightnessEqual(a: Map<NodeId, number>, b: Map<NodeId, number>): boolean {
   if (a.size !== b.size) return false
-  for (const id of a) if (!b.has(id)) return false
+  for (const [id, brightness] of a) if (b.get(id) !== brightness) return false
   return true
 }

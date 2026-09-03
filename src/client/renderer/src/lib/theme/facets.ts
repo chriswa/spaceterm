@@ -85,6 +85,8 @@ export interface BackgroundFacet extends FacetBase {
  * because the chevron crawl is applied to the V coordinate in the *vertex*
  * stage, so a theme that wants still edges cannot express that in its fragment
  * shader — the motion is already baked into `vUV` by the time it arrives.
+ * Edge fragments also receive `uBrightness`, the age-band brightness for the
+ * child subtree an edge leads into.
  */
 export interface EdgeFacet extends FacetBase {
   readonly frag: string

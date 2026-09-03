@@ -16,6 +16,8 @@ export interface TreeLineNode {
   parentId: NodeId
   x: number
   y: number
+  /** Age-band brightness of the child subtree this edge leads into. */
+  brightness: number
 }
 
 export interface MaskRect {
@@ -113,6 +115,7 @@ interface EdgeStage {
   bgTime: WebGLUniformLocation | null
   bgOrigin: WebGLUniformLocation | null
   intensity: WebGLUniformLocation | null
+  brightness: WebGLUniformLocation | null
   dpr: WebGLUniformLocation | null
 }
 
@@ -144,6 +147,7 @@ function buildEdgeStage(gl: WebGLRenderingContext, frag: string, vert: string): 
     bgTime: gl.getUniformLocation(prog, 'uBgTime'),
     bgOrigin: gl.getUniformLocation(prog, 'uBgOrigin'),
     intensity: gl.getUniformLocation(prog, 'uIntensity'),
+    brightness: gl.getUniformLocation(prog, 'uBrightness'),
     dpr: gl.getUniformLocation(prog, 'uDpr'),
   }
 }
@@ -440,7 +444,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       if (edge) {
         // One upload-and-draw for every edge batch: the ordinary edges and
         // both highlight passes differ only in vertex data and intensity.
-        const drawEdgeBatch = (vertexCount: number, intensity: number) => {
+        const drawEdgeBatch = (vertexCount: number, intensity: number, brightness: number) => {
           if (vertexCount === 0) return
           gl.useProgram(edge.prog)
           gl.bindBuffer(gl.ARRAY_BUFFER, res.edgeBuf)
@@ -460,6 +464,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           gl.uniform2f(edge.bgOrigin, cam.x * dpr, canvas.height - cam.y * dpr)
           gl.uniform1f(edge.dpr, dpr)
           gl.uniform1f(edge.intensity, intensity)
+          gl.uniform1f(edge.brightness, brightness)
 
           gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
           gl.disableVertexAttribArray(edge.pos)
@@ -520,13 +525,20 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           const parentPosOf = (parentId: NodeId): { x: number; y: number } | null =>
             parentId === 'root' ? { x: 0, y: 0 } : posMap.get(parentId) ?? null
 
-          let offset = 0
-          for (const node of edges) {
-            const parentPos = parentPosOf(node.parentId)
-            if (!parentPos) continue
-            offset = emitQuad(offset, parentPos.x, parentPos.y, node.x, node.y)
+          // An edge inherits the brightness of the child subtree it leads to.
+          // Draw each age band separately so the shader can apply that value
+          // consistently across every edge theme without changing its vertex
+          // format or its hit-testing geometry.
+          for (const brightness of [1, 0.6, 0.4, 0.2]) {
+            let offset = 0
+            for (const node of edges) {
+              if (node.brightness !== brightness) continue
+              const parentPos = parentPosOf(node.parentId)
+              if (!parentPos) continue
+              offset = emitQuad(offset, parentPos.x, parentPos.y, node.x, node.y)
+            }
+            drawEdgeBatch(offset / FLOATS_PER_VERTEX, 1.0, brightness)
           }
-          drawEdgeBatch(offset / FLOATS_PER_VERTEX, 1.0)
 
           // 2b. Highlight edges:
           //     - Node selected → boosted chevrons on its parent edge
@@ -536,13 +548,13 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           const selParent = childNode ? parentPosOf(childNode.parentId) : null
           if (childNode && selParent) {
             const end = emitQuad(0, selParent.x, selParent.y, childNode.x, childNode.y)
-            drawEdgeBatch(end / FLOATS_PER_VERTEX, HIGHLIGHT_INTENSITY)
+            drawEdgeBatch(end / FLOATS_PER_VERTEX, HIGHLIGHT_INTENSITY, childNode.brightness)
           }
 
           const rEdge = reparentEdgeRef.current
           if (rEdge) {
             const end = emitQuad(0, rEdge.fromX, rEdge.fromY, rEdge.toX, rEdge.toY)
-            drawEdgeBatch(end / FLOATS_PER_VERTEX, HIGHLIGHT_INTENSITY)
+            drawEdgeBatch(end / FLOATS_PER_VERTEX, HIGHLIGHT_INTENSITY, 1.0)
           }
         }
       }

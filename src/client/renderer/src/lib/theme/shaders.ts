@@ -237,6 +237,7 @@ varying vec2 vUV;
 uniform float uBgTime;
 uniform vec2 uBgOrigin;
 uniform float uIntensity;
+uniform float uBrightness;
 uniform float uZoom;
 
 ${OKLAB_GLSL}
@@ -270,7 +271,7 @@ void main() {
   vec4 bg = computeBackground(gl_FragCoord.xy, uBgTime, uBgOrigin, uZoom, 0.15);
   vec3 blended = softLight(bg.rgb, vec3(1.0));
   // uIntensity > 1 overshoots past soft-light toward brighter
-  vec3 result = mix(bg.rgb, blended, alpha * uIntensity);
+  vec3 result = mix(bg.rgb, blended, alpha * uIntensity * uBrightness);
   gl_FragColor = vec4(result, bg.a);
 }
 `
@@ -323,6 +324,7 @@ precision highp float;
 varying vec2 vUV;
 uniform vec2 uBgOrigin;
 uniform float uIntensity;
+uniform float uBrightness;
 uniform float uZoom;
 
 ${OKLAB_GLSL}
@@ -334,7 +336,7 @@ void main() {
 
   vec2 canvasOffset = (gl_FragCoord.xy - uBgOrigin) / uZoom;
   vec3 rgb = max(oklch2rgb(0.75, 0.08, angularHue(canvasOffset)), 0.0);
-  gl_FragColor = vec4(rgb, alpha * 0.35 * uIntensity);
+  gl_FragColor = vec4(rgb, alpha * 0.35 * uIntensity * uBrightness);
 }
 `
 
@@ -610,19 +612,21 @@ export const CONCENTRIC_EDGE_FRAG = `
 precision highp float;
 varying vec2 vUV;
 uniform float uIntensity;
+uniform float uBrightness;
 
 ${CHEVRON_GLSL}
 
 /**
- * Opaque, so brightness is set by the colour rather than by how much of the
- * background shows through.
+ * Opaque at full brightness, so its normal colour does not depend on the
+ * background showing through.
  *
  * An earlier version carried its weight in alpha, which made the chevrons
  * translucent — the bands read straight through them, and their apparent colour
- * changed depending on which band happened to be underneath. Alpha is
- * now coverage only: antialiasing at the silhouette, fully opaque inside. The
- * core is therefore about the luminance the translucent version *averaged* to,
- * not the value it was written with.
+ * changed depending on which band happened to be underneath. Alpha is normally
+ * coverage only: antialiasing at the silhouette, fully opaque inside. The core
+ * is therefore about the luminance the translucent version *averaged* to, not
+ * the value it was written with. uBrightness intentionally reduces that
+ * coverage for stale edges so both the rim and core recede together.
  */
 const vec3  CORE       = vec3(0.42, 0.45, 0.52);
 const vec3  OUTLINE    = vec3(0.02, 0.02, 0.03);
@@ -653,7 +657,10 @@ void main() {
   // a highlighted edge is still legible over a pale band.
   vec3 rgb = mix(OUTLINE, min(CORE * uIntensity, vec3(1.0)), core);
 
-  gl_FragColor = vec4(rgb, outline);
+  // Unlike the animated themes this edge is normally opaque. Carry age in
+  // coverage, rather than merely darkening its ink, so the black rim fades
+  // into the background along with the core.
+  gl_FragColor = vec4(rgb, outline * uBrightness);
 }
 `
 

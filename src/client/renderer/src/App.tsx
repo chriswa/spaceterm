@@ -35,6 +35,7 @@ import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, r
 import { DEFAULT_PRESET } from './lib/color-presets'
 
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
+import { useDimStaleStore } from './stores/dimStaleStore'
 import { useSavedViewportStore } from './stores/savedViewportStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
@@ -187,10 +188,17 @@ export function App() {
   const renameNode = useNodeStore(s => s.renameNode)
   const setNodeColor = useNodeStore(s => s.setNodeColor)
   const bringToFront = useNodeStore(s => s.bringToFront)
+  const nodeBrightness = useDimStaleStore(s => s.nodeBrightness)
 
   const treeLineNodes = useMemo(() =>
-    nodeList.map((n): TreeLineNode => ({ id: n.id, parentId: n.parentId, x: n.x, y: n.y })),
-    [nodeList]
+    nodeList.map((n): TreeLineNode => ({
+      id: n.id,
+      parentId: n.parentId,
+      x: n.x,
+      y: n.y,
+      brightness: nodeBrightness.get(n.id) ?? 1,
+    })),
+    [nodeList, nodeBrightness]
   )
   const edgesRef = useRef<TreeLineNode[]>([])
   edgesRef.current = treeLineNodes

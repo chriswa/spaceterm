@@ -15,11 +15,12 @@ import { CanvasFrameGate, type FrameInputs } from './canvas-frame-gate'
  */
 
 /** `TreeLineNode`'s ids are branded, and spelling that out inline drowns the tests. */
-const edge = (id: string, parentId: string, x: number, y: number) => ({
+const edge = (id: string, parentId: string, x: number, y: number, brightness = 1) => ({
   id: asNodeId(id),
   parentId: asNodeId(parentId),
   x,
   y,
+  brightness,
 })
 
 const base = (): FrameInputs => ({
@@ -113,13 +114,14 @@ describe('CanvasFrameGate', () => {
     }
   })
 
-  it('draws again when an edge moves, appears, or is reparented', () => {
+  it('draws again when an edge moves, changes brightness, appears, or is reparented', () => {
     const cases: Record<string, FrameInputs['edges']> = {
       moved: [edge('a', 'root', 101, 200)],
       added: [edge('a', 'root', 100, 200), edge('b', 'a', 300, 400)],
       removed: [],
       reparented: [edge('a', 'b', 100, 200)],
       renamed: [edge('z', 'root', 100, 200)],
+      dimmed: [edge('a', 'root', 100, 200, 0.6)],
     }
     for (const [name, edges] of Object.entries(cases)) {
       const gate = settled()

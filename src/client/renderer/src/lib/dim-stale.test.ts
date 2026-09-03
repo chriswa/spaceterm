@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { businessMillisBetween, computeStaleNodeIds, STALE_THRESHOLD_BUSINESS_MS } from './dim-stale'
+import {
+  businessMillisBetween,
+  computeNodeBrightness,
+  MONTH_PLUS_DAY_BUSINESS_MS,
+  STALE_BRIGHTNESS,
+  STALE_THRESHOLD_BUSINESS_MS,
+  WEEK_PLUS_DAY_BUSINESS_MS,
+} from './dim-stale'
 import { asNodeId } from '../../../../shared/ids'
 import type { NodeData } from '../../../../shared/state'
 
@@ -44,7 +51,7 @@ describe('businessMillisBetween', () => {
   })
 })
 
-// computeStaleNodeIds only reads `parentId` and `lastInteractedAt`.
+// computeNodeBrightness only reads `parentId` and `lastInteractedAt`.
 function nodes(defs: Array<{ id: string; parentId: string; at?: number }>): Record<string, NodeData> {
   const out: Record<string, NodeData> = {}
   for (const d of defs) {
@@ -53,52 +60,68 @@ function nodes(defs: Array<{ id: string; parentId: string; at?: number }>): Reco
   return out
 }
 
-describe('computeStaleNodeIds (business hours)', () => {
+describe('computeNodeBrightness (business hours)', () => {
   const NOW = at(0, 12, 12) // Monday noon
 
-  it('keeps a node touched within 16 business hours lit', () => {
+  it('keeps a node touched within 16 business hours at full brightness', () => {
     // Fri 16:00 → Mon 12:00 = 1h + 3h = 4 business hours.
-    const stale = computeStaleNodeIds(nodes([{ id: 'a', parentId: 'root', at: at(0, 9, 16) }]), NOW)
-    expect(stale.size).toBe(0)
+    const brightness = computeNodeBrightness(nodes([{ id: 'a', parentId: 'root', at: at(0, 9, 16) }]), NOW)
+    expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.recent)
   })
 
-  it('dims a node past 16 business hours', () => {
+  it('drops to 60% immediately past 16 business hours', () => {
     // Thu 09:00 → Mon 12:00 = 8h + 8h + 3h = 19 business hours.
-    const stale = computeStaleNodeIds(nodes([{ id: 'a', parentId: 'root', at: at(0, 8, 9) }]), NOW)
-    expect([...stale]).toEqual(['a'])
+    const brightness = computeNodeBrightness(nodes([{ id: 'a', parentId: 'root', at: at(0, 8, 9) }]), NOW)
+    expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.weekPlusDay)
   })
 
-  it('treats a never-interacted node as stale', () => {
-    const stale = computeStaleNodeIds(nodes([{ id: 'a', parentId: 'root' }]), NOW)
-    expect(stale.has(asNodeId('a'))).toBe(true)
+  it('uses the requested weekday capacities for the age bands', () => {
+    expect(WEEK_PLUS_DAY_BUSINESS_MS).toBe(48 * HOUR)
+    expect(MONTH_PLUS_DAY_BUSINESS_MS).toBe(192 * HOUR)
+
+    const brightness = computeNodeBrightness(nodes([
+      // Dec 15 → Jan 12 noon is 163 business hours: within 24 business days.
+      { id: 'month', parentId: 'root', at: at(-1, 15, 9) },
+      // Dec 1 → Jan 12 noon exceeds 24 business days.
+      { id: 'old', parentId: 'root', at: at(-1, 1, 9) },
+    ]), NOW)
+    expect(brightness.get(asNodeId('month'))).toBe(STALE_BRIGHTNESS.monthPlusDay)
+    expect(brightness.get(asNodeId('old'))).toBe(STALE_BRIGHTNESS.older)
   })
 
-  it('keeps a stale ancestor lit when a descendant is fresh', () => {
+  it('treats a never-interacted node as oldest', () => {
+    const brightness = computeNodeBrightness(nodes([{ id: 'a', parentId: 'root' }]), NOW)
+    expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.older)
+  })
+
+  it('keeps an old ancestor fully bright when a descendant is fresh', () => {
     // root and mid are past the threshold on their own; the fresh leaf lifts both.
-    const stale = computeStaleNodeIds(nodes([
-      { id: 'root', parentId: 'ROOT', at: at(0, 8, 9) },   // 19h → stale alone
+    const brightness = computeNodeBrightness(nodes([
+      { id: 'root', parentId: 'ROOT', at: at(0, 8, 9) },   // 19h → 60% alone
       { id: 'mid', parentId: 'root', at: at(0, 8, 9) },
       { id: 'leaf', parentId: 'mid', at: at(0, 12, 10) },  // 2h → fresh
     ]), NOW)
-    expect(stale.size).toBe(0)
+    expect([...brightness.values()]).toEqual([1, 1, 1])
   })
 
-  it('dims a stale branch while its fresh sibling branch stays lit', () => {
-    const stale = computeStaleNodeIds(nodes([
+  it('dims an old branch while its fresh sibling branch stays fully bright', () => {
+    const brightness = computeNodeBrightness(nodes([
       { id: 'parent', parentId: 'root', at: at(0, 8, 9) },
       { id: 'fresh-child', parentId: 'parent', at: at(0, 12, 10) },
       { id: 'stale-child', parentId: 'parent', at: at(0, 8, 9) },
     ]), NOW)
-    expect([...stale]).toEqual(['stale-child'])
+    expect(brightness.get(asNodeId('parent'))).toBe(STALE_BRIGHTNESS.recent)
+    expect(brightness.get(asNodeId('fresh-child'))).toBe(STALE_BRIGHTNESS.recent)
+    expect(brightness.get(asNodeId('stale-child'))).toBe(STALE_BRIGHTNESS.weekPlusDay)
   })
 
-  it('is exclusive at the threshold boundary', () => {
-    // Exactly 16 business hours old is NOT stale; a minute older is.
-    const stale = computeStaleNodeIds(nodes([
+  it('is exclusive at the full-brightness threshold boundary', () => {
+    // Exactly 16 business hours old is still fully bright; a minute older is 60%.
+    const brightness = computeNodeBrightness(nodes([
       { id: 'at', parentId: 'root', at: at(0, 8, 12) },       // Thu noon → 5h+8h+3h = 16h exactly
       { id: 'past', parentId: 'root', at: at(0, 8, 11, 59) }, // a minute earlier → >16h
     ]), NOW, STALE_THRESHOLD_BUSINESS_MS)
-    expect(stale.has(asNodeId('at'))).toBe(false)
-    expect(stale.has(asNodeId('past'))).toBe(true)
+    expect(brightness.get(asNodeId('at'))).toBe(STALE_BRIGHTNESS.recent)
+    expect(brightness.get(asNodeId('past'))).toBe(STALE_BRIGHTNESS.weekPlusDay)
   })
 })

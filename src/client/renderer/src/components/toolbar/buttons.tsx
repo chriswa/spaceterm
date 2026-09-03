@@ -223,7 +223,7 @@ export function DimStaleToggle() {
     <button
       className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
       onClick={toggle}
-      data-tooltip={enabled ? 'Dim Stale — Disable to show every node at full brightness' : 'Dim Stale — Dim nodes untouched for a day, unless a descendant is fresh'}
+      data-tooltip={enabled ? 'Dim Stale — Disable to show every node at full brightness' : 'Dim Stale — Fade untouched nodes by business-hour age; fresh descendants keep ancestors bright'}
       data-tooltip-no-flip
     >
       <DimIcon />

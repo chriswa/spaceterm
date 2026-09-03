@@ -6,11 +6,11 @@ interface DimStaleState {
   enabled: boolean
   toggle: () => void
   /**
-   * Node ids to dim, recomputed by useDimStaleController. Always empty while
-   * `enabled` is false, so a subscriber can key dimming off membership alone.
+   * Per-node brightness, recomputed by useDimStaleController. Always empty
+   * while `enabled` is false, so cards remain at full brightness then.
    */
-  staleIds: Set<NodeId>
-  setStaleIds: (ids: Set<NodeId>) => void
+  nodeBrightness: Map<NodeId, number>
+  setNodeBrightness: (brightness: Map<NodeId, number>) => void
 }
 
 const stored = localStorage.getItem('toolbar.dimStale')
@@ -23,6 +23,6 @@ export const useDimStaleStore = create<DimStaleState>((set, get) => ({
     localStorage.setItem('toolbar.dimStale', String(next))
     set({ enabled: next })
   },
-  staleIds: new Set(),
-  setStaleIds: (ids) => set({ staleIds: ids }),
+  nodeBrightness: new Map(),
+  setNodeBrightness: (brightness) => set({ nodeBrightness: brightness }),
 }))
