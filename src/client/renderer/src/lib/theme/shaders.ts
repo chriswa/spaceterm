@@ -270,8 +270,9 @@ void main() {
 
   vec4 bg = computeBackground(gl_FragCoord.xy, uBgTime, uBgOrigin, uZoom, 0.15);
   vec3 blended = softLight(bg.rgb, vec3(1.0));
-  // uIntensity > 1 overshoots past soft-light toward brighter
-  vec3 result = mix(bg.rgb, blended, alpha * uIntensity * uBrightness);
+  // uIntensity > 1 overshoots past soft-light toward brighter. Age darkens
+  // the finished chevron toward black without making it more transparent.
+  vec3 result = mix(bg.rgb, blended, alpha * uIntensity) * uBrightness;
   gl_FragColor = vec4(result, bg.a);
 }
 `
@@ -336,7 +337,7 @@ void main() {
 
   vec2 canvasOffset = (gl_FragCoord.xy - uBgOrigin) / uZoom;
   vec3 rgb = max(oklch2rgb(0.75, 0.08, angularHue(canvasOffset)), 0.0);
-  gl_FragColor = vec4(rgb, alpha * 0.35 * uIntensity * uBrightness);
+  gl_FragColor = vec4(rgb * uBrightness, alpha * 0.35 * uIntensity);
 }
 `
 
@@ -625,8 +626,8 @@ ${CHEVRON_GLSL}
  * changed depending on which band happened to be underneath. Alpha is normally
  * coverage only: antialiasing at the silhouette, fully opaque inside. The core
  * is therefore about the luminance the translucent version *averaged* to, not
- * the value it was written with. uBrightness intentionally reduces that
- * coverage for stale edges so both the rim and core recede together.
+ * the value it was written with. uBrightness intentionally darkens the
+ * finished chevron toward black while preserving that coverage.
  */
 const vec3  CORE       = vec3(0.42, 0.45, 0.52);
 const vec3  OUTLINE    = vec3(0.02, 0.02, 0.03);
@@ -657,10 +658,7 @@ void main() {
   // a highlighted edge is still legible over a pale band.
   vec3 rgb = mix(OUTLINE, min(CORE * uIntensity, vec3(1.0)), core);
 
-  // Unlike the animated themes this edge is normally opaque. Carry age in
-  // coverage, rather than merely darkening its ink, so the black rim fades
-  // into the background along with the core.
-  gl_FragColor = vec4(rgb, outline * uBrightness);
+  gl_FragColor = vec4(rgb * uBrightness, outline);
 }
 `
 
