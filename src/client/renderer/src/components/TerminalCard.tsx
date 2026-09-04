@@ -409,7 +409,8 @@ export function TerminalCard({
         return forwardToCanvas(ev)
       }
 
-      // Pinch or horizontal swipe → window-manager navigation, in any buffer.
+      // Zoom (pinch or Cmd+wheel) or horizontal swipe → window-manager
+      // navigation, in any buffer. This is how a wheel leaves a focused terminal.
       const gesture = classifyWheelEvent(wheelAccRef.current, ev)
       if (gesture !== 'vertical') {
         scrollModeRef.current = false

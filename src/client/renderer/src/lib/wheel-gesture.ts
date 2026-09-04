@@ -6,11 +6,24 @@ export function createWheelAccumulator(): WheelAccumulator {
   return { dx: 0, dy: 0, t: 0 }
 }
 
-export type WheelGesture = 'vertical' | 'horizontal' | 'pinch'
+export type WheelGesture = 'vertical' | 'horizontal' | 'zoom'
 
-/** Classify a wheel event. Updates accumulator in place. */
+/**
+ * Classify a wheel event. Updates accumulator in place.
+ *
+ * Only 'vertical' belongs to whatever is under the pointer (terminal
+ * scrollback, a modal's list). 'horizontal' and 'zoom' always go to the
+ * window manager, so they are how a wheel breaks out of a focused surface.
+ *
+ * 'zoom' is a trackpad pinch (macOS reports it as a ctrlKey wheel) or any
+ * wheel with Command held. Cmd+wheel is the mouse user's zoom: a plain mouse
+ * has no pinch, and its sideways jitter rarely clears the horizontal
+ * threshold, so without this rule Cmd+scroll over a focused terminal would
+ * just scroll the terminal.
+ */
 export function classifyWheelEvent(acc: WheelAccumulator, ev: WheelEvent): WheelGesture {
-  if (ev.ctrlKey && Math.abs(ev.deltaY) > PINCH_ZOOM_THRESHOLD) return 'pinch'
+  if (ev.metaKey) return 'zoom'
+  if (ev.ctrlKey && Math.abs(ev.deltaY) > PINCH_ZOOM_THRESHOLD) return 'zoom'
 
   const now = performance.now()
   const dt = now - acc.t
