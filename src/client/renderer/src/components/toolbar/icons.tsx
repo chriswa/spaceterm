@@ -158,6 +158,16 @@ export function DimIcon() {
   )
 }
 
+export function CaretIcon() {
+  // Points up, not down: the toolbar sits at the bottom of the window, so its
+  // menus open upward.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M4 10 L8 6 L12 10" />
+    </svg>
+  )
+}
+
 export function DustpanIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>

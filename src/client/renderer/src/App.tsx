@@ -19,6 +19,7 @@ import { HelpModal } from './components/HelpModal'
 import { KeycastOverlay } from './components/KeycastOverlay'
 import { PeerCameraOverlay } from './components/PeerCameraOverlay'
 import { ResizeGhost } from './components/ResizeGhost'
+import { NodeLabels } from './components/NodeLabels'
 import { AgentSelector, AGENT_SELECTOR_OPTIONS } from './components/AgentSelector'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
@@ -31,6 +32,7 @@ import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
+import { labelMaskBox, layOutNodeLabel, type NodeLabel } from './lib/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
@@ -203,14 +205,43 @@ export function App() {
   const edgesRef = useRef<TreeLineNode[]>([])
   edgesRef.current = treeLineNodes
 
+  /**
+   * Captions drawn above the cards. Laid out here rather than cached per node:
+   * a label is anchored to a card that moves, so there is nothing a drag would
+   * not invalidate anyway.
+   */
+  const nodeLabels = useMemo(() => {
+    const laidOut: NodeLabel[] = []
+    for (const node of nodeList) {
+      // File-backed markdown keeps its text in the store's fileContents, not on
+      // the node — the same substitution the card itself makes.
+      const content = node.type === 'markdown' && node.fileBacked ? (fileContents[node.id] ?? '') : undefined
+      const label = layOutNodeLabel(node, content)
+      if (label) laidOut.push(label)
+    }
+    return laidOut
+  }, [nodeList, fileContents])
+
+  /**
+   * Where the edges must be painted back out.
+   *
+   * Every rect here is `alwaysMasks`: markdown cards, title nodes and node
+   * labels are all drawn with no background of their own, so edges show through
+   * them whatever the theme's card chrome does. See `MaskRect.alwaysMasks`.
+   */
   const maskRects = useMemo(() => {
-    const rects: MaskRect[] = markdowns.map((n): MaskRect => ({ x: n.x, y: n.y, width: n.width, height: n.height }))
+    const rects: MaskRect[] = markdowns.map((n): MaskRect => (
+      { x: n.x, y: n.y, width: n.width, height: n.height, alwaysMasks: true }
+    ))
     for (const t of titles) {
       const size = nodePixelSize(t)
-      rects.push({ x: t.x, y: t.y, width: size.width, height: size.height })
+      rects.push({ x: t.x, y: t.y, width: size.width, height: size.height, alwaysMasks: true })
+    }
+    for (const label of nodeLabels) {
+      rects.push({ ...labelMaskBox(label), alwaysMasks: true })
     }
     return rects
-  }, [markdowns, titles])
+  }, [markdowns, titles, nodeLabels])
   const maskRectsRef = useRef<MaskRect[]>([])
   maskRectsRef.current = maskRects
 
@@ -1348,6 +1379,40 @@ export function App() {
     flyTo(cameraToFitBoundsWithCenter(center, rects, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
   }, [flyTo])
 
+  /**
+   * Step out of `nodeId` to the view of its parent — what Cmd+Up does, and what
+   * clicking an edge label does to the node that supplies it.
+   *
+   * Named rather than inlined in the key handler because there are now two ways
+   * to ask for it and they must land on the same camera: an edge label is a
+   * caption on the edge *into* a node, so clicking it is a request to see that
+   * node in its parent's context, not to focus the node itself.
+   *
+   * A node hanging directly off the root has no parent worth framing — the root
+   * is the whole tree's hub — so that case fits everything instead.
+   */
+  const focusParentOfNode = useCallback((nodeId: NodeId) => {
+    snapToTarget()
+    focusRef.current = null
+    setFocusedId(null)
+    setScrollMode(false)
+
+    const node = useNodeStore.getState().nodes[nodeId]
+    if (nodeId === ROOT_NODE_ID || !node || node.parentId === ROOT_NODE_ID) {
+      // Remember the node itself as the fallback anchor: there is no selection
+      // left to step out of, and the next Cmd+Up has to start somewhere.
+      lastFocusedRef.current = nodeId
+      setSelection(null)
+      fitAllNodes()
+      return
+    }
+
+    setSelection(node.parentId)
+    lastFocusedRef.current = node.parentId
+    flashNode(node.parentId)
+    flyToSelection(node.parentId)
+  }, [snapToTarget, fitAllNodes, flashNode, flyToSelection])
+
   // Detect when focused node disappears (e.g. archived by server on terminal exit)
   useEffect(() => {
     const unsub = useNodeStore.subscribe((state, prevState) => {
@@ -2123,29 +2188,14 @@ export function App() {
       if (e.metaKey && e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
-        snapToTarget()
         const target = focusRef.current ?? selectionRef.current ?? lastFocusedRef.current
-        if (!target) return
-
-        // Unfocus
-        focusRef.current = null
-        setFocusedId(null)
-        setScrollMode(false)
-
-        const node = useNodeStore.getState().nodes[target]
-        if (target === 'root' || !node || node.parentId === 'root') {
-          // At root level → remember for fallback, clear selection, fit all
-          lastFocusedRef.current = target
-          setSelection(null)
-          fitAllNodes()
+        if (!target) {
+          // Nothing to step out of, but a flight in progress still gets cut
+          // short rather than carrying on under a key that meant to stop it.
+          snapToTarget()
           return
         }
-
-        // Select parent
-        setSelection(node.parentId)
-        lastFocusedRef.current = node.parentId
-        flashNode(node.parentId)
-        flyToSelection(node.parentId)
+        focusParentOfNode(target)
       }
 
       // Cmd+Down Arrow: jump to highest-priority unattended crab
@@ -2210,7 +2260,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
+  }, [agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, focusParentOfNode, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -2414,6 +2464,12 @@ export function App() {
       <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <PeerCameraOverlay />
         <ResizeGhost />
+        <NodeLabels
+          labels={nodeLabels}
+          resolvedPresets={resolvedPresets}
+          nodeBrightness={nodeBrightness}
+          onLabelClick={focusParentOfNode}
+        />
         <RootNode
           focused={focusedId === ROOT_NODE_ID}
           selected={selection === ROOT_NODE_ID}

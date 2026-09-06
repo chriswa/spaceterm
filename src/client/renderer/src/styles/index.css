@@ -450,6 +450,27 @@ html, body, #root {
   position: relative;
 }
 
+/* A toggle plus a caret that opens the menu — one control, so the pair sits
+   tighter than the toolbar's own 8px gap. */
+.toolbar__menu-group--split {
+  display: flex;
+  gap: 2px;
+}
+
+.toolbar__btn--caret {
+  padding: 4px 4px;
+  font-size: 14px;
+  color: rgba(255,255,255,0.6);
+}
+
+.toolbar__btn--caret:hover {
+  color: #fff;
+}
+
+.toolbar__btn--caret.toolbar__btn--active {
+  color: #000;
+}
+
 .toolbar__menu {
   position: absolute;
   bottom: 100%;
@@ -468,6 +489,22 @@ html, body, #root {
 /* Wider variant for items that carry a line of explanation under the label. */
 .toolbar__menu--describing {
   min-width: 240px;
+}
+
+/* For a list long enough to run off the top of a short window (the dim-stale
+   thresholds are sixteen items). */
+.toolbar__menu--scrolling {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+
+/* Names the units a list of bare values is measured in. */
+.toolbar__menu-heading {
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255,255,255,0.4);
 }
 
 .toolbar__menu-item {
@@ -522,6 +559,7 @@ html, body, #root {
 .toolbar__menu-note {
   font-size: 11px;
   color: #ffc94d;
+  margin-left: auto;
 }
 
 .toolbar__menu-item--active .toolbar__menu-blurb {
@@ -1458,12 +1496,57 @@ html, body, #root {
   text-decoration: underline;
 }
 
+/* Node label — a node's title drawn on the canvas above its card.
+   Face and weight are the title card's, deliberately: the canvas has one label
+   scale, and a caption is read from the same distance a title node is. Size is
+   where the two part company — LABEL_TEXT_SCALE in node-label.ts measures the
+   box these rules draw into, so the same two-thirds must appear in both places.
+   z-index 0 puts it under every card (the server's z-index counter starts at 1)
+   so an overlapping card wins both the paint and the click. */
+.node-label {
+  position: absolute;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  transition: filter 0.25s ease;
+  /* A label is a name written on the canvas, not a control: it offers no hover
+     state and no pointer cursor, and a double-click on one must navigate rather
+     than select the word underneath. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.node-label__text {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: calc(66px * var(--label-node-scale) * 2 / 3);
+  font-weight: bold;
+  line-height: calc(80px * var(--label-node-scale) * 2 / 3);
+  color: var(--node-label-fg, #a66cff);
+  text-align: center;
+  white-space: pre;
+  /* The lines are already broken to a measured width; the box is sized from
+     that measurement, so nothing here may re-wrap or clip them. */
+  overflow: visible;
+}
+
 /* Title card */
+
+/* A title node wears a thick rounded frame; a node label does not. The frame is
+   what says "a person put this here" as against a caption the canvas derived,
+   and unlike the size difference it still reads when the two are not on screen
+   together. Drawn on the card's measured box — the global border-box reset
+   keeps it inside — so the frame costs no footprint and TITLE_H_PADDING and
+   TITLE_HEIGHT go on being the space around the text. Those two leave ~180
+   world units on every side once the frame is subtracted, which is why the
+   padding needs no separate number. */
 .title-card {
   width: 100%;
   height: 100%;
   overflow: visible;
-  border: none;
+  border: calc(6px * var(--label-node-scale)) solid var(--title-fg, #a66cff);
+  border-radius: calc(20px * var(--label-node-scale));
   background: transparent;
   display: flex;
   flex-direction: column;
@@ -2347,6 +2430,9 @@ html, body, #root {
 }
 
 /* Claude crab behind terminal cards — always visible at popped-up position */
+/* The agent mark, drawn behind the card and lifted past its top edge. Its
+   height is what `CARD_AGENT_MARK_HEIGHT` in lib/constants.ts records, so that
+   node labels can be spaced off it — keep the two in step. */
 .terminal-card__crab-behind {
   position: absolute;
   top: 0;

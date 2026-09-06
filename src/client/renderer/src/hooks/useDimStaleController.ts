@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react'
 import { useNodeStore } from '../stores/nodeStore'
 import { useDimStaleStore } from '../stores/dimStaleStore'
-import { computeNodeBrightness, nodeBrightnessEqual } from '../lib/dim-stale'
+import { computeNodeBrightness, nodeBrightnessEqual, staleThresholdMs } from '../lib/dim-stale'
 
 const RECOMPUTE_INTERVAL_MS = 30_000
 
 /**
  * Keeps `useDimStaleStore.nodeBrightness` current while the dim view is on. Mount once
  * (in App). Recomputes when the node set changes and on a slow interval, so
- * nodes cross the staleness threshold as time passes even with no data change.
+ * nodes cross the staleness threshold as time passes even with no data change,
+ * and immediately when the threshold itself changes.
  * While the view is off it clears the set, so subscribers can dim purely by
  * membership.
  */
 export function useDimStaleController(): void {
   const enabled = useDimStaleStore(s => s.enabled)
   const nodes = useNodeStore(s => s.nodes)
+  const thresholdHours = useDimStaleStore(s => s.thresholdHours)
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export function useDimStaleController(): void {
       if (store.nodeBrightness.size > 0) store.setNodeBrightness(new Map())
       return
     }
-    const next = computeNodeBrightness(nodes, Date.now())
+    const next = computeNodeBrightness(nodes, Date.now(), staleThresholdMs(thresholdHours))
     if (!nodeBrightnessEqual(next, store.nodeBrightness)) store.setNodeBrightness(next)
-  }, [enabled, nodes, tick])
+  }, [enabled, nodes, thresholdHours, tick])
 }

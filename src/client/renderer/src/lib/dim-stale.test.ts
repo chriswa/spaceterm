@@ -2,10 +2,15 @@ import { describe, it, expect } from 'vitest'
 import {
   businessMillisBetween,
   computeNodeBrightness,
-  MONTH_PLUS_DAY_BUSINESS_MS,
+  DARKEST_BAND_AGE_MULTIPLE,
+  STALE_BANDS,
   STALE_BRIGHTNESS,
+  STALE_BRIGHTNESS_LEVELS,
   STALE_THRESHOLD_BUSINESS_MS,
-  WEEK_PLUS_DAY_BUSINESS_MS,
+  STALE_THRESHOLD_HOUR_OPTIONS,
+  DEFAULT_STALE_THRESHOLD_HOURS,
+  normalizeStaleThresholdHours,
+  staleThresholdMs,
 } from './dim-stale'
 import { asNodeId } from '../../../../shared/ids'
 import type { NodeData } from '../../../../shared/state'
@@ -72,12 +77,13 @@ describe('computeNodeBrightness (business hours)', () => {
   it('drops to 60% immediately past 16 business hours', () => {
     // Thu 09:00 → Mon 12:00 = 8h + 8h + 3h = 19 business hours.
     const brightness = computeNodeBrightness(nodes([{ id: 'a', parentId: 'root', at: at(0, 8, 9) }]), NOW)
-    expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.weekPlusDay)
+    expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.fading)
   })
 
-  it('uses the requested weekday capacities for the age bands', () => {
-    expect(WEEK_PLUS_DAY_BUSINESS_MS).toBe(48 * HOUR)
-    expect(MONTH_PLUS_DAY_BUSINESS_MS).toBe(192 * HOUR)
+  it('keeps the default threshold on the original 48h / 192h band edges', () => {
+    // The multiples exist to reproduce the pre-scaling bands at the default.
+    expect(STALE_BANDS.map(b => b.maxAgeMultiple * STALE_THRESHOLD_BUSINESS_MS))
+      .toEqual([16 * HOUR, 48 * HOUR, 192 * HOUR, Infinity])
 
     const brightness = computeNodeBrightness(nodes([
       // Dec 15 → Jan 12 noon is 163 business hours: within 24 business days.
@@ -85,13 +91,13 @@ describe('computeNodeBrightness (business hours)', () => {
       // Dec 1 → Jan 12 noon exceeds 24 business days.
       { id: 'old', parentId: 'root', at: at(-1, 1, 9) },
     ]), NOW)
-    expect(brightness.get(asNodeId('month'))).toBe(STALE_BRIGHTNESS.monthPlusDay)
-    expect(brightness.get(asNodeId('old'))).toBe(STALE_BRIGHTNESS.older)
+    expect(brightness.get(asNodeId('month'))).toBe(STALE_BRIGHTNESS.faded)
+    expect(brightness.get(asNodeId('old'))).toBe(STALE_BRIGHTNESS.oldest)
   })
 
   it('treats a never-interacted node as oldest', () => {
     const brightness = computeNodeBrightness(nodes([{ id: 'a', parentId: 'root' }]), NOW)
-    expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.older)
+    expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.oldest)
   })
 
   it('keeps an old ancestor fully bright when a descendant is fresh', () => {
@@ -112,7 +118,7 @@ describe('computeNodeBrightness (business hours)', () => {
     ]), NOW)
     expect(brightness.get(asNodeId('parent'))).toBe(STALE_BRIGHTNESS.recent)
     expect(brightness.get(asNodeId('fresh-child'))).toBe(STALE_BRIGHTNESS.recent)
-    expect(brightness.get(asNodeId('stale-child'))).toBe(STALE_BRIGHTNESS.weekPlusDay)
+    expect(brightness.get(asNodeId('stale-child'))).toBe(STALE_BRIGHTNESS.fading)
   })
 
   it('is exclusive at the full-brightness threshold boundary', () => {
@@ -122,6 +128,85 @@ describe('computeNodeBrightness (business hours)', () => {
       { id: 'past', parentId: 'root', at: at(0, 8, 11, 59) }, // a minute earlier → >16h
     ]), NOW, STALE_THRESHOLD_BUSINESS_MS)
     expect(brightness.get(asNodeId('at'))).toBe(STALE_BRIGHTNESS.recent)
-    expect(brightness.get(asNodeId('past'))).toBe(STALE_BRIGHTNESS.weekPlusDay)
+    expect(brightness.get(asNodeId('past'))).toBe(STALE_BRIGHTNESS.fading)
+  })
+
+  it('honours a tighter threshold chosen from the toolbar', () => {
+    // Fri 16:00 is 3 business hours before Mon noon: bright at the 16h default,
+    // dim at 2h.
+    const fixture = nodes([{ id: 'a', parentId: 'root', at: at(0, 9, 16) }])
+    expect(computeNodeBrightness(fixture, NOW, staleThresholdMs(DEFAULT_STALE_THRESHOLD_HOURS)).get(asNodeId('a')))
+      .toBe(STALE_BRIGHTNESS.recent)
+    expect(computeNodeBrightness(fixture, NOW, staleThresholdMs(2)).get(asNodeId('a')))
+      .toBe(STALE_BRIGHTNESS.fading)
+  })
+
+  it('scales every band with the threshold, not just the first one', () => {
+    // Thu 09:00 → Mon noon = 19 business hours. At the 16h default that is one
+    // step past full brightness; at 1h it is 19x the threshold, well past the
+    // darkest band's 12x edge. The bug this covers: the darker bands used to sit
+    // at fixed 48h/192h ages, so a 1h threshold left this node at 0.6 — a node
+    // untouched for days looked barely dimmer than one touched this morning.
+    const fixture = nodes([{ id: 'a', parentId: 'root', at: at(0, 8, 9) }])
+    const brightnessAt = (hours: number) =>
+      computeNodeBrightness(fixture, NOW, staleThresholdMs(hours)).get(asNodeId('a'))
+    expect(brightnessAt(DEFAULT_STALE_THRESHOLD_HOURS)).toBe(STALE_BRIGHTNESS.fading)
+    expect(brightnessAt(8)).toBe(STALE_BRIGHTNESS.fading)   // 19h ≤ 24h (3x)
+    expect(brightnessAt(4)).toBe(STALE_BRIGHTNESS.faded)    // 19h ≤ 48h (12x), past 12h (3x)
+    expect(brightnessAt(1)).toBe(STALE_BRIGHTNESS.oldest)   // past 12h (12x)
+  })
+
+  it('walks the whole ladder as a node ages against a fixed threshold', () => {
+    // One threshold, four ages: the bands are ordered and each one is reachable.
+    const brightness = computeNodeBrightness(nodes([
+      { id: 'a', parentId: 'root', at: at(0, 12, 11, 30) },  // 0.5h → 1x
+      { id: 'b', parentId: 'root', at: at(0, 12, 10) },      // 2h  → 3x
+      { id: 'c', parentId: 'root', at: at(0, 9, 16) },       // 4h  → 12x
+      { id: 'd', parentId: 'root', at: at(0, 8, 9) },        // 19h → past 12x
+    ]), NOW, staleThresholdMs(1))
+    expect([...brightness.values()]).toEqual(STALE_BRIGHTNESS_LEVELS)
+  })
+})
+
+describe('threshold options', () => {
+  it('offers every whole hour from 1 up to the default', () => {
+    expect(STALE_THRESHOLD_HOUR_OPTIONS[0]).toBe(1)
+    expect(STALE_THRESHOLD_HOUR_OPTIONS.at(-1)).toBe(DEFAULT_STALE_THRESHOLD_HOURS)
+    expect(STALE_THRESHOLD_HOUR_OPTIONS).toHaveLength(DEFAULT_STALE_THRESHOLD_HOURS)
+  })
+
+  it('leaves the default as the widest setting, so it still means 16 business hours', () => {
+    expect(staleThresholdMs(DEFAULT_STALE_THRESHOLD_HOURS)).toBe(STALE_THRESHOLD_BUSINESS_MS)
+  })
+
+  it('normalizes anything outside the offered range onto an option', () => {
+    // A value no menu item shows would dim by an invisible rule.
+    for (const [input, expected] of [[0, 1], [-4, 1], [99, 16], [3.4, 3], [3.6, 4]] as const) {
+      expect(normalizeStaleThresholdHours(input), String(input)).toBe(expected)
+    }
+    expect(STALE_THRESHOLD_HOUR_OPTIONS).toContain(normalizeStaleThresholdHours(7))
+  })
+
+  it('falls back to the default for a value that is not a number at all', () => {
+    expect(normalizeStaleThresholdHours(NaN)).toBe(DEFAULT_STALE_THRESHOLD_HOURS)
+    expect(normalizeStaleThresholdHours(Infinity)).toBe(DEFAULT_STALE_THRESHOLD_HOURS)
+  })
+})
+
+describe('the fade ladder', () => {
+  it('is ordered: later bands reach further and render darker', () => {
+    for (let i = 1; i < STALE_BANDS.length; i++) {
+      expect(STALE_BANDS[i].maxAgeMultiple).toBeGreaterThan(STALE_BANDS[i - 1].maxAgeMultiple)
+      expect(STALE_BANDS[i].brightness).toBeLessThan(STALE_BANDS[i - 1].brightness)
+    }
+  })
+
+  it('ends unbounded, so every age classifies', () => {
+    expect(STALE_BANDS.at(-1)!.maxAgeMultiple).toBe(Infinity)
+    expect(DARKEST_BAND_AGE_MULTIPLE).toBe(STALE_BANDS.at(-2)!.maxAgeMultiple)
+  })
+
+  it('publishes exactly the levels the canvas batches edges by', () => {
+    expect(STALE_BRIGHTNESS_LEVELS).toEqual([1, 0.6, 0.4, 0.2])
   })
 })

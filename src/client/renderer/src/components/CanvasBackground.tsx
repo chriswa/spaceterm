@@ -10,6 +10,7 @@ import { CanvasFrameGate } from '../lib/canvas-frame-gate'
 import { FrameLimiter, quantizeClock } from '../lib/frame-policy'
 import { chromeNeedsEdgeMask } from '../lib/card-surface'
 import { isCardOnScreen } from '../lib/viewport'
+import { STALE_BRIGHTNESS_LEVELS } from '../lib/dim-stale'
 
 export interface TreeLineNode {
   id: NodeId
@@ -25,6 +26,18 @@ export interface MaskRect {
   y: number // center y (world space)
   width: number
   height: number
+  /**
+   * Repaint the background here whatever the theme does with card chrome.
+   *
+   * `chromeNeedsEdgeMask` asks whether this theme paints `--card-surface`
+   * see-through, and that settles it for the cards drawn on that surface. Some
+   * things on the canvas are not: markdown cards, title nodes and node labels
+   * are all `background: transparent` in the stylesheet itself, so edges cross
+   * them under every theme — including the ones whose opaque chrome switches
+   * the whole pass off. Their transparency is not the theme's to decide, so
+   * neither is their mask.
+   */
+  alwaysMasks?: boolean
 }
 
 export interface ReparentEdge {
@@ -217,15 +230,22 @@ const NO_MASK_RECTS: readonly MaskRect[] = []
  * reason the frame differed from the last one. `margin` is zero here, unlike
  * the card-freshness use of `isCardOnScreen`: this is about what is on screen
  * now, not about what needs to be kept current for a pan that has not happened.
+ *
+ * `chromeMasks` is the theme's answer to `chromeNeedsEdgeMask`. Applied here
+ * rather than as a separate pass so that both reasons a rect might be dropped —
+ * off screen, or not masked under this theme — leave the list in one traversal,
+ * and so the gate is handed exactly what will be drawn.
  */
 function visibleMaskRects(
   rects: readonly MaskRect[],
   camera: Camera,
   cssWidth: number,
-  cssHeight: number
+  cssHeight: number,
+  chromeMasks: boolean
 ): readonly MaskRect[] {
   const viewport = { width: cssWidth, height: cssHeight }
-  const visible = rects.filter((rect) => isCardOnScreen(rect, camera, viewport, 0))
+  const visible = rects.filter((rect) =>
+    (chromeMasks || rect.alwaysMasks) && isCardOnScreen(rect, camera, viewport, 0))
   // Nothing culled is the common case when zoomed in on a small surface; hand
   // back the original so the gate's copy is the only allocation.
   return visible.length === rects.length ? rects : visible
@@ -380,16 +400,18 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       const edgeTime = (edgeClock ?? 0) / 2000
 
       // Opaque card chrome hides whatever is behind it without any help from
-      // us, so the masking pass is pure overdraw — one full evaluation of the
-      // background shader per card. See `chromeNeedsEdgeMask`.
-      const masking = chromeNeedsEdgeMask(facets.cardChrome)
+      // us, so masking those cards is pure overdraw — one full evaluation of
+      // the background shader per card. See `chromeNeedsEdgeMask`. Rects for
+      // things the stylesheet makes see-through set `alwaysMasks` and are not
+      // subject to that question at all.
+      const chromeMasks = chromeNeedsEdgeMask(facets.cardChrome)
       // Culled here rather than in the draw so the gate sees the same list: a
       // card that is off screen cannot change a pixel, and treating its
       // movement as a redraw reason is what kept the canvas repainting while
       // cards drifted about out of view.
-      const maskRects = masking
-        ? visibleMaskRects(maskRectsRef.current, cam, cssWidth, cssHeight)
-        : NO_MASK_RECTS
+      const maskRects = maskRectsRef.current.length === 0
+        ? NO_MASK_RECTS
+        : visibleMaskRects(maskRectsRef.current, cam, cssWidth, cssHeight, chromeMasks)
 
       if (!gate.shouldDraw({
         width: canvas.width,
@@ -529,7 +551,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           // Draw each age band separately so the shader can apply that value
           // consistently across every edge theme without changing its vertex
           // format or its hit-testing geometry.
-          for (const brightness of [1, 0.6, 0.4, 0.2]) {
+          for (const brightness of STALE_BRIGHTNESS_LEVELS) {
             let offset = 0
             for (const node of edges) {
               if (node.brightness !== brightness) continue

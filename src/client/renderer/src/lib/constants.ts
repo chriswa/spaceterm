@@ -38,6 +38,24 @@ export {
   resizeDraftSize
 } from '../../../../shared/node-size'
 
+import { LABEL_NODE_SCALE } from '../../../../shared/node-size'
+
+/**
+ * Height of the agent mark drawn behind a card, above its top edge.
+ *
+ * `.terminal-card__crab-behind` is the artwork a surface wears to say which CLI
+ * it runs. It is anchored at the card's top edge and lifted past it, so it is
+ * the thing occupying the space directly above a card, and the natural unit for
+ * anything measuring that space.
+ *
+ * The stylesheet sizes the three marks at 50px (claude), 62px (cursor) and 68px
+ * (codex), all at label scale. The largest is taken, so one number covers every
+ * card rather than callers having to know which agent a surface runs — and so
+ * things placed above sibling cards line up instead of stepping by agent type.
+ * **Mirrors the CSS**: change one and the other has to follow.
+ */
+export const CARD_AGENT_MARK_HEIGHT = 68 * LABEL_NODE_SCALE
+
 // Client-only markdown size constants (resize minimums used for UI)
 export const MARKDOWN_DEFAULT_WIDTH = 200
 export const MARKDOWN_DEFAULT_HEIGHT = 60
