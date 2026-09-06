@@ -32,7 +32,7 @@ import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { labelMaskBox, layOutNodeLabel, type NodeLabel } from './lib/node-label'
+import { labelMaskShape, layOutNodeLabel, type NodeLabel } from './lib/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
@@ -238,7 +238,7 @@ export function App() {
       rects.push({ x: t.x, y: t.y, width: size.width, height: size.height, alwaysMasks: true })
     }
     for (const label of nodeLabels) {
-      rects.push({ ...labelMaskBox(label), alwaysMasks: true })
+      rects.push({ ...labelMaskShape(label), alwaysMasks: true })
     }
     return rects
   }, [markdowns, titles, nodeLabels])

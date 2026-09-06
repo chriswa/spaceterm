@@ -141,7 +141,9 @@ export class CanvasFrameGate {
     this.previous = {
       ...next,
       edges: next.edges.map((e) => ({ ...e })),
-      maskRects: next.maskRects.map((r) => ({ ...r })),
+      maskRects: next.maskRects.map((r) => (
+        r.bridgeTo ? { ...r, bridgeTo: { ...r.bridgeTo } } : { ...r }
+      )),
       reparentEdge: next.reparentEdge ? { ...next.reparentEdge } : null,
     }
 
@@ -206,6 +208,16 @@ function maskRectsDiffer(a: readonly MaskRect[], b: readonly MaskRect[]): boolea
   for (let i = 0; i < a.length; i++) {
     if (a[i].x !== b[i].x || a[i].y !== b[i].y) return true
     if (a[i].width !== b[i].width || a[i].height !== b[i].height) return true
+    // Geometry only. `alwaysMasks` decided whether the entry is in this list at
+    // all, which the renderer settled before handing the list over; by here it
+    // can no longer change a pixel. `bridgeTo` still can — it is four more
+    // triangles.
+    if (bridgeDiffers(a[i].bridgeTo, b[i].bridgeTo)) return true
   }
   return false
+}
+
+function bridgeDiffers(a: MaskRect['bridgeTo'], b: MaskRect['bridgeTo']): boolean {
+  if (a === undefined || b === undefined) return a !== b
+  return a.x !== b.x || a.y !== b.y
 }

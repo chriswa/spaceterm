@@ -9,7 +9,7 @@ import { BG_VERT_SRC, EDGE_VERT_SRC } from '../lib/theme/shaders'
 import { CanvasFrameGate } from '../lib/canvas-frame-gate'
 import { FrameLimiter, quantizeClock } from '../lib/frame-policy'
 import { chromeNeedsEdgeMask } from '../lib/card-surface'
-import { isCardOnScreen } from '../lib/viewport'
+import { isCardOnScreen, type WorldRect } from '../lib/viewport'
 import { STALE_BRIGHTNESS_LEVELS } from '../lib/dim-stale'
 
 export interface TreeLineNode {
@@ -38,6 +38,18 @@ export interface MaskRect {
    * neither is their mask.
    */
   alwaysMasks?: boolean
+  /**
+   * Widen the cleared area to the convex hull of this rect and this point.
+   *
+   * A node label is a rect above the card it names, and every edge running into
+   * that node converges on the card's centre. Clearing only the rect leaves any
+   * such edge visible again the moment it passes below the rect, which on a
+   * wide label and a shallow edge shows up as the line vanishing under one
+   * corner and reappearing before it reaches the card. Bridging the rect to the
+   * point they all converge on closes that: a straight line to the point cannot
+   * leave the hull once it has entered it.
+   */
+  bridgeTo?: { x: number; y: number }
 }
 
 export interface ReparentEdge {
@@ -222,6 +234,36 @@ const HIGHLIGHT_INTENSITY = 3.0
 const NO_MASK_RECTS: readonly MaskRect[] = []
 
 /**
+ * Triangles emitted per mask entry.
+ *
+ * Two for the rect. A rect that bridges to a point needs the convex hull of the
+ * two, which is drawn as a fan from that point to all four of the rect's edges
+ * — the two edges facing away from the point contribute triangles that fall
+ * inside the rect, so covering all four costs a little overdraw and removes the
+ * need to work out which edges face the point. The background shader is
+ * idempotent (it writes opaque colour from `gl_FragCoord` alone), so overlapping
+ * triangles paint exactly what one of them would.
+ */
+const MASK_TRIANGLES_PER_RECT = 6
+const FLOATS_PER_MASK_TRIANGLE = 6
+
+/** The area a mask entry can paint, including whatever it bridges to. */
+function maskBounds(rect: MaskRect): WorldRect {
+  const bridge = rect.bridgeTo
+  if (!bridge) return rect
+  const left = Math.min(rect.x - rect.width / 2, bridge.x)
+  const right = Math.max(rect.x + rect.width / 2, bridge.x)
+  const top = Math.min(rect.y - rect.height / 2, bridge.y)
+  const bottom = Math.max(rect.y + rect.height / 2, bridge.y)
+  return {
+    x: (left + right) / 2,
+    y: (top + bottom) / 2,
+    width: right - left,
+    height: bottom - top
+  }
+}
+
+/**
  * The mask rects that can actually change a pixel this frame.
  *
  * A mask quad's cost is its area in fragments of the *background* shader, and a
@@ -245,7 +287,7 @@ function visibleMaskRects(
 ): readonly MaskRect[] {
   const viewport = { width: cssWidth, height: cssHeight }
   const visible = rects.filter((rect) =>
-    (chromeMasks || rect.alwaysMasks) && isCardOnScreen(rect, camera, viewport, 0))
+    (chromeMasks || rect.alwaysMasks) && isCardOnScreen(maskBounds(rect), camera, viewport, 0))
   // Nothing culled is the common case when zoomed in on a small surface; hand
   // back the original so the gate's copy is the only allocation.
   return visible.length === rects.length ? rects : visible
@@ -588,7 +630,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       if (bg) {
         const rects = maskRects
         if (rects.length > 0) {
-          const needed = rects.length * 12 // 6 verts × 2 floats
+          const needed = rects.length * MASK_TRIANGLES_PER_RECT * FLOATS_PER_MASK_TRIANGLE
           if (maskVerts.length < needed) {
             maskVerts = new Float32Array(needed)
           }
@@ -597,26 +639,38 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           const w = cssWidth
           const h = cssHeight
 
+          // World → screen → NDC, the same transform as the edge vertex shader.
+          const ndcX = (worldX: number) => 2 * (worldX * cam.z + cam.x) / w - 1
+          const ndcY = (worldY: number) => 1 - 2 * (worldY * cam.z + cam.y) / h
+          const triangle = (
+            ax: number, ay: number, bx: number, by: number, cx: number, cy: number
+          ) => {
+            maskVerts[mOffset++] = ax; maskVerts[mOffset++] = ay
+            maskVerts[mOffset++] = bx; maskVerts[mOffset++] = by
+            maskVerts[mOffset++] = cx; maskVerts[mOffset++] = cy
+          }
+
           for (const rect of rects) {
-            // World → screen → NDC  (same transform as edge vertex shader)
-            const sl = (rect.x - rect.width / 2) * cam.z + cam.x
-            const sr = (rect.x + rect.width / 2) * cam.z + cam.x
-            const st = (rect.y - rect.height / 2) * cam.z + cam.y
-            const sb = (rect.y + rect.height / 2) * cam.z + cam.y
+            const nl = ndcX(rect.x - rect.width / 2)
+            const nr = ndcX(rect.x + rect.width / 2)
+            const nt = ndcY(rect.y - rect.height / 2)
+            const nb = ndcY(rect.y + rect.height / 2)
 
-            const nl = 2 * sl / w - 1
-            const nr = 2 * sr / w - 1
-            const nt = 1 - 2 * st / h
-            const nb = 1 - 2 * sb / h
+            triangle(nl, nt, nl, nb, nr, nt)
+            triangle(nl, nb, nr, nb, nr, nt)
 
-            // Triangle 1: TL, BL, TR
-            maskVerts[mOffset++] = nl; maskVerts[mOffset++] = nt
-            maskVerts[mOffset++] = nl; maskVerts[mOffset++] = nb
-            maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nt
-            // Triangle 2: BL, BR, TR
-            maskVerts[mOffset++] = nl; maskVerts[mOffset++] = nb
-            maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nb
-            maskVerts[mOffset++] = nr; maskVerts[mOffset++] = nt
+            const bridge = rect.bridgeTo
+            if (bridge) {
+              // The hull, as a fan from the bridge point to every edge. See
+              // MASK_TRIANGLES_PER_RECT for why all four rather than the two
+              // that actually face it.
+              const bx = ndcX(bridge.x)
+              const by = ndcY(bridge.y)
+              triangle(bx, by, nl, nt, nr, nt)
+              triangle(bx, by, nr, nt, nr, nb)
+              triangle(bx, by, nr, nb, nl, nb)
+              triangle(bx, by, nl, nb, nl, nt)
+            }
           }
 
           bindBackground(res.maskBuf)

@@ -188,22 +188,49 @@ export interface NodeLabel {
   y: number
   width: number
   height: number
+  /**
+   * Centre of the card this captions.
+   *
+   * Carried on the label because it is the point every edge running into that
+   * node converges on, which is what `labelMaskShape` needs and what makes the
+   * mask hold together. See there for why.
+   */
+  anchorX: number
+  anchorY: number
 }
 
 /**
- * The area around a label that has to be cleared of edges.
+ * The area around a label that has to be cleared of edges: its own box, bridged
+ * to the centre of the card it names.
  *
- * The label's own box plus the gap below it, so the mask reaches all the way to
- * the card's top edge. Masking the box alone leaves whatever edge ran through
- * the gap as a short stub stranded between the label and the card, which reads
- * as debris rather than as a line going somewhere.
+ * Masking the box alone leaves whatever edge ran through the gap below it as a
+ * stub stranded between the label and the card. Stretching the box down to the
+ * card does not fix that either, and on a label wider than its card it invents
+ * a worse artefact: an edge arriving at a shallow angle passes under one of the
+ * box's lower corners, vanishes there, and reappears in the open before it
+ * reaches the card.
+ *
+ * Bridging instead of stretching is what makes it hold. Every edge into a node
+ * ends at that node's centre, so consider any straight line to it that crosses
+ * the label box: the line can only leave the box through the edge facing the
+ * centre — leaving through a side would mean re-entering immediately — and from
+ * there to the centre it is inside the triangle spanned by that edge and the
+ * centre. Both regions are in the hull, so the line is covered continuously
+ * from wherever it entered the label right through to the card.
  */
-export function labelMaskBox(label: NodeLabel): { x: number; y: number; width: number; height: number } {
+export function labelMaskShape(label: NodeLabel): {
+  x: number
+  y: number
+  width: number
+  height: number
+  bridgeTo: { x: number; y: number }
+} {
   return {
     x: label.x,
-    y: label.y + LABEL_CARD_GAP / 2,
+    y: label.y,
     width: label.width,
-    height: label.height + LABEL_CARD_GAP
+    height: label.height,
+    bridgeTo: { x: label.anchorX, y: label.anchorY }
   }
 }
 
@@ -230,6 +257,8 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
     lines,
     x: node.x,
     y: node.y - measureCard(node).height / 2 - LABEL_CARD_GAP - box.height / 2,
+    anchorX: node.x,
+    anchorY: node.y,
     ...box
   }
 }

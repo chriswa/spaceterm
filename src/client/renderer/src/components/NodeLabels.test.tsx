@@ -17,7 +17,12 @@ import { asNodeId, type NodeId } from '../../../../shared/ids'
 const NODE = asNodeId('term-1')
 
 function label(overrides: Partial<NodeLabel> = {}): NodeLabel {
-  return { nodeId: NODE, lines: ['Deploy', 'pipeline'], x: 200, y: -100, width: 900, height: 1000, ...overrides }
+  return {
+    nodeId: NODE, lines: ['Deploy', 'pipeline'],
+    x: 200, y: -100, width: 900, height: 1000,
+    anchorX: 200, anchorY: 900,
+    ...overrides
+  }
 }
 
 function renderLabels(labels: NodeLabel[], onClick = vi.fn(), brightness = new Map<NodeId, number>()) {

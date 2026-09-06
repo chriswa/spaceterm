@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  nodeLabelText, wrapLabel, labelBox, labelMaskBox, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES
+  nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES
 } from './node-label'
 import { measureCard } from '../../../../shared/card-types'
 import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../../../../shared/state'
@@ -202,20 +202,6 @@ describe('layOutNodeLabel', () => {
     expect(rise).toBeCloseTo((measureCard(tall).height - measureCard(short).height) / 2)
   })
 
-  it.each(CARDS)('clears edges all the way down to the card: $name', (node) => {
-    // No stub of edge may be left stranded in the gap between the two.
-    const mask = labelMaskBox(layOutNodeLabel(node)!)
-    expect(mask.y + mask.height / 2).toBeCloseTo(node.y - measureCard(node).height / 2)
-  })
-
-  it('clears the label itself, not just the gap', () => {
-    const label = layOutNodeLabel(terminal({ name: 'Named' }))!
-    const mask = labelMaskBox(label)
-    expect(mask.x).toBe(label.x)
-    expect(mask.width).toBe(label.width)
-    expect(mask.y - mask.height / 2).toBeCloseTo(label.y - label.height / 2)
-  })
-
   it('reports the node that supplies it, so a click can navigate from there', () => {
     const node = terminal({ name: 'Named' })
     expect(layOutNodeLabel(node)!.nodeId).toBe(node.id)
@@ -223,5 +209,85 @@ describe('layOutNodeLabel', () => {
 
   it('lays out nothing for a node with no label', () => {
     expect(layOutNodeLabel(terminal())).toBeNull()
+  })
+})
+
+
+/** A point, for the mask-coverage property below. */
+interface Pt { x: number; y: number }
+
+type MaskShape = ReturnType<typeof labelMaskShape>
+
+function inTriangle(a: Pt, b: Pt, c: Pt, p: Pt): boolean {
+  const side = (p1: Pt, p2: Pt, p3: Pt) => (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+  const d1 = side(p, a, b)
+  const d2 = side(p, b, c)
+  const d3 = side(p, c, a)
+  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+}
+
+/**
+ * Is `p` inside the area the mask actually paints?
+ *
+ * Mirrors what `CanvasBackground` emits: the rect, plus a fan of triangles from
+ * the bridge point to each of the rect's four edges.
+ */
+function insideMask(shape: MaskShape, p: Pt): boolean {
+  const l = shape.x - shape.width / 2
+  const r = shape.x + shape.width / 2
+  const t = shape.y - shape.height / 2
+  const b = shape.y + shape.height / 2
+  if (p.x >= l && p.x <= r && p.y >= t && p.y <= b) return true
+  const corners: Pt[] = [{ x: l, y: t }, { x: r, y: t }, { x: r, y: b }, { x: l, y: b }]
+  return corners.some((corner, i) => inTriangle(shape.bridgeTo, corner, corners[(i + 1) % 4], p))
+}
+
+describe('labelMaskShape', () => {
+  it('covers the label box itself', () => {
+    const label = layOutNodeLabel(terminal({ name: 'Named' }))!
+    const shape = labelMaskShape(label)
+    expect(shape.x).toBe(label.x)
+    expect(shape.y).toBe(label.y)
+    expect(shape.width).toBe(label.width)
+    expect(shape.height).toBe(label.height)
+  })
+
+  it('bridges to the centre of the card, where every edge into it converges', () => {
+    const node = terminal({ name: 'Named', x: 1200, y: -800 })
+    expect(labelMaskShape(layOutNodeLabel(node)!).bridgeTo).toEqual({ x: 1200, y: -800 })
+  })
+
+  /**
+   * The property the bridge exists for.
+   *
+   * A label far wider than its card, which is the case a rectangle cannot
+   * cover: an edge arriving at a shallow angle used to pass under one of the
+   * box's lower corners, vanish, and reappear in the open before reaching the
+   * card. Once a line to the node's centre enters the mask it must stay inside
+   * it the whole rest of the way.
+   */
+  it('never lets an edge reappear between the label and the card', () => {
+    const node = terminal({ name: 'A rather long surface title', cols: 80, rows: 24, x: 0, y: 0 })
+    const label = layOutNodeLabel(node)!
+    const shape = labelMaskShape(label)
+    // The case only bites when the label overhangs the card.
+    expect(label.width).toBeGreaterThan(measureCard(node).width)
+
+    const anchor: Pt = { x: node.x, y: node.y }
+    for (let deg = 0; deg < 360; deg += 3) {
+      const radians = (deg * Math.PI) / 180
+      const from: Pt = { x: anchor.x + 40000 * Math.cos(radians), y: anchor.y + 40000 * Math.sin(radians) }
+      let entered = false
+      let reappeared = false
+      const STEPS = 4000
+      for (let i = 0; i <= STEPS; i++) {
+        const s = i / STEPS
+        const p: Pt = { x: from.x + (anchor.x - from.x) * s, y: from.y + (anchor.y - from.y) * s }
+        const inside = insideMask(shape, p)
+        if (inside) entered = true
+        else if (entered) reappeared = true
+      }
+      expect(reappeared, `edge at ${deg}deg left the mask before reaching the card`).toBe(false)
+    }
   })
 })
