@@ -1,20 +1,32 @@
 import { create } from 'zustand'
 import type { NodeId } from '../../../../shared/ids'
-import { DEFAULT_STALE_THRESHOLD_HOURS, normalizeStaleThresholdHours } from '../lib/dim-stale'
+import {
+  DEFAULT_STALE_THRESHOLD_HOURS,
+  normalizeActiveHoursId,
+  normalizeStaleThresholdHours,
+  type ActiveHoursId,
+} from '../lib/dim-stale'
 
 const ENABLED_KEY = 'toolbar.dimStale'
 const THRESHOLD_KEY = 'toolbar.dimStaleThresholdHours'
+const ACTIVE_HOURS_KEY = 'toolbar.dimStaleActiveHours'
 
 interface DimStaleState {
   /** Whether the "dim stale nodes" view is on. */
   enabled: boolean
   toggle: () => void
   /**
-   * How much untouched business time a node's subtree gets before it starts to
+   * How much untouched active time a node's subtree gets before it starts to
    * fade, in hours. Chosen from the dim button's menu; persisted.
    */
   thresholdHours: number
   setThresholdHours: (hours: number) => void
+  /**
+   * Which hours count as active — work-style (Mon–Fri 9–5) or home-style (every
+   * day 7am–10pm). Chosen from the same menu; persisted.
+   */
+  activeHoursId: ActiveHoursId
+  setActiveHoursId: (id: ActiveHoursId) => void
   /**
    * Per-node brightness, recomputed by useDimStaleController. Always empty
    * while `enabled` is false, so cards remain at full brightness then.
@@ -42,6 +54,12 @@ export const useDimStaleStore = create<DimStaleState>((set, get) => ({
     const next = normalizeStaleThresholdHours(hours)
     localStorage.setItem(THRESHOLD_KEY, String(next))
     set({ thresholdHours: next })
+  },
+  activeHoursId: normalizeActiveHoursId(localStorage.getItem(ACTIVE_HOURS_KEY)),
+  setActiveHoursId: (id) => {
+    const next = normalizeActiveHoursId(id)
+    localStorage.setItem(ACTIVE_HOURS_KEY, next)
+    set({ activeHoursId: next })
   },
   nodeBrightness: new Map(),
   setNodeBrightness: (brightness) => set({ nodeBrightness: brightness }),

@@ -492,7 +492,7 @@ html, body, #root {
 }
 
 /* For a list long enough to run off the top of a short window (the dim-stale
-   thresholds are sixteen items). */
+   menu is two schedules plus sixteen thresholds). */
 .toolbar__menu--scrolling {
   max-height: min(60vh, 420px);
   overflow-y: auto;
@@ -505,6 +505,14 @@ html, body, #root {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: rgba(255,255,255,0.4);
+}
+
+/* A heading that opens a second section gets a rule above it, so a menu holding
+   two lists (the dim-stale schedules and thresholds) reads as two, not one. */
+.toolbar__menu-heading:not(:first-child) {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.1);
 }
 
 .toolbar__menu-item {
@@ -540,7 +548,9 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-.toolbar__menu--describing .toolbar__menu-item {
+.toolbar__menu--describing .toolbar__menu-item,
+/* A single explained item inside a menu that is otherwise bare values. */
+.toolbar__menu-item--stacked {
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;

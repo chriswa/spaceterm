@@ -13,7 +13,14 @@ import { useFps } from '../../hooks/useFps'
 import { useToolbarMenu } from './useToolbarMenu'
 import { showToast } from '../../lib/toast'
 import { useDimStaleStore } from '../../stores/dimStaleStore'
-import { DARKEST_BAND_AGE_MULTIPLE, DEFAULT_STALE_THRESHOLD_HOURS, STALE_THRESHOLD_HOUR_OPTIONS } from '../../lib/dim-stale'
+import {
+  ACTIVE_HOURS,
+  ACTIVE_HOURS_OPTIONS,
+  DARKEST_BAND_AGE_MULTIPLE,
+  DEFAULT_STALE_THRESHOLD_HOURS,
+  STALE_THRESHOLD_HOUR_OPTIONS,
+  type ActiveHoursId,
+} from '../../lib/dim-stale'
 import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
 import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon } from './icons'
 
@@ -218,26 +225,40 @@ export function CopyCleanupToggle() {
 }
 
 /**
- * Dim-stale: a one-click on/off toggle, plus a caret that pulls up the
- * threshold — how much untouched business time a node gets before it fades.
+ * Dim-stale: a one-click on/off toggle, plus a caret that pulls up the two
+ * settings that decide how a node ages — which hours count as active, and how
+ * much untouched active time a node gets before it fades.
  *
- * A split control rather than folding "off" into the threshold list (the move
+ * A split control rather than folding "off" into the menu (the move
  * `ThemePicker` made) because on/off is the setting reached constantly and the
- * threshold is the one tuned once; making the common action two clicks to save
- * a menu item would be the wrong trade.
+ * other two are tuned once; making the common action two clicks to save a menu
+ * item would be the wrong trade.
+ *
+ * Both settings share the one menu: they are two halves of the same sentence
+ * ("fade after N hours, counting only these hours"), and neither is legible
+ * without the other.
  */
 export function DimStaleToggle() {
   const enabled = useDimStaleStore(s => s.enabled)
   const toggle = useDimStaleStore(s => s.toggle)
   const thresholdHours = useDimStaleStore(s => s.thresholdHours)
   const setThresholdHours = useDimStaleStore(s => s.setThresholdHours)
+  const activeHoursId = useDimStaleStore(s => s.activeHoursId)
+  const setActiveHoursId = useDimStaleStore(s => s.setActiveHoursId)
   const menu = useToolbarMenu()
 
-  // Picking a threshold while the view is off would change nothing visible,
-  // which reads as a dead control — so the pick turns the lens on.
-  const pick = (hours: number) => {
-    setThresholdHours(hours)
+  // Picking either setting while the view is off would change nothing visible,
+  // which reads as a dead control — so a pick turns the lens on.
+  const lightUp = () => {
     if (!useDimStaleStore.getState().enabled) toggle()
+  }
+  const pickThreshold = (hours: number) => {
+    setThresholdHours(hours)
+    lightUp()
+  }
+  const pickActiveHours = (id: ActiveHoursId) => {
+    setActiveHoursId(id)
+    lightUp()
   }
 
   return (
@@ -245,7 +266,7 @@ export function DimStaleToggle() {
       <button
         className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
         onClick={toggle}
-        data-tooltip={enabled ? 'Dim Stale — Disable to show every node at full brightness' : 'Dim Stale — Fade untouched nodes by business-hour age; fresh descendants keep ancestors bright'}
+        data-tooltip={enabled ? 'Dim Stale — Disable to show every node at full brightness' : 'Dim Stale — Fade untouched nodes by active-hour age; fresh descendants keep ancestors bright'}
         data-tooltip-no-flip
       >
         <DimIcon />
@@ -253,22 +274,33 @@ export function DimStaleToggle() {
       <button
         className={'toolbar__btn toolbar__btn--caret' + (menu.open ? ' toolbar__btn--active' : '')}
         onClick={menu.toggle}
-        data-tooltip={`Dim Stale threshold — fades after ${thresholdHours}h of business time, fully dark by ${thresholdHours * DARKEST_BAND_AGE_MULTIPLE}h`}
+        data-tooltip={`Dim Stale threshold — fades after ${thresholdHours}h of ${ACTIVE_HOURS[activeHoursId].blurb}, fully dark by ${thresholdHours * DARKEST_BAND_AGE_MULTIPLE}h`}
         data-tooltip-no-flip
       >
         <CaretIcon />
       </button>
       {menu.open && (
         // Stays open while you click through the options: what you are judging
-        // is which threshold lights the right set of cards, and closing the
+        // is which settings light the right set of cards, and closing the
         // menu after each pick would make that comparison a chore.
         <div className="toolbar__menu toolbar__menu--scrolling">
-          <div className="toolbar__menu-heading">Fade after (business hours)</div>
+          <div className="toolbar__menu-heading">Hours that count</div>
+          {ACTIVE_HOURS_OPTIONS.map(schedule => (
+            <button
+              key={schedule.id}
+              className={'toolbar__menu-item toolbar__menu-item--stacked' + (schedule.id === activeHoursId ? ' toolbar__menu-item--active' : '')}
+              onClick={() => pickActiveHours(schedule.id)}
+            >
+              <span className="toolbar__menu-label">{schedule.label}</span>
+              <span className="toolbar__menu-blurb">{schedule.blurb}</span>
+            </button>
+          ))}
+          <div className="toolbar__menu-heading">Fade after (active hours)</div>
           {STALE_THRESHOLD_HOUR_OPTIONS.map(hours => (
             <button
               key={hours}
               className={'toolbar__menu-item' + (hours === thresholdHours ? ' toolbar__menu-item--active' : '')}
-              onClick={() => pick(hours)}
+              onClick={() => pickThreshold(hours)}
             >
               <span>{hours === 1 ? '1 hour' : `${hours} hours`}</span>
               {hours === DEFAULT_STALE_THRESHOLD_HOURS && <span className="toolbar__menu-note">default</span>}

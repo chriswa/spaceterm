@@ -1,16 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import {
-  businessMillisBetween,
+  ACTIVE_HOURS,
+  ACTIVE_HOURS_OPTIONS,
+  activeMillisBetween,
   computeNodeBrightness,
   DARKEST_BAND_AGE_MULTIPLE,
   STALE_BANDS,
   STALE_BRIGHTNESS,
   STALE_BRIGHTNESS_LEVELS,
-  STALE_THRESHOLD_BUSINESS_MS,
+  DEFAULT_ACTIVE_HOURS_ID,
+  DEFAULT_STALE_THRESHOLD_MS,
   STALE_THRESHOLD_HOUR_OPTIONS,
   DEFAULT_STALE_THRESHOLD_HOURS,
+  normalizeActiveHoursId,
   normalizeStaleThresholdHours,
   staleThresholdMs,
+  type ActiveHours,
 } from './dim-stale'
 import { asNodeId } from '../../../../shared/ids'
 import type { NodeData } from '../../../../shared/state'
@@ -24,35 +29,63 @@ const HOUR = 60 * 60 * 1000
 const at = (month: number, day: number, hour: number, min = 0) =>
   new Date(2026, month, day, hour, min, 0, 0).getTime()
 
-describe('businessMillisBetween', () => {
+const WORK = ACTIVE_HOURS.work
+const HOME = ACTIVE_HOURS.home
+
+describe('activeMillisBetween (work hours)', () => {
   it('counts time inside the business window', () => {
-    expect(businessMillisBetween(at(0, 5, 10), at(0, 5, 12))).toBe(2 * HOUR)
+    expect(activeMillisBetween(at(0, 5, 10), at(0, 5, 12), WORK)).toBe(2 * HOUR)
   })
 
   it('clamps to the 9am–5pm window', () => {
-    expect(businessMillisBetween(at(0, 5, 8), at(0, 5, 10))).toBe(1 * HOUR) // only 9–10 counts
-    expect(businessMillisBetween(at(0, 5, 16), at(0, 5, 20))).toBe(1 * HOUR) // only 16–17 counts
-    expect(businessMillisBetween(at(0, 5, 18), at(0, 5, 20))).toBe(0) // fully after hours
+    expect(activeMillisBetween(at(0, 5, 8), at(0, 5, 10), WORK)).toBe(1 * HOUR) // only 9–10 counts
+    expect(activeMillisBetween(at(0, 5, 16), at(0, 5, 20), WORK)).toBe(1 * HOUR) // only 16–17 counts
+    expect(activeMillisBetween(at(0, 5, 18), at(0, 5, 20), WORK)).toBe(0) // fully after hours
   })
 
   it('counts a full business day as 8 hours', () => {
-    expect(businessMillisBetween(at(0, 5, 9), at(0, 5, 17))).toBe(8 * HOUR)
+    expect(activeMillisBetween(at(0, 5, 9), at(0, 5, 17), WORK)).toBe(8 * HOUR)
   })
 
   it('spans overnight, counting only each day’s window', () => {
-    expect(businessMillisBetween(at(0, 5, 16), at(0, 6, 10))).toBe(2 * HOUR) // Mon 16–17 + Tue 9–10
+    expect(activeMillisBetween(at(0, 5, 16), at(0, 6, 10), WORK)).toBe(2 * HOUR) // Mon 16–17 + Tue 9–10
   })
 
   it('skips the weekend entirely', () => {
     // Fri 16:00 → Mon 10:00: 1h Friday + 0 weekend + 1h Monday.
-    expect(businessMillisBetween(at(0, 9, 16), at(0, 12, 10))).toBe(2 * HOUR)
+    expect(activeMillisBetween(at(0, 9, 16), at(0, 12, 10), WORK)).toBe(2 * HOUR)
     // Fri 09:00 → Mon 17:00: two full business days.
-    expect(businessMillisBetween(at(0, 9, 9), at(0, 12, 17))).toBe(16 * HOUR)
+    expect(activeMillisBetween(at(0, 9, 9), at(0, 12, 17), WORK)).toBe(16 * HOUR)
   })
 
   it('returns 0 when to is not after from', () => {
-    expect(businessMillisBetween(at(0, 5, 12), at(0, 5, 12))).toBe(0)
-    expect(businessMillisBetween(at(0, 5, 12), at(0, 5, 10))).toBe(0)
+    expect(activeMillisBetween(at(0, 5, 12), at(0, 5, 12), WORK)).toBe(0)
+    expect(activeMillisBetween(at(0, 5, 12), at(0, 5, 10), WORK)).toBe(0)
+  })
+})
+
+describe('activeMillisBetween (home hours)', () => {
+  it('clamps to the 7am–10pm window', () => {
+    expect(activeMillisBetween(at(0, 5, 6), at(0, 5, 9), HOME)).toBe(2 * HOUR)   // only 7–9 counts
+    expect(activeMillisBetween(at(0, 5, 21), at(0, 5, 23), HOME)).toBe(1 * HOUR) // only 21–22 counts
+    expect(activeMillisBetween(at(0, 5, 23), at(0, 6, 6), HOME)).toBe(0)         // fully overnight
+  })
+
+  it('counts a full home day as 15 hours', () => {
+    expect(activeMillisBetween(at(0, 5, 7), at(0, 5, 22), HOME)).toBe(15 * HOUR)
+  })
+
+  it('counts the weekend, which work hours skip entirely', () => {
+    // Sat 10:00 → Sun 12:00: 12h Saturday (10pm cutoff) + 5h Sunday.
+    expect(activeMillisBetween(at(0, 10, 10), at(0, 11, 12), HOME)).toBe(17 * HOUR)
+    expect(activeMillisBetween(at(0, 10, 10), at(0, 11, 12), WORK)).toBe(0)
+  })
+
+  it('ages a Friday-evening node over the weekend, where work hours freeze it', () => {
+    // Fri 18:00 → Mon 12:00. Home: 4h Fri + 15h Sat + 15h Sun + 5h Mon = 39h.
+    // Work: nothing counts until Monday 9am, so 3h.
+    expect(activeMillisBetween(at(0, 9, 18), at(0, 12, 12), HOME)).toBe(39 * HOUR)
+    expect(activeMillisBetween(at(0, 9, 18), at(0, 12, 12), WORK)).toBe(3 * HOUR)
   })
 })
 
@@ -65,16 +98,16 @@ function nodes(defs: Array<{ id: string; parentId: string; at?: number }>): Reco
   return out
 }
 
-describe('computeNodeBrightness (business hours)', () => {
+describe('computeNodeBrightness (work hours)', () => {
   const NOW = at(0, 12, 12) // Monday noon
 
-  it('keeps a node touched within 16 business hours at full brightness', () => {
+  it('keeps a node touched within 16 active hours at full brightness', () => {
     // Fri 16:00 → Mon 12:00 = 1h + 3h = 4 business hours.
     const brightness = computeNodeBrightness(nodes([{ id: 'a', parentId: 'root', at: at(0, 9, 16) }]), NOW)
     expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.recent)
   })
 
-  it('drops to 60% immediately past 16 business hours', () => {
+  it('drops to 60% immediately past 16 active hours', () => {
     // Thu 09:00 → Mon 12:00 = 8h + 8h + 3h = 19 business hours.
     const brightness = computeNodeBrightness(nodes([{ id: 'a', parentId: 'root', at: at(0, 8, 9) }]), NOW)
     expect(brightness.get(asNodeId('a'))).toBe(STALE_BRIGHTNESS.fading)
@@ -82,7 +115,7 @@ describe('computeNodeBrightness (business hours)', () => {
 
   it('keeps the default threshold on the original 48h / 192h band edges', () => {
     // The multiples exist to reproduce the pre-scaling bands at the default.
-    expect(STALE_BANDS.map(b => b.maxAgeMultiple * STALE_THRESHOLD_BUSINESS_MS))
+    expect(STALE_BANDS.map(b => b.maxAgeMultiple * DEFAULT_STALE_THRESHOLD_MS))
       .toEqual([16 * HOUR, 48 * HOUR, 192 * HOUR, Infinity])
 
     const brightness = computeNodeBrightness(nodes([
@@ -126,7 +159,7 @@ describe('computeNodeBrightness (business hours)', () => {
     const brightness = computeNodeBrightness(nodes([
       { id: 'at', parentId: 'root', at: at(0, 8, 12) },       // Thu noon → 5h+8h+3h = 16h exactly
       { id: 'past', parentId: 'root', at: at(0, 8, 11, 59) }, // a minute earlier → >16h
-    ]), NOW, STALE_THRESHOLD_BUSINESS_MS)
+    ]), NOW, DEFAULT_STALE_THRESHOLD_MS)
     expect(brightness.get(asNodeId('at'))).toBe(STALE_BRIGHTNESS.recent)
     expect(brightness.get(asNodeId('past'))).toBe(STALE_BRIGHTNESS.fading)
   })
@@ -168,6 +201,50 @@ describe('computeNodeBrightness (business hours)', () => {
   })
 })
 
+describe('computeNodeBrightness (the schedule choice)', () => {
+  const NOW = at(0, 12, 12) // Monday noon
+
+  it('dims a Friday-evening node under home hours that work hours keeps bright', () => {
+    // The whole point of the choice: a weekend is invisible at work and two of
+    // the most active days of the week at home.
+    const fixture = nodes([{ id: 'a', parentId: 'root', at: at(0, 9, 18) }])
+    const bright = (schedule: ActiveHours) =>
+      computeNodeBrightness(fixture, NOW, DEFAULT_STALE_THRESHOLD_MS, schedule).get(asNodeId('a'))
+    expect(bright(WORK)).toBe(STALE_BRIGHTNESS.recent) // 3 work hours old
+    expect(bright(HOME)).toBe(STALE_BRIGHTNESS.fading) // 39 home hours old
+  })
+
+  it('defaults to work hours, so the setting arriving changes nothing', () => {
+    const fixture = nodes([{ id: 'a', parentId: 'root', at: at(0, 9, 18) }])
+    expect(DEFAULT_ACTIVE_HOURS_ID).toBe('work')
+    expect(computeNodeBrightness(fixture, NOW).get(asNodeId('a')))
+      .toBe(STALE_BRIGHTNESS.recent)
+  })
+})
+
+describe('active-hours options', () => {
+  it('offers every registered schedule, each keyed by its own id', () => {
+    expect(ACTIVE_HOURS_OPTIONS.map(schedule => schedule.id)).toEqual(Object.keys(ACTIVE_HOURS))
+    for (const [id, schedule] of Object.entries(ACTIVE_HOURS)) expect(schedule.id).toBe(id)
+  })
+
+  it('describes a window that opens before it closes', () => {
+    for (const schedule of ACTIVE_HOURS_OPTIONS) {
+      expect(schedule.endHour, schedule.id).toBeGreaterThan(schedule.startHour)
+    }
+  })
+
+  it('falls back to the default for anything that is not a known schedule', () => {
+    // localStorage can hold a hand-edited or retired id, and dimming by a rule
+    // no menu item shows would be invisible.
+    expect(normalizeActiveHoursId(null)).toBe(DEFAULT_ACTIVE_HOURS_ID)
+    expect(normalizeActiveHoursId('')).toBe(DEFAULT_ACTIVE_HOURS_ID)
+    expect(normalizeActiveHoursId('office')).toBe(DEFAULT_ACTIVE_HOURS_ID)
+    expect(normalizeActiveHoursId('toString')).toBe(DEFAULT_ACTIVE_HOURS_ID) // not a prototype key
+    expect(normalizeActiveHoursId('home')).toBe('home')
+  })
+})
+
 describe('threshold options', () => {
   it('offers every whole hour from 1 up to the default', () => {
     expect(STALE_THRESHOLD_HOUR_OPTIONS[0]).toBe(1)
@@ -175,8 +252,8 @@ describe('threshold options', () => {
     expect(STALE_THRESHOLD_HOUR_OPTIONS).toHaveLength(DEFAULT_STALE_THRESHOLD_HOURS)
   })
 
-  it('leaves the default as the widest setting, so it still means 16 business hours', () => {
-    expect(staleThresholdMs(DEFAULT_STALE_THRESHOLD_HOURS)).toBe(STALE_THRESHOLD_BUSINESS_MS)
+  it('leaves the default as the widest setting, so it still means 16 active hours', () => {
+    expect(staleThresholdMs(DEFAULT_STALE_THRESHOLD_HOURS)).toBe(DEFAULT_STALE_THRESHOLD_MS)
   })
 
   it('normalizes anything outside the offered range onto an option', () => {
