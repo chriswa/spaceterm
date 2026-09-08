@@ -226,8 +226,9 @@ export function App() {
    * Where the edges must be painted back out.
    *
    * Every rect here is `alwaysMasks`: markdown cards, title nodes and node
-   * labels are all drawn with no background of their own, so edges show through
-   * them whatever the theme's card chrome does. See `MaskRect.alwaysMasks`.
+   * labels are all drawn see-through — the two cards on a half-transparent
+   * surface, the labels on nothing at all — so edges show through them whatever
+   * the theme's card chrome does. See `MaskRect.alwaysMasks`.
    */
   const maskRects = useMemo(() => {
     const rects: MaskRect[] = markdowns.map((n): MaskRect => (

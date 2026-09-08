@@ -1134,7 +1134,8 @@ html, body, #root {
   border-radius: var(--card-radius, 8px);
   overflow: visible;
   border: var(--card-border-width, 2px) solid transparent;
-  background: transparent;
+  /* Background comes from the card itself: its preset's surface colour, half
+     transparent so the canvas reads through. */
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
@@ -1557,7 +1558,8 @@ html, body, #root {
   overflow: visible;
   border: calc(6px * var(--label-node-scale)) solid var(--title-fg, #a66cff);
   border-radius: calc(20px * var(--label-node-scale));
-  background: transparent;
+  /* Background comes from the card itself: its preset's surface colour, half
+     transparent so the canvas reads through. */
   display: flex;
   flex-direction: column;
   position: relative;

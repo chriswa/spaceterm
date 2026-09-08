@@ -5,7 +5,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { indentWithTab } from '@codemirror/commands'
 import { syntaxTree } from '@codemirror/language'
 import { MARKDOWN_MIN_WIDTH, MARKDOWN_MIN_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH, MARKDOWN_MIN_MAX_WIDTH } from '../lib/constants'
-import { blendHex } from '../lib/color-presets'
+import { blendHex, cardSurfaceColor } from '../lib/color-presets'
 import type { ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
@@ -684,7 +684,7 @@ export function MarkdownCard({
       isReparenting={reparentingNodeId === id}
       className={`markdown-card ${focused ? 'markdown-card--focused' : selected ? 'markdown-card--selected' : ''} ${isEmpty ? 'markdown-card--empty' : ''}`}
       style={{
-        backgroundColor: 'transparent',
+        backgroundColor: cardSurfaceColor(preset),
         '--markdown-fg': preset?.markdownFg ?? '#cdd6f4',
         '--markdown-accent': preset?.markdownAccent ?? '#4d9eff',
         '--markdown-highlight': preset?.markdownHighlight ?? '#ffc94d',

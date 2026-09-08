@@ -3,7 +3,7 @@ export interface ColorPreset {
   label: string
   titleBarBg: string      // bright — title bar background
   titleBarFg: string      // off-black — title bar text
-  terminalBg: string      // dark tinted — xterm background
+  terminalBg: string      // dark tinted — the surface a card body sits on (xterm's background)
   markdownFg: string      // light pastel — markdown body text
   markdownAccent: string  // mid-sat — markdown headings, links, bold, list markers
   markdownHighlight: string // warm contrasting — markdown italic, emphasis
@@ -32,6 +32,31 @@ export const COLOR_PRESET_MAP: Record<string, ColorPreset> = Object.fromEntries(
 )
 
 export const DEFAULT_PRESET = COLOR_PRESETS[0]
+
+/**
+ * How much of a markdown or title card's surface is its own colour, the rest
+ * being whatever the canvas draws behind it.
+ */
+export const CARD_SURFACE_ALPHA = 0.5
+
+/**
+ * The surface a markdown or title card is drawn on: the same dark tint a
+ * terminal of that colour runs on, laid down at `CARD_SURFACE_ALPHA` so the
+ * canvas still reads through. One function so the two cards cannot drift, and
+ * so a card whose preset has not resolved yet lands on the default surface
+ * rather than on a fallback of its own.
+ */
+export function cardSurfaceColor(preset: ColorPreset | undefined): string {
+  return hexToRgba(preset?.terminalBg ?? DEFAULT_PRESET.terminalBg, CARD_SURFACE_ALPHA)
+}
+
+/** Render a '#rrggbb' hex color as `rgba(...)` at the given alpha (0–1). */
+export function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
 
 const dimCache = new Map<string, string>()
 

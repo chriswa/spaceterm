@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TITLE_HEIGHT, TITLE_LINE_HEIGHT, TITLE_H_PADDING, TITLE_MIN_WIDTH } from '../lib/constants'
 import type { ColorPreset } from '../lib/color-presets'
+import { cardSurfaceColor } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
 import { CardShell } from './CardShell'
@@ -190,7 +191,7 @@ export function TitleCard({
       isReparenting={reparentingNodeId === id}
       className={`title-card ${focused ? 'title-card--focused' : selected ? 'title-card--selected' : ''}`}
       style={{
-        backgroundColor: 'transparent',
+        backgroundColor: cardSurfaceColor(preset),
         '--title-fg': preset?.titleBarBg ?? '#a66cff',
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}

@@ -31,11 +31,11 @@ export interface MaskRect {
    *
    * `chromeNeedsEdgeMask` asks whether this theme paints `--card-surface`
    * see-through, and that settles it for the cards drawn on that surface. Some
-   * things on the canvas are not: markdown cards, title nodes and node labels
-   * are all `background: transparent` in the stylesheet itself, so edges cross
-   * them under every theme — including the ones whose opaque chrome switches
-   * the whole pass off. Their transparency is not the theme's to decide, so
-   * neither is their mask.
+   * things on the canvas are not: markdown cards and title nodes carry a
+   * half-transparent surface of their own colour, and node labels carry no
+   * surface at all, so edges cross them under every theme — including the ones
+   * whose opaque chrome switches the whole pass off. Their transparency is not
+   * the theme's to decide, so neither is their mask.
    */
   alwaysMasks?: boolean
   /**
@@ -444,8 +444,8 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       // Opaque card chrome hides whatever is behind it without any help from
       // us, so masking those cards is pure overdraw — one full evaluation of
       // the background shader per card. See `chromeNeedsEdgeMask`. Rects for
-      // things the stylesheet makes see-through set `alwaysMasks` and are not
-      // subject to that question at all.
+      // things that are see-through whatever the theme does set `alwaysMasks`
+      // and are not subject to that question at all.
       const chromeMasks = chromeNeedsEdgeMask(facets.cardChrome)
       // Culled here rather than in the draw so the gate sees the same list: a
       // card that is off screen cannot change a pixel, and treating its
