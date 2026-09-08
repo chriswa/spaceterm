@@ -190,19 +190,36 @@ const GRAIN_OCTAVES: readonly (readonly [wavelength: number, weight: number])[] 
 const BAND = 6
 
 /* ------------------------------------------------------------------ */
-/*  Palette                                                            */
+/*  Palette and contrast                                               */
 /* ------------------------------------------------------------------ */
 
 /**
- * Greys, given in sRGB and decoded once at build time — see `./srgb`.
+ * How much of the floor's full contrast to keep: 0 is a flat field, 1 the
+ * palette and lighting exactly as written below.
+ *
+ * The one knob over everything that makes one part of the floor differ in tone
+ * from another — the palette's spread, the grain, the chamfer's lighting and
+ * the soldier courses all pass through it. Half leaves the paving legible as
+ * stone while keeping the cards, which are lit brighter and carry the actual
+ * text, the loudest thing on the canvas.
+ *
+ * It is not a brightness control. The palette is compressed toward the middle
+ * of the stone range rather than toward black, and everything else here is a
+ * *ratio* applied to a tone, so turning it down flattens the floor without
+ * dimming or lifting it: the stones a viewer mostly sees stay about as bright
+ * as they were.
+ */
+const CONTRAST = 0.5
+
+/**
+ * Greys at full contrast, given in sRGB, compressed by `CONTRAST` and decoded
+ * once at build time — see `./srgb`.
  *
  * Grayscale, and dark enough to be furniture: the lightest stone is under a
  * fifth of the way to white before it is lit, and only the lit chamfer goes
  * above that. This is a background that fills area with tone where a woven
  * one only draws lines, so every value here is well under what Medallion
- * spends on its highlights. These are exactly half, in linear light, of the
- * first cut's values — which read as a floor in daylight next to cards that
- * are lit like a room at night.
+ * spends on its highlights.
  */
 interface PaverPalette {
   /** What the canvas fades to when the stones are too small to draw. */
@@ -221,12 +238,67 @@ const PALETTE: PaverPalette = {
   stoneLight: [0.188, 0.188, 0.188],
 }
 
+/**
+ * The tone the palette is compressed toward: the middle of the stone range.
+ *
+ * Stones cover nearly the whole floor, so pulling everything toward their
+ * average is what keeps the floor's overall lightness where it is as
+ * `CONTRAST` comes down. The mortar and the far ground rise to meet the
+ * stones; the stones themselves barely move.
+ */
+const pivotOf = (p: PaverPalette): Rgb => [
+  (p.stoneDark[0] + p.stoneLight[0]) / 2,
+  (p.stoneDark[1] + p.stoneLight[1]) / 2,
+  (p.stoneDark[2] + p.stoneLight[2]) / 2,
+]
+
+/** The palette with its spread about the pivot scaled by `contrast`. */
+const atContrast = (p: PaverPalette, contrast: number): PaverPalette => {
+  const pivot = pivotOf(p)
+  const pull = (c: Rgb): Rgb => [
+    pivot[0] + (c[0] - pivot[0]) * contrast,
+    pivot[1] + (c[1] - pivot[1]) * contrast,
+    pivot[2] + (c[2] - pivot[2]) * contrast,
+  ]
+  return {
+    ground: pull(p.ground),
+    mortar: pull(p.mortar),
+    stoneDark: pull(p.stoneDark),
+    stoneLight: pull(p.stoneLight),
+  }
+}
+
+/**
+ * The tonal modulations, at full contrast.
+ *
+ * Each is a fraction of the tone it multiplies rather than an offset added to
+ * it, so the palette's compression leaves them untouched and they have to be
+ * scaled by `CONTRAST` in their own right — which is what `modGlsl` does on
+ * their way into the shader.
+ */
+const MODULATION = {
+  /** How far the grain swings a stone's tone, and the mortar's. */
+  GRAIN_STONE: 0.7,
+  GRAIN_MORTAR: 0.8,
+  /** The chamfer: lit on the faces turned to the light, darker all round. */
+  CHAMFER_LIGHT: 0.45,
+  CHAMFER_SHADE: 0.10,
+  /** How much darker a soldier course is laid, and its echo in the far ground. */
+  BAND_DARKEN: 0.22,
+  GROUND_BAND: 0.22,
+} as const
+
 const paletteGlsl = (p: PaverPalette): string => `
 const vec3 GROUND      = ${glslVec3(rgbToLinear(p.ground))};
 const vec3 MORTAR      = ${glslVec3(rgbToLinear(p.mortar))};
 const vec3 STONE_DARK  = ${glslVec3(rgbToLinear(p.stoneDark))};
 const vec3 STONE_LIGHT = ${glslVec3(rgbToLinear(p.stoneLight))};
 `
+
+const modGlsl = (m: typeof MODULATION, contrast: number): string =>
+  Object.entries(m)
+    .map(([name, value]) => `const float ${name} = ${(value * contrast).toFixed(4)};`)
+    .join('\n')
 
 /* ------------------------------------------------------------------ */
 /*  The shader                                                         */
@@ -238,7 +310,8 @@ uniform vec2 uOrigin;
 uniform float uZoom;
 uniform float uDpr;
 
-${paletteGlsl(PALETTE)}
+${paletteGlsl(atContrast(PALETTE, CONTRAST))}
+${modGlsl(MODULATION, CONTRAST)}
 
 const float TAU = 6.28318530718;
 const float FOLLOW  = ${FOLLOW.toFixed(4)};
@@ -415,16 +488,14 @@ ${GRAIN_OCTAVES.map(([wavelength, weight], i) => `  grain += (vnoise(gp * ${(1 /
   // and is the one navigation cue this background keeps at the zoom floor.
   float band = 1.0 - min(mod(row, BAND), 1.0);
   float bandWave = abs(fract((v - 0.5) / BAND) - 0.5) * 2.0;
-  vec3 ground = GROUND * (1.0 - (bandWave - 0.5) * 0.22);
+  vec3 ground = GROUND * (1.0 - (bandWave - 0.5) * GROUND_BAND);
 
   vec3 tone = mix(STONE_DARK, STONE_LIGHT, id.x * 0.85 + 0.075);
-  tone *= 1.0 - band * 0.22;
-  tone *= 1.0 + grain * 0.7;
-  // The chamfer: lit on the faces turned to the light, in shadow on the others,
-  // and a little darker all round where the stone meets the joint.
-  tone *= 1.0 + chamfer * (facing * 0.45 - 0.10);
+  tone *= 1.0 - band * BAND_DARKEN;
+  tone *= 1.0 + grain * GRAIN_STONE;
+  tone *= 1.0 + chamfer * (facing * CHAMFER_LIGHT - CHAMFER_SHADE);
 
-  vec3 mortar = MORTAR * (1.0 + grain * 0.8);
+  vec3 mortar = MORTAR * (1.0 + grain * GRAIN_MORTAR);
   vec3 col = mix(mortar, tone, stone);
   col = mix(ground, col, quietStone);
 
@@ -436,6 +507,12 @@ ${GRAIN_OCTAVES.map(([wavelength, weight], i) => `  grain += (vnoise(gp * ${(1 /
  * The lattice's parameters, exported so the tests measure the shader's own
  * numbers rather than a second copy of them — see `./paver-lattice.test`.
  */
+/**
+ * The tone knob, exported for the same reason: `./paver-lattice.test` checks
+ * that turning `CONTRAST` down flattens the floor without dimming it.
+ */
+export const PAVER_TONE = { CONTRAST, PALETTE, MODULATION, atContrast } as const
+
 export const PAVER_LATTICE = {
   GROWTH,
   FOLLOW,

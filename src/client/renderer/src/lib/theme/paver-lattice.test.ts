@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ROOT_DISC_RADIUS } from '../../../../../shared/node-size'
-import { PAVER_BG_FRAG, PAVER_LATTICE } from './paver-background'
+import { PAVER_BG_FRAG, PAVER_LATTICE, PAVER_TONE } from './paver-background'
 
 /**
  * What the paver background has to keep being.
@@ -321,7 +321,33 @@ describe('the shader', () => {
       expect(r, name).toBeGreaterThan(0.001)
       expect(r, name).toBeLessThan(0.035)
     }
-    const ground = tones.find(([, name]) => name === 'GROUND')?.[2].split(',').map(Number)[0] ?? 1
-    expect(ground).toBeLessThan(0.006)
+    // A floor, so the tones are ordered: the ground the stones fade to is no
+    // lighter than the mortar between them, and neither is as light as stone.
+    const tone = (name: string) => Number(tones.find(([, n]) => n === name)?.[2].split(',')[0])
+    expect(tone('GROUND')).toBeLessThanOrEqual(tone('MORTAR'))
+    expect(tone('MORTAR')).toBeLessThan(tone('STONE_DARK'))
+    expect(tone('STONE_DARK')).toBeLessThan(tone('STONE_LIGHT'))
+  })
+
+  it('flattens without dimming as the contrast comes down', () => {
+    const { PALETTE, MODULATION, CONTRAST, atContrast } = PAVER_TONE
+    const mid = (p: typeof PALETTE) => (p.stoneDark[0] + p.stoneLight[0]) / 2
+    const spread = (p: typeof PALETTE) => p.stoneLight[0] - p.ground[0]
+
+    // The palette turns about the middle of the stone range, which is what
+    // nearly the whole floor is: the spread scales with the contrast and the
+    // lightness a viewer reads off the paving does not follow it down.
+    for (const contrast of [1, 0.5, 0.2, 0]) {
+      const p = atContrast(PALETTE, contrast)
+      expect(mid(p), `mid at ${contrast}`).toBeCloseTo(mid(PALETTE), 6)
+      expect(spread(p), `spread at ${contrast}`).toBeCloseTo(spread(PALETTE) * contrast, 6)
+    }
+
+    // The grain, the chamfer and the soldier courses are ratios rather than
+    // offsets, so the palette cannot carry them: they are scaled on their own
+    // way into the shader, and every one of them has to be.
+    for (const [name, full] of Object.entries(MODULATION)) {
+      expect(src, name).toContain(`const float ${name} = ${(full * CONTRAST).toFixed(4)};`)
+    }
   })
 })
