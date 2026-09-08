@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNodeStore } from '../stores/nodeStore'
 import { useDimStaleStore } from '../stores/dimStaleStore'
-import { ACTIVE_HOURS, computeNodeBrightness, nodeBrightnessEqual, staleThresholdMs } from '../lib/dim-stale'
+import { ACTIVE_HOURS, computeNodeFreshness, nodeFreshnessEqual, staleThresholdMs } from '../lib/dim-stale'
 
 const RECOMPUTE_INTERVAL_MS = 30_000
 
 /**
- * Keeps `useDimStaleStore.nodeBrightness` current while the dim view is on. Mount once
+ * Keeps `useDimStaleStore.nodeFreshness` current while the dim view is on. Mount once
  * (in App). Recomputes when the node set changes and on a slow interval, so
  * nodes cross the staleness threshold as time passes even with no data change,
  * and immediately when the threshold or the active-hours schedule changes.
@@ -31,15 +31,15 @@ export function useDimStaleController(): void {
     // set it writes.
     const store = useDimStaleStore.getState()
     if (!enabled) {
-      if (store.nodeBrightness.size > 0) store.setNodeBrightness(new Map())
+      if (store.nodeFreshness.size > 0) store.setNodeFreshness(new Map())
       return
     }
-    const next = computeNodeBrightness(
+    const next = computeNodeFreshness(
       nodes,
       Date.now(),
       staleThresholdMs(thresholdHours),
       ACTIVE_HOURS[activeHoursId]
     )
-    if (!nodeBrightnessEqual(next, store.nodeBrightness)) store.setNodeBrightness(next)
+    if (!nodeFreshnessEqual(next, store.nodeFreshness)) store.setNodeFreshness(next)
   }, [enabled, nodes, thresholdHours, activeHoursId, tick])
 }

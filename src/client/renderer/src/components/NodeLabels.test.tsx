@@ -25,10 +25,10 @@ function label(overrides: Partial<NodeLabel> = {}): NodeLabel {
   }
 }
 
-function renderLabels(labels: NodeLabel[], onClick = vi.fn(), brightness = new Map<NodeId, number>()) {
+function renderLabels(labels: NodeLabel[], onClick = vi.fn(), freshness = new Map<NodeId, number>()) {
   const presets = { [NODE]: COLOR_PRESET_MAP['teal'] }
   const { container } = render(
-    <NodeLabels labels={labels} resolvedPresets={presets} nodeBrightness={brightness} onLabelClick={onClick} />
+    <NodeLabels labels={labels} resolvedPresets={presets} nodeFreshness={freshness} onLabelClick={onClick} />
   )
   return { container, onClick }
 }
@@ -81,12 +81,13 @@ describe('NodeLabels', () => {
     expect(container.querySelector('[data-node-id]')).toBeNull()
   })
 
-  it('fades with its node under the dim-stale view', () => {
+  it('drains with its node under the dim-stale view', () => {
     const { container } = renderLabels([label()], vi.fn(), new Map([[NODE, 0.4]]))
-    expect((container.querySelector('.node-label') as HTMLElement).style.filter).toBe('brightness(0.4)')
+    expect((container.querySelector('.node-label') as HTMLElement).style.filter)
+      .toBe('saturate(0.55) brightness(0.76)')
   })
 
-  it('leaves an undimmed label unfiltered rather than at brightness(1)', () => {
+  it('leaves an undrained label unfiltered rather than at saturate(1)', () => {
     const { container } = renderLabels([label()])
     expect((container.querySelector('.node-label') as HTMLElement).style.filter).toBe('')
   })

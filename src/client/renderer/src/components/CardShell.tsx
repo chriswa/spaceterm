@@ -11,6 +11,7 @@ import { hasLiveChildren } from '../lib/tree-utils'
 import { cardChromeScale, ROOT_CHROME_SCALE } from '../../../../shared/card-types'
 import { useNodeStore } from '../stores/nodeStore'
 import { useDimStaleStore } from '../stores/dimStaleStore'
+import { staleFilter } from '../lib/dim-stale'
 import type { NodeAlert } from '../../../../shared/state'
 import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
@@ -92,12 +93,12 @@ export function CardShell({
   // leaf-ness actually flips, not on every unrelated store change.
   const canClose = useNodeStore(s => !hasLiveChildren(s.nodes, nodeId))
 
-  // "Dim stale nodes" view: age-band brightness for a node's whole subtree.
+  // "Dim stale nodes" view: age-band freshness for a node's whole subtree.
   // The focused node is exempt so you can look at something old without it
-  // fading under you (focusing is not an interaction, so it doesn't otherwise
+  // draining under you (focusing is not an interaction, so it doesn't otherwise
   // wake the node). The map is empty when the view is off.
-  const staleBrightness = useDimStaleStore(s => s.nodeBrightness.get(nodeId) ?? 1)
-  const brightness = focused ? 1 : staleBrightness
+  const staleFreshness = useDimStaleStore(s => s.nodeFreshness.get(nodeId) ?? 1)
+  const freshness = focused ? 1 : staleFreshness
 
   // Build NodeActionBar props and register in the action registry
   const actionBarProps: NodeActionBarProps = {
@@ -201,8 +202,8 @@ export function CardShell({
         flexDirection: 'column',
         alignItems: 'center',
         // Transition so toggling the view (and a node waking on interaction)
-        // fades rather than snaps.
-        filter: brightness < 1 ? `brightness(${brightness})` : undefined,
+        // drains rather than snaps.
+        filter: staleFilter(freshness),
         transition: 'filter 0.25s ease',
         '--card-chrome-scale': chromeScale,
       } as CSSProperties}

@@ -42,6 +42,7 @@
 
 import { ROOT_DISC_RADIUS } from '../../../../../shared/node-size'
 import { glslVec3, LINEAR_TO_SRGB_GLSL, rgbToLinear, type Rgb } from './srgb'
+import { STALE_EDGE_DIM_RATIO, STALE_MAX_DRAIN } from '../dim-stale'
 
 /** OKLab → sRGB, for the shaders that tint by polar angle. Concentric does not. */
 const OKLAB_GLSL = `
@@ -108,6 +109,28 @@ float chevronCoverage(float d, float halfWidth) {
 // Coverage of the chevron at uv, antialiased to one pixel.
 float chevronAlpha(vec2 uv) {
   return chevronCoverage(chevronDistance(uv), HALF_W);
+}
+`
+
+/**
+ * The "dim stale nodes" lens, in GLSL: `drain(rgb, uFreshness)` mixes a colour
+ * toward its own luminance and takes a little lightness with it, so an aged
+ * edge mostly loses its hue rather than fading to black. `uFreshness` is 1 for
+ * an edge the lens has not touched and 0 for the oldest band.
+ *
+ * The colour half is exactly what the cards and node labels wear, down to the
+ * coefficients CSS `filter: saturate()` uses; the lightness half is gentler
+ * than a card's, because a two-pixel chevron has less to lose. Both constants
+ * are interpolated from `dim-stale` rather than restated, since a card and the
+ * edge running into it landing on different colours is exactly the kind of
+ * drift nobody would notice for months.
+ */
+const DESATURATE_GLSL = `
+vec3 drain(vec3 rgb, float freshness) {
+  float luma = dot(rgb, vec3(0.213, 0.715, 0.072));
+  float saturation = 1.0 - ${STALE_MAX_DRAIN.toFixed(4)} * (1.0 - freshness);
+  float dimmed = 1.0 - ${STALE_EDGE_DIM_RATIO.toFixed(4)} * (1.0 - freshness);
+  return mix(vec3(luma), rgb, saturation) * dimmed;
 }
 `
 
@@ -237,12 +260,13 @@ varying vec2 vUV;
 uniform float uBgTime;
 uniform vec2 uBgOrigin;
 uniform float uIntensity;
-uniform float uBrightness;
+uniform float uFreshness;
 uniform float uZoom;
 
 ${OKLAB_GLSL}
 ${NEBULA_FIELD_GLSL}
 ${CHEVRON_GLSL}
+${DESATURATE_GLSL}
 
 // W3C soft-light compositing (Figma-compatible)
 float softLightChannel(float backdrop, float source) {
@@ -270,9 +294,10 @@ void main() {
 
   vec4 bg = computeBackground(gl_FragCoord.xy, uBgTime, uBgOrigin, uZoom, 0.15);
   vec3 blended = softLight(bg.rgb, vec3(1.0));
-  // uIntensity > 1 overshoots past soft-light toward brighter. Age darkens
-  // the finished chevron toward black without making it more transparent.
-  vec3 result = mix(bg.rgb, blended, alpha * uIntensity) * uBrightness;
+  // uIntensity > 1 overshoots past soft-light toward brighter. Age drains the
+  // finished chevron toward grey and a little darker, without making it more
+  // transparent.
+  vec3 result = drain(mix(bg.rgb, blended, alpha * uIntensity), uFreshness);
   gl_FragColor = vec4(result, bg.a);
 }
 `
@@ -325,11 +350,12 @@ precision highp float;
 varying vec2 vUV;
 uniform vec2 uBgOrigin;
 uniform float uIntensity;
-uniform float uBrightness;
+uniform float uFreshness;
 uniform float uZoom;
 
 ${OKLAB_GLSL}
 ${CHEVRON_GLSL}
+${DESATURATE_GLSL}
 
 void main() {
   float alpha = chevronAlpha(vec2(vUV.x, fract(vUV.y)));
@@ -337,7 +363,7 @@ void main() {
 
   vec2 canvasOffset = (gl_FragCoord.xy - uBgOrigin) / uZoom;
   vec3 rgb = max(oklch2rgb(0.75, 0.08, angularHue(canvasOffset)), 0.0);
-  gl_FragColor = vec4(rgb * uBrightness, alpha * 0.35 * uIntensity);
+  gl_FragColor = vec4(drain(rgb, uFreshness), alpha * 0.35 * uIntensity);
 }
 `
 
@@ -371,12 +397,13 @@ export const STATIC_EDGE_FRAG = `
 precision highp float;
 varying vec2 vUV;
 uniform float uIntensity;
-uniform float uBrightness;
+uniform float uFreshness;
 
 ${CHEVRON_GLSL}
+${DESATURATE_GLSL}
 
 /**
- * Opaque at full brightness, so its normal colour does not depend on the
+ * Opaque at full strength, so its normal colour does not depend on the
  * background showing through.
  *
  * An earlier version carried its weight in alpha, which made the chevrons
@@ -384,8 +411,11 @@ ${CHEVRON_GLSL}
  * changed depending on which band happened to be underneath. Alpha is normally
  * coverage only: antialiasing at the silhouette, fully opaque inside. The core
  * is therefore about the luminance the translucent version *averaged* to, not
- * the value it was written with. uBrightness intentionally darkens the
- * finished chevron toward black while preserving that coverage.
+ * the value it was written with.
+ *
+ * CORE is very nearly neutral already, so the colour half of uFreshness moves
+ * it barely at all; what ages a chevron in this theme is the lightness the same
+ * value carries (see drain()).
  */
 const vec3  CORE       = vec3(0.42, 0.45, 0.52);
 const vec3  OUTLINE    = vec3(0.02, 0.02, 0.03);
@@ -416,7 +446,7 @@ void main() {
   // a highlighted edge is still legible over a pale band.
   vec3 rgb = mix(OUTLINE, min(CORE * uIntensity, vec3(1.0)), core);
 
-  gl_FragColor = vec4(rgb * uBrightness, outline);
+  gl_FragColor = vec4(drain(rgb, uFreshness), outline);
 }
 `
 

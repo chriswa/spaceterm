@@ -198,7 +198,7 @@ function edgesDiffer(a: readonly TreeLineNode[], b: readonly TreeLineNode[]): bo
     // Order matters as well as content: the loop emits quads in array order, so
     // a reorder is a different draw even when the set is identical.
     if (a[i].id !== b[i].id || a[i].parentId !== b[i].parentId) return true
-    if (a[i].x !== b[i].x || a[i].y !== b[i].y || a[i].brightness !== b[i].brightness) return true
+    if (a[i].x !== b[i].x || a[i].y !== b[i].y || a[i].freshness !== b[i].freshness) return true
   }
   return false
 }

@@ -10,6 +10,7 @@ import {
   type FacetId,
 } from './facets'
 import { EDGE_VERT_SRC } from './shaders'
+import { STALE_EDGE_DIM_RATIO, STALE_MAX_DRAIN } from '../dim-stale'
 import { registerTheme } from './theme-registry'
 import { DEFAULT_THEME_ID, themes, resolveFacet, resolveFacets, resolveTheme } from './themes'
 
@@ -236,6 +237,19 @@ describe('shader facets', () => {
       for (const facet of ['background', 'edges'] as const satisfies readonly FacetId[]) {
         expect(resolveFacet(themeId, facet).frag, `${themeId}/${facet}`).toContain('void main()')
       }
+    }
+  })
+
+  it('build the dim-stale lens from the shared constants', () => {
+    // Every edge shader ages its chevrons, and a card and the edge running into
+    // it have to land on the same colour. The only way to guarantee that is for
+    // the GLSL to interpolate `dim-stale`'s numbers rather than spell its own,
+    // so assert the numbers are actually in there — a hardcoded 0.4 would look
+    // right today and drift the first time the lens is retuned.
+    for (const themeId of themes().map(t => t.id)) {
+      const frag = resolveFacet(themeId, 'edges').frag
+      expect(frag, `${themeId}/edges`).toContain(STALE_MAX_DRAIN.toFixed(4))
+      expect(frag, `${themeId}/edges`).toContain(STALE_EDGE_DIM_RATIO.toFixed(4))
     }
   })
 })

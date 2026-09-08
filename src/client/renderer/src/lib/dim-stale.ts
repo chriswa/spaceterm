@@ -66,7 +66,7 @@ export function normalizeActiveHoursId(id: string | null): ActiveHoursId {
 
 /**
  * How much active time a node's whole subtree can go untouched before the
- * "dim stale nodes" view stops keeping it at full brightness, in hours.
+ * "dim stale nodes" view stops drawing it untouched, in hours.
  *
  * 16 active hours is the widest setting and the default: two 8-hour work days,
  * or a bit over one 15-hour home day — enough to keep today, the previous day,
@@ -96,56 +96,128 @@ export function normalizeStaleThresholdHours(hours: number): number {
 
 export const DEFAULT_STALE_THRESHOLD_MS = staleThresholdMs(DEFAULT_STALE_THRESHOLD_HOURS)
 
-export const STALE_BRIGHTNESS = {
+/**
+ * How much of its normal look a node keeps, by age band: 1 is untouched by the
+ * lens, 0 is as aged as the lens goes.
+ *
+ * A band carries this one number and nothing else. Both effects are derived
+ * from it — `staleSaturation` for the colour, `staleBrightness` for the
+ * lightness — which is what keeps a band one value everywhere it is used (one
+ * number per node in the store, one uniform per edge batch on the canvas) and
+ * lets the two be tuned against each other without touching this ladder.
+ *
+ * The three knobs below produce, at the current settings:
+ *
+ * | band   | freshness | saturate | card brightness | edge brightness |
+ * |--------|-----------|----------|-----------------|-----------------|
+ * | recent | 1         | 1        | 1               | 1               |
+ * | fading | 0.5       | 0.625    | 0.8             | 0.9             |
+ * | faded  | 0.25      | 0.4375   | 0.7             | 0.85            |
+ * | oldest | 0         | 0.25     | 0.6             | 0.8             |
+ */
+export const STALE_FRESHNESS = {
   /** Touched within the threshold. */
   recent: 1,
   /** Just past the threshold. */
-  fading: 0.6,
+  fading: 0.5,
   /** Well past it. */
-  faded: 0.4,
-  /** As dark as the lens goes. */
-  oldest: 0.2,
+  faded: 0.25,
+  /** As aged as the lens goes. */
+  oldest: 0,
 } as const
 
 /**
- * The fade ladder: how far each brightness band reaches, as a multiple of the
+ * How much colour the lens takes at the oldest band.
+ *
+ * Short of 1 on purpose. A card drained to flat grey loses which of the tints
+ * it was — and the tint is a thing the user chose and still needs to read at a
+ * glance on an old branch. A quarter of the colour left is enough to tell two
+ * tints apart while still reading as drained next to a fresh card.
+ */
+export const STALE_MAX_DRAIN = 0.75
+
+/**
+ * How much lightness a card loses at the oldest band.
+ *
+ * Colour alone is a quiet signal on a board whose cards are mostly dark chrome
+ * to begin with — there is little colour there to take away, so an old card and
+ * a fresh one read nearly the same. A little darkening puts the difference in a
+ * channel a dark card still has room in, while staying well short of the black
+ * this lens used to reach (0.6 lightness at the oldest band, against 0.2).
+ */
+export const STALE_DIM_RATIO = 0.4
+
+/**
+ * How much lightness an *edge* loses at the oldest band, against a card's.
+ *
+ * Half, because a card and an edge have very different amounts of ink to lose.
+ * A card is a large surface and reads as receding when it dims; an edge is a
+ * two-pixel chevron on a patterned ground, and taking the same lightness off it
+ * erases the line rather than ageing it — which costs the shape of the tree,
+ * the one thing the edges are there to show.
+ *
+ * Expressed against the card ratio rather than as its own number, so retuning
+ * the darkening moves both together.
+ */
+export const STALE_EDGE_DIM_RATIO = STALE_DIM_RATIO / 2
+
+/** The `saturate()` amount for a node at `freshness`. */
+export function staleSaturation(freshness: number): number {
+  return 1 - STALE_MAX_DRAIN * (1 - freshness)
+}
+
+/**
+ * The `brightness()` amount for a node at `freshness` — a card's by default,
+ * an edge's when passed `STALE_EDGE_DIM_RATIO`.
+ *
+ * Derived rather than tabulated so the knobs above are the only place either
+ * effect is written down, and so the CSS filter and the canvas's `drain()`
+ * cannot disagree about what one band looks like: `shaders.ts` builds its GLSL
+ * from these same constants.
+ */
+export function staleBrightness(
+  freshness: number,
+  dimRatio: number = STALE_DIM_RATIO
+): number {
+  return 1 - dimRatio * (1 - freshness)
+}
+
+/**
+ * The fade ladder: how far each freshness band reaches, as a multiple of the
  * chosen threshold.
  *
  * The *whole* ladder scales with the threshold, which is what makes the toolbar
- * control mean what it says — halve the threshold and a node reaches the darkest
- * band in half the active time. (Every step but the first used to be pinned to
- * a fixed calendar-sized window, so a 1-hour threshold still needed 24 business
- * days to go darkest, and everything between 1 and 48 business hours old sat
- * together in one barely-dimmed band.)
+ * control mean what it says — halve the threshold and a node reaches the last
+ * band in half the active time.
  *
- * The multiples are those original fixed bands expressed against the
- * 16-business-hour default, so that setting still fades exactly as it did:
+ * The multiples are calendar-sized windows expressed against the 16-business-hour
+ * default:
  * 1x = 16h (two business days), 3x = 48h (six business days — the most a calendar
  * week plus a day can hold), 12x = 192h (24 business days — the most a 31-day
  * month plus a day can hold). Bands are inclusive of their edge, and the last one
  * is unbounded.
  */
 export const STALE_BANDS = [
-  { maxAgeMultiple: 1, brightness: STALE_BRIGHTNESS.recent },
-  { maxAgeMultiple: 3, brightness: STALE_BRIGHTNESS.fading },
-  { maxAgeMultiple: 12, brightness: STALE_BRIGHTNESS.faded },
-  { maxAgeMultiple: Infinity, brightness: STALE_BRIGHTNESS.oldest },
+  { maxAgeMultiple: 1, freshness: STALE_FRESHNESS.recent },
+  { maxAgeMultiple: 3, freshness: STALE_FRESHNESS.fading },
+  { maxAgeMultiple: 12, freshness: STALE_FRESHNESS.faded },
+  { maxAgeMultiple: Infinity, freshness: STALE_FRESHNESS.oldest },
 ] as const
 
 /**
- * Every brightness the ladder can produce, brightest first. The canvas draws
+ * Every freshness the ladder can produce, freshest first. The canvas draws
  * tree edges one batch per level, so it needs the set of values rather than the
- * age mapping — and an edge whose brightness is not in this list never gets
+ * age mapping — and an edge whose freshness is not in this list never gets
  * drawn, so the two must not drift apart.
  */
-export const STALE_BRIGHTNESS_LEVELS: readonly number[] = STALE_BANDS.map(b => b.brightness)
+export const STALE_FRESHNESS_LEVELS: readonly number[] = STALE_BANDS.map(b => b.freshness)
 
 /**
- * The multiple of the threshold at which a node reaches the darkest band — the
- * age past which the ladder has nothing left to say, so both the staleness walk
- * and the toolbar's tooltip can stop there.
+ * The multiple of the threshold at which a node reaches the last band — the age
+ * past which the ladder has nothing left to say, so both the staleness walk and
+ * the toolbar's tooltip can stop there.
  */
-export const DARKEST_BAND_AGE_MULTIPLE = Math.max(
+export const OLDEST_BAND_AGE_MULTIPLE = Math.max(
   ...STALE_BANDS.map(b => b.maxAgeMultiple).filter(m => Number.isFinite(m))
 )
 
@@ -192,21 +264,22 @@ export function activeMillisBetween(
 }
 
 /**
- * Brightness for each node, based on how long its whole subtree (the node and
- * every descendant) has gone untouched. A node stays as bright as its freshest
- * descendant, so interacting with one leaf keeps its whole ancestor chain lit
- * — the "touch it and its parents wake up" behaviour the dim view is for.
+ * Freshness for each node, based on how long its whole subtree (the node and
+ * every descendant) has gone untouched. A node stays as colourful as its
+ * freshest descendant, so interacting with one leaf keeps its whole ancestor
+ * chain lit — the "touch it and its parents wake up" behaviour the dim view is
+ * for.
  *
  * `thresholdMs` sets the whole fade curve, not just its first step: it is the
  * unit the `STALE_BANDS` multiples are measured in, so a shorter threshold
- * reaches every darker band proportionally sooner. `schedule` decides which
+ * reaches every older band proportionally sooner. `schedule` decides which
  * wall-clock time counts towards it at all.
  *
  * O(n): subtree freshness is the max `lastInteractedAt` over a node's subtree,
  * computed once bottom-up with memoization (and a cycle guard, since the tree is
  * derived from `parentId` links rather than trusted structure).
  */
-export function computeNodeBrightness(
+export function computeNodeFreshness(
   nodes: Record<string, NodeData>,
   now: number,
   thresholdMs: number = DEFAULT_STALE_THRESHOLD_MS,
@@ -235,21 +308,36 @@ export function computeNodeBrightness(
 
   // The ladder, resolved against this threshold. The last edge is Infinity, so
   // the lookup below always matches; the walk in activeMillisBetween can stop
-  // at the darkest band's edge, since everything beyond it classifies the same.
+  // at the last band's edge, since everything beyond it classifies the same.
   const bandEdges = STALE_BANDS.map(b => b.maxAgeMultiple * thresholdMs)
-  const ageCap = DARKEST_BAND_AGE_MULTIPLE * thresholdMs
+  const ageCap = OLDEST_BAND_AGE_MULTIPLE * thresholdMs
 
-  const brightness = new Map<NodeId, number>()
+  const freshness = new Map<NodeId, number>()
   for (const id of nodeIdsOf(nodes)) {
     const age = activeMillisBetween(visit(id), now, schedule, ageCap)
-    brightness.set(id, STALE_BANDS[bandEdges.findIndex(edge => age <= edge)].brightness)
+    freshness.set(id, STALE_BANDS[bandEdges.findIndex(edge => age <= edge)].freshness)
   }
-  return brightness
+  return freshness
 }
 
-/** Shallow map equality — used to skip a store update when brightness is unchanged. */
-export function nodeBrightnessEqual(a: Map<NodeId, number>, b: Map<NodeId, number>): boolean {
+/**
+ * The CSS `filter` that draws a node at `freshness`, or `undefined` for a node
+ * the lens has not touched. Cards and their labels both wear it, so the two
+ * cannot age at different rates.
+ *
+ * `undefined` rather than `saturate(1) brightness(1)` matters: any filter value
+ * puts the element in its own compositing layer, which a board full of
+ * untouched cards should not pay for.
+ */
+export function staleFilter(freshness: number): string | undefined {
+  return freshness < 1
+    ? `saturate(${staleSaturation(freshness)}) brightness(${staleBrightness(freshness)})`
+    : undefined
+}
+
+/** Shallow map equality — used to skip a store update when freshness is unchanged. */
+export function nodeFreshnessEqual(a: Map<NodeId, number>, b: Map<NodeId, number>): boolean {
   if (a.size !== b.size) return false
-  for (const [id, brightness] of a) if (b.get(id) !== brightness) return false
+  for (const [id, freshness] of a) if (b.get(id) !== freshness) return false
   return true
 }

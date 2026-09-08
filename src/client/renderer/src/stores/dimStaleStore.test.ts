@@ -20,7 +20,7 @@ describe('dim-stale threshold persistence', () => {
 
   it('answers junk with the default rather than never dimming', () => {
     // Number('nonsense') is NaN, and NaN fails every threshold comparison — so
-    // an unguarded read would leave every node at full brightness with the lens on.
+    // an unguarded read would leave every node in full colour with the lens on.
     expect(loadThresholdHours('nonsense')).toBe(DEFAULT_STALE_THRESHOLD_HOURS)
   })
 

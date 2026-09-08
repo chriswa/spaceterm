@@ -28,11 +28,11 @@ interface DimStaleState {
   activeHoursId: ActiveHoursId
   setActiveHoursId: (id: ActiveHoursId) => void
   /**
-   * Per-node brightness, recomputed by useDimStaleController. Always empty
-   * while `enabled` is false, so cards remain at full brightness then.
+   * Per-node freshness, recomputed by useDimStaleController. Always empty
+   * while `enabled` is false, so every card draws untouched then.
    */
-  nodeBrightness: Map<NodeId, number>
-  setNodeBrightness: (brightness: Map<NodeId, number>) => void
+  nodeFreshness: Map<NodeId, number>
+  setNodeFreshness: (freshness: Map<NodeId, number>) => void
 }
 
 /** The saved threshold, or the default when nothing usable is stored. */
@@ -61,6 +61,6 @@ export const useDimStaleStore = create<DimStaleState>((set, get) => ({
     localStorage.setItem(ACTIVE_HOURS_KEY, next)
     set({ activeHoursId: next })
   },
-  nodeBrightness: new Map(),
-  setNodeBrightness: (brightness) => set({ nodeBrightness: brightness }),
+  nodeFreshness: new Map(),
+  setNodeFreshness: (freshness) => set({ nodeFreshness: freshness }),
 }))

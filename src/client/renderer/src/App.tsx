@@ -190,7 +190,7 @@ export function App() {
   const renameNode = useNodeStore(s => s.renameNode)
   const setNodeColor = useNodeStore(s => s.setNodeColor)
   const bringToFront = useNodeStore(s => s.bringToFront)
-  const nodeBrightness = useDimStaleStore(s => s.nodeBrightness)
+  const nodeFreshness = useDimStaleStore(s => s.nodeFreshness)
 
   const treeLineNodes = useMemo(() =>
     nodeList.map((n): TreeLineNode => ({
@@ -198,9 +198,9 @@ export function App() {
       parentId: n.parentId,
       x: n.x,
       y: n.y,
-      brightness: nodeBrightness.get(n.id) ?? 1,
+      freshness: nodeFreshness.get(n.id) ?? 1,
     })),
-    [nodeList, nodeBrightness]
+    [nodeList, nodeFreshness]
   )
   const edgesRef = useRef<TreeLineNode[]>([])
   edgesRef.current = treeLineNodes
@@ -2467,7 +2467,7 @@ export function App() {
         <NodeLabels
           labels={nodeLabels}
           resolvedPresets={resolvedPresets}
-          nodeBrightness={nodeBrightness}
+          nodeFreshness={nodeFreshness}
           onLabelClick={focusParentOfNode}
         />
         <RootNode

@@ -16,7 +16,7 @@ import { useDimStaleStore } from '../../stores/dimStaleStore'
 import {
   ACTIVE_HOURS,
   ACTIVE_HOURS_OPTIONS,
-  DARKEST_BAND_AGE_MULTIPLE,
+  OLDEST_BAND_AGE_MULTIPLE,
   DEFAULT_STALE_THRESHOLD_HOURS,
   STALE_THRESHOLD_HOUR_OPTIONS,
   type ActiveHoursId,
@@ -266,7 +266,7 @@ export function DimStaleToggle() {
       <button
         className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
         onClick={toggle}
-        data-tooltip={enabled ? 'Dim Stale — Disable to show every node at full brightness' : 'Dim Stale — Fade untouched nodes by active-hour age; fresh descendants keep ancestors bright'}
+        data-tooltip={enabled ? 'Dim Stale — Disable to show every node in full colour' : 'Dim Stale — Drain the colour from untouched nodes by active-hour age; fresh descendants keep ancestors lit'}
         data-tooltip-no-flip
       >
         <DimIcon />
@@ -274,7 +274,7 @@ export function DimStaleToggle() {
       <button
         className={'toolbar__btn toolbar__btn--caret' + (menu.open ? ' toolbar__btn--active' : '')}
         onClick={menu.toggle}
-        data-tooltip={`Dim Stale threshold — fades after ${thresholdHours}h of ${ACTIVE_HOURS[activeHoursId].blurb}, fully dark by ${thresholdHours * DARKEST_BAND_AGE_MULTIPLE}h`}
+        data-tooltip={`Dim Stale threshold — drains after ${thresholdHours}h of ${ACTIVE_HOURS[activeHoursId].blurb}, fully faded by ${thresholdHours * OLDEST_BAND_AGE_MULTIPLE}h`}
         data-tooltip-no-flip
       >
         <CaretIcon />

@@ -1,14 +1,15 @@
 import type { CSSProperties } from 'react'
 import type { NodeLabel } from '../lib/node-label'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
+import { staleFilter } from '../lib/dim-stale'
 import type { NodeId } from '../../../../shared/ids'
 
 interface NodeLabelsProps {
   labels: readonly NodeLabel[]
   /** Inherited colour presets, keyed by node id — a label wears its node's colour. */
   resolvedPresets: Record<string, ColorPreset>
-  /** "Dim stale nodes" brightness, so a label fades with the node that supplies it. */
-  nodeBrightness: Map<NodeId, number>
+  /** "Dim stale nodes" freshness, so a label drains with the node that supplies it. */
+  nodeFreshness: Map<NodeId, number>
   onLabelClick: (nodeId: NodeId) => void
 }
 
@@ -31,11 +32,11 @@ interface NodeLabelsProps {
  * hover state. A caption that lit up under the pointer read as a control the
  * canvas was offering rather than as a name written on the canvas.
  */
-export function NodeLabels({ labels, resolvedPresets, nodeBrightness, onLabelClick }: NodeLabelsProps) {
+export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClick }: NodeLabelsProps) {
   return (
     <>
       {labels.map((label) => {
-        const brightness = nodeBrightness.get(label.nodeId) ?? 1
+        const freshness = nodeFreshness.get(label.nodeId) ?? 1
         return (
           <div
             key={label.nodeId}
@@ -46,7 +47,7 @@ export function NodeLabels({ labels, resolvedPresets, nodeBrightness, onLabelCli
               width: label.width,
               height: label.height,
               '--node-label-fg': (resolvedPresets[label.nodeId] ?? DEFAULT_PRESET).titleBarBg,
-              filter: brightness < 1 ? `brightness(${brightness})` : undefined
+              filter: staleFilter(freshness)
             } as CSSProperties}
             onClick={() => onLabelClick(label.nodeId)}
           >

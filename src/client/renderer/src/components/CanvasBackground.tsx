@@ -10,15 +10,15 @@ import { CanvasFrameGate } from '../lib/canvas-frame-gate'
 import { FrameLimiter, quantizeClock } from '../lib/frame-policy'
 import { chromeNeedsEdgeMask } from '../lib/card-surface'
 import { isCardOnScreen, type WorldRect } from '../lib/viewport'
-import { STALE_BRIGHTNESS_LEVELS } from '../lib/dim-stale'
+import { STALE_FRESHNESS_LEVELS } from '../lib/dim-stale'
 
 export interface TreeLineNode {
   id: NodeId
   parentId: NodeId
   x: number
   y: number
-  /** Age-band brightness of the child subtree this edge leads into. */
-  brightness: number
+  /** Age-band freshness of the child subtree this edge leads into. */
+  freshness: number
 }
 
 export interface MaskRect {
@@ -140,7 +140,7 @@ interface EdgeStage {
   bgTime: WebGLUniformLocation | null
   bgOrigin: WebGLUniformLocation | null
   intensity: WebGLUniformLocation | null
-  brightness: WebGLUniformLocation | null
+  freshness: WebGLUniformLocation | null
   dpr: WebGLUniformLocation | null
 }
 
@@ -172,7 +172,7 @@ function buildEdgeStage(gl: WebGLRenderingContext, frag: string, vert: string): 
     bgTime: gl.getUniformLocation(prog, 'uBgTime'),
     bgOrigin: gl.getUniformLocation(prog, 'uBgOrigin'),
     intensity: gl.getUniformLocation(prog, 'uIntensity'),
-    brightness: gl.getUniformLocation(prog, 'uBrightness'),
+    freshness: gl.getUniformLocation(prog, 'uFreshness'),
     dpr: gl.getUniformLocation(prog, 'uDpr'),
   }
 }
@@ -508,7 +508,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       if (edge) {
         // One upload-and-draw for every edge batch: the ordinary edges and
         // both highlight passes differ only in vertex data and intensity.
-        const drawEdgeBatch = (vertexCount: number, intensity: number, brightness: number) => {
+        const drawEdgeBatch = (vertexCount: number, intensity: number, freshness: number) => {
           if (vertexCount === 0) return
           gl.useProgram(edge.prog)
           gl.bindBuffer(gl.ARRAY_BUFFER, res.edgeBuf)
@@ -528,7 +528,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           gl.uniform2f(edge.bgOrigin, cam.x * dpr, canvas.height - cam.y * dpr)
           gl.uniform1f(edge.dpr, dpr)
           gl.uniform1f(edge.intensity, intensity)
-          gl.uniform1f(edge.brightness, brightness)
+          gl.uniform1f(edge.freshness, freshness)
 
           gl.drawArrays(gl.TRIANGLES, 0, vertexCount)
           gl.disableVertexAttribArray(edge.pos)
@@ -589,19 +589,19 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           const parentPosOf = (parentId: NodeId): { x: number; y: number } | null =>
             parentId === 'root' ? { x: 0, y: 0 } : posMap.get(parentId) ?? null
 
-          // An edge inherits the brightness of the child subtree it leads to.
+          // An edge inherits the freshness of the child subtree it leads to.
           // Draw each age band separately so the shader can apply that value
           // consistently across every edge theme without changing its vertex
           // format or its hit-testing geometry.
-          for (const brightness of STALE_BRIGHTNESS_LEVELS) {
+          for (const freshness of STALE_FRESHNESS_LEVELS) {
             let offset = 0
             for (const node of edges) {
-              if (node.brightness !== brightness) continue
+              if (node.freshness !== freshness) continue
               const parentPos = parentPosOf(node.parentId)
               if (!parentPos) continue
               offset = emitQuad(offset, parentPos.x, parentPos.y, node.x, node.y)
             }
-            drawEdgeBatch(offset / FLOATS_PER_VERTEX, 1.0, brightness)
+            drawEdgeBatch(offset / FLOATS_PER_VERTEX, 1.0, freshness)
           }
 
           // 2b. Highlight edges:
@@ -612,7 +612,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
           const selParent = childNode ? parentPosOf(childNode.parentId) : null
           if (childNode && selParent) {
             const end = emitQuad(0, selParent.x, selParent.y, childNode.x, childNode.y)
-            drawEdgeBatch(end / FLOATS_PER_VERTEX, HIGHLIGHT_INTENSITY, childNode.brightness)
+            drawEdgeBatch(end / FLOATS_PER_VERTEX, HIGHLIGHT_INTENSITY, childNode.freshness)
           }
 
           const rEdge = reparentEdgeRef.current
