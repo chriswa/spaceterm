@@ -18,7 +18,7 @@ import {
 } from './resume-target'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import { hookPayloadAgentType, isForeignAgentHook } from './hook-agent'
-import type { AgentType } from '../shared/agent-type'
+import { agentTypeOrDefault, type AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
 import { probeCapabilities, formatCapabilityReport } from './capabilities'
@@ -43,6 +43,7 @@ import { ClaudeStateMachine } from './claude-state'
 import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
+import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
@@ -218,6 +219,7 @@ let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
 let gitStatusPoller: GitStatusPoller
+let sessionStatusObserver: SessionStatusObserver
 let planCacheManager: PlanCacheManager
 let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
@@ -2474,6 +2476,28 @@ async function startServer(): Promise<void> {
     log: (line) => console.log(line),
   })
 
+  // --- Claude Code's own session status, paired with ours ---
+  // Reads ~/.claude/sessions/<pid>.json, logs how its busy/waiting/idle status
+  // compares to the state we inferred at the same moment, and puts it in the
+  // card footer next to that state. It drives no transition: claudeState is
+  // still decided entirely by hooks and the transcript.
+  sessionStatusObserver = new SessionStatusObserver(() => {
+    const surfaces: ObservedSurface[] = []
+    for (const node of Object.values(stateManager.getState().nodes)) {
+      if (node.type !== 'terminal' || !node.alive) continue
+      surfaces.push({
+        surfaceId: node.sessionId,
+        claudeSessionId: sessionManager.getLastClaudeSessionId(node.sessionId),
+        agentType: agentTypeOrDefault(node.agentType),
+        state: node.claudeState,
+        ...(node.claudeStateDecidedAt !== undefined && { stateDecidedAt: node.claudeStateDecidedAt })
+      })
+    }
+    return surfaces
+  }, (surfaceId, status, waitingFor) => {
+    stateManager.updateCcSessionStatus(surfaceId, status, waitingFor)
+  })
+
   // --- Git status polling for directory nodes ---
   gitStatusPoller = new GitStatusPoller(
     () => stateManager.getDirectoryNodes(),
@@ -2626,6 +2650,7 @@ async function startServer(): Promise<void> {
     // Flush queued transitions and stop timers before persisting state
     claudeStateMachine.dispose()
     gitStatusPoller.dispose()
+    sessionStatusObserver.dispose()
     fileContentManager.dispose()
     sessionFileWatcher.dispose()
     if (restartFlagWatcher) restartFlagWatcher()

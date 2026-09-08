@@ -9,7 +9,7 @@ import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '..
 import { classifyWheelEvent } from '../lib/wheel-gesture'
 import { type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
-import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
+import type { ArchivedNode, TerminalSessionEntry, CcSessionStatus } from '../../../../shared/state'
 import type { ClaudeSessionEntry, SnapshotMessage, SnapshotRow } from '../../../../shared/protocol'
 import { planRepaint, type PaintedState } from '../lib/snapshot-diff'
 import { isCardOnScreen } from '../lib/viewport'
@@ -27,7 +27,7 @@ import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScr
 import crabIcon from '../assets/crab.png'
 import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
-import { deriveToolbarIndicator, CRAB_COLORS } from '../lib/crab-nav'
+import { deriveToolbarIndicator, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
@@ -157,6 +157,9 @@ interface TerminalCardProps {
   agentType?: AgentType
   claudeState?: string
   claudeModel?: string
+  /** Claude Code's own status for this surface — footer only, Claude surfaces only. */
+  ccStatus?: CcSessionStatus | null
+  ccWaitingFor?: string | null
   onExit?: (id: NodeId, exitCode: number) => void
   onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
@@ -179,7 +182,7 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
-  claudeSessionHistory, agentType, claudeState, claudeModel, onExit, onNodeReady,
+  claudeSessionHistory, agentType, claudeState, claudeModel, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
@@ -1127,6 +1130,11 @@ export function TerminalCard({
     }
   }
 
+  // Claude Code's own status, shown next to the state we inferred so the two
+  // can be compared without opening a log. See ccStatusLabel for why it is
+  // Claude-only.
+  const ccLabel = ccStatusLabel(agentType, ccStatus, ccWaitingFor)
+
   const pastSessions = terminalSessions ?? []
   const currentSessionIndex = terminalSessions ? terminalSessions.length - 1 : -1
 
@@ -1263,6 +1271,10 @@ export function TerminalCard({
           let text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id}`
           if (lastClaudeSession) text += ` ${agentLabel} session ID: ${lastClaudeSession.claudeSessionId}`
           text += ` ${agentLabel} State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
+          // Claude Code's own status goes in the copied string too: this text is
+          // what gets pasted into a bug report, and a state complaint is far
+          // quicker to settle when it says which of the two views disagreed.
+          if (ccLabel) text += ` ${ccLabel}`
           navigator.clipboard.writeText(text)
           showToast(`Copied to clipboard: ${text}`)
         }
@@ -1282,6 +1294,7 @@ export function TerminalCard({
                 {claudeSessionLineCount != null && <span>&nbsp;({claudeSessionLineCount})</span>}
                 <span>&nbsp;|&nbsp;</span>
                 <span>{claudeStateLabel(claudeState)}</span>
+                {ccLabel && <><span>&nbsp;/&nbsp;</span><span title="Claude Code's own status, for comparison">{ccLabel}</span></>}
                 {claudeModel && <><span>&nbsp;|&nbsp;</span><span>{claudeModel}</span></>}
               </>
             )}

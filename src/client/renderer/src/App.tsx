@@ -2519,6 +2519,8 @@ export function App() {
             agentType={t.agentType}
             claudeState={t.claudeState}
             claudeModel={t.claudeModel}
+            ccStatus={t.ccStatus}
+            ccWaitingFor={t.ccWaitingFor}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}

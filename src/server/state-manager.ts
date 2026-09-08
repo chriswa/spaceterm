@@ -1070,6 +1070,27 @@ export class StateManager {
     this.patchNode(node, { claudeModel: model })
   }
 
+  /**
+   * Claude Code's own `busy | waiting | idle | shell` for this surface, for the
+   * footer to show beside the state we inferred.
+   *
+   * `applyPatch`, not `patchNode`: this describes a live process, so persisting
+   * it would restore a claim about a session that no longer exists on the next
+   * startup. The observer re-reports within a tick of the server coming up.
+   */
+  updateCcSessionStatus(
+    ptySessionId: PtySessionId,
+    status: import('../shared/state').CcSessionStatus | null,
+    waitingFor: string | null
+  ): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    // `?? null` on both sides so a never-observed node (undefined) and a cleared
+    // one (null) compare equal — otherwise the first clear after startup would
+    // broadcast a patch that changes nothing.
+    if (!node || ((node.ccStatus ?? null) === status && (node.ccWaitingFor ?? null) === waitingFor)) return
+    this.applyPatch(node, { ccStatus: status, ccWaitingFor: waitingFor })
+  }
+
   /** Returns true when the value changed, so callers can gate a client broadcast. */
   updateClaudeContextPercent(ptySessionId: PtySessionId, percent: number): boolean {
     const node = this.getTerminalBySession(ptySessionId)

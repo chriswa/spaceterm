@@ -33,7 +33,28 @@ Raw hook events from Claude Code (SessionStart, PreToolUse, PermissionRequest, P
 ```
 The Claude Code JSONL transcript. Contains assistant messages, user messages, and tool results. The JSONL file watcher uses this to detect `assistant` entries (→ working) and `user` entries (→ working or stopped on interrupt).
 
-### 4. Electron Log
+### 4. Session-Status Log (Claude Code's own answer)
+
+The same status is on screen: the card footer shows `<our state> / cc: <status>`
+on Claude surfaces, and the footer's click-to-copy string carries it too — so a
+pasted bug report already says which of the two views disagreed.
+```
+~/.spaceterm/session-status-logs/{surfaceId}.jsonl
+```
+Claude Code publishes its own `busy | waiting | idle | shell` status per process
+in `~/.claude/sessions/<pid>.json`, computed from the UI state that draws the
+spinner. This log pairs that status with the state we decided at the same
+moment: `cc.status` / `cc.waitingFor` / `cc.statusUpdatedAt` against
+`spaceterm.state` / `spaceterm.decidedAt`, plus `agreement`
+(`agree` / `disagree` / `no-opinion`) and `lagMs` (ours minus theirs — positive
+means the registry knew first). **Nothing in the state machine reads this**; it
+is observation only, so a decision to use it can rest on days of paired samples.
+Grep `"agreement":"disagree"` for the cases worth explaining. It is the only
+signal that catches an Esc interrupt, which fires no hook and appends nothing to
+the transcript. Claude-only: Codex publishes per-thread write locks and Cursor
+nothing comparable.
+
+### 5. Electron Log
 ```
 ~/.spaceterm/electron.log
 ```
@@ -77,6 +98,7 @@ ledger in `src/server/claude-state/background-ledger.ts`.
 ### Signals that DON'T change state
 - `PostToolUse` / `PostToolUseFailure` with non-matching tool_use_id — ignored (prevents subagent events from clobbering main agent state)
 - `Notification` hooks, all kinds — intentionally not handled (permission_prompt is always redundant with PermissionRequest; `idle_prompt` was evaluated as a turn-idle backstop and rejected, see invariant 17)
+- `StopFailure`, `PostCompact`, `PermissionDenied`, `Elicitation`, `ElicitationResult`, `TaskCreated` — subscribed in `hooks/hooks.json` for their payloads only. `handleHook` ignores unrecognised types, so they land in the hook log and nowhere else. Claude Code 2.1.263 defines 33 hook events; these six are the low-frequency ones that look state-relevant, and whether they fire (and with what) is the thing being found out. `PostCompact` in particular could replace invariant 17's `<local-command-stdout>` prose match, and `TaskCreated` could replace the background ledger's launch-ack regexes.
 - `Status-line` heartbeats — no longer drive state (the stale-sweep/`stuck` heuristic was removed)
 - `client:interact` (any terminal keystroke) — only clears the `unread` flag, never changes state
 - `client:markRead` / `client:markUnread` — only toggles the `unread` flag, never changes state
@@ -111,7 +133,7 @@ Supporting files:
 
 ## Interleaved timeline tool
 
-`interleave-logs.js` merges decision, hook, transcript, and electron logs into a single chronological timeline. Use it to see the full picture without manually cross-referencing files.
+`interleave-logs.js` merges decision, hook, session-status, transcript, and electron logs into a single chronological timeline. Use it to see the full picture without manually cross-referencing files.
 
 ```bash
 # Basic usage — auto-discovers session from hook log
@@ -127,6 +149,10 @@ node .claude/skills/claude-state-transition-research/interleave-logs.js <surface
 
 # Hide status-line entries for cleaner output
 node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId> --skip-status-lines
+
+# Just our decisions against Claude Code's own status
+node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId> \
+  --sources decision,ccstatus
 
 # Use a specific transcript file directly
 node .claude/skills/claude-state-transition-research/interleave-logs.js <surfaceId> \

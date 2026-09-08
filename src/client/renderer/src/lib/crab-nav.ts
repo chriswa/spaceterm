@@ -1,5 +1,6 @@
 import { type NodeId } from '../../../../shared/ids'
 import type { AgentType } from '../../../../shared/agent-type'
+import type { CcSessionStatus } from '../../../../shared/state'
 export type CrabColor = 'white' | 'red' | 'green' | 'purple' | 'orange' | 'yellow' | 'gray' | 'asleep'
 
 /** Hex colors for each crab color variant. Matches the toolbar CSS classes. */
@@ -30,6 +31,38 @@ export interface CrabEntry {
   sortOrder: number
   title: string
   claudeStateDecidedAt?: number
+}
+
+/** Longest `waitingFor` the footer will render before eliding. */
+const CC_WAITING_FOR_MAX = 24
+
+/**
+ * The footer's rendering of Claude Code's own status, or null when there is
+ * nothing to show.
+ *
+ * Claude surfaces only. Codex publishes per-thread write locks and Cursor
+ * publishes nothing comparable, so those surfaces can never have a value here —
+ * and a field that is permanently blank beside a populated state reads as
+ * broken rather than as inapplicable. An absent `agentType` is a legacy Claude
+ * surface (see `agentTypeOrDefault`), so it qualifies.
+ *
+ * Also null before the first observation lands and after a session's process
+ * exits: the status describes a live process, and the last value a dead one
+ * reported is not a fact about anything.
+ */
+export function ccStatusLabel(
+  agentType: AgentType | undefined,
+  ccStatus: CcSessionStatus | null | undefined,
+  ccWaitingFor: string | null | undefined
+): string | null {
+  if (agentType === 'cursor' || agentType === 'codex') return null
+  if (!ccStatus) return null
+  // `waitingFor` is free text from Claude Code (a dialog's own label, among
+  // other things), so it is unbounded input rendered into a single-line footer.
+  const reason = ccWaitingFor
+    ? ` (${ccWaitingFor.length > CC_WAITING_FOR_MAX ? ccWaitingFor.slice(0, CC_WAITING_FOR_MAX - 1) + '\u2026' : ccWaitingFor})`
+    : ''
+  return `cc: ${ccStatus}${reason}`
 }
 
 /**

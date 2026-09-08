@@ -8,6 +8,22 @@ import type { UndoEntry } from './undo-types'
 
 export type ClaudeState = 'stopped' | 'working' | 'working_background' | 'waiting_permission' | 'waiting_question' | 'waiting_plan' | 'potential_error'
 
+/**
+ * The statuses Claude Code publishes for itself in `~/.claude/sessions/<pid>.json`.
+ *
+ * Named here rather than in the server's `session-registry.ts` because the
+ * footer renders it: a second copy of the union in the renderer would drift the
+ * first time Claude Code adds a value. The list doubles as the parser's
+ * whitelist, so an unrecognised status reads as *no status* rather than as one
+ * whose meaning we would be guessing.
+ *
+ * This is Claude Code's own view, not ours — it is displayed beside
+ * `ClaudeState` precisely so the two can be compared at a glance, and nothing
+ * derives state from it. See `session-status-observer.ts`.
+ */
+export const CC_SESSION_STATUSES = ['busy', 'shell', 'idle', 'waiting'] as const
+export type CcSessionStatus = (typeof CC_SESSION_STATUSES)[number]
+
 // --- Terminal session tracking ---
 
 export interface TerminalSessionEntry {
@@ -81,6 +97,24 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeStatusUnread: boolean
   claudeStatusAsleep: boolean
   claudeModel?: string
+  /**
+   * Claude Code's own status for this surface, and the reason when it is
+   * `waiting`. Ephemeral and deliberately NOT persisted: it describes a live
+   * process, so a value restored from disk would be a claim about a session
+   * that no longer exists.
+   *
+   * `null`, not `undefined`, for "no status" — the same distinction `gitStatus`
+   * above draws, and for a harder reason: node patches cross the socket as
+   * JSON, and `JSON.stringify` DROPS undefined values, so a patch clearing this
+   * field would arrive as `{}` and leave the client showing a dead session's
+   * last status forever. undefined therefore only ever means "never observed";
+   * every clear is an explicit null.
+   *
+   * Always null on non-Claude surfaces (Codex and Cursor publish no equivalent)
+   * and on a Claude Code too old to write a registry.
+   */
+  ccStatus?: CcSessionStatus | null
+  ccWaitingFor?: string | null
   /** Last-known remaining context %, persisted so it survives a server restart. */
   claudeContextPercent?: number
   /** Last-known Claude session JSONL line count, persisted so it survives a server restart. */

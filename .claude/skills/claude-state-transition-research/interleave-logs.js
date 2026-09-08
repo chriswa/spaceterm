@@ -11,7 +11,7 @@ const { parseArgs } = require('util');
 const USAGE = `
 Usage: node interleave-logs.js <surfaceId> [options]
 
-Interleave decision log, hook log, Claude session transcript, and electron log
+Interleave decision log, hook log, session-status log, Claude session transcript, and electron log
 entries in chronological order for debugging state transition bugs.
 
 Options:
@@ -20,7 +20,8 @@ Options:
   --transcript <path>      Direct path to transcript JSONL (overrides --session/--cwd)
   --from <iso8601>         Only show entries at or after this timestamp
   --to <iso8601>           Only show entries at or before this timestamp
-  --sources <list>         Comma-separated sources (default: decision,hook,transcript)
+  --sources <list>         Comma-separated sources (default: decision,hook,ccstatus,transcript)
+                           ccstatus = Claude Code's own busy/waiting/idle vs ours
   --skip-status-lines      Hide status-line entries from hook log
   --help                   Print usage
 `.trim();
@@ -68,7 +69,7 @@ if (opts.to && Number.isNaN(toMs)) {
 }
 
 const enabledSources = new Set(
-  (opts.sources || 'decision,hook,transcript').split(',').map(s => s.trim()),
+  (opts.sources || 'decision,hook,ccstatus,transcript').split(',').map(s => s.trim()),
 );
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -79,7 +80,7 @@ function stripAnsi(s) {
 }
 
 /** Source priority for tie-breaking (lower = higher priority). */
-const SOURCE_PRIORITY = { hook: 0, decision: 1, transcript: 2, electron: 3 };
+const SOURCE_PRIORITY = { hook: 0, decision: 1, ccstatus: 2, transcript: 3, electron: 4 };
 
 function abbreviateUuid(uuid) {
   const stripped = uuid.replace(/-/g, '');
@@ -156,6 +157,31 @@ function parseDecisionEntries(filePath) {
     results.push({
       epochMs: ms,
       source: 'decision',
+      loc: `${abbreviateUuid(surfaceId)}:${lineNo}`,
+      summary: stripAnsi(summary),
+    });
+  }
+  return results;
+}
+
+// ── Session-status log (Claude Code's own busy/waiting/idle) ────────────────
+
+function parseSessionStatusEntries(filePath) {
+  const results = [];
+  for (const { obj, lineNo } of readJsonlFile(filePath)) {
+    const ms = parseTimestamp(obj.timestamp);
+    if (Number.isNaN(ms)) continue;
+    if (ms < fromMs || ms > toMs) continue;
+
+    const cc = obj.cc || {};
+    let summary = `cc=${cc.status || '?'}`;
+    if (cc.waitingFor) summary += `(${cc.waitingFor})`;
+    summary += ` ours=${obj.spaceterm?.state || '?'} ${obj.agreement || '?'}`;
+    if (obj.lagMs != null) summary += ` lag=${obj.lagMs}ms`;
+
+    results.push({
+      epochMs: ms,
+      source: 'ccstatus',
       loc: `${abbreviateUuid(surfaceId)}:${lineNo}`,
       summary: stripAnsi(summary),
     });
@@ -340,6 +366,7 @@ function main() {
   const decisionLogPath = path.join(spacetermDir, 'decision-logs', `${surfaceId}.jsonl`);
   const hookLogPath     = path.join(spacetermDir, 'hook-logs', `${surfaceId}.jsonl`);
   const electronLogPath = path.join(spacetermDir, 'electron.log');
+  const ccStatusLogPath = path.join(spacetermDir, 'session-status-logs', `${surfaceId}.jsonl`);
 
   // Auto-discover session info from hook log
   let sessionId = opts.session || null;
@@ -361,7 +388,7 @@ function main() {
 
   // Collect all entries
   let allEntries = [];
-  const counts = { decision: 0, hook: 0, transcript: 0, electron: 0 };
+  const counts = { decision: 0, hook: 0, ccstatus: 0, transcript: 0, electron: 0 };
 
   if (enabledSources.has('decision')) {
     if (fs.existsSync(decisionLogPath)) {
@@ -380,6 +407,16 @@ function main() {
       allEntries.push(...entries);
     } else {
       process.stderr.write(`warn: hook log not found: ${hookLogPath}\n`);
+    }
+  }
+
+  if (enabledSources.has('ccstatus')) {
+    if (fs.existsSync(ccStatusLogPath)) {
+      const entries = parseSessionStatusEntries(ccStatusLogPath);
+      counts.ccstatus = entries.length;
+      allEntries.push(...entries);
+    } else {
+      process.stderr.write(`warn: session-status log not found: ${ccStatusLogPath}\n`);
     }
   }
 

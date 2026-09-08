@@ -77,6 +77,13 @@ export const SCRIPTS_SOCKET_PATH = join(SOCKET_DIR, 'scripts.sock')
 export const DAEMON_SOCKET_PATH = join(SOCKET_DIR, 'pty-daemon.sock')
 export const HOOK_LOG_DIR = join(SOCKET_DIR, 'hook-logs')
 export const DECISION_LOG_DIR = join(SOCKET_DIR, 'decision-logs')
+/**
+ * Observation log for Claude Code's own `~/.claude/sessions/<pid>.json` status,
+ * paired with the state we decided at the same moment. Nothing reads it back —
+ * it exists to be analysed after days of real use, to see whether that status
+ * is a better or complementary signal to our hook/transcript inference.
+ */
+export const SESSION_STATUS_LOG_DIR = join(SOCKET_DIR, 'session-status-logs')
 
 export interface SessionInfo {
   sessionId: PtySessionId

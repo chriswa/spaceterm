@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveToolbarIndicator } from './crab-nav'
+import { deriveToolbarIndicator, ccStatusLabel } from './crab-nav'
 
 /**
  * deriveToolbarIndicator maps a surface's agent state onto the toolbar crab's
@@ -134,5 +134,42 @@ describe('deriveToolbarIndicator', () => {
     it('does not mark a read stopped surface without history as unviewed', () => {
       expect(derive('stopped', false, false, true).unviewed).toBe(false)
     })
+  })
+})
+
+describe('ccStatusLabel', () => {
+  it('renders Claude Code\'s own status for a claude surface', () => {
+    expect(ccStatusLabel('claude', 'idle', undefined)).toBe('cc: idle')
+    expect(ccStatusLabel('claude', 'busy', undefined)).toBe('cc: busy')
+  })
+
+  it('includes the reason a session is waiting', () => {
+    // waitingFor is the only part that says WHICH prompt is open, and it is the
+    // half our own waiting_* states cannot always distinguish.
+    expect(ccStatusLabel('claude', 'waiting', 'dialog open')).toBe('cc: waiting (dialog open)')
+  })
+
+  it('treats a legacy surface with no agentType as claude', () => {
+    expect(ccStatusLabel(undefined, 'idle', undefined)).toBe('cc: idle')
+  })
+
+  it('shows nothing for cursor or codex, which publish no equivalent', () => {
+    // Not even if a stale value somehow reached the node: a permanently blank
+    // field beside a populated state reads as broken rather than inapplicable.
+    expect(ccStatusLabel('cursor', 'idle', undefined)).toBeNull()
+    expect(ccStatusLabel('codex', 'busy', undefined)).toBeNull()
+  })
+
+  it('elides an over-long reason rather than stretching the footer', () => {
+    // waitingFor carries a dialog's own label, which we do not control.
+    const label = ccStatusLabel('claude', 'waiting', 'a'.repeat(80))
+    expect(label).toBe(`cc: waiting (${'a'.repeat(23)}\u2026)`)
+  })
+
+  it('shows nothing before the first observation or after the process exits', () => {
+    expect(ccStatusLabel('claude', undefined, undefined)).toBeNull()
+    expect(ccStatusLabel('claude', null, null)).toBeNull()
+    // A waitingFor with no status is not a status.
+    expect(ccStatusLabel('claude', undefined, 'dialog open')).toBeNull()
   })
 })
