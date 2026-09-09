@@ -753,53 +753,6 @@ html, body, #root {
   animation: selection-flash 1s ease-in-out forwards !important;
 }
 
-/* Speaking indicator: white rings that emanate outward from the card border and
-   fade — echoes the toolbar crab sonar. Rendered as a sibling of the card inside
-   .card-shell (NOT inside .terminal-card, whose content-visibility:auto paint
-   containment would clip the expanding rings). Sits behind the card so only the
-   portion outside the border shows; never touches the card's own border/box-shadow.
-   pointer-events:none keeps drag/click working. */
-.terminal-card__sonar {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Each ring grows by animating a negative `inset` rather than `transform: scale`
-   so it expands the SAME number of pixels on every side regardless of the card's
-   aspect ratio (scale would stretch proportionally). Thick + blurred so it reads
-   as a soft fuzzy halo that stands clear of the unread-message glow.
-
-   Zoom compensation: reach, border thickness, blur and corner radius are all
-   expressed in SCREEN pixels by dividing a base value by `--camera-zoom` (the
-   live canvas zoom, same var the borders/keycast use). Because the whole surface
-   is scaled by the camera transform, dividing here cancels that scale so the halo
-   looks the SAME on screen at every zoom level — it reaches much farther across
-   the canvas when zoomed out (where a card is tiny and needs a big halo to be
-   seen) yet stays a tight, non-distracting ring when zoomed in. clamp() caps the
-   canvas-space extremes so it never vanishes when fully zoomed in nor paints an
-   absurd area when fully zoomed out. */
-.terminal-card__sonar-ring {
-  --sonar-reach: clamp(8px, calc(22px / var(--camera-zoom, 1)), 600px);
-  position: absolute;
-  inset: 0;
-  border-radius: clamp(0.8px, calc(2px / var(--camera-zoom, 1)), 40px);
-  border: clamp(0.6px, calc(1.8px / var(--camera-zoom, 1)), 96px) solid rgba(255, 255, 255, 1);
-  filter: blur(clamp(0.3px, calc(0.8px / var(--camera-zoom, 1)), 32px));
-  animation: surface-sonar 2s ease-out infinite;
-}
-
-.terminal-card__sonar-ring--2 {
-  animation-delay: 1s;
-}
-
-@keyframes surface-sonar {
-  0%   { inset: 0;                          opacity: 0; }
-  12%  { opacity: 1; }
-  100% { inset: calc(-1 * var(--sonar-reach)); opacity: 0; }
-}
-
 @keyframes selection-flash {
   0% { box-shadow: 0 0 0 0px rgba(166, 108, 255, 0); }
   50% { box-shadow: 0 0 0 30px rgba(166, 108, 255, 0.7); }
@@ -2488,6 +2441,40 @@ html, body, #root {
 
 .terminal-card__crab-behind--codex {
   height: calc(68px * var(--label-node-scale));
+}
+
+/* Speaking mark: a plain white megaphone shown while Voice Operator is reading
+   this surface aloud, and gone the moment it stops. Static on purpose — the
+   toolbar bubble already carries the "talking" motion, and a second animated
+   cue out on the canvas was the distracting part.
+
+   Placed in the band between the card's top edge and its node label, up and to
+   the right of the agent mark's centre. Sizes and offsets are in label-scale
+   units like the mark itself, so the two stay in proportion at every zoom.
+   Anchored to the card rather than to the mark because the three marks differ
+   in height and squareness, and a fixed anchor keeps the megaphone in the same
+   spot across all of them (and on a surface with no mark at all). */
+.terminal-card__speaking-mark {
+  position: absolute;
+  /* `top`/`left` place the element's CENTRE, since the transform below pulls it
+     back by half its own size. The centre is offset upward by half the ROTATED
+     footprint (~0.56 x the height at 20 deg), which is what parks the horn's
+     lower edge just past the card's top border. */
+  top: calc(-20.2px * var(--label-node-scale));
+  left: calc(50% + 55px * var(--label-node-scale));
+  height: calc(36px * var(--label-node-scale));
+  aspect-ratio: 256 / 242;
+  /* Counter-clockwise so the horn points up and away from the card. */
+  transform: translate(-50%, -50%) rotate(-20deg);
+  background-color: #ffffff;
+  z-index: -1;
+  pointer-events: none;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
 }
 
 /* Terminal Search Bar */

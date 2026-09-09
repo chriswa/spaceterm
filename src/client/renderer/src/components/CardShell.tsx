@@ -58,8 +58,6 @@ interface CardShellProps {
   onMouseEnter?: (e: React.MouseEvent) => void
   onMouseLeave?: (e: React.MouseEvent) => void
   behindContent?: ReactNode
-  /** Non-interactive layer rendered on top of the card, e.g. the speaking sonar. */
-  overlay?: ReactNode
   children: ReactNode
 }
 
@@ -71,7 +69,7 @@ export function CardShell({
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
   onAddNode, onExtraCliArgs, extraCliArgs,
-  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, overlay, children
+  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
 
   // Chrome that must stay legible at the card type's focus zoom. Published as a
@@ -211,7 +209,6 @@ export function CardShell({
       onMouseLeave={onMouseLeave}
     >
       {behindContent}
-      {overlay}
       {hasAlerts && !focused && (
         <div className={`card-shell__alert-badge${hasUnread ? ' card-shell__alert-badge--unread' : ''}`}>
           <svg width="60" height="60" viewBox="0 0 16 16" fill="none" strokeLinecap="round" strokeLinejoin="round">

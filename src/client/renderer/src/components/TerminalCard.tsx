@@ -27,6 +27,7 @@ import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScr
 import crabIcon from '../assets/crab.png'
 import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
+import megaphoneIcon from '../assets/megaphone.png'
 import { deriveToolbarIndicator, unreadIsLegible, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
@@ -1192,12 +1193,6 @@ export function TerminalCard({
           canStartEdit={() => !dragOccurredRef.current}
         />
       }
-      overlay={isSpeaking ? (
-        <div className="terminal-card__sonar" aria-hidden="true">
-          <div className="terminal-card__sonar-ring" />
-          <div className="terminal-card__sonar-ring terminal-card__sonar-ring--2" />
-        </div>
-      ) : undefined}
       headStyle={preset ? {
         backgroundColor: preset.titleBarBg,
         color: preset.titleBarFg,
@@ -1247,21 +1242,30 @@ export function TerminalCard({
         onHoverUnfocus?.()
       }}
       behindContent={
-        crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex' ? (
-          <div
-            ref={behindCrabRef}
-            className={`terminal-card__crab-behind${agentBehindClass}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}`}
-            title={unreadToggleable ? (claudeStatusUnread ? 'Mark read' : 'Mark unread') : undefined}
-            onMouseDown={swallowCrabMouseDown}
-            onClick={handleCrabBehindClick}
-            style={{
-              maskImage: `url(${agentIconUrl})`,
-              WebkitMaskImage: `url(${agentIconUrl})`,
-              backgroundColor: CRAB_COLORS[crabAppearance.color],
-              ...(crabAppearance.asleep ? { transform: 'rotate(180deg)' } : {}),
-            }}
-          />
-        ) : undefined
+        <>
+          {(crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex') && (
+            <div
+              ref={behindCrabRef}
+              className={`terminal-card__crab-behind${agentBehindClass}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}`}
+              title={unreadToggleable ? (claudeStatusUnread ? 'Mark read' : 'Mark unread') : undefined}
+              onMouseDown={swallowCrabMouseDown}
+              onClick={handleCrabBehindClick}
+              style={{
+                maskImage: `url(${agentIconUrl})`,
+                WebkitMaskImage: `url(${agentIconUrl})`,
+                backgroundColor: CRAB_COLORS[crabAppearance.color],
+                ...(crabAppearance.asleep ? { transform: 'rotate(180deg)' } : {}),
+              }}
+            />
+          )}
+          {isSpeaking && (
+            <div
+              className="terminal-card__speaking-mark"
+              aria-hidden="true"
+              style={{ maskImage: `url(${megaphoneIcon})`, WebkitMaskImage: `url(${megaphoneIcon})` }}
+            />
+          )}
+        </>
       }
     >
       {searchOpen && searchAddonRef.current && (
