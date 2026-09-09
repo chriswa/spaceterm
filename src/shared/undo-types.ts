@@ -17,7 +17,14 @@ export interface UndoArchiveEntry {
   description: string
   nodeId: NodeId
   parentId: NodeId
-  reparentedChildIds: NodeId[]
+  /**
+   * Children that were lifted to the archived node's parent, to be put back on
+   * undo. Only single-node archives reparent, so this is absent whenever a
+   * subtree was archived as a group — restoring the group brings its children
+   * back on its own. The undo buffer is persisted, so entries recorded before
+   * subtree archiving existed still carry it.
+   */
+  reparentedChildIds?: NodeId[]
 }
 
 export interface UndoUnarchiveEntry {

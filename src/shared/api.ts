@@ -66,9 +66,15 @@ export interface NodeApi {
   batchMove(moves: Array<{ nodeId: NodeId; x: number; y: number }>): Promise<void>
   rename(nodeId: NodeId, name: string): Promise<void>
   setColor(nodeId: NodeId, colorPresetId: string): Promise<void>
+  /** Archive a node and everything beneath it, as one restorable entry. */
   archive(nodeId: NodeId): Promise<void>
-  unarchive(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void>
-  archiveDelete(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void>
+  /**
+   * Restore an archive entry, and the subtree archived with it, under
+   * `parentNodeId`. `path` names the entry from that node's archive down — see
+   * `NodeUnarchiveMessage`.
+   */
+  unarchive(parentNodeId: NodeId, path: NodeId[]): Promise<void>
+  archiveDelete(parentNodeId: NodeId, path: NodeId[]): Promise<void>
   undoPush(entry: UndoEntry): Promise<void>
   undoSetCursor(cursor: number): Promise<void>
   bringToFront(nodeId: NodeId): Promise<void>

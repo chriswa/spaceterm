@@ -22,8 +22,6 @@ function renderRoot(focused: boolean) {
       selected={false}
       onClick={vi.fn()}
       archivedChildren={[]}
-      onUnarchive={vi.fn()}
-      onArchiveDelete={vi.fn()}
       onOpenArchiveSearch={vi.fn()}
       onAddNode={vi.fn()}
     />

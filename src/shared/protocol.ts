@@ -39,10 +39,16 @@ export const MIN_SCRIPT_PROTOCOL_VERSION = 1
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 1
+export const CLIENT_PROTOCOL_VERSION = 2
 
-/** Oldest client protocol this build still serves. */
-export const MIN_CLIENT_PROTOCOL_VERSION = 1
+/**
+ * Oldest client protocol this build still serves.
+ *
+ * v1 addressed an unarchive by a single entry id, which cannot name an entry
+ * nested inside an archived subtree. `node-unarchive` carries a path instead,
+ * so a v1 peer's request is not something this build can honour.
+ */
+export const MIN_CLIENT_PROTOCOL_VERSION = 2
 
 /**
  * The events a script may subscribe to.
@@ -260,15 +266,26 @@ export interface NodeArchiveMessage {
 export interface NodeUnarchiveMessage {
   type: 'node-unarchive'
   seq: number
+  /** The live node (or `ROOT_NODE_ID`) whose archive holds the top of the path. */
   parentNodeId: NodeId
-  archivedNodeId: NodeId
+  /**
+   * Archive entry ids from the host's own entry down to the one to restore,
+   * outermost first — `[id]` for an entry sitting directly in the host's
+   * archive.
+   *
+   * A path rather than a single id because archives nest: an entry can sit
+   * inside an archived subtree, and naming only the leaf left the server unable
+   * to find it. Restoring brings back the named entry and its whole group.
+   */
+  path: NodeId[]
 }
 
 export interface NodeArchiveDeleteMessage {
   type: 'node-archive-delete'
   seq: number
   parentNodeId: NodeId
-  archivedNodeId: NodeId
+  /** Same addressing as {@link NodeUnarchiveMessage.path}. Deletes the entry and its whole group. */
+  path: NodeId[]
 }
 
 export interface UndoBufferPushMessage {

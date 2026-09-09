@@ -10,7 +10,7 @@ import type { ServerState, TerminalNodeData } from '../shared/state'
  * 1 → 2 therefore normalises defensively instead of assuming a known shape. From
  * version 2 on, the number means what it says.
  */
-export const CURRENT_STATE_VERSION = 2
+export const CURRENT_STATE_VERSION = 3
 
 /** A persisted document as it comes off disk: shape unknown until migrated. */
 export type PersistedDoc = Record<string, unknown>
@@ -105,6 +105,17 @@ export const MIGRATIONS: Migration[] = [
         delete node.alerts
         delete node.alertsReadTimestamp
       }
+    }
+  },
+  {
+    to: 3,
+    description: 'archive entries may carry a live subtree that is restored with them',
+    migrate() {
+      // Nothing to rewrite. Entries written from here on can hold `descendants`
+      // — the cards that were live under them when they were archived — and a
+      // build that predates the field would restore only the entry root and
+      // drop the rest on its next save. The version is bumped so such a build
+      // refuses the file outright instead of quietly losing those cards.
     }
   }
 ]

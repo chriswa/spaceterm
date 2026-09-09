@@ -151,8 +151,6 @@ interface TerminalCardProps {
   onRename: (id: NodeId, name: string) => void
   archivedChildren: ArchivedNode[]
   onColorChange: (id: NodeId, color: string) => void
-  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
   agentType?: AgentType
@@ -182,7 +180,7 @@ interface TerminalCardProps {
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
-  onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
+  onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onOpenArchiveSearch,
   claudeSessionHistory, agentType, claudeState, claudeModel, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
@@ -1205,8 +1203,6 @@ export function TerminalCard({
       onSessionRevive={onSessionRevive}
       onClose={onClose}
       onColorChange={onColorChange}
-      onUnarchive={onUnarchive}
-      onArchiveDelete={onArchiveDelete}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}

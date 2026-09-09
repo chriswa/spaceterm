@@ -4,9 +4,10 @@ import { asNodeId } from '../../../../shared/ids'
 import { hasLiveChildren, getDescendantIds } from './tree-utils'
 
 /**
- * `hasLiveChildren` guards a destructive action: archiving is refused (and the X
- * button greys out) for any node that still has live children, so both answers
- * matter. It reads only `parentId`, so the fixtures carry nothing else.
+ * `hasLiveChildren` decides whether archiving asks first: a node with live
+ * children takes its whole subtree, so the gesture opens a confirmation instead
+ * of archiving outright. Both answers matter. It reads only `parentId`, so the
+ * fixtures carry nothing else.
  */
 const nodes = (...edges: [id: string, parentId: string][]): Record<string, NodeData> =>
   Object.fromEntries(

@@ -34,8 +34,6 @@ interface CardShellProps {
   archivedChildren: ArchivedNode[]
   onClose: (id: NodeId) => void
   onColorChange: (id: NodeId, color: string) => void
-  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onOpenArchiveSearch?: (nodeId: NodeId) => void
   pastSessions?: TerminalSessionEntry[]
   currentSessionIndex?: number
@@ -65,7 +63,7 @@ export function CardShell({
   nodeId, x, y, width, height, zIndex, focused,
   headVariant, titleContent, headStyle, preset,
   showClose = true, showColorPicker = true,
-  archivedChildren, onClose, onColorChange, onUnarchive, onArchiveDelete, onOpenArchiveSearch,
+  archivedChildren, onClose, onColorChange, onOpenArchiveSearch,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
   onAddNode, onExtraCliArgs, extraCliArgs,
@@ -86,10 +84,11 @@ export function CardShell({
   const hasAlerts = alerts.length > 0
   const hasUnread = hasAlerts && alerts.some(a => a.timestamp > (alertsReadTimestamp ?? 0))
 
-  // Archiving is only allowed from leaf nodes — a node with live children greys
-  // out its X button. Subscribing to a boolean means we only re-render when
-  // leaf-ness actually flips, not on every unrelated store change.
-  const canClose = useNodeStore(s => !hasLiveChildren(s.nodes, nodeId))
+  // Whether the X button archives a whole branch rather than just this card,
+  // which decides whether it asks first. A boolean, and a scan that stops at
+  // the first child: this runs for every card on every store change, and the
+  // exact count is only needed once, in the dialog itself.
+  const hasChildren = useNodeStore(s => hasLiveChildren(s.nodes, nodeId))
 
   // "Dim stale nodes" view: age-band freshness for a node's whole subtree.
   // The focused node is exempt so you can look at something old without it
@@ -104,10 +103,10 @@ export function CardShell({
     onShipIt, onFork, onExtraCliArgs, extraCliArgs,
     onDiffPlans, showColorPicker, onColorChange,
     pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
-    archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
+    archivedChildren, onOpenArchiveSearch,
     onStartReparent, isReparenting,
     onStartResize, isResizing,
-    onAddNode, showClose, canClose, onClose,
+    onAddNode, showClose, hasChildren, onClose,
   }
 
   // Register action props so FloatingToolbar can read them

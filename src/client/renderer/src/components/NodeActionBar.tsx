@@ -32,8 +32,6 @@ export interface NodeActionBarProps {
   onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
   archivedChildren: ArchivedNode[]
   onOpenArchiveSearch?: (nodeId: NodeId) => void
-  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onStartReparent?: (id: NodeId) => void
   isReparenting?: boolean
   /** Terminals only — the other node types have no grid to resize. */
@@ -42,11 +40,13 @@ export interface NodeActionBarProps {
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   showClose?: boolean
   /**
-   * False when the node has live children — archiving is only allowed from
-   * leaf nodes. The X button greys out; clicking it (or Cmd+W) still routes
-   * through `onClose`, which shakes instead of archiving.
+   * True when archiving this node takes a whole branch with it, so the click
+   * opens a confirmation naming the card count rather than archiving outright
+   * — see `handleRemoveNode`. The count itself is left to the dialog: working
+   * it out here would mean walking the graph for every card on every store
+   * change, to say something the user only needs once they have clicked.
    */
-  canClose?: boolean
+  hasChildren?: boolean
   onClose: (id: NodeId) => void
 }
 
@@ -63,10 +63,10 @@ export function NodeActionBar({
   onShipIt, onFork, onExtraCliArgs, extraCliArgs,
   onDiffPlans, showColorPicker, onColorChange,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
-  archivedChildren, onOpenArchiveSearch, onUnarchive, onArchiveDelete,
+  archivedChildren, onOpenArchiveSearch,
   onStartReparent, isReparenting,
   onStartResize, isResizing,
-  onAddNode, showClose, canClose = true, onClose,
+  onAddNode, showClose, hasChildren = false, onClose,
   variant = 'card',
   onActionInvoked,
 }: NodeActionBarProps & {
@@ -427,8 +427,8 @@ export function NodeActionBar({
       )}
       {showClose && (
         <button
-          className={`node-titlebar__close${canClose ? '' : ' node-titlebar__close--disabled'}`}
-          data-tooltip={canClose ? 'Archive' : "Can't archive — has child nodes"}
+          className="node-titlebar__close"
+          data-tooltip={hasChildren ? 'Archive subtree…' : 'Archive'}
           style={preset ? { color: preset.titleBarFg } : undefined}
           onClick={(e) => { e.stopPropagation(); onClose(nodeId); onActionInvoked?.() }}
           onMouseDown={(e) => e.stopPropagation()}

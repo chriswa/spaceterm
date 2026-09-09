@@ -82,8 +82,6 @@ interface DirectoryCardProps {
   onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onCwdChange: (id: NodeId, cwd: string) => void
   onColorChange: (id: NodeId, color: string) => void
-  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
@@ -97,7 +95,7 @@ interface DirectoryCardProps {
 export function DirectoryCard({
   id, x, y, zIndex, zoom, cwd, gitStatus, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
-  onUnarchive, onArchiveDelete, onOpenArchiveSearch, onNodeReady,
+  onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: DirectoryCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
@@ -305,8 +303,6 @@ export function DirectoryCard({
       archivedChildren={archivedChildren}
       onClose={onClose}
       onColorChange={onColorChange}
-      onUnarchive={onUnarchive}
-      onArchiveDelete={onArchiveDelete}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}

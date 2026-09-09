@@ -211,12 +211,12 @@ export async function sendArchive(nodeId: NodeId): Promise<void> {
   await window.api.node.archive(nodeId)
 }
 
-export async function sendUnarchive(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void> {
-  await window.api.node.unarchive(parentNodeId, archivedNodeId)
+export async function sendUnarchive(parentNodeId: NodeId, path: NodeId[]): Promise<void> {
+  await window.api.node.unarchive(parentNodeId, path)
 }
 
-export async function sendArchiveDelete(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<void> {
-  await window.api.node.archiveDelete(parentNodeId, archivedNodeId)
+export async function sendArchiveDelete(parentNodeId: NodeId, path: NodeId[]): Promise<void> {
+  await window.api.node.archiveDelete(parentNodeId, path)
 }
 
 export async function sendTerminalCreate(

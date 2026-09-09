@@ -74,7 +74,7 @@ Three extension surfaces, none of them called that:
 There are **nine tools written against it**, in
 `src/claude-code-plugin/mcp-server/`: spawn a surface, fork a surface, emit a
 markdown card, emit one onto the parent, resolve handoff context, broadcast,
-play a sound, speak, read surface env.
+play a sound, speak text (TTS), read surface env.
 
 That is a mod. It runs out-of-process, loads no code into spaceterm, and does real
 work. The MCP server is spaceterm's first mod and nobody called it one.

@@ -10,9 +10,11 @@ import type {
   TitleNodeData,
   TerminalSessionEntry,
   ArchivedNode,
+  ArchivedDescendant,
   GitStatus,
   AlertType
 } from '../shared/state'
+import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import { StatePersister } from './persistence'
 import { serverLog } from './server-log'
@@ -109,11 +111,25 @@ function hostsAgentSession(node: NodeData, id: string): node is TerminalNodeData
   )
 }
 
-/** One archive entry plus the route back to it. Internal: callers get {@link ArchivedFocusMatch}. */
+/** A detached copy, so a snapshot cannot alias the live node it was taken from. */
+function deepCopy<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+/**
+ * One archived node plus the route back to it. Internal: callers get
+ * {@link ArchivedFocusMatch}.
+ *
+ * `node` and `entry.data` differ when the match is a member of an archived
+ * subtree rather than the entry's own root. Restoring is always addressed at
+ * the entry — a group comes back whole — so `path` names the entry, never the
+ * member.
+ */
 interface LocatedArchive {
   hostNodeId: NodeId
   path: NodeId[]
   entry: ArchivedNode
+  node: NodeData
 }
 
 /**
@@ -126,11 +142,15 @@ interface LocatedArchive {
  * — the live node (or the root) whose `archivedChildren` holds the top of that
  * chain — and is where a restore puts the node, since its recorded parent may
  * no longer exist on the canvas.
+ *
+ * A match can also be a member of an archived subtree rather than an entry in
+ * its own right. Those are restored by restoring the group that holds them, so
+ * `path` names that group's entry while `data` is the surface that matched.
  */
 export interface ArchivedFocusMatch {
   /** Live node (or `ROOT_NODE_ID`) owning the top-level archive entry. */
   hostNodeId: NodeId
-  /** Archived node ids from the host's own entry down to the match; length 1 when it sits directly under the host. */
+  /** Archive entry ids from the host's own entry down to the entry to restore; length 1 when it sits directly under the host. */
   path: NodeId[]
   /** The matched snapshot, for reading only — restoring goes through {@link StateManager.unarchiveNodeAtPath}. */
   data: NodeData
@@ -143,7 +163,7 @@ function toFocusMatch(located: LocatedArchive, matchedAs: FocusIdKind): Archived
   return {
     hostNodeId: located.hostNodeId,
     path: located.path,
-    data: located.entry.data,
+    data: located.node,
     archivedAt: located.entry.archivedAt,
     matchedAs
   }
@@ -536,23 +556,27 @@ export class StateManager {
   /**
    * Every archived node in the forest, paired with where it sits.
    *
-   * Two things make this a forest rather than a list. Archives hang off each
-   * live node (plus the root), and an archived node keeps its own
+   * Three things make this a forest rather than a list. Archives hang off each
+   * live node (plus the root); an archived node keeps its own
    * `archivedChildren`, so archiving a parent buries whatever was already
-   * archived beneath it. Both directions are walked, depth-first, and every
-   * entry reports the same `hostNodeId`: nesting does not change which live
-   * node ultimately holds the chain.
+   * archived beneath it; and an entry can carry a whole archived subtree, whose
+   * members may in turn hold archives of their own. All of it is walked,
+   * depth-first, and every record reports the same `hostNodeId`: nesting does
+   * not change which live node ultimately holds the chain.
    *
-   * `archivedChildren` is defaulted because snapshots deep-copied under older
-   * state versions can predate the field.
+   * Group members are reported as nodes in their own right — a deep link to a
+   * surface buried in an archived subtree still has to find it — but under the
+   * path of the entry that would restore them.
    */
   private archivedNodesWithLocation(): LocatedArchive[] {
     const found: LocatedArchive[] = []
     const walk = (hostNodeId: NodeId, entries: ArchivedNode[], prefix: NodeId[]): void => {
       for (const entry of entries) {
         const path = [...prefix, entry.data.id]
-        found.push({ hostNodeId, path, entry })
-        walk(hostNodeId, entry.data.archivedChildren ?? [], path)
+        for (const node of groupNodes(entry)) {
+          found.push({ hostNodeId, path, entry, node })
+        }
+        walk(hostNodeId, archivesOwnedBy(entry), path)
       }
     }
     walk(ROOT_NODE_ID, this.state.rootArchivedChildren, [])
@@ -578,7 +602,7 @@ export class StateManager {
     const all = this.archivedNodesWithLocation()
     const newest = (reading: (node: NodeData, id: string) => boolean): LocatedArchive | undefined =>
       all
-        .filter((m) => reading(m.entry.data, id))
+        .filter((m) => reading(m.node, id))
         .reduce<LocatedArchive | undefined>(
           (best, m) => (!best || m.entry.archivedAt > best.entry.archivedAt ? m : best),
           undefined
@@ -793,7 +817,17 @@ export class StateManager {
   }
 
   /**
-   * Archive a node: snapshot into parent's archivedChildren, reparent children, remove node.
+   * Archive one node, lifting its children to take its place: snapshot into the
+   * parent's `archivedChildren`, reparent the children, remove the node.
+   *
+   * This is the *automatic* archival path — a pty exiting, a session that could
+   * not be recovered at startup, a revival whose agent never came back. None of
+   * those can ask the user anything, and an agent finishing must not take the
+   * notes and files hanging off its surface with it, so the children stay on
+   * the canvas under the grandparent.
+   *
+   * The archive gesture a user performs goes through {@link archiveSubtree}
+   * instead, which keeps the subtree together.
    *
    * `now` stamps the snapshot. Defaulted rather than read inside so a test can
    * archive two nodes at known, distinct times — which reading of the wall clock
@@ -815,20 +849,11 @@ export class StateManager {
 
     // Only snapshot into archive if the node has meaningful content
     if (!isDisposable(node)) {
-      const snapshot = {
+      this.pushArchiveEntry(parentId, {
         archivedAt: new Date(now).toISOString(),
-        data: JSON.parse(JSON.stringify(node)) // deep copy
-      }
-      if (parentId === ROOT_NODE_ID) {
-        this.state.rootArchivedChildren.push(snapshot)
-        this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren })
-      } else {
-        const parent = this.state.nodes[parentId]
-        if (parent) {
-          parent.archivedChildren.push(snapshot)
-          this.onNodeUpdate(parentId, { archivedChildren: parent.archivedChildren })
-        }
-      }
+        data: deepCopy(node),
+        parentOffset: this.offsetFromParent(node, parentId)
+      })
     }
 
     // Reparent children to the archived node's parent
@@ -848,6 +873,111 @@ export class StateManager {
   }
 
   /**
+   * Archive a node together with everything hanging off it, as one entry that
+   * restores as one arrangement.
+   *
+   * This is what the user's archive gesture does, and it is deliberately not
+   * what {@link archiveNode} does — see there for why an automatic archival
+   * must leave the children behind instead.
+   *
+   * The snapshot keeps the two kinds of nesting apart. A member's own
+   * `archivedChildren` are things that were *already* archived under it and
+   * stay archived; the live subtree goes in `descendants` and comes back. So a
+   * subtree containing archived subtrees, archived and then restored, shows
+   * exactly the cards it showed before.
+   *
+   * Nothing in the group is dropped as disposable. An empty note in the middle
+   * of an arrangement is still part of that arrangement, and dropping one would
+   * strand whatever hung beneath it.
+   *
+   * Returns the ids removed from the canvas, leaf-first.
+   */
+  archiveSubtree(rootId: NodeId, now: number = Date.now()): NodeId[] {
+    const root = this.state.nodes[rootId]
+    if (!root) return []
+
+    const removed = this.subtreeNodes(rootId)
+    serverLog(`[archive] Archiving subtree ${rootId.slice(0, 8)} (${removed.length} node${removed.length === 1 ? '' : 's'})`)
+
+    const parentId = root.parentId
+    this.pushArchiveEntry(parentId, {
+      archivedAt: new Date(now).toISOString(),
+      data: deepCopy(root),
+      descendants: this.snapshotChildrenOf(rootId),
+      parentOffset: this.offsetFromParent(root, parentId)
+    })
+
+    for (const node of removed) {
+      if (node.type === 'terminal') this.sessionToNodeId.delete(node.sessionId)
+      delete this.state.nodes[node.id]
+      this.onNodeRemove(node.id)
+    }
+
+    this.schedulePersist()
+    return removed.map((node) => node.id)
+  }
+
+  /** A node's live children, in id order so a snapshot is reproducible. */
+  private childrenOf(nodeId: NodeId): NodeData[] {
+    return Object.values(this.state.nodes)
+      .filter((node) => node.parentId === nodeId)
+      .sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  /**
+   * A node and everything beneath it, leaf-first — the order a caller wants for
+   * tearing surfaces down, since a child is released before its parent.
+   *
+   * `seen` guards against a `parentId` cycle for the same reason the ancestor
+   * walk in `node-ancestry.ts` does: parent links come from client messages and
+   * from a state file that survives crashes, and a descent with no guard does
+   * not corrupt anything — it hangs the server.
+   */
+  subtreeNodes(rootId: NodeId, seen: Set<NodeId> = new Set()): NodeData[] {
+    const root = this.state.nodes[rootId]
+    if (!root || seen.has(rootId)) return []
+    seen.add(rootId)
+    const below = this.childrenOf(rootId).flatMap((child) => this.subtreeNodes(child.id, seen))
+    return [...below, root]
+  }
+
+  /** The live subtree under `nodeId`, snapshotted as group members. */
+  private snapshotChildrenOf(nodeId: NodeId, seen: Set<NodeId> = new Set([nodeId])): ArchivedDescendant[] {
+    const members: ArchivedDescendant[] = []
+    for (const child of this.childrenOf(nodeId)) {
+      if (seen.has(child.id)) continue
+      seen.add(child.id)
+      members.push({ data: deepCopy(child), descendants: this.snapshotChildrenOf(child.id, seen) })
+    }
+    return members
+  }
+
+  /** Where a parent sits, so a restore can put a node back beside it. The root is the origin. */
+  private anchorOf(parentId: NodeId): { x: number; y: number } {
+    if (parentId === ROOT_NODE_ID) return { x: 0, y: 0 }
+    const parent = this.state.nodes[parentId]
+    return parent ? { x: parent.x, y: parent.y } : { x: 0, y: 0 }
+  }
+
+  private offsetFromParent(node: NodeData, parentId: NodeId): { dx: number; dy: number } {
+    const anchor = this.anchorOf(parentId)
+    return { dx: node.x - anchor.x, dy: node.y - anchor.y }
+  }
+
+  /** Add an entry to a parent's archive — or the root's — and broadcast the change. */
+  private pushArchiveEntry(parentId: NodeId, entry: ArchivedNode): void {
+    if (parentId === ROOT_NODE_ID) {
+      this.state.rootArchivedChildren.push(entry)
+      this.onNodeUpdate(ROOT_NODE_ID, { archivedChildren: this.state.rootArchivedChildren })
+      return
+    }
+    const parent = this.state.nodes[parentId]
+    if (!parent) return
+    parent.archivedChildren.push(entry)
+    this.onNodeUpdate(parentId, { archivedChildren: parent.archivedChildren })
+  }
+
+  /**
    * The `archivedChildren` array a host node owns directly — the root's, or a
    * live node's. Undefined when the node is gone.
    */
@@ -857,9 +987,15 @@ export class StateManager {
   }
 
   /**
-   * Follow `path` — archived node ids, outermost first — down `hostNodeId`'s
+   * Follow `path` — archive entry ids, outermost first — down `hostNodeId`'s
    * archive tree to the entry it names, reporting the array that holds it so a
    * caller can splice it out. Undefined if any hop is missing.
+   *
+   * Each hop searches every archive the previous entry *owns*, which is more
+   * than its own `archivedChildren`: a member of an archived subtree can hold
+   * archives too, and an entry buried there has to be nameable. Searching only
+   * the entry's own list is what used to make a restore from deep in the
+   * archive silently do nothing.
    */
   private archiveEntryAt(
     hostNodeId: NodeId,
@@ -867,88 +1003,111 @@ export class StateManager {
   ): { list: ArchivedNode[]; index: number; entry: ArchivedNode } | undefined {
     const hostArchive = this.archiveArrayOf(hostNodeId)
     if (!hostArchive || path.length === 0) return undefined
-    let list: ArchivedNode[] = hostArchive
+    let lists: ArchivedNode[][] = [hostArchive]
     for (let depth = 0; ; depth++) {
-      const index = list.findIndex((e) => e.data.id === path[depth])
-      if (index === -1) return undefined
-      const entry = list[index]
-      if (depth === path.length - 1) return { list, index, entry }
-      list = entry.data.archivedChildren ?? []
+      let found: { list: ArchivedNode[]; index: number; entry: ArchivedNode } | undefined
+      for (const list of lists) {
+        const index = list.findIndex((e) => e.data.id === path[depth])
+        if (index !== -1) {
+          found = { list, index, entry: list[index] }
+          break
+        }
+      }
+      if (!found) return undefined
+      if (depth === path.length - 1) return found
+      lists = ownedArchiveLists(found.entry)
     }
   }
 
-  /**
-   * Read archived node data without modifying state.
-   */
-  peekArchivedNode(parentNodeId: NodeId, archivedNodeId: NodeId): NodeData | undefined {
-    return this.archiveEntryAt(parentNodeId, [archivedNodeId])?.entry.data
+  /** Read an archive entry without changing anything. */
+  peekArchiveEntry(hostNodeId: NodeId, path: NodeId[]): ArchivedNode | undefined {
+    return this.archiveEntryAt(hostNodeId, path)?.entry
   }
 
   /**
-   * Unarchive a node: restore from parent's archivedChildren back into the node tree.
-   */
-  unarchiveNode(parentNodeId: NodeId, archivedNodeId: NodeId, positionOverride?: { x: number; y: number }): void {
-    this.unarchiveNodeAtPath(parentNodeId, [archivedNodeId], positionOverride)
-  }
-
-  /**
-   * Restore an archived node from anywhere in `hostNodeId`'s archive tree, as a
-   * direct child of that host.
+   * Restore an archive entry from anywhere in `hostNodeId`'s archive tree, as a
+   * direct child of that host, together with every card that was swept in with
+   * it.
    *
-   * Depth is the whole point. An entry nested inside archived ancestors has a
+   * Depth is half the point. An entry nested inside archived ancestors has a
    * `parentId` pointing at a node that is no longer on the canvas, so restoring
    * it in place would attach it to nothing; it is reparented to the host, which
-   * is by construction the nearest node that is not itself archived. Its own
-   * `archivedChildren` ride along in the snapshot, so unarchiving a parent does
-   * not strand what was archived beneath it.
+   * is by construction the nearest node that is not itself archived.
    *
-   * Returns the restored node, or undefined if `path` names nothing.
+   * The group is the other half. Members come back under each other, not under
+   * the host, so the arrangement is the one that was archived — and each keeps
+   * its offset from the entry root, while the root itself lands back at its
+   * recorded offset from its parent. Nothing is auto-placed: a restore puts
+   * cards where they were, overlaps and all. Whatever the group had *already*
+   * archived stays archived.
+   *
+   * Returns the restored nodes, root first, or an empty array if `path` names
+   * nothing.
    */
-  unarchiveNodeAtPath(
-    hostNodeId: NodeId,
-    path: NodeId[],
-    positionOverride?: { x: number; y: number }
-  ): NodeData | undefined {
+  unarchiveNodeAtPath(hostNodeId: NodeId, path: NodeId[]): NodeData[] {
     const found = this.archiveEntryAt(hostNodeId, path)
-    if (!found) return undefined
+    if (!found) return []
     found.list.splice(found.index, 1)
 
-    // Restore node data
-    const restoredNode = JSON.parse(JSON.stringify(found.entry.data)) as NodeData
-    restoredNode.zIndex = this.state.nextZIndex++
-    restoredNode.parentId = hostNodeId
+    const entry = found.entry
+    const anchor = this.anchorOf(hostNodeId)
+    const target = entry.parentOffset
+      ? { x: anchor.x + entry.parentOffset.dx, y: anchor.y + entry.parentOffset.dy }
+      : { x: entry.data.x, y: entry.data.y }
+    // One delta for the whole group, so members keep their layout relative to
+    // the root wherever the root ends up.
+    const dx = target.x - entry.data.x
+    const dy = target.y - entry.data.y
 
-    if (positionOverride) {
-      restoredNode.x = positionOverride.x
-      restoredNode.y = positionOverride.y
+    // Re-stack in the order the group was stacked in, so a card that was on top
+    // of its neighbour still is.
+    const members = [...groupNodesWithParent(entry)]
+      .map(({ data, groupParentId }) => ({ data: deepCopy(data), groupParentId }))
+      .sort((a, b) => a.data.zIndex - b.data.zIndex)
+
+    const restored: NodeData[] = []
+    for (const { data, groupParentId } of members) {
+      data.parentId = groupParentId ? asNodeId(groupParentId) : hostNodeId
+      data.x += dx
+      data.y += dy
+      data.zIndex = this.state.nextZIndex++
+      // The ptys are gone; the caller decides what comes back to life.
+      if (data.type === 'terminal') {
+        data.alive = false
+        data.claudeState = 'stopped'
+      }
+      this.state.nodes[data.id] = data
+      this.onNodeAdd(data)
+      restored.push(data)
     }
-
-    // For terminals: mark as dead remnant (PTY is gone)
-    if (restoredNode.type === 'terminal') {
-      restoredNode.alive = false
-      restoredNode.claudeState = 'stopped'
-    }
-
-    this.state.nodes[restoredNode.id] = restoredNode
-    this.onNodeAdd(restoredNode)
 
     // Broadcast the host's archive, which changed at whatever depth the entry sat.
     const hostArchive = this.archiveArrayOf(hostNodeId)
     if (hostArchive) this.onNodeUpdate(hostNodeId, { archivedChildren: hostArchive })
 
-    if (path.length > 1) {
-      serverLog(`[archive] Restored ${restoredNode.id.slice(0, 8)} from ${path.length} levels deep -> parent=${hostNodeId.slice(0, 8)}`)
-    }
+    serverLog(
+      `[archive] Restored ${entry.data.id.slice(0, 8)} (${restored.length} node${restored.length === 1 ? '' : 's'}) ` +
+      `from depth ${path.length} -> parent=${hostNodeId.slice(0, 8)}`
+    )
 
     this.schedulePersist()
-    return restoredNode
+    // Root first: callers report on the entry they asked for, not on whichever
+    // member happened to sit lowest in the stack.
+    return [
+      ...restored.filter((node) => node.id === entry.data.id),
+      ...restored.filter((node) => node.id !== entry.data.id)
+    ]
   }
 
   /**
-   * Delete an archived node entry permanently.
+   * Delete an archive entry permanently, along with everything it holds — the
+   * group it would have restored, and whatever was archived beneath that.
+   *
+   * Addressed by path for the same reason a restore is: an entry can sit inside
+   * an archived subtree.
    */
-  deleteArchivedNode(parentNodeId: NodeId, archivedNodeId: NodeId): void {
-    const found = this.archiveEntryAt(parentNodeId, [archivedNodeId])
+  deleteArchivedNode(parentNodeId: NodeId, path: NodeId[]): void {
+    const found = this.archiveEntryAt(parentNodeId, path)
     if (!found) return
     found.list.splice(found.index, 1)
 

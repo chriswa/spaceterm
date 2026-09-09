@@ -10,8 +10,8 @@ const SOCKET_PATH = process.env.SPACETERM_HOME
   : path.join(os.homedir(), '.spaceterm', 'hooks.sock')
 const TIMEOUT_MS = 3000
 
-export const speakTool = defineTool({
-  name: 'spaceterm_speak',
+export const ttsTool = defineTool({
+  name: 'TTS',
   description:
     'IMPORTANT: Only use this tool when the user explicitly asks for text-to-speech, speech, or to speak aloud. ' +
     'Speaks text through the spaceterm client\'s text-to-speech engine.',

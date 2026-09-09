@@ -339,12 +339,12 @@ function setupIPC(): void {
     await client!.nodeArchive(nodeId)
   })
 
-  ipcMain.handle('node:unarchive', async (_event, parentNodeId: NodeId, archivedNodeId: NodeId) => {
-    await client!.nodeUnarchive(parentNodeId, archivedNodeId)
+  ipcMain.handle('node:unarchive', async (_event, parentNodeId: NodeId, path: NodeId[]) => {
+    await client!.nodeUnarchive(parentNodeId, path)
   })
 
-  ipcMain.handle('node:archive-delete', async (_event, parentNodeId: NodeId, archivedNodeId: NodeId) => {
-    await client!.nodeArchiveDelete(parentNodeId, archivedNodeId)
+  ipcMain.handle('node:archive-delete', async (_event, parentNodeId: NodeId, path: NodeId[]) => {
+    await client!.nodeArchiveDelete(parentNodeId, path)
   })
 
   ipcMain.handle('node:undo-push', async (_event, entry: import('../../shared/undo-types').UndoEntry) => {

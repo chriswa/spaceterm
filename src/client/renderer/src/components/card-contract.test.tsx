@@ -47,8 +47,6 @@ interface SharedProps {
   onClose: (id: NodeId) => void
   onMove: (id: NodeId, x: number, y: number) => void
   onColorChange: (id: NodeId, color: string) => void
-  onUnarchive: (p: NodeId, a: NodeId) => void
-  onArchiveDelete: (p: NodeId, a: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   onAddNode: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
   /**
@@ -73,8 +71,6 @@ function sharedProps(overrides: Partial<SharedProps> = {}): SharedProps {
     onClose: vi.fn(),
     onMove: vi.fn(),
     onColorChange: vi.fn(),
-    onUnarchive: vi.fn(),
-    onArchiveDelete: vi.fn(),
     onOpenArchiveSearch: vi.fn(),
     onAddNode: vi.fn(),
     cameraRef: { current: { x: 0, y: 0, z: 1 } },
@@ -359,13 +355,3 @@ describe('label-card add-node menus', () => {
   )
 })
 
-describe('the parent id used for archived children', () => {
-  it('is the card’s own id, not the canvas root', () => {
-    // Archived children hang off the node they were archived from. Passing
-    // ROOT_NODE_ID here would unarchive them to the wrong parent — a data bug
-    // with no visible symptom until the user looks for a card that moved.
-    const onUnarchive = vi.fn()
-    render(CARDS[0].build(sharedProps({ id: nid('owner'), onUnarchive })))
-    expect(onUnarchive).not.toHaveBeenCalledWith(ROOT_NODE_ID, expect.anything())
-  })
-})

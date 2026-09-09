@@ -182,9 +182,50 @@ type _EveryCardTypeIsANodeType = Assignable<CardType, NodeData['type']>
 
 // --- Archived nodes ---
 
+/**
+ * A node that was live on the canvas when one of its ancestors was archived,
+ * and that comes back when that ancestor is restored.
+ *
+ * Deliberately not an {@link ArchivedNode}. A descendant has no `archivedAt` of
+ * its own — the group shares the root's — and no independent restore path: a
+ * subtree archived as a unit is restored as a unit. Giving it a separate type
+ * makes "you cannot restore one of these on its own" a compile error rather
+ * than a convention every caller has to remember.
+ *
+ * Two kinds of nesting meet here and must not be confused:
+ *
+ * - `data.archivedChildren` — entries that were ALREADY archived beneath this
+ *   node before the group was archived. They stay archived through a round
+ *   trip.
+ * - `descendants` — this node's LIVE children at archive time. They come back.
+ *
+ * That split is what gives a round trip parity: archive a subtree that already
+ * contains archived subtrees, restore it, and exactly the cards that were
+ * visible before are visible again.
+ */
+export interface ArchivedDescendant {
+  data: NodeData
+  descendants: ArchivedDescendant[]
+}
+
 export interface ArchivedNode {
   archivedAt: string
   data: NodeData
+  /**
+   * The live subtree swept in with this node, absent when a single leaf was
+   * archived. See {@link ArchivedDescendant} for why these are not archives in
+   * their own right.
+   */
+  descendants?: ArchivedDescendant[]
+  /**
+   * Where the node sat relative to its parent when it was archived, so a
+   * restore puts it back in the same place even if the parent has since moved.
+   *
+   * Absent on entries written before subtree archiving existed; those restore
+   * at the absolute position recorded in `data`, which is only wrong if the
+   * parent moved in the meantime.
+   */
+  parentOffset?: { dx: number; dy: number }
 }
 
 // --- Server state ---

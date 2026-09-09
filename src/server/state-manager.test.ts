@@ -560,24 +560,39 @@ describe('archive and unarchive', () => {
 
     sm.archiveNode(child.id)
     expect(sm.getNode(child.id)).toBeUndefined()
-    expect(sm.peekArchivedNode(nid('parent'), child.id)?.id).toBe(child.id)
+    expect(sm.peekArchiveEntry(nid('parent'), [child.id])?.data.id).toBe(child.id)
 
-    sm.unarchiveNode(nid('parent'), child.id)
+    sm.unarchiveNodeAtPath(nid('parent'), [child.id])
     expect(sm.getNode(child.id)?.id).toBe(child.id)
-    expect(sm.peekArchivedNode(nid('parent'), child.id)).toBeUndefined()
+    expect(sm.peekArchiveEntry(nid('parent'), [child.id])).toBeUndefined()
   })
 
-  it('restores at an override position when one is given', () => {
+  it('restores a node at the offset from its parent it was archived at', () => {
     const { sm } = harness()
-    createTerminal(sm, 'parent')
-    const child = sm.createMarkdown(nid('parent'), 10, 10, 'hello')
+    const parent = createTerminal(sm, 'parent')
+    sm.moveNode(parent.id, 100, 100)
+    const child = sm.createMarkdown(nid('parent'), 130, 160, 'hello')
 
     sm.archiveNode(child.id)
-    sm.unarchiveNode(nid('parent'), child.id, { x: 77, y: 88 })
+    // The parent moves while the child is away; the child follows it.
+    sm.moveNode(parent.id, 500, 700)
+    sm.unarchiveNodeAtPath(nid('parent'), [child.id])
 
-    const restored = sm.getNode(child.id)
-    expect(restored?.x).toBe(77)
-    expect(restored?.y).toBe(88)
+    expect(sm.getNode(child.id)).toMatchObject({ x: 530, y: 760 })
+  })
+
+  it('restores a legacy entry, which recorded no offset, where it was', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'parent')
+    const child = sm.createMarkdown(nid('parent'), 30, 60, 'hello')
+    sm.archiveNode(child.id)
+
+    // An entry written before offsets were recorded.
+    const entry = sm.peekArchiveEntry(nid('parent'), [child.id])!
+    delete entry.parentOffset
+
+    sm.unarchiveNodeAtPath(nid('parent'), [child.id])
+    expect(sm.getNode(child.id)).toMatchObject({ x: 30, y: 60 })
   })
 
   it('deleteArchivedNode removes it permanently', () => {
@@ -586,11 +601,190 @@ describe('archive and unarchive', () => {
     const child = sm.createMarkdown(nid('parent'), 10, 10, 'hello')
 
     sm.archiveNode(child.id)
-    sm.deleteArchivedNode(nid('parent'), child.id)
+    sm.deleteArchivedNode(nid('parent'), [child.id])
 
-    expect(sm.peekArchivedNode(nid('parent'), child.id)).toBeUndefined()
-    sm.unarchiveNode(nid('parent'), child.id)
+    expect(sm.peekArchiveEntry(nid('parent'), [child.id])).toBeUndefined()
+    expect(sm.unarchiveNodeAtPath(nid('parent'), [child.id])).toEqual([])
     expect(sm.getNode(child.id)).toBeUndefined()
+  })
+
+  it('lifts children when a single node is archived, so an exiting agent leaves its notes behind', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'grandparent')
+    createTerminal(sm, 'parent', nid('grandparent'))
+    recordAgentSession(sm, 'parent', 'agent-abc')
+    const note = sm.createMarkdown(nid('parent'), 10, 10, 'hello')
+
+    sm.archiveNode(nid('parent'))
+
+    expect(sm.getNode(note.id)?.parentId).toBe('grandparent')
+  })
+})
+
+describe('archiveSubtree', () => {
+  /** grandparent → parent → { childA → grandchild, childB } */
+  function tree(sm: StateManager): void {
+    createTerminal(sm, 'grandparent')
+    createTerminal(sm, 'parent', nid('grandparent'))
+    sm.createMarkdown(nid('parent'), 10, 10, 'a')
+    sm.createMarkdown(nid('parent'), 20, 20, 'b')
+  }
+
+  it('takes the whole subtree off the canvas as one entry', () => {
+    const { sm } = harness()
+    tree(sm)
+    const [a, b] = sm.subtreeNodes(nid('parent')).filter((n) => n.type === 'markdown')
+
+    const removed = sm.archiveSubtree(nid('parent'))
+
+    expect(removed).toHaveLength(3)
+    expect(sm.getNode(nid('parent'))).toBeUndefined()
+    expect(sm.getNode(a.id)).toBeUndefined()
+    expect(sm.getNode(b.id)).toBeUndefined()
+    // One entry under the grandparent, not three.
+    expect(sm.getNode(nid('grandparent'))?.archivedChildren).toHaveLength(1)
+  })
+
+  it('reports the subtree leaf-first, so a child is released before its parent', () => {
+    const { sm } = harness()
+    tree(sm)
+
+    const removed = sm.archiveSubtree(nid('parent'))
+
+    expect(removed[removed.length - 1]).toBe('parent')
+  })
+
+  it('brings the whole subtree back on restore', () => {
+    const { sm } = harness()
+    tree(sm)
+    const before = sm.subtreeNodes(nid('parent')).map((n) => n.id).sort()
+
+    sm.archiveSubtree(nid('parent'))
+    sm.unarchiveNodeAtPath(nid('grandparent'), [nid('parent')])
+
+    expect(sm.subtreeNodes(nid('parent')).map((n) => n.id).sort()).toEqual(before)
+  })
+
+  it('restores the arrangement, not just the cards', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    createTerminal(sm, 'grp', nid('host'))
+    sm.moveNode(nid('grp'), 200, 200)
+    const child = sm.createMarkdown(nid('grp'), 260, 240, 'a')
+
+    sm.archiveSubtree(nid('grp'))
+    sm.unarchiveNodeAtPath(nid('host'), [nid('grp')])
+
+    const root = sm.getNode(nid('grp'))!
+    const restoredChild = sm.getNode(child.id)!
+    expect({ x: root.x, y: root.y }).toEqual({ x: 200, y: 200 })
+    // The child keeps its offset from the root rather than being re-placed.
+    expect({ dx: restoredChild.x - root.x, dy: restoredChild.y - root.y }).toEqual({ dx: 60, dy: 40 })
+  })
+
+  it('reattaches members to each other, not to the host', () => {
+    const { sm } = harness()
+    tree(sm)
+    const child = sm.subtreeNodes(nid('parent')).find((n) => n.type === 'markdown')!
+
+    sm.archiveSubtree(nid('parent'))
+    sm.unarchiveNodeAtPath(nid('grandparent'), [nid('parent')])
+
+    expect(sm.getNode(child.id)?.parentId).toBe('parent')
+    expect(sm.getNode(nid('parent'))?.parentId).toBe('grandparent')
+  })
+
+  it('keeps what was already archived under the subtree archived', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    createTerminal(sm, 'grp', nid('host'))
+    createTerminal(sm, 'buried', nid('grp'))
+    recordAgentSession(sm, 'buried', 'agent-abc')
+    sm.archiveNode(nid('buried'))
+    const visibleBefore = sm.subtreeNodes(nid('grp')).map((n) => n.id).sort()
+
+    sm.archiveSubtree(nid('grp'))
+    sm.unarchiveNodeAtPath(nid('host'), [nid('grp')])
+
+    // Parity: exactly the cards that were visible before are visible again...
+    expect(sm.subtreeNodes(nid('grp')).map((n) => n.id).sort()).toEqual(visibleBefore)
+    expect(sm.getNode(nid('buried'))).toBeUndefined()
+    // ...and the one that was archived is still reachable where it was.
+    expect(sm.peekArchiveEntry(nid('grp'), [nid('buried')])?.data.id).toBe('buried')
+  })
+
+  it('survives a subtree archived inside a subtree', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    createTerminal(sm, 'outer', nid('host'))
+    createTerminal(sm, 'inner', nid('outer'))
+    sm.createMarkdown(nid('inner'), 10, 10, 'note')
+    // Archive the inner subtree, then the outer one on top of it.
+    sm.archiveSubtree(nid('inner'))
+    const visibleBefore = sm.subtreeNodes(nid('outer')).map((n) => n.id).sort()
+    sm.archiveSubtree(nid('outer'))
+
+    sm.unarchiveNodeAtPath(nid('host'), [nid('outer')])
+
+    expect(sm.subtreeNodes(nid('outer')).map((n) => n.id).sort()).toEqual(visibleBefore)
+    // The inner subtree is still one archived entry, restorable in its own right.
+    const inner = sm.peekArchiveEntry(nid('outer'), [nid('inner')])
+    expect(inner?.descendants).toHaveLength(1)
+
+    sm.unarchiveNodeAtPath(nid('outer'), [nid('inner')])
+    expect(sm.getNode(nid('inner'))?.parentId).toBe('outer')
+  })
+
+  it('keeps a card the single-node path would have thrown away', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    createTerminal(sm, 'grp', nid('host'))
+    // An empty note is disposable on its own — but it is part of an arrangement.
+    const blank = sm.createMarkdown(nid('grp'), 10, 10, '')
+
+    sm.archiveSubtree(nid('grp'))
+    sm.unarchiveNodeAtPath(nid('host'), [nid('grp')])
+
+    expect(sm.getNode(blank.id)?.id).toBe(blank.id)
+  })
+
+  it('archives a disposable root that has a subtree to carry', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    // A bare terminal with no agent session: disposable on its own.
+    createTerminal(sm, 'grp', nid('host'))
+    const note = sm.createMarkdown(nid('grp'), 10, 10, 'keep me')
+
+    sm.archiveSubtree(nid('grp'))
+
+    expect(sm.getNode(nid('host'))?.archivedChildren).toHaveLength(1)
+    sm.unarchiveNodeAtPath(nid('host'), [nid('grp')])
+    expect(sm.getNode(note.id)?.id).toBe(note.id)
+  })
+
+  it('does not hang on a parentId cycle', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    createTerminal(sm, 'a', nid('host'))
+    createTerminal(sm, 'b', nid('a'))
+    // Forge the kind of loop a corrupt state file or a bad client message can
+    // produce. Unguarded, the descent never terminates.
+    sm.getState().nodes['a'].parentId = nid('b')
+
+    expect(sm.subtreeNodes(nid('a')).map((n) => n.id).sort()).toEqual(['a', 'b'])
+    expect(() => sm.archiveSubtree(nid('a'))).not.toThrow()
+  })
+
+  it('restores terminals as remnants, since their ptys are gone', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    createTerminal(sm, 'grp', nid('host'))
+    recordAgentSession(sm, 'grp', 'agent-abc')
+
+    sm.archiveSubtree(nid('grp'))
+    const [restored] = sm.unarchiveNodeAtPath(nid('host'), [nid('grp')])
+
+    expect(restored).toMatchObject({ alive: false, claudeState: 'stopped' })
   })
 })
 
@@ -686,11 +880,11 @@ describe('unarchiveNodeAtPath', () => {
 
     // Reparented to the nearest node that is not itself archived — its recorded
     // parent is still archived and would have been nothing to attach to.
-    expect(restored?.id).toBe('child')
+    expect(restored[0]?.id).toBe('child')
     expect(sm.getNode(nid('child'))?.parentId).toBe('grandparent')
     // Gone from the nested archive, while the parent's own entry stays put.
     expect(sm.findArchivedNodeForFocus('child')).toBeUndefined()
-    expect(sm.peekArchivedNode(nid('grandparent'), nid('parent'))?.id).toBe('parent')
+    expect(sm.peekArchiveEntry(nid('grandparent'), [nid('parent')])?.data.id).toBe('parent')
   })
 
   it('carries the restored node\'s own archived children back with it', () => {
@@ -705,14 +899,33 @@ describe('unarchiveNodeAtPath', () => {
     sm.unarchiveNodeAtPath(nid('grandparent'), [nid('parent')])
 
     expect(sm.getNode(nid('parent'))?.id).toBe('parent')
-    expect(sm.peekArchivedNode(nid('parent'), nid('child'))?.id).toBe('child')
+    expect(sm.peekArchiveEntry(nid('parent'), [nid('child')])?.data.id).toBe('child')
   })
 
-  it('reports undefined for a path that names nothing', () => {
+  it('restores nothing for a path that names nothing', () => {
     const { sm } = harness()
     createTerminal(sm, 'parent')
 
-    expect(sm.unarchiveNodeAtPath(nid('parent'), [nid('ghost')])).toBeUndefined()
+    expect(sm.unarchiveNodeAtPath(nid('parent'), [nid('ghost')])).toEqual([])
+  })
+
+  it('reaches an entry archived under a member of an archived subtree', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'host')
+    createTerminal(sm, 'outer', nid('host'))
+    createTerminal(sm, 'member', nid('outer'))
+    createTerminal(sm, 'buried', nid('member'))
+    recordAgentSession(sm, 'buried', 'agent-abc')
+    // `buried` is archived under `member`, then `member` is swept into a group.
+    sm.archiveNode(nid('buried'))
+    sm.archiveSubtree(nid('outer'))
+
+    // The entry sits inside the group's snapshot, two hops from the host. A
+    // hop that searched only the outer entry's own archivedChildren missed it.
+    const restored = sm.unarchiveNodeAtPath(nid('host'), [nid('outer'), nid('buried')])
+
+    expect(restored[0]?.id).toBe('buried')
+    expect(sm.getNode(nid('buried'))?.parentId).toBe('host')
   })
 })
 

@@ -48,8 +48,6 @@ function props(overrides: Record<string, unknown> = {}): TerminalCardProps {
     onMove: vi.fn(),
     onRename: vi.fn(),
     onColorChange: vi.fn(),
-    onUnarchive: vi.fn(),
-    onArchiveDelete: vi.fn(),
     onOpenArchiveSearch: vi.fn(),
     cameraRef: { current: { x: 0, y: 0, z: 1 } as Camera },
     ...overrides

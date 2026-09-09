@@ -51,8 +51,6 @@ interface FileCardProps {
   onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onFilePathChange: (id: NodeId, filePath: string) => void
   onColorChange: (id: NodeId, color: string) => void
-  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
@@ -66,7 +64,7 @@ interface FileCardProps {
 export function FileCard({
   id, x, y, zIndex, zoom, filePath, inheritedCwd, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onFilePathChange, onColorChange,
-  onUnarchive, onArchiveDelete, onOpenArchiveSearch, onNodeReady,
+  onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: FileCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
@@ -239,8 +237,6 @@ export function FileCard({
       archivedChildren={archivedChildren}
       onClose={onClose}
       onColorChange={onColorChange}
-      onUnarchive={onUnarchive}
-      onArchiveDelete={onArchiveDelete}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}

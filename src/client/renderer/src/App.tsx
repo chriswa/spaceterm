@@ -21,6 +21,7 @@ import { PeerCameraOverlay } from './components/PeerCameraOverlay'
 import { ResizeGhost } from './components/ResizeGhost'
 import { NodeLabels } from './components/NodeLabels'
 import { AgentSelector, AGENT_SELECTOR_OPTIONS } from './components/AgentSelector'
+import { ArchiveConfirm } from './components/ArchiveConfirm'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover } from './hooks/useEdgeHover'
@@ -46,6 +47,7 @@ import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename,
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
+import { findArchiveEntry } from '../../../shared/archive-tree'
 import { pushUndo, peekUndo, peekRedo, undoStep, redoStep, getCursor, getConfirmation, setConfirmation, clearConfirmation, setUndoInProgress, getUndoInProgress } from './lib/undo-buffer'
 import { nodeUndoDescription } from './lib/node-title'
 import type { UndoEntry, UndoMoveEntry, UndoArchiveEntry, UndoUnarchiveEntry, UndoResizeEntry } from '../../../shared/undo-types'
@@ -100,6 +102,8 @@ export function App() {
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
   const [agentSelectorParentId, setAgentSelectorParentId] = useState<NodeId | null>(null)
+  /** The pending "archive this whole branch?" question, if one is open. */
+  const [archiveConfirm, setArchiveConfirm] = useState<{ nodeId: NodeId; label: string; count: number } | null>(null)
   const agentLaunchInFlightRef = useRef(false)
   const [keycastEnabled, setKeycastEnabled] = useState(() => localStorage.getItem('toolbar.keycast') === 'true')
   // Every mod registers, then every mod activates — before the first paint
@@ -1019,54 +1023,48 @@ export function App() {
   }, [flyTo, handleNodeFocus])
 
 
-  const handleUnarchive = useCallback(async (parentNodeId: NodeId, archivedNodeId: NodeId) => {
+  /**
+   * Restore an archive entry, and whatever subtree was archived with it, under
+   * `parentNodeId`. `path` names the entry from that node's archive down, so an
+   * entry buried inside an archived subtree is reachable too.
+   */
+  const handleUnarchive = useCallback(async (parentNodeId: NodeId, path: NodeId[]) => {
     if (!getUndoInProgress()) {
       const { nodes, rootArchivedChildren } = useNodeStore.getState()
-      const archiveArray = parentNodeId === 'root'
+      const hostArchive = parentNodeId === 'root'
         ? rootArchivedChildren
         : nodes[parentNodeId]?.archivedChildren ?? []
-      const archived = archiveArray.find(e => e.data.id === archivedNodeId)
+      const archived = findArchiveEntry(hostArchive, path)
       if (archived) {
         const entry: UndoUnarchiveEntry = {
           kind: 'unarchive',
           ts: Date.now(),
           description: nodeUndoDescription(archived.data),
-          nodeId: archivedNodeId,
+          // A restore lands the entry at the host's top level, so undo and redo
+          // address it by id from there rather than by the path it came from.
+          nodeId: archived.data.id,
           parentId: parentNodeId
         }
         pushUndo(entry)
         sendUndoPush(entry)
       }
     }
-    await sendUnarchive(parentNodeId, archivedNodeId)
+    await sendUnarchive(parentNodeId, path)
   }, [])
 
-  const handleReviveNode = useCallback(async (archiveParentId: NodeId, archivedNodeId: NodeId) => {
+  /**
+   * Restore from the search results and fly to what the user picked — which is
+   * not always the entry root: picking a card that was swept into a subtree
+   * restores the whole subtree and focuses that card.
+   */
+  const handleReviveNode = useCallback(async (archiveParentId: NodeId, path: NodeId[], focusNodeId: NodeId) => {
     setSearchVisible(false)
-    if (!getUndoInProgress()) {
-      const { nodes, rootArchivedChildren } = useNodeStore.getState()
-      const archiveArray = archiveParentId === 'root'
-        ? rootArchivedChildren
-        : nodes[archiveParentId]?.archivedChildren ?? []
-      const archived = archiveArray.find(e => e.data.id === archivedNodeId)
-      if (archived) {
-        const entry: UndoUnarchiveEntry = {
-          kind: 'unarchive',
-          ts: Date.now(),
-          description: nodeUndoDescription(archived.data),
-          nodeId: archivedNodeId,
-          parentId: archiveParentId
-        }
-        pushUndo(entry)
-        sendUndoPush(entry)
-      }
-    }
-    await sendUnarchive(archiveParentId, archivedNodeId)
-    await navigateToNode(archivedNodeId)
-  }, [navigateToNode])
+    await handleUnarchive(archiveParentId, path)
+    await navigateToNode(focusNodeId)
+  }, [handleUnarchive, navigateToNode])
 
-  const handleArchiveDelete = useCallback(async (parentNodeId: NodeId, archivedNodeId: NodeId) => {
-    await sendArchiveDelete(parentNodeId, archivedNodeId)
+  const handleArchiveDelete = useCallback(async (parentNodeId: NodeId, path: NodeId[]) => {
+    await sendArchiveDelete(parentNodeId, path)
   }, [])
 
   const handleOpenArchiveSearch = useCallback((nodeId: NodeId) => {
@@ -1105,33 +1103,62 @@ export function App() {
     }
   }, [])
 
-  const handleRemoveNode = useCallback(async (id: NodeId) => {
+  /**
+   * Archive a card and everything under it.
+   *
+   * The subtree goes into one archive entry and comes back as one arrangement,
+   * so there is nothing to record about reparented children — an undo restores
+   * the group whole. Entries recorded before subtree archiving still carry
+   * `reparentedChildIds`, which is why the field survives as optional.
+   */
+  const archiveNodeNow = useCallback(async (id: NodeId) => {
     const { nodes } = useNodeStore.getState()
     const node = nodes[id]
-    // Archiving is only allowed from leaf nodes. Archiving a parent would sweep
-    // its whole subtree into archivedChildren — easy to trigger by accident with
-    // Cmd+W or the X button. Refuse and shake instead of silently swallowing a tree.
-    if (node && hasLiveChildren(nodes, id)) {
-      shakeCamera()
-      return
-    }
+    for (const descendantId of getDescendantIds(nodes, id)) cwdMapRef.current.delete(descendantId)
     cwdMapRef.current.delete(id)
-    if (node && !isDisposable(node) && !getUndoInProgress()) {
-      const reparentedChildIds = nodeIdsOf(nodes).filter(k => nodes[k].parentId === id)
+    // A leaf with nothing worth keeping is dropped rather than archived, so
+    // there would be nothing for an undo to restore. A subtree is always kept.
+    const keepsSomething = node && (!isDisposable(node) || hasLiveChildren(nodes, id))
+    if (keepsSomething && !getUndoInProgress()) {
       const entry: UndoArchiveEntry = {
         kind: 'archive',
         ts: Date.now(),
         description: nodeUndoDescription(node),
         nodeId: id,
-        parentId: node.parentId,
-        reparentedChildIds
+        parentId: node.parentId
       }
       pushUndo(entry)
       sendUndoPush(entry)
     }
     await sendArchive(id)
     // Focus cleanup + fly-to handled by Zustand subscription when node-removed arrives
-  }, [shakeCamera])
+  }, [])
+
+  /**
+   * The archive gesture, from the X button or Cmd+W.
+   *
+   * A leaf goes straight into the archive. A card with children takes the whole
+   * branch with it, which is too much to do on one keystroke without asking, so
+   * that case opens {@link ArchiveConfirm} instead and the archive happens when
+   * the user confirms.
+   */
+  const handleRemoveNode = useCallback(async (id: NodeId) => {
+    const { nodes } = useNodeStore.getState()
+    const node = nodes[id]
+    if (!node) {
+      shakeCamera()
+      return
+    }
+    if (hasLiveChildren(nodes, id)) {
+      setArchiveConfirm({
+        nodeId: id,
+        label: nodeDisplayTitle(node),
+        count: 1 + getDescendantIds(nodes, id).length
+      })
+      return
+    }
+    await archiveNodeNow(id)
+  }, [archiveNodeNow, shakeCamera])
 
   const executeUndoRedo = useCallback((entry: UndoEntry, direction: 'undo' | 'redo') => {
     switch (entry.kind) {
@@ -1197,9 +1224,11 @@ export function App() {
           setUndoInProgress(true)
           ;(async () => {
             try {
-              await sendUnarchive(entry.parentId, entry.nodeId)
+              await sendUnarchive(entry.parentId, [entry.nodeId])
+              // Only entries recorded before subtree archiving lifted children
+              // out; a group restore brings its own children back.
               const { nodes } = useNodeStore.getState()
-              for (const childId of entry.reparentedChildIds) {
+              for (const childId of entry.reparentedChildIds ?? []) {
                 const child = nodes[childId]
                 if (child && child.parentId === entry.parentId) {
                   sendReparent(childId, entry.nodeId)
@@ -1240,7 +1269,7 @@ export function App() {
           setUndoInProgress(true)
           ;(async () => {
             try {
-              await sendUnarchive(entry.parentId, entry.nodeId)
+              await sendUnarchive(entry.parentId, [entry.nodeId])
               navigateToNode(entry.nodeId)
             } finally {
               setUndoInProgress(false)
@@ -1892,6 +1921,19 @@ export function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      // An open archive confirmation owns Enter and Escape: it is asking about
+      // something destructive, so nothing behind it should act on either key.
+      if (archiveConfirm) {
+        if (e.key === 'Escape' || e.key === 'Enter') {
+          e.preventDefault()
+          e.stopPropagation()
+          const pending = archiveConfirm
+          setArchiveConfirm(null)
+          if (e.key === 'Enter') await archiveNodeNow(pending.nodeId)
+        }
+        return
+      }
+
       // Cmd+E opens this short-lived launcher. Its choices must win before
       // xterm sees a bare digit as terminal input.
       if (agentSelectorParentId) {
@@ -2261,7 +2303,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, focusParentOfNode, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
+  }, [archiveConfirm, archiveNodeNow, agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, focusParentOfNode, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -2442,8 +2484,6 @@ export function App() {
     onClose: handleRemoveNode,
     onMove: handleMove,
     onColorChange: handleColorChange,
-    onUnarchive: handleUnarchive,
-    onArchiveDelete: handleArchiveDelete,
     onOpenArchiveSearch: handleOpenArchiveSearch,
     onNodeReady: handleNodeReady,
     onDragStart: handleDragStart,
@@ -2455,14 +2495,14 @@ export function App() {
   }), [
     camera.z, resolvedPresets, focusedId, selection,
     handleNodeFocus, handleRemoveNode, handleMove, handleColorChange,
-    handleUnarchive, handleArchiveDelete, handleOpenArchiveSearch, handleNodeReady,
+    handleOpenArchiveSearch, handleNodeReady,
     handleDragStart, handleDragEnd, handleStartReparent, handleReparentTarget,
     handleAddNode, cameraRef,
   ])
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <PeerCameraOverlay />
         <ResizeGhost />
         <NodeLabels
@@ -2476,8 +2516,6 @@ export function App() {
           selected={selection === ROOT_NODE_ID}
           onClick={() => handleNodeFocus(ROOT_NODE_ID)}
           archivedChildren={rootArchivedChildren}
-          onUnarchive={handleUnarchive}
-          onArchiveDelete={handleArchiveDelete}
           onOpenArchiveSearch={handleOpenArchiveSearch}
           onAddNode={handleAddNode}
           onReparentTarget={handleReparentTarget}
@@ -2513,8 +2551,6 @@ export function App() {
             onRename={handleRename}
             archivedChildren={t.archivedChildren}
             onColorChange={handleColorChange}
-            onUnarchive={handleUnarchive}
-            onArchiveDelete={handleArchiveDelete}
             onOpenArchiveSearch={handleOpenArchiveSearch}
             claudeSessionHistory={t.claudeSessionHistory}
             agentType={t.agentType}

@@ -30,9 +30,8 @@ import { expandTilde } from './cwd'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
-import { canFitAt, computePlacement } from './node-placement'
+import { computePlacement } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
-import { measureCard as nodePixelSize } from '../shared/card-types'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { SessionFileWatcher } from './session-file-watcher'
@@ -47,7 +46,7 @@ import { SessionStatusObserver, type ObservedSurface } from './claude-state/sess
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import type { NodeData, TerminalNodeData } from '../shared/state'
+import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../shared/state'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
@@ -411,19 +410,58 @@ function raiseNodeOnClient(focusNodeId: NodeId | null, tag: string): void {
 }
 
 /**
- * Where a restored node goes: back where it was if that spot is still clear,
- * otherwise auto-placed beside the parent it is being restored under.
+ * Everything outside the node graph that a card owns, handed back before the
+ * card leaves the canvas: its pty and that pty's scrollback, the attachments
+ * clients hold on it, the file it was watching, its place in the git poll.
  *
- * Shared by the two paths that bring an archived node back — the user's
- * unarchive gesture and the deep-link revive — so a surface lands the same way
- * whichever asked for it.
+ * One function because archiving now takes a whole subtree, and a release that
+ * covered only the node the user clicked would leave the descendants' ptys
+ * running with nothing on screen attached to them.
  */
-function placementForRestore(archived: NodeData, parentNodeId: NodeId): { x: number; y: number } {
-  const size = nodePixelSize(archived)
+function releaseNodeResources(node: NodeData): void {
+  if (node.type === 'terminal' && node.alive) {
+    snapshotManager.removeSession(node.sessionId)
+    sessionManager.destroy(node.sessionId)
+    clients.forEach((c) => {
+      c.attachedSessions.delete(node.sessionId)
+      c.snapshotSessions.delete(node.sessionId)
+    })
+  }
+  fileContentManager.stopWatching(node.id)
+  gitStatusPoller.removeNode(node.id)
+}
+
+/**
+ * Bring an archive entry back: the node the user named, the subtree that was
+ * archived with it, and the agents and file watchers all of them had.
+ *
+ * The mirror of {@link releaseNodeResources}. Directory nodes need nothing —
+ * the git poller reads the live node list each tick — but a file-backed
+ * markdown's watcher is started explicitly, so a restore has to start it again
+ * or the card comes back showing a file it has stopped following.
+ *
+ * Returns the restored nodes, entry root first; empty when the path names
+ * nothing.
+ */
+function restoreArchiveEntry(hostNodeId: NodeId, path: NodeId[]): NodeData[] {
+  const restored = stateManager.unarchiveNodeAtPath(hostNodeId, path)
+  for (const node of restored) {
+    if (node.type === 'terminal') {
+      reincarnateRestoredTerminal(node)
+    } else if (node.type === 'markdown' && node.fileBacked) {
+      startFileBackedWatch(node)
+    }
+  }
+  return restored
+}
+
+/** Point a restored file-backed markdown at its file again. */
+function startFileBackedWatch(node: MarkdownNodeData): void {
   const nodes = stateManager.getState().nodes
-  return canFitAt(nodes, { x: archived.x, y: archived.y }, size)
-    ? { x: archived.x, y: archived.y }
-    : computePlacement(nodes, parentNodeId, size)
+  const parent = nodes[node.parentId]
+  if (parent?.type !== 'file') return
+  const path = resolveFilePath(parent.filePath, getAncestorCwd(nodes, parent.id))
+  fileContentManager.startWatching(node.id, parent.id, path)
 }
 
 /**
@@ -493,11 +531,11 @@ function reviveArchivedSurfaceForFocus(id: string): NodeId | undefined {
     `depth=${match.path.length} host=${match.hostNodeId.slice(0, 8)} archivedAt=${match.archivedAt}`
   )
 
-  const restored = stateManager.unarchiveNodeAtPath(
-    match.hostNodeId, match.path, placementForRestore(match.data, match.hostNodeId))
-  if (!restored) return undefined
-  if (restored.type !== 'terminal') return restored.id
-  return reincarnateRestoredTerminal(restored) ? restored.id : undefined
+  const restored = restoreArchiveEntry(match.hostNodeId, match.path)
+  if (restored.length === 0) return undefined
+  // Raise the surface the link named, which is the entry root unless the link
+  // pointed at something buried in the group that came back with it.
+  return stateManager.getNode(match.data.id) ? match.data.id : undefined
 }
 
 function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void {
@@ -1230,43 +1268,25 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-archive': {
-      const node = stateManager.getNode(msg.nodeId)
-      if (node && node.type === 'terminal' && node.alive) {
-        snapshotManager.removeSession(node.sessionId)
-        sessionManager.destroy(node.sessionId)
-        clients.forEach((c) => {
-          c.attachedSessions.delete(node.sessionId)
-          c.snapshotSessions.delete(node.sessionId)
-        })
+      // Leaf-first, so a child's surface is released before its parent's.
+      for (const node of stateManager.subtreeNodes(msg.nodeId)) {
+        releaseNodeResources(node)
       }
-      // Stop file watching if this is a file-backed markdown
-      fileContentManager.stopWatching(msg.nodeId)
-      gitStatusPoller.removeNode(msg.nodeId)
-      stateManager.archiveNode(msg.nodeId)
+      stateManager.archiveSubtree(msg.nodeId)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'node-unarchive': {
-      const archivedData = stateManager.peekArchivedNode(msg.parentNodeId, msg.archivedNodeId)
-      stateManager.unarchiveNode(
-        msg.parentNodeId, msg.archivedNodeId,
-        archivedData && placementForRestore(archivedData, msg.parentNodeId))
-
-      // Auto-reincarnate if the restored node is a terminal
-      const restoredNode = stateManager.getNode(msg.archivedNodeId)
-      const pty = restoredNode?.type === 'terminal' ? reincarnateRestoredTerminal(restoredNode) : undefined
-      if (pty) {
-        client.attachedSessions.add(pty.sessionId)
-        send(client.socket, { type: 'created', seq: msg.seq, sessionId: pty.sessionId, cols: pty.cols, rows: pty.rows })
-      } else {
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
-      }
+      restoreArchiveEntry(msg.parentNodeId, msg.path)
+      // No `created` reply even for a single terminal: a group can restore any
+      // number of them, and the cards attach to their own ptys as they mount.
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'node-archive-delete': {
-      stateManager.deleteArchivedNode(msg.parentNodeId, msg.archivedNodeId)
+      stateManager.deleteArchivedNode(msg.parentNodeId, msg.path)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }

@@ -1,6 +1,7 @@
-import type { NodeData, ArchivedNode } from '../../../../shared/state'
+import type { NodeData, ArchivedNode, ArchivedDescendant } from '../../../../shared/state'
 import type { ColorPreset } from './color-presets'
 import { COLOR_PRESET_MAP, DEFAULT_PRESET } from './color-presets'
+import { groupNodes, groupSize, archivesOwnedBy } from '../../../../shared/archive-tree'
 import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
 // --- Types ---
@@ -14,6 +15,12 @@ export type SearchMode =
 export interface AncestorEntry {
   data: NodeData
   isLive: boolean
+  /**
+   * The archive entry whose group this ancestor belongs to, when it is a card
+   * that was swept up in a subtree archive. Breadcrumbs use it to box a run of
+   * ancestors that came down together.
+   */
+  groupRootId?: NodeId
 }
 
 export interface SearchEntry {
@@ -24,6 +31,18 @@ export interface SearchEntry {
   depth: number
   resolvedPreset: ColorPreset
   ancestors: AncestorEntry[]
+  /**
+   * How to restore this result, for archived entries.
+   *
+   * A subtree is archived and restored as a unit, so a result that is a member
+   * of one restores through the entry that holds it: `restorePath` names that
+   * entry and `restoreCount` says how many cards come back with it. For a card
+   * archived on its own the path is its own and the count is 1.
+   */
+  restorePath?: NodeId[]
+  restoreCount?: number
+  /** True when this result is a group member rather than an entry in its own right. */
+  isGroupMember?: boolean
 }
 
 export type MatchField = 'name' | 'cwd' | 'shellTitle' | 'markdown' | 'claudeSessionId'
@@ -73,16 +92,22 @@ export function buildSearchableEntries(
   // Build a unified lookup of ALL nodes (live + archived) for ancestor chain walking.
   // Archived nodes' parentId is preserved from when they were alive, so walking
   // parentId chains through this map reconstructs the full ancestor tree.
-  const allNodeLookup = new Map<string, { data: NodeData; isLive: boolean }>()
+  const allNodeLookup = new Map<string, LookupEntry>()
   for (const data of Object.values(nodes)) {
     allNodeLookup.set(data.id, { data, isLive: true })
   }
   function indexArchived(archives: ArchivedNode[]): void {
     for (const a of archives) {
-      if (!allNodeLookup.has(a.data.id)) {
-        allNodeLookup.set(a.data.id, { data: a.data, isLive: false })
+      // A subtree archived as a unit contributes every card it holds, so a
+      // surface buried in one is still findable and still has an ancestor
+      // chain. Members are tagged with the entry that would restore them.
+      const groupRootId = groupSize(a) > 1 ? a.data.id : undefined
+      for (const data of groupNodes(a)) {
+        if (!allNodeLookup.has(data.id)) {
+          allNodeLookup.set(data.id, { data, isLive: false, groupRootId })
+        }
       }
-      indexArchived(a.data.archivedChildren)
+      indexArchived(archivesOwnedBy(a))
     }
   }
   for (const data of Object.values(nodes)) indexArchived(data.archivedChildren)
@@ -91,11 +116,11 @@ export function buildSearchableEntries(
   if (mode.kind === 'archived-children') {
     const parentPreset = resolvedPresets[mode.parentId] ?? DEFAULT_PRESET
     if (mode.parentId === 'root') {
-      collectArchived(entries, rootArchivedChildren, ROOT_NODE_ID, 0, parentPreset, archiveMaxDepth)
+      collectArchived(entries, rootArchivedChildren, ROOT_NODE_ID, 0, parentPreset, archiveMaxDepth, [])
     } else {
       const node = nodes[mode.parentId]
       if (node) {
-        collectArchived(entries, node.archivedChildren, node.id, 0, parentPreset, archiveMaxDepth)
+        collectArchived(entries, node.archivedChildren, node.id, 0, parentPreset, archiveMaxDepth, [])
       }
     }
   } else {
@@ -105,9 +130,9 @@ export function buildSearchableEntries(
     }
     for (const data of Object.values(nodes)) {
       const parentPreset = resolvedPresets[data.id] ?? DEFAULT_PRESET
-      collectArchived(entries, data.archivedChildren, data.id, 0, parentPreset, Infinity)
+      collectArchived(entries, data.archivedChildren, data.id, 0, parentPreset, Infinity, [])
     }
-    collectArchived(entries, rootArchivedChildren, ROOT_NODE_ID, 0, resolvedPresets['root'] ?? DEFAULT_PRESET, Infinity)
+    collectArchived(entries, rootArchivedChildren, ROOT_NODE_ID, 0, resolvedPresets['root'] ?? DEFAULT_PRESET, Infinity, [])
   }
 
   // Compute ancestor chains for all entries
@@ -118,19 +143,33 @@ export function buildSearchableEntries(
   return entries
 }
 
+function presetFor(data: NodeData, inherited: ColorPreset): ColorPreset {
+  const ownId = data.colorPresetId
+  return (ownId && ownId !== 'inherit' && COLOR_PRESET_MAP[ownId]) ? COLOR_PRESET_MAP[ownId]! : inherited
+}
+
+/**
+ * What one archive entry contributes to search: the entry itself, the cards
+ * that would come back with it, and — one hop deeper — the entries its group
+ * owns, which restore separately.
+ *
+ * `pathPrefix` is what makes a nested result actionable. An entry buried inside
+ * an archived subtree is named by the chain of entries above it, not by its own
+ * id alone, and a result carrying only the id was silently unrestorable.
+ */
 function collectArchived(
   entries: SearchEntry[],
   archives: ArchivedNode[],
   archiveParentId: NodeId,
   depth: number,
   inheritedPreset: ColorPreset,
-  maxDepth: number
+  maxDepth: number,
+  pathPrefix: NodeId[]
 ): void {
   for (const archived of archives) {
-    const ownId = archived.data.colorPresetId
-    const resolvedPreset = (ownId && ownId !== 'inherit' && COLOR_PRESET_MAP[ownId])
-      ? COLOR_PRESET_MAP[ownId]!
-      : inheritedPreset
+    const resolvedPreset = presetFor(archived.data, inheritedPreset)
+    const path = [...pathPrefix, archived.data.id]
+    const restoreCount = groupSize(archived)
 
     entries.push({
       data: archived.data,
@@ -140,16 +179,71 @@ function collectArchived(
       depth,
       resolvedPreset,
       ancestors: [], // filled in by buildSearchableEntries post-loop
+      restorePath: path,
+      restoreCount,
     })
-    if (depth < maxDepth) {
-      collectArchived(entries, archived.data.archivedChildren, archiveParentId, depth + 1, resolvedPreset, maxDepth)
-    }
+    if (depth >= maxDepth) continue
+
+    collectGroupMembers(
+      entries, archived.descendants ?? [], depth + 1, resolvedPreset,
+      { archiveParentId, archivedAt: archived.archivedAt, path, restoreCount, maxDepth }
+    )
+    collectArchived(entries, archived.data.archivedChildren, archiveParentId, depth + 1, resolvedPreset, maxDepth, path)
   }
+}
+
+/** What a restore of `ctx.path` would do, shared by every member of that group. */
+interface GroupContext {
+  archiveParentId: NodeId
+  archivedAt: string
+  path: NodeId[]
+  restoreCount: number
+  maxDepth: number
+}
+
+/**
+ * The cards inside an archived subtree. Each is findable in its own right but
+ * restores through the entry that holds it, so they all carry that entry's
+ * path and count.
+ */
+function collectGroupMembers(
+  entries: SearchEntry[],
+  members: ArchivedDescendant[],
+  depth: number,
+  inheritedPreset: ColorPreset,
+  ctx: GroupContext
+): void {
+  for (const member of members) {
+    const resolvedPreset = presetFor(member.data, inheritedPreset)
+    entries.push({
+      data: member.data,
+      isActive: false,
+      archivedAt: ctx.archivedAt,
+      archiveParentId: ctx.archiveParentId,
+      depth,
+      resolvedPreset,
+      ancestors: [],
+      restorePath: ctx.path,
+      restoreCount: ctx.restoreCount,
+      isGroupMember: true,
+    })
+    if (depth >= ctx.maxDepth) continue
+    collectGroupMembers(entries, member.descendants, depth + 1, resolvedPreset, ctx)
+    // A member can hold archives of its own, and those restore on their own.
+    collectArchived(entries, member.data.archivedChildren, ctx.archiveParentId, depth + 1, resolvedPreset, ctx.maxDepth, ctx.path)
+  }
+}
+
+/** A node the ancestor walk can reach: live, archived, or a member of an archived subtree. */
+interface LookupEntry {
+  data: NodeData
+  isLive: boolean
+  groupRootId?: NodeId
 }
 
 function buildAncestorChain(
   startParentId: string,
-  lookup: Map<string, { data: NodeData; isLive: boolean }>
+  lookup: Map<string, LookupEntry>
 ): AncestorEntry[] {
   const chain: AncestorEntry[] = []
   let currentId = startParentId
@@ -158,7 +252,7 @@ function buildAncestorChain(
     visited.add(currentId)
     const entry = lookup.get(currentId)
     if (!entry) break
-    chain.push({ data: entry.data, isLive: entry.isLive })
+    chain.push({ data: entry.data, isLive: entry.isLive, groupRootId: entry.groupRootId })
     currentId = entry.data.parentId
   }
   chain.reverse() // root-to-parent order

@@ -13,8 +13,6 @@ interface RootNodeProps {
   selected: boolean
   onClick: () => void
   archivedChildren: ArchivedNode[]
-  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   onReparentTarget?: (id: NodeId) => void
@@ -33,7 +31,7 @@ interface RootNodeProps {
  */
 const HIDDEN_ACTIONS_HEIGHT = 28
 
-export function RootNode({ focused, selected, onClick, archivedChildren, onUnarchive, onArchiveDelete, onOpenArchiveSearch, onAddNode, onReparentTarget }: RootNodeProps) {
+export function RootNode({ focused, selected, onClick, archivedChildren, onOpenArchiveSearch, onAddNode, onReparentTarget }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
   const visualSize = ROOT_DISC_RADIUS * 2
   const { Component: RootNodeVisual } = useFacet('rootNode')
@@ -65,8 +63,6 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onUnarc
       archivedChildren={archivedChildren}
       onClose={noop}
       onColorChange={noop}
-      onUnarchive={onUnarchive}
-      onArchiveDelete={onArchiveDelete}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onAddNode={onAddNode}
       onMouseDown={handleMouseDown}

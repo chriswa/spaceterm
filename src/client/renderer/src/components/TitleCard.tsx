@@ -28,8 +28,6 @@ interface TitleCardProps {
   onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onTextChange: (id: NodeId, text: string) => void
   onColorChange: (id: NodeId, color: string) => void
-  onUnarchive: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
@@ -43,7 +41,7 @@ interface TitleCardProps {
 export function TitleCard({
   id, x, y, zIndex, zoom, text, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onTextChange, onColorChange,
-  onUnarchive, onArchiveDelete, onOpenArchiveSearch, onNodeReady,
+  onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: TitleCardProps) {
   const preset = resolvedPreset
@@ -182,8 +180,6 @@ export function TitleCard({
       archivedChildren={archivedChildren}
       onClose={onClose}
       onColorChange={onColorChange}
-      onUnarchive={onUnarchive}
-      onArchiveDelete={onArchiveDelete}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}

@@ -357,12 +357,12 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'node-archive', nodeId })
   }
 
-  async nodeUnarchive(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'node-unarchive', parentNodeId, archivedNodeId })
+  async nodeUnarchive(parentNodeId: NodeId, path: NodeId[]): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-unarchive', parentNodeId, path })
   }
 
-  async nodeArchiveDelete(parentNodeId: NodeId, archivedNodeId: NodeId): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'node-archive-delete', parentNodeId, archivedNodeId })
+  async nodeArchiveDelete(parentNodeId: NodeId, path: NodeId[]): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-archive-delete', parentNodeId, path })
   }
 
   async undoPush(entry: import('../../shared/undo-types').UndoEntry): Promise<ServerMessage> {

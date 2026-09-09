@@ -244,3 +244,25 @@ describe('migration is idempotent', () => {
     expect(twice.state).toEqual(once.state)
   })
 })
+
+describe('migration 2 → 3: archive entries carrying a live subtree', () => {
+  it('leaves a v2 document alone apart from the version stamp', () => {
+    const v2 = {
+      version: 2,
+      nextZIndex: 1,
+      nodes: {},
+      rootArchivedChildren: [
+        { archivedAt: '2026-01-01T00:00:00.000Z', data: { id: 'a', type: 'title', parentId: 'root', x: 0, y: 0, zIndex: 0, text: 'a', archivedChildren: [] } }
+      ],
+      undoBuffer: [],
+      undoCursor: 0,
+      savedViewports: {}
+    }
+
+    const result = migrate(v2)
+    if (result.status !== 'ok') throw new Error('expected ok')
+
+    expect(result.state.version).toBe(3)
+    expect(result.state.rootArchivedChildren).toEqual(v2.rootArchivedChildren)
+  })
+})

@@ -682,6 +682,87 @@ html, body, #root {
 
 .agent-selector__key { width: 20px; }
 
+/* Archive confirmation — the gate in front of archiving a whole subtree */
+.archive-confirm {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 9001;
+  width: 320px;
+  transform: translate(-50%, -50%);
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.archive-confirm__header {
+  padding: 12px 14px 0;
+  color: #cdd6f4;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.archive-confirm__body {
+  margin: 6px 0 0;
+  padding: 0 14px;
+  color: #a6adc8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.archive-confirm__body strong {
+  color: #cdd6f4;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.archive-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px;
+}
+
+.archive-confirm__button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 1px solid #585b70;
+  border-radius: 6px;
+  background: transparent;
+  color: #cdd6f4;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.archive-confirm__button:hover { background: rgba(88, 91, 112, 0.4); }
+
+.archive-confirm__button--primary {
+  border-color: #f38ba8;
+  color: #f38ba8;
+}
+
+.archive-confirm__button--primary:hover { background: rgba(243, 139, 168, 0.16); }
+
+.archive-confirm__button:focus-visible {
+  outline: 2px solid #89b4fa;
+  outline-offset: 1px;
+}
+
+.archive-confirm__button kbd {
+  border: 1px solid #585b70;
+  border-radius: 4px;
+  color: #a6adc8;
+  font: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  padding: 0 4px;
+}
+
 /* Peer camera viewport rectangles */
 .peer-camera-rect {
   border: calc(1px / var(--camera-zoom, 1)) solid rgba(255, 255, 255, 0.5);
@@ -959,16 +1040,9 @@ html, body, #root {
   justify-content: center;
 }
 
-.node-titlebar__close:hover:not(.node-titlebar__close--disabled) {
+.node-titlebar__close:hover {
   background: #181825;
   color: #cdd6f4 !important;
-}
-
-/* Greyed out when the node has child nodes — archiving is leaf-only.
-   Still clickable so the click gives shake feedback rather than nothing. */
-.node-titlebar__close--disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 .terminal-card__body {
@@ -2741,6 +2815,32 @@ html, body, #root {
   gap: 2px;
 }
 
+/* Ancestors archived together as one subtree read as one boxed run. */
+.search-modal__breadcrumb-item--grouped {
+  border-top: 1px solid #6c7086;
+  border-bottom: 1px solid #6c7086;
+  padding: 1px 1px;
+}
+
+.search-modal__breadcrumb-item--group-start {
+  border-left: 1px solid #6c7086;
+  border-top-left-radius: 5px;
+  border-bottom-left-radius: 5px;
+  padding-left: 3px;
+}
+
+.search-modal__breadcrumb-item--group-end {
+  border-right: 1px solid #6c7086;
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+  padding-right: 3px;
+  margin-right: 2px;
+}
+
+.search-modal__card-meta { display: flex; gap: 8px; }
+
+.search-modal__card-restores { color: #a6adc8; }
+
 .search-modal__breadcrumb-chevron {
   font-size: 10px;
   color: #585b70;
@@ -3064,7 +3164,7 @@ html, body, #root {
   position: relative;
 }
 
-.floating-toolbar .node-titlebar__close:hover:not(.node-titlebar__close--disabled),
+.floating-toolbar .node-titlebar__close:hover,
 .floating-toolbar .node-titlebar__color-btn:hover,
 .floating-toolbar .node-titlebar__archive-btn:hover:not(:disabled),
 .floating-toolbar .node-titlebar__sessions-btn:hover:not(:disabled),

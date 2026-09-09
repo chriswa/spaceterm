@@ -41,10 +41,22 @@ interface SearchModalProps {
   resolvedPresets: Record<string, ColorPreset>
   onDismiss: () => void
   onNavigateToNode: (nodeId: NodeId) => void
-  onReviveNode: (archiveParentId: NodeId, archivedNodeId: NodeId) => void
-  onArchiveDelete?: (parentNodeId: NodeId, archivedNodeId: NodeId) => void
+  /**
+   * Restore an archived result. `path` names the entry to restore — which is
+   * not the clicked card when that card was swept into a subtree — and
+   * `focusNodeId` is the card the user actually picked.
+   */
+  onReviveNode: (archiveParentId: NodeId, path: NodeId[], focusNodeId: NodeId) => void
+  onArchiveDelete?: (parentNodeId: NodeId, path: NodeId[]) => void
 }
 
+/**
+ * How many archives this card holds, at any depth.
+ *
+ * Only what the card itself holds. An archive owned by a card that was swept
+ * into a subtree belongs to that card's own row, which search lists separately
+ * — counting it here too would report it twice.
+ */
 function countNestedArchives(data: SearchEntry['data']): number {
   let total = data.archivedChildren.length
   for (const child of data.archivedChildren) {
@@ -160,15 +172,15 @@ export function SearchModal({ visible, mode, resolvedPresets, onDismiss, onNavig
     if (r.sessionLabel) return
     if (r.entry.isActive) {
       onNavigateToNode(r.entry.data.id)
-    } else if (r.entry.archiveParentId) {
-      onReviveNode(r.entry.archiveParentId, r.entry.data.id)
+    } else if (r.entry.archiveParentId && r.entry.restorePath) {
+      onReviveNode(r.entry.archiveParentId, r.entry.restorePath, r.entry.data.id)
     }
   }, [onNavigateToNode, onReviveNode])
 
   const handleDeleteClick = useCallback((e: React.MouseEvent, r: SearchResult) => {
     e.stopPropagation()
-    if (r.entry.archiveParentId && onArchiveDelete) {
-      onArchiveDelete(r.entry.archiveParentId, r.entry.data.id)
+    if (r.entry.archiveParentId && r.entry.restorePath && onArchiveDelete) {
+      onArchiveDelete(r.entry.archiveParentId, r.entry.restorePath)
     }
   }, [onArchiveDelete])
 
@@ -274,6 +286,7 @@ export function SearchModal({ visible, mode, resolvedPresets, onDismiss, onNavig
               {visibleResults.map((r, localIndex) => {
                 const globalIndex = startIdx + localIndex
                 const nestedCount = countNestedArchives(r.entry.data)
+                const restoreCount = r.entry.restoreCount ?? 1
                 const isActive = r.entry.isActive
                 const isSession = !!r.sessionLabel
                 const iconColor = isActive ? r.entry.resolvedPreset.titleBarBg : '#585b70'
@@ -298,18 +311,29 @@ export function SearchModal({ visible, mode, resolvedPresets, onDismiss, onNavig
                               {rootIcon}
                             </span>
                             <span className="search-modal__breadcrumb-chevron">&rsaquo;</span>
-                            {r.entry.ancestors.map((ancestor) => (
-                              <span key={ancestor.data.id} className="search-modal__breadcrumb-item">
-                                <span
-                                  className={`search-modal__breadcrumb-icon${!ancestor.isLive ? ' search-modal__breadcrumb-icon--archived' : ''}`}
-                                  data-tooltip={nodeDisplayTitle(ancestor.data) + (!ancestor.isLive ? ' (Archived)' : '')}
-                                  onClick={(e) => { e.stopPropagation(); if (ancestor.isLive) onNavigateToNode(ancestor.data.id) }}
-                                >
-                                  {typeIcon(ancestor.data, 14)}
+                            {r.entry.ancestors.map((ancestor, i) => {
+                              // Ancestors archived together as one subtree are
+                              // boxed, so it reads as a unit that comes back as
+                              // a unit rather than as separate archived cards.
+                              const group = ancestor.groupRootId
+                              const prev = r.entry.ancestors[i - 1]?.groupRootId
+                              const next = r.entry.ancestors[i + 1]?.groupRootId
+                              const groupClass = group
+                                ? ` search-modal__breadcrumb-item--grouped${group !== prev ? ' search-modal__breadcrumb-item--group-start' : ''}${group !== next ? ' search-modal__breadcrumb-item--group-end' : ''}`
+                                : ''
+                              return (
+                                <span key={ancestor.data.id} className={`search-modal__breadcrumb-item${groupClass}`}>
+                                  <span
+                                    className={`search-modal__breadcrumb-icon${!ancestor.isLive ? ' search-modal__breadcrumb-icon--archived' : ''}`}
+                                    data-tooltip={nodeDisplayTitle(ancestor.data) + (!ancestor.isLive ? ' (Archived)' : '')}
+                                    onClick={(e) => { e.stopPropagation(); if (ancestor.isLive) onNavigateToNode(ancestor.data.id) }}
+                                  >
+                                    {typeIcon(ancestor.data, 14)}
+                                  </span>
+                                  {group !== next && <span className="search-modal__breadcrumb-chevron">&rsaquo;</span>}
                                 </span>
-                                <span className="search-modal__breadcrumb-chevron">&rsaquo;</span>
-                              </span>
-                            ))}
+                              )
+                            })}
                           </>
                         )}
                       </div>
@@ -333,9 +357,14 @@ export function SearchModal({ visible, mode, resolvedPresets, onDismiss, onNavig
                           </button>
                         )}
                       </div>
-                      {nestedCount > 0 && (
+                      {(restoreCount > 1 || nestedCount > 0) && (
                         <div className="search-modal__card-meta">
-                          {nestedCount} archived
+                          {restoreCount > 1 && (
+                            <span className="search-modal__card-restores">
+                              Restores {restoreCount} cards{r.entry.isGroupMember ? ' — this one is inside that subtree' : ''}
+                            </span>
+                          )}
+                          {nestedCount > 0 && <span>{nestedCount} archived</span>}
                         </div>
                       )}
                     </div>

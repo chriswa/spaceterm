@@ -137,14 +137,16 @@ Three corollaries worth stating, all learned the hard way:
   49 client message types — plus socket setup plus startup reconciliation.
   Those are three files.
 
-  The switch is not uniformly bad: 30 of the 49 cases are under 20 lines and
-  read fine as a router. The value is in the nine that are not
-  (`terminal-restart` 93, `fork-session` 85, `node-unarchive` 68, `attach` 57,
-  `directory-wt-spawn` 52). Those are operations, not routing, and the
-  fork/spawn ones now have `respawnTerminal` and `NewTerminalSpec` to build on.
-  A `terminal-operations.ts` holding create/fork/restart/reincarnate/unarchive
-  would take ~350 lines out and be the first testable coverage of the terminal
-  lifecycle above the session-manager level. **Note the shape of the problem:**
+  The switch is not uniformly bad: most cases are under 20 lines and read fine
+  as a router. The value is in the ones that are not (`terminal-restart` 93,
+  `fork-session` 85, `attach` 57, `directory-wt-spawn` 52). Those are
+  operations, not routing, and the fork/spawn ones now have `respawnTerminal`
+  and `NewTerminalSpec` to build on. A `terminal-operations.ts` holding
+  create/fork/restart/reincarnate/unarchive would take ~300 lines out and be
+  the first testable coverage of the terminal lifecycle above the
+  session-manager level. Unarchive has already moved most of the way out:
+  `restoreArchiveEntry` and `releaseNodeResources` are the two halves of it,
+  and both are file-local functions waiting for that module. **Note the shape of the problem:**
   these operations need the requesting client (to reply, to auto-attach), so
   the extraction needs a small reply abstraction the way `ScriptApi` needed
   `ScriptConnection`. That is the design question to answer first.
