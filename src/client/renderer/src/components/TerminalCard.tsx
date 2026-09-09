@@ -27,7 +27,7 @@ import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScr
 import crabIcon from '../assets/crab.png'
 import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
-import { deriveToolbarIndicator, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
+import { deriveToolbarIndicator, unreadIsLegible, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
@@ -1109,6 +1109,27 @@ export function TerminalCard({
   useUnreadGlow(cardRef, CRAB_COLORS[crabAppearance.color], cameraRef, crabAppearance.unviewed && !focused && !anyToolbarHover && !rtsSelectActive)
   useToolbarHoverGlow(cardRef, x, y, cameraRef, toolbarHovered && !focused && !rtsSelectActive)
 
+  // The agent mark floats in the empty band above the card, so it is the one
+  // piece of card chrome a click can reach without also meaning "focus this
+  // node" — every other click path on a card clears the unread flag on the way
+  // in. That makes it the only place the flag can be set by hand.
+  //
+  // The band always swallows its clicks, even when the toggle is a no-op:
+  // falling through to the background would deselect or start a pan, and
+  // "nothing happened" is a better answer to a mis-click on an icon than
+  // "your selection is gone".
+  const unreadToggleable = unreadIsLegible(claudeState, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0, agentType)
+  const swallowCrabMouseDown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+  }, [])
+  const handleCrabBehindClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!unreadToggleable) return
+    window.api.node.setClaudeStatusUnread(sessionId, !(claudeStatusUnread ?? false))
+  }, [unreadToggleable, sessionId, claudeStatusUnread])
+
   const agentLabel = agentType === 'cursor' ? 'Cursor' : agentType === 'codex' ? 'Codex' : 'Claude'
   const agentIconUrl =
     crabAppearance.kind === 'cursor' ? cursorAgentIcon
@@ -1229,7 +1250,10 @@ export function TerminalCard({
         crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex' ? (
           <div
             ref={behindCrabRef}
-            className={`terminal-card__crab-behind${agentBehindClass}`}
+            className={`terminal-card__crab-behind${agentBehindClass}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}`}
+            title={unreadToggleable ? (claudeStatusUnread ? 'Mark read' : 'Mark unread') : undefined}
+            onMouseDown={swallowCrabMouseDown}
+            onClick={handleCrabBehindClick}
             style={{
               maskImage: `url(${agentIconUrl})`,
               WebkitMaskImage: `url(${agentIconUrl})`,

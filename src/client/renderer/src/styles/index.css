@@ -2453,13 +2453,29 @@ html, body, #root {
   height: calc(50px * var(--label-node-scale));
   aspect-ratio: 128 / 85;
   z-index: -1;
-  pointer-events: none;
+  /* The one clickable piece of card chrome outside the card box: a click here
+     hand-toggles the unread flag (see TerminalCard). z-index keeps it behind
+     the card, so the part that overlaps the card's top edge still belongs to
+     the card. Clicks are swallowed in every state, so the band never falls
+     through to a background pan or deselect. */
+  pointer-events: auto;
+  cursor: default;
   mask-size: contain;
   mask-repeat: no-repeat;
   mask-position: center;
   -webkit-mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-position: center;
+}
+
+/* Only offered as a target in the states where the unread flag is visible;
+   elsewhere the band still eats the click but says nothing about it. */
+.terminal-card__crab-behind--toggles-unread {
+  cursor: pointer;
+}
+
+.terminal-card__crab-behind--toggles-unread:hover {
+  filter: brightness(1.35);
 }
 
 /* Cursor/Codex marks are square and read smaller than the wide crab mark at the same height. */

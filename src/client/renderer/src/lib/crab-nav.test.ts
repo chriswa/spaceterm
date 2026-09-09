@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveToolbarIndicator, ccStatusLabel } from './crab-nav'
+import { deriveToolbarIndicator, unreadIsLegible, ccStatusLabel } from './crab-nav'
 
 /**
  * deriveToolbarIndicator maps a surface's agent state onto the toolbar crab's
@@ -134,6 +134,38 @@ describe('deriveToolbarIndicator', () => {
     it('does not mark a read stopped surface without history as unviewed', () => {
       expect(derive('stopped', false, false, true).unviewed).toBe(false)
     })
+  })
+})
+
+/**
+ * The crab mark floating above a card is clickable, and a click hand-toggles
+ * the unread flag. It only offers itself in the states where the flag actually
+ * shows, so the answer here must track deriveToolbarIndicator exactly.
+ */
+describe('unreadIsLegible', () => {
+  it('is legible in the attention states', () => {
+    for (const state of ['stopped', 'waiting_permission', 'waiting_question', 'waiting_plan', 'potential_error']) {
+      expect(unreadIsLegible(state, false, true, 'claude'), state).toBe(true)
+    }
+  })
+
+  it('is illegible while the agent is working', () => {
+    expect(unreadIsLegible('working', false, true, 'claude')).toBe(false)
+    expect(unreadIsLegible('working_background', false, true, 'claude')).toBe(false)
+  })
+
+  it('is illegible while asleep, whatever the state underneath', () => {
+    expect(unreadIsLegible('stopped', true, true, 'claude')).toBe(false)
+    expect(unreadIsLegible('waiting_permission', true, true, 'claude')).toBe(false)
+  })
+
+  it('is legible on a plain terminal, which has no state of its own', () => {
+    expect(unreadIsLegible(undefined, false, false)).toBe(true)
+  })
+
+  it('is illegible on a fresh agent surface with no session history', () => {
+    // Grey either way until the first session lands — nothing to mark unread.
+    expect(unreadIsLegible(undefined, false, false, 'claude')).toBe(false)
   })
 })
 

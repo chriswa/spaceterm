@@ -85,6 +85,29 @@ export function deriveToolbarIndicator(
   return { ...base, asleep: false }
 }
 
+/**
+ * Whether `claudeStatusUnread` is legible on this surface's indicator.
+ *
+ * Several states paint their own colour and force `unviewed` false —
+ * working, working_background, asleep — so the flag is invisible while they
+ * hold. Toggling it there changes nothing the user can see and then
+ * resurfaces, as a surprise, once the state settles.
+ *
+ * Rather than restate the list (which would drift the moment a new state is
+ * added above), this asks `deriveToolbarIndicator` directly: flip the flag and
+ * see whether anything about the indicator moves.
+ */
+export function unreadIsLegible(
+  claudeState: string | undefined,
+  claudeStatusAsleep: boolean,
+  hasSessionHistory: boolean,
+  agentType?: AgentType
+): boolean {
+  const on = deriveToolbarIndicator(claudeState, true, claudeStatusAsleep, hasSessionHistory, agentType)
+  const off = deriveToolbarIndicator(claudeState, false, claudeStatusAsleep, hasSessionHistory, agentType)
+  return on.unviewed !== off.unviewed || on.color !== off.color
+}
+
 function deriveToolbarIndicatorInner(
   claudeState: string | undefined,
   claudeStatusUnread: boolean,
