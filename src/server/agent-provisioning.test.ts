@@ -1,11 +1,16 @@
 import { describe, it, expect } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import {
   mergeCursorStatusLine,
   mergeCursorHooks,
   mergeCodexHooks,
   isCodexHandlerCommand,
+  installCodexSkills,
   CURSOR_HOOK_EVENTS,
-  CODEX_HOOK_EVENTS
+  CODEX_HOOK_EVENTS,
+  CODEX_SKILLS
 } from './agent-provisioning'
 
 const HANDLER = '/home/u/.spaceterm/cursor-agent-plugin/scripts/hook-handler.sh'
@@ -223,5 +228,55 @@ describe('the two agents do not claim each other entries', () => {
       hooks: Record<string, unknown[]>
     }
     expect(merged.hooks.stop).toContainEqual(codexEntry)
+  })
+})
+
+// `installCodexSkills` writes into the user's own Codex skill root, so the
+// invariant is the same one the merges above hold: additive. It owns one
+// subdirectory per skill and nothing else in there.
+describe('installCodexSkills', () => {
+  function tmpdirs(): { codexHome: string; srcRoot: string } {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'st-codex-skills-'))
+    const srcRoot = path.join(base, 'src')
+    for (const skill of CODEX_SKILLS) {
+      fs.mkdirSync(path.join(srcRoot, skill), { recursive: true })
+      fs.writeFileSync(path.join(srcRoot, skill, 'SKILL.md'), `# ${skill}\n`)
+    }
+    return { codexHome: path.join(base, 'codex'), srcRoot }
+  }
+
+  it('installs every skill under <codexHome>/skills/<name>/', () => {
+    const { codexHome, srcRoot } = tmpdirs()
+    const installed = installCodexSkills(codexHome, srcRoot)
+
+    expect(installed).toHaveLength(CODEX_SKILLS.length)
+    for (const skill of CODEX_SKILLS) {
+      const md = path.join(codexHome, 'skills', skill, 'SKILL.md')
+      expect(fs.readFileSync(md, 'utf8')).toBe(`# ${skill}\n`)
+    }
+  })
+
+  it('leaves the user\'s other skills alone', () => {
+    const { codexHome, srcRoot } = tmpdirs()
+    const mine = path.join(codexHome, 'skills', 'my-own-skill')
+    fs.mkdirSync(mine, { recursive: true })
+    fs.writeFileSync(path.join(mine, 'SKILL.md'), 'do not touch\n')
+
+    installCodexSkills(codexHome, srcRoot)
+
+    expect(fs.readFileSync(path.join(mine, 'SKILL.md'), 'utf8')).toBe('do not touch\n')
+  })
+
+  it('replaces its own skill contents rather than accumulating stale files', () => {
+    const { codexHome, srcRoot } = tmpdirs()
+    const skill = CODEX_SKILLS[0]
+    installCodexSkills(codexHome, srcRoot)
+    const stale = path.join(codexHome, 'skills', skill, 'stale-reference.md')
+    fs.writeFileSync(stale, 'from an older version\n')
+
+    installCodexSkills(codexHome, srcRoot)
+
+    expect(fs.existsSync(stale)).toBe(false)
+    expect(fs.existsSync(path.join(codexHome, 'skills', skill, 'SKILL.md'))).toBe(true)
   })
 })

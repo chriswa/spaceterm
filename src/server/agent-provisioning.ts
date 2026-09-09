@@ -290,8 +290,43 @@ export function ensureCodexUserHooks(handlerPath: string): void {
 }
 
 /**
+ * Skill directories under `src/codex-agent-plugin/skills/` that get installed
+ * into the user's Codex skill root.
+ *
+ * Codex lazy-loads MCP tools behind tool search, so a tool the user names in
+ * their prompt is not in the model's initial tool set and it answers without
+ * ever looking. A skill's *description* is in that initial context, so this is
+ * how a Spaceterm MCP tool becomes discoverable on a Codex surface. Codex reads
+ * skills only from `$CODEX_HOME/skills`, which is why these land in a directory
+ * Spaceterm does not own — one subdirectory each, never the root itself.
+ */
+export const CODEX_SKILLS = ['spaceterm-tts'] as const
+
+/**
+ * Copy `CODEX_SKILLS` into `<codexHome>/skills/<name>/`, replacing the contents
+ * of each Spaceterm-owned skill directory and leaving every sibling alone.
+ *
+ * `codexHome` and `srcRoot` are parameters so a test can point the whole thing
+ * at a tmpdir instead of the caller's real `~/.codex`.
+ */
+export function installCodexSkills(
+  codexHome = path.join(homedir(), '.codex'),
+  srcRoot = path.join(PROJECT_ROOT, 'src/codex-agent-plugin/skills'),
+): string[] {
+  const installed: string[] = []
+  for (const skill of CODEX_SKILLS) {
+    const src = path.join(srcRoot, skill)
+    const dest = path.join(codexHome, 'skills', skill)
+    fs.rmSync(dest, { recursive: true, force: true })
+    fs.cpSync(src, dest, { recursive: true })
+    installed.push(dest)
+  }
+  return installed
+}
+
+/**
  * Materialize Codex hook handler under ~/.spaceterm and sync user hooks +
- * Spaceterm-owned profile (MCP) under ~/.codex/.
+ * Spaceterm-owned profile (MCP) and skills under ~/.codex/.
  */
 export function prepareCodexAgentDir(): string {
   const srcRoot = path.join(PROJECT_ROOT, 'src/codex-agent-plugin')
@@ -318,6 +353,10 @@ export function prepareCodexAgentDir(): string {
   ].join('\n')
   fs.writeFileSync(profilePath, profileBody)
   serverLog(`[codex-mcp] Wrote Spaceterm profile ${profilePath}`)
+
+  for (const skillDir of installCodexSkills()) {
+    serverLog(`[codex-skills] Installed ${skillDir}`)
+  }
 
   return destRoot
 }

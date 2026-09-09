@@ -202,9 +202,12 @@ function codexDriver(provisioning: AgentProvisioning): AgentDriver {
       const shared = [
         '--dangerously-bypass-hook-trust',
         '--dangerously-bypass-approvals-and-sandbox',
-        // Spaceterm's MCP tools are few and surface-specific. Keep them in the
-        // initial tool set so an agent can invoke them directly instead of first
-        // discovering them through ToolSearch.
+        // Asks Codex to keep Spaceterm's MCP tools in the initial tool set
+        // rather than behind tool search. `codex features list` reports this
+        // feature as stage `removed` with effective state `true` as of 0.153.4,
+        // so the flag is accepted and ignored: MCP tools are always deferred,
+        // and a model asked to use one answers "no such tool" without searching.
+        // `CODEX_SKILLS` in agent-provisioning.ts is what actually surfaces them.
         '--disable', 'tool_search_always_defer_mcp_tools',
         '-p', 'spaceterm',
       ]
