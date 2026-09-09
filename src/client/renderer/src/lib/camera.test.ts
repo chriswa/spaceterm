@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { cameraToFitBounds, focusZoomCeiling } from './camera'
+import { cameraToFitBounds, focusZoomCeiling, wheelZoomFactor } from './camera'
 import { CARD_TYPES } from '../../../../shared/card-types'
-import { MAX_ZOOM } from './constants'
+import { MAX_ZOOM, WHEEL_ZOOM_SENSITIVITY, WHEEL_ZOOM_MAX_RATE, WHEEL_ZOOM_RATE_WINDOW_MS } from './constants'
 
 describe('focusZoomCeiling', () => {
   it('caps label-ish cards well short of filling the viewport', () => {
@@ -56,5 +56,53 @@ describe('cameraToFitBounds honours the focus ceiling', () => {
     const cam = cameraToFitBounds(wide, 1600, 1000, 0, focusZoomCeiling('title'))
     expect(cam.z).toBeLessThan(0.15)
     expect(cam.z).toBeCloseTo(1600 / 40000)
+  })
+})
+
+describe('wheelZoomFactor', () => {
+  const FULL_WINDOW_STEP = Math.exp(WHEEL_ZOOM_MAX_RATE * WHEEL_ZOOM_RATE_WINDOW_MS / 1000)
+
+  it('leaves a trackpad pinch alone', () => {
+    // Single-digit deltas at ~60Hz — the cap should be invisible here, or
+    // pinch-to-zoom would feel throttled on hardware that was never the problem.
+    for (const delta of [1, 3, 6]) {
+      expect(wheelZoomFactor(delta, 16), String(delta))
+        .toBeCloseTo(Math.exp(-delta * WHEEL_ZOOM_SENSITIVITY), 6)
+    }
+  })
+
+  it('caps one oversized notch from a fast mouse', () => {
+    // A mouse that reports 500 in a single event asks for e^8 ≈ 3000x.
+    const zoomOut = wheelZoomFactor(500, 16)
+    const zoomIn = wheelZoomFactor(-500, 16)
+    expect(zoomIn).toBeLessThanOrEqual(FULL_WINDOW_STEP)
+    expect(zoomOut).toBeGreaterThanOrEqual(1 / FULL_WINDOW_STEP)
+  })
+
+  it('stays positive and directional no matter how large the delta', () => {
+    // The linear form this replaced changed sign past delta ≈ 62 and threw the
+    // camera to MIN_ZOOM on one notch.
+    expect(wheelZoomFactor(100000, 1000)).toBeGreaterThan(0)
+    expect(wheelZoomFactor(100000, 1000)).toBeLessThan(1)
+    expect(wheelZoomFactor(-100000, 1000)).toBeGreaterThan(1)
+    expect(wheelZoomFactor(0, 1000)).toBe(1)
+  })
+
+  it('spends the same budget whether the events arrive in a flood or one at a time', () => {
+    // 20 saturating events across 50ms must not out-zoom a single event that
+    // waited the whole window.
+    let flood = 1
+    for (let i = 0; i < 20; i++) flood *= wheelZoomFactor(-500, WHEEL_ZOOM_RATE_WINDOW_MS / 20)
+    expect(flood).toBeCloseTo(FULL_WINDOW_STEP, 6)
+  })
+
+  it('does not bank budget across a long pause', () => {
+    // Idling for a second must not buy a 400x lurch on the next notch.
+    expect(wheelZoomFactor(-500, 5000)).toBeCloseTo(FULL_WINDOW_STEP, 6)
+    expect(wheelZoomFactor(-500, Infinity)).toBeCloseTo(FULL_WINDOW_STEP, 6)
+  })
+
+  it('is symmetric, so a capped scroll back up undoes a capped scroll down', () => {
+    expect(wheelZoomFactor(500, 20) * wheelZoomFactor(-500, 20)).toBeCloseTo(1, 6)
   })
 })

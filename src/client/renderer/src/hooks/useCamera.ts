@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraElastic, zoomCameraToElastic, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
+import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraToElastic, wheelZoomFactor, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
 import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 import { useCameraLockStore } from '../stores/cameraLockStore'
@@ -57,6 +57,10 @@ export function useCamera(
   const snapBackTimerRef = useRef<number>(0)
   const isSnapBackRef = useRef(false)
   const lastZoomPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  // Timestamp of the last wheel event that actually zoomed. Only the zoom
+  // branch updates it, so a trackpad pan immediately before a pinch doesn't
+  // eat the first step's rate budget.
+  const lastZoomWheelTimeRef = useRef(-Infinity)
 
   const onCameraEventRef = useRef(onCameraEvent)
   onCameraEventRef.current = onCameraEvent
@@ -273,7 +277,10 @@ export function useCamera(
       }
       const point = { x: e.clientX, y: e.clientY }
       const snapMax = focusedRef?.current ? ZOOM_SNAP_HIGH : ZOOM_SNAP_HIGH_UNFOCUSED
-      const next = zoomCameraElastic(cameraRef.current, point, e.deltaY * 4, snapMax)
+      const now = performance.now()
+      const factor = wheelZoomFactor(e.deltaY, now - lastZoomWheelTimeRef.current)
+      lastZoomWheelTimeRef.current = now
+      const next = zoomCameraToElastic(cameraRef.current, point, cameraRef.current.z * factor, snapMax)
       cameraRef.current = next
       targetRef.current = { ...next }
       applyToDOM(next)

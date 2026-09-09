@@ -75,6 +75,20 @@ export const ZOOM_SNAP_HIGH = 1.25
 export const ZOOM_SNAP_HIGH_UNFOCUSED = 1.0
 export const UNFOCUS_SNAP_ZOOM = 0.5
 export const ZOOM_SENSITIVITY = 0.004
+// Wheel/pinch zoom, in log-zoom units per unit of wheel delta: one event
+// multiplies zoom by e^(-deltaY * WHEEL_ZOOM_SENSITIVITY). A trackpad pinch
+// reports single-digit deltas at ~60Hz; one mouse notch reports 100+ at once,
+// and a fast-scrolling mouse reports several times that.
+export const WHEEL_ZOOM_SENSITIVITY = 0.016
+// Ceiling on how fast the wheel may zoom, in e-folds per second. The whole
+// [MIN_ZOOM, MAX_ZOOM] range is ln(400) ~= 6 e-folds, so this crosses it in
+// half a second of uninterrupted scrolling — fast enough that a trackpad pinch
+// never feels it, slow enough that a mouse notch can't fling the camera.
+export const WHEEL_ZOOM_MAX_RATE = 12
+// The gap since the previous zoom event is capped at this before it earns
+// budget, so the first event after a pause steps at most
+// WHEEL_ZOOM_MAX_RATE * this (~1.8x) rather than an unbounded amount.
+export const WHEEL_ZOOM_RATE_WINDOW_MS = 50
 // Exponent factor (per pixel) for right-button drag-to-zoom. Zoom scales as
 // e^(dragPixels * ZOOM_DRAG_SENSITIVITY), so this controls how many pixels of
 // drag double the zoom: ln(2)/0.0075 ≈ 92px per 2x.

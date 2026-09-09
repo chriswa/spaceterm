@@ -1,4 +1,4 @@
-import { MIN_ZOOM, MAX_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SENSITIVITY, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW, FOCUS_SPEED, FLY_TO_BASE_DURATION, FLY_TO_HALF_RANGE, FLY_TO_MAX_DURATION } from './constants'
+import { MIN_ZOOM, MAX_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SENSITIVITY, WHEEL_ZOOM_SENSITIVITY, WHEEL_ZOOM_MAX_RATE, WHEEL_ZOOM_RATE_WINDOW_MS, ZOOM_RUBBER_BAND_HIGH, ZOOM_RUBBER_BAND_LOW, FOCUS_SPEED, FLY_TO_BASE_DURATION, FLY_TO_HALF_RANGE, FLY_TO_MAX_DURATION } from './constants'
 import { CARD_TYPE_SPECS, type CardType } from '../../../../shared/card-types'
 
 /**
@@ -72,22 +72,32 @@ function elasticClamp(z: number, snapMin: number, snapMax: number): number {
   return Math.max(MIN_ZOOM, snapMin - ZOOM_RUBBER_BAND_LOW * Math.tanh(excess / ZOOM_RUBBER_BAND_LOW))
 }
 
-export function zoomCameraElastic(camera: Camera, screenPoint: Point, delta: number, snapMax = ZOOM_SNAP_HIGH): Camera {
-  const rawZ = camera.z - delta * ZOOM_SENSITIVITY * camera.z
-  const newZ = elasticClamp(rawZ, ZOOM_SNAP_LOW, snapMax)
-
-  // Keep the point under the cursor fixed
-  const canvasPoint = screenToCanvas(screenPoint, camera)
-  return {
-    x: screenPoint.x - canvasPoint.x * newZ,
-    y: screenPoint.y - canvasPoint.y * newZ,
-    z: newZ
-  }
+/**
+ * Zoom multiplier for one wheel event, rate-capped.
+ *
+ * Working in log space rather than scaling z linearly by the delta is what
+ * makes a huge delta merely fast instead of nonsensical: the old linear form
+ * changed sign once `delta * sensitivity` passed 1, so a single notch from a
+ * fast-scrolling mouse could push z through zero and slam into MIN_ZOOM.
+ *
+ * The cap is on rate, not on the individual step, because a fast mouse
+ * over-reports in both ways — a big delta per event *and* a flood of events.
+ * Each event may only spend the zoom budget accrued since the previous one
+ * (`msSinceLastZoom`), so 20 events in a frame together move the camera no
+ * further than one event would have. Pass `Infinity` for the first event of a
+ * gesture; the gap is capped at WHEEL_ZOOM_RATE_WINDOW_MS either way.
+ */
+export function wheelZoomFactor(deltaY: number, msSinceLastZoom: number): number {
+  const raw = -deltaY * WHEEL_ZOOM_SENSITIVITY
+  const gap = Math.min(Math.max(msSinceLastZoom, 0), WHEEL_ZOOM_RATE_WINDOW_MS)
+  const budget = WHEEL_ZOOM_MAX_RATE * (gap / 1000)
+  return Math.exp(Math.max(-budget, Math.min(budget, raw)))
 }
 
-// Like zoomCameraElastic, but sets zoom to an absolute target z (elastic
-// clamped) rather than applying an incremental delta. Used by drag-to-zoom,
-// where the total drag distance maps directly to a target zoom level.
+// Move the camera to an absolute target zoom (elastic clamped past the snap
+// range) while keeping the point under the cursor fixed. Every user-driven
+// zoom lands here: the wheel multiplies its current z by wheelZoomFactor(),
+// right-button drag maps total drag distance straight to a target zoom.
 export function zoomCameraToElastic(camera: Camera, screenPoint: Point, targetZ: number, snapMax = ZOOM_SNAP_HIGH): Camera {
   const newZ = elasticClamp(targetZ, ZOOM_SNAP_LOW, snapMax)
 
