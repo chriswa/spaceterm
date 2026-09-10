@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import type {
   ServerState,
+  MetaHostEntry,
   NodeData,
   NodeAlert,
   TerminalNodeData,
@@ -217,6 +218,22 @@ export class StateManager {
    * ever match a session id that will not come back.
    */
   private exitOverrides = new Map<PtySessionId, ExitOverride>()
+  /**
+   * Stacking order for generated cards, kept apart from `state.nextZIndex`.
+   *
+   * The persisted counter must not move because a card that only exists while
+   * the app is running was clicked. Starting high keeps generated cards above
+   * the arrangement they hang off, which is what you want from a panel you
+   * opened deliberately.
+   */
+  private nextEphemeralZIndex = 1
+  /**
+   * Told where a generated card was dragged to, so its owner can remember the
+   * position against what the card describes rather than against a node id that
+   * will be regenerated. Set by `AgentMetaManager`; absent in tests that do not
+   * exercise it, which is why the calls are optional.
+   */
+  onEphemeralMove?: (nodeId: NodeId, x: number, y: number) => void
 
   constructor(deps: StateManagerDeps, options: StateManagerOptions = {}) {
     this.onNodeUpdate = deps.onNodeUpdate
@@ -229,6 +246,10 @@ export class StateManager {
     // returns. Dead terminal processing is done by the caller via
     // processDeadTerminals().
     this.state = this.persister.load().state
+    // Hand-built fixtures and states written before v3 reach here without it.
+    // The migration covers the real load path; this covers the rest, so no
+    // caller has to remember that the map might be missing.
+    if (!this.state.metaHosts) this.state.metaHosts = {}
 
     // Scan all existing Claude terminals for cwd-mismatch alerts.
     // This catches mismatches that existed before the alert system was deployed
@@ -711,24 +732,36 @@ export class StateManager {
     node.x = x
     node.y = y
     this.onNodeUpdate(nodeId, { x, y })
+    // A generated card's position is remembered by its owner, keyed by what the
+    // card describes, not by a node id that will not exist next boot.
+    if (node.ephemeral) {
+      this.onEphemeralMove?.(nodeId, x, y)
+      return
+    }
     this.schedulePersist()
   }
 
   batchMoveNodes(moves: Array<{ nodeId: NodeId; x: number; y: number }>): void {
+    // Dragging a card drags its whole subtree, so this is the path a generated
+    // card takes on the single most ordinary gesture in the feature — the one
+    // place a per-call-site guard would have been forgotten.
+    let touchedReal = false
     for (const { nodeId, x, y } of moves) {
       const node = this.state.nodes[nodeId]
       if (node) {
         node.x = x
         node.y = y
         this.onNodeUpdate(nodeId, { x, y })
+        if (node.ephemeral) this.onEphemeralMove?.(nodeId, x, y)
+        else touchedReal = true
       }
     }
-    this.schedulePersist()
+    if (touchedReal) this.schedulePersist()
   }
 
   renameNode(nodeId: NodeId, name: string): void {
     const node = this.state.nodes[nodeId]
-    if (!node) return
+    if (!node || this.refuseEphemeral(node, 'rename')) return
     node.name = name || null
     this.onNodeUpdate(nodeId, { name: node.name })
     this.schedulePersist()
@@ -736,7 +769,7 @@ export class StateManager {
 
   setNodeColor(nodeId: NodeId, colorPresetId: string): void {
     const node = this.state.nodes[nodeId]
-    if (!node) return
+    if (!node || this.refuseEphemeral(node, 'setNodeColor')) return
     node.colorPresetId = colorPresetId
     this.onNodeUpdate(nodeId, { colorPresetId })
     this.schedulePersist()
@@ -756,6 +789,14 @@ export class StateManager {
   bringToFront(nodeId: NodeId): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
+    // `nextZIndex` is persisted, so raising a generated card would move a
+    // number on disk every time one was clicked — and would defeat the
+    // "enabling and disabling changes nothing" invariant the tests assert.
+    if (node.ephemeral) {
+      node.zIndex = this.nextEphemeralZIndex++
+      this.onNodeUpdate(nodeId, { zIndex: node.zIndex })
+      return
+    }
     node.zIndex = this.state.nextZIndex++
     node.lastFocusedAt = new Date().toISOString()
     this.onNodeUpdate(nodeId, { zIndex: node.zIndex, lastFocusedAt: node.lastFocusedAt })
@@ -764,7 +805,12 @@ export class StateManager {
 
   reparentNode(nodeId: NodeId, newParentId: NodeId): void {
     const node = this.state.nodes[nodeId]
-    if (!node) return
+    if (!node || this.refuseEphemeral(node, 'reparent')) return
+    // Also refuse the other direction: a real, persisted node hanging off a
+    // generated one would be orphaned the moment the card was reaped, and its
+    // parentId would already be on disk pointing at nothing.
+    const newParent = this.state.nodes[newParentId]
+    if (newParent && this.refuseEphemeral(newParent, 'reparent-onto')) return
     node.parentId = newParentId
     this.onNodeUpdate(nodeId, { parentId: newParentId })
     this.schedulePersist()
@@ -834,9 +880,91 @@ export class StateManager {
    * cannot guarantee within one tick, and {@link findArchivedNodeForFocus}
    * breaks ties on exactly that stamp.
    */
+  /**
+   * Refuse a persisting mutation against a generated card, and say so once.
+   *
+   * The single gate the ephemeral design rests on. An earlier draft of this
+   * feature guarded three hand-picked call sites; every leak found afterwards
+   * was a *generic* path over `state.nodes` that the list had missed — subtree
+   * drag, subtree archive, bring-to-front moving a persisted counter. One
+   * predicate consulted by every mutator is the difference between a rule and
+   * a habit.
+   *
+   * Returns true when the caller should stop.
+   */
+  private refuseEphemeral(node: NodeData, what: string): boolean {
+    if (!node.ephemeral) return false
+    serverLog(`[agent-meta] Refused ${what} on generated node ${node.id}`)
+    return true
+  }
+
+  /** Whether a node is a generated card rather than something the user made. */
+  isEphemeral(nodeId: NodeId): boolean {
+    return this.state.nodes[nodeId]?.ephemeral === true
+  }
+
+  /**
+   * Put a generated card on the canvas.
+   *
+   * Deliberately not one of the `create*` methods: it takes a caller-supplied
+   * id (generated cards use deterministic ids so focus, camera history and the
+   * renderer's expansion set survive a restart), draws its z from the
+   * in-memory counter, and never schedules a persist.
+   */
+  addEphemeralNode(node: NodeData): NodeData {
+    const placed = { ...node, ephemeral: true as const, zIndex: this.nextEphemeralZIndex++ }
+    this.state.nodes[placed.id] = placed
+    this.onNodeAdd(placed)
+    return placed
+  }
+
+  /** Update a generated card in place — its measured size, or its scan-derived fields. */
+  patchEphemeralNode(nodeId: NodeId, fields: Partial<NodeData>): void {
+    const node = this.state.nodes[nodeId]
+    if (!node?.ephemeral) return
+    Object.assign(node, fields)
+    this.onNodeUpdate(nodeId, fields)
+  }
+
+  /** Take a generated card off the canvas. No archive, no undo entry, no persist. */
+  removeEphemeralNode(nodeId: NodeId): void {
+    const node = this.state.nodes[nodeId]
+    if (!node?.ephemeral) return
+    delete this.state.nodes[nodeId]
+    this.onNodeRemove(nodeId)
+  }
+
+  /** Every generated card currently on the canvas, in insertion order. */
+  ephemeralNodeIds(): NodeId[] {
+    return Object.values(this.state.nodes)
+      .filter((node) => node.ephemeral)
+      .map((node) => node.id)
+  }
+
+  // --- Agent-meta host registry ---
+
+  getMetaHosts(): Record<string, MetaHostEntry> {
+    return this.state.metaHosts
+  }
+
+  getMetaHost(hostId: NodeId): MetaHostEntry | undefined {
+    return this.state.metaHosts[hostId]
+  }
+
+  setMetaHost(hostId: NodeId, entry: MetaHostEntry): void {
+    this.state.metaHosts[hostId] = entry
+    this.schedulePersist()
+  }
+
+  clearMetaHost(hostId: NodeId): void {
+    if (!(hostId in this.state.metaHosts)) return
+    delete this.state.metaHosts[hostId]
+    this.schedulePersist()
+  }
+
   archiveNode(nodeId: NodeId, now: number = Date.now()): void {
     const node = this.state.nodes[nodeId]
-    if (!node) return
+    if (!node || this.refuseEphemeral(node, 'archive')) return
     serverLog(`[archive] Archiving node ${nodeId.slice(0, 8)}`)
 
     const parentId = node.parentId
@@ -859,6 +987,10 @@ export class StateManager {
     // Reparent children to the archived node's parent
     for (const child of Object.values(this.state.nodes)) {
       if (child.parentId === nodeId) {
+        // Generated cards belong to the node that hosted them. Re-homing one
+        // onto the grandparent would leave a card describing a directory that
+        // is no longer anywhere above it; its owner drops it instead.
+        if (child.ephemeral) continue
         child.parentId = parentId
         this.onNodeUpdate(child.id, { parentId })
         // Recheck cwd-mismatch alerts for each reparented child subtree
@@ -894,7 +1026,7 @@ export class StateManager {
    */
   archiveSubtree(rootId: NodeId, now: number = Date.now()): NodeId[] {
     const root = this.state.nodes[rootId]
-    if (!root) return []
+    if (!root || this.refuseEphemeral(root, 'archiveSubtree')) return []
 
     const removed = this.subtreeNodes(rootId)
     serverLog(`[archive] Archiving subtree ${rootId.slice(0, 8)} (${removed.length} node${removed.length === 1 ? '' : 's'})`)
@@ -947,6 +1079,12 @@ export class StateManager {
     for (const child of this.childrenOf(nodeId)) {
       if (seen.has(child.id)) continue
       seen.add(child.id)
+      // A generated card is a view of a file, not part of the arrangement. It
+      // is still REMOVED with the subtree (see `subtreeNodes`, which keeps
+      // them) — it is only never written down. Recording one would put an id
+      // in `state.json` that nothing can resolve, and restoring the entry
+      // would resurrect a stale copy of a file as a real, persisted node.
+      if (child.ephemeral) continue
       members.push({ data: deepCopy(child), descendants: this.snapshotChildrenOf(child.id, seen) })
     }
     return members

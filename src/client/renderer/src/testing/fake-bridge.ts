@@ -91,6 +91,7 @@ const EMPTY_STATE: ServerState = {
   version: 0,
   nextZIndex: 1,
   nodes: {},
+  metaHosts: {},
   rootArchivedChildren: [],
   undoBuffer: [],
   undoCursor: -1,

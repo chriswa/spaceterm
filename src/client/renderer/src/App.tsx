@@ -608,7 +608,12 @@ export function App() {
     }
     for (const d of dragDescendantsRef.current) {
       const dn = allNodesForUndo[d]
-      if (dn) positions.push({ nodeId: d, x: dn.x, y: dn.y })
+      // Generated cards drag along with their host — they are on screen and
+      // hang off it — but they must not enter the undo buffer, which IS
+      // persisted. An entry naming a card that will not exist after the next
+      // restart is a dangling id in state.json, and this is the path it would
+      // take on every ordinary drag of a host with its agent-meta branch open.
+      if (dn && !dn.ephemeral) positions.push({ nodeId: d, x: dn.x, y: dn.y })
     }
     preDragPositionsRef.current = positions
   }, [])

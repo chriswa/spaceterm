@@ -45,12 +45,25 @@ export function getDescendantIds(
  * True if any live node has `nodeId` as its parent, i.e. the node is NOT a leaf.
  * The tree has no forward child links, so leaf-ness is a scan over parentId.
  * Archived children (`archivedChildren`) don't count — those aren't live nodes.
+ *
+ * Generated cards (`ephemeral`) don't count either, and that exclusion is
+ * load-bearing rather than cosmetic. This predicate is what decides whether
+ * archiving a card takes a whole branch with it — it drives the confirmation
+ * dialog and the archive gesture. Counting an open agent-meta branch would mean
+ * that merely *looking at* a directory's skills changed what archiving that
+ * directory does, and would put the generated cards in the count the dialog
+ * reads out. A branch you can close again is not a subtree you are about to
+ * lose.
+ *
+ * Note the deliberate asymmetry with `getDescendantIds`, which DOES include
+ * them: dragging a host must carry its branch along, because those cards are on
+ * screen and hang off it.
  */
 export function hasLiveChildren(
   nodes: Record<string, NodeData>,
   nodeId: NodeId
 ): boolean {
-  return nodeIdsOf(nodes).some(k => nodes[k].parentId === nodeId)
+  return nodeIdsOf(nodes).some(k => nodes[k].parentId === nodeId && !nodes[k].ephemeral)
 }
 
 /**

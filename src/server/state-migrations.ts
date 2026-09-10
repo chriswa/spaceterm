@@ -10,7 +10,7 @@ import type { ServerState, TerminalNodeData } from '../shared/state'
  * 1 → 2 therefore normalises defensively instead of assuming a known shape. From
  * version 2 on, the number means what it says.
  */
-export const CURRENT_STATE_VERSION = 3
+export const CURRENT_STATE_VERSION = 4
 
 /** A persisted document as it comes off disk: shape unknown until migrated. */
 export type PersistedDoc = Record<string, unknown>
@@ -47,6 +47,13 @@ function terminalNodes(doc: PersistedDoc): Array<Record<string, unknown>> {
 }
 
 export const MIGRATIONS: Migration[] = [
+  {
+    to: 4,
+    description: 'add metaHosts, the agent-meta branch registry',
+    migrate(doc) {
+      if (!isRecord(doc.metaHosts)) doc.metaHosts = {}
+    }
+  },
   {
     to: 2,
     description:
@@ -161,7 +168,8 @@ export function emptyState(): ServerState {
     rootArchivedChildren: [],
     undoBuffer: [],
     undoCursor: 0,
-    savedViewports: {}
+    savedViewports: {},
+    metaHosts: {}
   }
 }
 

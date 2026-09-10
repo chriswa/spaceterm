@@ -262,7 +262,10 @@ describe('migration 2 → 3: archive entries carrying a live subtree', () => {
     const result = migrate(v2)
     if (result.status !== 'ok') throw new Error('expected ok')
 
-    expect(result.state.version).toBe(3)
+    // The constant, not a literal: this test is about the archive entries
+    // surviving untouched, and hard-coding the version made it fail the next
+    // time an unrelated migration was added.
+    expect(result.state.version).toBe(CURRENT_STATE_VERSION)
     expect(result.state.rootArchivedChildren).toEqual(v2.rootArchivedChildren)
   })
 })

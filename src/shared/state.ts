@@ -78,6 +78,24 @@ export interface BaseNodeData {
   archivedChildren: ArchivedNode[]
   alerts?: NodeAlert[]
   alertsReadTimestamp?: number  // epoch ms, set by client
+  /**
+   * Generated, not authored: this node is a view of something on disk, kept in
+   * `state.nodes` only so the canvas can lay it out.
+   *
+   * Living in `state.nodes` is what gets these cards edges, camera fit, focus,
+   * z-order, colour inheritance and hit-testing for free, instead of a second
+   * node source every one of those would have to learn about. The cost is that
+   * every generic path over `state.nodes` — archive, reparent, batch move,
+   * bring-to-front, the undo buffer — would otherwise treat them as real, and
+   * a single one of those reaching disk puts a node id in `state.json` that
+   * nothing can ever resolve again.
+   *
+   * So this flag is checked in exactly two places rather than at each call
+   * site: `StateManager.refuseEphemeral` refuses every persisting mutation, and
+   * `serializeState` drops the nodes on the way out. See `AgentMetaManager`,
+   * the only thing that sets it.
+   */
+  ephemeral?: true
 }
 
 export interface TerminalNodeData extends BaseNodeData {
@@ -249,4 +267,32 @@ export interface ServerState {
   undoCursor: number
   /** Numbered viewport bookmarks (slot '0'..'9' -> canvas-space camera bounds), shared across clients. */
   savedViewports: Record<string, CameraBounds>
+  /**
+   * Which nodes have their agent-meta branch open, and where its cards sit.
+   *
+   * Presence of a key IS the enabled flag. Nothing else about the branch is
+   * persisted — not the generated node ids, not the file contents, not the
+   * sizes, not which cards are expanded — because all of it is re-derived from
+   * disk on the next scan.
+   *
+   * One top-level key rather than a field on `DirectoryNodeData`: the root node
+   * is not in `state.nodes` and would have needed a second home anyway, and
+   * this keeps `NodeData` — which every archive snapshot deep-copies — free of
+   * it.
+   */
+  metaHosts: Record<string, MetaHostEntry>
+}
+
+export interface MetaHostEntry {
+  /** Where the user dragged the group card, absent until they move it. */
+  groupPos?: { x: number; y: number }
+  /**
+   * Remembered card positions, keyed by what the card describes (a skill's
+   * directory name, or a document's path relative to the host) rather than by
+   * node id — ids are regenerated every boot, keys are not.
+   *
+   * Pruned to the current scan on every rescan, so it cannot grow without
+   * bound and cannot re-apply one repo's layout to another's same-named skill.
+   */
+  cardPos?: Record<string, { x: number; y: number }>
 }

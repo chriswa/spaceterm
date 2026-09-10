@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, ArchivedNode } from '../../../../shared/state'
 import { measureCard as nodePixelSize } from '../../../../shared/card-types'
+import { assertNever } from '../../../../shared/exhaustive'
 import { type NodeId } from '../../../../shared/ids'
 
 export { nodePixelSize }
@@ -70,16 +71,20 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
   const titles: TitleNodeData[] = []
 
   for (const node of nodeList) {
-    if (node.type === 'terminal') {
-      liveTerminals.push(node)
-    } else if (node.type === 'directory') {
-      directories.push(node)
-    } else if (node.type === 'file') {
-      files.push(node)
-    } else if (node.type === 'title') {
-      titles.push(node)
-    } else {
-      markdowns.push(node)
+    switch (node.type) {
+      case 'terminal': liveTerminals.push(node); break
+      case 'directory': directories.push(node); break
+      case 'file': files.push(node); break
+      case 'title': titles.push(node); break
+      case 'markdown': markdowns.push(node); break
+      // An exhaustive switch, where this used to be `else { markdowns.push() }`.
+      // That catch-all was silent and actively harmful: a node of any type the
+      // renderer had not learned about was rendered as a MarkdownCard with
+      // `width`, `height` and `content` all undefined, and then handed to the
+      // WebGL edge mask as a NaN × NaN rect. Nothing threw; the canvas just
+      // drew wrong. `assertNever` turns the next new card type into a compile
+      // error in the one file that has to know about it.
+      default: assertNever(node, 'recomputeDerived')
     }
   }
 

@@ -45,7 +45,8 @@ function serverState(...nodes: NodeData[]): ServerState {
     version: 2, nextZIndex: 10,
     nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
     rootArchivedChildren: [], undoBuffer: [], undoCursor: -1,
-    savedViewports: {}
+    savedViewports: {},
+    metaHosts: {}
   }
 }
 

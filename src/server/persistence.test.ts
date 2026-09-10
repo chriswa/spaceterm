@@ -9,6 +9,7 @@ function makeState(overrides: Partial<ServerState> = {}): ServerState {
     version: CURRENT_STATE_VERSION,
     nextZIndex: 1,
     nodes: {},
+    metaHosts: {},
     rootArchivedChildren: [],
     undoBuffer: [],
     undoCursor: 0,

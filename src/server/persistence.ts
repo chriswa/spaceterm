@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, renameSync, existsSync, openSync, fsyncSync, closeSync, mkdirSync, copyFileSync } from 'fs'
 import { dirname, join } from 'path'
-import type { ServerState } from '../shared/state'
+import type { ServerState, NodeData } from '../shared/state'
+import { ROOT_NODE_ID } from '../shared/ids'
 import { SOCKET_DIR } from '../shared/protocol'
 import { assertNever } from '../shared/exhaustive'
 import { migrateState, emptyState, CURRENT_STATE_VERSION, type MigrationResult } from './state-migrations'
@@ -93,7 +94,65 @@ const EPHEMERAL_FIELD_SET: ReadonlySet<string> = new Set(EPHEMERAL_STATE_FIELDS)
  * write would be the most expensive thing the server does at idle.
  */
 export function serializeState(state: ServerState): string {
-  return JSON.stringify(state, (key, value) => (EPHEMERAL_FIELD_SET.has(key) ? undefined : value), 2)
+  return JSON.stringify(
+    state,
+    function (this: unknown, key: string, value: unknown) {
+      if (EPHEMERAL_FIELD_SET.has(key)) return undefined
+      // Only the document's own node map, never a `nodes` key that happened to
+      // appear deeper in some other structure.
+      if (key === 'nodes' && this === state) return persistableNodes(value as Record<string, NodeData>)
+      return value
+    },
+    2
+  )
+}
+
+/**
+ * The node map minus generated cards (`ephemeral`), which exist only while the
+ * app is running and describe files rather than anything the user authored.
+ *
+ * Filtered **by key**, rebuilding one object, rather than by returning
+ * `undefined` for each node from the replacer. That is not a style preference:
+ * inside an *array* — `archivedChildren` — `JSON.stringify` writes `null` for
+ * an element the replacer dropped, not nothing. A hole there would be read back
+ * as an archive entry and dereferenced for `.data.id` on the next load.
+ *
+ * A surviving node whose parent was dropped would be a bug elsewhere — nothing
+ * real is allowed to hang off a generated card (see `reparentNode`) — so this
+ * reports rather than repairs. Rewriting the `parentId` on the way out would
+ * hide the bug and put a value on disk that disagrees with the one in memory.
+ */
+function persistableNodes(nodes: Record<string, NodeData>): Record<string, NodeData> {
+  const kept: Record<string, NodeData> = {}
+  let dropped = 0
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node.ephemeral) {
+      dropped++
+      continue
+    }
+    kept[id] = node
+  }
+  if (dropped > 0) {
+    for (const node of Object.values(kept)) {
+      if (node.parentId !== ROOT_NODE_ID && nodes[node.parentId]?.ephemeral) {
+        onOrphanedParent(
+          `[persistence] Node ${node.id} would persist with a generated parent ${node.parentId}. ` +
+            'Nothing real may hang off a generated card; this is a bug in the guard, not in the write.'
+        )
+      }
+    }
+  }
+  return kept
+}
+
+/**
+ * What to do about the impossible case above. Loud in production — a write that
+ * refused to happen is worse than one that recorded a dangling id — and fatal
+ * under test, so the invariant is proved rather than merely logged.
+ */
+function onOrphanedParent(message: string): void {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) throw new Error(message)
+  console.error(message)
 }
 
 /**

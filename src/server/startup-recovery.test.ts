@@ -60,7 +60,8 @@ function stateWith(...nodes: NodeData[]): ServerState {
     rootArchivedChildren: [],
     undoBuffer: [],
     undoCursor: -1,
-    savedViewports: {}
+    savedViewports: {},
+    metaHosts: {}
   }
 }
 
