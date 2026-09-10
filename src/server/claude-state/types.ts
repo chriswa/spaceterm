@@ -33,6 +33,12 @@ export interface StateMachineDeps {
   handleClaudeStop(surfaceId: PtySessionId): void
   broadcastClaudeStateDecisionTime(surfaceId: PtySessionId, timestamp: number): void
   setClaudeStatusAsleep(surfaceId: PtySessionId, asleep: boolean): void
+  /**
+   * How many background launches this surface has dismissed, i.e. stopped
+   * counting as blocking. Published so the client can offer taking them back up
+   * only where there is something to take up.
+   */
+  setClaudeDismissedBackground(surfaceId: PtySessionId, count: number): void
 }
 
 /**

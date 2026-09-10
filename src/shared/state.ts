@@ -115,6 +115,16 @@ export interface TerminalNodeData extends BaseNodeData {
    */
   ccStatus?: CcSessionStatus | null
   ccWaitingFor?: string | null
+  /**
+   * How many background launches this surface has dismissed — work the ledger
+   * tracked and then stopped counting as blocking (see background-ledger.ts).
+   * Non-zero is what makes "wait on background work again" an available action
+   * on the agent mark; zero means there is nothing to wait for.
+   *
+   * Ephemeral and NOT persisted: the ledger is in-memory, so a count restored
+   * from disk would offer to restore launches that no longer exist anywhere.
+   */
+  claudeDismissedBackground?: number
   /** Last-known remaining context %, persisted so it survives a server restart. */
   claudeContextPercent?: number
   /** Last-known Claude session JSONL line count, persisted so it survives a server restart. */

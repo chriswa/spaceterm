@@ -325,6 +325,8 @@ export class FakeBridge implements Api {
       this.record('node.setClaudeStatusUnread', sessionId, unread),
     setClaudeStatusAsleep: (sessionId, asleep) =>
       this.record('node.setClaudeStatusAsleep', sessionId, asleep),
+    setClaudeStatusBackground: (sessionId, background) =>
+      this.record('node.setClaudeStatusBackground', sessionId, background),
     setAlertsReadTimestamp: (nodeId, timestamp) =>
       this.record('node.setAlertsReadTimestamp', nodeId, timestamp),
     sendCameraBounds: (bounds) => this.record('node.sendCameraBounds', bounds),

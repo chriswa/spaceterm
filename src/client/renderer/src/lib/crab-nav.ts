@@ -108,6 +108,30 @@ export function unreadIsLegible(
   return on.unviewed !== off.unviewed || on.color !== off.color
 }
 
+/**
+ * Whether the stopped/working_background distinction is visible on this
+ * surface's indicator — i.e. whether the right-click that moves between them
+ * would show the user anything.
+ *
+ * Same shape as `unreadIsLegible`, and for the same reason: asleep paints over
+ * everything, and a plain terminal has no agent colours at all, so restating
+ * either list here would drift the moment `deriveToolbarIndicator` changes.
+ * Ask it instead.
+ *
+ * Legibility is only half the gate — the caller also needs the surface to be in
+ * one of the two states, and (for the arm direction) to have dismissed work to
+ * take back up.
+ */
+export function backgroundToggleIsLegible(
+  claudeStatusAsleep: boolean,
+  hasSessionHistory: boolean,
+  agentType?: AgentType
+): boolean {
+  const stopped = deriveToolbarIndicator('stopped', false, claudeStatusAsleep, hasSessionHistory, agentType)
+  const background = deriveToolbarIndicator('working_background', false, claudeStatusAsleep, hasSessionHistory, agentType)
+  return stopped.color !== background.color
+}
+
 function deriveToolbarIndicatorInner(
   claudeState: string | undefined,
   claudeStatusUnread: boolean,

@@ -2555,6 +2555,7 @@ export function App() {
             claudeSessionHistory={t.claudeSessionHistory}
             agentType={t.agentType}
             claudeState={t.claudeState}
+            claudeDismissedBackground={t.claudeDismissedBackground}
             claudeModel={t.claudeModel}
             ccStatus={t.ccStatus}
             ccWaitingFor={t.ccWaitingFor}

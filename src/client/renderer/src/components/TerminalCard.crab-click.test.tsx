@@ -128,6 +128,62 @@ describe('clicking the agent mark above a card', () => {
     })
   })
 
+  describe('right-clicking it, to move between finished and finishing background work', () => {
+    it('takes dismissed background work back up on a stopped surface', () => {
+      const { container } = render(<TerminalCard {...props({ claudeDismissedBackground: 2 })} />)
+      fireEvent.contextMenu(crabIn(container))
+      expect(bridge.lastCall('node.setClaudeStatusBackground')).toEqual([pid('term-1'), true])
+    })
+
+    it('stops waiting on a yellow surface', () => {
+      const { container } = render(<TerminalCard {...props({ claudeState: 'working_background' })} />)
+      fireEvent.contextMenu(crabIn(container))
+      expect(bridge.lastCall('node.setClaudeStatusBackground')).toEqual([pid('term-1'), false])
+    })
+
+    it('offers nothing on a stopped surface that has dismissed nothing', () => {
+      // No background work was ever dismissed here, so there is nothing to wait
+      // for — and inventing a task to represent the hunch is exactly what the
+      // ledger forbids.
+      const { container } = render(<TerminalCard {...props({ claudeDismissedBackground: 0 })} />)
+      fireEvent.contextMenu(crabIn(container))
+      expect(bridge.callsTo('node.setClaudeStatusBackground')).toEqual([])
+    })
+
+    it('offers nothing while asleep, where neither colour is legible', () => {
+      const { container } = render(
+        <TerminalCard {...props({ claudeStatusAsleep: true, claudeDismissedBackground: 2 })} />
+      )
+      fireEvent.contextMenu(crabIn(container))
+      expect(bridge.callsTo('node.setClaudeStatusBackground')).toEqual([])
+    })
+
+    it('offers nothing while Claude is working', () => {
+      const { container } = render(
+        <TerminalCard {...props({ claudeState: 'working', claudeDismissedBackground: 2 })} />
+      )
+      fireEvent.contextMenu(crabIn(container))
+      expect(bridge.callsTo('node.setClaudeStatusBackground')).toEqual([])
+    })
+
+    it('swallows the event so the canvas menu never opens over the card', () => {
+      const onBackgroundContextMenu = vi.fn()
+      const { container } = render(
+        <div onContextMenu={onBackgroundContextMenu}>
+          <TerminalCard {...props({ claudeState: 'working' })} />
+        </div>
+      )
+      fireEvent.contextMenu(crabIn(container))
+      expect(onBackgroundContextMenu).not.toHaveBeenCalled()
+    })
+
+    it('leaves the unread flag alone', () => {
+      const { container } = render(<TerminalCard {...props({ claudeDismissedBackground: 2 })} />)
+      fireEvent.contextMenu(crabIn(container))
+      expect(bridge.callsTo('node.setClaudeStatusUnread')).toEqual([])
+    })
+  })
+
   it('is not offered on a plain shell, which shows no agent mark at all', () => {
     const { container } = render(
       <TerminalCard {...props({ agentType: undefined, claudeState: undefined, claudeSessionHistory: [] })} />

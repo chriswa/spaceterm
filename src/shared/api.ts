@@ -118,6 +118,7 @@ export interface NodeApi {
 
   setClaudeStatusUnread(sessionId: PtySessionId, unread: boolean): void
   setClaudeStatusAsleep(sessionId: PtySessionId, asleep: boolean): void
+  setClaudeStatusBackground(sessionId: PtySessionId, background: boolean): void
   setAlertsReadTimestamp(nodeId: NodeId, timestamp: number): void
   sendCameraBounds(bounds: CameraBounds): void
   saveViewport(slot: string, bounds: CameraBounds): void

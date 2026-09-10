@@ -28,7 +28,7 @@ import crabIcon from '../assets/crab.png'
 import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
 import megaphoneIcon from '../assets/megaphone.png'
-import { deriveToolbarIndicator, unreadIsLegible, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
+import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
@@ -155,6 +155,8 @@ interface TerminalCardProps {
   claudeSessionHistory?: ClaudeSessionEntry[]
   agentType?: AgentType
   claudeState?: string
+  /** Background launches the server has stopped counting as blocking — 0 or absent means there is nothing to wait on again. */
+  claudeDismissedBackground?: number
   claudeModel?: string
   /** Claude Code's own status for this surface — footer only, Claude surfaces only. */
   ccStatus?: CcSessionStatus | null
@@ -181,7 +183,7 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onOpenArchiveSearch,
-  claudeSessionHistory, agentType, claudeState, claudeModel, ccStatus, ccWaitingFor, onExit, onNodeReady,
+  claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
@@ -1129,6 +1131,38 @@ export function TerminalCard({
     window.api.node.setClaudeStatusUnread(sessionId, !(claudeStatusUnread ?? false))
   }, [unreadToggleable, sessionId, claudeStatusUnread])
 
+  // Right-click on the same mark moves the surface between "finished" and
+  // "still finishing background work".
+  //
+  // Only one direction is ever available, and each has its own precondition.
+  // Yellow → white always works: there is by definition something blocking to
+  // dismiss. White → yellow needs the server to have dismissed work on record —
+  // a surface that never ran background work has nothing to wait for, and the
+  // honest answer there is no affordance rather than an invented task.
+  const backgroundToggleable = backgroundToggleIsLegible(claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0, agentType)
+  const backgroundTarget: boolean | null =
+    !backgroundToggleable ? null
+      : claudeState === 'working_background' ? false
+        : claudeState === 'stopped' && (claudeDismissedBackground ?? 0) > 0 ? true
+          : null
+  const handleCrabBehindContextMenu = useCallback((e: React.MouseEvent) => {
+    // Swallowed in every state, like the left-click: the alternative is the
+    // canvas's own context menu opening on top of the card you aimed at.
+    e.stopPropagation()
+    e.preventDefault()
+    if (backgroundTarget === null) return
+    window.api.node.setClaudeStatusBackground(sessionId, backgroundTarget)
+  }, [backgroundTarget, sessionId])
+
+  // Both clicks are invisible affordances on a bare icon, so the tooltip is
+  // where the surface says which of them it will honour right now.
+  const crabTitle = [
+    unreadToggleable ? (claudeStatusUnread ? 'Mark read' : 'Mark unread') : null,
+    backgroundTarget === true ? 'Right-click: wait on background work'
+      : backgroundTarget === false ? 'Right-click: stop waiting on background work'
+        : null,
+  ].filter(Boolean).join(' \u00b7 ') || undefined
+
   const agentLabel = agentType === 'cursor' ? 'Cursor' : agentType === 'codex' ? 'Codex' : 'Claude'
   const agentIconUrl =
     crabAppearance.kind === 'cursor' ? cursorAgentIcon
@@ -1242,10 +1276,11 @@ export function TerminalCard({
           {(crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex') && (
             <div
               ref={behindCrabRef}
-              className={`terminal-card__crab-behind${agentBehindClass}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}`}
-              title={unreadToggleable ? (claudeStatusUnread ? 'Mark read' : 'Mark unread') : undefined}
+              className={`terminal-card__crab-behind${agentBehindClass}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}${backgroundTarget !== null ? ' terminal-card__crab-behind--toggles-background' : ''}`}
+              title={crabTitle}
               onMouseDown={swallowCrabMouseDown}
               onClick={handleCrabBehindClick}
+              onContextMenu={handleCrabBehindContextMenu}
               style={{
                 maskImage: `url(${agentIconUrl})`,
                 WebkitMaskImage: `url(${agentIconUrl})`,

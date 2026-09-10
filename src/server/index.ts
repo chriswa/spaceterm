@@ -1725,6 +1725,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'set-claude-status-background': {
+      claudeStateMachine.handleClientMarkBackground(msg.sessionId, msg.background)
+      break
+    }
+
     case 'fork-session': {
       try {
         const forkNode = stateManager.getNode(msg.nodeId)
@@ -2310,6 +2315,7 @@ async function startServer(): Promise<void> {
     getClaudeStatusUnread: (id) => stateManager.getClaudeStatusUnread(id),
     setClaudeStatusUnread: (id, unread) => stateManager.updateClaudeStatusUnread(id, unread),
     setClaudeStatusAsleep: (id, asleep) => stateManager.updateClaudeStatusAsleep(id, asleep),
+    setClaudeDismissedBackground: (id, count) => stateManager.updateClaudeDismissedBackground(id, count),
     handleClaudeStop: (id) => sessionManager.handleClaudeStop(id),
     broadcastClaudeStateDecisionTime: (id, ts) => stateManager.updateClaudeStateDecisionTime(id, ts),
   })

@@ -91,6 +91,7 @@ const nodeApi: NodeApi = {
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
   setClaudeStatusUnread: (sessionId: PtySessionId, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
   setClaudeStatusAsleep: (sessionId: PtySessionId, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
+  setClaudeStatusBackground: (sessionId: PtySessionId, background: boolean) => ipcRenderer.send('node:set-claude-status-background', sessionId, background),
   setAlertsReadTimestamp: (nodeId: NodeId, timestamp: number) => ipcRenderer.send('node:set-alerts-read-timestamp', nodeId, timestamp),
   sendCameraBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:camera-bounds', bounds),
   saveViewport: (slot: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:save-viewport', slot, bounds),

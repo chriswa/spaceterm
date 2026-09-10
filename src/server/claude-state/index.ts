@@ -309,10 +309,13 @@ export class ClaudeStateMachine {
           // far as the indicator is concerned — bound the flag's lifetime here
           // the same way the ledger is bounded (invariant 13).
           this.manualCompactPending.delete(surfaceId)
-          // A typed turn also makes prior background context moot, and clearing
-          // the ledger here bounds any leak from a missed completion to "until
-          // the next prompt".
-          this.backgroundLedger.clear(surfaceId)
+          // A typed turn also makes prior background context moot, and
+          // dismissing the ledger here bounds any leak from a missed completion
+          // to "until the next prompt". Dismiss, not clear: the launches are
+          // kept as a record of what stopped being waited on, so
+          // handleClientMarkBackground can take them back up. See the
+          // blocking-vs-dismissed note in background-ledger.ts.
+          this.backgroundLedger.dismissAll(surfaceId)
         }
       }
       this.transitionQueue.enqueue(surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)
@@ -360,6 +363,13 @@ export class ClaudeStateMachine {
     // The one compaction that DOES end in idle — a user-typed /compact — is
     // recognised by its own transcript stdout entry instead, which is specific
     // to the manual kind. See the compact-finished branch in handleJsonlEntries.
+
+    // Hooks are where launches are registered (SubagentStart), resolved
+    // (SubagentStop) and dismissed (a typed prompt / SessionEnd), so the
+    // dismissed count can change on any path that reaches here. The one path
+    // that returns early — a subagent's own PreToolUse/PreCompact — touches
+    // nothing.
+    this.publishDismissedBackground(surfaceId)
   }
 
   /**
@@ -529,6 +539,7 @@ export class ClaudeStateMachine {
     // surface is showing yellow and nothing's left, go idle now (rather than
     // waiting for the next reconciliation sweep).
     this.drainBackgroundIfIdle(surfaceId, 'jsonl', `jsonl:background${BG_DRAINED_SUFFIX}`, Date.now())
+    this.publishDismissedBackground(surfaceId)
   }
 
   /**
@@ -621,6 +632,91 @@ export class ClaudeStateMachine {
       newState: this.deps.getClaudeState(surfaceId),
       unread: false
     })
+  }
+
+  /**
+   * Process a client request to wait on / stop waiting on this surface's
+   * background work — the right-click on the agent mark.
+   *
+   * `background: true` takes the dismissed launches back up (yellow); the first
+   * one to resolve dismisses the rest and the surface returns to white on the
+   * ordinary drain path. `background: false` dismisses everything outstanding
+   * (white), whether the yellow was earned or armed by hand.
+   *
+   * Both directions edit the ledger and then read the state back out of it, so
+   * the invariant that yellow means "something is blocking" survives a manual
+   * override. Forcing `claudeState` directly would have been fewer lines and
+   * would have broken exactly that: a yellow with an empty ledger has nothing
+   * for the drain path to notice, and would sit there until the next prompt.
+   *
+   * Nothing happens unless the surface is idle-ish to begin with. A click races
+   * the agent: it is authored against whatever the card was showing, and Claude
+   * may have started working in between, where neither answer means anything.
+   * The renderer gates the affordance too, but its view is a frame behind.
+   *
+   * Deliberately NOT routed through applyTransition, for two reasons. It sets
+   * the unread flag when entering `stopped`, which fires the completion tone —
+   * wrong for a state the user typed with their own mouse, and it would fight
+   * the left-click's unread toggle. And it advances the ordering watermark,
+   * which would let a click suppress a genuine hook that happened moments
+   * earlier. A manual override should lose to real evidence, not outrank it.
+   */
+  handleClientMarkBackground(surfaceId: PtySessionId, background: boolean): void {
+    const prevState = this.deps.getClaudeState(surfaceId)
+    const logSuppressed = (detail: string): void => {
+      this.decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(),
+        source: 'client',
+        event: background ? 'client:markBackground' : 'client:markForeground',
+        prevState,
+        newState: prevState,
+        detail,
+        suppressed: true
+      })
+    }
+
+    if (prevState !== 'stopped' && prevState !== 'working_background') {
+      logSuppressed('not idle')
+      return
+    }
+    if (background) {
+      // Nothing dismissed means nothing to wait for. The alternative — a
+      // synthetic launch standing in for the user's hunch — is an outstanding
+      // entry with no drain path, which is invariant 13's whole subject.
+      if (!this.backgroundLedger.restoreDismissed(surfaceId)) {
+        logSuppressed('nothing dismissed to restore')
+        return
+      }
+    } else {
+      this.backgroundLedger.dismissAll(surfaceId)
+    }
+
+    const outstanding = this.backgroundLedger.outstandingCount(surfaceId)
+    const newState: ClaudeState = outstanding > 0 ? 'working_background' : 'stopped'
+    this.deps.setClaudeState(surfaceId, newState)
+    this.publishDismissedBackground(surfaceId)
+    this.deps.broadcastClaudeStateDecisionTime(surfaceId, Date.now())
+    this.decisionLogger.log(surfaceId, {
+      timestamp: localISOTimestamp(),
+      source: 'client',
+      event: background ? 'client:markBackground' : 'client:markForeground',
+      prevState,
+      newState,
+      detail: `bg:${outstanding}`
+    })
+  }
+
+  /**
+   * Push the surface's dismissed-launch count to the client, which uses it to
+   * decide whether the right-click affordance exists at all.
+   *
+   * Called from every entry point that can touch the ledger rather than from
+   * the ledger itself: the count is derived, the setter already drops a patch
+   * that changes nothing, and a callback threaded through the ledger would make
+   * it a broadcaster as well as a bookkeeper.
+   */
+  private publishDismissedBackground(surfaceId: PtySessionId): void {
+    this.deps.setClaudeDismissedBackground(surfaceId, this.backgroundLedger.dismissedCount(surfaceId))
   }
 
   // ─── Core transition logic ──────────────────────────────────────────────
@@ -887,6 +983,9 @@ export class ClaudeStateMachine {
       const pruned = await this.backgroundLedger.reconcile(surfaceId)
       if (pruned) {
         this.drainBackgroundIfIdle(surfaceId, 'ledger', `ledger:reconcile${BG_DRAINED_SUFFIX}`, Date.now())
+        // A probe that resolved a launch while an arm was outstanding dismisses
+        // everything else, so the count the client gates on has moved.
+        this.publishDismissedBackground(surfaceId)
       }
     }
   }

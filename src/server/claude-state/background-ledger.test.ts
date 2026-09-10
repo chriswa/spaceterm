@@ -178,6 +178,121 @@ const cases: Case[] = [
     },
   },
 
+  // ─── Blocking vs dismissed ────────────────────────────────────────────────
+  {
+    name: 'dismissAll stops counting the work without forgetting it',
+    run: () => {
+      const l = new BackgroundLedger(fakeProbes())
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      l.dismissAll(SURFACE)
+      assertEq(l.outstandingCount(SURFACE), 0)
+      assertEq(l.dismissedCount(SURFACE), 1)
+    },
+  },
+  {
+    name: 'restoreDismissed takes the dismissed work back up',
+    run: () => {
+      const l = new BackgroundLedger(fakeProbes())
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      l.dismissAll(SURFACE)
+      assertEq(l.restoreDismissed(SURFACE), true)
+      assertEq(l.outstandingCount(SURFACE), 1)
+      assertEq(l.dismissedCount(SURFACE), 0)
+    },
+  },
+  {
+    name: 'restoreDismissed refuses when there is nothing dismissed',
+    run: () => {
+      // Both shapes of "nothing to take up": a surface that never ran
+      // background work, and one whose work is already blocking. Neither may be
+      // answered with an invented launch.
+      const l = new BackgroundLedger(fakeProbes())
+      assertEq(l.restoreDismissed(SURFACE), false)
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      assertEq(l.restoreDismissed(SURFACE), false)
+      assertEq(l.outstandingCount(SURFACE), 1)
+    },
+  },
+  {
+    name: 'after a restore, the first launch to resolve dismisses the rest',
+    run: () => {
+      // The point of "first, not all": the restored work is exactly the work
+      // that might never end, so waiting for all of it would never drain.
+      const l = new BackgroundLedger(fakeProbes())
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
+      l.dismissAll(SURFACE)
+      assertEq(l.restoreDismissed(SURFACE), true)
+      assertEq(l.outstandingCount(SURFACE), 2)
+      l.ingestJsonl(SURFACE, [stringEntry('user', DONE('b4g2uhdde'))])
+      assertEq(l.outstandingCount(SURFACE), 0)
+      assertEq(l.dismissedCount(SURFACE), 1) // the monitor, back where it was
+    },
+  },
+  {
+    name: 'a probe that sees work finish settles the restore',
+    run: async () => {
+      const l = new BackgroundLedger(fakeProbes({ bash: 'finished', monitor: 'running' }))
+      l.setContext(SURFACE, '/p/sess.jsonl', cid('sess'))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
+      l.dismissAll(SURFACE)
+      l.restoreDismissed(SURFACE)
+      assertEq(await l.reconcile(SURFACE), true)
+      assertEq(l.outstandingCount(SURFACE), 0)
+      assertEq(l.dismissedCount(SURFACE), 1)
+    },
+  },
+  {
+    name: 'a staleness prune is not the resolution a restore waits for',
+    run: async () => {
+      // "We lost sight of it" is not news that anything finished, so it must
+      // not settle the arm — the monitor keeps the surface waiting.
+      const l = new BackgroundLedger(fakeProbes({ bash: 'indeterminate', monitor: 'running' }))
+      l.setContext(SURFACE, '/p/sess.jsonl', cid('sess'))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
+      l.dismissAll(SURFACE)
+      l.restoreDismissed(SURFACE)
+      assertEq(await l.reconcile(SURFACE, 0), false)
+      assertEq(await l.reconcile(SURFACE, 6 * 60_000), true) // bash drained on the bound
+      assertEq(l.outstandingCount(SURFACE), 1)               // monitor still blocking
+      assertEq(l.dismissedCount(SURFACE), 0)                 // nothing was re-dismissed
+    },
+  },
+  {
+    name: 'a restored launch does not inherit the no-evidence clock it accrued before dismissal',
+    run: async () => {
+      // Otherwise the bound would fire on the first sweep after a restore and
+      // end the wait before it began.
+      const l = new BackgroundLedger(fakeProbes({ bash: 'indeterminate' }))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      assertEq(await l.reconcile(SURFACE, 0), false) // clock starts
+      l.dismissAll(SURFACE)
+      l.restoreDismissed(SURFACE)
+      assertEq(await l.reconcile(SURFACE, 6 * 60_000), false) // clock restarts here
+      assertEq(l.outstandingCount(SURFACE), 1)
+    },
+  },
+  {
+    name: 'dismissed launches are never probed',
+    run: async () => {
+      const l = new BackgroundLedger(fakeProbes({ bash: 'finished' }))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      l.dismissAll(SURFACE)
+      assertEq(await l.reconcile(SURFACE), false)
+      assertEq(l.dismissedCount(SURFACE), 1)
+    },
+  },
+  {
+    name: 'clear forgets dismissed work too (SessionEnd)',
+    run: () => {
+      const l = new BackgroundLedger(fakeProbes())
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      l.dismissAll(SURFACE)
+      l.clear(SURFACE)
+      assertEq(l.dismissedCount(SURFACE), 0)
+      assertEq(l.restoreDismissed(SURFACE), false)
+    },
+  },
+
   // ── Notification delivery: the queue's exit op drains the launch ──
   {
     name: 'a queue-operation remove drains the launch it delivered',

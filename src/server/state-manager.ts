@@ -1250,6 +1250,19 @@ export class StateManager {
     this.applyPatch(node, { ccStatus: status, ccWaitingFor: waitingFor })
   }
 
+  /**
+   * Dismissed-background count for this surface.
+   *
+   * `applyPatch`, not `patchNode`: the ledger behind this count lives only in
+   * memory, so persisting it would restore an offer to take up work that died
+   * with the last server process. Same reasoning as `updateCcSessionStatus`.
+   */
+  updateClaudeDismissedBackground(ptySessionId: PtySessionId, count: number): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node || (node.claudeDismissedBackground ?? 0) === count) return
+    this.applyPatch(node, { claudeDismissedBackground: count })
+  }
+
   /** Returns true when the value changed, so callers can gate a client broadcast. */
   updateClaudeContextPercent(ptySessionId: PtySessionId, percent: number): boolean {
     const node = this.getTerminalBySession(ptySessionId)

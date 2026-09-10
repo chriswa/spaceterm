@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveToolbarIndicator, unreadIsLegible, ccStatusLabel } from './crab-nav'
+import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, ccStatusLabel } from './crab-nav'
 
 /**
  * deriveToolbarIndicator maps a surface's agent state onto the toolbar crab's
@@ -166,6 +166,27 @@ describe('unreadIsLegible', () => {
   it('is illegible on a fresh agent surface with no session history', () => {
     // Grey either way until the first session lands — nothing to mark unread.
     expect(unreadIsLegible(undefined, false, false, 'claude')).toBe(false)
+  })
+})
+
+/**
+ * The same mark's right-click moves between stopped (white) and
+ * working_background (yellow), so it only offers itself where those two are
+ * different colours.
+ */
+describe('backgroundToggleIsLegible', () => {
+  it('is legible on an agent surface', () => {
+    expect(backgroundToggleIsLegible(false, true, 'claude')).toBe(true)
+    expect(backgroundToggleIsLegible(false, true, 'cursor')).toBe(true)
+    expect(backgroundToggleIsLegible(false, true, 'codex')).toBe(true)
+  })
+
+  it('is illegible while asleep, which paints over both colours', () => {
+    expect(backgroundToggleIsLegible(true, true, 'claude')).toBe(false)
+  })
+
+  it('is illegible on a plain terminal, which has no agent colours', () => {
+    expect(backgroundToggleIsLegible(false, false)).toBe(false)
   })
 })
 

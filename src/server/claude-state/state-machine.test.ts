@@ -31,6 +31,8 @@ class FakeDeps implements StateMachineDeps {
   handleClaudeStop(): void { /* no-op */ }
   broadcastClaudeStateDecisionTime(): void { /* no-op */ }
   setClaudeStatusAsleep(): void { /* no-op */ }
+  dismissed = new Map<string, number>()
+  setClaudeDismissedBackground(id: string, count: number): void { this.dismissed.set(id, count) }
 }
 
 /** Monotonic clock so queued transitions apply in the order events were fired. */
@@ -442,6 +444,104 @@ const cases: Case[] = [
       // bg-drained 'stopped' is enqueued, but must be suppressed from 'working'.
       jsonl(sm, [{ type: 'user', message: { content: '<task-notification><task-id>zzz</task-id><status>completed</status></task-notification>' } }])
       sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+
+  // ─── The right-click on the agent mark ────────────────────────────────────
+  {
+    name: 'right-click takes dismissed background work back up (stopped → yellow)',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      // A typed prompt dismisses the still-running subagent — this is the
+      // "appears simply stopped while background work continues" case.
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      assertEq(deps.dismissed.get(S), 1)
+
+      sm.handleClientMarkBackground(S, true)
+      assertEq(deps.getClaudeState(S), 'working_background')
+      assertEq(deps.dismissed.get(S), 0)
+    },
+  },
+  {
+    name: 'and the next background resolution returns it to stopped (+unread, tone)',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      sm.handleClientMarkBackground(S, true)
+      deps.unread.set(S, false)
+
+      hook(sm, 'SubagentStop', { agent_id: 'a1' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      // The whole point of arming: being told when the work actually landed.
+      assertEq(deps.getClaudeStatusUnread(S), true)
+    },
+  },
+  {
+    name: 'right-click does nothing on a surface with no dismissed work',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      sm.handleClientMarkBackground(S, true)
+      assertEq(deps.getClaudeState(S), 'stopped')
+    },
+  },
+  {
+    name: 'right-click on yellow dismisses it to stopped, silently',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+
+      sm.handleClientMarkBackground(S, false)
+      assertEq(deps.getClaudeState(S), 'stopped')
+      // No tone for a state the user set with their own mouse — the unread flag
+      // belongs to the left-click.
+      assertEq(deps.getClaudeStatusUnread(S), false)
+      assertEq(deps.dismissed.get(S), 1)
+    },
+  },
+  {
+    name: 'a manual dismiss is reversible',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      sm.handleClientMarkBackground(S, false)
+      assertEq(deps.getClaudeState(S), 'stopped')
+      sm.handleClientMarkBackground(S, true)
+      assertEq(deps.getClaudeState(S), 'working_background')
+    },
+  },
+  {
+    name: 'right-click is ignored while Claude is working',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      hook(sm, 'UserPromptSubmit')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      // The click was authored against a card that has since moved on; neither
+      // answer means anything now.
+      sm.handleClientMarkBackground(S, true)
       assertEq(deps.getClaudeState(S), 'working')
     },
   },

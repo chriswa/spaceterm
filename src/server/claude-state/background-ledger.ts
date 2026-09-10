@@ -41,6 +41,23 @@
  * therefore needs byte offsets + a resolved-id cache), spaceterm ingests the
  * transcript delta once per append. So a launch ack is seen exactly once and a
  * resolved launch is simply removed from the map — no positions, no caching.
+ *
+ * Blocking vs dismissed
+ * ---------------------
+ * A launch that is merely *tracked* is not necessarily one the indicator waits
+ * on. Some background work never ends by design — a persistent `Monitor` runs
+ * until its session does, and its probe (pgrep on the session id) says so —
+ * which would hold the surface yellow for the rest of the session. So a typed
+ * prompt dismisses everything outstanding: the work is very probably still
+ * running, but it stops being treated as blocking. Only non-dismissed launches
+ * count toward `outstandingCount`, and therefore toward yellow.
+ *
+ * Dismissal marks rather than deletes, which is what makes it reversible. When
+ * the user can see that dismissed work is still going and wants the surface to
+ * say so, `restoreDismissed` takes it back up, and the first launch to resolve
+ * — whichever one — dismisses the rest again. That "first, not all" rule is
+ * deliberate: the restored launches are exactly the ones that might never end,
+ * so waiting for all of them would re-create the problem dismissal solved.
  */
 
 import { execFile } from 'child_process'
@@ -81,6 +98,17 @@ interface Launch {
    * launch nobody can say anything about must not pin the indicator forever.
    */
   indeterminateSinceMs?: number
+  /**
+   * True once this launch has been dismissed: still tracked, but no longer
+   * counted as blocking (see `dismissAll`).
+   *
+   * The flag is why dismissal is a *record* rather than a deletion. A dismissed
+   * launch is not a claim that the work finished — it usually has not, which is
+   * the whole reason dismissal exists — only that we have stopped waiting on it.
+   * Keeping it lets `restoreDismissed` put the surface back to waiting on
+   * exactly the work it stopped waiting on, which a delete could never do.
+   */
+  dismissed?: boolean
 }
 
 /**
@@ -356,6 +384,18 @@ interface SurfaceLedger {
   /** Directory containing the main transcript — used to locate subagent/workflow files for probes */
   transcriptDir?: string
   sessionId?: ClaudeSessionId
+  /**
+   * Set by `restoreDismissed`: the next launch to resolve, whichever one it is,
+   * re-dismisses everything still outstanding.
+   *
+   * This is what makes a restored surface drain on its own. The launches it
+   * restores were dismissed precisely because they might run forever (a
+   * persistent Monitor), so waiting for ALL of them would be waiting for
+   * nothing — the same trap dismissal was invented to escape. Waiting for the
+   * FIRST is bounded by real evidence and answers the question actually being
+   * asked: is any of this still going?
+   */
+  awaitingAnyResolution?: boolean
 }
 
 // ─── Ledger ─────────────────────────────────────────────────────────────────
@@ -392,24 +432,117 @@ export class BackgroundLedger {
 
   /** SubagentStop(agent_id) — the subagent finished; drop it. */
   completeAgent(surfaceId: PtySessionId, agentId: string): void {
-    this.get(surfaceId).launches.delete(agentId)
+    this.resolve(this.get(surfaceId), agentId)
   }
 
-  /** How many background launches are still outstanding on this surface. */
+  /** How many background launches are still BLOCKING this surface — dismissed ones are not. */
   outstandingCount(surfaceId: PtySessionId): number {
-    return this.surfaces.get(surfaceId)?.launches.size ?? 0
+    return this.countLaunches(surfaceId, false)
   }
 
   /**
-   * Clear all tracking for a surface. Called on a *human* UserPromptSubmit (a
-   * new typed turn makes prior background context moot, and bounds any leak
-   * from a missed completion to "until the next prompt") and on SessionEnd.
-   * Not called for `<task-notification>` UserPromptSubmits — those are Claude
-   * re-invoking itself for background deliveries, and clearing would drop
-   * still-running work (especially persistent monitors) the moment they ping.
+   * How many launches this surface has dismissed and could take back up.
+   *
+   * Published to the client so the "wait for background work again" affordance
+   * is only offered where there is something to wait for. A surface that never
+   * ran background work reports 0 and must not be given the option: the arm is
+   * a claim about specific work we stopped counting, and with nothing to count
+   * the only way to honour it would be a fabricated launch that no evidence
+   * could ever resolve.
+   */
+  dismissedCount(surfaceId: PtySessionId): number {
+    return this.countLaunches(surfaceId, true)
+  }
+
+  private countLaunches(surfaceId: PtySessionId, dismissed: boolean): number {
+    const s = this.surfaces.get(surfaceId)
+    if (!s) return 0
+    let n = 0
+    for (const launch of Array.from(s.launches.values())) {
+      if (!!launch.dismissed === dismissed) n++
+    }
+    return n
+  }
+
+  /**
+   * Stop counting this surface's background work as blocking, keeping a record
+   * of what was dropped.
+   *
+   * Called on a *human* UserPromptSubmit (a new typed turn makes prior
+   * background context moot, and bounds any leak from a missed completion to
+   * "until the next prompt"), and by the client when the user says a yellow
+   * surface should read as finished. Not called for `<task-notification>`
+   * UserPromptSubmits — those are Claude re-invoking itself for background
+   * deliveries, and dismissing would drop still-running work (especially
+   * persistent monitors) the moment they ping.
+   *
+   * This is where the indicator gives up accuracy on purpose: a persistent
+   * Monitor really is still running, and would otherwise hold the surface
+   * yellow for the rest of the session. `restoreDismissed` is the way back.
+   */
+  dismissAll(surfaceId: PtySessionId): void {
+    const s = this.surfaces.get(surfaceId)
+    if (!s) return
+    s.awaitingAnyResolution = false
+    for (const launch of Array.from(s.launches.values())) launch.dismissed = true
+  }
+
+  /**
+   * Take the dismissed work back up: every dismissed launch blocks again, and
+   * the first one to resolve dismisses the rest (see `awaitingAnyResolution`).
+   *
+   * Returns false, changing nothing, when there is nothing dismissed — the
+   * caller has no state to move, and inventing a launch to represent the user's
+   * hunch would create the one thing this file forbids: an outstanding entry no
+   * drain path can reach.
+   */
+  restoreDismissed(surfaceId: PtySessionId): boolean {
+    const s = this.surfaces.get(surfaceId)
+    if (!s) return false
+    let restored = 0
+    for (const launch of Array.from(s.launches.values())) {
+      if (!launch.dismissed) continue
+      launch.dismissed = false
+      // The no-evidence streak accrued before dismissal, while nothing was
+      // probing. Measuring the staleness bound from then would prune a restored
+      // launch on the first sweep, ending the wait before it began.
+      launch.indeterminateSinceMs = undefined
+      restored++
+    }
+    if (restored === 0) return false
+    s.awaitingAnyResolution = true
+    return true
+  }
+
+  /**
+   * Drop all tracking for a surface, dismissed launches included. SessionEnd
+   * only: the session is gone, so a record of what it was running is a claim
+   * about nothing. Every other reset is a `dismissAll`.
    */
   clear(surfaceId: PtySessionId): void {
-    this.surfaces.get(surfaceId)?.launches.clear()
+    const s = this.surfaces.get(surfaceId)
+    if (!s) return
+    s.launches.clear()
+    s.awaitingAnyResolution = false
+  }
+
+  /**
+   * Remove a launch that we have positive evidence has ended, and settle any
+   * outstanding arm.
+   *
+   * The distinction this method carries is between a launch that *resolved* and
+   * one that was merely dropped: only the former satisfies
+   * `awaitingAnyResolution`. A staleness prune — the sweep giving up on a launch
+   * nothing can answer for — goes through a bare `delete` instead, because "we
+   * stopped being able to see it" is not the news the user armed to hear.
+   */
+  private resolve(s: SurfaceLedger, id: string): boolean {
+    if (!s.launches.delete(id)) return false
+    if (s.awaitingAnyResolution) {
+      s.awaitingAnyResolution = false
+      for (const launch of Array.from(s.launches.values())) launch.dismissed = true
+    }
+    return true
   }
 
   /**
@@ -440,7 +573,7 @@ export class BackgroundLedger {
               const l = s.launches.get(id)
               if (l) l.queuedSinceMs ??= now
             } else {
-              s.launches.delete(id)
+              this.resolve(s, id)
             }
           }
         }
@@ -456,7 +589,7 @@ export class BackgroundLedger {
       if (entry.type !== 'assistant') {
         const text = toolResult || entryText(entry)
         for (const id of completedTaskIds(text)) {
-          s.launches.delete(id)
+          this.resolve(s, id)
         }
       }
     }
@@ -485,6 +618,12 @@ export class BackgroundLedger {
 
     let pruned = false
     for (const launch of Array.from(s.launches.values())) {
+      // Dismissed launches are not being waited on, so there is nothing for a
+      // probe to decide: draining one would change no indicator, and its verdict
+      // must not satisfy an arm that has not been made. Skipping them is also
+      // what keeps dismissal cheap — a session's worth of retained monitors
+      // costs no subprocesses.
+      if (launch.dismissed) continue
       // Queued: the work is done and a probe would only confirm that, draining
       // it before delivery re-invokes the agent. So skip the probe — but not
       // the clock, or an unparsed delivery makes it immortal.
@@ -508,7 +647,15 @@ export class BackgroundLedger {
       }
       // The launch may have been delivered/cleared by a concurrent ingest while
       // we awaited the probe — only prune if it's still present.
-      if (s.launches.delete(launch.id)) {
+      if (verdict === 'finished') {
+        // Positive evidence the work ended: a resolution, and enough to settle
+        // an arm.
+        if (this.resolve(s, launch.id)) pruned = true
+      } else if (s.launches.delete(launch.id)) {
+        // Reached only via a staleness bound above, i.e. nothing could tell us
+        // anything for STALE_INDETERMINATE_MS. The indicator must still drain,
+        // but "we lost sight of it" is not evidence that it finished, so it
+        // cannot be the one resolution an arm is waiting for.
         pruned = true
       }
     }
@@ -537,11 +684,11 @@ export class BackgroundLedger {
     }
   }
 
-  /** surfaceIds that currently have outstanding launches — used to scope the reconciliation sweep. */
+  /** surfaceIds with at least one blocking launch — used to scope the reconciliation sweep. */
   activeSurfaces(): PtySessionId[] {
     const out: PtySessionId[] = []
-    for (const [id, s] of Array.from(this.surfaces.entries())) {
-      if (s.launches.size > 0) out.push(id)
+    for (const id of Array.from(this.surfaces.keys())) {
+      if (this.outstandingCount(id) > 0) out.push(id)
     }
     return out
   }

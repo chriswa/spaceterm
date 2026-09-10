@@ -481,6 +481,18 @@ export interface SetClaudeStatusAsleepMessage {
   asleep: boolean
 }
 
+/**
+ * Right-click on the agent mark: take this surface's dismissed background work
+ * back up (`background: true`) or stop counting it (`background: false`).
+ * Fire-and-forget — the server may decline (nothing dismissed, or the surface
+ * is no longer idle) and the authoritative answer arrives as a node update.
+ */
+export interface SetClaudeStatusBackgroundMessage {
+  type: 'set-claude-status-background'
+  sessionId: PtySessionId
+  background: boolean
+}
+
 export interface ForkSessionMessage {
   type: 'fork-session'
   seq: number
@@ -700,6 +712,7 @@ export type ClientMessage =
   | NodeInteractionMessage
   | SetClaudeStatusUnreadMessage
   | SetClaudeStatusAsleepMessage
+  | SetClaudeStatusBackgroundMessage
   | DirectoryAddMessage
   | DirectoryCwdMessage
   | DirectoryGitFetchMessage

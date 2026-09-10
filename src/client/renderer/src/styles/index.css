@@ -2495,13 +2495,17 @@ html, body, #root {
   -webkit-mask-position: center;
 }
 
-/* Only offered as a target in the states where the unread flag is visible;
-   elsewhere the band still eats the click but says nothing about it. */
-.terminal-card__crab-behind--toggles-unread {
+/* Only offered as a target in the states where one of its two clicks does
+   something — the unread flag is visible, or there is background work to start
+   or stop waiting on. Elsewhere the band still eats the click but says nothing
+   about it. */
+.terminal-card__crab-behind--toggles-unread,
+.terminal-card__crab-behind--toggles-background {
   cursor: pointer;
 }
 
-.terminal-card__crab-behind--toggles-unread:hover {
+.terminal-card__crab-behind--toggles-unread:hover,
+.terminal-card__crab-behind--toggles-background:hover {
   filter: brightness(1.35);
 }
 

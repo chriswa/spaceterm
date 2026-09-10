@@ -501,6 +501,10 @@ function setupIPC(): void {
     client!.setClaudeStatusAsleep(sessionId, asleep)
   })
 
+  ipcMain.on('node:set-claude-status-background', (_event, sessionId: PtySessionId, background: boolean) => {
+    client!.setClaudeStatusBackground(sessionId, background)
+  })
+
   ipcMain.on('node:set-alerts-read-timestamp', (_event, nodeId: NodeId, timestamp: number) => {
     client!.setAlertsReadTimestamp(nodeId, timestamp)
   })

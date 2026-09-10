@@ -473,6 +473,10 @@ export class ServerClient extends EventEmitter {
     this.sendFireAndForget({ type: 'set-claude-status-unread', sessionId, unread } as ClientMessage)
   }
 
+  setClaudeStatusBackground(sessionId: PtySessionId, background: boolean): void {
+    this.sendFireAndForget({ type: 'set-claude-status-background', sessionId, background } as ClientMessage)
+  }
+
   setClaudeStatusAsleep(sessionId: PtySessionId, asleep: boolean): void {
     this.sendFireAndForget({ type: 'set-claude-status-asleep', sessionId, asleep } as ClientMessage)
   }
