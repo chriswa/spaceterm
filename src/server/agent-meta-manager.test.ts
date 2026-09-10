@@ -416,14 +416,14 @@ describe('a marketplace nests inside the branch, beside the host’s own things'
     expect(kit.manager.enable(host)).toBe(true)
 
     const kinds = groupsOf(kit.sm).map((g) => g.groupKind).sort()
-    expect(kinds).toEqual(['marketplace', 'meta', 'plugin', 'skills', 'skills'])
+    expect(kinds).toEqual(['marketplace', 'meta', 'plugin', 'skills'])
 
     // The repo's own CLAUDE.md and skill are still there, alongside the
-    // plugin's — the two are additive, which is the whole point.
+    // plugin's skills — the two are additive, which is the whole point.
+    // No card for the plugin's CLAUDE.md: nothing reads one.
     expect(docsOf(kit.sm).map((d) => d.docKey).sort()).toEqual([
       'CLAUDE.md',
       'own',
-      'plugin:devkit/CLAUDE.md',
       'plugin:devkit/recall'
     ])
   })
@@ -437,16 +437,15 @@ describe('a marketplace nests inside the branch, beside the host’s own things'
     const meta = byKind('meta')[0]
     const market = byKind('marketplace')[0]
     const plugin = byKind('plugin')[0]
-    const pluginSkills = byKind('skills').find((g) => g.parentId === plugin.id)!
 
     expect(meta.parentId).toBe(host)
     expect(market.parentId).toBe(meta.id)
     expect(plugin.parentId).toBe(market.id)
-    expect(pluginSkills).toBeDefined()
 
+    // A plugin's skills hang straight off it: skills are the only thing a
+    // plugin contributes, so a sub-group would be a level with one child.
     const byKey = new Map(docsOf(kit.sm).map((d) => [d.docKey, d]))
-    expect(byKey.get('plugin:devkit/CLAUDE.md')!.parentId).toBe(plugin.id)
-    expect(byKey.get('plugin:devkit/recall')!.parentId).toBe(pluginSkills.id)
+    expect(byKey.get('plugin:devkit/recall')!.parentId).toBe(plugin.id)
   })
 
   it('drops the whole marketplace subtree when the manifest goes', () => {

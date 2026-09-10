@@ -140,15 +140,23 @@ describe('the marketplace layout — what ~/chriswa-devkit actually is', () => {
     expect(scan.marketplace).not.toBeNull()
   })
 
-  it('scans each plugin in its own right, documents included', () => {
+  it('scans each plugin for its skills', () => {
     const plugins = scanAgentMeta('/w/kit', 'project', io).marketplace!.plugins
     expect(plugins).toHaveLength(1)
     expect(plugins[0].name).toBe('devkit')
-    expect(plugins[0].docs.map((d) => d.key)).toEqual(['plugin:devkit/CLAUDE.md'])
     expect(plugins[0].skills.map((s) => s.key)).toEqual([
       'plugin:devkit/recall',
       'plugin:devkit/session-id'
     ])
+  })
+
+  it('ignores a CLAUDE.md sitting in a plugin, because nothing reads it', () => {
+    // `CLAUDE.md` is not part of the plugin format — it is project or user
+    // memory, found from the cwd hierarchy and ~/.claude. A card for one would
+    // advertise instructions that never reach the agent.
+    const scan = scanAgentMeta('/w/kit', 'project', io)
+    const keys = scan.marketplace!.plugins.flatMap((p) => p.skills.map((s) => s.key))
+    expect(keys.some((k) => k.endsWith('CLAUDE.md'))).toBe(false)
   })
 
   it('prefixes keys by plugin, so two plugins may ship the same skill name', () => {
@@ -202,7 +210,7 @@ describe('the marketplace layout — what ~/chriswa-devkit actually is', () => {
     expect(scanAgentMeta('/w/kit', 'project', remote).marketplace).toBeNull()
   })
 
-  it('skips a plugin that has neither documents nor skills', () => {
+  it('skips a plugin with no skills', () => {
     const empty = fakeIO({
       '/w/kit': null,
       '/w/kit/.claude-plugin': null,

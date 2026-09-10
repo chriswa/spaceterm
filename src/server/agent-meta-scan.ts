@@ -75,12 +75,22 @@ export interface MetaDoc {
   path: string
 }
 
-/** One plugin inside a marketplace, scanned in its own right. */
+/**
+ * One plugin inside a marketplace.
+ *
+ * Skills only, deliberately. A plugin ships `plugin.json`, `commands/`,
+ * `agents/`, `skills/`, `hooks/` and `.mcp.json` — `CLAUDE.md` is not part of
+ * the plugin format. It is project or user memory, discovered from the working
+ * directory hierarchy and `~/.claude`, so a `CLAUDE.md` sitting in a plugin
+ * directory is a file Claude Code never reads. Showing a card for one would
+ * advertise instructions that have no effect, which is worse than showing
+ * nothing. Commands are out of scope on the same reasoning the feature started
+ * with: a command is a skill with one extra line of frontmatter.
+ */
 export interface PluginScan {
   /** The name the manifest gives it — the caption, and the key prefix. */
   name: string
   dir: string
-  docs: MetaDoc[]
   skillsRoot: string | null
   skills: MetaDoc[]
 }
@@ -117,9 +127,7 @@ const EMPTY_SCAN: MetaScan = { docs: [], skillsRoot: null, skills: [], marketpla
 /** True when a scan found anything worth building a branch for. */
 export function hasAgentMeta(scan: MetaScan): boolean {
   if (scan.docs.length > 0 || scan.skills.length > 0) return true
-  return (scan.marketplace?.plugins ?? []).some(
-    (plugin) => plugin.docs.length > 0 || plugin.skills.length > 0
-  )
+  return (scan.marketplace?.plugins ?? []).some((plugin) => plugin.skills.length > 0)
 }
 
 /** The key prefix a plugin's documents and skills carry, so nothing collides. */
@@ -179,16 +187,10 @@ function scanMarketplace(hostDir: string, io: MetaScanIO): MarketplaceScan | nul
     const dir = join(hostDir, source)
     if (!io.isDirectory(dir)) continue
 
-    const prefix = pluginKeyPrefix(name)
-    const docs: MetaDoc[] = []
-    const claudeMd = join(dir, 'CLAUDE.md')
-    if (io.isFile(claudeMd)) docs.push({ key: `${prefix}CLAUDE.md`, path: claudeMd })
-
     const skillsRoot = join(dir, 'skills')
-    const skills = skillsIn(skillsRoot, io, prefix)
-
-    if (docs.length === 0 && skills.length === 0) continue
-    plugins.push({ name, dir, docs, skillsRoot: skills.length > 0 ? skillsRoot : null, skills })
+    const skills = skillsIn(skillsRoot, io, pluginKeyPrefix(name))
+    if (skills.length === 0) continue
+    plugins.push({ name, dir, skillsRoot, skills })
   }
 
   if (plugins.length === 0) return null

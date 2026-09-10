@@ -387,24 +387,15 @@ export class AgentMetaManager {
         const pluginKey = `plugin:${plugin.name}`
         wantedGroups.set(pluginKey, {
           kind: 'plugin',
-          label: plugin.name,
-          sourcePath: plugin.dir,
+          label: `${plugin.name} · ${plugin.skills.length}`,
+          sourcePath: plugin.skillsRoot ?? plugin.dir,
           parentKey: 'market'
         })
-        for (const doc of plugin.docs) {
-          wantedDocs.set(doc.key, { path: doc.path, groupKey: pluginKey, kind: 'doc' })
-        }
-        if (plugin.skills.length > 0) {
-          const pluginSkillsKey = `${pluginKey}:skills`
-          wantedGroups.set(pluginSkillsKey, {
-            kind: 'skills',
-            label: `Skills · ${plugin.skills.length}`,
-            sourcePath: plugin.skillsRoot ?? plugin.dir,
-            parentKey: pluginKey
-          })
-          for (const skill of plugin.skills) {
-            wantedDocs.set(skill.key, { path: skill.path, groupKey: pluginSkillsKey, kind: 'skill' })
-          }
+        // Skills only — a plugin has no CLAUDE.md in its format, and the
+        // skills hang directly off the plugin group rather than under a
+        // sub-group, since skills are the only thing there.
+        for (const skill of plugin.skills) {
+          wantedDocs.set(skill.key, { path: skill.path, groupKey: pluginKey, kind: 'skill' })
         }
       }
     }

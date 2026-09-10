@@ -25,11 +25,31 @@ host (directory node, or the root)
 | Root node | `~/.claude` — `CLAUDE.md` and `skills/` directly inside |
 | Project | `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/skills/*/SKILL.md` |
 | Plugin (`.claude-plugin/plugin.json`) | `CLAUDE.md` and `skills/*/SKILL.md` — no `.claude` anywhere |
-| Marketplace (`.claude-plugin/marketplace.json`) | follows the manifest into each local plugin, keys prefixed by plugin name |
+| A plugin reached *via* a marketplace manifest | `skills/*/SKILL.md` only |
+| Marketplace (`.claude-plugin/marketplace.json`) | follows the manifest into each local plugin for its `skills/`, keys prefixed by plugin name |
 
 That last row is not hypothetical: `~/chriswa-devkit` is a marketplace, and its
 skills live one level down in `default-plugin/`. A scanner that only knew
-`.claude/skills` and plugin roots reported the repo as having nothing.
+`.claude/skills` and plugin roots reported the repo as having nothing. A
+marketplace is **additive** — a repo can have its own `CLAUDE.md` and skills and
+also publish plugins.
+
+**The last two rows differ, and the difference is the point.** `CLAUDE.md` is not
+part of the plugin format — a plugin ships `plugin.json`, `commands/`, `agents/`,
+`skills/`, `hooks/` and `.mcp.json`. `CLAUDE.md` is project or user memory,
+discovered from the *working directory* hierarchy and `~/.claude`. So:
+
+- **A host you point a directory node at** is a working directory. Its
+  `CLAUDE.md` is read by anyone running an agent there, whatever else that
+  directory happens to be — including a plugin. It gets a card.
+- **A plugin reached through a marketplace manifest** is not a working
+  directory. You are looking into it from outside, and nothing loads a
+  `CLAUDE.md` found there. A card for one would advertise instructions that
+  never reach the agent, so plugins contribute skills only.
+
+An earlier version scanned marketplace plugins for `CLAUDE.md` on nothing better
+than "a plugin is a directory, and directories have CLAUDE.md". No plugin on this
+machine has one.
 
 Two more things the real files taught us, both caught by fixture tests against
 this machine rather than by invented examples:
