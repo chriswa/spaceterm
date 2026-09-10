@@ -111,12 +111,18 @@ describe('the plugin layout', () => {
 describe('the marketplace layout — what ~/chriswa-devkit actually is', () => {
   const io = fakeIO({
     '/w/kit': null,
+    '/w/kit/CLAUDE.md': '# the repo itself',
+    '/w/kit/.claude': null,
+    '/w/kit/.claude/skills': null,
+    '/w/kit/.claude/skills/own': null,
+    '/w/kit/.claude/skills/own/SKILL.md': skill('the repo own skill'),
     '/w/kit/.claude-plugin': null,
     '/w/kit/.claude-plugin/marketplace.json': JSON.stringify({
       name: 'kit',
       plugins: [{ name: 'devkit', source: './default-plugin' }]
     }),
     '/w/kit/default-plugin': null,
+    '/w/kit/default-plugin/CLAUDE.md': '# the plugin',
     '/w/kit/default-plugin/skills': null,
     '/w/kit/default-plugin/skills/recall': null,
     '/w/kit/default-plugin/skills/recall/SKILL.md': skill('recall'),
@@ -124,9 +130,25 @@ describe('the marketplace layout — what ~/chriswa-devkit actually is', () => {
     '/w/kit/default-plugin/skills/session-id/SKILL.md': skill('session id')
   })
 
-  it('follows the manifest one level down instead of reporting nothing', () => {
+  it('keeps the repo’s OWN documents and skills alongside the marketplace', () => {
+    // The bug this replaced: the marketplace was only consulted when the repo
+    // had no skills of its own, which made the two mutually exclusive for no
+    // reason. A repo can have both, and this one does.
     const scan = scanAgentMeta('/w/kit', 'project', io)
-    expect(scan.skills.map((s) => s.key)).toEqual(['devkit/recall', 'devkit/session-id'])
+    expect(scan.docs.map((d) => d.key)).toEqual(['CLAUDE.md'])
+    expect(scan.skills.map((s) => s.key)).toEqual(['own'])
+    expect(scan.marketplace).not.toBeNull()
+  })
+
+  it('scans each plugin in its own right, documents included', () => {
+    const plugins = scanAgentMeta('/w/kit', 'project', io).marketplace!.plugins
+    expect(plugins).toHaveLength(1)
+    expect(plugins[0].name).toBe('devkit')
+    expect(plugins[0].docs.map((d) => d.key)).toEqual(['plugin:devkit/CLAUDE.md'])
+    expect(plugins[0].skills.map((s) => s.key)).toEqual([
+      'plugin:devkit/recall',
+      'plugin:devkit/session-id'
+    ])
   })
 
   it('prefixes keys by plugin, so two plugins may ship the same skill name', () => {
@@ -148,9 +170,15 @@ describe('the marketplace layout — what ~/chriswa-devkit actually is', () => {
       '/w/kit/b/skills/recall': null,
       '/w/kit/b/skills/recall/SKILL.md': skill('b recall')
     })
-    const keys = scanAgentMeta('/w/kit', 'project', two).skills.map((s) => s.key)
-    expect(keys).toEqual(['a/recall', 'b/recall'])
+    const keys = scanAgentMeta('/w/kit', 'project', two).marketplace!.plugins.flatMap((p) =>
+      p.skills.map((s) => s.key)
+    )
+    expect(keys).toEqual(['plugin:a/recall', 'plugin:b/recall'])
     expect(new Set(keys).size).toBe(2)
+  })
+
+  it('names itself from the manifest, falling back to the directory', () => {
+    expect(scanAgentMeta('/w/kit', 'project', io).marketplace!.name).toBe('kit')
   })
 
   it('survives a manifest that is mid-edit rather than throwing', () => {
@@ -160,7 +188,7 @@ describe('the marketplace layout — what ~/chriswa-devkit actually is', () => {
       '/w/kit/.claude-plugin/marketplace.json': '{ "plugins": [ {'
     })
     expect(() => scanAgentMeta('/w/kit', 'project', broken)).not.toThrow()
-    expect(scanAgentMeta('/w/kit', 'project', broken).skills).toEqual([])
+    expect(scanAgentMeta('/w/kit', 'project', broken).marketplace).toBeNull()
   })
 
   it('ignores plugin sources that are not local directories', () => {
@@ -171,7 +199,20 @@ describe('the marketplace layout — what ~/chriswa-devkit actually is', () => {
         plugins: [{ name: 'r', source: 'github:someone/thing' }]
       })
     })
-    expect(scanAgentMeta('/w/kit', 'project', remote).skills).toEqual([])
+    expect(scanAgentMeta('/w/kit', 'project', remote).marketplace).toBeNull()
+  })
+
+  it('skips a plugin that has neither documents nor skills', () => {
+    const empty = fakeIO({
+      '/w/kit': null,
+      '/w/kit/.claude-plugin': null,
+      '/w/kit/.claude-plugin/marketplace.json': JSON.stringify({
+        plugins: [{ name: 'hollow', source: './hollow' }]
+      }),
+      '/w/kit/hollow': null,
+      '/w/kit/hollow/README.md': 'nothing an agent reads'
+    })
+    expect(scanAgentMeta('/w/kit', 'project', empty).marketplace).toBeNull()
   })
 })
 
@@ -216,6 +257,19 @@ describe('against the real directories on this machine', () => {
     const dir = join(homedir(), 'chriswa-devkit')
     if (!existsSync(dir)) return
     const scan = scanAgentMeta(dir, 'project', REAL_META_SCAN_IO)
-    expect(scan.skills.map((s) => s.key)).toContain('chriswa-devkit/recall')
+    const keys = (scan.marketplace?.plugins ?? []).flatMap((p) => p.skills.map((s) => s.key))
+    expect(keys).toContain('plugin:chriswa-devkit/recall')
+    // And its own top-level CLAUDE.md is still found, beside the marketplace.
+    expect(scan.docs.map((d) => d.key)).toContain('CLAUDE.md')
+  })
+
+  it('finds ~/tts, which has a CLAUDE.md and nothing else', () => {
+    // The case that was reported greyed out. Nothing to do with the scanner in
+    // the end, but it is the shape most directories have and deserves a guard.
+    const dir = join(homedir(), 'tts')
+    if (!existsSync(dir)) return
+    const scan = scanAgentMeta(dir, 'project', REAL_META_SCAN_IO)
+    expect(hasAgentMeta(scan)).toBe(true)
+    expect(scan.docs.map((d) => d.key)).toContain('CLAUDE.md')
   })
 })

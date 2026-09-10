@@ -1,5 +1,5 @@
 import * as fs from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 
 /**
  * Finding the agent-facing documents that belong to a directory.
@@ -75,21 +75,56 @@ export interface MetaDoc {
   path: string
 }
 
+/** One plugin inside a marketplace, scanned in its own right. */
+export interface PluginScan {
+  /** The name the manifest gives it — the caption, and the key prefix. */
+  name: string
+  dir: string
+  docs: MetaDoc[]
+  skillsRoot: string | null
+  skills: MetaDoc[]
+}
+
+export interface MarketplaceScan {
+  /** The manifest's own name, or the directory's when it declares none. */
+  name: string
+  dir: string
+  plugins: PluginScan[]
+}
+
 export interface MetaScan {
   /** `CLAUDE.md` documents, outermost first. */
   docs: MetaDoc[]
   /** Where skills were found, for the group's tooltip. Null when there are none. */
   skillsRoot: string | null
   skills: MetaDoc[]
+  /**
+   * A marketplace this directory hosts, if any.
+   *
+   * Additive, never a substitute. A repo can perfectly well have its own
+   * `CLAUDE.md`, its own `.claude/skills`, AND publish a marketplace of plugins
+   * that each have their own — an earlier version only looked for the
+   * marketplace when the repo had no skills of its own, which made the two
+   * mutually exclusive for no reason.
+   */
+  marketplace: MarketplaceScan | null
 }
 
 export type MetaHostKind = 'user' | 'project'
 
-const EMPTY_SCAN: MetaScan = { docs: [], skillsRoot: null, skills: [] }
+const EMPTY_SCAN: MetaScan = { docs: [], skillsRoot: null, skills: [], marketplace: null }
 
 /** True when a scan found anything worth building a branch for. */
 export function hasAgentMeta(scan: MetaScan): boolean {
-  return scan.docs.length > 0 || scan.skills.length > 0
+  if (scan.docs.length > 0 || scan.skills.length > 0) return true
+  return (scan.marketplace?.plugins ?? []).some(
+    (plugin) => plugin.docs.length > 0 || plugin.skills.length > 0
+  )
+}
+
+/** The key prefix a plugin's documents and skills carry, so nothing collides. */
+export function pluginKeyPrefix(pluginName: string): string {
+  return `plugin:${pluginName}/`
 }
 
 /**
@@ -113,33 +148,55 @@ function skillsIn(root: string, io: MetaScanIO, keyPrefix = ''): MetaDoc[] {
   return found
 }
 
-/** The plugin directories a marketplace manifest points at, relative paths resolved. */
-function marketplacePlugins(hostDir: string, io: MetaScanIO): Array<{ name: string; dir: string }> {
+/**
+ * The marketplace this directory publishes, with each local plugin scanned.
+ *
+ * Only relative sources describe a directory in this repo; a git or npm source
+ * names something we have not fetched and cannot read.
+ */
+function scanMarketplace(hostDir: string, io: MetaScanIO): MarketplaceScan | null {
   const raw = io.readFile(join(hostDir, '.claude-plugin', 'marketplace.json'))
-  if (raw === undefined) return []
+  if (raw === undefined) return null
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
     // A manifest mid-edit is not an error worth surfacing on the canvas; it
     // just means no plugins this scan. The next watch event re-reads it.
-    return []
+    return null
   }
-  if (typeof parsed !== 'object' || parsed === null) return []
-  const plugins = (parsed as { plugins?: unknown }).plugins
-  if (!Array.isArray(plugins)) return []
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const manifest = parsed as { name?: unknown; plugins?: unknown }
+  if (!Array.isArray(manifest.plugins)) return null
 
-  const result: Array<{ name: string; dir: string }> = []
-  for (const entry of plugins) {
+  const plugins: PluginScan[] = []
+  for (const entry of manifest.plugins) {
     if (typeof entry !== 'object' || entry === null) continue
     const { name, source } = entry as { name?: unknown; source?: unknown }
     if (typeof name !== 'string' || typeof source !== 'string') continue
-    // Only relative sources describe a directory in this repo. A git or npm
-    // source names something we have not fetched and cannot read.
     if (!source.startsWith('.') && !source.startsWith('/')) continue
-    result.push({ name, dir: join(hostDir, source) })
+
+    const dir = join(hostDir, source)
+    if (!io.isDirectory(dir)) continue
+
+    const prefix = pluginKeyPrefix(name)
+    const docs: MetaDoc[] = []
+    const claudeMd = join(dir, 'CLAUDE.md')
+    if (io.isFile(claudeMd)) docs.push({ key: `${prefix}CLAUDE.md`, path: claudeMd })
+
+    const skillsRoot = join(dir, 'skills')
+    const skills = skillsIn(skillsRoot, io, prefix)
+
+    if (docs.length === 0 && skills.length === 0) continue
+    plugins.push({ name, dir, docs, skillsRoot: skills.length > 0 ? skillsRoot : null, skills })
   }
-  return result
+
+  if (plugins.length === 0) return null
+  return {
+    name: typeof manifest.name === 'string' ? manifest.name : basename(hostDir),
+    dir: hostDir,
+    plugins
+  }
 }
 
 /**
@@ -158,42 +215,32 @@ export function scanAgentMeta(absHostDir: string, kind: MetaHostKind, io: MetaSc
     const docs: MetaDoc[] = []
     const claudeMd = join(absHostDir, 'CLAUDE.md')
     if (io.isFile(claudeMd)) docs.push({ key: 'CLAUDE.md', path: claudeMd })
-    return { docs, skillsRoot: skills.length > 0 ? skillsRoot : null, skills }
+    return { docs, skillsRoot: skills.length > 0 ? skillsRoot : null, skills, marketplace: null }
   }
 
   const docs: MetaDoc[] = []
   const topDoc = join(absHostDir, 'CLAUDE.md')
   if (io.isFile(topDoc)) docs.push({ key: 'CLAUDE.md', path: topDoc })
 
+  // A plugin keeps its skills at `skills/`, with no `.claude` in the path.
   const isPlugin = io.isFile(join(absHostDir, '.claude-plugin', 'plugin.json'))
-  if (isPlugin) {
-    const skillsRoot = join(absHostDir, 'skills')
-    const skills = skillsIn(skillsRoot, io)
-    return { docs, skillsRoot: skills.length > 0 ? skillsRoot : null, skills }
+  const ownSkillsRoot = isPlugin ? join(absHostDir, 'skills') : join(absHostDir, '.claude', 'skills')
+
+  // A second CLAUDE.md inside `.claude/` is a different document from the
+  // top-level one, so both get a card. A plugin has no `.claude` to look in.
+  if (!isPlugin) {
+    const nestedDoc = join(absHostDir, '.claude', 'CLAUDE.md')
+    if (io.isFile(nestedDoc)) docs.push({ key: '.claude/CLAUDE.md', path: nestedDoc })
   }
 
-  // An ordinary project. A second CLAUDE.md inside `.claude/` is common and is
-  // a different document from the top-level one, so both get a card.
-  const nestedDoc = join(absHostDir, '.claude', 'CLAUDE.md')
-  if (io.isFile(nestedDoc)) docs.push({ key: '.claude/CLAUDE.md', path: nestedDoc })
+  const skills = skillsIn(ownSkillsRoot, io)
 
-  const projectSkillsRoot = join(absHostDir, '.claude', 'skills')
-  const skills = skillsIn(projectSkillsRoot, io)
-  if (skills.length > 0) {
-    return { docs, skillsRoot: projectSkillsRoot, skills }
+  return {
+    docs,
+    skillsRoot: skills.length > 0 ? ownSkillsRoot : null,
+    skills,
+    // Independent of everything above: a repo may publish a marketplace and
+    // still have documents and skills of its own.
+    marketplace: isPlugin ? null : scanMarketplace(absHostDir, io)
   }
-
-  // No skills of its own — but it may be a marketplace whose plugins have them.
-  // Keys are prefixed with the plugin name so two plugins can both ship a
-  // `recall` without colliding in the position map.
-  const plugins = marketplacePlugins(absHostDir, io)
-  const fromPlugins: MetaDoc[] = []
-  for (const plugin of plugins) {
-    fromPlugins.push(...skillsIn(join(plugin.dir, 'skills'), io, `${plugin.name}/`))
-  }
-  if (fromPlugins.length > 0) {
-    return { docs, skillsRoot: absHostDir, skills: fromPlugins }
-  }
-
-  return { docs, skillsRoot: null, skills: [] }
 }

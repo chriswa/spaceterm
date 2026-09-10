@@ -80,8 +80,13 @@ interface LiveBranch {
   /** Absolute, `~`-expanded directory the scan runs against. */
   rootDir: string
   kind: MetaHostKind
-  /** Node ids currently on the canvas, keyed by what they show. */
-  groupIds: { meta: NodeId; skills?: NodeId }
+  /**
+   * Group cards on the canvas, keyed by what they head — `meta`, `skills`,
+   * `market`, `plugin:<name>`, `plugin:<name>:skills`. A map rather than named
+   * fields because a marketplace's plugins appear and disappear like any other
+   * scanned thing, and a rescan has to diff them.
+   */
+  groupIds: Map<string, NodeId>
   docIds: Map<string, NodeId>
   watchers: DirWatchHandle[]
   cancelRescan: CancelScheduled | null
@@ -93,6 +98,39 @@ interface LiveBranch {
    * `FileContentManager`'s per-entry echo suppression, one level up.
    */
   selfWrites: Map<string, number>
+}
+
+/** One group the scan says should exist, and what it hangs under. */
+interface WantedGroup {
+  kind: 'meta' | 'skills' | 'marketplace' | 'plugin'
+  label: string
+  sourcePath: string
+  /** The group key this hangs under, or null for the branch root (the host). */
+  parentKey: string | null
+}
+
+interface WantedDoc {
+  path: string
+  groupKey: string
+  kind: 'skill' | 'doc'
+}
+
+/**
+ * Groups ordered parents-first, so a child is always placed after the parent it
+ * is positioned relative to. Depth is short and bounded — meta, market, plugin,
+ * skills — so counting hops is cheaper and clearer than a topological sort.
+ */
+function orderedByDepth(groups: Map<string, WantedGroup>): Array<[string, WantedGroup]> {
+  const depth = (key: string): number => {
+    let hops = 0
+    let current = groups.get(key)?.parentKey ?? null
+    while (current !== null && hops < 8) {
+      hops++
+      current = groups.get(current)?.parentKey ?? null
+    }
+    return hops
+  }
+  return [...groups].sort((a, b) => depth(a[0]) - depth(b[0]))
 }
 
 /** How long a self-write suppresses the rescan it would otherwise trigger. */
@@ -165,7 +203,7 @@ export class AgentMetaManager {
       hostId,
       rootDir: host.dir,
       kind: host.kind,
-      groupIds: { meta: metaGroupId(hostId) },
+      groupIds: new Map(),
       docIds: new Map(),
       watchers: [],
       cancelRescan: null,
@@ -309,62 +347,116 @@ export class AgentMetaManager {
    * theirs removed along with its file watch.
    */
   private materialise(branch: LiveBranch, scan: MetaScan): void {
-    const metaGroup = this.ensureGroup(branch, 'meta', metaGroupId(branch.hostId), {
+    // What the canvas SHOULD show, built first and diffed second. Groups are
+    // keyed by what they head and carry the key of the group they hang under,
+    // so the shape below is a tree without any of this code recursing.
+    const wantedGroups = new Map<string, WantedGroup>()
+    const wantedDocs = new Map<string, WantedDoc>()
+
+    wantedGroups.set('meta', {
+      kind: 'meta',
       label: 'Agent Meta',
-      parentId: branch.hostId,
       sourcePath: branch.rootDir,
-      fallbackPos: this.defaultGroupPos(branch)
+      parentKey: null
     })
-
-    // Documents hang directly off the branch root; skills hang off their own
-    // sub-group, so a repo with twenty skills does not bury its CLAUDE.md.
-    const wanted = new Map<string, { path: string; parentId: NodeId; kind: 'skill' | 'doc' }>()
     for (const doc of scan.docs) {
-      wanted.set(doc.key, { path: doc.path, parentId: metaGroup, kind: 'doc' })
+      wantedDocs.set(doc.key, { path: doc.path, groupKey: 'meta', kind: 'doc' })
     }
-
     if (scan.skills.length > 0) {
-      const skillsGroup = this.ensureGroup(branch, 'skills', skillsGroupId(branch.hostId), {
+      wantedGroups.set('skills', {
+        kind: 'skills',
         label: `Skills · ${scan.skills.length}`,
-        parentId: metaGroup,
         sourcePath: scan.skillsRoot ?? branch.rootDir,
-        fallbackPos: this.defaultSkillsGroupPos(branch, metaGroup)
+        parentKey: 'meta'
       })
-      for (const s of scan.skills) {
-        wanted.set(s.key, { path: s.path, parentId: skillsGroup, kind: 'skill' })
+      for (const skill of scan.skills) {
+        wantedDocs.set(skill.key, { path: skill.path, groupKey: 'skills', kind: 'skill' })
       }
-    } else if (branch.groupIds.skills) {
-      this.removeNode(branch.groupIds.skills)
-      branch.groupIds.skills = undefined
     }
 
-    // Drop the cards whose files are gone.
+    // A marketplace hangs beside the host's own documents, not instead of them.
+    const marketplace = scan.marketplace
+    if (marketplace) {
+      wantedGroups.set('market', {
+        kind: 'marketplace',
+        label: `Marketplace · ${marketplace.name}`,
+        sourcePath: marketplace.dir,
+        parentKey: 'meta'
+      })
+      for (const plugin of marketplace.plugins) {
+        const pluginKey = `plugin:${plugin.name}`
+        wantedGroups.set(pluginKey, {
+          kind: 'plugin',
+          label: plugin.name,
+          sourcePath: plugin.dir,
+          parentKey: 'market'
+        })
+        for (const doc of plugin.docs) {
+          wantedDocs.set(doc.key, { path: doc.path, groupKey: pluginKey, kind: 'doc' })
+        }
+        if (plugin.skills.length > 0) {
+          const pluginSkillsKey = `${pluginKey}:skills`
+          wantedGroups.set(pluginSkillsKey, {
+            kind: 'skills',
+            label: `Skills · ${plugin.skills.length}`,
+            sourcePath: plugin.skillsRoot ?? plugin.dir,
+            parentKey: pluginKey
+          })
+          for (const skill of plugin.skills) {
+            wantedDocs.set(skill.key, { path: skill.path, groupKey: pluginSkillsKey, kind: 'skill' })
+          }
+        }
+      }
+    }
+
+    // --- Drop what is no longer wanted, cards before the groups they hung on.
     for (const [key, nodeId] of [...branch.docIds]) {
-      if (wanted.has(key)) continue
+      if (wantedDocs.has(key)) continue
       this.files.stopWatching(nodeId)
       this.removeNode(nodeId)
       branch.docIds.delete(key)
     }
+    for (const [key, nodeId] of [...branch.groupIds]) {
+      if (wantedGroups.has(key)) continue
+      this.removeNode(nodeId)
+      branch.groupIds.delete(key)
+    }
 
-    // Add the ones that appeared, and re-home any whose group changed.
+    // --- Groups, parents before children so a child can be placed beside one.
+    const slotOf = new Map<string, number>()
+    for (const [key, want] of orderedByDepth(wantedGroups)) {
+      const parentNodeId = want.parentKey === null
+        ? branch.hostId
+        : branch.groupIds.get(want.parentKey) ?? branch.hostId
+      const slot = slotOf.get(want.parentKey ?? '') ?? 0
+      slotOf.set(want.parentKey ?? '', slot + 1)
+      this.ensureGroup(branch, key, want, parentNodeId, slot)
+    }
+
+    // --- Cards, into whichever group now holds them.
     const entry: MetaHostEntry = this.state.getMetaHost(branch.hostId) ?? { open: true }
-    let slot = 0
-    for (const [key, want] of wanted) {
+    const cardSlot = new Map<string, number>()
+    for (const [key, want] of wantedDocs) {
+      const groupNodeId = branch.groupIds.get(want.groupKey)
+      if (!groupNodeId) continue
+      const slot = cardSlot.get(want.groupKey) ?? 0
+      cardSlot.set(want.groupKey, slot + 1)
+
       const existing = branch.docIds.get(key)
       if (existing) {
         const node = this.state.getNode(existing)
-        if (node?.type === 'meta-doc' && node.parentId !== want.parentId) {
-          this.state.patchEphemeralNode(existing, { parentId: want.parentId })
+        if (node?.type === 'meta-doc' && node.parentId !== groupNodeId) {
+          this.state.patchEphemeralNode(existing, { parentId: groupNodeId })
         }
-        slot++
         continue
       }
-      const pos = entry.cardPos?.[key] ?? this.slotPosition(branch, want.parentId, slot)
+
+      const pos = entry.cardPos?.[key] ?? this.slotPosition(groupNodeId, slot)
       const id = docNodeId(branch.hostId, key)
       const node: MetaDocNodeData = {
         id,
         type: 'meta-doc',
-        parentId: want.parentId,
+        parentId: groupNodeId,
         hostId: branch.hostId,
         docKind: want.kind,
         docKey: key,
@@ -385,40 +477,46 @@ export class AgentMetaManager {
       // back. A skill deleted inside the debounce window would otherwise have
       // its directory and an empty SKILL.md recreated in the user's repo, and
       // the watcher would then see a legitimate new skill.
-      this.files.startWatching(id, want.parentId, want.path, { createIfMissing: false })
-      slot++
+      this.files.startWatching(id, groupNodeId, want.path, { createIfMissing: false })
     }
 
     // Keep the remembered positions to what the scan actually found, so the map
     // cannot grow without bound.
-    this.prunePositions(branch, [...wanted.keys()])
+    this.prunePositions(branch, [...wantedDocs.keys()])
   }
 
   private ensureGroup(
     branch: LiveBranch,
-    kind: 'meta' | 'skills',
-    id: NodeId,
-    spec: { label: string; parentId: NodeId; sourcePath: string; fallbackPos: { x: number; y: number } }
-  ): NodeId {
+    key: string,
+    want: WantedGroup,
+    parentNodeId: NodeId,
+    slot: number
+  ): void {
+    const id = groupNodeId(branch.hostId, key)
     const existing = this.state.getNode(id)
     if (existing && existing.type === 'meta-group') {
-      if (existing.label !== spec.label || existing.sourcePath !== spec.sourcePath) {
-        this.state.patchEphemeralNode(id, { label: spec.label, sourcePath: spec.sourcePath })
-      }
-      if (kind === 'skills') branch.groupIds.skills = id
-      return id
+      branch.groupIds.set(key, id)
+      const patch: Partial<MetaGroupNodeData> = {}
+      if (existing.label !== want.label) patch.label = want.label
+      if (existing.sourcePath !== want.sourcePath) patch.sourcePath = want.sourcePath
+      if (existing.parentId !== parentNodeId) patch.parentId = parentNodeId
+      if (Object.keys(patch).length > 0) this.state.patchEphemeralNode(id, patch)
+      return
     }
 
-    const remembered = kind === 'meta' ? this.state.getMetaHost(branch.hostId)?.groupPos : undefined
-    const pos = remembered ?? spec.fallbackPos
+    // Only the branch root's position is remembered: everything below it is
+    // laid out relative to its parent, so restoring one nested group to an
+    // absolute position it held under a different tree shape would scatter it.
+    const remembered = key === 'meta' ? this.state.getMetaHost(branch.hostId)?.groupPos : undefined
+    const pos = remembered ?? this.groupPosition(parentNodeId, slot)
     const node: MetaGroupNodeData = {
       id,
       type: 'meta-group',
-      parentId: spec.parentId,
+      parentId: parentNodeId,
       hostId: branch.hostId,
-      groupKind: kind,
-      label: spec.label,
-      sourcePath: spec.sourcePath,
+      groupKind: want.kind,
+      label: want.label,
+      sourcePath: want.sourcePath,
       x: pos.x,
       y: pos.y,
       zIndex: 0,
@@ -426,27 +524,20 @@ export class AgentMetaManager {
       lastInteractedAt: this.deps.now()
     }
     this.state.addEphemeralNode(node)
-    if (kind === 'skills') branch.groupIds.skills = id
-    return id
+    branch.groupIds.set(key, id)
   }
 
-  private defaultGroupPos(branch: LiveBranch): { x: number; y: number } {
-    const host = branch.hostId === ROOT_NODE_ID ? null : this.state.getNode(branch.hostId)
-    const x = host?.x ?? 0
-    const y = host?.y ?? 0
-    return { x, y: y + META_GROUP_DROP }
-  }
-
-  private defaultSkillsGroupPos(branch: LiveBranch, metaGroupNodeId: NodeId): { x: number; y: number } {
-    const group = this.state.getNode(metaGroupNodeId)
-    const base = group ?? { x: 0, y: 0 }
-    return { x: base.x + META_DOC_WIDTH, y: base.y + META_GROUP_DROP }
+  /** A group sits below its parent, fanned sideways so siblings do not stack. */
+  private groupPosition(parentNodeId: NodeId, slot: number): { x: number; y: number } {
+    const parent = parentNodeId === ROOT_NODE_ID ? null : this.state.getNode(parentNodeId)
+    const base = parent ?? { x: 0, y: 0 }
+    return { x: base.x + slot * (META_DOC_WIDTH + 120), y: base.y + META_GROUP_DROP }
   }
 
   /** A column below the group, so a set of cards reads as the list it is. */
-  private slotPosition(branch: LiveBranch, parentId: NodeId, slot: number): { x: number; y: number } {
-    const parent = this.state.getNode(parentId)
-    const base = parent ?? { x: 0, y: 0 }
+  private slotPosition(groupNodeId: NodeId, slot: number): { x: number; y: number } {
+    const group = this.state.getNode(groupNodeId)
+    const base = group ?? { x: 0, y: 0 }
     return { x: base.x, y: base.y + META_GROUP_DROP + slot * META_COLUMN_PITCH }
   }
 
@@ -456,6 +547,9 @@ export class AgentMetaManager {
     const node = this.state.getNode(nodeId)
     if (!node) return
     if (node.type === 'meta-group') {
+      // Only the branch root. A nested group's place is derived from its
+      // parent, so remembering an absolute position for one would misplace it
+      // the moment the tree above it changed shape.
       if (node.groupKind !== 'meta') return
       const entry: MetaHostEntry = this.state.getMetaHost(node.hostId) ?? { open: true }
       this.state.setMetaHost(node.hostId, { ...entry, groupPos: { x, y } })
@@ -494,8 +588,8 @@ export class AgentMetaManager {
       this.removeNode(nodeId)
     }
     branch.docIds.clear()
-    if (branch.groupIds.skills) this.removeNode(branch.groupIds.skills)
-    this.removeNode(branch.groupIds.meta)
+    for (const nodeId of branch.groupIds.values()) this.removeNode(nodeId)
+    branch.groupIds.clear()
   }
 
   private removeNode(nodeId: NodeId): void {
@@ -526,11 +620,12 @@ export class AgentMetaManager {
  * keyed by node id, and a fresh uuid every boot would quietly reset all three.
  */
 export function metaGroupId(hostId: NodeId): NodeId {
-  return asNodeId(`meta:${hostId}`)
+  return groupNodeId(hostId, 'meta')
 }
 
-export function skillsGroupId(hostId: NodeId): NodeId {
-  return asNodeId(`meta:${hostId}:skills`)
+/** `meta`, `skills`, `market`, `plugin:<name>`, `plugin:<name>:skills`. */
+export function groupNodeId(hostId: NodeId, groupKey: string): NodeId {
+  return asNodeId(`meta:${hostId}:group:${groupKey}`)
 }
 
 export function docNodeId(hostId: NodeId, key: string): NodeId {

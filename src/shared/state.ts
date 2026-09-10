@@ -202,8 +202,16 @@ export interface MetaGroupNodeData extends BaseNodeData {
   type: 'meta-group'
   /** The directory node — or the root — whose branch this belongs to. */
   hostId: NodeId
-  /** `meta` is the branch root the toolbar button toggles; `skills` is the sub-group. */
-  groupKind: 'meta' | 'skills'
+  /**
+   * What this group heads.
+   *
+   * `meta` is the branch root the toolbar button toggles. `skills` groups a set
+   * of skills — a host's own, or one plugin's. `marketplace` and `plugin` are
+   * the two levels a published marketplace adds, and they nest inside the same
+   * branch as the host's own documents rather than replacing them: a repo can
+   * have its own CLAUDE.md and skills AND publish plugins that have theirs.
+   */
+  groupKind: 'meta' | 'skills' | 'marketplace' | 'plugin'
   /** Rendered caption, derived by the server from the scan. */
   label: string
   /** Absolute path this group summarises, for the tooltip. */

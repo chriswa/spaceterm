@@ -390,6 +390,86 @@ describe('the branch leaves no trace in the document', () => {
   })
 })
 
+describe('a marketplace nests inside the branch, beside the host’s own things', () => {
+  const KIT = {
+    '/w/kit': null,
+    '/w/kit/CLAUDE.md': '# the repo itself',
+    '/w/kit/.claude': null,
+    '/w/kit/.claude/skills': null,
+    '/w/kit/.claude/skills/own': null,
+    '/w/kit/.claude/skills/own/SKILL.md': skillFile('its own skill'),
+    '/w/kit/.claude-plugin': null,
+    '/w/kit/.claude-plugin/marketplace.json': JSON.stringify({
+      name: 'kit',
+      plugins: [{ name: 'devkit', source: './default-plugin' }]
+    }),
+    '/w/kit/default-plugin': null,
+    '/w/kit/default-plugin/CLAUDE.md': '# the plugin',
+    '/w/kit/default-plugin/skills': null,
+    '/w/kit/default-plugin/skills/recall': null,
+    '/w/kit/default-plugin/skills/recall/SKILL.md': skillFile('recall')
+  } as Record<string, string | null>
+
+  it('builds marketplace and plugin groups without displacing the host’s own', () => {
+    const kit = harness(KIT)
+    const host = addDirectoryHost(kit.sm, '/w/kit')
+    expect(kit.manager.enable(host)).toBe(true)
+
+    const kinds = groupsOf(kit.sm).map((g) => g.groupKind).sort()
+    expect(kinds).toEqual(['marketplace', 'meta', 'plugin', 'skills', 'skills'])
+
+    // The repo's own CLAUDE.md and skill are still there, alongside the
+    // plugin's — the two are additive, which is the whole point.
+    expect(docsOf(kit.sm).map((d) => d.docKey).sort()).toEqual([
+      'CLAUDE.md',
+      'own',
+      'plugin:devkit/CLAUDE.md',
+      'plugin:devkit/recall'
+    ])
+  })
+
+  it('hangs each level under the one above it', () => {
+    const kit = harness(KIT)
+    const host = addDirectoryHost(kit.sm, '/w/kit')
+    kit.manager.enable(host)
+
+    const byKind = (k: string) => groupsOf(kit.sm).filter((g) => g.groupKind === k)
+    const meta = byKind('meta')[0]
+    const market = byKind('marketplace')[0]
+    const plugin = byKind('plugin')[0]
+    const pluginSkills = byKind('skills').find((g) => g.parentId === plugin.id)!
+
+    expect(meta.parentId).toBe(host)
+    expect(market.parentId).toBe(meta.id)
+    expect(plugin.parentId).toBe(market.id)
+    expect(pluginSkills).toBeDefined()
+
+    const byKey = new Map(docsOf(kit.sm).map((d) => [d.docKey, d]))
+    expect(byKey.get('plugin:devkit/CLAUDE.md')!.parentId).toBe(plugin.id)
+    expect(byKey.get('plugin:devkit/recall')!.parentId).toBe(pluginSkills.id)
+  })
+
+  it('drops the whole marketplace subtree when the manifest goes', () => {
+    const kit = harness(KIT)
+    const host = addDirectoryHost(kit.sm, '/w/kit')
+    kit.manager.enable(host)
+    delete kit.tree['/w/kit/.claude-plugin/marketplace.json']
+    kit.fireWatch()
+
+    expect(groupsOf(kit.sm).map((g) => g.groupKind).sort()).toEqual(['meta', 'skills'])
+    expect(docsOf(kit.sm).map((d) => d.docKey).sort()).toEqual(['CLAUDE.md', 'own'])
+  })
+
+  it('leaves nothing behind when the branch closes', () => {
+    const kit = harness(KIT)
+    const host = addDirectoryHost(kit.sm, '/w/kit')
+    const before = serializeState(kit.sm.getState())
+    kit.manager.enable(host)
+    kit.manager.disable(host)
+    expect(serializeState(kit.sm.getState())).toBe(before)
+  })
+})
+
 describe('the host going away', () => {
   it('takes the branch with it', () => {
     const host = addDirectoryHost(h.sm)
