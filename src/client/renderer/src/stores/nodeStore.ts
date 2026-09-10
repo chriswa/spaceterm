@@ -36,6 +36,23 @@ interface NodeStoreState {
   // File-backed markdown content (nodeId → file content, overlayed at render time)
   fileContents: Record<string, string>
 
+  /**
+   * Whether each host has an agent-meta branch to offer, as the server reports
+   * it. Keyed by node id, and includes ROOT_NODE_ID — which is why this is a
+   * map of its own rather than a field on a node.
+   */
+  agentMetaAvailable: Record<string, boolean>
+  /**
+   * Which generated document cards are expanded.
+   *
+   * Client-local on purpose: it is a per-viewer preference, it costs nothing to
+   * rebuild, and generated node ids are deterministic, so it survives a
+   * renderer reload without ever being written down.
+   */
+  expandedDocs: Set<string>
+  setAgentMetaAvailable(nodeId: NodeId, available: boolean): void
+  toggleDocExpanded(nodeId: NodeId): void
+
   // Ephemeral set of node IDs that were just created (cleared by components after auto-edit)
   freshlyCreatedIds: Set<string>
 
@@ -131,6 +148,25 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   metaDocs: [],
   nodeList: [],
   fileContents: {},
+  agentMetaAvailable: {},
+  expandedDocs: new Set(),
+
+  setAgentMetaAvailable(nodeId, available) {
+    set(state => (
+      state.agentMetaAvailable[nodeId] === available
+        ? state
+        : { agentMetaAvailable: { ...state.agentMetaAvailable, [nodeId]: available } }
+    ))
+  },
+
+  toggleDocExpanded(nodeId) {
+    set(state => {
+      const next = new Set(state.expandedDocs)
+      if (next.has(nodeId)) next.delete(nodeId)
+      else next.add(nodeId)
+      return { expandedDocs: next }
+    })
+  },
   freshlyCreatedIds: new Set(),
 
   markFreshlyCreated(id) {

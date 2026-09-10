@@ -42,6 +42,8 @@ import { ClaudeStateMachine } from './claude-state'
 import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
+import { AgentMetaManager } from './agent-meta-manager'
+import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
@@ -218,6 +220,8 @@ let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
 let gitStatusPoller: GitStatusPoller
+let agentMetaManager: AgentMetaManager
+let agentMetaAvailability: AgentMetaAvailability
 let sessionStatusObserver: SessionStatusObserver
 let planCacheManager: PlanCacheManager
 let claudeStateMachine: ClaudeStateMachine
@@ -1268,6 +1272,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-archive': {
+      // Close any agent-meta branches in the subtree first, so their cards are
+      // torn down by their owner rather than swept into the archive entry.
+      for (const node of stateManager.subtreeNodes(msg.nodeId)) {
+        agentMetaManager.onHostRemoved(node.id)
+        agentMetaAvailability.forget(node.id)
+      }
       // Leaf-first, so a child's surface is released before its parent's.
       for (const node of stateManager.subtreeNodes(msg.nodeId)) {
         releaseNodeResources(node)
@@ -1517,6 +1527,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // Human-only path — the PTY-reported cwd writes a terminal node instead.
         stateManager.recordInteraction(msg.nodeId, Date.now())
         gitStatusPoller.pollNode(msg.nodeId)
+        // The branch and the button both described the old directory.
+        agentMetaManager.onHostChanged(msg.nodeId)
+        agentMetaAvailability.invalidate(msg.nodeId)
         send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
         console.error(`directory-cwd failed: ${err.message}`)
@@ -1638,6 +1651,35 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'markdown-resize': {
       stateManager.resizeMarkdown(msg.nodeId, msg.width, msg.height)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'agent-meta-toggle': {
+      const open = agentMetaManager.toggle(msg.nodeId)
+      send(client.socket, { type: 'agent-meta-toggle-result', seq: msg.seq, open })
+      break
+    }
+
+    case 'agent-meta-rescan': {
+      agentMetaManager.rescan(msg.nodeId)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'meta-doc-resize': {
+      stateManager.patchEphemeralNode(msg.nodeId, { width: msg.width, height: msg.height })
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'meta-doc-content': {
+      // Straight to the file. A generated card has no `content` field to fall
+      // back to, so unlike `markdown-content` there is no second path here.
+      // Telling the manager first stops the write it is about to make from
+      // reading back as a filesystem change and triggering a rescan.
+      agentMetaManager.noteSelfWrite(msg.nodeId)
+      fileContentManager.writeContent(msg.nodeId, msg.content)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -2530,6 +2572,23 @@ async function startServer(): Promise<void> {
     (nodeId, gitStatus) => stateManager.updateDirectoryGitStatus(nodeId, gitStatus)
   )
 
+  // --- Agent-meta branches ---
+  agentMetaManager = new AgentMetaManager(stateManager, fileContentManager)
+  agentMetaAvailability = new AgentMetaAvailability(
+    {
+      scan: (hostId) => agentMetaManager.scanFor(hostId),
+      hosts: () => stateManager.getDirectoryNodes().map((node) => node.id),
+      scheduleInterval: (fn, ms) => {
+        const timer = setInterval(fn, ms)
+        return () => clearInterval(timer)
+      },
+      now: () => Date.now()
+    },
+    (nodeId, available) => broadcastToAll({ type: 'agent-meta-availability', nodeId, available })
+  )
+  agentMetaAvailability.start()
+  agentMetaManager.restoreFromState()
+
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes
   for (const node of Object.values(allStartupNodes)) {
@@ -2574,6 +2633,12 @@ async function startServer(): Promise<void> {
 
     // Send the shared saved viewport slots to the new client
     send(socket, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
+
+    // Availability is pushed on change, which a client that connected after the
+    // last change would never have heard. Replay what is known.
+    for (const { nodeId, available } of agentMetaAvailability.snapshot()) {
+      send(socket, { type: 'agent-meta-availability', nodeId, available })
+    }
 
     const summaryTargetNodeId = summaryChat.getTargetNodeId()
     if (summaryTargetNodeId) {

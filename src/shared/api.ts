@@ -113,6 +113,18 @@ export interface NodeApi {
   markdownContent(nodeId: NodeId, content: string): Promise<void>
   markdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<void>
 
+  /**
+   * Open or close a host's agent-meta branch, resolving to whether it is open
+   * afterwards. The server decides: only it knows whether the host's directory
+   * has a CLAUDE.md or any skills.
+   */
+  agentMetaToggle(nodeId: NodeId): Promise<boolean>
+  /** Re-read a branch's tree now rather than waiting for a filesystem event. */
+  agentMetaRescan(nodeId: NodeId): Promise<void>
+  metaDocResize(nodeId: NodeId, width: number, height: number): Promise<void>
+  /** Edit a generated document. Written straight to the file; there is no node content. */
+  metaDocContent(nodeId: NodeId, content: string): Promise<void>
+
   titleAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }>
   titleText(nodeId: NodeId, text: string): Promise<void>
 
@@ -143,6 +155,8 @@ export interface NodeApi {
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
   /** Live changes to the restart-required flag (PUSH). See restartFlagStatus for the PULL. */
   onRestartRequired(callback: (required: boolean, reason: string) => void): () => void
+  /** Whether a host has an agent-meta branch to show, as the server learns it. */
+  onAgentMetaAvailability(callback: (nodeId: NodeId, available: boolean) => void): () => void
   /**
    * Current restart-required state (PULL). Authoritative on every renderer
    * (re)load — the PUSH above does not repeat across a reload that keeps the

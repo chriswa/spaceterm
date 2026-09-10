@@ -48,6 +48,7 @@ interface CardShellProps {
   isReparenting?: boolean
   isResizing?: boolean
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
+  agentMeta?: { available: boolean; open: boolean; onToggle: (id: NodeId) => void }
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   className?: string
@@ -66,7 +67,7 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onOpenArchiveSearch,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
-  onAddNode, onExtraCliArgs, extraCliArgs,
+  onAddNode, agentMeta, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
 
@@ -106,7 +107,7 @@ export function CardShell({
     archivedChildren, onOpenArchiveSearch,
     onStartReparent, isReparenting,
     onStartResize, isResizing,
-    onAddNode, showClose, hasChildren, onClose,
+    onAddNode, agentMeta, showClose, hasChildren, onClose,
   }
 
   // Register action props so FloatingToolbar can read them

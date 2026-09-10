@@ -15,6 +15,7 @@ interface RootNodeProps {
   archivedChildren: ArchivedNode[]
   onOpenArchiveSearch: (nodeId: NodeId) => void
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
+  agentMeta?: { available: boolean; open: boolean; onToggle: (id: NodeId) => void }
   onReparentTarget?: (id: NodeId) => void
 }
 
@@ -31,7 +32,7 @@ interface RootNodeProps {
  */
 const HIDDEN_ACTIONS_HEIGHT = 28
 
-export function RootNode({ focused, selected, onClick, archivedChildren, onOpenArchiveSearch, onAddNode, onReparentTarget }: RootNodeProps) {
+export function RootNode({ focused, selected, onClick, archivedChildren, onOpenArchiveSearch, onAddNode, agentMeta, onReparentTarget }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
   const visualSize = ROOT_DISC_RADIUS * 2
   const { Component: RootNodeVisual } = useFacet('rootNode')
@@ -65,6 +66,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onOpenA
       onColorChange={noop}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onAddNode={onAddNode}
+      agentMeta={agentMeta}
       onMouseDown={handleMouseDown}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(ROOT_NODE_ID) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}

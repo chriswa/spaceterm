@@ -85,6 +85,8 @@ export interface FakeBridgeResponses {
   activeLaunchPrefs: LaunchPrefs
   /** Current restart-required state returned by `restartFlagStatus` (the PULL). */
   restartFlag: { required: boolean; reason: string }
+  /** What `agentMetaToggle` reports the branch state as, afterwards. */
+  agentMetaOpen: boolean
 }
 
 const EMPTY_STATE: ServerState = {
@@ -112,6 +114,7 @@ export class FakeBridge implements Api {
     ttsAvailable: true,
     launchPrefs: { ...DEFAULT_LAUNCH_PREFS },
     activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS },
+    agentMetaOpen: true,
     restartFlag: { required: false, reason: '' }
   }
 
@@ -139,6 +142,7 @@ export class FakeBridge implements Api {
   private readonly peerCameraBounds = new Set<(clientId: string, bounds: CameraBounds) => void>()
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
+  private readonly agentMetaAvailability = new Set<(nodeId: NodeId, available: boolean) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusChanged = new Set<(focused: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId | null) => void>()
@@ -315,6 +319,10 @@ export class FakeBridge implements Api {
     markdownResize: (nodeId, width, height) =>
       this.reply('node.markdownResize', undefined, nodeId, width, height),
     markdownContent: (nodeId, content) => this.reply('node.markdownContent', undefined, nodeId, content),
+    agentMetaToggle: (nodeId) => this.reply('node.agentMetaToggle', this.responses.agentMetaOpen, nodeId),
+    agentMetaRescan: (nodeId) => this.reply('node.agentMetaRescan', undefined, nodeId),
+    metaDocResize: (nodeId, width, height) => this.reply('node.metaDocResize', undefined, nodeId, width, height),
+    metaDocContent: (nodeId, content) => this.reply('node.metaDocContent', undefined, nodeId, content),
     markdownSetMaxWidth: (nodeId, maxWidth) =>
       this.reply('node.markdownSetMaxWidth', undefined, nodeId, maxWidth),
 
@@ -348,6 +356,7 @@ export class FakeBridge implements Api {
     onPeerCameraBounds: (cb) => subscribe(this.peerCameraBounds, cb),
     onSavedViewports: (cb) => subscribe(this.savedViewports, cb),
     onRestartRequired: (cb) => subscribe(this.restartRequired, cb),
+    onAgentMetaAvailability: (cb) => subscribe(this.agentMetaAvailability, cb),
     restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag)
   }
 

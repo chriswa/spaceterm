@@ -679,7 +679,75 @@ export interface ModMessage {
   payload: unknown
 }
 
+// --- Agent meta ---
+
+/**
+ * Open or close a host's agent-meta branch. The server decides which, and says
+ * so in the ack — the client cannot know whether a host has anything to show
+ * without doing the filesystem work itself.
+ */
+export interface AgentMetaToggleMessage {
+  type: 'agent-meta-toggle'
+  seq: number
+  nodeId: NodeId
+}
+
+export interface AgentMetaToggleResult {
+  type: 'agent-meta-toggle-result'
+  seq: number
+  open: boolean
+}
+
+/** Re-read a branch's tree now, rather than waiting for a watch event. */
+export interface AgentMetaRescanMessage {
+  type: 'agent-meta-rescan'
+  seq: number
+  nodeId: NodeId
+}
+
+/** A generated document card reporting the size it measured for itself. */
+export interface MetaDocResizeMessage {
+  type: 'meta-doc-resize'
+  seq: number
+  nodeId: NodeId
+  width: number
+  height: number
+}
+
+/**
+ * An edit to a generated document, written straight through to the file.
+ *
+ * Deliberately not `markdown-content`: that one also writes `node.content` for
+ * cards that are not file-backed, and a generated card has no content field to
+ * write. Keeping them separate means neither has to ask which kind it is.
+ */
+export interface MetaDocContentMessage {
+  type: 'meta-doc-content'
+  seq: number
+  nodeId: NodeId
+  content: string
+}
+
+/**
+ * Whether a host has an agent-meta branch available, pushed as it changes.
+ *
+ * A dedicated broadcast rather than a `node-updated` patch: the root node is
+ * not in `state.nodes`, and the existing `'root'` special case in the client
+ * store exists to carry `archivedChildren` — it is a wart, not an extension
+ * point. This is also ephemeral in the same sense `gitStatus` is, so it has no
+ * business on `NodeData`.
+ */
+export interface AgentMetaAvailabilityMessage {
+  type: 'agent-meta-availability'
+  nodeId: NodeId
+  available: boolean
+}
+
 export type ClientMessage =
+  | AgentMetaToggleMessage
+  | AgentMetaRescanMessage
+  | MetaDocResizeMessage
+  | MetaDocContentMessage
   | ModMessage
   | ClientHelloMessage
   | CreateMessage
@@ -1229,6 +1297,8 @@ export type ScriptResponse =
   | ScriptResolveHandoffResult
 
 export type ServerMessage =
+  | AgentMetaToggleResult
+  | AgentMetaAvailabilityMessage
   | ModMessage
   | ClientHelloResult
   | CreatedMessage

@@ -177,6 +177,9 @@ export class ServerClient extends EventEmitter {
       case 'restart-required':
         this.emit('restart-required', msg.required, msg.reason)
         return
+      case 'agent-meta-availability':
+        this.emit('agent-meta-availability', msg.nodeId, msg.available)
+        return
 
       // --- Both: an error is broadcast, and also rejects its request if correlated ---
       case 'server-error':
@@ -205,6 +208,7 @@ export class ServerClient extends EventEmitter {
       case 'validate-file-result':
       case 'client-hello-result':
       case 'summary-chat-toggle-result':
+      case 'agent-meta-toggle-result':
         this.resolvePending(msg.seq, msg)
         return
 
@@ -439,6 +443,22 @@ export class ServerClient extends EventEmitter {
 
   async markdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
+  }
+
+  async agentMetaToggle(nodeId: NodeId): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'agent-meta-toggle', nodeId })
+  }
+
+  async agentMetaRescan(nodeId: NodeId): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'agent-meta-rescan', nodeId })
+  }
+
+  async metaDocResize(nodeId: NodeId, width: number, height: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'meta-doc-resize', nodeId, width, height })
+  }
+
+  async metaDocContent(nodeId: NodeId, content: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'meta-doc-content', nodeId, content })
   }
 
   async titleAdd(parentId: NodeId, x?: number, y?: number): Promise<ServerMessage> {

@@ -3321,3 +3321,142 @@ html, body, #root {
 .help-modal__notes {
   color: #7f849c;
 }
+
+/* --- Agent meta: generated cards for CLAUDE.md and skills --- */
+
+/* The branch header. Borrows the title card's label face so the canvas has one
+   label scale, but dashed rather than solid: this is a view of the filesystem,
+   not something the user drew, and the border is where that reads. */
+.meta-group-card {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  border: calc(6px * var(--label-node-scale)) dashed var(--title-fg, #a66cff);
+  border-radius: calc(20px * var(--label-node-scale));
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  cursor: grab;
+}
+
+.meta-group-card--focused {
+  box-shadow: 0 0 calc(24px * var(--label-node-scale)) var(--title-fg, #a66cff);
+}
+
+.meta-group-card--selected {
+  border-style: solid;
+}
+
+.meta-group-card__body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.meta-group-card__label {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: calc(66px * var(--label-node-scale));
+  font-weight: bold;
+  line-height: calc(80px * var(--label-node-scale));
+  color: var(--title-fg, #a66cff);
+  text-align: center;
+  padding: 0 calc(12px * var(--label-node-scale));
+  white-space: pre;
+  overflow: visible;
+  cursor: pointer;
+}
+
+.meta-group-card__measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: calc(66px * var(--label-node-scale));
+  font-weight: bold;
+}
+
+/* One document. Collapsed it is a caption; expanded it is the file. */
+.meta-doc-card {
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(166, 108, 255, 0.35);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+}
+
+.meta-doc-card--focused {
+  border-color: rgba(166, 108, 255, 0.9);
+  box-shadow: 0 0 8px rgba(166, 108, 255, 0.4);
+}
+
+.meta-doc-card--selected {
+  border-color: rgba(166, 108, 255, 0.7);
+}
+
+/* The open card is a document you are reading, so it stops advertising itself
+   as clickable and lets the editor own the pointer. */
+.meta-doc-card--expanded {
+  cursor: default;
+}
+
+.meta-doc-card__summary {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.meta-doc-card__name {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--markdown-accent, #4d9eff);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* Marks a plain document apart from a skill, since the two sit in one column. */
+.meta-doc-card__badge {
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(166, 108, 255, 0.22);
+  color: rgba(220, 200, 255, 0.9);
+}
+
+.meta-doc-card__description {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--markdown-fg, #cdd6f4);
+  opacity: 0.82;
+}
+
+.meta-doc-card__editor {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* Greyed rather than hidden: a directory that could have skills and does not is
+   worth being able to see. */
+.node-titlebar__agent-meta-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.node-titlebar__agent-meta-btn--active {
+  background: rgba(166, 108, 255, 0.25);
+  border-radius: 3px;
+}

@@ -89,6 +89,7 @@ interface DirectoryCardProps {
   onStartReparent?: (id: NodeId) => void
   onReparentTarget?: (id: NodeId) => void
   onAddNode?: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
+  agentMeta?: { available: boolean; open: boolean; onToggle: (id: NodeId) => void }
   cameraRef: React.MutableRefObject<Camera>
 }
 
@@ -96,7 +97,7 @@ export function DirectoryCard({
   id, x, y, zIndex, zoom, cwd, gitStatus, focused, selected, colorPresetId, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onCwdChange, onColorChange,
   onOpenArchiveSearch, onNodeReady,
-  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
+  onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, agentMeta, cameraRef
 }: DirectoryCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
   const nodeTint = useFacet('nodeTint')
@@ -307,6 +308,7 @@ export function DirectoryCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       onAddNode={onAddNode}
+      agentMeta={agentMeta}
       isReparenting={reparentingNodeId === id}
       className={`directory-card ${focused ? 'directory-card--focused' : selected ? 'directory-card--selected' : ''}`}
       style={{

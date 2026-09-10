@@ -5,6 +5,8 @@ import { onToast, showToast } from './lib/toast'
 import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers } from './components/TerminalCard'
 import { MarkdownCard } from './components/MarkdownCard'
+import { MetaGroupCard } from './components/MetaGroupCard'
+import { MetaDocCard } from './components/MetaDocCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
 import { TitleCard } from './components/TitleCard'
@@ -47,6 +49,12 @@ import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename,
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
+import {
+  sendAgentMetaToggle,
+  sendAgentMetaRescan,
+  sendMetaDocResize,
+  sendMetaDocContent
+} from './lib/server-sync'
 import { findArchiveEntry } from '../../../shared/archive-tree'
 import { pushUndo, peekUndo, peekRedo, undoStep, redoStep, getCursor, getConfirmation, setConfirmation, clearConfirmation, setUndoInProgress, getUndoInProgress } from './lib/undo-buffer'
 import { nodeUndoDescription } from './lib/node-title'
@@ -188,6 +196,10 @@ export function App() {
   const files = useNodeStore(s => s.files)
   const titles = useNodeStore(s => s.titles)
   const fileContents = useNodeStore(s => s.fileContents)
+  const metaGroups = useNodeStore(s => s.metaGroups)
+  const metaDocs = useNodeStore(s => s.metaDocs)
+  const agentMetaAvailable = useNodeStore(s => s.agentMetaAvailable)
+  const expandedDocs = useNodeStore(s => s.expandedDocs)
   const rootArchivedChildren = useNodeStore(s => s.rootArchivedChildren)
   const moveNode = useNodeStore(s => s.moveNode)
   const batchMoveNodes = useNodeStore(s => s.batchMoveNodes)
@@ -1147,6 +1159,30 @@ export function App() {
    * that case opens {@link ArchiveConfirm} instead and the archive happens when
    * the user confirms.
    */
+  const handleAgentMetaToggle = useCallback(async (nodeId: NodeId) => {
+    try {
+      await sendAgentMetaToggle(nodeId)
+    } catch (err) {
+      console.error(`Agent meta toggle failed: ${(err as Error).message}`)
+    }
+  }, [])
+
+  const handleAgentMetaRescan = useCallback((nodeId: NodeId) => {
+    sendAgentMetaRescan(nodeId).catch(() => {})
+  }, [])
+
+  const handleMetaDocResize = useCallback((nodeId: NodeId, width: number, height: number) => {
+    sendMetaDocResize(nodeId, width, height).catch(() => {})
+  }, [])
+
+  const handleMetaDocContent = useCallback((nodeId: NodeId, content: string) => {
+    sendMetaDocContent(nodeId, content).catch(() => {})
+  }, [])
+
+  const handleToggleDocExpanded = useCallback((nodeId: NodeId) => {
+    useNodeStore.getState().toggleDocExpanded(nodeId)
+  }, [])
+
   const handleRemoveNode = useCallback(async (id: NodeId) => {
     const { nodes } = useNodeStore.getState()
     const node = nodes[id]
@@ -2530,6 +2566,11 @@ export function App() {
           archivedChildren={rootArchivedChildren}
           onOpenArchiveSearch={handleOpenArchiveSearch}
           onAddNode={handleAddNode}
+          agentMeta={{
+            available: agentMetaAvailable[ROOT_NODE_ID] ?? false,
+            open: metaGroups.some((g) => g.hostId === ROOT_NODE_ID && g.groupKind === 'meta'),
+            onToggle: handleAgentMetaToggle
+          }}
           onReparentTarget={handleReparentTarget}
         />
         {liveTerminals.map((t) => (
@@ -2629,6 +2670,64 @@ export function App() {
             cwd={d.cwd}
             gitStatus={d.gitStatus}
             onCwdChange={handleDirectoryCwdChange}
+            agentMeta={{
+              available: agentMetaAvailable[d.id] ?? false,
+              open: metaGroups.some((g) => g.hostId === d.id && g.groupKind === 'meta'),
+              onToggle: handleAgentMetaToggle
+            }}
+          />
+        ))}
+        {metaGroups.map((g) => (
+          <MetaGroupCard
+            key={g.id}
+            id={g.id}
+            x={g.x}
+            y={g.y}
+            zIndex={tieredZIndex(g.type, g.zIndex)}
+            zoom={camera.z}
+            label={g.label}
+            sourcePath={g.sourcePath}
+            focused={focusedId === g.id}
+            selected={selection === g.id}
+            resolvedPreset={resolvedPresets[g.id]}
+            archivedChildren={g.archivedChildren}
+            onFocus={handleNodeFocus}
+            onMove={handleMove}
+            onRescan={handleAgentMetaRescan}
+            onNodeReady={handleNodeReady}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            cameraRef={cameraRef}
+          />
+        ))}
+        {metaDocs.map((d) => (
+          <MetaDocCard
+            key={d.id}
+            id={d.id}
+            x={d.x}
+            y={d.y}
+            width={d.width}
+            height={d.height}
+            zIndex={tieredZIndex(d.type, d.zIndex)}
+            zoom={camera.z}
+            content={fileContents[d.id] ?? ''}
+            docKind={d.docKind}
+            docKey={d.docKey}
+            docPath={d.docPath}
+            expanded={expandedDocs.has(d.id)}
+            focused={focusedId === d.id}
+            selected={selection === d.id}
+            resolvedPreset={resolvedPresets[d.id]}
+            archivedChildren={d.archivedChildren}
+            onFocus={handleNodeFocus}
+            onMove={handleMove}
+            onToggleExpanded={handleToggleDocExpanded}
+            onContentChange={handleMetaDocContent}
+            onResize={handleMetaDocResize}
+            onNodeReady={handleNodeReady}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            cameraRef={cameraRef}
           />
         ))}
         {files.map((f) => (

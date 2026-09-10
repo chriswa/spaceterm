@@ -445,6 +445,23 @@ function setupIPC(): void {
     await client!.markdownSetMaxWidth(nodeId, maxWidth)
   })
 
+  ipcMain.handle('node:agent-meta-toggle', async (_event, nodeId: NodeId) => {
+    const resp = await client!.agentMetaToggle(nodeId)
+    return resp.type === 'agent-meta-toggle-result' ? resp.open : false
+  })
+
+  ipcMain.handle('node:agent-meta-rescan', async (_event, nodeId: NodeId) => {
+    await client!.agentMetaRescan(nodeId)
+  })
+
+  ipcMain.handle('node:meta-doc-resize', async (_event, nodeId: NodeId, width: number, height: number) => {
+    await client!.metaDocResize(nodeId, width, height)
+  })
+
+  ipcMain.handle('node:meta-doc-content', async (_event, nodeId: NodeId, content: string) => {
+    await client!.metaDocContent(nodeId, content)
+  })
+
   ipcMain.handle('node:title-add', async (_event, parentId: NodeId, x?: number, y?: number) => {
     const resp = await client!.titleAdd(parentId, x, y)
     if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
@@ -732,6 +749,12 @@ function wireClientEvents(): void {
   client!.on('restart-required', (required: boolean, reason: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('restart:required', required, reason)
+    }
+  })
+
+  client!.on('agent-meta-availability', (nodeId: NodeId, available: boolean) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('agent-meta:availability', nodeId, available)
     }
   })
 

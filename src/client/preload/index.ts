@@ -83,6 +83,10 @@ const nodeApi: NodeApi = {
   markdownAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
   markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
   markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
+  agentMetaToggle: (nodeId) => ipcRenderer.invoke('node:agent-meta-toggle', nodeId),
+  agentMetaRescan: (nodeId) => ipcRenderer.invoke('node:agent-meta-rescan', nodeId),
+  metaDocResize: (nodeId, width, height) => ipcRenderer.invoke('node:meta-doc-resize', nodeId, width, height),
+  metaDocContent: (nodeId, content) => ipcRenderer.invoke('node:meta-doc-content', nodeId, content),
   markdownSetMaxWidth: (nodeId, maxWidth) => ipcRenderer.invoke('node:markdown-set-max-width', nodeId, maxWidth),
   titleAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:title-add', parentId, x, y),
   titleText: (nodeId, text) => ipcRenderer.invoke('node:title-text', nodeId, text),
@@ -170,6 +174,11 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, required: boolean, reason: string) => callback(required, reason)
     ipcRenderer.on('restart:required', listener)
     return () => ipcRenderer.removeListener('restart:required', listener)
+  },
+  onAgentMetaAvailability: (callback: (nodeId: NodeId, available: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, available: boolean) => callback(nodeId, available)
+    ipcRenderer.on('agent-meta:availability', listener)
+    return () => ipcRenderer.removeListener('agent-meta:availability', listener)
   },
   restartFlagStatus: () => ipcRenderer.invoke('app:restart-flag')
 }

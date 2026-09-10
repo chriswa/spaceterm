@@ -38,6 +38,13 @@ export interface NodeActionBarProps {
   onStartResize?: (id: NodeId) => void
   isResizing?: boolean
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
+  /**
+   * The agent-meta branch, for hosts that can have one: directory nodes and the
+   * root. `available` is false when the host's directory has no CLAUDE.md and
+   * no skills, which greys the button out rather than hiding it — a directory
+   * that *could* have skills and does not is worth being able to see.
+   */
+  agentMeta?: { available: boolean; open: boolean; onToggle: (id: NodeId) => void }
   showClose?: boolean
   /**
    * True when archiving this node takes a whole branch with it, so the click
@@ -66,7 +73,7 @@ export function NodeActionBar({
   archivedChildren, onOpenArchiveSearch,
   onStartReparent, isReparenting,
   onStartResize, isResizing,
-  onAddNode, showClose, hasChildren = false, onClose,
+  onAddNode, agentMeta, showClose, hasChildren = false, onClose,
   variant = 'card',
   onActionInvoked,
 }: NodeActionBarProps & {
@@ -407,6 +414,28 @@ export function NodeActionBar({
             <path d="M2 5 L2 2 L5 2" />
             <path d="M12 9 L12 12 L9 12" />
             <path d="M3 11 L11 3" />
+          </svg>
+        </button>
+      )}
+      {agentMeta && (
+        <button
+          className={`node-titlebar__agent-meta-btn${agentMeta.open ? ' node-titlebar__agent-meta-btn--active' : ''}`}
+          data-tooltip={
+            !agentMeta.available
+              ? 'No CLAUDE.md or skills here'
+              : agentMeta.open
+                ? 'Hide agent meta'
+                : 'Show agent meta — CLAUDE.md and skills'
+          }
+          disabled={!agentMeta.available}
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); agentMeta.onToggle(nodeId); onActionInvoked?.() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* An open book: the documents an agent reads before it starts. */}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 3.5 Q4.5 2 1.5 2.5 L1.5 11 Q4.5 10.5 7 12 Q9.5 10.5 12.5 11 L12.5 2.5 Q9.5 2 7 3.5 Z" />
+            <line x1="7" y1="3.5" x2="7" y2="12" />
           </svg>
         </button>
       )}

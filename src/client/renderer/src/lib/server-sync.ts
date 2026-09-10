@@ -94,6 +94,12 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
+    window.api.node.onAgentMetaAvailability((nodeId: NodeId, available: boolean) => {
+      useNodeStore.getState().setAgentMetaAvailable(nodeId, available)
+    })
+  )
+
+  cleanupFns.push(
     window.api.node.onPlaySound((sound: string) => {
       playSound(sound as SoundName)
     })
@@ -257,6 +263,22 @@ export async function sendMarkdownResize(nodeId: NodeId, width: number, height: 
 
 export async function sendMarkdownContent(nodeId: NodeId, content: string): Promise<void> {
   await window.api.node.markdownContent(nodeId, content)
+}
+
+export async function sendAgentMetaToggle(nodeId: NodeId): Promise<boolean> {
+  return window.api.node.agentMetaToggle(nodeId)
+}
+
+export async function sendAgentMetaRescan(nodeId: NodeId): Promise<void> {
+  await window.api.node.agentMetaRescan(nodeId)
+}
+
+export async function sendMetaDocResize(nodeId: NodeId, width: number, height: number): Promise<void> {
+  await window.api.node.metaDocResize(nodeId, width, height)
+}
+
+export async function sendMetaDocContent(nodeId: NodeId, content: string): Promise<void> {
+  await window.api.node.metaDocContent(nodeId, content)
 }
 
 export async function sendMarkdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<void> {
