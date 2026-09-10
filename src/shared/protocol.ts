@@ -743,7 +743,27 @@ export interface AgentMetaAvailabilityMessage {
   available: boolean
 }
 
+/**
+ * Ask for every host's availability at once (the PULL).
+ *
+ * The broadcast above fires when the *socket* connects and then only on change,
+ * which a renderer that loaded afterwards — or reloaded over a socket that
+ * stayed up — never hears. Exactly the trap `restartFlagStatus` documents. The
+ * renderer asks for this once at startup and is authoritative from then on.
+ */
+export interface AgentMetaAvailabilityQueryMessage {
+  type: 'agent-meta-availability-query'
+  seq: number
+}
+
+export interface AgentMetaAvailabilityResult {
+  type: 'agent-meta-availability-result'
+  seq: number
+  entries: Array<{ nodeId: NodeId; available: boolean }>
+}
+
 export type ClientMessage =
+  | AgentMetaAvailabilityQueryMessage
   | AgentMetaToggleMessage
   | AgentMetaRescanMessage
   | MetaDocResizeMessage
@@ -1297,6 +1317,7 @@ export type ScriptResponse =
   | ScriptResolveHandoffResult
 
 export type ServerMessage =
+  | AgentMetaAvailabilityResult
   | AgentMetaToggleResult
   | AgentMetaAvailabilityMessage
   | ModMessage

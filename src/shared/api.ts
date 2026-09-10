@@ -155,8 +155,15 @@ export interface NodeApi {
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
   /** Live changes to the restart-required flag (PUSH). See restartFlagStatus for the PULL. */
   onRestartRequired(callback: (required: boolean, reason: string) => void): () => void
-  /** Whether a host has an agent-meta branch to show, as the server learns it. */
+  /** Whether a host has an agent-meta branch to show, as the server learns it (PUSH). */
   onAgentMetaAvailability(callback: (nodeId: NodeId, available: boolean) => void): () => void
+  /**
+   * Every host's availability right now (PULL). Authoritative on every renderer
+   * (re)load — the PUSH above fires on socket connect and then only on change,
+   * so a renderer that loaded after it, or reloaded over a socket that stayed
+   * up, would never hear anything and would show every button greyed out.
+   */
+  agentMetaAvailabilityStatus(): Promise<Array<{ nodeId: NodeId; available: boolean }>>
   /**
    * Current restart-required state (PULL). Authoritative on every renderer
    * (re)load — the PUSH above does not repeat across a reload that keeps the

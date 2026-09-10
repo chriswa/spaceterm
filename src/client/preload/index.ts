@@ -84,6 +84,7 @@ const nodeApi: NodeApi = {
   markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
   markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
   agentMetaToggle: (nodeId) => ipcRenderer.invoke('node:agent-meta-toggle', nodeId),
+  agentMetaAvailabilityStatus: () => ipcRenderer.invoke('node:agent-meta-availability-status'),
   agentMetaRescan: (nodeId) => ipcRenderer.invoke('node:agent-meta-rescan', nodeId),
   metaDocResize: (nodeId, width, height) => ipcRenderer.invoke('node:meta-doc-resize', nodeId, width, height),
   metaDocContent: (nodeId, content) => ipcRenderer.invoke('node:meta-doc-content', nodeId, content),

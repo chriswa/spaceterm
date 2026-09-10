@@ -99,6 +99,18 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     })
   )
 
+  // The PULL that makes the PUSH above safe to miss. The broadcast fires when
+  // the main process's socket connects and then only on change, so a renderer
+  // that finished loading afterwards — the ordinary case — would otherwise show
+  // every agent-meta button greyed out forever.
+  window.api.node
+    .agentMetaAvailabilityStatus()
+    .then((entries) => {
+      const store = useNodeStore.getState()
+      for (const { nodeId, available } of entries) store.setAgentMetaAvailable(nodeId, available)
+    })
+    .catch(() => {})
+
   cleanupFns.push(
     window.api.node.onPlaySound((sound: string) => {
       playSound(sound as SoundName)

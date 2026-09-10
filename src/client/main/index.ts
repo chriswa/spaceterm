@@ -25,6 +25,7 @@ import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
  */
 const launchPrefs = loadLaunchPrefs()
 
+
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
 // Matched by client:dev's supervisor. A normal quit remains exit code 0 so
@@ -443,6 +444,11 @@ function setupIPC(): void {
 
   ipcMain.handle('node:markdown-set-max-width', async (_event, nodeId: NodeId, maxWidth: number) => {
     await client!.markdownSetMaxWidth(nodeId, maxWidth)
+  })
+
+  ipcMain.handle('node:agent-meta-availability-status', async () => {
+    const resp = await client!.agentMetaAvailabilityStatus()
+    return resp.type === 'agent-meta-availability-result' ? resp.entries : []
   })
 
   ipcMain.handle('node:agent-meta-toggle', async (_event, nodeId: NodeId) => {

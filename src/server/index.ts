@@ -1655,6 +1655,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'agent-meta-availability-query': {
+      send(client.socket, {
+        type: 'agent-meta-availability-result',
+        seq: msg.seq,
+        entries: agentMetaAvailability.snapshot()
+      })
+      break
+    }
+
     case 'agent-meta-toggle': {
       const open = agentMetaManager.toggle(msg.nodeId)
       send(client.socket, { type: 'agent-meta-toggle-result', seq: msg.seq, open })

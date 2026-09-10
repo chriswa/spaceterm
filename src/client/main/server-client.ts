@@ -209,6 +209,7 @@ export class ServerClient extends EventEmitter {
       case 'client-hello-result':
       case 'summary-chat-toggle-result':
       case 'agent-meta-toggle-result':
+      case 'agent-meta-availability-result':
         this.resolvePending(msg.seq, msg)
         return
 
@@ -443,6 +444,10 @@ export class ServerClient extends EventEmitter {
 
   async markdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
+  }
+
+  async agentMetaAvailabilityStatus(): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'agent-meta-availability-query' })
   }
 
   async agentMetaToggle(nodeId: NodeId): Promise<ServerMessage> {
