@@ -99,13 +99,29 @@ export class FileContentManager {
    * Start watching a file for a markdown node.
    * Reads the file (creating it if missing), broadcasts content, and starts the watch.
    */
-  startWatching(markdownNodeId: NodeId, fileNodeId: NodeId, resolvedPath: string): void {
+  startWatching(
+    markdownNodeId: NodeId,
+    fileNodeId: NodeId,
+    resolvedPath: string,
+    options: { createIfMissing?: boolean } = {}
+  ): void {
     // Stop any existing watcher for this node
     this.stopWatching(markdownNodeId)
 
+    const createIfMissing = options.createIfMissing ?? true
     let content = this.io.readFile(resolvedPath)
     if (content === undefined) {
-      // File doesn't exist — create it empty
+      // A file card names a file the user intends to have, so pointing one at a
+      // path that does not exist yet creates it. A *scan-driven* card is the
+      // opposite: it exists because the file does, and creating the file would
+      // invent the thing it was meant to describe.
+      //
+      // This is not hypothetical. `writeFile` mkdirs the parent, so a skill
+      // deleted inside the rescan debounce window would have had its directory
+      // and an empty SKILL.md written back into the user's repo — and the
+      // directory watcher would then see a legitimate new skill, making the
+      // phantom self-sustaining across a disable/enable.
+      if (!createIfMissing) return
       try {
         this.io.writeFile(resolvedPath, '')
       } catch (err) {

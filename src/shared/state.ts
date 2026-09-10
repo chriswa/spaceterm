@@ -333,6 +333,16 @@ export interface ServerState {
 }
 
 export interface MetaHostEntry {
+  /**
+   * Whether the branch is currently showing.
+   *
+   * An explicit flag rather than presence-of-key, which is what this started
+   * as. Presence had to double as both "is open" and "here is your layout", so
+   * closing the branch — an ordinary thing to do repeatedly — threw away every
+   * card position with it. The entry outlives the branch; only this says
+   * whether to rebuild it.
+   */
+  open: boolean
   /** Where the user dragged the group card, absent until they move it. */
   groupPos?: { x: number; y: number }
   /**
