@@ -48,6 +48,11 @@ Three vitest projects, split by what a suite needs:
   if missing, and runs under Xvfb on Linux. Keep this layer to smoke tests:
   it is seconds per test and the most brittle thing in the repo. Behaviour
   belongs in `renderer`.
+  **No window is ever shown** — the app runs with `SPACETERM_HEADLESS=1`, so a
+  run does not steal focus or take over the operator's screen. Playwright drives
+  the renderer over CDP, which does not need the window mapped, and the GPU
+  process is still real, so shaders are still compiled by a real driver. Use
+  `npm run test:e2e:headed` on the rare occasion you need to watch it.
 
 **The GUI *can* be launched headlessly.** Earlier notes in this repo said
 otherwise; they were wrong. `npm install --ignore-scripts` skips *electron's*
