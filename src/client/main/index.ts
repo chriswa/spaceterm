@@ -25,6 +25,26 @@ import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
  */
 const launchPrefs = loadLaunchPrefs()
 
+/**
+ * Run without ever putting a window on screen.
+ *
+ * Set by the E2E harness, which turns it on by default. The suite launches the
+ * real app a dozen-odd times per run, and every launch used to raise a
+ * full-screen window and steal focus — which makes the machine unusable for as
+ * long as the run takes, and is why the suite was something you scheduled
+ * around rather than something you ran.
+ *
+ * Nothing under test needs the pixels. Playwright drives the renderer over CDP,
+ * which does not care whether the window is mapped, and the two GPU-dependent
+ * tests reach WebGL through explicit `evaluate()` calls and context-event
+ * handlers rather than through anything that has to paint. The GPU process is
+ * still real, so shaders are still compiled by a real driver — the point of
+ * having those tests at all.
+ *
+ * Deliberately opt-in at this level and defaulted-on one level up: the app
+ * itself must never decide to be invisible.
+ */
+const headless = process.env['SPACETERM_HEADLESS'] === '1'
 
 let mainWindow: BrowserWindow | null = null
 let client: ServerClient | null = null
@@ -54,10 +74,16 @@ function requestFocus(id: string): void {
 // The server has already decided this client should be the one to raise.
 function raiseAndFocusNode(nodeId: NodeId | null): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
-  if (process.platform === 'darwin') app.focus({ steal: true })
+  // Raising is the whole point of a deep link, and also the most disruptive
+  // thing this process does — `steal: true` pulls the machine away from
+  // whatever the user was doing. Skipped when headless; the renderer is still
+  // told what to focus below, so the behaviour under test is unchanged.
+  if (!headless) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    if (process.platform === 'darwin') app.focus({ steal: true })
+  }
 
   const wc = mainWindow.webContents
   if (wc.isLoadingMainFrame()) {
@@ -128,7 +154,13 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false
+      sandbox: false,
+      // Chromium throttles rAF to a crawl in a window that is not on screen,
+      // which for a never-shown window means the canvas render loop barely
+      // runs. Only relaxed under `headless`, so the shipped app keeps
+      // Chromium's power behaviour and `frame-policy` stays the one thing
+      // deciding frame rate.
+      ...(headless ? { backgroundThrottling: false } : {})
     }
   })
 
@@ -139,7 +171,9 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
-  mainWindow.show()
+  // The window is constructed with `show: false` either way; this is the line
+  // that puts it on screen, and the only one.
+  if (!headless) mainWindow.show()
 
   // The work area moves under us when the dock resizes or the display mode changes.
   const onDisplayMetricsChanged = () => fitToWorkArea()
@@ -826,6 +860,14 @@ function connectWithinGrace(serverClient: ServerClient, graceMs: number): Promis
 app.whenReady().then(async () => {
   logger.init()
   logger.log('Electron app starting')
+
+  if (headless) {
+    logger.log('[headless] SPACETERM_HEADLESS=1 — no window will be shown')
+    // The dock icon is the other half of the disruption: it appears and bounces
+    // on every launch even when no window is ever mapped, and on macOS it also
+    // makes the app a candidate for Cmd-Tab mid-run.
+    app.dock?.hide()
+  }
 
   // Which GPU Chromium actually chose. On a dual-GPU MacBook this is the
   // difference between a canvas theme costing a couple of watts and costing

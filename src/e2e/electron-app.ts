@@ -167,6 +167,14 @@ export async function launchApp(
       ...process.env,
       SPACETERM_HOME: home,
       NODE_ENV: 'production',
+      // Headless by DEFAULT, opted out of rather than into.
+      //
+      // A run launches the real app a dozen-odd times, and each launch used to
+      // raise a full-screen window and steal focus, which makes the machine
+      // unusable for the duration. Watching the window is the rare case — you
+      // want it when a test fails in a way the DOM does not explain — so it is
+      // the one that asks. `npm run test:e2e:headed`, or SPACETERM_HEADED=1.
+      SPACETERM_HEADLESS: process.env.SPACETERM_HEADED === '1' ? '0' : '1',
       // dbus is absent in the container; without this Electron logs a scary
       // connection failure on every launch that reads like a real error.
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'

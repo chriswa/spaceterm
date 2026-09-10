@@ -39,6 +39,31 @@ describeE2E('launching Spaceterm', () => {
     expect(await launched.window.title()).toBeTruthy()
   })
 
+  it('never puts that window on screen, so a run does not seize the machine', async () => {
+    // The default the whole suite depends on being able to run at all. A run
+    // launches the app a dozen-odd times; when each launch raised a
+    // full-screen window and stole focus, the machine was unusable for the
+    // duration and the suite became something you scheduled around.
+    //
+    // Asserted from inside the main process, because a hidden window is
+    // indistinguishable from a shown one over CDP — which is exactly why this
+    // works, and exactly why it could regress without anything else noticing.
+    launched = await launchApp()
+    const visible = await launched.app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().map((w) => w.isVisible())
+    )
+    expect(visible).not.toContain(true)
+  })
+
+  it('still drives a real renderer while hidden', async () => {
+    // The other half: invisible must not mean inert. If a never-shown window
+    // stopped running the renderer, every other test here would be asserting
+    // against a dead page.
+    launched = await launchApp()
+    await launched.window.waitForSelector('.canvas-viewport', { timeout: 30_000 })
+    expect(await launched.window.evaluate(() => document.readyState)).toBe('complete')
+  })
+
   it('mounts the React tree rather than showing a blank page', async () => {
     // A renderer that throws during mount leaves #root empty, which is exactly
     // what a missing preload bridge or a node builtin in the bundle produces.

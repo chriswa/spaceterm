@@ -27,6 +27,7 @@
     "postinstall": "electron-rebuild",
     "electron:install": "node scripts/ensure-electron-binary.mjs",
     "test:e2e": "npm run client:build && npm run daemon:build && node scripts/ensure-electron-binary.mjs && node scripts/run-e2e.mjs",
+    "test:e2e:headed": "SPACETERM_HEADED=1 npm run test:e2e",
     "test:all": "npm test && npm run test:e2e"
   },
   "dependencies": {
