@@ -221,6 +221,19 @@ done last session; kept so the reasoning is not lost.
    provisions, so it is genuinely lower risk — but that is an argument about
    *who* speaks it, not about whether it can drift, and a mod that installs its
    own hook handler changes the answer.
+6. **`resize-terminal` measures a surface before it has settled.** Two tests in
+   `src/e2e/resize-terminal.test.ts` — the Escape test (~line 218) and its
+   neighbour (~233) — capture `cardWidth` immediately after `createSurface`.
+   `createSurface` returns as soon as `.terminal-card` appears in the DOM,
+   which is before xterm attaches and the card resizes to its final width, so
+   the "before" value is read mid-settle. Every sibling test in the file that
+   cares about width waits 2000ms first; these two do not. The symptom is a
+   failure whose *received* value differs on every run (2592 expected; 2217,
+   then 2069 observed), which reads as a broken Escape handler and is not one —
+   it cost four separate debugging detours in one session, each time looking
+   like a product bug. The fix is bounded: give `createSurface` a settle step,
+   or have it wait on the persisted size, so every caller measures a card that
+   has stopped moving. Nothing else about the resize tests changes.
 
 ### Robustness
 
