@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, ArchivedNode } from '../../../../shared/state'
+import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, MetaGroupNodeData, MetaDocNodeData, ArchivedNode } from '../../../../shared/state'
 import { measureCard as nodePixelSize } from '../../../../shared/card-types'
 import { assertNever } from '../../../../shared/exhaustive'
 import { type NodeId } from '../../../../shared/ids'
@@ -27,6 +27,8 @@ interface NodeStoreState {
   directories: DirectoryNodeData[]
   files: FileNodeData[]
   titles: TitleNodeData[]
+  metaGroups: MetaGroupNodeData[]
+  metaDocs: MetaDocNodeData[]
 
   // All node IDs in array form for iteration
   nodeList: NodeData[]
@@ -69,6 +71,8 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
   const directories: DirectoryNodeData[] = []
   const files: FileNodeData[] = []
   const titles: TitleNodeData[] = []
+  const metaGroups: MetaGroupNodeData[] = []
+  const metaDocs: MetaDocNodeData[] = []
 
   for (const node of nodeList) {
     switch (node.type) {
@@ -77,6 +81,8 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
       case 'file': files.push(node); break
       case 'title': titles.push(node); break
       case 'markdown': markdowns.push(node); break
+      case 'meta-group': metaGroups.push(node); break
+      case 'meta-doc': metaDocs.push(node); break
       // An exhaustive switch, where this used to be `else { markdowns.push() }`.
       // That catch-all was silent and actively harmful: a node of any type the
       // renderer had not learned about was rendered as a MarkdownCard with
@@ -88,7 +94,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
     }
   }
 
-  return { nodeList, liveTerminals, markdowns, directories, files, titles }
+  return { nodeList, liveTerminals, markdowns, directories, files, titles, metaGroups, metaDocs }
 }
 
 function mergeNodes(
@@ -121,6 +127,8 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   directories: [],
   files: [],
   titles: [],
+  metaGroups: [],
+  metaDocs: [],
   nodeList: [],
   fileContents: {},
   freshlyCreatedIds: new Set(),

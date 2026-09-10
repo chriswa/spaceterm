@@ -127,7 +127,9 @@ describe('measureCard', () => {
       markdown: { type: 'markdown', width: 400, height: 300 },
       directory: { type: 'directory', cwd: '~' },
       file: { type: 'file' },
-      title: { type: 'title', text: '' }
+      title: { type: 'title', text: '' },
+      'meta-group': { type: 'meta-group', label: 'Agent Meta' },
+      'meta-doc': { type: 'meta-doc', width: 600, height: 96 }
     }
     for (const type of CARD_TYPES) {
       const size = measureCard(samples[type])

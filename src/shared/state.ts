@@ -191,7 +191,56 @@ export interface TitleNodeData extends BaseNodeData {
   text: string
 }
 
-export type NodeData = TerminalNodeData | MarkdownNodeData | DirectoryNodeData | FileNodeData | TitleNodeData
+/**
+ * The header card of a generated agent-meta branch, and of the Skills group
+ * nested inside it.
+ *
+ * Shaped like a title card and deliberately not one: its text is derived, so it
+ * cannot be edited, renamed, coloured or closed. Clicking its label rescans.
+ */
+export interface MetaGroupNodeData extends BaseNodeData {
+  type: 'meta-group'
+  /** The directory node — or the root — whose branch this belongs to. */
+  hostId: NodeId
+  /** `meta` is the branch root the toolbar button toggles; `skills` is the sub-group. */
+  groupKind: 'meta' | 'skills'
+  /** Rendered caption, derived by the server from the scan. */
+  label: string
+  /** Absolute path this group summarises, for the tooltip. */
+  sourcePath: string
+}
+
+/**
+ * One markdown document on disk, shown as a card: a skill's `SKILL.md`, or a
+ * `CLAUDE.md`.
+ *
+ * Content is NOT held here. It reaches the client through the same
+ * `file-content` broadcast that file-backed markdown uses, and lands in the
+ * renderer's `fileContents` map — so the card's caption is parsed from text the
+ * renderer already has, and re-renders as you type in it.
+ */
+export interface MetaDocNodeData extends BaseNodeData {
+  type: 'meta-doc'
+  hostId: NodeId
+  /** `skill` titles itself from its directory; `doc` from its first heading. */
+  docKind: 'skill' | 'doc'
+  /** Stable identity within the branch, and the caption's last-resort fallback. */
+  docKey: string
+  /** Absolute path to the file being shown. */
+  docPath: string
+  /** Measured by the client, like markdown. Never persisted, so re-measured each mount. */
+  width: number
+  height: number
+}
+
+export type NodeData =
+  | TerminalNodeData
+  | MarkdownNodeData
+  | DirectoryNodeData
+  | FileNodeData
+  | TitleNodeData
+  | MetaGroupNodeData
+  | MetaDocNodeData
 
 /**
  * Compile-time check that the node union and the CardType registry describe the

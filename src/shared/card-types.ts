@@ -5,6 +5,8 @@ import {
   FILE_HEIGHT,
   MARKDOWN_DEFAULT_WIDTH,
   MARKDOWN_DEFAULT_HEIGHT,
+  META_DOC_WIDTH,
+  META_DOC_COLLAPSED_HEIGHT,
   TITLE_HEIGHT,
   TITLE_LINE_HEIGHT,
   TITLE_CHAR_WIDTH,
@@ -27,10 +29,55 @@ import {
  * node-size.ts, node-placement, state-manager, App.tsx's card maps and
  * AddNodeBody — this names it once and makes the size rules exhaustive.
  */
-export type CardType = 'terminal' | 'markdown' | 'directory' | 'file' | 'title'
+export type CardType = 'terminal' | 'markdown' | 'directory' | 'file' | 'title' | 'meta-group' | 'meta-doc'
 
 /** Every card type, in add-menu order. */
-export const CARD_TYPES: readonly CardType[] = ['terminal', 'markdown', 'directory', 'file', 'title']
+export const CARD_TYPES: readonly CardType[] = [
+  'terminal',
+  'markdown',
+  'directory',
+  'file',
+  'title',
+  'meta-group',
+  'meta-doc'
+]
+
+/**
+ * Card types that are generated from the filesystem rather than authored, and
+ * so are never written to `state.json`.
+ *
+ * `CardType` used to mean "a card that persists" — `persistence-roundtrip`
+ * asserted that every member survived a write — and agent-meta cards split that
+ * meaning in two: they render like any other card and persist like none of
+ * them. Naming the split here rather than letting it be implicit is what lets
+ * `PERSISTED_CARD_TYPES` drive the round-trip generator, so adding a card type
+ * still cannot be done silently in either direction.
+ *
+ * Note this is about the *type*. Whether a given node is skipped on write is
+ * decided by its own `ephemeral` flag, not by looking it up here — the flag is
+ * what a generic path over `state.nodes` can check without knowing card types
+ * exist.
+ */
+export const EPHEMERAL_CARD_TYPES = ['meta-group', 'meta-doc'] as const
+export type EphemeralCardType = (typeof EPHEMERAL_CARD_TYPES)[number]
+
+export function isEphemeralCardType(type: CardType): type is EphemeralCardType {
+  return (EPHEMERAL_CARD_TYPES as readonly string[]).includes(type)
+}
+
+/** A card type that is written to `state.json`. */
+export type PersistedCardType = Exclude<CardType, EphemeralCardType>
+
+/**
+ * The card types a persisted document may contain.
+ *
+ * Narrowed at the type level, not just the value level: this is what a
+ * document generator switches over, and a `readonly CardType[]` would leave
+ * that switch obliged to handle cards it can never be handed.
+ */
+export const PERSISTED_CARD_TYPES: readonly PersistedCardType[] = CARD_TYPES.filter(
+  (type): type is PersistedCardType => !isEphemeralCardType(type)
+)
 
 export function isCardType(value: unknown): value is CardType {
   return typeof value === 'string' && (CARD_TYPES as readonly string[]).includes(value)
@@ -131,6 +178,25 @@ export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
     contentSized: true,
     zIndexTier: TIER.title,
     focusMaxZoom: LABEL_FOCUS_MAX_ZOOM
+  },
+  'meta-group': {
+    type: 'meta-group',
+    label: 'Agent Meta',
+    defaultSize: { width: TITLE_MIN_WIDTH, height: TITLE_HEIGHT },
+    contentSized: true,
+    // A label for its neighbourhood, exactly like a title — so it floats above
+    // the cards it heads, and focusing it shows the group rather than filling
+    // the screen with one word.
+    zIndexTier: TIER.title,
+    focusMaxZoom: LABEL_FOCUS_MAX_ZOOM
+  },
+  'meta-doc': {
+    type: 'meta-doc',
+    label: 'Agent Document',
+    defaultSize: { width: META_DOC_WIDTH, height: META_DOC_COLLAPSED_HEIGHT },
+    contentSized: true,
+    zIndexTier: TIER.base,
+    focusMaxZoom: null
   }
 }
 
@@ -202,6 +268,19 @@ export function measureCard(node: NodeLike): Size {
       }
     }
     case 'markdown':
+      return { width: node.width, height: node.height }
+    case 'meta-group': {
+      // The title formula, against the derived caption. Shares the metrics
+      // rather than restating them, so a retune of the label face moves both.
+      const longest = node.label.length
+      return {
+        width: Math.max(TITLE_MIN_WIDTH, longest * TITLE_CHAR_WIDTH + TITLE_H_PADDING),
+        height: TITLE_HEIGHT
+      }
+    }
+    case 'meta-doc':
+      // Client-measured, like markdown: the collapsed face is as tall as its
+      // description wraps, and the expanded one as tall as the document.
       return { width: node.width, height: node.height }
     default:
       return assertNever(node, 'measureCard')

@@ -196,6 +196,30 @@ export const TITLE_CHAR_WIDTH = 66 * MENLO_ADVANCE_RATIO * LABEL_NODE_SCALE  // 
 export const TITLE_H_PADDING = 72 * LABEL_NODE_SCALE                        // 36px padding on each side
 export const TITLE_MIN_WIDTH = 360 * LABEL_NODE_SCALE
 
+// --- Agent-meta cards ---
+
+/**
+ * How wide a generated document card is.
+ *
+ * Fixed rather than measured, unlike markdown. A skill card's collapsed face is
+ * a name and a description — a caption, not a document — and a column of them
+ * reads as a list only if they share an edge. The expanded face keeps the same
+ * width and scrolls, so opening one does not reflow the column beside it.
+ */
+export const META_DOC_WIDTH = MARKDOWN_DEFAULT_MAX_WIDTH
+
+/** Height of a collapsed card before its description has been measured. */
+export const META_DOC_COLLAPSED_HEIGHT = 96
+
+/** How tall an expanded card may grow before it scrolls internally. */
+export const META_DOC_MAX_HEIGHT = 720
+
+/** Vertical pitch of the column a group lays its cards out in. */
+export const META_COLUMN_PITCH = META_DOC_COLLAPSED_HEIGHT + 40
+
+/** How far below its host a group card sits when it first appears. */
+export const META_GROUP_DROP = 260
+
 // Placement
 export const PLACEMENT_MARGIN = 80
 
@@ -255,6 +279,8 @@ export type NodeLike =
   | { type: 'file' }
   | { type: 'title'; text: string }
   | { type: 'markdown'; width: number; height: number }
+  | { type: 'meta-group'; label: string }
+  | { type: 'meta-doc'; width: number; height: number }
 
 /** Compute the auto-scaled folder width for a directory node from its text content. */
 export function directoryFolderWidth(cwd: string, gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null): number {
