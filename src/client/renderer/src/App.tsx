@@ -2760,7 +2760,6 @@ export function App() {
         onCrabReorder={handleCrabReorder}
         selectedNodeId={focusedId}
         crabNavEvent={crabNavEvent}
-        zoom={camera.z}
         onHelpClick={() => setHelpVisible(v => !v)}
         keycastEnabled={keycastEnabled}
         onKeycastToggle={() => setKeycastEnabled(v => { const next = !v; localStorage.setItem('toolbar.keycast', String(next)); return next })}

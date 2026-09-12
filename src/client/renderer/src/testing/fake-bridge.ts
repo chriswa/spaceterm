@@ -89,6 +89,8 @@ export interface FakeBridgeResponses {
   agentMetaOpen: boolean
   /** What the availability PULL reports. */
   agentMetaAvailability: Array<{ nodeId: NodeId; available: boolean }>
+  /** Bytes reported by the toolbar's agent-memory poll; `null` = no daemon. */
+  agentMemoryBytes: number | null
 }
 
 const EMPTY_STATE: ServerState = {
@@ -119,7 +121,8 @@ export class FakeBridge implements Api {
     activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS },
     agentMetaOpen: true,
     agentMetaAvailability: [],
-    restartFlag: { required: false, reason: '' }
+    restartFlag: { required: false, reason: '' },
+    agentMemoryBytes: null
   }
 
   /**
@@ -400,7 +403,8 @@ export class FakeBridge implements Api {
       this.responses.launchPrefs = { ...this.responses.launchPrefs, ...patch }
       return this.reply('system.setLaunchPrefs', this.responses.launchPrefs, patch)
     },
-    getActiveLaunchPrefs: () => this.reply('system.getActiveLaunchPrefs', this.responses.activeLaunchPrefs)
+    getActiveLaunchPrefs: () => this.reply('system.getActiveLaunchPrefs', this.responses.activeLaunchPrefs),
+    getAgentMemory: () => this.reply('system.getAgentMemory', this.responses.agentMemoryBytes)
   }
 
   log = (message: string): void => this.record('log', message)

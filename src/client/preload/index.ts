@@ -230,7 +230,8 @@ const api: Api = {
     },
     getLaunchPrefs: () => ipcRenderer.invoke('system:get-launch-prefs'),
     setLaunchPrefs: (patch) => ipcRenderer.invoke('system:set-launch-prefs', patch),
-    getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs')
+    getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs'),
+    getAgentMemory: () => ipcRenderer.invoke('system:agent-memory')
   },
   mods: {
     send: (modId: string, event: string, payload: unknown) =>

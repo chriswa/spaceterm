@@ -10,6 +10,8 @@ import { REDUCED_HZ } from '../../lib/frame-policy'
 import { resolveTheme } from '../../lib/theme/themes'
 import { useThemes } from '../../hooks/useFacet'
 import { useFps } from '../../hooks/useFps'
+import { useAgentMemory } from '../../hooks/useAgentMemory'
+import { formatBytes } from '../../lib/format-bytes'
 import { useToolbarMenu } from './useToolbarMenu'
 import { showToast } from '../../lib/toast'
 import { useDimStaleStore } from '../../stores/dimStaleStore'
@@ -453,10 +455,24 @@ export function FpsMetric() {
   )
 }
 
-export function ZoomMetric({ zoom }: { zoom: number }) {
+/**
+ * Resident memory of every process under the PTY daemon — which is every agent
+ * Spaceterm is running — refreshed once a second.
+ *
+ * A dash means there is no daemon to ask, which is a different thing from
+ * agents using no memory and reads as one.
+ */
+export function AgentMemoryMetric() {
+  const bytes = useAgentMemory()
+  const formatted = bytes === null ? null : formatBytes(bytes)
   return (
-    <span className="toolbar__status-item toolbar__metric">
-      {(zoom * 100).toFixed(2)}<span className="toolbar__metric-label">%</span>
+    <span
+      className="toolbar__status-item toolbar__metric toolbar__metric--memory"
+      data-tooltip="Agent Memory — resident memory of every process under the PTY daemon"
+    >
+      {formatted === null
+        ? <>&mdash;</>
+        : <>{formatted.value} <span className="toolbar__metric-label">{formatted.unit}</span></>}
     </span>
   )
 }

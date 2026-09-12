@@ -362,6 +362,14 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
 }
 
+/* Three significant figures is 3 or 4 characters; reserving the wider of the
+   two stops the readout nudging its neighbours when the decimal point moves. */
+.toolbar__metric--memory {
+  display: inline-block;
+  min-width: 62px;
+  text-align: right;
+}
+
 .toolbar__metric-label {
   font-size: 10px;
   opacity: 0.6;

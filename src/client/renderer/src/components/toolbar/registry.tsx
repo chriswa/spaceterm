@@ -4,6 +4,7 @@ import type { CrabEntry } from '../../lib/crab-nav'
 import { CrabGroup, type CrabNavEvent } from './CrabGroup'
 import { PowerMonitor } from './PowerMonitor'
 import {
+  AgentMemoryMetric,
   CameraLockToggle,
   CopyCleanupToggle,
   DimStaleToggle,
@@ -15,8 +16,7 @@ import {
   NotificationSoundToggle,
   RestartButton,
   ThemePicker,
-  UnfocusedFramesToggle,
-  ZoomMetric
+  UnfocusedFramesToggle
 } from './buttons'
 
 /**
@@ -65,7 +65,6 @@ export const TOOLBAR_SLOTS = ['buttons', 'status', 'surfaces'] as const
  * toolbar is to being assembled entirely from independent parts.
  */
 export interface ToolbarHost {
-  zoom: number
   onHelpClick: () => void
   keycastEnabled: boolean
   onKeycastToggle: () => void
@@ -142,7 +141,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   { id: 'dim-stale', slot: 'buttons', kind: 'standalone', render: () => <DimStaleToggle /> },
 
   { id: 'fps', slot: 'status', kind: 'standalone', render: () => <FpsMetric /> },
-  { id: 'zoom', slot: 'status', kind: 'host', render: (h) => <ZoomMetric zoom={h.zoom} /> },
+  { id: 'agent-memory', slot: 'status', kind: 'standalone', render: () => <AgentMemoryMetric /> },
   // Renders nothing unless switched on from the debug menu.
   { id: 'power-monitor', slot: 'status', kind: 'standalone', render: () => <PowerMonitor /> },
 

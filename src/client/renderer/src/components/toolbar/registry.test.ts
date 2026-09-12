@@ -111,10 +111,10 @@ describe('renderToolbarWidget', () => {
       id: 'w',
       slot: 'status',
       kind: 'host',
-      render: (h) => { void h.zoom; return null }
+      render: (h) => { void h.onHelpClick; return null }
     }
     renderToolbarWidget(widget, spyingHost((k) => reads.push(k)))
-    expect(reads).toContain('zoom')
+    expect(reads).toContain('onHelpClick')
   })
 
   it('returns whatever the widget returned, including null', () => {

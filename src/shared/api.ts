@@ -232,6 +232,11 @@ export interface SystemApi {
   setLaunchPrefs(patch: Partial<LaunchPrefs>): Promise<LaunchPrefs>
   /** What the *running* process launched with, so unapplied changes are visible. */
   getActiveLaunchPrefs(): Promise<LaunchPrefs>
+  /**
+   * Total resident memory of every process under the PTY daemon, in bytes, or
+   * `null` when no daemon is running. Polled by the toolbar's readout.
+   */
+  getAgentMemory(): Promise<number | null>
 }
 
 export interface WindowApi {

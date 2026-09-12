@@ -10,6 +10,7 @@ import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
 import { loadWindowState, saveWindowState, findTargetDisplay } from './window-state'
 import { startSystemMetrics, stopSystemMetrics } from './system-metrics'
+import { readAgentMemoryBytes } from './agent-memory'
 import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
 import type { LaunchPrefs } from '../../shared/launch-prefs'
 import type { NodeId, PtySessionId } from '../../shared/ids'
@@ -641,6 +642,13 @@ function setupIPC(): void {
       }
     })
   })
+
+  // --- Agent memory (toolbar readout) ---
+
+  // Pulled by the renderer once a second rather than pushed on a timer here:
+  // no sampling happens when no window is asking, and a reload cannot leave a
+  // stray interval behind.
+  ipcMain.handle('system:agent-memory', () => readAgentMemoryBytes())
 
 }
 
