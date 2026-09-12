@@ -1484,6 +1484,19 @@ export function App() {
     flyToSelection(node.parentId)
   }, [snapToTarget, fitAllNodes, flashNode, flyToSelection])
 
+  // Cmd+Up, and the toolbar's step-out button: select the parent of whatever is
+  // focused or selected, or fit everything once there is nowhere left to go.
+  const stepOut = useCallback(() => {
+    const target = focusRef.current ?? selectionRef.current ?? lastFocusedRef.current
+    if (!target) {
+      // Nothing to step out of, but a flight in progress still gets cut
+      // short rather than carrying on under a request that meant to stop it.
+      snapToTarget()
+      return
+    }
+    focusParentOfNode(target)
+  }, [snapToTarget, focusParentOfNode])
+
   // Detect when focused node disappears (e.g. archived by server on terminal exit)
   useEffect(() => {
     const unsub = useNodeStore.subscribe((state, prevState) => {
@@ -2279,14 +2292,7 @@ export function App() {
       if (e.metaKey && e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
-        const target = focusRef.current ?? selectionRef.current ?? lastFocusedRef.current
-        if (!target) {
-          // Nothing to step out of, but a flight in progress still gets cut
-          // short rather than carrying on under a key that meant to stop it.
-          snapToTarget()
-          return
-        }
-        focusParentOfNode(target)
+        stepOut()
       }
 
       // Cmd+Down Arrow: jump to highest-priority unattended crab
@@ -2351,7 +2357,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [archiveConfirm, archiveNodeNow, agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, focusParentOfNode, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
+  }, [archiveConfirm, archiveNodeNow, agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, stepOut, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.
@@ -2767,6 +2773,7 @@ export function App() {
         onInertiaLogDump={handleInertiaLogDump}
         restartingSpaceterm={restartingSpaceterm}
         onRestartSpaceterm={handleRestartSpaceterm}
+        onStepOut={stepOut}
       />
       {quickActions && resolvedPresets[quickActions.nodeId] && (
         <FloatingToolbar

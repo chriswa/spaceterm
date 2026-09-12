@@ -195,6 +195,21 @@ export function FitToMonitorButton() {
   )
 }
 
+// Same corners as the fit-to-monitor button, but a camera action: it does what
+// Cmd+Up does. Sized below a crab so it reads as a quiet utility at the bar's end.
+export function StepOutButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar__step-out"
+      onClick={onClick}
+      data-tooltip="Step out (⌘↑)"
+      data-tooltip-no-flip
+    >
+      <FitToMonitorIcon />
+    </button>
+  )
+}
+
 export function NotificationSoundToggle() {
   const enabled = useNotificationSoundStore(s => s.enabled)
   const toggle = useNotificationSoundStore(s => s.toggle)

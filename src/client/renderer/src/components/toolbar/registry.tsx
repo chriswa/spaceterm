@@ -15,6 +15,7 @@ import {
   KeycastToggle,
   NotificationSoundToggle,
   RestartButton,
+  StepOutButton,
   ThemePicker,
   UnfocusedFramesToggle
 } from './buttons'
@@ -77,6 +78,7 @@ export interface ToolbarHost {
   onCrabReorder: (order: NodeId[]) => void
   selectedNodeId: NodeId | null
   crabNavEvent: CrabNavEvent
+  onStepOut: () => void
 }
 
 interface ToolbarWidgetBase {
@@ -160,7 +162,9 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
         crabNavEvent={h.crabNavEvent}
       />
     )
-  }
+  },
+  // Last in the bar: pinned to the far right, after the crabs.
+  { id: 'step-out', slot: 'surfaces', kind: 'host', render: (h) => <StepOutButton onClick={h.onStepOut} /> }
 ]
 
 /** The widgets in one slot, in display order. */

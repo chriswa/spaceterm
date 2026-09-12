@@ -120,6 +120,27 @@ html, body, #root {
   margin-left: 4px;
 }
 
+/* Step-out (Cmd+Up) button — the bar's rightmost item, smaller than a crab. */
+.toolbar__step-out {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 2px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: rgba(255,255,255,0.55);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.toolbar__step-out:hover {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+
 /* Crab status indicators */
 .toolbar__crabs {
   display: flex;
