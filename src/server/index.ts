@@ -2367,6 +2367,7 @@ async function startServer(): Promise<void> {
     setClaudeStatusUnread: (id, unread) => stateManager.updateClaudeStatusUnread(id, unread),
     setClaudeStatusAsleep: (id, asleep) => stateManager.updateClaudeStatusAsleep(id, asleep),
     setClaudeDismissedBackground: (id, count) => stateManager.updateClaudeDismissedBackground(id, count),
+    setBackgroundLedger: (id, snapshot) => stateManager.setBackgroundLedger(id, snapshot),
     handleClaudeStop: (id) => sessionManager.handleClaudeStop(id),
     broadcastClaudeStateDecisionTime: (id, ts) => stateManager.updateClaudeStateDecisionTime(id, ts),
   })
@@ -2521,6 +2522,15 @@ async function startServer(): Promise<void> {
         sessionManager.reattachSession(pty.sessionId, scrollback, pty.cols, pty.rows, cwd)
         return pty
       }, RESPAWN_DEPS)
+      // The pty survived, so anything this surface had running in the
+      // background is still running under it. Put the persisted ledger back so
+      // a yellow surface stays yellow — and drains through the ordinary probe
+      // sweep — instead of coming up white with the completion tone.
+      const persistedLedger = stateManager.getBackgroundLedger(pty.sessionId)
+      if (persistedLedger) {
+        claudeStateMachine.restoreBackgroundLedger(pty.sessionId, persistedLedger)
+        serverLog(`[startup] Restored ${persistedLedger.launches.length} background launch(es) for ${pty.sessionId.slice(0, 8)}`)
+      }
       // Feed scrollback into the snapshot manager so a client attaching
       // immediately sees the same screen the daemon has.
       if (scrollback) snapshotManager.write(pty.sessionId, scrollback)
@@ -2552,6 +2562,12 @@ async function startServer(): Promise<void> {
 
     log: (line) => console.log(line),
   })
+
+  // Ledger entries keyed by a pty session id no surface holds any more — the
+  // surfaces that had to be respawned. Their background work died with the old
+  // pty, and nothing will ever key on those ids again.
+  const reapedLedgers = stateManager.reapBackgroundLedgers()
+  if (reapedLedgers > 0) serverLog(`[startup] Reaped ${reapedLedgers} stale background ledger(s)`)
 
   // --- Claude Code's own session status, paired with ours ---
   // Reads ~/.claude/sessions/<pid>.json, logs how its busy/waiting/idle status

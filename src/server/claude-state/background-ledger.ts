@@ -65,6 +65,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { SessionFileEntry } from '../session-file-watcher'
 import type { ClaudeSessionId, PtySessionId } from '../../shared/ids'
+import type { PersistedSurfaceLedger, PersistedBackgroundLaunch } from '../../shared/state'
 
 export type LaunchKind = 'bash' | 'agent' | 'monitor' | 'workflow'
 
@@ -404,6 +405,21 @@ export class BackgroundLedger {
   private surfaces = new Map<PtySessionId, SurfaceLedger>()
   private probes: LivenessProbes
 
+  /**
+   * Called after any mutation, with the surface that changed. The owner uses it
+   * to write `snapshot(surfaceId)` to `ServerState.backgroundLedgers`, so the
+   * yellow indicator survives a server restart.
+   *
+   * Fired from exactly one place — `touch()` — which every *public* mutator
+   * calls on its way out. That is what makes the persisted copy complete by
+   * construction rather than by vigilance: the private helpers (`resolve`,
+   * `get`) are unreachable except through one of those, so a new public mutator
+   * is the only way to introduce a change that does not persist. Add the
+   * `touch()`; `notifies-on-every-mutation` in the tests will tell you if you
+   * forget.
+   */
+  onChange?: (surfaceId: PtySessionId) => void
+
   constructor(probes: LivenessProbes = REAL_PROBES) {
     this.probes = probes
   }
@@ -412,6 +428,83 @@ export class BackgroundLedger {
     let s = this.surfaces.get(surfaceId)
     if (!s) { s = { launches: new Map() }; this.surfaces.set(surfaceId, s) }
     return s
+  }
+
+  private touch(surfaceId: PtySessionId): void {
+    this.onChange?.(surfaceId)
+  }
+
+  /**
+   * This surface's ledger in the form that goes to disk, or undefined when
+   * there is nothing worth writing.
+   *
+   * "Nothing worth writing" is no launches AND no context: a surface with only
+   * a `transcriptDir` has told us where to look but has nothing to look for, so
+   * persisting it would grow `backgroundLedgers` by one entry per surface per
+   * session for no benefit. Returning undefined is how the owner knows to
+   * delete the key rather than store an empty record.
+   */
+  snapshot(surfaceId: PtySessionId): PersistedSurfaceLedger | undefined {
+    const s = this.surfaces.get(surfaceId)
+    if (!s || s.launches.size === 0) return undefined
+    const launches: PersistedBackgroundLaunch[] = []
+    for (const l of Array.from(s.launches.values())) {
+      // Field-by-field rather than a spread: `Launch` carries
+      // `indeterminateSinceMs`, which is a measurement of *this process's*
+      // probing and is meaningless to the next one (see `restore`). Listing the
+      // fields is what keeps that decision visible.
+      launches.push({
+        id: l.id,
+        kind: l.kind,
+        ...(l.outputPath !== undefined ? { outputPath: l.outputPath } : {}),
+        ...(l.runId !== undefined ? { runId: l.runId } : {}),
+        ...(l.queuedSinceMs !== undefined ? { queuedSinceMs: l.queuedSinceMs } : {}),
+        ...(l.dismissed ? { dismissed: true } : {})
+      })
+    }
+    return {
+      launches,
+      ...(s.transcriptDir !== undefined ? { transcriptDir: s.transcriptDir } : {}),
+      ...(s.sessionId !== undefined ? { sessionId: s.sessionId } : {}),
+      ...(s.awaitingAnyResolution ? { awaitingAnyResolution: true } : {})
+    }
+  }
+
+  /**
+   * Adopt a persisted ledger for a surface whose pty survived a server restart.
+   *
+   * Both no-evidence clocks are re-based to `now`, because both measure how
+   * long *we* have been unable to learn anything, and we were not looking while
+   * the server was down. Carrying them across would mean a restart after an
+   * hour's downtime prunes every launch on the first sweep — draining the
+   * indicator to white and firing the completion tone for work that is still
+   * running, which is the exact failure the ledger exists to prevent. Re-based,
+   * a restored launch gets a full STALE_INDETERMINATE_MS of real probing before
+   * the staleness bound can reach it, and a probe that answers definitively
+   * settles it long before that.
+   *
+   * Replaces whatever the surface had: this runs at startup, before any hook or
+   * transcript entry for the surface has been processed.
+   */
+  restore(surfaceId: PtySessionId, persisted: PersistedSurfaceLedger, now: number = Date.now()): void {
+    const launches = new Map<string, Launch>()
+    for (const l of persisted.launches) {
+      launches.set(l.id, {
+        id: l.id,
+        kind: l.kind,
+        outputPath: l.outputPath,
+        runId: l.runId,
+        queuedSinceMs: l.queuedSinceMs !== undefined ? now : undefined,
+        dismissed: l.dismissed
+      })
+    }
+    this.surfaces.set(surfaceId, {
+      launches,
+      transcriptDir: persisted.transcriptDir,
+      sessionId: persisted.sessionId,
+      awaitingAnyResolution: persisted.awaitingAnyResolution
+    })
+    this.touch(surfaceId)
   }
 
   /**
@@ -423,16 +516,19 @@ export class BackgroundLedger {
     const s = this.get(surfaceId)
     if (transcriptPath) s.transcriptDir = path.dirname(transcriptPath)
     if (sessionId) s.sessionId = sessionId
+    this.touch(surfaceId)
   }
 
   /** SubagentStart(agent_id) — register (or re-register, on resume) a background subagent. */
   registerAgent(surfaceId: PtySessionId, agentId: string): void {
     this.get(surfaceId).launches.set(agentId, { id: agentId, kind: 'agent' })
+    this.touch(surfaceId)
   }
 
   /** SubagentStop(agent_id) — the subagent finished; drop it. */
   completeAgent(surfaceId: PtySessionId, agentId: string): void {
     this.resolve(this.get(surfaceId), agentId)
+    this.touch(surfaceId)
   }
 
   /** How many background launches are still BLOCKING this surface — dismissed ones are not. */
@@ -485,6 +581,7 @@ export class BackgroundLedger {
     if (!s) return
     s.awaitingAnyResolution = false
     for (const launch of Array.from(s.launches.values())) launch.dismissed = true
+    this.touch(surfaceId)
   }
 
   /**
@@ -511,6 +608,7 @@ export class BackgroundLedger {
     }
     if (restored === 0) return false
     s.awaitingAnyResolution = true
+    this.touch(surfaceId)
     return true
   }
 
@@ -524,6 +622,7 @@ export class BackgroundLedger {
     if (!s) return
     s.launches.clear()
     s.awaitingAnyResolution = false
+    this.touch(surfaceId)
   }
 
   /**
@@ -593,6 +692,7 @@ export class BackgroundLedger {
         }
       }
     }
+    this.touch(surfaceId)
   }
 
   /**
@@ -659,6 +759,9 @@ export class BackgroundLedger {
         pruned = true
       }
     }
+    // Unconditional: a probe that only moved an `indeterminateSinceMs` clock
+    // pruned nothing, but the ledger still changed.
+    this.touch(surfaceId)
     return pruned
   }
 

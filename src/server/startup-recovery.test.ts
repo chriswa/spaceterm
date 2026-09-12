@@ -57,6 +57,7 @@ function stateWith(...nodes: NodeData[]): ServerState {
     version: CURRENT_STATE_VERSION,
     nextZIndex: 100,
     nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
+    backgroundLedgers: {},
     rootArchivedChildren: [],
     undoBuffer: [],
     undoCursor: -1,

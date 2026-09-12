@@ -46,7 +46,8 @@ function serverState(...nodes: NodeData[]): ServerState {
     nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
     rootArchivedChildren: [], undoBuffer: [], undoCursor: -1,
     savedViewports: {},
-    metaHosts: {}
+    metaHosts: {},
+    backgroundLedgers: {}
   }
 }
 

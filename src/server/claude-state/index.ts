@@ -24,6 +24,7 @@ import { DecisionLogger } from './decision-logger'
 import { BackgroundLedger, isTaskNotificationPrompt } from './background-ledger'
 import { localISOTimestamp } from '../timestamp'
 import { asClaudeSessionId, type PtySessionId } from '../../shared/ids'
+import type { PersistedSurfaceLedger } from '../../shared/state'
 
 export { DecisionLogger } from './decision-logger'
 export type { DecisionLogEntry } from './decision-logger'
@@ -124,6 +125,13 @@ export class ClaudeStateMachine {
     this.deps = deps
     this.decisionLogger = new DecisionLogger()
     this.backgroundLedger = backgroundLedger
+    // The ledger reports its own changes rather than each call site persisting
+    // after touching it: the mutation points are spread across hooks, transcript
+    // ingestion, client actions and the reconcile sweep, and one that forgot to
+    // save would be invisible until a restart lost exactly that surface.
+    this.backgroundLedger.onChange = (surfaceId) => {
+      this.deps.setBackgroundLedger(surfaceId, this.backgroundLedger.snapshot(surfaceId))
+    }
     this.transitionQueue = new TransitionQueue(
       (surfaceId, newState, source, event, sourceTime, detail) =>
         this.applyTransition(surfaceId, newState, source, event, sourceTime, detail)
@@ -704,6 +712,24 @@ export class ClaudeStateMachine {
       newState,
       detail: `bg:${outstanding}`
     })
+  }
+
+  /**
+   * Adopt a surface's persisted background ledger at startup.
+   *
+   * Called only for a surface whose pty the daemon still held, so the launches
+   * being restored are children of a process that is genuinely still running.
+   * A surface that had to be respawned gets a new pty session id and therefore
+   * finds no entry — correctly, since its background work died with the old pty.
+   *
+   * The dismissed count is republished immediately: the client gates the "wait
+   * on background work again" affordance on it, and a restored ledger full of
+   * dismissed launches is exactly the case where that affordance should be back
+   * on the first render rather than after the next ledger event.
+   */
+  restoreBackgroundLedger(surfaceId: PtySessionId, persisted: PersistedSurfaceLedger): void {
+    this.backgroundLedger.restore(surfaceId, persisted)
+    this.publishDismissedBackground(surfaceId)
   }
 
   /**

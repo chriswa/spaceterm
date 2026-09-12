@@ -139,8 +139,11 @@ export interface TerminalNodeData extends BaseNodeData {
    * Non-zero is what makes "wait on background work again" an available action
    * on the agent mark; zero means there is nothing to wait for.
    *
-   * Ephemeral and NOT persisted: the ledger is in-memory, so a count restored
-   * from disk would offer to restore launches that no longer exist anywhere.
+   * Ephemeral and NOT persisted *on the node*: it is a projection of the
+   * ledger, which is persisted in its own right under
+   * `ServerState.backgroundLedgers`. Republished from the restored ledger as
+   * soon as a surface is adopted at startup, so a second copy on the node
+   * could only ever disagree with it.
    */
   claudeDismissedBackground?: number
   /** Last-known remaining context %, persisted so it survives a server restart. */
@@ -338,6 +341,62 @@ export interface ServerState {
    * it.
    */
   metaHosts: Record<string, MetaHostEntry>
+  /**
+   * Outstanding background work per surface, keyed by **pty session id**.
+   *
+   * The ledger behind the yellow `working_background` indicator lives in
+   * memory (see `background-ledger.ts`); this is its durable copy, so a server
+   * restart does not silently turn a surface that is still running background
+   * work back to white and fire the completion tone.
+   *
+   * Keyed by pty session id — not node id — because that is the ledger's own
+   * key, and because it makes the entry self-invalidating: a surface whose pty
+   * survived the restart is re-adopted under the *same* session id and finds
+   * its launches waiting, while one that had to be respawned gets a fresh id
+   * and correctly finds nothing (its background processes were children of the
+   * pty that died). Entries no live surface claims are reaped at startup.
+   *
+   * Top-level rather than a field on `TerminalNodeData` for the same reason as
+   * `metaHosts`: `NodeData` is deep-copied into every archive snapshot, and
+   * this is bookkeeping about a running process, not something the user
+   * authored.
+   */
+  backgroundLedgers: Record<string, PersistedSurfaceLedger>
+}
+
+/** What kind of background work a launch represents. Mirrors `LaunchKind`. */
+export type BackgroundLaunchKind = 'bash' | 'agent' | 'monitor' | 'workflow'
+
+/**
+ * One tracked background launch, as written to disk.
+ *
+ * A structural mirror of `Launch` in `background-ledger.ts` rather than an
+ * import of it: the ledger's interface is free to grow fields that only make
+ * sense in memory, and this one is a wire/disk format that a migration has to
+ * answer for. The ledger converts between them explicitly, so a field added
+ * there without being added here is visible at that seam.
+ */
+export interface PersistedBackgroundLaunch {
+  id: string
+  kind: BackgroundLaunchKind
+  /** bash only: the `.output` file its process tree holds open (lsof probe target). */
+  outputPath?: string
+  /** workflow only: the `wf_…` id naming its on-disk state file. */
+  runId?: string
+  /** Epoch ms when a completion was enqueued but not yet delivered to the agent. */
+  queuedSinceMs?: number
+  /** True once dismissed: still tracked, no longer counted as blocking. */
+  dismissed?: boolean
+}
+
+/** A surface's background ledger, as written to disk. */
+export interface PersistedSurfaceLedger {
+  launches: PersistedBackgroundLaunch[]
+  /** Directory holding the transcript, used to build subagent/workflow probe paths. */
+  transcriptDir?: string
+  sessionId?: ClaudeSessionId
+  /** True when the next launch to resolve should re-dismiss the rest. */
+  awaitingAnyResolution?: boolean
 }
 
 export interface MetaHostEntry {

@@ -1,4 +1,4 @@
-import type { ClaudeState } from '../../shared/state'
+import type { ClaudeState, PersistedSurfaceLedger } from '../../shared/state'
 import type { PtySessionId } from '../../shared/ids'
 export type { ClaudeState }
 
@@ -39,6 +39,17 @@ export interface StateMachineDeps {
    * only where there is something to take up.
    */
   setClaudeDismissedBackground(surfaceId: PtySessionId, count: number): void
+  /**
+   * Write this surface's background ledger to durable state, or delete the
+   * entry when the snapshot is undefined (nothing left to track).
+   *
+   * Persisted, unlike `setClaudeDismissedBackground` above, because the ledger
+   * is the *cause* and that count is only a projection of it. A server restart
+   * used to lose it outright, which turned a surface with live background work
+   * from yellow back to white and fired the completion tone for work that was
+   * still running. See `ServerState.backgroundLedgers`.
+   */
+  setBackgroundLedger(surfaceId: PtySessionId, snapshot: PersistedSurfaceLedger | undefined): void
 }
 
 /**

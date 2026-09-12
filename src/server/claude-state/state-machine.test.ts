@@ -3,6 +3,7 @@ import { ClaudeStateMachine } from './index'
 import { BackgroundLedger } from './background-ledger'
 import type { StateMachineDeps, ClaudeState } from './types'
 import type { SessionFileEntry } from '../session-file-watcher'
+import type { PersistedSurfaceLedger } from '../../shared/state'
 import { asPtySessionId as pid, asClaudeSessionId as cid } from '../../shared/ids'
 
 /**
@@ -33,6 +34,8 @@ class FakeDeps implements StateMachineDeps {
   setClaudeStatusAsleep(): void { /* no-op */ }
   dismissed = new Map<string, number>()
   setClaudeDismissedBackground(id: string, count: number): void { this.dismissed.set(id, count) }
+  ledgers = new Map<string, PersistedSurfaceLedger | undefined>()
+  setBackgroundLedger(id: string, snapshot: PersistedSurfaceLedger | undefined): void { this.ledgers.set(id, snapshot) }
 }
 
 /** Monotonic clock so queued transitions apply in the order events were fired. */
@@ -543,6 +546,45 @@ const cases: Case[] = [
       // answer means anything now.
       sm.handleClientMarkBackground(S, true)
       assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+
+  // ─── Persisting the ledger ────────────────────────────────────────────────
+  {
+    name: 'a registered background subagent is written to durable state',
+    run: (sm, deps) => {
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      assertEq(deps.ledgers.get(S)?.launches, [{ id: 'a1', kind: 'agent' }])
+    },
+  },
+  {
+    name: 'the durable entry is dropped once the last launch resolves',
+    run: (sm, deps) => {
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'SubagentStop', { agent_id: 'a1' })
+      // undefined, not an empty record: the owner deletes the key, so
+      // backgroundLedgers does not accumulate one entry per surface forever.
+      assertEq(deps.ledgers.get(S), undefined)
+    },
+  },
+  {
+    name: 'a restored ledger republishes the dismissed count the client gates on',
+    run: (sm, deps) => {
+      sm.restoreBackgroundLedger(S, { launches: [{ id: 'a1', kind: 'agent', dismissed: true }] })
+      assertEq(deps.dismissed.get(S), 1)
+    },
+  },
+  {
+    name: 'a surface restored with outstanding work stops yellow rather than white',
+    run: (sm, deps) => {
+      // What a server restart looks like from here: the pty was adopted, its
+      // ledger came back, and the agent's next Stop must not fire the
+      // completion tone for work that is still running.
+      sm.restoreBackgroundLedger(S, { launches: [{ id: 'a1', kind: 'agent' }] })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      assertEq(deps.unread.get(S) ?? false, false)
     },
   },
 ]

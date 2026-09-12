@@ -521,7 +521,7 @@ describe('processDeadTerminals', () => {
     expect((revived.getNode(nid('t1')) as TerminalNodeData).alive).toBe(false)
   })
 
-  it('downgrades working_background to stopped, since the ledger backing it is gone', () => {
+  it('keeps working_background, whose ledger is persisted alongside it', () => {
     const { sm, io } = harness()
     createTerminal(sm, 't1')
     sm.updateClaudeState(pid('t1'), 'working_background')
@@ -533,7 +533,25 @@ describe('processDeadTerminals', () => {
     )
     revived.processDeadTerminals()
 
-    expect((revived.getNode(nid('t1')) as TerminalNodeData).claudeState).toBe('stopped')
+    // This used to reset to 'stopped' because the ledger behind yellow was
+    // in-memory. It is persisted now, so the claim is still backed — and a
+    // surface whose pty did NOT survive is reset by reincarnateTerminal instead.
+    expect((revived.getNode(nid('t1')) as TerminalNodeData).claudeState).toBe('working_background')
+  })
+
+  it('keeps the unread flag, so a restart does not mark every surface seen', () => {
+    const { sm, io } = harness()
+    createTerminal(sm, 't1')
+    sm.updateClaudeStatusUnread(pid('t1'), true)
+    sm.persistImmediate()
+
+    const revived = new StateManager(
+      { onNodeUpdate: () => {}, onNodeAdd: () => {}, onNodeRemove: () => {} },
+      { persister: new StatePersister(io, DEBOUNCE) }
+    )
+    revived.processDeadTerminals()
+
+    expect((revived.getNode(nid('t1')) as TerminalNodeData).claudeStatusUnread).toBe(true)
   })
 
   it('preserves other claude states across a restart', () => {
@@ -549,6 +567,73 @@ describe('processDeadTerminals', () => {
     revived.processDeadTerminals()
 
     expect((revived.getNode(nid('t1')) as TerminalNodeData).claudeState).toBe('waiting_permission')
+  })
+})
+
+describe('reincarnateTerminal and agent state', () => {
+  it('resets state and unread when the pty session id changes', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    sm.updateClaudeState(pid('t1'), 'working_background')
+    sm.updateClaudeStatusUnread(pid('t1'), true)
+
+    sm.reincarnateTerminal(nid('t1'), pid('pty-new'), 80, 24)
+
+    const node = sm.getNode(nid('t1')) as TerminalNodeData
+    expect(node.claudeState).toBe('stopped')
+    expect(node.claudeStatusUnread).toBe(false)
+  })
+
+  it('keeps them when the same pty is adopted back (startup reattach)', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    sm.updateClaudeState(pid('t1'), 'working_background')
+    sm.updateClaudeStatusUnread(pid('t1'), true)
+
+    // Startup daemon reattach comes through here with the id the node already
+    // has: the process never died, so neither claim is stale.
+    sm.reincarnateTerminal(nid('t1'), pid('t1'), 80, 24)
+
+    const node = sm.getNode(nid('t1')) as TerminalNodeData
+    expect(node.claudeState).toBe('working_background')
+    expect(node.claudeStatusUnread).toBe(true)
+  })
+})
+
+describe('background ledgers', () => {
+  const LEDGER = { launches: [{ id: 'task-1', kind: 'bash' as const }] }
+
+  it('round-trips a snapshot through persistence', () => {
+    const { sm, io } = harness()
+    createTerminal(sm, 't1')
+    sm.setBackgroundLedger(pid('t1'), LEDGER)
+    sm.persistImmediate()
+
+    const revived = new StateManager(
+      { onNodeUpdate: () => {}, onNodeAdd: () => {}, onNodeRemove: () => {} },
+      { persister: new StatePersister(io, DEBOUNCE) }
+    )
+    expect(revived.getBackgroundLedger(pid('t1'))).toEqual(LEDGER)
+  })
+
+  it('drops the entry when the snapshot is undefined', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    sm.setBackgroundLedger(pid('t1'), LEDGER)
+    sm.setBackgroundLedger(pid('t1'), undefined)
+    expect(sm.getBackgroundLedger(pid('t1'))).toBeUndefined()
+  })
+
+  it('reaps entries no live surface is keyed on, and keeps the ones that are', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    sm.setBackgroundLedger(pid('t1'), LEDGER)
+    // A surface that was respawned: its old pty session id is now unreachable.
+    sm.setBackgroundLedger(pid('gone'), LEDGER)
+
+    expect(sm.reapBackgroundLedgers()).toBe(1)
+    expect(sm.getBackgroundLedger(pid('t1'))).toEqual(LEDGER)
+    expect(sm.getBackgroundLedger(pid('gone'))).toBeUndefined()
   })
 })
 

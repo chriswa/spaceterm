@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import type {
   ServerState,
   MetaHostEntry,
+  PersistedSurfaceLedger,
   NodeData,
   NodeAlert,
   TerminalNodeData,
@@ -250,6 +251,7 @@ export class StateManager {
     // The migration covers the real load path; this covers the rest, so no
     // caller has to remember that the map might be missing.
     if (!this.state.metaHosts) this.state.metaHosts = {}
+    if (!this.state.backgroundLedgers) this.state.backgroundLedgers = {}
 
     // Scan all existing Claude terminals for cwd-mismatch alerts.
     // This catches mismatches that existed before the alert system was deployed
@@ -315,11 +317,18 @@ export class StateManager {
 
       const wasAlive = node.alive
       node.alive = false
-      // 'working_background' (yellow) is backed by an in-memory ledger that a
-      // restart clears, so we can no longer know what background work was
-      // outstanding — reset it to 'stopped'.
-      node.claudeState = node.claudeState === 'working_background' ? 'stopped' : node.claudeState
-      node.claudeStatusUnread = false
+      // `claudeState` and `claudeStatusUnread` are deliberately left alone.
+      //
+      // Both used to be reset here — unread unconditionally, and
+      // 'working_background' (yellow) down to 'stopped' because the ledger
+      // behind it was in-memory and a restart lost it. The ledger is persisted
+      // now (`ServerState.backgroundLedgers`), so the yellow claim is one we can
+      // still back up, and clearing unread on every boot threw away the one
+      // thing that says which surfaces the user has not looked at yet.
+      //
+      // Neither survives a surface that has to be respawned:
+      // `reincarnateTerminal` resets both when the pty session id changes, which
+      // is exactly the case where the process they described is gone.
 
       const history = node.claudeSessionHistory ?? []
       const latestClaude = history.length > 0 ? history[history.length - 1].claudeSessionId : undefined
@@ -712,6 +721,16 @@ export class StateManager {
     }
     node.terminalSessions.push(newSession)
 
+    // A *different* pty session id means a different process: whatever the
+    // agent was doing, and whether the user had looked at it, are claims about
+    // something that no longer exists, so both are reset. Startup daemon
+    // reattach comes through here with the *same* id — it adopts the pty the
+    // daemon still holds rather than spawning one — and there the agent is
+    // still sitting where it was, so resetting would be a lie the user pays for
+    // twice: a yellow surface with live background work goes white and fires
+    // the completion tone, and every unread surface reads as seen.
+    const newProcess = node.sessionId !== newPtySessionId
+
     this.sessionToNodeId.set(newPtySessionId, nodeId)
     this.patchNode(node, {
       alive: true,
@@ -719,8 +738,7 @@ export class StateManager {
       cols,
       rows,
       exitCode: undefined,
-      claudeState: 'stopped',
-      claudeStatusUnread: false
+      ...(newProcess ? { claudeState: 'stopped' as const, claudeStatusUnread: false } : {})
     })
   }
 
@@ -960,6 +978,59 @@ export class StateManager {
     if (!(hostId in this.state.metaHosts)) return
     delete this.state.metaHosts[hostId]
     this.schedulePersist()
+  }
+
+  // --- Background-work ledgers ---
+
+  /**
+   * The persisted background ledger for a pty session, if one survived a
+   * restart. See `ServerState.backgroundLedgers`.
+   */
+  getBackgroundLedger(ptySessionId: PtySessionId): PersistedSurfaceLedger | undefined {
+    return this.state.backgroundLedgers[ptySessionId]
+  }
+
+  /**
+   * Store (or, with `undefined`, drop) a surface's background ledger.
+   *
+   * `schedulePersist` without a node patch, deliberately: no client reads this
+   * — the indicator they render is `claudeState`, which the state machine sets
+   * from the same ledger — so broadcasting it would put a launch-by-launch
+   * record of every backgrounded task on the wire at the ledger's mutation rate
+   * for nothing. It rides along on the next full `sync-state` instead.
+   */
+  setBackgroundLedger(ptySessionId: PtySessionId, snapshot: PersistedSurfaceLedger | undefined): void {
+    if (snapshot === undefined) {
+      if (!(ptySessionId in this.state.backgroundLedgers)) return
+      delete this.state.backgroundLedgers[ptySessionId]
+    } else {
+      this.state.backgroundLedgers[ptySessionId] = snapshot
+    }
+    this.schedulePersist()
+  }
+
+  /**
+   * Drop ledger entries no live terminal claims.
+   *
+   * Called once at startup, after recovery has decided which ptys were adopted
+   * and which were respawned. Without it the map grows by one entry per
+   * respawned surface per restart forever: a revived surface gets a fresh pty
+   * session id, so the entry keyed by its old one is unreachable by anything
+   * except this sweep. Returns how many it removed, for the startup log.
+   */
+  reapBackgroundLedgers(): number {
+    const live = new Set<string>()
+    for (const node of Object.values(this.state.nodes)) {
+      if (node.type === 'terminal') live.add(node.sessionId)
+    }
+    let removed = 0
+    for (const key of Object.keys(this.state.backgroundLedgers)) {
+      if (live.has(key)) continue
+      delete this.state.backgroundLedgers[key]
+      removed++
+    }
+    if (removed > 0) this.schedulePersist()
+    return removed
   }
 
   archiveNode(nodeId: NodeId, now: number = Date.now()): void {

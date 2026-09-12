@@ -269,3 +269,29 @@ describe('migration 2 → 3: archive entries carrying a live subtree', () => {
     expect(result.state.rootArchivedChildren).toEqual(v2.rootArchivedChildren)
   })
 })
+
+describe('migration 4 → 5: the durable background-work ledger', () => {
+  const v4 = () => ({
+    version: 4,
+    nextZIndex: 1,
+    nodes: {},
+    rootArchivedChildren: [],
+    undoBuffer: [],
+    undoCursor: 0,
+    savedViewports: {},
+    metaHosts: {}
+  })
+
+  it('adds an empty backgroundLedgers map', () => {
+    const result = migrate(v4())
+    if (result.status !== 'ok') throw new Error('expected ok')
+    expect(result.state.backgroundLedgers).toEqual({})
+  })
+
+  it('does not clobber ledgers a current-version document already carries', () => {
+    const ledgers = { 'pty-1': { launches: [{ id: 'task-1', kind: 'bash' as const }] } }
+    const result = migrate({ ...v4(), version: CURRENT_STATE_VERSION, backgroundLedgers: ledgers })
+    if (result.status !== 'ok') throw new Error('expected ok')
+    expect(result.state.backgroundLedgers).toEqual(ledgers)
+  })
+})

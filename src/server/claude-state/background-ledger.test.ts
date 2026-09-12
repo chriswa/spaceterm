@@ -482,6 +482,84 @@ const cases: Case[] = [
       assertEq(agentTranscriptVerdict(''), 'indeterminate')
     },
   },
+
+  // ─── Persistence: snapshot / restore ──────────────────────────────────────
+  {
+    name: 'a snapshot round-trips outstanding, dismissed and queued launches',
+    run: () => {
+      const l = new BackgroundLedger(fakeProbes())
+      l.setContext(SURFACE, '/t/proj/sess.jsonl', cid('sess'))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      l.registerAgent(SURFACE, 'agent-1')
+      l.dismissAll(SURFACE)
+      l.registerAgent(SURFACE, 'agent-2')
+
+      const snap = l.snapshot(SURFACE)!
+      const restored = new BackgroundLedger(fakeProbes())
+      restored.restore(SURFACE, snap)
+
+      assertEq(restored.outstandingCount(SURFACE), 1)
+      assertEq(restored.dismissedCount(SURFACE), 2)
+      assertEq(restored.snapshot(SURFACE), snap)
+    },
+  },
+  {
+    name: 'a surface with nothing tracked snapshots as undefined, so no entry is stored',
+    run: () => {
+      const l = new BackgroundLedger(fakeProbes())
+      // Context alone says where to look but gives nothing to look for.
+      l.setContext(SURFACE, '/t/proj/sess.jsonl', cid('sess'))
+      assertEq(l.snapshot(SURFACE), undefined)
+    },
+  },
+  {
+    name: 'a restored launch gets a full staleness window, not the one that elapsed while we were down',
+    run: async () => {
+      const l = new BackgroundLedger(fakeProbes())
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      const snap = l.snapshot(SURFACE)!
+
+      // The server was down for an hour. A probe that can say nothing must not
+      // immediately prune work that may well still be running.
+      const restored = new BackgroundLedger(fakeProbes({ bash: 'indeterminate' }))
+      restored.restore(SURFACE, snap, 3_600_000)
+      await restored.reconcile(SURFACE, 3_600_000)
+      assertEq(restored.outstandingCount(SURFACE), 1)
+
+      // ...but the bound still applies from the restore, so it does drain.
+      await restored.reconcile(SURFACE, 3_600_000 + 5 * 60_000)
+      assertEq(restored.outstandingCount(SURFACE), 0)
+    },
+  },
+  {
+    name: 'every public mutator notifies onChange',
+    run: async () => {
+      // The persisted copy is only as complete as this: a mutator that does not
+      // report itself is a surface that loses exactly its state on a restart.
+      const l = new BackgroundLedger(fakeProbes())
+      const seen: string[] = []
+      let label = 'none'
+      l.onChange = () => { seen.push(label) }
+
+      const mutations: Array<[string, () => void | Promise<void>]> = [
+        ['setContext', () => l.setContext(SURFACE, '/t/proj/sess.jsonl', cid('sess'))],
+        ['registerAgent', () => l.registerAgent(SURFACE, 'agent-1')],
+        ['ingestJsonl', () => l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])],
+        ['completeAgent', () => l.completeAgent(SURFACE, 'agent-1')],
+        ['dismissAll', () => l.dismissAll(SURFACE)],
+        ['restoreDismissed', () => { l.restoreDismissed(SURFACE) }],
+        ['reconcile', () => l.reconcile(SURFACE)],
+        ['clear', () => l.clear(SURFACE)],
+        ['restore', () => l.restore(SURFACE, { launches: [] })],
+      ]
+      for (const [name, run] of mutations) {
+        label = name
+        await run()
+      }
+
+      assertEq(seen, mutations.map(([name]) => name))
+    },
+  },
 ]
 
 function assertEq(actual: unknown, expected: unknown): void {
