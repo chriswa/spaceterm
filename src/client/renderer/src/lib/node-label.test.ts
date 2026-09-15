@@ -208,15 +208,15 @@ describe('layOutNodeLabel', () => {
     expect(layOutNodeLabel(node)!.nodeId).toBe(node.id)
   })
 
-  it('draws a markdown label at two thirds the size of an agent surface label', () => {
+  it('draws a markdown label at half the size of an agent surface label', () => {
     const agent = layOutNodeLabel(terminal({ name: 'Same label' }))!
     const doc = layOutNodeLabel(markdown({ name: 'Same label' }))!
     expect(agent.textScale).toBe(LABEL_TEXT_SCALE)
-    expect(doc.textScale).toBeCloseTo(agent.textScale * 2 / 3)
+    expect(doc.textScale).toBeCloseTo(agent.textScale / 2)
     expect(doc.textScale).toBe(MARKDOWN_LABEL_TEXT_SCALE)
     // The box shrinks with the text, or the mask and click target would not fit it.
-    expect(doc.width).toBeCloseTo(agent.width * 2 / 3)
-    expect(doc.height).toBeCloseTo(agent.height * 2 / 3)
+    expect(doc.width).toBeCloseTo(agent.width / 2)
+    expect(doc.height).toBeCloseTo(agent.height / 2)
   })
 
   it('lays out nothing for a node with no label', () => {

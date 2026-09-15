@@ -67,7 +67,7 @@ export function nodeLabelText(data: NodeData, markdownContent?: string): string 
  * a label is a caption the canvas derived. Both are bold Menlo at label scale,
  * and size is what tells them apart.
  *
- * A markdown node's label is two thirds again. A document's h1 is a heading
+ * A markdown node's label is half that again. A document's h1 is a heading
  * inside something you can already read, where an agent surface's label is the
  * only name that surface shows from a distance — so the document's caption
  * steps back a size.
@@ -77,7 +77,7 @@ export function nodeLabelText(data: NodeData, markdownContent?: string): string 
  * it cannot disagree about it.
  */
 export const LABEL_TEXT_SCALE = 2 / 3
-export const MARKDOWN_LABEL_TEXT_SCALE = LABEL_TEXT_SCALE * 2 / 3
+export const MARKDOWN_LABEL_TEXT_SCALE = LABEL_TEXT_SCALE / 2
 
 /** The text scale a node's label is drawn at. */
 export function labelTextScale(node: NodeData): number {
