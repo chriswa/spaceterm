@@ -8,6 +8,7 @@ import { scrubInheritedAgentEnv } from './spawn-env'
 import { serverLog } from './server-log'
 import { expandTilde } from './cwd'
 import { TitleParser } from './title-parser'
+import { normalizeShellTitle } from './shell-title-history'
 import type { DaemonClient } from './daemon-client'
 import type { SessionInfo, CreateOptions, ClaudeSessionEntry } from '../shared/protocol'
 import type { ClaudeState } from '../shared/state'
@@ -19,8 +20,27 @@ const MAX_CLAUDE_SESSION_HISTORY = 20
 
 /** Titles that programs set spuriously (e.g. on every session revival) */
 const SPURIOUS_TITLES = ['Claude Code']
+
 function isSpuriousTitle(title: string): boolean {
   return SPURIOUS_TITLES.includes(title)
+}
+
+/**
+ * Keep shell titles as a bounded most-recent-first set. `title` must already
+ * be normalized so transient presentation state cannot make duplicate entries.
+ */
+function rememberShellTitle(history: string[], title: string): boolean {
+  const idx = history.indexOf(title)
+  // Animated title decorations can produce the same logical title many times
+  // per second. It is already the newest item, so neither state nor clients
+  // need another update.
+  if (idx === 0) return false
+  if (idx !== -1) history.splice(idx, 1)
+  history.unshift(title)
+  if (history.length > MAX_TITLE_HISTORY) {
+    history.pop()
+  }
+  return true
 }
 
 interface Session {
@@ -308,23 +328,26 @@ export class SessionManager {
   seedTitleHistory(sessionId: PtySessionId, history: string[]): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
-    const filtered = history.filter(t => !isSpuriousTitle(t))
-    session.shellTitleHistory.push(...filtered)
+    // Seeded history comes from persisted state, which may predate title
+    // normalization. Rebuild it through the same LRU path as live input.
+    for (const title of history.slice().reverse()) {
+      const normalized = normalizeShellTitle(title)
+      if (normalized && !isSpuriousTitle(normalized)) {
+        rememberShellTitle(session.shellTitleHistory, normalized)
+      }
+    }
   }
 
   /** Inject a title using the same LRU logic as the OSC title callback. */
   injectTitle(sessionId: PtySessionId, title: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
-    if (isSpuriousTitle(title)) return
+    const normalized = normalizeShellTitle(title)
+    if (!normalized || isSpuriousTitle(normalized)) return
     const { shellTitleHistory } = session
-    const idx = shellTitleHistory.indexOf(title)
-    if (idx !== -1) shellTitleHistory.splice(idx, 1)
-    shellTitleHistory.unshift(title)
-    if (shellTitleHistory.length > MAX_TITLE_HISTORY) {
-      shellTitleHistory.pop()
+    if (rememberShellTitle(shellTitleHistory, normalized)) {
+      this.onTitleHistory(sessionId, shellTitleHistory)
     }
-    this.onTitleHistory(sessionId, shellTitleHistory)
   }
 
   getLastClaudeSessionId(sessionId: PtySessionId): ClaudeSessionId | null {
@@ -344,14 +367,11 @@ export class SessionManager {
 
     const titleParser = new TitleParser(
       (title) => {
-        if (isSpuriousTitle(title)) return
-        const idx = shellTitleHistory.indexOf(title)
-        if (idx !== -1) shellTitleHistory.splice(idx, 1)
-        shellTitleHistory.unshift(title)
-        if (shellTitleHistory.length > MAX_TITLE_HISTORY) {
-          shellTitleHistory.pop()
+        const normalized = normalizeShellTitle(title)
+        if (!normalized || isSpuriousTitle(normalized)) return
+        if (rememberShellTitle(shellTitleHistory, normalized)) {
+          this.onTitleHistory(sessionId, shellTitleHistory)
         }
-        this.onTitleHistory(sessionId, shellTitleHistory)
       },
       (newCwd) => {
         const session = this.sessions.get(sessionId)

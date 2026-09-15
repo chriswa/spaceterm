@@ -295,3 +295,32 @@ describe('migration 4 → 5: the durable background-work ledger', () => {
     expect(result.state.backgroundLedgers).toEqual(ledgers)
   })
 })
+
+describe('migration 5 → 6: shell title history normalization', () => {
+  it('removes Codex transient title frames and duplicates from live and archived terminals', () => {
+    const result = migrate({
+      version: 5,
+      nodes: {
+        live: {
+          type: 'terminal',
+          shellTitleHistory: ['⠋ Fix title | spaceterm', 'Fix title | spaceterm', 'renaming... ⠙ | spaceterm', 'Other ⠙ | spaceterm'],
+          terminalSessions: [{ shellTitleHistory: ['⠹ Fix title | spaceterm', 'renaming...', 'Fix title | spaceterm'] }]
+        }
+      },
+      rootArchivedChildren: [{
+        data: {
+          type: 'terminal',
+          shellTitleHistory: ['Archived ⠸ | spaceterm', 'Archived | spaceterm'],
+          terminalSessions: []
+        }
+      }]
+    })
+    if (result.status !== 'ok') throw new Error('expected migrated state')
+
+    const live = result.state.nodes.live as unknown as { shellTitleHistory: string[], terminalSessions: Array<{ shellTitleHistory: string[] }> }
+    expect(live.shellTitleHistory).toEqual(['Fix title | spaceterm', 'Other | spaceterm'])
+    expect(live.terminalSessions[0].shellTitleHistory).toEqual(['Fix title | spaceterm'])
+    const archived = result.state.rootArchivedChildren[0].data as unknown as { shellTitleHistory: string[] }
+    expect(archived.shellTitleHistory).toEqual(['Archived | spaceterm'])
+  })
+})

@@ -198,6 +198,20 @@ describe('SessionManager PTY output', () => {
     client.dispose()
   })
 
+  it('strips Codex’s rotating title spinner before de-duplicating', async () => {
+    const { manager, deps, client } = await setup()
+    const { sessionId } = manager.create()
+    // Codex has emitted the spinner both as a prefix and immediately before
+    // its workspace suffix. Neither placement is meaningful title content.
+    manager.handleDaemonData(sessionId, '\x1b]2;⠋ Fix the title history | spaceterm\x07')
+    manager.handleDaemonData(sessionId, '\x1b]2;Fix the title history ⠙ | spaceterm\x07')
+    manager.handleDaemonData(sessionId, '\x1b]2;⠹ Fix the title history | spaceterm\x07')
+    expect(deps.onTitleHistory).toHaveBeenLastCalledWith(sessionId, ['Fix the title history | spaceterm'])
+    expect(deps.onTitleHistory).toHaveBeenCalledTimes(1)
+    expect(manager.getShellTitleHistory(sessionId)).toEqual(['Fix the title history | spaceterm'])
+    client.dispose()
+  })
+
   it('ignores titles known to be set spuriously', async () => {
     // "Claude Code" is re-set on every revival and would otherwise churn history.
     const { manager, deps, client } = await setup()

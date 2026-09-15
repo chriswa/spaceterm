@@ -1,4 +1,5 @@
 import type { ServerState, TerminalNodeData } from '../shared/state'
+import { normalizeShellTitleHistory } from './shell-title-history'
 
 /**
  * Bump this when a migration is added below.
@@ -10,7 +11,7 @@ import type { ServerState, TerminalNodeData } from '../shared/state'
  * 1 → 2 therefore normalises defensively instead of assuming a known shape. From
  * version 2 on, the number means what it says.
  */
-export const CURRENT_STATE_VERSION = 5
+export const CURRENT_STATE_VERSION = 6
 
 /** A persisted document as it comes off disk: shape unknown until migrated. */
 export type PersistedDoc = Record<string, unknown>
@@ -46,7 +47,38 @@ function terminalNodes(doc: PersistedDoc): Array<Record<string, unknown>> {
   )
 }
 
+/** Includes archived terminals, whose snapshots are nested beneath live nodes. */
+function normalizeTitleHistories(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) normalizeTitleHistories(item)
+    return
+  }
+  if (!isRecord(value)) return
+
+  if (value.type === 'terminal') {
+    if (Array.isArray(value.shellTitleHistory)) {
+      value.shellTitleHistory = normalizeShellTitleHistory(value.shellTitleHistory)
+    }
+    if (Array.isArray(value.terminalSessions)) {
+      for (const session of value.terminalSessions) {
+        if (isRecord(session) && Array.isArray(session.shellTitleHistory)) {
+          session.shellTitleHistory = normalizeShellTitleHistory(session.shellTitleHistory)
+        }
+      }
+    }
+  }
+
+  for (const child of Object.values(value)) normalizeTitleHistories(child)
+}
+
 export const MIGRATIONS: Migration[] = [
+  {
+    to: 6,
+    description: 'remove Codex title-spinner frames, renaming placeholders, and duplicate shell titles',
+    migrate(doc) {
+      normalizeTitleHistories(doc)
+    }
+  },
   {
     to: 5,
     description: 'add backgroundLedgers, the durable copy of the background-work ledger',
