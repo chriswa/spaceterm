@@ -47,6 +47,7 @@ export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClic
               width: label.width,
               height: label.height,
               '--node-label-fg': (resolvedPresets[label.nodeId] ?? DEFAULT_PRESET).titleBarBg,
+              '--node-label-text-scale': label.textScale,
               filter: staleFilter(freshness)
             } as CSSProperties}
             onClick={() => onLabelClick(label.nodeId)}

@@ -18,7 +18,7 @@ const NODE = asNodeId('term-1')
 
 function label(overrides: Partial<NodeLabel> = {}): NodeLabel {
   return {
-    nodeId: NODE, lines: ['Deploy', 'pipeline'],
+    nodeId: NODE, lines: ['Deploy', 'pipeline'], textScale: 2 / 3,
     x: 200, y: -100, width: 900, height: 1000,
     anchorX: 200, anchorY: 900,
     ...overrides
@@ -36,6 +36,12 @@ function renderLabels(labels: NodeLabel[], onClick = vi.fn(), freshness = new Ma
 afterEach(cleanup)
 
 describe('NodeLabels', () => {
+  it('hands its text scale to the stylesheet', () => {
+    const { container } = renderLabels([label({ textScale: 4 / 9 })])
+    const el = container.querySelector('.node-label') as HTMLElement
+    expect(Number(el.style.getPropertyValue('--node-label-text-scale'))).toBeCloseTo(4 / 9)
+  })
+
   it('draws the label box at the position it was laid out at', () => {
     const { container } = renderLabels([label()])
     const el = container.querySelector('.node-label') as HTMLElement

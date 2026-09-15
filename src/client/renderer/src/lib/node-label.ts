@@ -62,18 +62,27 @@ export function nodeLabelText(data: NodeData, markdownContent?: string): string 
 /**
  * How large a label is drawn relative to a title node.
  *
- * Two thirds, so the two read as different kinds of thing at a glance: a title
- * node is a heading someone placed on the canvas, a label is a caption the
- * canvas derived. Both are bold Menlo at label scale, and size is what tells
- * them apart — which means the stylesheet has to apply exactly this factor to
- * `.node-label__text`, or the measured box stops fitting the drawn text.
+ * Two thirds for an agent surface's label, so the two read as different kinds
+ * of thing at a glance: a title node is a heading someone placed on the canvas,
+ * a label is a caption the canvas derived. Both are bold Menlo at label scale,
+ * and size is what tells them apart.
+ *
+ * A markdown node's label is two thirds again. A document's h1 is a heading
+ * inside something you can already read, where an agent surface's label is the
+ * only name that surface shows from a distance — so the document's caption
+ * steps back a size.
+ *
+ * The factor travels on the laid-out label and reaches the stylesheet as
+ * `--node-label-text-scale`, so the box measured here and the text drawn into
+ * it cannot disagree about it.
  */
 export const LABEL_TEXT_SCALE = 2 / 3
+export const MARKDOWN_LABEL_TEXT_SCALE = LABEL_TEXT_SCALE * 2 / 3
 
-const LABEL_CHAR_WIDTH = TITLE_CHAR_WIDTH * LABEL_TEXT_SCALE
-const LABEL_LINE_HEIGHT = TITLE_LINE_HEIGHT * LABEL_TEXT_SCALE
-const LABEL_H_PADDING = TITLE_H_PADDING * LABEL_TEXT_SCALE
-const LABEL_SINGLE_LINE_HEIGHT = TITLE_HEIGHT * LABEL_TEXT_SCALE
+/** The text scale a node's label is drawn at. */
+export function labelTextScale(node: NodeData): number {
+  return node.type === 'markdown' ? MARKDOWN_LABEL_TEXT_SCALE : LABEL_TEXT_SCALE
+}
 
 /**
  * Air between the label box and the top edge of the card it names.
@@ -91,13 +100,16 @@ const LABEL_SINGLE_LINE_HEIGHT = TITLE_HEIGHT * LABEL_TEXT_SCALE
 export const LABEL_CARD_GAP = CARD_AGENT_MARK_HEIGHT / 4
 
 
-/** World-space footprint of a label drawn as `lines`. */
-export function labelBox(lines: readonly string[]): { width: number; height: number } {
+/** World-space footprint of a label drawn as `lines` at text scale `scale`. */
+export function labelBox(
+  lines: readonly string[],
+  scale: number = LABEL_TEXT_SCALE
+): { width: number; height: number } {
   const longest = lines.reduce((max, line) => Math.max(max, line.length), 0)
   const lineCount = Math.max(1, lines.length)
   return {
-    width: longest * LABEL_CHAR_WIDTH + LABEL_H_PADDING,
-    height: LABEL_SINGLE_LINE_HEIGHT + (lineCount - 1) * LABEL_LINE_HEIGHT
+    width: (longest * TITLE_CHAR_WIDTH + TITLE_H_PADDING) * scale,
+    height: (TITLE_HEIGHT + (lineCount - 1) * TITLE_LINE_HEIGHT) * scale
   }
 }
 
@@ -156,6 +168,10 @@ function wrapInto(words: readonly string[], maxLines: number): string[] {
  *
  * Ties go to the fewest lines — `<` rather than `<=` below — so the shape only
  * changes when narrowing actually buys something.
+ *
+ * Scored at the default text scale whatever size the label is drawn at: the
+ * whole box scales uniformly, so every candidate's area scales by the same
+ * factor and the winner does not change.
  */
 export function wrapLabel(text: string): string[] {
   const words = text.split(/\s+/).filter((w) => w.length > 0)
@@ -183,6 +199,8 @@ export interface NodeLabel {
   /** The node that supplies the label — clicking it navigates relative to this. */
   nodeId: NodeId
   lines: string[]
+  /** Text size relative to a title node — see `labelTextScale`. */
+  textScale: number
   /** Centre of the label, directly above the node's card. */
   x: number
   y: number
@@ -251,10 +269,12 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
   if (!text) return null
   const lines = wrapLabel(text)
   if (lines.length === 0) return null
-  const box = labelBox(lines)
+  const textScale = labelTextScale(node)
+  const box = labelBox(lines, textScale)
   return {
     nodeId: node.id,
     lines,
+    textScale,
     x: node.x,
     y: node.y - measureCard(node).height / 2 - LABEL_CARD_GAP - box.height / 2,
     anchorX: node.x,

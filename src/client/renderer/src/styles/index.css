@@ -1566,8 +1566,9 @@ html, body, #root {
 /* Node label — a node's title drawn on the canvas above its card.
    Face and weight are the title card's, deliberately: the canvas has one label
    scale, and a caption is read from the same distance a title node is. Size is
-   where the two part company — LABEL_TEXT_SCALE in node-label.ts measures the
-   box these rules draw into, so the same two-thirds must appear in both places.
+   where the two part company — labelTextScale in node-label.ts picks the factor
+   and measures the box with it, and NodeLabels hands the same number in here as
+   --node-label-text-scale, so there is one source for it.
    z-index 0 puts it under every card (the server's z-index counter starts at 1)
    so an overlapping card wins both the paint and the click. */
 .node-label {
@@ -1587,9 +1588,9 @@ html, body, #root {
 
 .node-label__text {
   font-family: Menlo, Monaco, 'Courier New', monospace;
-  font-size: calc(66px * var(--label-node-scale) * 2 / 3);
+  font-size: calc(66px * var(--label-node-scale) * var(--node-label-text-scale));
   font-weight: bold;
-  line-height: calc(80px * var(--label-node-scale) * 2 / 3);
+  line-height: calc(80px * var(--label-node-scale) * var(--node-label-text-scale));
   color: var(--node-label-fg, #a66cff);
   text-align: center;
   white-space: pre;
