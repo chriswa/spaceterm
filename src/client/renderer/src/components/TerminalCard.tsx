@@ -12,6 +12,7 @@ import type { Camera } from '../lib/camera'
 import type { ArchivedNode, TerminalSessionEntry, CcSessionStatus } from '../../../../shared/state'
 import type { ClaudeSessionEntry, SnapshotMessage, SnapshotRow } from '../../../../shared/protocol'
 import { planRepaint, type PaintedState } from '../lib/snapshot-diff'
+import { glyphGrowth, rowsToRepaint, snapshotLod } from '../lib/snapshot-lod'
 import { isCardOnScreen } from '../lib/viewport'
 import { isWindowVisible, useWindowVisible } from '../hooks/useWindowVisible'
 import { XTERM_THEME, DEFAULT_BG } from '../../../../shared/theme'
@@ -60,8 +61,35 @@ const INTERACTION_THROTTLE_MS = 15_000
 
 const DRAG_THRESHOLD = 5
 
-const SNAPSHOT_FONT = '14px Menlo, Monaco, "Courier New", monospace'
-const SNAPSHOT_BOLD_FONT = 'bold 14px Menlo, Monaco, "Courier New", monospace'
+const SNAPSHOT_FONT_SIZE = 14
+const SNAPSHOT_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace'
+
+/**
+ * The fonts and glyph placement one repaint draws with, grown for the level of
+ * detail it is painting at — see `glyphGrowth` for why a small bitmap needs
+ * bigger glyphs.
+ *
+ * Built once per repaint rather than per row: the strings are identical for
+ * every row, and assigning `ctx.font` reparses them.
+ */
+interface SnapshotTextStyle {
+  font: string
+  boldFont: string
+  /** Shift that keeps a grown glyph centred on the cell it belongs to. */
+  offsetX: number
+  offsetY: number
+}
+
+function snapshotTextStyle(lod: number): SnapshotTextStyle {
+  const growth = glyphGrowth(lod)
+  const size = SNAPSHOT_FONT_SIZE * growth
+  return {
+    font: `${size}px ${SNAPSHOT_FONT_FAMILY}`,
+    boldFont: `bold ${size}px ${SNAPSHOT_FONT_FAMILY}`,
+    offsetX: -(growth - 1) * CELL_WIDTH / 2,
+    offsetY: -(growth - 1) * CELL_HEIGHT / 2
+  }
+}
 
 export const terminalSelectionGetters = new Map<string, () => string>()
 export const terminalSearchOpeners = new Map<string, () => void>()
@@ -91,7 +119,8 @@ function paintSnapshotRow(
   ctx: CanvasRenderingContext2D,
   row: SnapshotRow,
   y: number,
-  termBg: string
+  termBg: string,
+  style: SnapshotTextStyle
 ): void {
   let xOffset = 0
 
@@ -104,11 +133,15 @@ function paintSnapshotRow(
     }
     if (span.text.trim().length > 0) {
       ctx.fillStyle = span.fg
-      ctx.font = span.bold ? SNAPSHOT_BOLD_FONT : SNAPSHOT_FONT
+      ctx.font = span.bold ? style.boldFont : style.font
       ctx.textBaseline = 'top'
       for (let i = 0; i < span.text.length; i++) {
         if (span.text[i] !== ' ') {
-          ctx.fillText(span.text[i], xOffset + i * CELL_WIDTH, y * CELL_HEIGHT + 1)
+          ctx.fillText(
+            span.text[i],
+            xOffset + i * CELL_WIDTH + style.offsetX,
+            y * CELL_HEIGHT + 1 + style.offsetY
+          )
         }
       }
     }
@@ -830,36 +863,54 @@ export function TerminalCard({
     // moment between a resize being applied and the first snapshot at the new
     // size arriving, and the canvas has to match the box the card lays out for
     // it or the browser scales the bitmap to fit.
-    const { cols, rows } = propsRef.current
+    const { cols, rows, zoom } = propsRef.current
     const cw = Math.ceil(cols * CELL_WIDTH)
     const ch = Math.ceil(rows * CELL_HEIGHT)
 
+    // How much bitmap the card is actually worth at this zoom — see
+    // `snapshotLod`. The canvas keeps its world-unit CSS size either way; only
+    // the number of pixels behind it changes.
+    const lod = snapshotLod(zoom, window.devicePixelRatio)
+    const bw = Math.max(1, Math.round(cw * lod))
+    const bh = Math.max(1, Math.round(ch * lod))
+
     // Assigning width/height blanks the canvas, so a resize is always full.
-    const resized = canvas.width !== cw || canvas.height !== ch
+    const resized = canvas.width !== bw || canvas.height !== bh
     if (resized) {
-      canvas.width = cw
-      canvas.height = ch
+      canvas.width = bw
+      canvas.height = bh
     }
 
-    const termBg = preset?.terminalBg ?? DEFAULT_BG
+    // World units in, bitmap pixels out, so everything below goes on working in
+    // cells. Set every time: assigning width resets the transform, and a paint
+    // that skipped the resize would otherwise inherit whatever was left.
+    ctx.setTransform(bw / cw, 0, 0, bh / ch, 0, 0)
 
-    const key = `${cw}x${ch}|${termBg}|${snapshot.lines.length}`
+    const termBg = preset?.terminalBg ?? DEFAULT_BG
+    const style = snapshotTextStyle(lod)
+
+    const key = `${cw}x${ch}@${bw}x${bh}|${termBg}|${snapshot.lines.length}`
     const plan = planRepaint(paintedRef.current, key, snapshot.lines, resized)
 
     if (plan.kind === 'full') {
       ctx.fillStyle = termBg
       ctx.fillRect(0, 0, cw, ch)
       for (let y = 0; y < snapshot.lines.length; y++) {
-        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg)
+        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg, style)
       }
     } else {
-      for (const y of plan.rows) {
-        // The row painter only draws glyphs and non-default backgrounds, so a
-        // row being redrawn has to be cleared first or the old text shows
-        // through wherever the new text is shorter.
-        ctx.fillStyle = termBg
+      // The row painter only draws glyphs and non-default backgrounds, so a row
+      // being redrawn has to be cleared first or the old text shows through
+      // wherever the new text is shorter. Clear every row in the batch before
+      // drawing any of them: the bands overlap by a pixel of antialiasing, so
+      // clearing as we go would scrub the row just drawn.
+      const touched = rowsToRepaint(plan.rows, snapshot.lines.length)
+      ctx.fillStyle = termBg
+      for (const y of touched) {
         ctx.fillRect(0, y * CELL_HEIGHT, cw, CELL_HEIGHT)
-        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg)
+      }
+      for (const y of touched) {
+        paintSnapshotRow(ctx, snapshot.lines[y], y, termBg, style)
       }
     }
 
@@ -941,9 +992,15 @@ export function TerminalCard({
   }, [id])
 
   // Repaint the snapshot canvas whenever what it should look like changes:
-  // colours, or the grid it is drawn on. Without the size here, a resize
-  // leaves the last-painted bitmap at the old dimensions until the next
-  // snapshot arrives — visible as a stretched image for a tick.
+  // colours, the grid it is drawn on, or how many pixels the card is worth at
+  // the current zoom. Without the size here, a resize leaves the last-painted
+  // bitmap at the old dimensions until the next snapshot arrives — visible as a
+  // stretched image for a tick.
+  //
+  // `zoom` is the settled camera rather than every wheel notch, and a settle
+  // that did not cross a level-of-detail octave costs one identity comparison
+  // per row and paints nothing, so it is cheaper than deriving the octave here
+  // and cannot disagree with what `paintCanvas` decides.
   useEffect(() => {
     if (focused) return
     const snapshot = snapshotRef.current
@@ -952,7 +1009,7 @@ export function TerminalCard({
     // nothing to repaint for, and the flush above will catch it later.
     if (canPaint()) paintCanvasRef.current(snapshot)
     else paintDeferredRef.current = true
-  }, [preset, cols, rows, focused, canPaint])
+  }, [preset, cols, rows, zoom, focused, canPaint])
 
   // Mouse coordinate correction for CSS transform scaling.
   // xterm uses clientX - getBoundingClientRect().left for mouse position.

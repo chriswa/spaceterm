@@ -62,16 +62,28 @@ export function ResizeGhost(): React.ReactElement | null {
     }
     ctx.clearRect(0, 0, width, height)
 
-    // Copy only what fits. drawImage would happily scale the source to the
-    // destination, and a stretched preview is worse than a truncated one — the
-    // whole point is to judge how much of this content the new size holds.
+    // Copy only what fits. drawImage would happily fit the whole source into
+    // the destination, and a stretched preview is worse than a truncated one —
+    // the whole point is to judge how much of this content the new size holds.
+    //
+    // The source canvas holds the surface's *current* grid, and only as many
+    // pixels as its zoom was worth (see `snapshotLod`), so the crop has to be
+    // taken in that canvas's own scale rather than assuming one pixel per cell
+    // unit. Blowing a coarse snapshot back up to full size is right: it is what
+    // the card itself is showing.
     const source = terminalSnapshotCanvases.get(resizingNodeId)
     if (source && source.width > 0 && source.height > 0) {
-      const w = Math.min(source.width, width)
-      const h = Math.min(source.height, height)
-      ctx.drawImage(source, 0, 0, w, h, 0, 0, w, h)
+      const sourceWidth = Math.ceil(node.cols * CELL_WIDTH)
+      const sourceHeight = Math.ceil(node.rows * CELL_HEIGHT)
+      const w = Math.min(sourceWidth, width)
+      const h = Math.min(sourceHeight, height)
+      ctx.drawImage(
+        source,
+        0, 0, w * (source.width / sourceWidth), h * (source.height / sourceHeight),
+        0, 0, w, h
+      )
     }
-  }, [isTerminal, resizingNodeId, cols, rows])
+  }, [isTerminal, resizingNodeId, node, cols, rows])
 
   if (!isTerminal || !node) return null
 
