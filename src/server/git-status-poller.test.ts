@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   GitStatusPoller,
   parseGitStatus,
+  UNKNOWN_REPO_FACTS,
   type GitStatusPollerDeps,
   type CancelScheduled
 } from './git-status-poller'
@@ -27,7 +28,9 @@ function dir(id: string, cwd: string): DirectoryNodeData {
 function status(overrides: Partial<GitStatus> = {}): GitStatus {
   return {
     branch: 'main',
+    defaultBranch: 'main',
     upstream: null,
+    hasRemote: false,
     ahead: 0,
     behind: 0,
     conflicts: 0,
@@ -301,15 +304,15 @@ describe('dispose', () => {
 describe('parseGitStatus', () => {
   it('reads the branch and upstream', () => {
     const out = ['# branch.head main', '# branch.upstream origin/main'].join('\n')
-    expect(parseGitStatus(out, null)).toMatchObject({ branch: 'main', upstream: 'origin/main' })
+    expect(parseGitStatus(out, UNKNOWN_REPO_FACTS)).toMatchObject({ branch: 'main', upstream: 'origin/main' })
   })
 
   it('reports a detached HEAD as no branch', () => {
-    expect(parseGitStatus('# branch.head (detached)', null).branch).toBeNull()
+    expect(parseGitStatus('# branch.head (detached)', UNKNOWN_REPO_FACTS).branch).toBeNull()
   })
 
   it('reads ahead/behind counts', () => {
-    expect(parseGitStatus('# branch.ab +3 -5', null)).toMatchObject({ ahead: 3, behind: 5 })
+    expect(parseGitStatus('# branch.ab +3 -5', UNKNOWN_REPO_FACTS)).toMatchObject({ ahead: 3, behind: 5 })
   })
 
   it('counts staged and unstaged changes from the XY field', () => {
@@ -319,24 +322,26 @@ describe('parseGitStatus', () => {
       '1 MM N... 100644 100644 100644 aaa bbb both.ts'
     ].join('\n')
 
-    expect(parseGitStatus(out, null)).toMatchObject({ staged: 2, unstaged: 2 })
+    expect(parseGitStatus(out, UNKNOWN_REPO_FACTS)).toMatchObject({ staged: 2, unstaged: 2 })
   })
 
   it('counts renames, which use the 2 prefix', () => {
-    expect(parseGitStatus('2 R. N... 100644 100644 100644 aaa bbb R100 new.ts\told.ts', null))
+    expect(parseGitStatus('2 R. N... 100644 100644 100644 aaa bbb R100 new.ts\told.ts', UNKNOWN_REPO_FACTS))
       .toMatchObject({ staged: 1 })
   })
 
   it('counts conflicts and untracked files', () => {
     const out = ['u UU N... 100644 100644 100644 100644 a b c d conflicted.ts', '? new-file.ts'].join('\n')
-    expect(parseGitStatus(out, null)).toMatchObject({ conflicts: 1, untracked: 1 })
+    expect(parseGitStatus(out, UNKNOWN_REPO_FACTS)).toMatchObject({ conflicts: 1, untracked: 1 })
   })
 
-  it('carries the FETCH_HEAD timestamp through', () => {
-    expect(parseGitStatus('# branch.head main', 1_700_000_000_000).lastFetchTimestamp).toBe(1_700_000_000_000)
+  it('folds in the facts git status cannot report', () => {
+    const facts = { lastFetchTimestamp: 1_700_000_000_000, defaultBranch: 'trunk', hasRemote: true }
+    expect(parseGitStatus('# branch.head main', facts)).toMatchObject(facts)
   })
 
   it('returns a clean status for empty output', () => {
-    expect(parseGitStatus('', null)).toEqual(status({ branch: null }))
+    expect(parseGitStatus('', UNKNOWN_REPO_FACTS))
+      .toEqual(status({ branch: null, upstream: null, defaultBranch: null, hasRemote: false }))
   })
 })

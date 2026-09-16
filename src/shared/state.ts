@@ -168,7 +168,20 @@ export interface MarkdownNodeData extends BaseNodeData {
 
 export interface GitStatus {
   branch: string | null        // null = detached HEAD
+  /**
+   * The branch work normally lands on, short form (e.g. "main"), or null if the
+   * repo never recorded one. Comes from `refs/remotes/<remote>/HEAD`, which
+   * `git clone` sets and `git init` does not — so null means "unknown", not
+   * "none", and callers fall back to the main/master convention. See
+   * `isOffDefaultBranch` in shared/git-status.ts.
+   */
+  defaultBranch: string | null
   upstream: string | null      // e.g. "origin/main"
+  /**
+   * Whether the repo has any remote configured at all. Separates "this branch
+   * was never pushed" from "this repo is local by design".
+   */
+  hasRemote: boolean
   ahead: number
   behind: number
   conflicts: number

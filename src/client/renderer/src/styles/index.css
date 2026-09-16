@@ -1548,9 +1548,62 @@ html, body, #root {
   opacity: 0.35;
 }
 
+/* Git badge row — hangs under the folder, centred on it.
+
+   Sized off --label-node-scale like the rest of the directory node, so the
+   badges are world-space objects that shrink with the canvas rather than
+   screen-space chrome. Non-interactive: the row sits over open canvas, which
+   stays draggable and selectable through it. */
+.directory-card__badges {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: calc(10px * var(--label-node-scale));
+  /* Tucked close under the folder. The row hangs past the node's measured
+     footprint, and placement only keeps PLACEMENT_MARGIN between two nodes'
+     boxes — every pixel of gap here is a pixel the row can reach into whatever
+     sits below. */
+  margin-top: calc(6px * var(--label-node-scale));
+  /* The gaps between coins stay canvas; only the discs themselves take the
+     cursor, and what they do with it is start a node drag (see GitBadges), so
+     they behave like the folder rather than like a hole in it. */
+  pointer-events: none;
+  /* Above the folder art, below the action bar the shell overlays on it. */
+  z-index: 2;
+}
+
+/* The mark. Its disc is painted by the rule below, so the two cannot be
+   coloured apart. */
+.directory-card__badge {
+  width: calc(64px * var(--label-node-scale));
+  height: calc(64px * var(--label-node-scale));
+  color: var(--badge-mark, #1e1e2e);
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.directory-card__badges:active .directory-card__badge {
+  cursor: grabbing;
+}
+
+.directory-card__badge-face {
+  fill: var(--badge-face, #ffffff);
+}
+
 .directory-card__fetch-age {
   cursor: default;
   pointer-events: none;
+}
+
+/* The status line's tooltip is the badge row's legend, so it has to be
+   reachable. Safe inside the card: the drag handler is on the card element and
+   these events bubble to it. Unfocused nodes are covered by the card's own
+   click-shield, which is what makes this focus-gated. */
+.directory-card--focused .directory-card__git-status {
+  pointer-events: auto;
 }
 
 .directory-card--focused .directory-card__fetch-age {

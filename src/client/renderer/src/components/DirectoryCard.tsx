@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { DIRECTORY_HEIGHT } from '../lib/constants'
 import { DIR_FOLDER_ART_HEIGHT, DIR_FOLDER_H_PADDING, DIR_MIN_FOLDER_WIDTH } from '../../../../shared/node-size'
 import type { ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
 import type { ArchivedNode, GitStatus } from '../../../../shared/state'
+import { gitBadges, type GitBadgeKind } from '../../../../shared/git-status'
 import { CardShell } from './CardShell'
 import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
@@ -25,6 +27,94 @@ function formatFetchAge(ts: number | null): string {
   return `(${days}d old)`
 }
 
+/**
+ * The mark each badge draws, on a 24x24 grid. Strokes only, in `currentColor`,
+ * so one CSS rule colours the whole set from the folder's own palette.
+ *
+ * Chosen to be readable as silhouettes from across the canvas, which is the
+ * distance these are for: a fork for "not on the default branch", arrows for
+ * the two directions the remote can be out of step, an M for modified tracked
+ * files, and a plus for files git has not been told about.
+ */
+const BADGE_GLYPHS: Record<GitBadgeKind, ReactNode> = {
+  'off-default': (
+    <>
+      <line x1="6.96" y1="4.44" x2="6.96" y2="14.52" />
+      <circle cx="17.04" cy="6.96" r="2.52" />
+      <circle cx="6.96" cy="17.04" r="2.52" />
+      <path d="M17.04 9.48a7.56 7.56 0 0 1-7.56 7.56" />
+    </>
+  ),
+  behind: (
+    <>
+      <line x1="12" y1="4.5" x2="12" y2="19" />
+      <polyline points="6.5,13 12,19 17.5,13" />
+    </>
+  ),
+  ahead: (
+    <>
+      <line x1="12" y1="19.5" x2="12" y2="5" />
+      <polyline points="6.5,11 12,5 17.5,11" />
+    </>
+  ),
+  dirty: <polyline points="5.5,18.5 5.5,5.5 12,14 18.5,5.5 18.5,18.5" />,
+  untracked: (
+    <>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </>
+  ),
+}
+
+/**
+ * The badge row that hangs under the folder: one coin per thing the repo wants
+ * noticing, centred, in the folder's own two colours.
+ *
+ * Absolutely positioned and non-interactive on purpose. The folder's width is
+ * computed from its text on both the client and the server
+ * (`directoryFolderWidth`), and the canvas behind the row stays draggable —
+ * what the badges say in shorthand, the git status line above them says in
+ * words, and its tooltip says in full.
+ */
+function GitBadges(
+  { gitStatus, preset, onMouseDown }:
+  { gitStatus: GitStatus; preset?: ColorPreset; onMouseDown: (e: React.MouseEvent) => void }
+): ReactNode {
+  const badges = gitBadges(gitStatus)
+  if (badges.length === 0) return null
+  const face = blendHex(preset?.titleBarBg ?? '#ffffff', '#000000', 0.8)
+  const mark = preset?.terminalBg ?? DEFAULT_BG
+  return (
+    <div
+      className="directory-card__badges"
+      onMouseDown={onMouseDown}
+      style={{ '--badge-face': face, '--badge-mark': mark } as React.CSSProperties}
+    >
+      {badges.map(badge => (
+        <svg
+          key={badge.kind}
+          className="directory-card__badge"
+          role="img"
+          aria-label={badge.label}
+          data-tooltip={badge.label}
+          // The row hangs below the node, so the folder is what a tooltip above
+          // it would cover.
+          data-tooltip-placement="bottom"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle className="directory-card__badge-face" cx="12" cy="12" r="12" stroke="none" />
+          {BADGE_GLYPHS[badge.kind]}
+        </svg>
+      ))}
+    </div>
+  )
+}
+
 function formatGitStatus(gs: GitStatus): string {
   const parts: string[] = []
   parts.push(gs.branch ?? 'detached')
@@ -38,7 +128,9 @@ function formatGitStatus(gs: GitStatus): string {
 }
 
 function formatGitStatusTooltip(gs: GitStatus): string {
-  const parts: string[] = []
+  // Leads with the badge row spelled out, so the marks under the folder have a
+  // legend, then the counts the badges compress.
+  const parts: string[] = gitBadges(gs).map(b => b.label)
   parts.push(`branch: ${gs.branch ?? 'detached'}`)
   if (gs.ahead > 0) parts.push(`${gs.ahead} ahead`)
   if (gs.behind > 0) parts.push(`${gs.behind} behind`)
@@ -317,6 +409,11 @@ export function DirectoryCard({
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
+      behindContent={
+        gitStatus
+          ? <GitBadges gitStatus={gitStatus} preset={preset} onMouseDown={handleMouseDown} />
+          : null
+      }
     >
       <svg
         className="directory-card__folder-svg"
