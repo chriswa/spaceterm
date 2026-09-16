@@ -1,5 +1,5 @@
 import type { NodeId } from '../../../../shared/ids'
-import type { SummaryChatToggleResult } from '../../../../shared/api'
+import type { SummaryChatMode, SummaryChatToggleResult } from '../../../../shared/api'
 import { playSummaryChatCancelledCue, playSummaryChatStartedCue } from './summary-chat-wait-cue'
 
 /**
@@ -16,7 +16,7 @@ import { playSummaryChatCancelledCue, playSummaryChatStartedCue } from './summar
  * outcome-to-feedback mapping buried inside that is a mapping nothing can test.
  */
 export interface SummaryChatChordDeps {
-  toggle(nodeId: NodeId | undefined): Promise<SummaryChatToggleResult>
+  toggle(nodeId: NodeId | undefined, mode: SummaryChatMode): Promise<SummaryChatToggleResult>
   /** Confirming chirp: an answer is on its way. */
   started(): void
   /** Abort chirp: something was cut off. */
@@ -33,12 +33,17 @@ const FALLBACK_REJECTION = 'Focus an agent terminal to start Summary Chat.'
  * `undefined` is a real argument, not a missing one: a press with no eligible
  * surface focused still cancels, because silencing an answer must not depend on
  * where the listener happens to be looking.
+ *
+ * `mode` only decides what a press that *starts* something produces; a press
+ * that lands on something audible cancels it either way, which is why the
+ * feedback below still reads off the outcome rather than the mode.
  */
 export async function pressSummaryChatChord(
   nodeId: NodeId | undefined,
+  mode: SummaryChatMode,
   deps: SummaryChatChordDeps,
 ): Promise<void> {
-  const { outcome, message } = await deps.toggle(nodeId)
+  const { outcome, message } = await deps.toggle(nodeId, mode)
   if (outcome === 'started') return deps.started()
   if (outcome === 'cancelled') return deps.cancelled()
   deps.rejected(message ?? FALLBACK_REJECTION)

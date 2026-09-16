@@ -4,7 +4,7 @@ import { pathToFileURL } from 'url'
 import { mkdirSync, writeFileSync } from 'fs'
 import { execFile } from 'child_process'
 import { join } from 'path'
-import { SOCKET_DIR } from '../../shared/protocol'
+import { SOCKET_DIR, type SummaryChatMode } from '../../shared/protocol'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
 import { setupTTSHandlers } from './tts'
@@ -340,9 +340,9 @@ function setupIPC(): void {
     return client!.restartFlagQuery()
   })
 
-  ipcMain.handle('summary-chat:toggle', async (_event, nodeId: NodeId | undefined) => {
-    logger.log(`[summary-chat] chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}`)
-    const result = await client!.toggleSummaryChat(nodeId)
+  ipcMain.handle('summary-chat:toggle', async (_event, nodeId: NodeId | undefined, mode: SummaryChatMode) => {
+    logger.log(`[summary-chat] ${mode} chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}`)
+    const result = await client!.toggleSummaryChat(nodeId, mode)
     logger.log(`[summary-chat] chord ${result.outcome}${result.message ? `: ${result.message}` : ''}`)
     return result
   })

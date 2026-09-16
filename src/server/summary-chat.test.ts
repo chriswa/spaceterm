@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   SummaryChat,
+  finalAgentMessage,
   parseTranscript,
   redactUnheard,
   type SummaryChatDeps,
@@ -788,7 +789,7 @@ describe('cancelAll', () => {
       stallBetweenPolls: true,
       configure: (http) => {
         answers(http, 'First sentence. Second sentence. Third sentence.')
-        speaking(http, 32) // Through "Second sentence.", partway into the third.
+        speaking(http, 33) // A sentence boundary: through "Second sentence.".
       }
     })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
@@ -802,12 +803,17 @@ describe('cancelAll', () => {
     expect(newestPrompt(h)).toContain('*INTERRUPTED*')
   })
 
-  it('drops a sentence that was only half spoken', async () => {
+  // Voice Operator reports where its voice stopped, down to the word, so an
+  // answer cut off part-way through a sentence keeps the words that were
+  // actually said. Rounding this down to the last whole sentence used to throw
+  // away everything the listener heard of the sentence they interrupted —
+  // which is usually the sentence they are asking about.
+  it('keeps the words of a sentence the listener only heard part of', async () => {
     const h = harness({
       stallBetweenPolls: true,
       configure: (http) => {
         answers(http, 'First sentence. Second sentence.')
-        speaking(http, 24) // Mid-way through "Second sentence."
+        speaking(http, 31) // On "sentence", the second word of the second sentence.
       }
     })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
@@ -816,12 +822,29 @@ describe('cancelAll', () => {
     h.http.calls.length = 0
 
     await h.chat.followUp('what was that?')
-    expect(lastAnswerSent(h)).toBe('First sentence. *INTERRUPTED*')
+    expect(lastAnswerSent(h)).toBe('First sentence. Second *INTERRUPTED*')
   })
 
-  it('redacts the whole answer when no sentence finished', async () => {
-    // Voice Operator counts whole sentences, so a zero means the listener heard
-    // nothing at all — none of the answer may be resent as though delivered.
+  it('puts the marker where the voice was cut off, not after it', async () => {
+    const h = harness({
+      stallBetweenPolls: true,
+      configure: (http) => {
+        answers(http, 'First sentence. Second sentence.')
+        speaking(http, 26) // Mid-way through "sentence".
+      }
+    })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
+    await flush(4)
+    await h.chat.cancelAll()
+    h.http.calls.length = 0
+
+    await h.chat.followUp('what was that?')
+    expect(lastAnswerSent(h)).toBe('First sentence. Second *INTERRUPTED*')
+  })
+
+  it('redacts the whole answer when not one word was heard', async () => {
+    // A reported zero means the voice was cut off before it said anything, so
+    // none of the answer may be resent as though delivered.
     const h = harness({ stallBetweenPolls: true, configure: (http) => speaking(http, 0) })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(4)
@@ -1206,15 +1229,39 @@ describe('dispose', () => {
 })
 
 describe('redactUnheard', () => {
-  it('keeps whole sentences and marks the cut', () => {
-    expect(redactUnheard('One. Two. Three.', 9)).toBe('One. Two. *INTERRUPTED*')
+  it('keeps the words that were said and marks the cut', () => {
+    expect(redactUnheard('First sentence. Second sentence.', 31))
+      .toBe('First sentence. Second *INTERRUPTED*')
   })
 
-  it('drops a sentence that was still being spoken', () => {
-    expect(redactUnheard('One. Two. Three.', 12)).toBe('One. Two. *INTERRUPTED*')
+  // The offset Voice Operator reports is the end of the word its voice was on,
+  // because it counts a word as heard the moment it starts. So that word is the
+  // uncertain one and the marker takes its place — which also puts the marker
+  // where the listener's attention was cut rather than a word past it.
+  it('replaces the word the voice was cut off in', () => {
+    expect(redactUnheard('One. Two. Three.', 9)).toBe('One. *INTERRUPTED*')
+    expect(redactUnheard('First sentence. Second sentence.', 26))
+      .toBe('First sentence. Second *INTERRUPTED*')
   })
 
-  it('keeps nothing when the first sentence never finished', () => {
+  // Captured from a real interrupt: the listener stopped the voice during
+  // "mango" and Voice Operator reported 92, the end of that word.
+  it('drops the fruit the voice was in the middle of', () => {
+    const list = 'Apple, banana, cherry, date, elderberry, fig, grape, honeydew, '
+      + 'jackfruit, kiwi, lemon, mango, and nectarine.'
+    expect(redactUnheard(list, 92)).toBe(
+      'Apple, banana, cherry, date, elderberry, fig, grape, honeydew, '
+      + 'jackfruit, kiwi, lemon, *INTERRUPTED*')
+  })
+
+  // A path is one thing to hear, not three. Cutting inside it would leave a
+  // fragment the listener never heard as such and could not act on.
+  it('treats a run of non-whitespace as one word', () => {
+    expect(redactUnheard('Open src/main.ts now.', 12)).toBe('Open *INTERRUPTED*')
+    expect(redactUnheard('Open src/main.ts now.', 16)).toBe('Open *INTERRUPTED*')
+  })
+
+  it('keeps nothing when not one word finished', () => {
     expect(redactUnheard('One. Two.', 0)).toBe('*INTERRUPTED*')
     expect(redactUnheard('One. Two.', 2)).toBe('*INTERRUPTED*')
   })
@@ -1224,20 +1271,13 @@ describe('redactUnheard', () => {
     expect(redactUnheard('One. Two.', 500)).toBe('One. Two.')
   })
 
-  // A summary is spoken prose, so its terminators sit next to real text. These
-  // are the shapes that would otherwise cut mid-sentence or not cut at all.
-  it('does not treat a decimal point as the end of a sentence', () => {
-    expect(redactUnheard('It bumped it to 3.5 today. Then it stopped.', 26))
-      .toBe('It bumped it to 3.5 today. *INTERRUPTED*')
-  })
-
-  it('cuts after punctuation that closes a quote or bracket', () => {
-    expect(redactUnheard('It failed (twice.) Then it stopped.', 20))
-      .toBe('It failed (twice.) *INTERRUPTED*')
-  })
-
-  it('handles the terminators a voice answer actually uses', () => {
-    expect(redactUnheard('Did it? Yes! Wait…  more', 12)).toBe('Did it? Yes! *INTERRUPTED*')
+  // A whole-sentence offset — an older Voice Operator, or a sentence that
+  // finished before the interruption — points at the start of the next word
+  // rather than just past the end of one. Nothing is dropped: the sentence it
+  // completes was heard in full.
+  it('leaves a sentence that finished before the cut intact', () => {
+    expect(redactUnheard('First sentence. Second sentence.', 16))
+      .toBe('First sentence. *INTERRUPTED*')
   })
 })
 
@@ -1758,5 +1798,265 @@ describe('tool activity in a transcript', () => {
   // anchors on. A transcript of pure tool calls still has nothing to summarize.
   it('does not let activity pass as a user message', () => {
     expect(run(toolUse('Bash', { command: 'ls' }))).toEqual([])
+  })
+})
+
+/**
+ * The agent's final message, as the Verbatim chord reads it out.
+ *
+ * Fed the coalesced message list rather than raw JSONL: the tool-activity
+ * marker that ends the run is something `parseTranscript` produces, so these
+ * fixtures describe what `finalAgentMessage` actually sees.
+ */
+describe('finalAgentMessage', () => {
+  const activityRun = (): TranscriptMessage =>
+    ({ role: 'assistant', text: '[agent tool activity, not speech] 2 calls: Bash x2.\n- Bash: ls' })
+
+  it('is the trailing agent prose', () => {
+    expect(finalAgentMessage([
+      { role: 'user', text: 'do the thing' },
+      { role: 'assistant', text: 'Done.' },
+    ])).toBe('Done.')
+  })
+
+  // Claude Code writes each content block as its own transcript entry, so an
+  // uninterrupted message still arrives in pieces. Reading only the last piece
+  // would drop the start of the very sentence the listener asked to hear.
+  it('rejoins a message that arrived in pieces', () => {
+    expect(finalAgentMessage([
+      { role: 'user', text: 'do the thing' },
+      { role: 'assistant', text: 'First part.' },
+      { role: 'assistant', text: 'Second part.' },
+    ])).toBe('First part.\n\nSecond part.')
+  })
+
+  it('stops at the work the agent did before writing it', () => {
+    expect(finalAgentMessage([
+      { role: 'user', text: 'do the thing' },
+      { role: 'assistant', text: 'Looking into it.' },
+      activityRun(),
+      { role: 'assistant', text: 'Done.' },
+    ])).toBe('Done.')
+  })
+
+  it('stops at the user, so it never reads a whole conversation out', () => {
+    expect(finalAgentMessage([
+      { role: 'assistant', text: 'An earlier answer.' },
+      { role: 'user', text: 'and now?' },
+      { role: 'assistant', text: 'Done.' },
+    ])).toBe('Done.')
+  })
+
+  // An agent mid-run has said nothing since its last tool call. That is an
+  // ordinary state, not a broken transcript, and the caller says so.
+  it('is empty when the turn ended on a tool call', () => {
+    expect(finalAgentMessage([
+      { role: 'user', text: 'do the thing' },
+      activityRun(),
+    ])).toBe('')
+  })
+
+  it('is empty when the agent has not spoken at all', () => {
+    expect(finalAgentMessage([{ role: 'user', text: 'do the thing' }])).toBe('')
+  })
+})
+
+describe('verbatim mode', () => {
+  const TRANSCRIPT: TranscriptMessage[] = [
+    { role: 'user', text: 'do the thing' },
+    { role: 'assistant', text: '[agent tool activity, not speech] 1 call: Bash.\n- Bash: ls' },
+    { role: 'assistant', text: 'I fixed the parser.' },
+    { role: 'assistant', text: 'Tests pass.' },
+  ]
+
+  const verbatim = (h: Harness) => h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+
+  it('speaks the agent\'s final message word for word', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await verbatim(h)
+
+    expect(spokenText(h)).toBe('I fixed the parser.\n\nTests pass.')
+  })
+
+  // The entire point of the mode: the listener hears the agent, not a model's
+  // account of the agent, and nothing is billed for the privilege.
+  it('involves no model at all', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await verbatim(h)
+    await flush()
+
+    expect(haikuCalls(h)).toHaveLength(0)
+  })
+
+  // Nothing is being generated, so there is nothing for the waiting cue to
+  // announce. A surface that passed through `thinking` would chirp at a
+  // listener who is already being spoken to.
+  it('never reports thinking, because nothing is being thought about', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await verbatim(h)
+    await flush()
+
+    expect(states(h)).not.toContain('thinking')
+    expect(states(h)).toContain('synthesizing')
+  })
+
+  it('refuses a surface whose agent is still working', async () => {
+    const h = harness({
+      transcript: [
+        { role: 'user', text: 'do the thing' },
+        { role: 'assistant', text: '[agent tool activity, not speech] 1 call: Bash.\n- Bash: ls' },
+      ]
+    })
+    const result = await verbatim(h)
+
+    expect(result).toEqual({
+      outcome: 'rejected', message: "The agent hasn't finished a message to read out yet.",
+    })
+    expect(spokenText(h)).toBe('')
+  })
+
+  // A surface parked on a question has no assistant turn on disk at all; the
+  // hook payload is the only copy of what is on screen. Reading it out is
+  // exactly what the listener wants, and the caution explains what is missing.
+  it('reads an un-flushed question out, with the caution that precedes it', async () => {
+    const h = harness({ transcript: [{ role: 'user', text: 'do the thing' }] })
+    const pending: PendingTurn = { tool: 'AskUserQuestion', text: 'Which database?', capturedAt: 0 }
+    await h.chat.start(
+      NODE,
+      { transcriptPath: '/t.jsonl', claudeState: 'waiting_question' as ClaudeState, pendingTurn: pending },
+      'verbatim',
+    )
+
+    expect(spokenText(h)).toBe(
+      "Note: only the question is available; the agent's message before it isn't saved yet. Which database?"
+    )
+  })
+
+  it('records the press as verbatim in the audit trail', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await verbatim(h)
+
+    expect(h.audits.find((a) => a.event === 'started')).toMatchObject({ mode: 'verbatim' })
+  })
+})
+
+describe('a verbatim conversation catching up on its first follow-up', () => {
+  const TRANSCRIPT: TranscriptMessage[] = [
+    { role: 'user', text: 'fix the parser' },
+    { role: 'assistant', text: 'I fixed the parser. Tests pass.' },
+  ]
+
+  it('sends the transcript and the question in one turn', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+    await flush()
+
+    await h.chat.followUp('which parser?')
+
+    expect(haikuCalls(h)).toHaveLength(1)
+    const prompt = newestPrompt(h)
+    expect(prompt).toContain('fix the parser')
+    expect(prompt).toContain('The listener asks: which parser?')
+  })
+
+  // The message appears twice on purpose — once in transcript position, once as
+  // what reached the listener. The duplication is what survives an interruption.
+  it('quotes what the listener heard alongside the transcript', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+    await flush()
+
+    await h.chat.followUp('which parser?')
+
+    const prompt = newestPrompt(h)
+    expect(prompt).toContain('read aloud word for word')
+    expect(prompt.match(/I fixed the parser\. Tests pass\./g)).toHaveLength(2)
+  })
+
+  // Cut off after the first sentence: the model has to know the listener never
+  // heard "Tests pass", while still being able to see it in the transcript —
+  // because "what was it about to say?" is the next question.
+  it('marks where the listener stopped it, but keeps the rest in the transcript', async () => {
+    const h = harness({
+      transcript: TRANSCRIPT,
+      configure: (http) => {
+        http.on('/v1/speech', ({ method }) =>
+          method === 'POST'
+            ? { id: 'speech-1', state: 'in_progress' }
+            : { id: 'speech-1', state: 'interrupted_by_user', character_offset: 20 }
+        )
+      }
+    })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+    await flush()
+
+    await h.chat.followUp('what were you about to say?')
+
+    const prompt = newestPrompt(h)
+    expect(prompt).toContain('I fixed the parser. *INTERRUPTED*')
+    expect(prompt).toContain('they stopped it there and never heard the rest')
+    // Still available to answer from, even though it was never spoken.
+    expect(prompt).toContain('Tests pass.')
+  })
+
+  // Where word resolution earns its keep: an agent's final message is long, and
+  // the listener cuts in the moment they have heard the part they care about.
+  // Sentence resolution would report them as having heard nothing of a sentence
+  // they in fact heard most of, and the answer would re-read it back at them.
+  it('records the interruption to the word, part-way through a sentence', async () => {
+    const h = harness({
+      transcript: TRANSCRIPT,
+      configure: (http) => {
+        http.on('/v1/speech', ({ method }) =>
+          method === 'POST'
+            ? { id: 'speech-1', state: 'in_progress' }
+            : { id: 'speech-1', state: 'interrupted_by_user', character_offset: 12 }
+        )
+      }
+    })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+    await flush()
+
+    await h.chat.followUp('the what?')
+
+    expect(newestPrompt(h)).toContain('I fixed the *INTERRUPTED*')
+  })
+
+  it('does not claim an interruption when the message played to the end', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+    await flush()
+
+    await h.chat.followUp('which parser?')
+
+    expect(newestPrompt(h)).not.toContain('*INTERRUPTED*')
+  })
+
+  it('tells Haiku not to summarize a message the listener already heard', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+    await flush()
+
+    await h.chat.followUp('which parser?')
+
+    const system = (haikuCalls(h)[0].body as { system: Array<{ text: string }> }).system
+    expect(system.map((s) => s.text).join(' ')).toContain('do not summarize it back to them')
+  })
+
+  // Once it has caught up it is an ordinary conversation: the second question
+  // carries only itself, and the answer to the first is redacted the usual way.
+  it('is an ordinary conversation from the second question on', async () => {
+    const h = harness({ transcript: TRANSCRIPT })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'verbatim')
+    await flush()
+    await h.chat.followUp('which parser?')
+    await flush()
+
+    await h.chat.followUp('and the tests?')
+
+    expect(haikuCalls(h)).toHaveLength(2)
+    const prompt = newestPrompt(h)
+    expect(prompt).toBe('The listener asks: and the tests?')
+    expect(lastAnswerSent(h)).toBe('A concise summary.')
   })
 })

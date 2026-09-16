@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 // The bridge contract lives in src/shared/api.ts so the renderer type-checks
 // against the same declaration this file implements. Do not restate it here.
-import type { Api, NodeApi, PtyApi, SummaryChatUiState } from '../../shared/api'
+import type { Api, NodeApi, PtyApi, SummaryChatMode, SummaryChatUiState } from '../../shared/api'
 import type { NodeId, PtySessionId } from '../../shared/ids'
 import type { SystemMetricsSample } from '../../shared/system-metrics'
 
@@ -190,7 +190,8 @@ const api: Api = {
   pty: ptyApi,
   node: nodeApi,
   log: (message: string) => ipcRenderer.send('log', message),
-  toggleSummaryChat: (nodeId: NodeId | undefined) => ipcRenderer.invoke('summary-chat:toggle', nodeId),
+  toggleSummaryChat: (nodeId: NodeId | undefined, mode: SummaryChatMode) =>
+    ipcRenderer.invoke('summary-chat:toggle', nodeId, mode),
   restartSpaceterm: (): Promise<void> => ipcRenderer.invoke('app:restart-spaceterm'),
   writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),

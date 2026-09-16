@@ -24,6 +24,7 @@ import type {
   CreateOptions,
   SessionInfo,
   SnapshotMessage,
+  SummaryChatMode,
   SummaryChatToggleOutcome,
   SummaryChatUiState,
 } from './protocol'
@@ -173,7 +174,7 @@ export interface NodeApi {
 }
 
 /** Status the toolbar renders for a surface's summary-chat session. */
-export type { SummaryChatPhase, SummaryChatUiState, SummaryChatToggleOutcome } from './protocol'
+export type { SummaryChatPhase, SummaryChatUiState, SummaryChatToggleOutcome, SummaryChatMode } from './protocol'
 
 /**
  * What one press of the Summary Chat chord did.
@@ -267,9 +268,9 @@ export interface Api {
   /**
    * Press the Summary Chat chord. Pass the focused terminal surface, or
    * undefined when nothing eligible is focused — a press with nothing focused
-   * still cancels whatever is speaking.
+   * still cancels whatever is speaking, in either mode.
    */
-  toggleSummaryChat(nodeId: NodeId | undefined): Promise<SummaryChatToggleResult>
+  toggleSummaryChat(nodeId: NodeId | undefined, mode: SummaryChatMode): Promise<SummaryChatToggleResult>
   restartSpaceterm(): Promise<void>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>

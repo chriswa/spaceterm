@@ -8,7 +8,9 @@ import type { NodeId } from '../shared/ids'
 import type { ClaudeState } from '../shared/state'
 import type { PendingTurn } from './pending-turn'
 import { speakableToolText } from './speakable-tool-text'
-import type { SummaryChatPhase, SummaryChatToggleOutcome, SummaryChatUiState } from '../shared/protocol'
+import type {
+  SummaryChatMode, SummaryChatPhase, SummaryChatToggleOutcome, SummaryChatUiState,
+} from '../shared/protocol'
 
 const DISCOVERY_PATH = path.join(homedir(), 'Library', 'Application Support', 'VoiceOperator', 'speech-service.json')
 const MAX_MESSAGES = 24
@@ -89,7 +91,28 @@ const SPEECH_POLL_INTERVAL_MS = 250
  * failure worth a line of its own.
  */
 const SPEECH_STALL_REPORT_MS = (SPEECH_LONG_POLL_SECONDS + 15) * 1_000
-const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Your first task is to summarize the coding-agent's messages in the latest "turn", which starts at the user's latest substantial message. A bare request to continue is not substantial; a short answer such as "yes" is substantial. Speak at most three concise sentences of plain English. The user can ask follow up questions, so make it clear where more info is available. Do not self-identify as the coding-agent, instead refer to it as "the agent". By default, skip summarizing the user's messages, since they probably already know what they wrote. Note that you have a chunk of conversation and earlier messages may be invalidated by later ones. Focus on what the agent concluded, accomplished, is blocked on, or needs next in response to that current request. Do not recap earlier work unless it is essential to make the current-turn answer intelligible. If the agent needs something from the user, make certain to include that information last. A message beginning "${TOOL_ACTIVITY_MARKER}" is a record of actions the agent took, not words it said: describe what it was working on and never read a command, path, or pattern aloud verbatim. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words which can be spoken.`
+/**
+ * Everything both modes' system prompts say, which is everything except the
+ * opening task.
+ *
+ * Shared rather than duplicated because these are the rules that make an answer
+ * *speakable*, and they have to hold whatever the listener asked for. Two
+ * copies would drift, and the drift would be inaudible until a Verbatim
+ * follow-up started reading file paths out character by character.
+ */
+const VOICE_STYLE_RULES = `Speak at most three concise sentences of plain English. The user can ask follow up questions, so make it clear where more info is available. Do not self-identify as the coding-agent, instead refer to it as "the agent". By default, skip repeating the user's own messages back to them, since they probably already know what they wrote. Note that you have a chunk of conversation and earlier messages may be invalidated by later ones. Focus on what the agent concluded, accomplished, is blocked on, or needs next in response to the current request. Do not recap earlier work unless it is essential to make the current answer intelligible. If the agent needs something from the user, make certain to include that information last. A message beginning "${TOOL_ACTIVITY_MARKER}" is a record of actions the agent took, not words it said: describe what it was working on and never read a command, path, or pattern aloud verbatim. Do not use markdown, lists, code, preambles, or quotation marks. Answer only with words which can be spoken.`
+
+const SUMMARY_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. Your first task is to summarize the coding-agent's messages in the latest "turn", which starts at the user's latest substantial message. A bare request to continue is not substantial; a short answer such as "yes" is substantial. ${VOICE_STYLE_RULES}`
+
+/**
+ * The Verbatim mode system prompt.
+ *
+ * A different opening because the conversation starts in a different place: the
+ * listener has already heard the agent's final message read out in full, so
+ * summarizing it is the one thing they did not ask for. Every request in this
+ * mode is a question, including the first.
+ */
+const VERBATIM_SYSTEM_PROMPT = `You are a fast voice companion helping a user understand a coding-agent conversation. The listener has already heard the agent's final message read out to them word for word, so do not summarize it back to them. Your task is to answer their questions about that message and about the conversation around it, using the transcript you are given. ${VOICE_STYLE_RULES}`
 
 /**
  * Marks where a spoken answer was cut off, in the history resent to Haiku.
@@ -191,23 +214,56 @@ export type SurfaceSnapshot = {
   pendingTurn?: PendingTurn
 }
 
-/** A validated summary request, ready to commit to. */
-interface Prepared {
+/** What both modes need before either will commit to anything. */
+interface PreparedCommon {
   nodeId: NodeId
   transcriptPath: string
   sourceAgentSessionId?: string
   messages: TranscriptMessage[]
-  /** Prefixed to the initial answer when set. See `PENDING_TURN_CAUTION`. */
+  /** Prefixed to the first thing spoken when set. See `PENDING_TURN_CAUTION`. */
   caution?: string
   /** Which interactive tool's input was injected, if any. Audited. */
   injectedTool?: PendingTurn['tool']
+}
+
+/**
+ * A validated request, ready to commit to.
+ *
+ * Discriminated on the mode rather than carrying an optional `finalMessage`,
+ * because the message only exists for one of the two and an optional field
+ * would let the summary path read it — or, worse, let the verbatim path find
+ * it missing at the point where it is about to speak.
+ */
+type Prepared =
+  | (PreparedCommon & { mode: 'summary' })
+  | (PreparedCommon & { mode: 'verbatim'; finalMessage: string })
+
+/**
+ * A Verbatim read's Haiku setup, held until a follow-up needs it.
+ *
+ * The whole point of the mode is that no model runs until the listener asks
+ * something, so the material a first Haiku turn would need is captured at press
+ * time and parked here. Captured *then*, not rebuilt on the follow-up: the
+ * listener is asking about the conversation as it stood when they heard it, and
+ * an agent that kept working in the meantime would otherwise have its later
+ * output silently folded into the answer.
+ */
+interface DeferredContext {
+  /** The transcript window, already split and rendered. */
+  sections: TranscriptSections
+  /** Exactly the string Voice Operator was given, so offsets into it line up. */
+  spoken: string
 }
 
 interface Conversation {
   auditId: string
   nodeId: NodeId
   sourceAgentSessionId?: string
+  /** Which system prompt this conversation's requests carry. Fixed at creation. */
+  systemPrompt: string
   haikuHistory: HaikuMessage[]
+  /** Verbatim mode only, until the first follow-up consumes it. */
+  deferred?: DeferredContext
   /** Prefixed to this conversation's first answer only. See `PENDING_TURN_CAUTION`. */
   caution?: string
   voice?: string
@@ -346,10 +402,12 @@ export class SummaryChat {
    * stop that only worked on the surface you happened to be looking at would
    * leave them hunting for the one that is talking.
    */
-  async toggle(nodeId: NodeId | undefined, snapshot: SurfaceSnapshot = {}): Promise<ToggleResult> {
+  async toggle(
+    nodeId: NodeId | undefined, snapshot: SurfaceSnapshot = {}, mode: SummaryChatMode = 'summary',
+  ): Promise<ToggleResult> {
     if (await this.cancelAll()) return { outcome: 'cancelled' }
     if (!nodeId) return { outcome: 'rejected', message: 'Focus an agent terminal to start Summary Chat.' }
-    const prepared = this.prepare(nodeId, snapshot)
+    const prepared = this.prepare(nodeId, snapshot, mode)
     if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
     // Answer the press now rather than when the answer is ready. The exchange
     // takes seconds; a confirmation that waited for it would land long after
@@ -389,15 +447,19 @@ export class SummaryChat {
    * answered immediately, while a caller that wants to *observe* the answer —
    * every test here — wants to await it.
    */
-  async start(nodeId: NodeId, snapshot: SurfaceSnapshot = {}): Promise<ToggleResult> {
-    const prepared = this.prepare(nodeId, snapshot)
+  async start(
+    nodeId: NodeId, snapshot: SurfaceSnapshot = {}, mode: SummaryChatMode = 'summary',
+  ): Promise<ToggleResult> {
+    const prepared = this.prepare(nodeId, snapshot, mode)
     if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
     await this.run(prepared)
     return { outcome: 'started' }
   }
 
-  /** Everything a summary needs before it commits to anything, or why it can't. */
-  private prepare(nodeId: NodeId, snapshot: SurfaceSnapshot): Prepared | { message: string } {
+  /** Everything a press needs before it commits to anything, or why it can't. */
+  private prepare(
+    nodeId: NodeId, snapshot: SurfaceSnapshot, mode: SummaryChatMode,
+  ): Prepared | { message: string } {
     const { transcriptPath, sourceAgentSessionId, claudeState, pendingTurn } = snapshot
     if (!transcriptPath) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} has no resolved transcript`)
@@ -425,7 +487,7 @@ export class SummaryChat {
     if (injected) {
       serverLog(`[summary-chat] ${nodeId.slice(0, 8)} injected pending ${pendingTurn?.tool} turn (${pendingTurn?.text.length} chars)`)
     }
-    return {
+    const common: PreparedCommon = {
       nodeId,
       transcriptPath,
       sourceAgentSessionId,
@@ -433,18 +495,32 @@ export class SummaryChat {
       caution: injected && claudeState ? PENDING_TURN_CAUTION[claudeState] : undefined,
       injectedTool: injected ? pendingTurn?.tool : undefined,
     }
+    if (mode === 'summary') return { ...common, mode }
+    // A turn that ended on a tool call has no final message to read. That is an
+    // ordinary state for a surface still working, not a broken transcript, so
+    // it gets its own refusal rather than the generic one above — the listener
+    // is being told to wait, not that something is wrong.
+    const finalMessage = finalAgentMessage(withPending)
+    if (!finalMessage) {
+      serverLog(`[summary-chat] ${nodeId.slice(0, 8)} has no finished agent message to read out`)
+      return { message: "The agent hasn't finished a message to read out yet." }
+    }
+    return { ...common, mode, finalMessage }
   }
 
-  private async run({ nodeId, transcriptPath, sourceAgentSessionId, messages, caution, injectedTool }: Prepared): Promise<void> {
+  private async run(prepared: Prepared): Promise<void> {
+    const { nodeId, transcriptPath, sourceAgentSessionId, messages, caution, injectedTool } = prepared
     // A previous conversation on this surface may still hold an open speech job
     // even when it was idle enough not to count as busy — Voice Operator parked
     // on `waiting_for_user`, say. Nothing should outlive the answer it belongs to.
     const previous = this.conversations.get(nodeId)
     if (previous) await this.cancel(previous)
+    const sections = transcriptSections(messages)
     const conversation: Conversation = {
       auditId: randomUUID(),
       nodeId,
       sourceAgentSessionId,
+      systemPrompt: prepared.mode === 'summary' ? SUMMARY_SYSTEM_PROMPT : VERBATIM_SYSTEM_PROMPT,
       haikuHistory: [],
       caution,
       voice: this.voiceFor(nodeId),
@@ -453,9 +529,39 @@ export class SummaryChat {
     }
     this.conversations.set(nodeId, conversation)
     this.onStatusChanged(nodeId, 'target')
-    const prompt = initialPrompt(messages)
-    this.recordInitialSnapshot(conversation, transcriptPath, messages, prompt, injectedTool)
+    if (prepared.mode === 'verbatim') {
+      // The caution joins the spoken string here for the same reason it joins a
+      // Haiku answer in `askHaiku`: what is stored and what is spoken have to be
+      // the same string, or every interruption offset is off by its length.
+      const spoken = caution ? `${caution} ${prepared.finalMessage}` : prepared.finalMessage
+      conversation.deferred = { sections, spoken }
+      this.recordInitialSnapshot(conversation, transcriptPath, messages, spoken, injectedTool, 'verbatim')
+      await this.speakFinalMessage(conversation, spoken)
+      return
+    }
+    const prompt = summaryPrompt(sections)
+    this.recordInitialSnapshot(conversation, transcriptPath, messages, prompt, injectedTool, 'summary')
     await this.ask(conversation, prompt, 'initial')
+  }
+
+  /**
+   * Read the agent's final message out, with no model in the loop.
+   *
+   * Deliberately never enters `thinking`: nothing is being generated, so there
+   * is nothing for spaceterm's waiting cue to announce. The surface is waiting
+   * on Voice Operator from the first instant, which is what `synthesizing`
+   * already means — and setting it *before* the POST is what keeps the press a
+   * toggle across that window, since `isBusy` is what the cancel gesture reads.
+   */
+  private async speakFinalMessage(conversation: Conversation, text: string): Promise<void> {
+    const attempt = this.beginAttempt(conversation)
+    this.setPhase(conversation, 'synthesizing')
+    let monitoring = false
+    try {
+      monitoring = await this.deliver(conversation, attempt, text)
+    } finally {
+      if (!monitoring && attempt.isCurrent) this.settle(conversation, attempt)
+    }
   }
 
   async followUp(text: string): Promise<void> {
@@ -466,6 +572,16 @@ export class SummaryChat {
       return
     }
     const heard = await this.heardPrefix(conversation)
+    const deferred = conversation.deferred
+    if (deferred) {
+      // The first question after a verbatim read is where this conversation
+      // catches up: the transcript it was never given, and the message the
+      // listener actually heard, both arrive in the same turn.
+      conversation.deferred = undefined
+      const audible = heard === undefined ? deferred.spoken : redactUnheard(deferred.spoken, heard)
+      await this.ask(conversation, verbatimFollowUpPrompt(deferred.sections, audible, text), 'verbatim-follow-up')
+      return
+    }
     const redacted = heard !== undefined && this.redactLastAnswer(conversation, heard)
     const context = redacted
       ? `Your previous answer was cut off where it now reads ${INTERRUPTED_MARKER}; the listener never heard the rest, and it has been removed. `
@@ -520,14 +636,73 @@ export class SummaryChat {
     this.onStatusChanged(conversation.nodeId, phase)
   }
 
-  private async ask(conversation: Conversation, prompt: string, kind: 'initial' | 'follow-up'): Promise<void> {
+  /**
+   * Take ownership of a conversation for a new run.
+   *
+   * Supersedes any run already under way *before* the caller announces a new
+   * phase, so there is never a moment where two attempts both believe they own
+   * the conversation. Shared by every entry point that produces sound, which is
+   * what keeps that ordering from being something each one has to remember.
+   */
+  private beginAttempt(conversation: Conversation): Attempt {
     conversation.lastUsedSeq = ++this.useCounter
-    // Supersede any run already under way on this surface before announcing a
-    // new phase, so there is never a moment where two attempts both believe
-    // they own the conversation.
     conversation.attempt?.abandon()
     const attempt = new Attempt(conversation)
     conversation.attempt = attempt
+    return attempt
+  }
+
+  /**
+   * Hand one answer to Voice Operator and start following it.
+   *
+   * Returns whether a monitor now owns the conversation's phase; a caller that
+   * gets `false` is responsible for settling the surface itself. Shared by the
+   * two things that can produce audible text — a Haiku answer and a verbatim
+   * read — because everything from the POST onwards is identical for both, down
+   * to the window where a cancel that lands mid-POST has to drop the job.
+   */
+  private async deliver(conversation: Conversation, attempt: Attempt, text: string): Promise<boolean> {
+    // The Voice Operator may have appeared after this chat started. Lock a
+    // deterministic voice as soon as its voice list becomes available.
+    conversation.voice ??= this.voiceFor(conversation.nodeId)
+    const speech = await this.speak(text, conversation.voice)
+    if (!attempt.isCurrent) {
+      // Cancelled while the POST was in flight. The job now exists and no
+      // monitor will ever adopt it, so it has to be dropped right here — this
+      // is the window that used to speak a whole answer at a listener who had
+      // already asked for silence.
+      if (speech.job) void this.dropSpeech(speech.job.id)
+      return false
+    }
+    if (speech.error) {
+      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} speech refused: ${speech.error}`)
+      this.onStatusChanged(conversation.nodeId, 'error', speechErrorMessage(speech.error))
+      return false
+    }
+    if (!speech.job) {
+      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} produced ${text.length} chars; Voice Operator is not running, so nothing was spoken`)
+      return false
+    }
+    conversation.speechId = speech.job.id
+    // Hand the wait over here, at the moment Voice Operator takes the job.
+    // It is not `speaking` — nothing has made a sound yet, and it may not
+    // for many seconds — but it is no longer ours to announce: Voice
+    // Operator's own waiting echo starts now, and a surface left in
+    // `thinking` would play a second one underneath it.
+    this.setPhase(conversation, 'synthesizing')
+    // "Queued", not "spoke". This point in the flow only knows that Voice
+    // Operator took the job — the old wording claimed the summary had been
+    // read out, and it logged that just as loudly on the presses where not
+    // one word was ever synthesized.
+    serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} queued ${text.length} chars as speech ${speech.job.id}`)
+    void this.monitorSpeech(conversation, attempt, speech.job)
+    return true
+  }
+
+  private async ask(
+    conversation: Conversation, prompt: string, kind: AskKind,
+  ): Promise<void> {
+    const attempt = this.beginAttempt(conversation)
     this.setPhase(conversation, 'thinking')
     let monitoring = false
     try {
@@ -547,41 +722,7 @@ export class SummaryChat {
         responseText: text,
       })
       if (!attempt.isCurrent || !text) return
-      // The Voice Operator may have appeared after this chat started. Lock a
-      // deterministic voice as soon as its voice list becomes available.
-      conversation.voice ??= this.voiceFor(conversation.nodeId)
-      const speech = await this.speak(text, conversation.voice)
-      if (!attempt.isCurrent) {
-        // Cancelled while the POST was in flight. The job now exists and no
-        // monitor will ever adopt it, so it has to be dropped right here — this
-        // is the window that used to speak a whole answer at a listener who had
-        // already asked for silence.
-        if (speech.job) void this.dropSpeech(speech.job.id)
-        return
-      }
-      if (speech.error) {
-        serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} speech refused: ${speech.error}`)
-        this.onStatusChanged(conversation.nodeId, 'error', speechErrorMessage(speech.error))
-        return
-      }
-      if (speech.job) {
-        conversation.speechId = speech.job.id
-        // Hand the wait over here, at the moment Voice Operator takes the job.
-        // It is not `speaking` — nothing has made a sound yet, and it may not
-        // for many seconds — but it is no longer ours to announce: Voice
-        // Operator's own waiting echo starts now, and a surface left in
-        // `thinking` would play a second one underneath it.
-        this.setPhase(conversation, 'synthesizing')
-        monitoring = true
-        // "Queued", not "spoke". This point in the flow only knows that Voice
-        // Operator took the job — the old wording claimed the summary had been
-        // read out, and it logged that just as loudly on the presses where not
-        // one word was ever synthesized.
-        serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} queued ${text.length} chars as speech ${speech.job.id}`)
-        void this.monitorSpeech(conversation, attempt, speech.job)
-      } else {
-        serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} summarised ${text.length} chars; Voice Operator is not running, so nothing was spoken`)
-      }
+      monitoring = await this.deliver(conversation, attempt, text)
     } catch (err) {
       // A cancelled request is not a failure. Reporting one would put an error
       // toast on screen every time the listener deliberately cut an answer off.
@@ -633,7 +774,7 @@ export class SummaryChat {
         max_tokens: 250,
         system: [
           { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
-          { type: 'text', text: SUMMARY_SYSTEM_PROMPT },
+          { type: 'text', text: conversation.systemPrompt },
         ],
         messages,
       }),
@@ -671,13 +812,13 @@ export class SummaryChat {
    */
   private recordInitialSnapshot(
     conversation: Conversation, transcriptPath: string, messages: TranscriptMessage[], prompt: string,
-    injectedTool?: PendingTurn['tool'],
+    injectedTool: PendingTurn['tool'] | undefined, mode: SummaryChatMode,
   ): void {
     try {
       const snapshotPath = this.deps.audit.writeSnapshot(conversation.auditId, prompt)
       const messageCharacters = messages.reduce((total, message) => total + message.text.length, 0)
       this.deps.audit.append({
-        event: 'started', auditId: conversation.auditId, nodeId: conversation.nodeId,
+        event: 'started', auditId: conversation.auditId, nodeId: conversation.nodeId, mode,
         sourceAgentSessionId: conversation.sourceAgentSessionId ?? null,
         transcriptPath, snapshotPath, messageCount: messages.length,
         messageCharacters, promptCharacters: prompt.length,
@@ -990,20 +1131,72 @@ function playbackPhase(
   return current === 'speaking' ? 'speaking' : 'synthesizing'
 }
 
-function initialPrompt(messages: TranscriptMessage[]): string {
+/** What one Haiku request is for. Gates the caution, and named in the audit. */
+type AskKind = 'initial' | 'follow-up' | 'verbatim-follow-up'
+
+/**
+ * The transcript window, split at the turn boundary and rendered.
+ *
+ * Rendered once and kept, rather than rebuilt per prompt, because Verbatim mode
+ * captures it at press time and spends it on a question that may not arrive for
+ * minutes. Both modes phrase their prompt around the same two blocks.
+ */
+interface TranscriptSections {
+  background: string
+  turn: string
+}
+
+function transcriptSections(messages: TranscriptMessage[]): TranscriptSections {
   const anchor = latestSubstantialUserMessage(messages)
-  const background = messages.slice(0, anchor)
-  const turn = messages.slice(anchor)
-  const format = (items: TranscriptMessage[]) => items
+  const format = (items: TranscriptMessage[]): string => items
     .map(message => `${message.role.toUpperCase()}: ${message.text}`)
     .join('\n\n')
+  return {
+    background: format(messages.slice(0, anchor)) || '(none)',
+    turn: format(messages.slice(anchor)),
+  }
+}
+
+function summaryPrompt({ background, turn }: TranscriptSections): string {
   return `BACKGROUND CONTEXT is only for disambiguation and for preparing to answer follow-up voice questions.
 
 BACKGROUND CONTEXT:
-${format(background) || '(none)'}
+${background}
 
 CURRENT TURN TO SUMMARIZE:
-${format(turn)}`
+${turn}`
+}
+
+/**
+ * The first — and only the first — Haiku turn of a Verbatim conversation.
+ *
+ * The final message appears twice on purpose: once where it belongs in the
+ * transcript, and again as the thing the listener heard. The duplication is
+ * what survives an interruption. Quoting only the audible part would hide the
+ * rest of the message from the model, and the listener's very next question is
+ * usually about exactly that rest — "what was it going to say?". Quoting only
+ * the transcript copy would lose the other half of the answer: where they
+ * stopped it, and therefore what they already know.
+ */
+function verbatimFollowUpPrompt(
+  { background, turn }: TranscriptSections, heard: string, question: string,
+): string {
+  const cut = heard.includes(INTERRUPTED_MARKER)
+    ? `, cut off where it reads ${INTERRUPTED_MARKER} — they stopped it there and never heard the rest`
+    : ''
+  return `BACKGROUND CONTEXT is only for disambiguation.
+
+BACKGROUND CONTEXT:
+${background}
+
+CURRENT TURN:
+${turn}
+
+The listener has just heard the agent's final message read aloud word for word${cut}. This is what reached them:
+
+${heard}
+
+The listener asks: ${question}`
 }
 
 /**
@@ -1032,30 +1225,50 @@ function isBareContinuation(text: string): boolean {
  * said…" about words nobody heard. Redacting the tail is what makes the resent
  * history match the listener's experience.
  *
- * The cut is backed up to the last sentence boundary at or before `heard`, so a
- * sentence that was half out of the speaker's mouth is dropped rather than
- * presented as delivered. Voice Operator already reports whole sentences, but
- * relying on that would put the correctness of the transcript in another
- * process's hands for no gain.
+ * The marker takes the place of the word the voice was cut off in, and
+ * everything after it goes. Voice Operator reports where its voice actually
+ * stopped, down to the word, and the whole value of that resolution is that
+ * stopping three words from the end of a long sentence is recorded as hearing
+ * nearly all of it rather than none of it — which is what a listener who
+ * interrupts to ask "wait, what was that last bit?" is relying on.
+ *
+ * The reported offset is the *end* of the word that was in progress: Voice
+ * Operator counts a word as heard once it has started, so that the offset and
+ * the word its reading overlay had lit up are the same word. Which makes that
+ * last word the uncertain one, and dropping it puts the marker where the
+ * listener's attention was actually cut. This is deliberately conservative in
+ * one direction — a word that had in fact just finished is dropped too — which
+ * is the right way to be wrong: a marker slightly early reads as "they were
+ * around here", while a word they only half heard, presented as delivered,
+ * invites the next answer to build on something they never got.
+ *
+ * A "word" is a run of non-whitespace, so `src/main.ts` is one thing to hear
+ * rather than three and is dropped whole rather than leaving a `src/ma`.
  */
 export function redactUnheard(text: string, heard: number): string {
   if (heard >= text.length) return text
-  const audible = text.slice(0, Math.max(0, heard))
-  const spoken = audible.slice(0, lastSentenceEnd(audible)).trim()
+  const spoken = text.slice(0, interruptedWordStart(text, Math.max(0, heard))).trim()
   return spoken ? `${spoken} ${INTERRUPTED_MARKER}` : INTERRUPTED_MARKER
 }
 
 /**
- * Where the last complete sentence in `text` ends, or 0 if there is none.
- * Terminators only count when followed by whitespace or the end of the string,
- * which keeps decimals and version numbers from reading as sentence ends.
+ * Where the word the voice was cut off in begins.
+ *
+ * A word's end offset points at whatever follows the word — a space, a comma —
+ * never at the start of the next word, since a word and its successor are
+ * separated by the whitespace that defines them. So a cut sitting immediately
+ * after whitespace did not come from a word ending: it is a whole-sentence
+ * offset, from an older Voice Operator or from a sentence that finished before
+ * the interruption, and the sentence it completes is left whole.
+ *
+ * Anything else is inside or just past a word, and that word is the one the
+ * marker replaces.
  */
-function lastSentenceEnd(text: string): number {
-  let end = 0
-  for (const match of text.matchAll(/[.!?…]["')\]]*(?=\s|$)/g)) {
-    end = (match.index ?? 0) + match[0].length
-  }
-  return end
+function interruptedWordStart(text: string, at: number): number {
+  if (at === 0 || /\s/.test(text[at - 1])) return at
+  let start = at
+  while (start > 0 && !/\s/.test(text[start - 1])) start--
+  return start
 }
 
 function boundedHaikuHistory(history: HaikuMessage[]): HaikuMessage[] {
@@ -1227,18 +1440,66 @@ function selectSpeakable(all: TranscriptMessage[]): TranscriptMessage[] {
   const anchor = all.map(message => message.role).lastIndexOf('user')
   if (anchor < 0) return []
   const kept = new Set<number>([anchor])
-  let chars = all[anchor].text.length
+  // The anchor is exempt, and that now means exempt rather than merely
+  // un-evictable. It used to be kept *and* charged, which let a long pasted
+  // user message spend the whole budget on itself and leave the agent's reply
+  // — the thing the listener actually pressed the key to hear — outside the
+  // window. Exempting it costs at most one message's overrun, which is the
+  // price the exemption was always going to have.
+  let chars = 0
   /** Take one message if both budgets allow; false means this direction is done. */
   const admit = (index: number): boolean => {
+    if (kept.has(index)) return true
     if (kept.size >= MAX_MESSAGES) return false
     if (chars + all[index].text.length > MAX_CHARS) return false
     kept.add(index)
     chars += all[index].text.length
     return true
   }
+  // The agent's final message goes in before anything else competes for room.
+  // It is what a summary is about and what a verbatim read *is*, so it is the
+  // last thing that should lose a budget fight — but it still fights, because a
+  // run of two hundred prose entries is a real transcript shape and exempting
+  // it outright would hand Haiku the whole history.
+  const run = finalAgentRun(all, anchor)
+  for (let i = run.length - 1; i >= 0; i--) if (!admit(run[i])) break
   for (let i = all.length - 1; i > anchor; i--) if (!admit(i)) break
   for (let i = anchor - 1; i >= 0; i--) if (!admit(i)) break
   return Array.from(kept).sort((a, b) => a - b).map(index => all[index])
+}
+
+/**
+ * Indices of the trailing run of agent prose, newest-last.
+ *
+ * "The agent's final message" is a run rather than one entry because Claude Code
+ * writes each content block as its own transcript entry: a message interrupted
+ * by nothing at all still arrives in pieces. The run ends at the first thing
+ * that is not the agent talking — a user turn, or a record of work it did — so
+ * a reply is rejoined while the tool calls that preceded it stay out.
+ *
+ * Stops at `after` so it can never reach back past the anchor, which is what
+ * keeps a transcript with no agent reply from returning the whole history.
+ */
+function finalAgentRun(all: TranscriptMessage[], after = -1): number[] {
+  const run: number[] = []
+  for (let i = all.length - 1; i > after; i--) {
+    const message = all[i]
+    if (message.role !== 'assistant') break
+    if (message.text.startsWith(TOOL_ACTIVITY_MARKER)) break
+    run.unshift(i)
+  }
+  return run
+}
+
+/**
+ * The agent's final message, as one speakable string, or '' when its last act
+ * was a tool call rather than a sentence.
+ *
+ * An empty result is an ordinary state — the agent is still working — and the
+ * caller reports it as such rather than as an unreadable transcript.
+ */
+export function finalAgentMessage(messages: TranscriptMessage[]): string {
+  return finalAgentRun(messages).map(index => messages[index].text).join('\n\n')
 }
 
 /**

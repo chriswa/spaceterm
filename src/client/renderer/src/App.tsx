@@ -66,7 +66,7 @@ import type { CrabEntry } from './lib/crab-nav'
 import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 import { pressSummaryChatChord, REAL_CHORD_CUES } from './lib/summary-chat-chord'
-import { isSummaryChatChord, shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
+import { summaryChatChordFor, shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
 import { tieredZIndex } from '../../../shared/card-types'
 import type { NodeData } from '../../../shared/state'
 import type { AgentType } from '../../../shared/agent-type'
@@ -2044,24 +2044,30 @@ export function App() {
       }
 
       // Cmd+Ctrl+X: one press of the Summary Chat chord. It summarizes the focused
-      // agent transcript, or cuts off whatever Summary Chat is producing — the
-      // server decides which, and its answer picks the feedback. See
-      // lib/summary-chat-chord.ts.
+      // agent transcript; with Shift it reads the agent's final message out word
+      // for word instead. Either press cuts off whatever Summary Chat is already
+      // producing — the server decides which, and its answer picks the feedback.
+      // See lib/summary-chat-chord.ts.
       //
       // The press is sent even with nothing eligible focused: stopping an
       // answer must not depend on where the listener happens to be looking.
-      if (isSummaryChatChord(e)) {
+      const summaryChatMode = summaryChatChordFor(e)
+      if (summaryChatMode) {
         e.preventDefault()
         e.stopPropagation()
         const focusedNode = focusRef.current ? useNodeStore.getState().nodes[focusRef.current] : undefined
         // Deliberately not awaited before the next press can arrive: two quick
         // presses mean "stop that, now start this", and serializing them here
         // would drop the second.
-        void pressSummaryChatChord(focusedNode?.type === 'terminal' ? focusedNode.id : undefined, {
-          toggle: (nodeId) => window.api.toggleSummaryChat(nodeId),
-          ...REAL_CHORD_CUES,
-          rejected: (message) => { shakeCamera(); showToast(message) },
-        })
+        void pressSummaryChatChord(
+          focusedNode?.type === 'terminal' ? focusedNode.id : undefined,
+          summaryChatMode,
+          {
+            toggle: (nodeId, mode) => window.api.toggleSummaryChat(nodeId, mode),
+            ...REAL_CHORD_CUES,
+            rejected: (message) => { shakeCamera(); showToast(message) },
+          },
+        )
         return
       }
 

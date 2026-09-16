@@ -11,6 +11,8 @@
  * Those conditions live here, with tests.
  */
 
+import type { SummaryChatMode } from '../../../../shared/api'
+
 /**
  * Keys that must reach a focused text-editing control even though Spaceterm
  * binds them globally.
@@ -58,20 +60,33 @@ export function shouldYieldToFocusedEditor(
 }
 
 /**
- * True when this keystroke is the Summary Chat chord.
+ * Which Summary Chat mode this keystroke asks for, or null if it is not the
+ * chord at all.
  *
- * Cmd+Ctrl+X. Control is required, not optional as it was for the old Cmd+P
- * chord: bare Cmd+X is Cut, and a global binding that swallowed it would break
- * cutting text everywhere in the app.
+ * Cmd+Ctrl+X summarizes; adding Shift reads the agent's final message out
+ * word for word. One function rather than two predicates, because the two
+ * chords differ by a single modifier and separate tests for them could both
+ * match — or, as easily, neither.
+ *
+ * Control is required, not optional as it was for the old Cmd+P chord: bare
+ * Cmd+X is Cut, and a global binding that swallowed it would break cutting text
+ * everywhere in the app.
+ *
+ * `key` is lowercased before comparison. With Shift held macOS reports `'X'`,
+ * so a bare `=== 'x'` test decides the mode by accident and drops the Verbatim
+ * chord entirely; Shift is read from `shiftKey`, which says what was actually
+ * held.
  *
  * Autorepeat is excluded rather than left to the caller. The chord is a toggle,
  * so a held key would start an answer, cancel it, start another, and so on for
  * as long as the finger stays down.
  */
-export function isSummaryChatChord(
-  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'repeat'>
-): boolean {
-  return event.metaKey && event.ctrlKey && event.key === 'x' && !event.repeat
+export function summaryChatChordFor(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'repeat'>
+): SummaryChatMode | null {
+  if (!event.metaKey || !event.ctrlKey || event.repeat) return null
+  if (event.key.toLowerCase() !== 'x') return null
+  return event.shiftKey ? 'verbatim' : 'summary'
 }
 
 /**

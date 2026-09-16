@@ -1127,7 +1127,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         sourceAgentSessionId: terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
         claudeState: terminal?.claudeState,
         pendingTurn: terminal && pendingTurnCache.get(terminal.sessionId),
-      }).then((result) => {
+      }, msg.mode).then((result) => {
         // Back to the client that pressed the key, not to every peer: the
         // chirp, the shake and the toast belong to one person.
         send(client.socket, {

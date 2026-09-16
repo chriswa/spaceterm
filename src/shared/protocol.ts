@@ -583,7 +583,19 @@ export interface SummaryChatToggleMessage {
   type: 'summary-chat-toggle'
   seq: number
   nodeId?: NodeId
+  mode: SummaryChatMode
 }
+
+/**
+ * What a press asks to be read out.
+ *
+ * `summary` sends the transcript to Haiku and speaks what comes back.
+ * `verbatim` speaks the agent's final message as written and involves no model
+ * at all — until the listener asks a follow-up, at which point the conversation
+ * catches up. Required rather than optional: a mode that could go missing on
+ * the wire would silently read the wrong thing out loud.
+ */
+export type SummaryChatMode = 'summary' | 'verbatim'
 
 export interface VoiceCommandMessage {
   type: 'voice-command'
