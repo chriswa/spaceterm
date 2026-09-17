@@ -9,7 +9,7 @@ This skill drives a TDD-style fix workflow for Cartesia TTS quality issues — t
 
 ## Pipeline architecture
 
-Text routed to Cartesia (e.g. via cmd+shift+s or the spaceterm-speak CLI) passes through TWO transforms in `tts-player.ts:speakText`, in order:
+Text routed to the speech engine (e.g. via cmd+shift+s or the spaceterm-speak CLI) passes through TWO transforms in `src/server/direct-speech.ts:speak`, in order:
 
 1. **`cleanTerminalCopy`** — structural cleanup (paragraph reflow, marker prefix strip, dedent, soft-wrap join). Shared with the clipboard copy path. Tested in `cleanTerminalCopy.test.ts`. See the `copy-cleanup-fix` skill for its own workflow.
 2. **`cartesiaFixup`** — pronunciation tweaks specific to Cartesia. Tested in `cartesiaFixup.test.ts`. Where you'll usually add new rules.
@@ -28,7 +28,7 @@ If the user only has a description, ask them to reproduce by re-selecting the sa
 
 This is the most important step. Before changing any code, work out which transform is responsible.
 
-Read both `src/client/renderer/src/lib/cleanTerminalCopy.ts` and `src/client/renderer/src/lib/cartesiaFixup.ts`. Note the responsibilities:
+Read both `src/shared/cleanTerminalCopy.ts` and `src/shared/cartesiaFixup.ts`. Note the responsibilities:
 
 - **cleanTerminalCopy** owns: paragraph reflow, indent stripping, marker prefix removal (`⏺ `, `❯ `, etc.), blank-line preservation, structural-block detection (lists, headings, code fences). Anything STRUCTURAL.
 - **cartesiaFixup** owns: pronunciation rewrites. Currently covers:
@@ -60,7 +60,7 @@ For example: ".ts" → " dot T S" (with leading space, no trailing space). Don't
 
 ## Step 4 — Add the fixture
 
-Append a new entry to the `cases` array in `src/client/renderer/src/lib/cartesiaFixup.test.ts`:
+Append a new entry to the `cases` array in `src/shared/cartesiaFixup.test.ts`:
 
 ```ts
 {
@@ -82,7 +82,7 @@ The new case should fail. If a different case fails, you may have broken an exis
 
 ## Step 6 — Fix `cartesiaFixup`
 
-Edit `src/client/renderer/src/lib/cartesiaFixup.ts` until all cases pass.
+Edit `src/shared/cartesiaFixup.ts` until all cases pass.
 
 - Prefer scoped regexes with word boundaries (`\b`) or explicit lookarounds over broad string substitutions.
 - Don't regress prior fixtures. The whole point of the suite is that previously-fixed pronunciations stay fixed.
@@ -101,4 +101,4 @@ Once `npm test` is green:
 - **Don't put pronunciation rewrites in cleanTerminalCopy.** Clipboard users don't want " dot T S" in their paste.
 - **Don't put structural fixes in cartesiaFixup.** Anything that should also benefit the clipboard belongs upstream.
 - **Don't skip the negative case.** A new regex without a negative test is a regression waiting to happen.
-- **Don't change `tts-player.ts` to bolt on one-off transforms.** Add them to `cartesiaFixup.ts` so they're covered by the suite.
+- **Don't change `direct-speech.ts` to bolt on one-off transforms.** Add them to `cartesiaFixup.ts` so they're covered by the suite.

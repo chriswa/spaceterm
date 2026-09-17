@@ -6,7 +6,8 @@ import type {
   CreateOptions,
   ServerMessage,
   SessionInfo,
-  CameraBounds
+  CameraBounds,
+  SpeakOutcome
 } from '../../shared/protocol'
 import type { SummaryChatMode, SummaryChatToggleResult } from '../../shared/api'
 import { LineParser } from '../../server/line-parser'
@@ -150,8 +151,8 @@ export class ServerClient extends EventEmitter {
       case 'play-sound':
         this.emit('play-sound', msg.sound)
         return
-      case 'speak':
-        this.emit('speak', msg.text)
+      case 'speech-active':
+        this.emit('speech-active', msg.active)
         return
       case 'speaking-changed':
         this.emit('speaking-changed', msg.nodeId, msg.speaking, msg.voice)
@@ -208,6 +209,7 @@ export class ServerClient extends EventEmitter {
       case 'validate-file-result':
       case 'client-hello-result':
       case 'summary-chat-toggle-result':
+      case 'speak-toggle-result':
       case 'agent-meta-toggle-result':
       case 'agent-meta-availability-result':
         this.resolvePending(msg.seq, msg)
@@ -523,6 +525,21 @@ export class ServerClient extends EventEmitter {
    * link it comes from does not say whether it holds a surface id or an agent
    * session id; the server resolves that against node state.
    */
+  /**
+   * Speak a selection, or stop what is already being said — the server rules on
+   * which, because it holds the Voice Operator job.
+   */
+  async toggleSpeak(text: string): Promise<SpeakOutcome> {
+    const resp = await this.sendRequest({ type: 'speak-toggle', text })
+    if (resp.type === 'speak-toggle-result') return resp.outcome
+    throw new Error('Unexpected response')
+  }
+
+  /** Stop the direct speech path. Fire-and-forget: silence needs no receipt. */
+  stopSpeak(): void {
+    this.sendFireAndForget({ type: 'speak-stop' })
+  }
+
   requestFocusById(id: string): void {
     this.sendFireAndForget({ type: 'focus-id-request', id })
   }

@@ -4,6 +4,7 @@ import * as os from 'os'
 import { z } from 'zod'
 import { defineTool } from './stdio-mcp.js'
 import { requireSurfaceId } from './surface-env.js'
+import { REAL_VOICE_OPERATOR_DEPS } from '../../server/voice-operator.js'
 
 const SOCKET_PATH = process.env.SPACETERM_HOME
   ? path.join(process.env.SPACETERM_HOME, 'hooks.sock')
@@ -20,6 +21,22 @@ export const ttsTool = defineTool({
   }),
   async handler({ text }) {
     const surfaceId = requireSurfaceId()
+
+    // Checked here, before the write, because this socket is one-way: the
+    // server never answers, so nothing downstream can tell the caller that the
+    // speech engine was missing. Reporting success regardless is what let a
+    // dead engine look like a working one for weeks — an agent said "done",
+    // and no sound was ever made.
+    if (!REAL_VOICE_OPERATOR_DEPS.readDiscovery()) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text' as const,
+          text: 'Voice Operator is not running, so nothing can be spoken. '
+            + 'Tell the user rather than assuming they heard this.',
+        }],
+      }
+    }
 
     const message = JSON.stringify({ type: 'speak', surfaceId, text }) + '\n'
 
@@ -40,8 +57,10 @@ export const ttsTool = defineTool({
       })
     })
 
+    // "Handed to", not "spoke": this call ends when the socket write does, and
+    // playback outlives it. Voice Operator may still mute or drop the job.
     return {
-      content: [{ type: 'text' as const, text: `Speaking: "${text}"` }],
+      content: [{ type: 'text' as const, text: `Handed to Voice Operator to speak: "${text}"` }],
     }
   },
 })

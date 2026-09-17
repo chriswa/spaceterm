@@ -1,35 +1,46 @@
 # Text-to-Speech Setup
 
-Spaceterm can read selected terminal text aloud using macOS native TTS. Select text in a terminal and press **Cmd+Shift+S** to start/stop speech. **Escape** also stops playback.
+Spaceterm speaks through **Voice Operator**, a local speech service that runs as
+a separate app. Everything that talks — the speak-the-selection chord, the MCP
+`TTS` tool an agent can call, the `spaceterm-speak` CLI, and Summary Chat — goes
+through it. Nothing is synthesized inside Spaceterm itself.
 
-## Installing a Premium Voice (Zoe)
+## Requirements
 
-The app ships with compact (low-quality) voices. For the best experience, download the **Zoe (Premium)** voice:
+Voice Operator must be running. It publishes the port it is listening on to:
 
-1. Open **System Settings**
-2. Go to **Accessibility** → **Spoken Content**
-3. Click the **System Voice** dropdown
-4. Select **Manage Voices...**
-5. In the voice list, find **English (US)** → **Zoe**
-6. Click the download button next to **Zoe (Premium)** (not Enhanced or Compact)
-7. Wait for the download to complete (~300-500 MB)
-8. Close System Settings and restart Spaceterm
+```
+~/Library/Application Support/VoiceOperator/speech-service.json
+```
 
-The app automatically detects and prefers premium voices. No configuration needed — once Zoe (Premium) is installed, it will be used automatically.
+Spaceterm reads that file on every request, so starting or restarting Voice
+Operator needs no Spaceterm restart. If the file is absent, speech requests are
+declined with "Voice Operator is not answering" and nothing is spoken — the rest
+of the app is unaffected.
 
-## Voice Quality Tiers
-
-macOS voices come in three quality levels:
-
-| Tier | Size | Quality |
-|------|------|---------|
-| Compact | Pre-installed | Low — robotic, noticeable artifacts |
-| Enhanced | ~100-200 MB | Good — natural sounding |
-| Premium | ~300-500 MB | Best — neural TTS, very natural |
+Voice selection, voice quality, and the mute control all live in Voice Operator.
+A press made while Voice Operator has speech muted reports that, rather than
+failing silently.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| Cmd+Shift+S | Speak selected text (or stop if already speaking) |
+| Cmd+Shift+S | Speak the selected text (or stop, if something is already being said) |
 | Escape | Stop speech |
+
+A short rising tone plays when speech starts and a falling one when it stops,
+including for speech an agent started on its own.
+
+## How it hangs together
+
+`src/server/voice-operator.ts` is the only thing that knows where the service
+lives and how it answers. Two callers sit on top of it:
+
+- `src/server/direct-speech.ts` — text handed over already written: the MCP
+  tool, the CLI, and the chord. One utterance at a time, plus a way to stop it.
+- `src/server/summary-chat.ts` — the Summary Chat chord, which runs a model to
+  produce what it speaks and keeps a per-surface conversation around it.
+
+Both run on the server because Voice Operator is a local HTTP service and the
+server is what talks to it. The renderer only plays the start/stop cues.

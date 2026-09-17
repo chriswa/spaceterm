@@ -146,7 +146,7 @@ export function App() {
   const cmdClickPendingRef = useRef<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
   const shiftClickPendingRef = useRef(false)
   const pinnedFocusRef = useRef(false)
-  const { speak, stop: ttsStop, isSpeaking } = useTTS()
+  const { speak, stop: ttsStop } = useTTS()
   const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
   const inertiaBlock = useInertiaBlock()
 
@@ -2266,21 +2266,19 @@ export function App() {
         }
       }
 
-      // Cmd+Shift+S: speak selected text or stop speaking
+      // Cmd+Shift+S: speak selected text or stop speaking. The selection is
+      // sent even when empty — the server turns a press made while speaking
+      // into a stop, whatever is under the cursor.
       if (e.metaKey && e.shiftKey && e.key === 's') {
         e.preventDefault()
         e.stopPropagation()
-        if (isSpeaking()) {
-          ttsStop()
-        } else if (focusRef.current) {
-          const getter = terminalSelectionGetters.get(focusRef.current)
-          const selection = getter?.()
-          if (selection && selection.length > 0) {
-            speak(selection).then((ok) => {
-              if (!ok) showToast('Speech synthesis unavailable — see TTS-SETUP.md')
-            })
-          }
-        }
+        const selection = focusRef.current
+          ? terminalSelectionGetters.get(focusRef.current)?.() ?? ''
+          : ''
+        speak(selection).then((outcome) => {
+          if (outcome === 'unavailable') showToast('Voice Operator is not answering — see TTS-SETUP.md')
+          else if (outcome === 'muted') showToast('Voice Operator has speech muted')
+        })
       }
 
       // Cmd+Enter: focus the selected node
@@ -2356,14 +2354,12 @@ export function App() {
           handleNodeFocus(srcId)
           return
         }
-        if (isSpeaking()) {
-          ttsStop()
-        }
+        ttsStop()
       }
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [archiveConfirm, archiveNodeNow, agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, stepOut, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, isSpeaking, handleForkSession, toggleAgentSelector])
+  }, [archiveConfirm, archiveNodeNow, agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, stepOut, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, handleForkSession, toggleAgentSelector])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.

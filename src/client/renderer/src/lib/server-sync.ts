@@ -9,7 +9,7 @@ import type { NodeData } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
-import { speakText } from './tts-player'
+import { playSpeechCue } from './speech-cues'
 import { setSummaryChatWaiting } from './summary-chat-wait-cue'
 import { showToast } from './toast'
 import { pokeFrames } from './frame-policy'
@@ -118,8 +118,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.node.onSpeak((text: string) => {
-      speakText(text)
+    window.api.tts.onActiveChanged((active: boolean) => {
+      playSpeechCue(active)
     })
   )
 

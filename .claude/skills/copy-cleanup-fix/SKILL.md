@@ -9,8 +9,8 @@ This skill drives a tight TDD-style workflow for `cleanTerminalCopy`, the transf
 
 ## Files you will touch
 
-- `src/client/renderer/src/lib/cleanTerminalCopy.ts` — the transform.
-- `src/client/renderer/src/lib/cleanTerminalCopy.test.ts` — fixture-based regression tests. Each case is `{ name, input, expected }`.
+- `src/shared/cleanTerminalCopy.ts` — the transform.
+- `src/shared/cleanTerminalCopy.test.ts` — fixture-based regression tests. Each case is `{ name, input, expected }`.
 - Run tests with `npm test`.
 
 ## Step 1 — Capture the RAW input
@@ -56,7 +56,7 @@ Confirm the new case fails (and that it fails in a way that matches the user's c
 
 ## Step 5 — Fix `cleanTerminalCopy`
 
-Edit `src/client/renderer/src/lib/cleanTerminalCopy.ts` until `npm test` is fully green. Common ingredients you may need:
+Edit `src/shared/cleanTerminalCopy.ts` until `npm test` is fully green. Common ingredients you may need:
 
 - **Prefix detection**: generalize beyond hard-coded `⏺ `. Likely a single non-alphanumeric char followed by a space, gated by an indent-consistency check on subsequent lines.
 - **Dedent**: strip the common indent from continuation lines.

@@ -8,11 +8,13 @@ import type { NodeId } from '../shared/ids'
 import type { ClaudeState } from '../shared/state'
 import type { PendingTurn } from './pending-turn'
 import { speakableToolText } from './speakable-tool-text'
+import {
+  VoiceOperator, speechStatus, DISCOVERY_PATH, type SpeechResponse, type SpeechStatus,
+} from './voice-operator'
 import type {
   SummaryChatMode, SummaryChatPhase, SummaryChatToggleOutcome, SummaryChatUiState,
 } from '../shared/protocol'
 
-const DISCOVERY_PATH = path.join(homedir(), 'Library', 'Application Support', 'VoiceOperator', 'speech-service.json')
 const MAX_MESSAGES = 24
 const MAX_CHARS = 48_000
 const SUMMARY_CHAT_DIR = path.join(process.env.SPACETERM_HOME ?? path.join(homedir(), '.spaceterm'), 'summary-chat')
@@ -145,19 +147,6 @@ const PENDING_TURN_CAUTION: Partial<Record<ClaudeState, string>> = {
 
 export type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
 type HaikuMessage = { role: 'user' | 'assistant'; content: string }
-type SpeechStatus = {
-  id: string
-  state: 'in_progress' | 'completed' | 'interrupted_by_user' | 'cancelled_by_client' | 'synthesis_failed'
-  playback_state?: 'queued' | 'speaking' | 'waiting_for_user'
-  character_offset?: number
-  /**
-   * Voice Operator's change cursor for this job, bumped on every observable
-   * change. Absent on services predating it — see `monitorSpeech`, which falls
-   * back to the polling cadence that cursor replaced.
-   */
-  version?: number
-}
-
 /** What one press of the chord did, and why, if it did nothing. */
 export type ToggleResult =
   | { outcome: Exclude<SummaryChatToggleOutcome, 'rejected'> }
@@ -364,6 +353,11 @@ export const REAL_SUMMARY_CHAT_DEPS: SummaryChatDeps = {
  * the original transcript and prior spoken answers.
  */
 export class SummaryChat {
+  /** The shared Voice Operator client, built from this instance's deps. */
+  private readonly vo = new VoiceOperator({
+    fetch: (...args) => this.deps.fetch(...args),
+    readDiscovery: () => this.deps.readDiscovery(),
+  })
   private readonly conversations = new Map<string, Conversation>()
   private voices: string[] = []
   private useCounter = 0
@@ -839,7 +833,7 @@ export class SummaryChat {
     if (recorded !== undefined) return recorded
     // Still-live job: the follow-up beat the monitor to the terminal status.
     if (!conversation.speechId) return undefined
-    const status = speechStatus(await this.speechRequest(`/v1/speech/${encodeURIComponent(conversation.speechId)}?wait=0`))
+    const status = speechStatus(await this.vo.status(conversation.speechId))
     if (status?.state !== 'interrupted_by_user') return undefined
     return status.character_offset ?? 0
   }
@@ -875,7 +869,7 @@ export class SummaryChat {
 
   /** Ask Voice Operator to drop a job, wherever it is in its lifecycle. */
   private dropSpeech(speechId: string): Promise<SpeechResponse> {
-    return this.speechRequest(`/v1/speech/${encodeURIComponent(speechId)}`, { method: 'DELETE' })
+    return this.vo.drop(speechId)
   }
 
   /**
@@ -898,12 +892,12 @@ export class SummaryChat {
     while (attempt.isCurrent) {
       // A cursor poll is paced by the service; a legacy poll is paced by us.
       const wait = cursor === undefined ? pollWaitSeconds(conversation.phase) : SPEECH_LONG_POLL_SECONDS
-      const since = cursor === undefined ? '' : `&since=${cursor}`
       // The default request timeout is intentionally short for one-shot
       // operations. A speech monitor, however, must tolerate a stalled local
       // service without falsely declaring the job finished.
-      const status = speechStatus(await this.speechRequest(
-        `/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}${since}`,
+      const status = speechStatus(await this.vo.status(
+        speechId,
+        { wait, ...(cursor === undefined ? {} : { since: cursor }) },
         { signal: attempt.signal },
         wait === 0 ? 3_000 : SPEECH_LONG_POLL_TIMEOUT_MS,
       ))
@@ -958,7 +952,7 @@ export class SummaryChat {
   }
 
   private async refreshVoices(): Promise<void> {
-    const response = await this.speechRequest('/v1/voices')
+    const response = await this.vo.voices()
     const body = response?.status === 200 ? response.body as { voices?: Array<{ id?: string }> } : undefined
     const voices = body?.voices
       ?.map(voice => voice.id)
@@ -983,9 +977,7 @@ export class SummaryChat {
    * "broken" they are looking at.
    */
   private async speak(text: string, voice: string | undefined): Promise<{ job?: SpeechStatus; error?: string }> {
-    const response = await this.speechRequest('/v1/speech', {
-      method: 'POST', body: JSON.stringify({ text, ...(voice ? { voice } : {}) }),
-    })
+    const response = await this.vo.speak(text, voice)
     const job = speechStatus(response)
     if (job?.id) return { job }
     // An absent response covers two different situations, and reporting both as
@@ -1002,37 +994,6 @@ export class SummaryChat {
     return { error: typeof error === 'string' ? error : 'rejected' }
   }
 
-  /**
-   * One call to Voice Operator. Returns undefined only when the service could
-   * not be reached at all — an HTTP status is an *answer*, not a failure.
-   *
-   * The status is handed back rather than filtered here, because this service
-   * uses status codes as outcomes: 409 is "the listener interrupted it", 410 is
-   * "cancelled, here is how far it got", 503 is "speech is muted". A
-   * transport-level allowlist can only ever get that wrong, and it did — a
-   * DELETE that successfully stopped speech answers 410, so the old allowlist
-   * discarded the response along with the character offset it carried.
-   */
-  private async speechRequest(endpoint: string, init?: RequestInit, timeoutMs = 3_000): Promise<SpeechResponse> {
-    const discovery = this.deps.readDiscovery()
-    if (!discovery) return undefined
-    const port = typeof discovery.port === 'number' && discovery.port > 0 && discovery.port < 65536
-      ? discovery.port
-      : undefined
-    if (port === undefined) return undefined
-    try {
-      const response = await this.deps.fetch(`http://127.0.0.1:${port}${endpoint}`, {
-        ...init,
-        headers: { 'content-type': 'application/json', ...init?.headers },
-        signal: init?.signal
-          ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
-          : AbortSignal.timeout(timeoutMs),
-      })
-      return { status: response.status, body: await response.json().catch(() => undefined) }
-    } catch {
-      return undefined
-    }
-  }
 }
 
 /**
@@ -1055,18 +1016,9 @@ function isBusy(conversation: Conversation): boolean {
   return conversation.phase !== 'ready'
 }
 
-/** A Voice Operator reply, or undefined when the service could not be reached. */
-type SpeechResponse = { status: number; body: unknown } | undefined
-
 /** Elapsed time since `startedAt`, for a log line. */
 function sinceSeconds(startedAt: number): string {
   return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
-}
-
-/** The speech job in a reply, if the reply carries one at all. */
-function speechStatus(response: SpeechResponse): SpeechStatus | undefined {
-  const body = response?.body as SpeechStatus | undefined
-  return typeof body?.id === 'string' && typeof body.state === 'string' ? body : undefined
 }
 
 /** What a named refusal from Voice Operator means to the listener. */

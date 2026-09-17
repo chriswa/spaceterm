@@ -24,6 +24,7 @@ import type {
   CreateOptions,
   SessionInfo,
   SnapshotMessage,
+  SpeakOutcome,
   SummaryChatMode,
   SummaryChatToggleOutcome,
   SummaryChatUiState,
@@ -143,7 +144,6 @@ export interface NodeApi {
   onFileContent(callback: (nodeId: NodeId, content: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
   onPlaySound(callback: (sound: string) => void): () => void
-  onSpeak(callback: (text: string) => void): () => void
   onSpeakingChanged(
     callback: (nodeId: NodeId, speaking: boolean, voice: string | undefined) => void,
   ): () => void
@@ -188,9 +188,26 @@ export interface SummaryChatToggleResult {
   message?: string
 }
 
+/**
+ * Speech for text the app already has in hand — a terminal selection, or an
+ * utterance pushed in by the MCP `TTS` tool or `spaceterm-speak`.
+ *
+ * Every member routes to the server, which owns the Voice Operator job. The
+ * renderer deliberately keeps no "am I speaking" flag of its own: it used to,
+ * and that second opinion drifted from the engine's whenever an utterance ended
+ * on its own.
+ */
 export interface TtsApi {
-  speak(text: string): Promise<{ available: boolean }>
+  /**
+   * Speak the text, or stop if this path is already speaking — the server
+   * decides which, since only it knows whether a job is still live. Sending
+   * empty text is how a press with no selection still stops speech.
+   */
+  toggle(text: string): Promise<SpeakOutcome>
+  /** Stop anything being said. A no-op when nothing is. */
   stop(): void
+  /** Fires whenever speech starts or stops, on this client or another. */
+  onActiveChanged(callback: (active: boolean) => void): () => void
 }
 
 export interface PerfApi {

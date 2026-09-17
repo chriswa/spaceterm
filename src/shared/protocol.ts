@@ -39,7 +39,7 @@ export const MIN_SCRIPT_PROTOCOL_VERSION = 1
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 2
+export const CLIENT_PROTOCOL_VERSION = 3
 
 /**
  * Oldest client protocol this build still serves.
@@ -47,6 +47,12 @@ export const CLIENT_PROTOCOL_VERSION = 2
  * v1 addressed an unarchive by a single entry id, which cannot name an entry
  * nested inside an archived subtree. `node-unarchive` carries a path instead,
  * so a v1 peer's request is not something this build can honour.
+ *
+ * v2 is still served. It differs only in speech: it expects a `speak`
+ * broadcast this build no longer sends, and drove that broadcast into a
+ * `cartesia-read` subprocess that no longer exists on any machine. A v2 client
+ * therefore loses nothing here that it had — everything else it asks for is
+ * answered exactly as before.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2
 
@@ -579,6 +585,25 @@ export interface FocusClaudeSessionMessage {
  * focused. A press with nothing focused still cancels: silencing an answer must
  * not depend on which surface the listener happens to be looking at.
  */
+/**
+ * Speak a selection, or stop the speech a previous press started.
+ *
+ * The client sends what it has — the text under the cursor — and the server
+ * rules on whether this press starts or stops, for the same reason
+ * `summary-chat-toggle` does: only the side holding the Voice Operator job
+ * knows whether anything is still being said.
+ */
+export interface SpeakToggleMessage {
+  type: 'speak-toggle'
+  seq: number
+  text: string
+}
+
+/** Stop anything the direct speech path is saying. Ignored when it is silent. */
+export interface SpeakStopMessage {
+  type: 'speak-stop'
+}
+
 export interface SummaryChatToggleMessage {
   type: 'summary-chat-toggle'
   seq: number
@@ -832,6 +857,8 @@ export type ClientMessage =
   | FocusIdRequestMessage
   | FocusClaudeSessionMessage
   | SummaryChatToggleMessage
+  | SpeakToggleMessage
+  | SpeakStopMessage
   | SaveViewportMessage
 
 // --- Server → Client messages ---
@@ -1021,9 +1048,30 @@ export interface SpeakMessage {
   text: string
 }
 
-export interface SpeakServerMessage {
-  type: 'speak'
-  text: string
+/** What a speak request did, as far as the listener is concerned. */
+export type SpeakOutcome = 'started' | 'stopped' | 'unavailable' | 'muted' | 'empty'
+
+/**
+ * The answer to one `speak-toggle`, sent to the client that pressed the key
+ * rather than broadcast — the toast it may raise belongs to one person.
+ */
+export interface SpeakToggleResultMessage {
+  type: 'speak-toggle-result'
+  seq: number
+  outcome: SpeakOutcome
+}
+
+/**
+ * Whether the direct speech path is saying anything, broadcast so every client
+ * can play its start and stop cues.
+ *
+ * Broadcast rather than answered per-press because an MCP `TTS` call and the
+ * `spaceterm-speak` CLI start speech nobody pressed a key for, and those
+ * deserve the same cue as a selection read aloud.
+ */
+export interface SpeechActiveMessage {
+  type: 'speech-active'
+  active: boolean
 }
 
 export interface SpeakingChangedMessage {
@@ -1357,7 +1405,8 @@ export type ServerMessage =
   | PlanCacheUpdateMessage
   | ServerErrorMessage
   | PlaySoundServerMessage
-  | SpeakServerMessage
+  | SpeakToggleResultMessage
+  | SpeechActiveMessage
   | SpeakingChangedMessage
   | SummaryChatStatusMessage
   | SummaryChatToggleResultMessage

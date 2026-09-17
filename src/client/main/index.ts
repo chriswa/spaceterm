@@ -7,7 +7,6 @@ import { join } from 'path'
 import { SOCKET_DIR, type SummaryChatMode } from '../../shared/protocol'
 import { ServerClient } from './server-client'
 import * as logger from './logger'
-import { setupTTSHandlers } from './tts'
 import { loadWindowState, saveWindowState, findTargetDisplay } from './window-state'
 import { startSystemMetrics, stopSystemMetrics } from './system-metrics'
 import { readAgentMemoryBytes } from './agent-memory'
@@ -339,6 +338,9 @@ function setupIPC(): void {
   ipcMain.handle('app:restart-flag', async () => {
     return client!.restartFlagQuery()
   })
+
+  ipcMain.handle('tts:toggle', async (_event, text: string) => client!.toggleSpeak(text))
+  ipcMain.on('tts:stop', () => client!.stopSpeak())
 
   ipcMain.handle('summary-chat:toggle', async (_event, nodeId: NodeId | undefined, mode: SummaryChatMode) => {
     logger.log(`[summary-chat] ${mode} chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}`)
@@ -752,9 +754,9 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('speak', (text: string) => {
+  client!.on('speech-active', (active: boolean) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('speak', text)
+      mainWindow.webContents.send('speech-active', active)
     }
   })
 
@@ -899,7 +901,6 @@ app.whenReady().then(async () => {
 
   client = new ServerClient()
   setupIPC()
-  setupTTSHandlers()
   wireClientEvents()
 
   // Wait for the server, but not forever.

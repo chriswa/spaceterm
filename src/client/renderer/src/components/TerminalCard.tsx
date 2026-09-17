@@ -33,7 +33,7 @@ import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, CRA
 import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
-import { cleanTerminalCopy } from '../lib/cleanTerminalCopy'
+import { cleanTerminalCopy } from '../../../../shared/cleanTerminalCopy'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
 import { type NodeId, type PtySessionId } from '../../../../shared/ids'
 import type { AgentType } from '../../../../shared/agent-type'

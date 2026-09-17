@@ -54,6 +54,8 @@ import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
 import { SummaryChat } from './summary-chat'
+import { DirectSpeech } from './direct-speech'
+import { VoiceOperator } from './voice-operator'
 import { PendingTurnCache } from './pending-turn'
 
 /**
@@ -228,6 +230,15 @@ let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
 let summaryChat: SummaryChat
+/**
+ * Speech for text nobody had to generate: the MCP `TTS` tool, `spaceterm-speak`,
+ * and the speak-the-selection chord. Constructed eagerly — unlike SummaryChat,
+ * it needs nothing from startup recovery, and an MCP call can arrive before it.
+ */
+const directSpeech = new DirectSpeech({
+  vo: new VoiceOperator(),
+  onActiveChanged: (active) => broadcastToAll({ type: 'speech-active', active }),
+})
 
 /**
  * Point the right transcript watcher at a surface's agent session.
@@ -987,7 +998,7 @@ function handleIngestMessage(msg: IngestMessage): void {
     }
 
     case 'speak': {
-      broadcastToAll({ type: 'speak', text: msg.text })
+      void directSpeech.speak(msg.text)
       break
     }
 
@@ -1139,6 +1150,20 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       })
       break
     }
+    case 'speak-toggle': {
+      void directSpeech.toggle(msg.text).then((outcome) => {
+        // To the client that pressed the key: the toast it may raise belongs to
+        // one person, the way the summary chord's does.
+        send(client.socket, { type: 'speak-toggle-result', seq: msg.seq, outcome })
+      })
+      break
+    }
+
+    case 'speak-stop': {
+      void directSpeech.stop()
+      break
+    }
+
     case 'create': {
       const { sessionId, cols, rows } = sessionManager.create(msg.options)
       send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })

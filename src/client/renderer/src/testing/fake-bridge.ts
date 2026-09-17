@@ -4,7 +4,7 @@ import type {
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
-import type { SnapshotMessage } from '../../../../shared/protocol'
+import type { SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
 import type { NodeData, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
@@ -78,7 +78,8 @@ export interface FakeBridgeResponses {
   attach: AttachResult
   validate: { valid: boolean; error?: string }
   newNodeId: NodeId
-  ttsAvailable: boolean
+  /** What a `tts.toggle` press resolves to. */
+  speakOutcome: SpeakOutcome
   /** What the next launch would use. `setLaunchPrefs` mutates this. */
   launchPrefs: LaunchPrefs
   /** What the running process launched with; differs once a change is unapplied. */
@@ -116,7 +117,7 @@ export class FakeBridge implements Api {
     attach: { scrollback: '' },
     validate: { valid: true },
     newNodeId: 'node-fake' as NodeId,
-    ttsAvailable: true,
+    speakOutcome: 'started',
     launchPrefs: { ...DEFAULT_LAUNCH_PREFS },
     activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS },
     agentMetaOpen: true,
@@ -141,7 +142,7 @@ export class FakeBridge implements Api {
   private readonly fileContent = new Set<(nodeId: NodeId, content: string) => void>()
   private readonly serverError = new Set<(message: string) => void>()
   private readonly playSound = new Set<(sound: string) => void>()
-  private readonly speak = new Set<(text: string) => void>()
+  private readonly speechActive = new Set<(active: boolean) => void>()
   private readonly speakingChanged = new Set<(nodeId: NodeId, speaking: boolean, voice?: string) => void>()
   private readonly summaryChatStatus = new Set<(nodeId: NodeId, s: SummaryChatUiState, m?: string) => void>()
   private readonly peerConnected = new Set<(clientId: string) => void>()
@@ -215,7 +216,7 @@ export class FakeBridge implements Api {
     },
     serverError: (message: string): void => { for (const fn of this.serverError) fn(message) },
     playSound: (sound: string): void => { for (const fn of this.playSound) fn(sound) },
-    speak: (text: string): void => { for (const fn of this.speak) fn(text) },
+    speechActive: (active: boolean): void => { for (const fn of this.speechActive) fn(active) },
     speakingChanged: (nodeId: NodeId, speaking: boolean, voice?: string): void => {
       for (const fn of this.speakingChanged) fn(nodeId, speaking, voice)
     },
@@ -356,7 +357,6 @@ export class FakeBridge implements Api {
     onFileContent: (cb) => subscribe(this.fileContent, cb),
     onServerError: (cb) => subscribe(this.serverError, cb),
     onPlaySound: (cb) => subscribe(this.playSound, cb),
-    onSpeak: (cb) => subscribe(this.speak, cb),
     onSpeakingChanged: (cb) => subscribe(this.speakingChanged, cb),
     onSummaryChatStatus: (cb) => subscribe(this.summaryChatStatus, cb),
     onPeerConnected: (cb) => subscribe(this.peerConnected, cb),
@@ -369,8 +369,9 @@ export class FakeBridge implements Api {
   }
 
   readonly tts: TtsApi = {
-    speak: (text) => this.reply('tts.speak', { available: this.responses.ttsAvailable }, text),
-    stop: () => this.record('tts.stop')
+    toggle: (text) => this.reply('tts.toggle', this.responses.speakOutcome, text),
+    stop: () => this.record('tts.stop'),
+    onActiveChanged: (cb) => subscribe(this.speechActive, cb)
   }
 
   readonly perf: PerfApi = {

@@ -136,11 +136,6 @@ const nodeApi: NodeApi = {
     ipcRenderer.on('play-sound', listener)
     return () => ipcRenderer.removeListener('play-sound', listener)
   },
-  onSpeak: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, text: string) => callback(text)
-    ipcRenderer.on('speak', listener)
-    return () => ipcRenderer.removeListener('speak', listener)
-  },
   onSpeakingChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, speaking: boolean, voice: string | undefined) => callback(nodeId, speaking, voice)
     ipcRenderer.on('speaking-changed', listener)
@@ -215,8 +210,13 @@ const api: Api = {
     }
   },
   tts: {
-    speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
-    stop: () => ipcRenderer.send('tts:stop')
+    toggle: (text: string) => ipcRenderer.invoke('tts:toggle', text),
+    stop: () => ipcRenderer.send('tts:stop'),
+    onActiveChanged: (callback: (active: boolean) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, active: boolean) => callback(active)
+      ipcRenderer.on('speech-active', listener)
+      return () => ipcRenderer.removeListener('speech-active', listener)
+    }
   },
   perf: {
     startTrace: () => ipcRenderer.invoke('perf:trace-start'),
