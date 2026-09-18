@@ -5,7 +5,7 @@ description: Use when the user reports a problem with how copied text from a spa
 
 # Copy Cleanup Fix
 
-This skill drives a tight TDD-style workflow for `cleanTerminalCopy`, the transform that runs on text copied from xterm and on text sent to Cartesia TTS.
+This skill drives a tight TDD-style workflow for `cleanTerminalCopy`, the transform that runs on text copied from xterm and on text sent to text-to-speech.
 
 ## Files you will touch
 

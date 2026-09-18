@@ -72,8 +72,8 @@ describeE2E('the agent-meta branch', () => {
 
     const names = await launched.window.locator('.meta-doc-card__name').allInnerTexts()
     expect(names.every((n) => n.trim().length > 0), `an untitled card: ${JSON.stringify(names)}`).toBe(true)
-    // `cartesia-fixup` is a skill of this repo's, and it declares a name.
-    expect(names.join('\n')).toContain('cartesia-fixup')
+    // `copy-cleanup-fix` is a skill of this repo's, and it declares a name.
+    expect(names.join('\n')).toContain('copy-cleanup-fix')
   })
 
   it('takes every card away again, and leaves nothing on disk', async () => {

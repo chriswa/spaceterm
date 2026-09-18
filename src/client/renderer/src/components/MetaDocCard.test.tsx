@@ -54,11 +54,11 @@ describe('the collapsed face', () => {
     render(
       <MetaDocCard
         {...props({
-          content: '---\nname: cartesia-fixup\ndescription: Use when TTS mispronounced something.\n---\n# Body'
+          content: '---\nname: copy-cleanup-fix\ndescription: Use when TTS mispronounced something.\n---\n# Body'
         })}
       />
     )
-    expect(screen.getByText('cartesia-fixup')).toBeTruthy()
+    expect(screen.getByText('copy-cleanup-fix')).toBeTruthy()
     expect(screen.getByText(/Use when TTS mispronounced something/)).toBeTruthy()
   })
 

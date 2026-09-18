@@ -1,7 +1,6 @@
 import { serverLog } from './server-log'
 import { VoiceOperator, speechStatus, type SpeechStatus } from './voice-operator'
 import { cleanTerminalCopy } from '../shared/cleanTerminalCopy'
-import { cartesiaFixup } from '../shared/cartesiaFixup'
 
 /**
  * Speech for text that is handed to us already written: the MCP `TTS` tool, the
@@ -66,9 +65,15 @@ export class DirectSpeech {
    * The cleanup is not optional here, unlike the toolbar's Copy Cleanup toggle:
    * that toggle is about what lands in the clipboard, and terminal decoration
    * read aloud is never what anyone meant.
+   *
+   * Structural cleanup only. Pronunciation — camelCase, acronyms, file
+   * extensions — is Voice Operator's, in `TTSPreprocess`: it keeps a map from
+   * the spoken text back to the original, and a rewrite made up here lands
+   * outside that map, so the overlay would highlight a position in a string
+   * nobody ever saw.
    */
   async speak(text: string): Promise<SpeakOutcome> {
-    const cleaned = cartesiaFixup(cleanTerminalCopy(text))
+    const cleaned = cleanTerminalCopy(text)
     if (!cleaned.trim()) return 'empty'
 
     const response = await this.deps.vo.speak(cleaned)

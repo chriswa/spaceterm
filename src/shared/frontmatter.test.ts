@@ -7,9 +7,9 @@ import { parseFrontmatter, documentSummary } from './frontmatter'
 describe('parseFrontmatter', () => {
   it('reads the two keys a skill header actually carries', () => {
     const { name, description, body } = parseFrontmatter(
-      '---\nname: cartesia-fixup\ndescription: Use when TTS mispronounced something.\n---\n\n# Heading\n\nBody.'
+      '---\nname: copy-cleanup-fix\ndescription: Use when TTS mispronounced something.\n---\n\n# Heading\n\nBody.'
     )
-    expect(name).toBe('cartesia-fixup')
+    expect(name).toBe('copy-cleanup-fix')
     expect(description).toBe('Use when TTS mispronounced something.')
     expect(body.trim()).toBe('# Heading\n\nBody.')
   })
@@ -92,7 +92,6 @@ describe('documentSummary', () => {
  */
 describe('against real SKILL.md files on disk', () => {
   const candidates = [
-    join(process.cwd(), '.claude/skills/cartesia-fixup/SKILL.md'),
     join(process.cwd(), '.claude/skills/copy-cleanup-fix/SKILL.md'),
     join(homedir(), 'chriswa-devkit/default-plugin/skills/recall/SKILL.md')
   ].filter(existsSync)
