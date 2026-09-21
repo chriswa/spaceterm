@@ -18,7 +18,7 @@ const NODE = asNodeId('term-1')
 
 function label(overrides: Partial<NodeLabel> = {}): NodeLabel {
   return {
-    nodeId: NODE, lines: ['Deploy', 'pipeline'], textScale: 2 / 3,
+    kind: 'name', nodeId: NODE, lines: ['Deploy', 'pipeline'], textScale: 2 / 3,
     x: 200, y: -100, width: 900, height: 1000,
     anchorX: 200, anchorY: 900,
     ...overrides

@@ -39,7 +39,10 @@ export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClic
         const freshness = nodeFreshness.get(label.nodeId) ?? 1
         return (
           <div
-            key={label.nodeId}
+            // A node supplies at most one label of each kind, so the pair is
+            // the identity — `nodeId` alone would collide the moment a card
+            // carried both its name and its elapsed caption.
+            key={`${label.kind}:${label.nodeId}`}
             className="node-label canvas-node"
             style={{
               left: label.x - label.width / 2,

@@ -31,11 +31,12 @@ import { useRtsSelect } from './hooks/useRtsSelect'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
 import { useDimStaleController } from './hooks/useDimStaleController'
+import { useCoarseClock } from './hooks/useCoarseClock'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { labelMaskShape, layOutNodeLabel, type NodeLabel } from './lib/node-label'
+import { labelMaskShape, layOutElapsedLabel, layOutNodeLabel, type NodeLabel } from './lib/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
@@ -121,6 +122,7 @@ export function App() {
   useCardChromeVars()
   // Keeps the "dim stale nodes" set current while that view is on.
   useDimStaleController()
+  const coarseNow = useCoarseClock()
   // Fallback colour for nodes the user has not coloured — see the nodeTint facet.
   const nodeTint = useFacet('nodeTint')
   const [restartingSpaceterm, setRestartingSpaceterm] = useState(false)
@@ -226,7 +228,7 @@ export function App() {
    * a label is anchored to a card that moves, so there is nothing a drag would
    * not invalidate anyway.
    */
-  const nodeLabels = useMemo(() => {
+  const nameLabels = useMemo(() => {
     const laidOut: NodeLabel[] = []
     for (const node of nodeList) {
       // File-backed markdown keeps its text in the store's fileContents, not on
@@ -237,6 +239,25 @@ export function App() {
     }
     return laidOut
   }, [nodeList, fileContents])
+
+  /**
+   * "Quiet for how long" captions under the agent cards.
+   *
+   * Split from the name captions rather than laid out in the same pass because
+   * only these depend on the clock: keeping them apart means a tick re-measures
+   * the handful of elapsed boxes instead of re-wrapping every name on the
+   * canvas to arrive at the identical answer.
+   */
+  const elapsedLabels = useMemo(() => {
+    const laidOut: NodeLabel[] = []
+    for (const node of nodeList) {
+      const label = layOutElapsedLabel(node, coarseNow)
+      if (label) laidOut.push(label)
+    }
+    return laidOut
+  }, [nodeList, coarseNow])
+
+  const nodeLabels = useMemo(() => [...nameLabels, ...elapsedLabels], [nameLabels, elapsedLabels])
 
   /**
    * Where the edges must be painted back out.

@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES,
-  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE
+  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutElapsedLabel, elapsedCardGap
 } from './node-label'
+import { TITLE_LINE_HEIGHT } from '../../../../shared/node-size'
 import { measureCard } from '../../../../shared/card-types'
 import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../../../../shared/state'
-import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../../../../shared/ids'
+import { asClaudeSessionId, asNodeId, asPtySessionId, ROOT_NODE_ID } from '../../../../shared/ids'
 
 const base = {
   id: asNodeId('n1'),
@@ -301,5 +302,83 @@ describe('labelMaskShape', () => {
       }
       expect(reappeared, `edge at ${deg}deg left the mask before reaching the card`).toBe(false)
     }
+  })
+})
+
+describe('layOutElapsedLabel', () => {
+  const NOW = 1_700_000_000_000
+  const agent = (fields: Partial<TerminalNodeData> = {}) =>
+    terminal({ agentType: 'claude', lastInteractedAt: NOW - 3 * 60_000, ...fields })
+
+  it('sits below the card, centred on it, half a line of its own type clear of it', () => {
+    const node = agent()
+    const label = layOutElapsedLabel(node, NOW)!
+    const card = measureCard(node)
+    expect(label.x).toBe(node.x)
+    expect(label.y - label.height / 2).toBeCloseTo(node.y + card.height / 2 + elapsedCardGap(label.textScale))
+  })
+
+  it('leaves half a line of air between the card and the line of type itself', () => {
+    // The box is taller than its line of type and centres it, so the visible
+    // gap is the geometric offset plus the box's own leading. That sum, not the
+    // offset alone, is what has to come to half a line.
+    const label = layOutElapsedLabel(agent(), NOW)!
+    const card = measureCard(agent())
+    const lineHeight = TITLE_LINE_HEIGHT * label.textScale
+    const boxLeading = (label.height - lineHeight) / 2
+    const cardBottom = agent().y + card.height / 2
+    const lineTop = label.y - label.height / 2 + boxLeading
+    expect(lineTop - cardBottom).toBeCloseTo(lineHeight / 2)
+  })
+
+  it('does not collide with the name caption above the same card', () => {
+    const node = agent({ name: 'Deploy the staging pipeline' })
+    const name = layOutNodeLabel(node)!
+    const elapsed = layOutElapsedLabel(node, NOW)!
+    expect(name.y + name.height / 2).toBeLessThan(elapsed.y - elapsed.height / 2)
+    expect(name.kind).toBe('name')
+    expect(elapsed.kind).toBe('elapsed')
+  })
+
+  it('is drawn at the canvas’s smallest label size', () => {
+    expect(layOutElapsedLabel(agent(), NOW)!.textScale).toBe(MARKDOWN_LABEL_TEXT_SCALE)
+  })
+
+  it('shows the span since the last interaction, in one unit', () => {
+    expect(layOutElapsedLabel(agent(), NOW)!.lines).toEqual(['3m'])
+    expect(layOutElapsedLabel(agent({ lastInteractedAt: NOW - 20_000 }), NOW)!.lines).toEqual(['0m'])
+    expect(layOutElapsedLabel(agent({ lastInteractedAt: NOW - 90 * 60_000 }), NOW)!.lines).toEqual(['1h'])
+  })
+
+  it('holds its text steady across a minute, so it does not flicker between ticks', () => {
+    const node = agent({ lastInteractedAt: NOW })
+    const texts = new Set<string>()
+    for (let t = NOW; t < NOW + 60_000; t += 10_000) {
+      texts.add(layOutElapsedLabel(node, t)!.lines.join(''))
+    }
+    expect([...texts]).toEqual(['0m'])
+  })
+
+  it('reports the node it reads, so a click navigates there like any label', () => {
+    const node = agent()
+    expect(layOutElapsedLabel(node, NOW)!.nodeId).toBe(node.id)
+    expect(labelMaskShape(layOutElapsedLabel(node, NOW)!).bridgeTo).toEqual({ x: node.x, y: node.y })
+  })
+
+  it('captions a legacy agent surface, which has session history but no agentType', () => {
+    const legacy = terminal({
+      lastInteractedAt: NOW - 60_000,
+      claudeSessionHistory: [{ claudeSessionId: asClaudeSessionId('abc'), reason: 'startup', timestamp: '' }]
+    })
+    expect(layOutElapsedLabel(legacy, NOW)).not.toBeNull()
+  })
+
+  it('captions nothing that is not an agent surface', () => {
+    expect(layOutElapsedLabel(terminal({ lastInteractedAt: NOW }), NOW)).toBeNull()
+    expect(layOutElapsedLabel(markdown({ lastInteractedAt: NOW }), NOW)).toBeNull()
+  })
+
+  it('captions nothing when the surface has no recorded interaction', () => {
+    expect(layOutElapsedLabel(agent({ lastInteractedAt: undefined }), NOW)).toBeNull()
   })
 })

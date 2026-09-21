@@ -1,4 +1,5 @@
 import { CARD_AGENT_MARK_HEIGHT, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './constants'
+import { formatElapsedShort } from './elapsed-label'
 import { measureCard } from '../../../../shared/card-types'
 import type { NodeData } from '../../../../shared/state'
 import type { NodeId } from '../../../../shared/ids'
@@ -194,8 +195,15 @@ export function wrapLabel(text: string): string[] {
   return best
 }
 
+/**
+ * Which caption this is. A node can supply one of each, so this is half of a
+ * label's identity — the other half is `nodeId`, and neither is unique alone.
+ */
+export type NodeLabelKind = 'name' | 'elapsed'
+
 /** A laid-out label, ready to draw. */
 export interface NodeLabel {
+  kind: NodeLabelKind
   /** The node that supplies the label — clicking it navigates relative to this. */
   nodeId: NodeId
   lines: string[]
@@ -272,11 +280,82 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
   const textScale = labelTextScale(node)
   const box = labelBox(lines, textScale)
   return {
+    kind: 'name',
     nodeId: node.id,
     lines,
     textScale,
     x: node.x,
     y: node.y - measureCard(node).height / 2 - LABEL_CARD_GAP - box.height / 2,
+    anchorX: node.x,
+    anchorY: node.y,
+    ...box
+  }
+}
+
+/**
+ * Whether a node is an agent surface rather than a plain terminal.
+ *
+ * Same rule the crab nav uses (`deriveToolbarIndicatorInner`): an explicit
+ * `agentType` marks a surface launched as one, and session history covers the
+ * surfaces created before that field existed as well as a plain terminal that
+ * has since had an agent run in it.
+ */
+function isAgentSurface(node: NodeData): boolean {
+  return node.type === 'terminal' && (node.agentType !== undefined || node.claudeSessionHistory.length > 0)
+}
+
+/**
+ * Air between the bottom edge of a card and the elapsed caption's line of text.
+ *
+ * Half a line, measured to the text rather than to the label's box, which is
+ * why this is not simply `TITLE_LINE_HEIGHT * scale / 2`. A one-line label box
+ * is `TITLE_HEIGHT` tall but its line of type is only `TITLE_LINE_HEIGHT`, and
+ * the difference is split above and below by the flex centring — so the box
+ * already supplies some of the gap, and the geometric offset has to give back
+ * exactly that much or the caption sits a whole line low.
+ *
+ * Much tighter than `LABEL_CARD_GAP`, deliberately. That gap clears the agent
+ * mark overhanging the top of a card; there is no artwork under a card, and
+ * this caption is a reading of the card rather than a caption floating near it,
+ * so it wants to sit close enough to be read as part of it.
+ */
+export function elapsedCardGap(scale: number): number {
+  return (TITLE_LINE_HEIGHT - TITLE_HEIGHT / 2) * scale
+}
+
+/**
+ * Lay out the "quiet for how long" caption under an agent surface's card.
+ *
+ * Below rather than above because the name is already above: the two captions
+ * answer different questions — which surface is this, and is it still moving —
+ * and stacking them would make the second look like a second line of the first.
+ * Drawn at the markdown label's size, the canvas's smallest, because it is a
+ * reading of the card rather than a name for it.
+ *
+ * Agent surfaces only. A plain terminal's `lastInteractedAt` tracks keystrokes,
+ * so the caption would read `0m` for as long as someone was typing and nothing
+ * otherwise — a reading of the human, not of the surface.
+ *
+ * Returns `null` for anything else, and for a surface with no recorded
+ * interaction at all: the server seeds the field on creation, so an absent one
+ * means unknown rather than "never", and a caption is worse than no caption
+ * when it would have to invent the number.
+ */
+export function layOutElapsedLabel(node: NodeData, now: number): NodeLabel | null {
+  if (!isAgentSurface(node)) return null
+  const since = node.lastInteractedAt
+  if (since === undefined) return null
+
+  const lines = [formatElapsedShort(now - since)]
+  const textScale = MARKDOWN_LABEL_TEXT_SCALE
+  const box = labelBox(lines, textScale)
+  return {
+    kind: 'elapsed',
+    nodeId: node.id,
+    lines,
+    textScale,
+    x: node.x,
+    y: node.y + measureCard(node).height / 2 + elapsedCardGap(textScale) + box.height / 2,
     anchorX: node.x,
     anchorY: node.y,
     ...box
