@@ -786,7 +786,7 @@ function handleIngestMessage(msg: IngestMessage): void {
       // boundaries, and question/notification hooks alike. Recorded here (not in
       // the state machine) so hook types the state machine ignores, like the
       // question notification, still count as an interaction.
-      stateManager.recordInteractionBySession(msg.surfaceId, hookTime)
+      stateManager.recordAgentActivity(msg.surfaceId, hookTime)
 
       // Delegate state transition logic to the state machine
       claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
@@ -2412,7 +2412,7 @@ async function startServer(): Promise<void> {
       if (Number.isFinite(t) && t > newestEntryTime) newestEntryTime = t
     }
     if (newestEntryTime > 0) {
-      stateManager.recordInteractionBySession(surfaceId, newestEntryTime, { reset: isBackfill })
+      stateManager.recordAgentActivity(surfaceId, newestEntryTime, { reset: isBackfill })
     }
 
     // Plan-cache tracking: scan assistant entries for plan file writes and ExitPlanMode.
@@ -2465,7 +2465,7 @@ async function startServer(): Promise<void> {
       if (Number.isFinite(t) && t > newestEntryTime) newestEntryTime = t
     }
     if (newestEntryTime > 0) {
-      stateManager.recordInteractionBySession(surfaceId, newestEntryTime, { reset: isBackfill })
+      stateManager.recordAgentActivity(surfaceId, newestEntryTime, { reset: isBackfill })
     }
 
     for (const entry of newEntries) {
@@ -2489,7 +2489,7 @@ async function startServer(): Promise<void> {
     // genuine activity now — stamp it Date.now(); skip backfill, which we can't
     // place in time. (Cursor's hooks already feed the historical picture.)
     if (!isBackfill && newEntries.length > 0) {
-      stateManager.recordInteractionBySession(surfaceId, Date.now())
+      stateManager.recordAgentActivity(surfaceId, Date.now())
     }
     claudeStateMachine.handleCursorTranscriptEntries(surfaceId, newEntries)
   })

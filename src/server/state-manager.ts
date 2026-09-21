@@ -200,6 +200,27 @@ export interface NewTerminalSpec {
   agentType?: AgentType
 }
 
+/**
+ * Whether `timestamp` may replace `prev` on a last-activity field, and whether
+ * the move is big enough that clients need to hear about it.
+ *
+ * `ignore` — older than what is recorded, and not a `reset`. `quiet` — record
+ * it in memory, but the displayed value has not changed. `broadcast` — it has.
+ *
+ * Second granularity because the card footer renders seconds under a minute;
+ * that is the finest thing any reader of these fields shows, so it is the point
+ * at which a change becomes worth a message.
+ */
+function timestampAdvance(
+  prev: number | undefined,
+  timestamp: number,
+  reset: boolean
+): 'ignore' | 'quiet' | 'broadcast' {
+  if (!reset && prev !== undefined && timestamp <= prev) return 'ignore'
+  const prevSecond = prev !== undefined ? Math.floor(prev / 1000) : -1
+  return Math.floor(timestamp / 1000) !== prevSecond ? 'broadcast' : 'quiet'
+}
+
 export class StateManager {
   private state: ServerState
   private onNodeUpdate: NodeUpdateCallback
@@ -1532,26 +1553,50 @@ export class StateManager {
    * Broadcasts only when the displayed value would change — the footer renders
    * second granularity under a minute — so at most once per second per node,
    * while always recording in memory and scheduling a persist.
+   *
+   * This is the *human* path: a keystroke into a terminal, an edit of a
+   * document. Agent hooks and transcript entries go through
+   * {@link recordAgentActivity} instead, which stamps one field more.
    */
   recordInteraction(nodeId: NodeId, timestamp: number, opts?: { reset?: boolean }): void {
     const node = this.state.nodes[nodeId]
     if (!node) return
-    const prev = node.lastInteractedAt
-    if (!opts?.reset && prev !== undefined && timestamp <= prev) return
-    const prevSecond = prev !== undefined ? Math.floor(prev / 1000) : -1
-    const curSecond = Math.floor(timestamp / 1000)
-    if (curSecond !== prevSecond) {
-      this.applyPatch(node, { lastInteractedAt: timestamp })
-    } else {
-      node.lastInteractedAt = timestamp
-    }
+    const advance = timestampAdvance(node.lastInteractedAt, timestamp, opts?.reset ?? false)
+    if (advance === 'ignore') return
+    if (advance === 'broadcast') this.applyPatch(node, { lastInteractedAt: timestamp })
+    else node.lastInteractedAt = timestamp
     this.schedulePersist()
   }
 
-  /** {@link recordInteraction} keyed by PTY session — agent hooks and transcript. */
-  recordInteractionBySession(ptySessionId: PtySessionId, timestamp: number, opts?: { reset?: boolean }): void {
+  /**
+   * Record agent activity on a surface at `timestamp` — a hook firing, or a new
+   * transcript entry. Keyed by PTY session, which is how both of those arrive.
+   *
+   * Stamps two fields, not one. Agent activity is also an interaction, so
+   * `lastInteractedAt` advances exactly as it always did; `lastAgentActivityAt`
+   * advances *only* here, which is what keeps it free of the human's keystrokes
+   * (see its doc comment). They are stamped in a single patch so one event
+   * produces one broadcast rather than two.
+   *
+   * Same monotonic and `reset` semantics as {@link recordInteraction}, applied
+   * to each field independently — on a surface whose two values have drifted
+   * apart, a timestamp can legitimately advance one and be stale for the other.
+   */
+  recordAgentActivity(ptySessionId: PtySessionId, timestamp: number, opts?: { reset?: boolean }): void {
     const node = this.getTerminalBySession(ptySessionId)
-    if (node) this.recordInteraction(node.id, timestamp, opts)
+    if (!node) return
+    const reset = opts?.reset ?? false
+    const interacted = timestampAdvance(node.lastInteractedAt, timestamp, reset)
+    const agent = timestampAdvance(node.lastAgentActivityAt, timestamp, reset)
+    if (interacted === 'ignore' && agent === 'ignore') return
+
+    const patch: Partial<TerminalNodeData> = {}
+    if (interacted === 'broadcast') patch.lastInteractedAt = timestamp
+    else if (interacted === 'quiet') node.lastInteractedAt = timestamp
+    if (agent === 'broadcast') patch.lastAgentActivityAt = timestamp
+    else if (agent === 'quiet') node.lastAgentActivityAt = timestamp
+    if (interacted === 'broadcast' || agent === 'broadcast') this.applyPatch(node, patch)
+    this.schedulePersist()
   }
 
   // --- Directory operations ---

@@ -1139,10 +1139,10 @@ describe('patched fields are broadcast exactly as applied', () => {
     // which the monotonic guard would otherwise keep ahead of these fixtures.)
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.recordInteractionBySession(pid('t1'), 60_000, { reset: true })
+    h.sm.recordAgentActivity(pid('t1'), 60_000, { reset: true })
     h.updates.length = 0
 
-    h.sm.recordInteractionBySession(pid('t1'), 60_400)
+    h.sm.recordAgentActivity(pid('t1'), 60_400)
 
     expect(h.updates).toHaveLength(0)
     expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(60_400)
@@ -1151,12 +1151,56 @@ describe('patched fields are broadcast exactly as applied', () => {
   it('broadcasts again once the displayed second changes', () => {
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.recordInteractionBySession(pid('t1'), 60_000, { reset: true })
+    h.sm.recordAgentActivity(pid('t1'), 60_000, { reset: true })
     h.updates.length = 0
 
-    h.sm.recordInteractionBySession(pid('t1'), 61_000)
+    h.sm.recordAgentActivity(pid('t1'), 61_000)
 
-    expect(patchedFields(h, nid('t1'))).toEqual([{ lastInteractedAt: 61_000 }])
+    // One patch, both fields: agent activity is also an interaction, and one
+    // event must not produce two broadcasts.
+    expect(patchedFields(h, nid('t1'))).toEqual([{ lastInteractedAt: 61_000, lastAgentActivityAt: 61_000 }])
+  })
+
+  it('leaves lastAgentActivityAt alone when the human interacts', () => {
+    // The point of the second field: a keystroke into a stalled surface must
+    // not make it read as alive on the canvas.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.recordAgentActivity(pid('t1'), 60_000, { reset: true })
+    h.updates.length = 0
+
+    h.sm.recordInteraction(nid('t1'), 900_000)
+
+    const node = h.sm.getNode(nid('t1')) as TerminalNodeData
+    expect(node.lastInteractedAt).toBe(900_000)
+    expect(node.lastAgentActivityAt).toBe(60_000)
+    expect(patchedFields(h, nid('t1'))).toEqual([{ lastInteractedAt: 900_000 }])
+  })
+
+  it('advances lastAgentActivityAt past a newer keystroke when the agent speaks again', () => {
+    // The two fields drift apart while the human types, so the next agent
+    // signal is stale for one and fresh for the other. Each is judged alone.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.recordAgentActivity(pid('t1'), 60_000, { reset: true })
+    h.sm.recordInteraction(nid('t1'), 900_000)
+    h.updates.length = 0
+
+    h.sm.recordAgentActivity(pid('t1'), 300_000)
+
+    const node = h.sm.getNode(nid('t1')) as TerminalNodeData
+    expect(node.lastAgentActivityAt).toBe(300_000)
+    // Stale for lastInteractedAt, which the monotonic guard holds at 900_000.
+    expect(node.lastInteractedAt).toBe(900_000)
+    expect(patchedFields(h, nid('t1'))).toEqual([{ lastAgentActivityAt: 300_000 }])
+  })
+
+  it('leaves lastAgentActivityAt unset on a surface no agent has spoken on', () => {
+    // Absent means "nothing heard yet" — the canvas caption reads that as
+    // "no caption", not as a zero.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastAgentActivityAt).toBeUndefined()
   })
 
   it('ignores an interaction older than the one already recorded', () => {
@@ -1164,10 +1208,10 @@ describe('patched fields are broadcast exactly as applied', () => {
     // live keystroke); the value must never move backward.
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.recordInteractionBySession(pid('t1'), 120_000, { reset: true })
+    h.sm.recordAgentActivity(pid('t1'), 120_000, { reset: true })
     h.updates.length = 0
 
-    h.sm.recordInteractionBySession(pid('t1'), 60_000)
+    h.sm.recordAgentActivity(pid('t1'), 60_000)
 
     expect(h.updates).toHaveLength(0)
     expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(120_000)
@@ -1176,10 +1220,10 @@ describe('patched fields are broadcast exactly as applied', () => {
   it('reset overwrites a newer timestamp with an older one, to re-seed from history on load', () => {
     const h = harness()
     createTerminal(h.sm, 't1')
-    h.sm.recordInteractionBySession(pid('t1'), 120_000, { reset: true })
+    h.sm.recordAgentActivity(pid('t1'), 120_000, { reset: true })
     h.updates.length = 0
 
-    h.sm.recordInteractionBySession(pid('t1'), 60_000, { reset: true })
+    h.sm.recordAgentActivity(pid('t1'), 60_000, { reset: true })
 
     expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(60_000)
   })

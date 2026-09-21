@@ -110,6 +110,23 @@ export interface TerminalNodeData extends BaseNodeData {
   extraCliArgs?: string
   /** Which agent CLI this surface runs. Absent = plain terminal or legacy Claude (inferred from session history). */
   agentType?: AgentType
+  /**
+   * epoch ms — last activity by the *agent* on this surface: a hook firing, or
+   * a new entry landing in its transcript. Written only by
+   * `StateManager.recordAgentActivity`.
+   *
+   * Narrower than `lastInteractedAt`, deliberately, and the two are not
+   * redundant. `lastInteractedAt` answers "has anything happened here",
+   * counting the human's keystrokes, which is what the "dim stale nodes" lens
+   * wants. This one answers "is the agent still moving", which a keystroke must
+   * not be allowed to reset — typing into a stalled surface would otherwise
+   * make it look alive.
+   *
+   * Absent means nothing has been heard from an agent on this surface yet, not
+   * "never": like `lastInteractedAt`, it is re-seeded from transcript history
+   * on load, so a surface that has a past acquires the value at startup.
+   */
+  lastAgentActivityAt?: number
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean

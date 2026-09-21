@@ -6,7 +6,7 @@ import {
 import { TITLE_LINE_HEIGHT } from '../../../../shared/node-size'
 import { measureCard } from '../../../../shared/card-types'
 import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../../../../shared/state'
-import { asClaudeSessionId, asNodeId, asPtySessionId, ROOT_NODE_ID } from '../../../../shared/ids'
+import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../../../../shared/ids'
 
 const base = {
   id: asNodeId('n1'),
@@ -308,7 +308,7 @@ describe('labelMaskShape', () => {
 describe('layOutElapsedLabel', () => {
   const NOW = 1_700_000_000_000
   const agent = (fields: Partial<TerminalNodeData> = {}) =>
-    terminal({ agentType: 'claude', lastInteractedAt: NOW - 3 * 60_000, ...fields })
+    terminal({ agentType: 'claude', lastAgentActivityAt: NOW - 3 * 60_000, ...fields })
 
   it('sits below the card, centred on it, half a line of its own type clear of it', () => {
     const node = agent()
@@ -346,12 +346,12 @@ describe('layOutElapsedLabel', () => {
 
   it('shows the span since the last interaction, in one unit', () => {
     expect(layOutElapsedLabel(agent(), NOW)!.lines).toEqual(['3m'])
-    expect(layOutElapsedLabel(agent({ lastInteractedAt: NOW - 20_000 }), NOW)!.lines).toEqual(['0m'])
-    expect(layOutElapsedLabel(agent({ lastInteractedAt: NOW - 90 * 60_000 }), NOW)!.lines).toEqual(['1h'])
+    expect(layOutElapsedLabel(agent({ lastAgentActivityAt: NOW - 20_000 }), NOW)!.lines).toEqual(['0m'])
+    expect(layOutElapsedLabel(agent({ lastAgentActivityAt: NOW - 90 * 60_000 }), NOW)!.lines).toEqual(['1h'])
   })
 
   it('holds its text steady across a minute, so it does not flicker between ticks', () => {
-    const node = agent({ lastInteractedAt: NOW })
+    const node = agent({ lastAgentActivityAt: NOW })
     const texts = new Set<string>()
     for (let t = NOW; t < NOW + 60_000; t += 10_000) {
       texts.add(layOutElapsedLabel(node, t)!.lines.join(''))
@@ -365,20 +365,23 @@ describe('layOutElapsedLabel', () => {
     expect(labelMaskShape(layOutElapsedLabel(node, NOW)!).bridgeTo).toEqual({ x: node.x, y: node.y })
   })
 
-  it('captions a legacy agent surface, which has session history but no agentType', () => {
-    const legacy = terminal({
-      lastInteractedAt: NOW - 60_000,
-      claudeSessionHistory: [{ claudeSessionId: asClaudeSessionId('abc'), reason: 'startup', timestamp: '' }]
-    })
-    expect(layOutElapsedLabel(legacy, NOW)).not.toBeNull()
+  it('ignores the human\u2019s keystrokes, which are what lastInteractedAt tracks', () => {
+    // The whole reason lastAgentActivityAt exists: typing into a stalled
+    // surface must not make it read as alive.
+    const stalled = agent({ lastAgentActivityAt: NOW - 2 * 60 * 60_000, lastInteractedAt: NOW })
+    expect(layOutElapsedLabel(stalled, NOW)!.lines).toEqual(['2h'])
   })
 
-  it('captions nothing that is not an agent surface', () => {
+  it('captions a plain terminal an agent has since spoken on', () => {
+    // Membership is the field itself, which only the agent path writes \u2014 so a
+    // surface with no agentType still qualifies once one has run in it.
+    const legacy = terminal({ lastAgentActivityAt: NOW - 60_000 })
+    expect(layOutElapsedLabel(legacy, NOW)!.lines).toEqual(['1m'])
+  })
+
+  it('captions nothing that no agent has spoken on', () => {
     expect(layOutElapsedLabel(terminal({ lastInteractedAt: NOW }), NOW)).toBeNull()
+    expect(layOutElapsedLabel(agent({ lastAgentActivityAt: undefined }), NOW)).toBeNull()
     expect(layOutElapsedLabel(markdown({ lastInteractedAt: NOW }), NOW)).toBeNull()
-  })
-
-  it('captions nothing when the surface has no recorded interaction', () => {
-    expect(layOutElapsedLabel(agent({ lastInteractedAt: undefined }), NOW)).toBeNull()
   })
 })

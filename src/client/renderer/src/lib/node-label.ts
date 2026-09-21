@@ -293,18 +293,6 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
 }
 
 /**
- * Whether a node is an agent surface rather than a plain terminal.
- *
- * Same rule the crab nav uses (`deriveToolbarIndicatorInner`): an explicit
- * `agentType` marks a surface launched as one, and session history covers the
- * surfaces created before that field existed as well as a plain terminal that
- * has since had an agent run in it.
- */
-function isAgentSurface(node: NodeData): boolean {
-  return node.type === 'terminal' && (node.agentType !== undefined || node.claudeSessionHistory.length > 0)
-}
-
-/**
  * Air between the bottom edge of a card and the elapsed caption's line of text.
  *
  * Half a line, measured to the text rather than to the label's box, which is
@@ -332,18 +320,19 @@ export function elapsedCardGap(scale: number): number {
  * Drawn at the markdown label's size, the canvas's smallest, because it is a
  * reading of the card rather than a name for it.
  *
- * Agent surfaces only. A plain terminal's `lastInteractedAt` tracks keystrokes,
- * so the caption would read `0m` for as long as someone was typing and nothing
- * otherwise — a reading of the human, not of the surface.
+ * Reads `lastAgentActivityAt` and not `lastInteractedAt`, which is the whole
+ * point of that field existing: the latter also advances on the human's
+ * keystrokes, so typing into a stalled surface would reset its caption to `0m`
+ * and make it look alive. This caption is a reading of the agent.
  *
- * Returns `null` for anything else, and for a surface with no recorded
- * interaction at all: the server seeds the field on creation, so an absent one
- * means unknown rather than "never", and a caption is worse than no caption
- * when it would have to invent the number.
+ * Returns `null` for a non-agent surface, and for one that has never been heard
+ * from — no transcript, no hooks. A surface with a past acquires the value when
+ * the server backfills its transcript at startup, so an absent one means
+ * nothing has been said yet, and no caption beats an invented number.
  */
 export function layOutElapsedLabel(node: NodeData, now: number): NodeLabel | null {
-  if (!isAgentSurface(node)) return null
-  const since = node.lastInteractedAt
+  if (node.type !== 'terminal') return null
+  const since = node.lastAgentActivityAt
   if (since === undefined) return null
 
   const lines = [formatElapsedShort(now - since)]
