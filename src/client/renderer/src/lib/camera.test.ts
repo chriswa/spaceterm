@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cameraToFitBounds, focusZoomCeiling, wheelZoomFactor } from './camera'
+import { cameraToFitBounds, cameraToFitBoundsWithCenter, canvasToScreen, unionBounds, focusZoomCeiling, wheelZoomFactor } from './camera'
 import { CARD_TYPES } from '../../../../shared/card-types'
 import { MAX_ZOOM, WHEEL_ZOOM_SENSITIVITY, WHEEL_ZOOM_MAX_RATE, WHEEL_ZOOM_RATE_WINDOW_MS } from './constants'
 
@@ -104,5 +104,49 @@ describe('wheelZoomFactor', () => {
 
   it('is symmetric, so a capped scroll back up undoes a capped scroll down', () => {
     expect(wheelZoomFactor(500, 20) * wheelZoomFactor(-500, 20)).toBeCloseTo(1, 6)
+  })
+})
+
+describe('cameraToFitBoundsWithCenter', () => {
+  const VW = 1000
+  const VH = 800
+
+  it('puts the centre point in the middle of the viewport', () => {
+    // A lopsided layout: everything hangs off to the right of the centre.
+    const cam = cameraToFitBoundsWithCenter(
+      { x: 0, y: 0 },
+      [{ x: -50, y: -50, width: 100, height: 100 }, { x: 400, y: 0, width: 200, height: 100 }],
+      VW, VH, 0.05
+    )
+    const screen = canvasToScreen({ x: 0, y: 0 }, cam)
+    expect(screen.x).toBeCloseTo(VW / 2)
+    expect(screen.y).toBeCloseTo(VH / 2)
+  })
+
+  it('zooms out far enough that the far side gets the same margin', () => {
+    // The mirror of the furthest rect must land on screen too, with the
+    // padding intact — that is what buys the centring.
+    const rects = [{ x: -50, y: -50, width: 100, height: 100 }, { x: 400, y: 0, width: 200, height: 100 }]
+    const cam = cameraToFitBoundsWithCenter({ x: 0, y: 0 }, rects, VW, VH, 0.05)
+    for (const r of rects) {
+      for (const p of [{ x: r.x, y: r.y }, { x: r.x + r.width, y: r.y + r.height }]) {
+        for (const q of [p, { x: -p.x, y: -p.y }]) {
+          const s = canvasToScreen(q, cam)
+          expect(s.x).toBeGreaterThanOrEqual(VW * 0.05 - 1e-6)
+          expect(s.x).toBeLessThanOrEqual(VW * 0.95 + 1e-6)
+          expect(s.y).toBeGreaterThanOrEqual(VH * 0.05 - 1e-6)
+          expect(s.y).toBeLessThanOrEqual(VH * 0.95 + 1e-6)
+        }
+      }
+    }
+  })
+
+  it('agrees with the plain union fit when the layout is already centred', () => {
+    const rects = [{ x: -300, y: -100, width: 100, height: 200 }, { x: 200, y: -100, width: 100, height: 200 }]
+    const withCenter = cameraToFitBoundsWithCenter({ x: 0, y: 0 }, rects, VW, VH, 0.05)
+    const union = cameraToFitBounds(unionBounds(rects)!, VW, VH, 0.05)
+    expect(withCenter.z).toBeCloseTo(union.z)
+    expect(withCenter.x).toBeCloseTo(union.x)
+    expect(withCenter.y).toBeCloseTo(union.y)
   })
 })

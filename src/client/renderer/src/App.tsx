@@ -34,6 +34,7 @@ import { useDimStaleController } from './hooks/useDimStaleController'
 import { useCoarseClock } from './hooks/useCoarseClock'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
+import type { Camera } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from './lib/node-label'
@@ -72,6 +73,25 @@ import { summaryChatChordFor, shouldYieldToFocusedEditor, viewportSlotFor } from
 import { tieredZIndex } from '../../../shared/card-types'
 import type { NodeData } from '../../../shared/state'
 import type { AgentType } from '../../../shared/agent-type'
+
+/**
+ * The fully-zoomed-out view: every node on screen with the root in the middle.
+ *
+ * Not the smallest box that holds everything — that box's centre is wherever
+ * the layout happens to be heaviest, which slides the root off to one side.
+ * The root is where the tree starts, so it stays at the centre of the screen
+ * and an unbalanced layout pays for it in zoom instead: the framing is the
+ * root's bounding box mirrored in all four directions, which for a centred
+ * layout is the same view the union would have given.
+ */
+function cameraFittingEverything(viewportWidth: number, viewportHeight: number): Camera {
+  const rects = useNodeStore.getState().nodeList.map(n => {
+    const size = nodePixelSize(n)
+    return { x: n.x - size.width / 2, y: n.y - size.height / 2, ...size }
+  })
+  rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
+  return cameraToFitBoundsWithCenter({ x: 0, y: 0 }, rects, viewportWidth, viewportHeight, 0.05, UNFOCUS_SNAP_ZOOM)
+}
 
 function agentCreateOptions(agent: AgentType, cwd: string | undefined): CreateOptions {
   switch (agent) {
@@ -574,17 +594,10 @@ export function App() {
 
       // Nothing visible (or no stored camera) → teleport to origin zoomed in, fly out
       focusRestoredRef.current = true
-      const allNodes = useNodeStore.getState().nodeList
-      const rects = allNodes.map(n => {
-        const size = nodePixelSize(n)
-        return { x: n.x - size.width / 2, y: n.y - size.height / 2, ...size }
-      })
-      rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
-      const bounds = unionBounds(rects)
-      if (!bounds) return
+      const target = cameraFittingEverything(vw, vh)
 
       resetCamera()  // instant teleport to origin, zoomed in at z:10
-      flyTo(cameraToFitBounds(bounds, vw, vh, 0.05, UNFOCUS_SNAP_ZOOM))
+      flyTo(target)
     })
   }, [initialSyncDone, flyTo, resetCamera])
 
@@ -1393,19 +1406,9 @@ export function App() {
   }, [shakeCamera, handleRemoveNode])
 
   const fitAllNodes = useCallback(() => {
-    const allNodeList = useNodeStore.getState().nodeList
-    const rects = allNodeList.map(n => {
-      const size = nodePixelSize(n)
-      return { x: n.x - size.width / 2, y: n.y - size.height / 2, ...size }
-    })
-    // Include root node in bounds
-    rects.push({ x: -ROOT_NODE_RADIUS, y: -ROOT_NODE_RADIUS, width: ROOT_NODE_RADIUS * 2, height: ROOT_NODE_RADIUS * 2 })
-    const bounds = unionBounds(rects)
-    if (!bounds) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
-    const target = cameraToFitBounds(bounds, viewport.clientWidth, viewport.clientHeight, 0.05, UNFOCUS_SNAP_ZOOM)
-    flyTo(target)
+    flyTo(cameraFittingEverything(viewport.clientWidth, viewport.clientHeight))
   }, [flyTo])
 
   // Focus a surface in response to an external `spaceterm-surface://` deep link.
