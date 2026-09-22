@@ -323,7 +323,7 @@ export function statusCardGap(scale: number): number {
  *
  * One caption, two readings, and which one it shows is which one is worth
  * having. While the prompt cache is warm it counts that down and says how much
- * context is riding on it — `22s (185k)` — and says nothing about age, because
+ * context is riding on it — `-22s (185k)` — and says nothing about age, because
  * the deadline is the thing with a decision attached: go back now and that
  * context is still cheap. The two halves answer the halves of that decision,
  * urgency and stake, and neither ranks surfaces on its own — 22 seconds on a
@@ -331,14 +331,16 @@ export function statusCardGap(scale: number): number {
  * decision is gone, and what is left to know is how long ago this was —
  * `14m cold`.
  *
- * Neither reading is labelled beyond that word. A countdown needs no name on
- * it: it is set in the larger of the two sizes, it carries a token count no age
- * ever does, and the only other thing a caption can say is `cold`. Spelling out
- * what the big number measures would spend a third of the line telling the
- * reader what its absence from the other case already tells them.
+ * The minus is the countdown's mark, the way `cold` is the age's. It is not
+ * arithmetic — the span it prefixes is positive — but a launch-clock sign for a
+ * number running down towards a deadline, where the age beside it runs up away
+ * from one. Two captions that both open with a digit take a moment to tell
+ * apart even at different sizes; one that opens with a sign does not. It also
+ * spends a character rather than the word it replaces, so nothing has to name
+ * what the number measures.
  *
  * The size is dropped when the agent does not report one, and a deadline the
- * server could only estimate is marked `4m?`. Cursor is both cases at once:
+ * server could only estimate is marked `-4m?`. Cursor is both cases at once:
  * it reports no token counts, and will not say which provider served a request,
  * so its lifetime is a floor across all of them rather than a reading. The
  * question mark is what keeps its cards from being compared against Claude's as
@@ -347,7 +349,7 @@ export function statusCardGap(scale: number): number {
  * The countdown is drawn at the name caption's size and the age at the canvas's
  * smallest, so the two are told apart before either is read: a card counting
  * down is legible from across the canvas, and a row of quiet ones stays quiet.
- * That difference is also what lets the countdown go unlabelled.
+ * Size separates them at a distance, the minus and `cold` at reading range.
  * Both are one line — `labelBox` measures the longest line, and neither string
  * is long enough to want wrapping.
  *
@@ -371,7 +373,7 @@ export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null
   let textScale: number
   if (warmFor > 0) {
     const size = node.cacheWarmTokens
-    const countdown = `${formatCountdownShort(warmFor)}${node.cacheWarmEstimated ? '?' : ''}`
+    const countdown = `-${formatCountdownShort(warmFor)}${node.cacheWarmEstimated ? '?' : ''}`
     text = size === undefined ? countdown : `${countdown} (${formatTokensShort(size)})`
     textScale = LABEL_TEXT_SCALE
   } else if (since !== undefined) {
