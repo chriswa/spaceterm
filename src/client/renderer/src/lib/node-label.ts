@@ -1,9 +1,8 @@
-import { CARD_AGENT_MARK_HEIGHT, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './constants'
+import { CARD_AGENT_MARK_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './constants'
 import { formatCountdownShort, formatElapsedShort } from './elapsed-label'
-import { formatTokensShort } from './token-count'
 import { measureCard } from '../../../../shared/card-types'
 import type { NodeData } from '../../../../shared/state'
-import type { NodeId } from '../../../../shared/ids'
+import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
 /**
  * Node labels: a node's name, drawn on the canvas directly above its card.
@@ -202,7 +201,7 @@ export function wrapLabel(text: string): string[] {
  * Which caption this is. A node can supply one of each, so this is half of a
  * label's identity — the other half is `nodeId`, and neither is unique alone.
  */
-export type NodeLabelKind = 'name' | 'status'
+export type NodeLabelKind = 'name' | 'status' | 'root-cwd'
 
 /** A laid-out label, ready to draw. */
 export interface NodeLabel {
@@ -322,34 +321,35 @@ export function statusCardGap(scale: number): number {
  * and stacking them would make the second look like a second line of the first.
  *
  * One caption, two readings, and which one it shows is which one is worth
- * having. While the prompt cache is warm it counts that down and says how much
- * context is riding on it — `-22s (185k)` — and says nothing about age, because
- * the deadline is the thing with a decision attached: go back now and that
- * context is still cheap. The two halves answer the halves of that decision,
- * urgency and stake, and neither ranks surfaces on its own — 22 seconds on a
- * 20k session is not worth crossing the room for. Once the cache is cold the
- * decision is gone, and what is left to know is how long ago this was —
- * `14m cold`.
+ * having. While the prompt cache is warm it counts that down — `T-22s` — and
+ * says nothing about age, because the deadline is the thing with a decision
+ * attached: go back now and the context is still cheap. Once the cache is cold
+ * the decision is gone, and what is left to know is how long ago this was —
+ * `cold for 14m`.
  *
- * The minus is the countdown's mark, the way `cold` is the age's. It is not
- * arithmetic — the span it prefixes is positive — but a launch-clock sign for a
- * number running down towards a deadline, where the age beside it runs up away
- * from one. Two captions that both open with a digit take a moment to tell
- * apart even at different sizes; one that opens with a sign does not. It also
- * spends a character rather than the word it replaces, so nothing has to name
- * what the number measures.
+ * Just the span, no size. `cacheWarmTokens` is collected and broadcast — it is
+ * what separates a 20k session expiring from a 500k one — but a caption read
+ * from across the canvas carries one number well and two poorly, and the one
+ * that has to be read now is the one that is running out.
  *
- * The size is dropped when the agent does not report one, and a deadline the
- * server could only estimate is marked `-4m?`. Cursor is both cases at once:
- * it reports no token counts, and will not say which provider served a request,
- * so its lifetime is a floor across all of them rather than a reading. The
- * question mark is what keeps its cards from being compared against Claude's as
- * though the two numbers were equally good.
+ * Each reading is marked at its start rather than named at its end, so the two
+ * are distinguished by the first glyph on the line instead of the last word.
+ * `T-` is borrowed from a launch clock and is not arithmetic — the span it
+ * prefixes is positive — but it says the number is running down towards a
+ * deadline, where `cold for` says the one beside it is running up away from a
+ * deadline already passed. Both also read as English left to right, which
+ * neither did while the qualifier trailed the number.
+ *
+ * A deadline the server could only estimate is marked `T-4m?`. That is Cursor:
+ * it will not say which provider served a request, so its lifetime is a floor
+ * across all of them rather than a reading. The question mark is what keeps its
+ * cards from being compared against Claude's as though the two numbers were
+ * equally good.
  *
  * The countdown is drawn at the name caption's size and the age at the canvas's
  * smallest, so the two are told apart before either is read: a card counting
  * down is legible from across the canvas, and a row of quiet ones stays quiet.
- * Size separates them at a distance, the minus and `cold` at reading range.
+ * Size separates them at a distance, `T-` and `cold for` at reading range.
  * Both are one line — `labelBox` measures the longest line, and neither string
  * is long enough to want wrapping.
  *
@@ -372,12 +372,10 @@ export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null
   let text: string
   let textScale: number
   if (warmFor > 0) {
-    const size = node.cacheWarmTokens
-    const countdown = `-${formatCountdownShort(warmFor)}${node.cacheWarmEstimated ? '?' : ''}`
-    text = size === undefined ? countdown : `${countdown} (${formatTokensShort(size)})`
+    text = `T-${formatCountdownShort(warmFor)}${node.cacheWarmEstimated ? '?' : ''}`
     textScale = LABEL_TEXT_SCALE
   } else if (since !== undefined) {
-    text = `${formatElapsedShort(now - since)} cold`
+    text = `cold for ${formatElapsedShort(now - since)}`
     textScale = MARKDOWN_LABEL_TEXT_SCALE
   } else {
     return null
@@ -394,6 +392,43 @@ export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null
     y: node.y + measureCard(node).height / 2 + statusCardGap(textScale) + box.height / 2,
     anchorX: node.x,
     anchorY: node.y,
+    ...box
+  }
+}
+
+/**
+ * Lay out the caption naming the root node's working directory.
+ *
+ * Below the disc, in the slot an agent surface's status caption uses, and drawn
+ * at the same size — it is the same kind of thing, a reading of the card rather
+ * than a name someone wrote on it. The name slot above is deliberately left
+ * free: the root has no name to show there and a path is not one.
+ *
+ * Measured from `ROOT_DISC_RADIUS`, the circle actually drawn, rather than
+ * `ROOT_NODE_RADIUS`, which is the larger hit box — a caption spaced off the
+ * box floats visibly clear of the disc it belongs to.
+ *
+ * The caller decides when this is on screen: it appears only while the root is
+ * focused, so the origin of an unfocused canvas stays a landmark rather than a
+ * line of text. Returns `null` when no default is set — there is nothing to
+ * caption, and an empty box would still mask the edges under it.
+ */
+export function layOutRootCwdLabel(cwd: string | undefined): NodeLabel | null {
+  const text = cwd?.trim()
+  if (!text) return null
+  const lines = wrapLabel(text)
+  if (lines.length === 0) return null
+  const textScale = LABEL_TEXT_SCALE
+  const box = labelBox(lines, textScale)
+  return {
+    kind: 'root-cwd',
+    nodeId: ROOT_NODE_ID,
+    lines,
+    textScale,
+    x: 0,
+    y: ROOT_DISC_RADIUS + statusCardGap(textScale) + box.height / 2,
+    anchorX: 0,
+    anchorY: 0,
     ...box
   }
 }
