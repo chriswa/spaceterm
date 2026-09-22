@@ -100,7 +100,16 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectSta
       <div
         ref={surfaceRef}
         className="canvas-surface"
-        style={{ transform: getCameraTransform(camera), transformOrigin: '0 0' }}
+        style={{
+          transform: getCameraTransform(camera),
+          transformOrigin: '0 0',
+          // Counter-scale for anything that must keep its on-screen size while
+          // the surface is scaled by the camera — card glows, today. Declared
+          // here because this is the one element that already re-renders on
+          // every camera change, so it costs nothing extra and is inherited by
+          // every card, rather than each of them reading the zoom per frame.
+          '--glow-scale': String(Math.max(1, 1 / camera.z)),
+        } as React.CSSProperties}
       >
         {children}
       </div>

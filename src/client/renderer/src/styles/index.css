@@ -2599,6 +2599,13 @@ html, body, #root {
   -webkit-mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-position: center;
+  /* Rotation as a variable rather than an inline `transform`, so the asleep
+     flip and the dance can compose. The dance animates `transform` and would
+     otherwise clobber an inline one outright - which is what used to happen,
+     silently un-flipping a sleeping agent the moment it had something unread.
+     `translate` above stays untouched: it is the positioning, and is why this
+     is `transform` and not the individual `rotate` property. */
+  transform: rotate(var(--crab-rotate, 0deg));
 }
 
 /* Only offered as a target in the states where one of its two clicks does
@@ -2625,6 +2632,126 @@ html, body, #root {
 
 .terminal-card__crab-behind--codex {
   height: calc(68px * var(--label-node-scale));
+}
+
+/* -- Card marks and glows: CSS, not rAF ---------------------------------
+   These three effects used to be three `requestAnimationFrame` loops *per
+   card* in `crab-dance.ts`, each writing inline styles every frame. At 120 Hz
+   with a handful of cards that was ~294 style writes a second driving ~114
+   full recalcStyle/layout/paint/commit cycles a second - for a dance the
+   source itself documents as ~0.5 Hz, and a glow whose only per-frame input
+   was a constant.
+
+   As CSS they cost the compositor and nothing else: `content-visibility: auto`
+   on `.terminal-card` means an off-screen card's animation is skipped without
+   anyone writing culling code, and a hidden or occluded window stops them
+   outright. Both are things the JS loops had no way to know about.
+
+   The dance keyframes are generated from the same arithmetic `CrabDance.tick`
+   uses, sampled every 2.5% - 50 ms a step, ten steps per bounce - so the
+   motion is the same curve, still resolved at the display's full rate by the
+   compositor rather than by us. */
+
+@keyframes terminal-card-crab-dance {
+  0% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.000px)) rotate(calc(var(--crab-rotate, 0deg) + 5.000deg)); }
+  2.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + 4.878deg)); }
+  5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + 4.523deg)); }
+  7.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + 3.969deg)); }
+  10% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + 3.273deg)); }
+  12.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -2.000px)) rotate(calc(var(--crab-rotate, 0deg) + 2.500deg)); }
+  15% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + 1.727deg)); }
+  17.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + 1.031deg)); }
+  20% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + 0.477deg)); }
+  22.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + 0.122deg)); }
+  25% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.000px)) rotate(calc(var(--crab-rotate, 0deg) + 0.000deg)); }
+  27.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + -0.122deg)); }
+  30% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + -0.477deg)); }
+  32.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + -1.031deg)); }
+  35% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + -1.727deg)); }
+  37.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -2.000px)) rotate(calc(var(--crab-rotate, 0deg) + -2.500deg)); }
+  40% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + -3.273deg)); }
+  42.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + -3.969deg)); }
+  45% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + -4.523deg)); }
+  47.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + -4.878deg)); }
+  50% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.000px)) rotate(calc(var(--crab-rotate, 0deg) + -5.000deg)); }
+  52.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + -4.878deg)); }
+  55% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + -4.523deg)); }
+  57.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + -3.969deg)); }
+  60% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + -3.273deg)); }
+  62.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -2.000px)) rotate(calc(var(--crab-rotate, 0deg) + -2.500deg)); }
+  65% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + -1.727deg)); }
+  67.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + -1.031deg)); }
+  70% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + -0.477deg)); }
+  72.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + -0.122deg)); }
+  75% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.000px)) rotate(calc(var(--crab-rotate, 0deg) + -0.000deg)); }
+  77.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + 0.122deg)); }
+  80% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + 0.477deg)); }
+  82.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + 1.031deg)); }
+  85% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + 1.727deg)); }
+  87.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -2.000px)) rotate(calc(var(--crab-rotate, 0deg) + 2.500deg)); }
+  90% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.902px)) rotate(calc(var(--crab-rotate, 0deg) + 3.273deg)); }
+  92.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.618px)) rotate(calc(var(--crab-rotate, 0deg) + 3.969deg)); }
+  95% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -1.176px)) rotate(calc(var(--crab-rotate, 0deg) + 4.523deg)); }
+  97.5% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.618px)) rotate(calc(var(--crab-rotate, 0deg) + 4.878deg)); }
+  100% { transform: translateY(calc(var(--crab-bounce-scale, 1) * -0.000px)) rotate(calc(var(--crab-rotate, 0deg) + 5.000deg)); }
+}
+
+.terminal-card__crab-behind--dancing {
+  /* linear: the easing is already in the keyframe values. */
+  animation: terminal-card-crab-dance 2s linear infinite;
+}
+
+/* The glow lives on the *shell*, not on the card.
+
+   `.terminal-card` carries `content-visibility: auto`, which implies
+   `contain: paint` — and paint containment clips descendants to the padding
+   box. A pseudo-element on the card therefore has its entire shadow spill
+   clipped away, which is exactly what happened on the first attempt: every
+   property computed correctly and nothing was visible. The old code escaped
+   this without knowing it, by setting `box-shadow` on the card itself; an
+   element's own shadow is not clipped by its own containment.
+
+   The shell is the same box as the card (same offset, same size) with no
+   containment of its own, and it is already where chrome that must escape the
+   card goes — see `behindContent`, which is how the crab mark hangs above the
+   card's top edge.
+
+   **Opacity, not box-shadow.** The shadow is painted once into this element's
+   own compositor layer and the pulse only varies its alpha, which the
+   compositor does without touching paint. Animating the `box-shadow` itself —
+   which is what this replaced — re-rasterises a blur every frame, and a blur
+   is the expensive half.
+
+   `--glow-scale` is `max(1, 1/z)`, set once on `.canvas-surface`. The surface
+   is scaled by the camera, so a glow in card-space would shrink with it; this
+   counter-scale keeps it the same size on screen at any zoom. One declaration
+   on one element, inherited — rather than the old per-card per-frame read of
+   `cameraRef.current.z`. */
+.card-shell--glow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--card-radius, 8px);
+  pointer-events: none;
+  /* Behind the card, which is opaque, so only the spill beyond its edge shows.
+     The shell sets `z-index`, so it is a stacking context and this cannot fall
+     behind anything but the shell's own (transparent) background. */
+  z-index: -1;
+  box-shadow:
+    0 0 calc(var(--card-glow-blur, 8px) * var(--glow-scale, 1))
+    calc(var(--card-glow-spread, 2px) * var(--glow-scale, 1))
+    var(--card-glow-color, transparent);
+}
+
+/* The pulse is a sine on brightness; `ease-in-out` between two stops is the
+   same shape to the eye and a third of the keyframes. */
+@keyframes card-shell-glow-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.card-shell--glow-pulse::before {
+  animation: card-shell-glow-pulse 2s ease-in-out infinite;
 }
 
 /* Speaking mark: a plain white megaphone shown while Voice Operator is reading

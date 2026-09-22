@@ -1,6 +1,3 @@
-import { useEffect, useRef } from 'react'
-import { currentFacet } from '../hooks/useFacet'
-
 export interface DanceValues {
   /** Raised-cosine glow pulse, 0..1 */
   glowPulse: number
@@ -17,6 +14,24 @@ export interface DanceValues {
  * - glowPulse: gentle sine, 0..1
  * - rock: ±5° squared cosine
  * - bounce: 2px absolute sine at double frequency
+ *
+ * ## Who still calls this
+ *
+ * `CrabGroup` — the toolbar — and nothing else. It drives every crab in the
+ * bar from one loop, with a `FrameLimiter`, a visibility gate and a
+ * skip-if-unchanged on the write, which is what a JS-driven animation has to
+ * do to be affordable.
+ *
+ * The card marks used to call it too, from a `requestAnimationFrame` loop
+ * *per card* with none of those three things. They are CSS keyframes now
+ * (`terminal-card-crab-dance` in index.css), generated from the arithmetic
+ * below: it is a pure function of `performance.now() % 2000` — no state, no
+ * input — which is the definition of something that did not need a frame loop
+ * to begin with.
+ *
+ * **If you change these curves, regenerate those keyframes.** They are a copy,
+ * and nothing enforces that they agree; the header above the keyframes says
+ * how they were sampled.
  */
 export class CrabDance {
   tick(): DanceValues {
@@ -32,168 +47,4 @@ export class CrabDance {
 
     return { glowPulse, rock, bounce }
   }
-}
-
-/**
- * Hook that drives bounce + rock on a single DOM element via a rAF loop.
- * Only applies animations when `active` is true. Cleans up styles when
- * inactive or unmounted. Does not apply glow or scale.
- *
- * `bounceScale` multiplies only the bounce (pixel offset) for elements
- * larger than the 20px toolbar crabs the default values are tuned for.
- * Rotation stays the same regardless of element size.
- *
- * Uses `style.transform` rather than the individual `translate`/`rotate` CSS
- * properties so that the element's CSS `translate` property (used for
- * positioning, e.g. centering) is not overridden.
- */
-export function useCrabDance(
-  ref: React.RefObject<HTMLElement | null>,
-  active: boolean,
-  bounceScale = 1
-): void {
-  const scaleRef = useRef(bounceScale)
-  scaleRef.current = bounceScale
-
-  useEffect(() => {
-    if (!active) {
-      const el = ref.current
-      if (el) el.style.transform = ''
-      return
-    }
-
-    const dance = new CrabDance()
-    let rafId = 0
-
-    const tick = () => {
-      rafId = requestAnimationFrame(tick)
-      const el = ref.current
-      if (!el) return
-
-      const { rock, bounce } = dance.tick()
-      el.style.transform = `translateY(${-bounce * scaleRef.current}px) rotate(${rock}deg)`
-    }
-
-    rafId = requestAnimationFrame(tick)
-
-    return () => {
-      cancelAnimationFrame(rafId)
-      const el = ref.current
-      if (el) el.style.transform = ''
-    }
-  }, [active, ref])
-}
-
-/**
- * Hook that applies a beat-synced boxShadow glow to an element.
- * Reads camera.z directly from a ref each frame so glow updates in realtime
- * during zoom animations. Glow radius scales inversely with zoom so it
- * remains visible when zoomed out. Clears styles when inactive, letting
- * React inline styles (e.g. focus glow) take over without conflict.
- */
-export function useUnreadGlow(
-  ref: React.RefObject<HTMLElement | null>,
-  color: string,
-  cameraRef: React.MutableRefObject<{ z: number }>,
-  active: boolean
-): void {
-  const colorRef = useRef(color)
-  colorRef.current = color
-
-  useEffect(() => {
-    if (!active) {
-      const el = ref.current
-      if (el) {
-        el.style.boxShadow = ''
-        el.style.borderColor = ''
-      }
-      return
-    }
-
-    const dance = new CrabDance()
-    let rafId = 0
-
-    const tick = () => {
-      rafId = requestAnimationFrame(tick)
-      const el = ref.current
-      if (!el) return
-
-      const { glowPulse } = dance.tick()
-      const z = cameraRef.current.z
-      const s = Math.max(1, 1 / z)
-      const blur = (3 + 5 * glowPulse) * s
-      const spread = (0.5 + 1.5 * glowPulse) * s
-      const c = colorRef.current
-      el.style.boxShadow = `0 0 ${blur}px ${spread}px ${c}`
-      el.style.borderColor = c
-    }
-
-    rafId = requestAnimationFrame(tick)
-
-    return () => {
-      cancelAnimationFrame(rafId)
-      const el = ref.current
-      if (el) {
-        el.style.boxShadow = ''
-        el.style.borderColor = ''
-      }
-    }
-  }, [active, ref, cameraRef])
-}
-
-/**
- * Hook that applies a steady scale-invariant glow to a card when its
- * corresponding toolbar icon is hovered. Uses the nodeTint facet for the
- * position-based color (same as focus glow) and scales blur/spread
- * inversely with camera zoom so the glow remains visible when zoomed out.
- */
-export function useToolbarHoverGlow(
-  ref: React.RefObject<HTMLElement | null>,
-  x: number,
-  y: number,
-  cameraRef: React.MutableRefObject<{ z: number }>,
-  active: boolean
-): void {
-  const coordsRef = useRef({ x, y })
-  coordsRef.current = { x, y }
-
-  useEffect(() => {
-    if (!active) {
-      const el = ref.current
-      if (el) {
-        el.style.boxShadow = ''
-        el.style.borderColor = ''
-      }
-      return
-    }
-
-    let rafId = 0
-
-    const tick = () => {
-      rafId = requestAnimationFrame(tick)
-      const el = ref.current
-      if (!el) return
-
-      const { x: cx, y: cy } = coordsRef.current
-      if (!cameraRef.current) return
-      const z = cameraRef.current.z
-      const s = Math.max(1, 1 / z)
-      const blur = 16 * s
-      const spread = 4 * s
-      const color = currentFacet('nodeTint').borderColor(cx, cy, 1)
-      el.style.boxShadow = `0 0 ${blur}px ${spread}px ${color}`
-      el.style.borderColor = color
-    }
-
-    rafId = requestAnimationFrame(tick)
-
-    return () => {
-      cancelAnimationFrame(rafId)
-      const el = ref.current
-      if (el) {
-        el.style.boxShadow = ''
-        el.style.borderColor = ''
-      }
-    }
-  }, [active, ref, cameraRef])
 }

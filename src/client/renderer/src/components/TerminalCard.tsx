@@ -30,7 +30,6 @@ import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
 import megaphoneIcon from '../assets/megaphone.png'
 import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
-import { useCrabDance, useUnreadGlow, useToolbarHoverGlow } from '../lib/crab-dance'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { cleanTerminalCopy } from '../../../../shared/cleanTerminalCopy'
@@ -233,7 +232,6 @@ export function TerminalCard({
   const snapshotRef = useRef<SnapshotMessage | null>(null)
   const autoJumpedRef = useRef(false)
   const lastInteractionSentRef = useRef(0)
-  const behindCrabRef = useRef<HTMLDivElement>(null)
 
   // Keep current props in refs for event handlers
   const propsRef = useRef({ x, y, zoom, cols, rows, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady })
@@ -1161,11 +1159,43 @@ export function TerminalCard({
   const rtsSelectActive = useRtsSelectStore(s => s.active)
   const focusGlowColor = focused && !rtsSelectActive ? nodeTint.borderColor(x, y, scrollMode ? 1.3 : 1) : undefined
   const crabAppearance = deriveToolbarIndicator(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0, agentType)
-  useCrabDance(behindCrabRef, crabAppearance.unviewed, 2.5)
   const anyToolbarHover = useHoveredCardStore(s => s.toolbarHoveredNodeId) != null
   const toolbarHovered = useHoveredCardStore(s => s.toolbarHoveredNodeId) === id
-  useUnreadGlow(cardRef, CRAB_COLORS[crabAppearance.color], cameraRef, crabAppearance.unviewed && !focused && !anyToolbarHover && !rtsSelectActive)
-  useToolbarHoverGlow(cardRef, x, y, cameraRef, toolbarHovered && !focused && !rtsSelectActive)
+  // The dance and both glows are CSS now — see `terminal-card-crab-dance` and
+  // `terminal-card--unread-glow` in index.css. What used to be three rAF loops
+  // per card is these three booleans and a colour, which change only when the
+  // state they describe changes.
+  //
+  // The conditions are unchanged, and the exclusivity between them is load
+  // bearing: the two glows share one `::before`, and can do so only because an
+  // unread glow requires that *no* card's toolbar entry is hovered.
+  const unreadGlow = crabAppearance.unviewed && !focused && !anyToolbarHover && !rtsSelectActive
+  const hoverGlow = toolbarHovered && !focused && !rtsSelectActive
+  const unreadGlowColor = CRAB_COLORS[crabAppearance.color]
+  const hoverGlowColor = hoverGlow ? nodeTint.borderColor(x, y, 1) : undefined
+  // Focus wins over both, as it did when these were separate loops racing for
+  // the same `style.boxShadow`. `borderColor` is set alongside each glow
+  // because the loops used to set it too.
+  const cardGlowStyle: React.CSSProperties | undefined = focusGlowColor
+    ? { borderColor: focusGlowColor, boxShadow: `0 0 16px 4px ${focusGlowColor}` }
+    : unreadGlow ? { borderColor: unreadGlowColor }
+      : hoverGlow ? { borderColor: hoverGlowColor }
+        : undefined
+
+  // Handed to the shell rather than drawn here: the card is paint-contained,
+  // so a glow of its own would be clipped to its padding box. Focus is the
+  // exception and keeps its `box-shadow` above — an element's own shadow
+  // escapes its own containment, and focus does not pulse, so it never wanted
+  // a composited layer in the first place.
+  //
+  // Blur and spread are the peaks of what the old loops computed: the unread
+  // pulse ran blur 3..8 and spread 0.5..2, and is now a steady 8/2 varied by
+  // opacity instead.
+  const cardGlow = focusGlowColor
+    ? undefined
+    : unreadGlow ? { color: unreadGlowColor, blur: 8, spread: 2, pulse: true }
+      : hoverGlow && hoverGlowColor ? { color: hoverGlowColor, blur: 16, spread: 4, pulse: false }
+        : undefined
 
   // The agent mark floats in the empty band above the card, so it is the one
   // piece of card chrome a click can reach without also meaning "focus this
@@ -1316,7 +1346,8 @@ export function TerminalCard({
       // are centred on the same point at different sizes, so leaving both
       // visible shows the same content twice, offset.
       className={`terminal-card ${focusClass}${resizingNodeId === id ? ' terminal-card--resize-source' : ''}`}
-      style={focusGlowColor ? { borderColor: focusGlowColor, boxShadow: `0 0 16px 4px ${focusGlowColor}` } : undefined}
+      style={cardGlowStyle}
+      glow={cardGlow}
       cardRef={cardRef}
       onMouseEnter={() => {
         if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id)
@@ -1332,8 +1363,7 @@ export function TerminalCard({
         <>
           {(crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex') && (
             <div
-              ref={behindCrabRef}
-              className={`terminal-card__crab-behind${agentBehindClass}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}${backgroundTarget !== null ? ' terminal-card__crab-behind--toggles-background' : ''}`}
+              className={`terminal-card__crab-behind${agentBehindClass}${crabAppearance.unviewed ? ' terminal-card__crab-behind--dancing' : ''}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}${backgroundTarget !== null ? ' terminal-card__crab-behind--toggles-background' : ''}`}
               title={crabTitle}
               onMouseDown={swallowCrabMouseDown}
               onClick={handleCrabBehindClick}
@@ -1342,8 +1372,13 @@ export function TerminalCard({
                 maskImage: `url(${agentIconUrl})`,
                 WebkitMaskImage: `url(${agentIconUrl})`,
                 backgroundColor: CRAB_COLORS[crabAppearance.color],
-                ...(crabAppearance.asleep ? { transform: 'rotate(180deg)' } : {}),
-              }}
+                // Both as custom properties rather than a `transform`: the
+                // dance keyframes animate `transform`, and an inline one would
+                // lose to them outright — which used to un-flip a sleeping
+                // agent the moment it had something unread.
+                '--crab-bounce-scale': 2.5,
+                ...(crabAppearance.asleep ? { '--crab-rotate': '180deg' } : {}),
+              } as React.CSSProperties}
             />
           )}
           {isSpeaking && (

@@ -854,6 +854,31 @@ if (launchPrefs.highPerformanceGpu) {
 }
 
 /**
+ * The Chrome DevTools Protocol port, for profiling this app from outside it.
+ *
+ * **Always on, rather than behind a flag.** The traces worth having are the
+ * ones from the session that was actually misbehaving — a window that has been
+ * up for a day and a half and has drifted somewhere the numbers do not explain.
+ * A port you have to switch on is a port that is off exactly then, and turning
+ * it on means a restart, which destroys the state you wanted to look at.
+ *
+ * Chromium binds this to loopback; it is not reachable from the network. It is
+ * still full control of the renderer to anything already on this machine —
+ * every terminal's contents readable and arbitrary script executable — which is
+ * why CLAUDE.md requires explicit operator approval before an agent attaches to
+ * it. That rule is the access control here; the port itself has none.
+ *
+ * `SPACETERM_DEBUG_PORT` overrides it. 9222 is the protocol's default and what
+ * every client tries first, so it is the right default to want — but a second
+ * Chromium-based app in dev may already hold it, and losing that race is
+ * silent, so the escape hatch is not hypothetical.
+ */
+app.commandLine.appendSwitch(
+  'remote-debugging-port',
+  process.env.SPACETERM_DEBUG_PORT ?? '9222'
+)
+
+/**
  * How long startup waits for the server before opening the window anyway.
  *
  * Long enough that the ordinary case — server already up, or coming up

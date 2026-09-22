@@ -61,6 +61,19 @@ interface CardShellProps {
   onMouseEnter?: (e: React.MouseEvent) => void
   onMouseLeave?: (e: React.MouseEvent) => void
   behindContent?: ReactNode
+  /**
+   * A glow around the whole card.
+   *
+   * Drawn by the shell rather than by the card because `.terminal-card` has
+   * `content-visibility: auto`, which implies `contain: paint` — a glow on the
+   * card clips its own spill away and is invisible. The shell is the same box
+   * with no containment. See `.card-shell--glow`.
+   *
+   * Blur and spread are the caller's, in card-space pixels; the stylesheet
+   * multiplies both by the camera counter-scale so the result is a constant
+   * size on screen.
+   */
+  glow?: { color: string; blur: number; spread: number; pulse: boolean }
   children: ReactNode
 }
 
@@ -72,7 +85,7 @@ export function CardShell({
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
   onAddNode, agentMeta, rootCwd, onExtraCliArgs, extraCliArgs,
-  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
+  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, glow, children
 }: CardShellProps) {
 
   // Chrome that must stay legible at the card type's focus zoom. Published as a
@@ -230,7 +243,7 @@ export function CardShell({
       // The focused modifier is on the shell, not on the per-card element, so
       // chrome the shell itself owns — the hidden-head buttons — can hide when
       // the node is not focused the way each card's own action bar does.
-      className={`card-shell canvas-node${focused ? ' card-shell--focused' : ''}`}
+      className={`card-shell canvas-node${focused ? ' card-shell--focused' : ''}${glow ? ' card-shell--glow' : ''}${glow?.pulse ? ' card-shell--glow-pulse' : ''}`}
       data-node-id={nodeId}
       style={{
         position: 'absolute',
@@ -246,6 +259,11 @@ export function CardShell({
         filter: staleFilter(freshness),
         transition: 'filter 0.25s ease',
         '--card-chrome-scale': chromeScale,
+        ...(glow ? {
+          '--card-glow-color': glow.color,
+          '--card-glow-blur': `${glow.blur}px`,
+          '--card-glow-spread': `${glow.spread}px`,
+        } : {}),
       } as CSSProperties}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}

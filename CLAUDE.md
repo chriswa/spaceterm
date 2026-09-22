@@ -96,6 +96,14 @@ Multiple Claude Code agents may be running on this repo at the same time. Files 
 
 Use the logger at `src/client/main/logger.ts` — never `console.log`/`console.error`. The log file lives at `~/.spaceterm/electron.log`, which the agent can read directly. Logs sent to the Electron terminal console or DevTools console are invisible to the agent and require the human to manually copy them, wasting time.
 
+## Remote debugging port
+
+The app runs with the Chrome DevTools Protocol exposed on `127.0.0.1:9222` (override with `SPACETERM_DEBUG_PORT`). It is always on, so that a session which has been misbehaving for hours can be profiled without a restart destroying the state worth looking at.
+
+**Do not attach to it without explicit operator approval for that specific occasion.** Approval to attach once is not standing approval; ask again the next time. This applies to every use of the port — CPU and heap profiles, tracing, evaluating expressions, reading the DOM, driving the page.
+
+The reason for the rule is that the port has no access control of its own. Attaching is full control of the renderer: every terminal's contents are readable, and arbitrary script can be executed in the page. The operator's approval is the only thing standing between those two facts, so it has to be real and it has to be current.
+
 ## Bug fixes and fragile code
 
 After finding or fixing a bug caused by fragile code, do not just patch the symptom. Take the time to improve the design of the surrounding code so that the same class of bug cannot recur. This means addressing the root cause — whether that's tightening types, restructuring control flow, adding invariants, factoring duplicated code out into a function, or simplifying the logic — not just making the failing case work. Try to identify and fix issues the codebase has which made it difficult to find the source of the bug, and made it easy to introduce the bug in the first place.
