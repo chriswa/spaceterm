@@ -6,7 +6,7 @@ import type { ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import { blendHex } from '../lib/color-presets'
 import type { ArchivedNode, GitStatus } from '../../../../shared/state'
-import { gitBadges, type GitBadgeKind } from '../../../../shared/git-status'
+import { gitBadges, formatGitStatusLine, type GitBadgeKind } from '../../../../shared/git-status'
 import { CardShell } from './CardShell'
 import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
@@ -115,29 +115,11 @@ function GitBadges(
   )
 }
 
-function formatGitStatus(gs: GitStatus): string {
-  const parts: string[] = []
-  parts.push(gs.branch ?? 'detached')
-  if (gs.ahead > 0) parts.push(`⇡${gs.ahead}`)
-  if (gs.behind > 0) parts.push(`⇣${gs.behind}`)
-  if (gs.staged > 0) parts.push(`+${gs.staged}`)
-  if (gs.unstaged > 0) parts.push(`!${gs.unstaged}`)
-  if (gs.untracked > 0) parts.push(`?${gs.untracked}`)
-  if (gs.conflicts > 0) parts.push(`=${gs.conflicts}`)
-  return parts.join(' ')
-}
-
 function formatGitStatusTooltip(gs: GitStatus): string {
-  // Leads with the badge row spelled out, so the marks under the folder have a
-  // legend, then the counts the badges compress.
+  // The badge row spelled out, so the marks under the folder have a legend.
   const parts: string[] = gitBadges(gs).map(b => b.label)
   parts.push(`branch: ${gs.branch ?? 'detached'}`)
-  if (gs.ahead > 0) parts.push(`${gs.ahead} ahead`)
-  if (gs.behind > 0) parts.push(`${gs.behind} behind`)
-  if (gs.staged > 0) parts.push(`${gs.staged} staged`)
-  if (gs.unstaged > 0) parts.push(`${gs.unstaged} modified`)
-  if (gs.untracked > 0) parts.push(`${gs.untracked} untracked`)
-  if (gs.conflicts > 0) parts.push(`${gs.conflicts} conflicts`)
+  if (gs.conflicts) parts.push('merge conflicts')
   if (gs.lastFetchTimestamp !== null) {
     const totalMinutes = Math.floor((Date.now() - gs.lastFetchTimestamp) / 60_000)
     if (totalMinutes < 60) parts.push(`fetched ${totalMinutes}m ago`)
@@ -226,7 +208,7 @@ export function DirectoryCard({
   }, [lastFetchTs])
 
   // Compute the git status display text for measurement (includes fetch-age for width)
-  const gitStatusCore = gitStatus ? formatGitStatus(gitStatus) : ''
+  const gitStatusCore = gitStatus ? formatGitStatusLine(gitStatus) : ''
   const fetchAgeText = gitStatus ? (fetching ? '(fetching…)' : formatFetchAge(gitStatus.lastFetchTimestamp)) : ''
   const gitStatusText = gitStatus === null
     ? 'not git controlled'
@@ -453,7 +435,7 @@ export function DirectoryCard({
             </div>
           ) : gitStatus ? (
             <div
-              className={`directory-card__git-status${gitStatus.conflicts > 0 ? ' directory-card__git-status--conflict' : ''}`}
+              className={`directory-card__git-status${gitStatus.conflicts ? ' directory-card__git-status--conflict' : ''}`}
               title={formatGitStatusTooltip(gitStatus)}
             >
               {gitStatusCore}{' '}

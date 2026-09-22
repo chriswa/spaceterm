@@ -8,12 +8,11 @@ function status(overrides: Partial<GitStatus> = {}): GitStatus {
     defaultBranch: 'main',
     upstream: 'origin/main',
     hasRemote: true,
-    ahead: 0,
-    behind: 0,
-    conflicts: 0,
-    staged: 0,
-    unstaged: 0,
-    untracked: 0,
+    ahead: false,
+    behind: false,
+    conflicts: false,
+    dirty: false,
+    untracked: false,
     lastFetchTimestamp: null,
     ...overrides
   }
@@ -46,7 +45,7 @@ describe('off the default branch', () => {
 
 describe('unpushed work', () => {
   it('flags commits sitting on top of the upstream', () => {
-    expect(hasUnpushedWork(status({ ahead: 2 }))).toBe(true)
+    expect(hasUnpushedWork(status({ ahead: true }))).toBe(true)
   })
 
   it('flags a branch that has no upstream at all', () => {
@@ -69,23 +68,19 @@ describe('the badge set', () => {
   })
 
   it('orders them branch, pull, push, dirty, untracked', () => {
-    const gs = status({ branch: 'wip', upstream: 'origin/wip', ahead: 1, behind: 3, unstaged: 2, untracked: 1 })
+    const gs = status({ branch: 'wip', upstream: 'origin/wip', ahead: true, behind: true, dirty: true, untracked: true })
     expect(kinds(gs)).toEqual(['off-default', 'behind', 'ahead', 'dirty', 'untracked'])
   })
 
-  it('counts staged changes as dirty', () => {
-    // `git add` moves a change between counters; it does not make it committed.
-    expect(kinds(status({ staged: 1 }))).toEqual(['dirty'])
-    expect(gitBadges(status({ staged: 1, unstaged: 2 }))[0].label).toBe('3 uncommitted changes')
-  })
-
   it('keeps untracked files separate from modifications', () => {
-    expect(kinds(status({ untracked: 4 }))).toEqual(['untracked'])
+    expect(kinds(status({ untracked: true }))).toEqual(['untracked'])
+    expect(kinds(status({ dirty: true }))).toEqual(['dirty'])
   })
 
-  it('singularises its counts', () => {
-    expect(gitBadges(status({ behind: 1 }))[0].label).toBe('1 commit to pull')
-    expect(gitBadges(status({ untracked: 1 }))[0].label).toBe('1 untracked file')
+  it('names what each mark means, without a count', () => {
+    expect(gitBadges(status({ behind: true }))[0].label).toBe('commits to pull')
+    expect(gitBadges(status({ dirty: true }))[0].label).toBe('uncommitted changes')
+    expect(gitBadges(status({ untracked: true }))[0].label).toBe('untracked files')
   })
 
   it('says which branch it expected', () => {

@@ -80,7 +80,9 @@ describe('measureCard', () => {
       cwd: '/p',
       gitStatus: {
         branch: 'a-rather-long-feature-branch-name',
-        ahead: 12, behind: 3, staged: 4, unstaged: 5, untracked: 6, conflicts: 7
+        defaultBranch: 'main', upstream: 'origin/a-rather-long-feature-branch-name', hasRemote: true,
+        ahead: true, behind: true, dirty: true, untracked: true, conflicts: true,
+        lastFetchTimestamp: null
       }
     })
     expect(busy.width).toBeGreaterThan(plain.width)

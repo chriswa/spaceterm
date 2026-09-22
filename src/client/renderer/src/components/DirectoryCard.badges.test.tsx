@@ -20,12 +20,11 @@ function status(overrides: Partial<GitStatus> = {}): GitStatus {
     defaultBranch: 'main',
     upstream: 'origin/main',
     hasRemote: true,
-    ahead: 0,
-    behind: 0,
-    conflicts: 0,
-    staged: 0,
-    unstaged: 0,
-    untracked: 0,
+    ahead: false,
+    behind: false,
+    conflicts: false,
+    dirty: false,
+    untracked: false,
     lastFetchTimestamp: Date.now(),
     ...overrides
   }
@@ -85,7 +84,7 @@ describe('when the row appears at all', () => {
 
 describe('what it shows', () => {
   it('draws one badge per thing worth noticing', () => {
-    expect(badgeCount(status({ branch: 'wip', upstream: 'origin/wip', behind: 2, unstaged: 1 }))).toBe(3)
+    expect(badgeCount(status({ branch: 'wip', upstream: 'origin/wip', behind: true, dirty: true }))).toBe(3)
   })
 
   it('draws a badge for an off-default branch on its own', () => {
@@ -100,7 +99,7 @@ describe('what it shows', () => {
 
 describe('how it is drawn', () => {
   it('takes both its colours from the node preset', () => {
-    const row = badgeRow(status({ untracked: 1 }))!
+    const row = badgeRow(status({ untracked: true }))!
     const style = row.getAttribute('style') ?? ''
     // The folder's own two tones: its face, and the tone its label is drawn in.
     expect(style).toContain('--badge-face')
@@ -110,14 +109,14 @@ describe('how it is drawn', () => {
   it('gives every badge an instant tooltip', () => {
     // data-tooltip is the app's own tooltip, shown on mouseover with no dwell;
     // the native `title` one waits about a second before it appears.
-    const row = badgeRow(status({ branch: 'wip', upstream: 'origin/wip', untracked: 2 }))!
+    const row = badgeRow(status({ branch: 'wip', upstream: 'origin/wip', untracked: true }))!
     const tips = [...row.querySelectorAll('.directory-card__badge')]
       .map(b => b.getAttribute('data-tooltip'))
-    expect(tips).toEqual(['on wip, not the default branch main', '2 untracked files'])
+    expect(tips).toEqual(['on wip, not the default branch main', 'untracked files'])
   })
 
   it('places those tooltips below, clear of the folder', () => {
-    const badge = badgeRow(status({ untracked: 1 }))!.querySelector('.directory-card__badge')!
+    const badge = badgeRow(status({ untracked: true }))!.querySelector('.directory-card__badge')!
     expect(badge.getAttribute('data-tooltip-placement')).toBe('bottom')
   })
 
@@ -127,7 +126,7 @@ describe('how it is drawn', () => {
     const onDragStart = vi.fn()
     const onMove = vi.fn()
     const { container } = render(
-      <DirectoryCard {...props(status({ untracked: 1 }))} onDragStart={onDragStart} onMove={onMove} />
+      <DirectoryCard {...props(status({ untracked: true }))} onDragStart={onDragStart} onMove={onMove} />
     )
     const badge = container.querySelector('.directory-card__badge')!
     fireEvent.mouseDown(badge, { clientX: 0, clientY: 0 })
@@ -141,12 +140,12 @@ describe('how it is drawn', () => {
 describe('the status tooltip', () => {
   it('spells out every badge, so the marks have a legend', () => {
     const { container } = render(
-      <DirectoryCard {...props(status({ branch: 'wip', upstream: null, behind: 2, untracked: 3 }))} />
+      <DirectoryCard {...props(status({ branch: 'wip', upstream: null, behind: true, untracked: true }))} />
     )
     const tooltip = container.querySelector('.directory-card__git-status')?.getAttribute('title') ?? ''
     expect(tooltip).toContain('on wip, not the default branch main')
-    expect(tooltip).toContain('2 commits to pull')
+    expect(tooltip).toContain('commits to pull')
     expect(tooltip).toContain('branch has never been pushed')
-    expect(tooltip).toContain('3 untracked files')
+    expect(tooltip).toContain('untracked files')
   })
 })

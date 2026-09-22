@@ -3,6 +3,7 @@ import {
   GitStatusPoller,
   SWEEP_INTERVAL_MS,
   METADATA_INTERVAL_MS,
+  REMOTE_CHECK_INTERVAL_MS,
   MIN_POLL_INTERVAL_MS,
   WATCH_SETTLE_MS,
   type GitStatusPollerDeps,
@@ -31,12 +32,11 @@ function status(overrides: Partial<GitStatus> = {}): GitStatus {
     defaultBranch: 'main',
     upstream: null,
     hasRemote: false,
-    ahead: 0,
-    behind: 0,
-    conflicts: 0,
-    staged: 0,
-    unstaged: 0,
-    untracked: 0,
+    ahead: false,
+    behind: false,
+    conflicts: false,
+    dirty: false,
+    untracked: false,
     lastFetchTimestamp: null,
     ...overrides
   }
@@ -96,6 +96,10 @@ interface Harness {
   markMoved(cwd: string): void
   /** Report a filesystem change under this cwd, as the watcher would. */
   fileChanged(cwd: string): void
+  /** cwds whose remote was asked whether anything is waiting, in order. */
+  remoteChecks: string[]
+  /** Say that this cwd's remote has something new, until its next check. */
+  markRemoteAhead(cwd: string): void
   /** The directories the watcher was last told to watch. */
   watched(): string[]
   resets: string[]
@@ -106,11 +110,14 @@ interface Harness {
 function harness(options: {
   nodes?: DirectoryNodeData[]
   gitStatus?: (cwd: string) => GitStatus | null | Promise<GitStatus | null>
+  remoteCheck?: (cwd: string) => boolean | Promise<boolean>
 } = {}): Harness {
   const clock = new FakeClock()
   const statusCalls: string[] = []
   const metadataChecks: string[] = []
   const resets: string[] = []
+  const remoteChecks: string[] = []
+  const remoteAhead = new Set<string>()
   const moved = new Set<string>()
   const updates: Harness['updates'] = []
   let nodes = options.nodes ?? []
@@ -127,6 +134,11 @@ function harness(options: {
       metadataMoved: async () => {
         metadataChecks.push(cwd)
         return moved.has(cwd)
+      },
+      checkRemote: async () => {
+        remoteChecks.push(cwd)
+        if (options.remoteCheck) return options.remoteCheck(cwd)
+        return remoteAhead.delete(cwd)
       },
       reset: () => { resets.push(cwd) },
     }),
@@ -157,6 +169,8 @@ function harness(options: {
     setNodes: (next) => { nodes = next },
     markMoved: (cwd) => { moved.add(cwd) },
     fileChanged: (cwd) => notifyChange(cwd),
+    remoteChecks,
+    markRemoteAhead: (cwd) => { remoteAhead.add(cwd) },
     watched: () => watched,
     settle: async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
   }
@@ -169,7 +183,7 @@ function harness(options: {
  */
 async function tick(h: Harness, ms: number, step = 50): Promise<void> {
   for (let t = 0; t < ms; t += step) {
-    h.clock.advance(step)
+    h.clock.advance(Math.min(step, ms - t))
     await h.settle()
   }
 }
@@ -422,6 +436,77 @@ describe('filesystem watch', () => {
     await tick(h, WATCH_SETTLE_MS * 2)
 
     expect(h.statusCalls).toEqual(['/repo'])
+  })
+})
+
+describe('remote check', () => {
+  it('asks every repo once a minute, spread across it', async () => {
+    const h = harness({ nodes: [dir('d1', '/repo'), dir('d2', '/other')] })
+
+    // The checks are staggered, so the first is immediate and the rest follow
+    // across the interval rather than all going out at once.
+    h.clock.advance(0)
+    await h.settle()
+    expect(h.remoteChecks).toHaveLength(1)
+
+    await tick(h, REMOTE_CHECK_INTERVAL_MS - 1, REMOTE_CHECK_INTERVAL_MS / 4)
+    expect(h.remoteChecks.sort()).toEqual(['/other', '/repo'])
+
+    h.remoteChecks.length = 0
+    await tick(h, REMOTE_CHECK_INTERVAL_MS, REMOTE_CHECK_INTERVAL_MS / 4)
+    expect(h.remoteChecks.sort()).toEqual(['/other', '/repo'])
+  })
+
+  it('publishes the news when a remote has something waiting', async () => {
+    let behind = false
+    const h = harness({
+      nodes: [dir('d1', '/repo')],
+      gitStatus: () => status({ behind })
+    })
+    h.clock.advance(0)
+    await h.settle()
+    expect(h.updates.map((u) => u.gitStatus?.behind)).toEqual([false])
+
+    behind = true
+    h.markRemoteAhead('/repo')
+    await tick(h, REMOTE_CHECK_INTERVAL_MS)
+
+    expect(h.updates.map((u) => u.gitStatus?.behind)).toEqual([false, true])
+  })
+
+  it('only polls when the remote actually had something new', async () => {
+    const window = REMOTE_CHECK_INTERVAL_MS * 2
+    const quiet = harness({ nodes: [dir('d1', '/repo')], remoteCheck: () => false })
+    const busy = harness({ nodes: [dir('d1', '/repo')], remoteCheck: () => true })
+    await tick(quiet, window, MIN_POLL_INTERVAL_MS)
+    await tick(busy, window, MIN_POLL_INTERVAL_MS)
+
+    // Both ran the same sweeps; the difference is the checks that found news.
+    expect(quiet.remoteChecks).toEqual(busy.remoteChecks)
+    expect(busy.statusCalls.length).toBeGreaterThan(quiet.statusCalls.length)
+  })
+
+  it('keeps going when a remote check rejects', async () => {
+    const h = harness({ nodes: [dir('d1', '/repo')], remoteCheck: () => Promise.reject(new Error('offline')) })
+    h.clock.advance(0)
+    await h.settle()
+    h.remoteChecks.length = 0
+
+    await tick(h, REMOTE_CHECK_INTERVAL_MS, REMOTE_CHECK_INTERVAL_MS / 4)
+
+    expect(h.remoteChecks).toEqual(['/repo'])
+  })
+
+  it('stops asking after dispose', async () => {
+    const h = harness({ nodes: [dir('d1', '/repo')] })
+    h.clock.advance(0)
+    await h.settle()
+    h.remoteChecks.length = 0
+
+    h.poller.dispose()
+    await tick(h, REMOTE_CHECK_INTERVAL_MS * 2, REMOTE_CHECK_INTERVAL_MS / 4)
+
+    expect(h.remoteChecks).toEqual([])
   })
 })
 

@@ -33,6 +33,16 @@ export const METADATA_INTERVAL_MS = 1_000
 export const MIN_POLL_INTERVAL_MS = 1_000
 
 /**
+ * How often each repo asks its remote whether anything is waiting to be pulled.
+ *
+ * Nothing local can answer this — `git status` reports the remote as of the
+ * last fetch, which without this is whenever the human last pressed ↻. A repo
+ * that already knows it is behind is skipped, so this only costs anything while
+ * there is nothing to say.
+ */
+export const REMOTE_CHECK_INTERVAL_MS = 60_000
+
+/**
  * How long to let filesystem events settle before reading the repo.
  *
  * Saving one file produces several events, and an editor that writes to a
@@ -62,7 +72,7 @@ export interface DirectoryWatcher {
  */
 export interface GitStatusPollerDeps {
   /** A probe for one already-tilde-expanded working directory. */
-  createProbe(cwd: string): Pick<RepoProbe, 'status' | 'metadataMoved' | 'reset'>
+  createProbe(cwd: string): Pick<RepoProbe, 'status' | 'metadataMoved' | 'checkRemote' | 'reset'>
   createWatcher(onChange: (cwd: string) => void): DirectoryWatcher
   scheduleInterval(fn: () => void, ms: number): CancelScheduled
   scheduleTimeout(fn: () => void, ms: number): CancelScheduled
@@ -89,6 +99,7 @@ interface ActivePoll {
 export class GitStatusPoller {
   private cancelSweep: CancelScheduled | null = null
   private cancelMetadataWatch: CancelScheduled | null = null
+  private cancelRemoteCheck: CancelScheduled | null = null
   /** Every timer this poller has armed, so dispose can cancel the lot. */
   private timers = new Set<CancelScheduled>()
   private cache = new Map<NodeId, string>() // nodeId → JSON.stringify(GitStatus)
@@ -119,8 +130,10 @@ export class GitStatusPoller {
     this.watcher = this.deps.createWatcher((cwd) => this.requestPoll(cwd))
     this.cancelSweep = this.deps.scheduleInterval(() => this.sweep(), SWEEP_INTERVAL_MS)
     this.cancelMetadataWatch = this.deps.scheduleInterval(() => this.checkMetadata(), METADATA_INTERVAL_MS)
+    this.cancelRemoteCheck = this.deps.scheduleInterval(() => this.checkRemotes(), REMOTE_CHECK_INTERVAL_MS)
     // Poll all directories immediately on startup
     this.sweep()
+    this.checkRemotes()
   }
 
   removeNode(nodeId: NodeId): void {
@@ -148,6 +161,8 @@ export class GitStatusPoller {
     this.cancelSweep = null
     this.cancelMetadataWatch?.()
     this.cancelMetadataWatch = null
+    this.cancelRemoteCheck?.()
+    this.cancelRemoteCheck = null
     this.watcher.dispose()
     // Staggered sweep polls, settle delays and cooldowns would otherwise keep
     // firing — and keep the process alive — after dispose. Same shape as the
@@ -221,6 +236,25 @@ export class GitStatusPoller {
       this.probeFor(cwd).metadataMoved()
         .then((moved) => { if (moved) this.requestPoll(cwd) })
         .catch(() => { /* the sweep will read it regardless */ })
+    }
+  }
+
+  /**
+   * Ask each remote whether anything is waiting, spread across the interval so
+   * a dozen network calls never go out together. A repo whose answer changed is
+   * then polled, which is what folds the news into a published status.
+   */
+  private checkRemotes(): void {
+    const cwds = [...this.uniqueCwds()]
+    if (cwds.length === 0) return
+    const spacing = cwds.length > 1 ? REMOTE_CHECK_INTERVAL_MS / cwds.length : 0
+    for (let i = 0; i < cwds.length; i++) {
+      const cwd = cwds[i]
+      this.later(() => {
+        this.probeFor(cwd).checkRemote()
+          .then((changed) => { if (changed) this.pollCwd(cwd) })
+          .catch(() => { /* offline, or no credentials — try again next time */ })
+      }, i * spacing)
     }
   }
 

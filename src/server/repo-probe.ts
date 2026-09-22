@@ -8,6 +8,12 @@ import type { GitStatus } from '../shared/state'
 const execFileAsync = promisify(execFile)
 
 const EXEC_TIMEOUT_MS = 5_000
+/**
+ * A command that talks to a remote gets longer, because it is a network round
+ * trip — but it still gets a limit, because the alternative to timing out is a
+ * background `git` sitting on a dead connection forever.
+ */
+const REMOTE_TIMEOUT_MS = 30_000
 
 /**
  * The parts of a `GitStatus` that `git status` does not report — each one its
@@ -36,16 +42,20 @@ export function parseGitStatus(stdout: string, facts: RepoFacts): GitStatus {
 /** The subset of a `GitStatus` that `git status --porcelain=v2 --branch` reports. */
 export type Porcelain = Omit<GitStatus, keyof RepoFacts>
 
-/** The subset of a `GitStatus` that `git status --porcelain=v2 --branch` reports. */
+/**
+ * The subset of a `GitStatus` that `git status --porcelain=v2 --branch` reports.
+ *
+ * Every flag is a yes/no. The card only ever asked whether something needs
+ * attention, and counting made it redraw each time a build touched a file.
+ */
 export function parsePorcelain(stdout: string): Porcelain {
   let branch: string | null = null
   let upstream: string | null = null
-  let ahead = 0
-  let behind = 0
-  let conflicts = 0
-  let staged = 0
-  let unstaged = 0
-  let untracked = 0
+  let ahead = false
+  let behind = false
+  let conflicts = false
+  let dirty = false
+  let untracked = false
 
   for (const line of stdout.split('\n')) {
     if (line.startsWith('# branch.head ')) {
@@ -56,27 +66,23 @@ export function parsePorcelain(stdout: string): Porcelain {
     } else if (line.startsWith('# branch.ab ')) {
       const match = line.match(/\+(\d+) -(\d+)/)
       if (match) {
-        ahead = parseInt(match[1], 10)
-        behind = parseInt(match[2], 10)
+        ahead = parseInt(match[1], 10) > 0
+        behind = parseInt(match[2], 10) > 0
       }
     } else if (line.startsWith('u ')) {
       // Unmerged (conflict) entry
-      conflicts++
+      conflicts = true
     } else if (line.startsWith('1 ') || line.startsWith('2 ')) {
-      // Changed entry: "1 XY ..." or "2 XY ..."
+      // Changed entry: "1 XY ..." or "2 XY ...", where XY is staged/unstaged.
+      // Either half means the tracked file differs from HEAD.
       const xy = line.split(' ')[1]
-      if (xy && xy.length >= 2) {
-        const x = xy[0] // staged
-        const y = xy[1] // unstaged
-        if (x !== '.') staged++
-        if (y !== '.') unstaged++
-      }
+      if (xy && xy.length >= 2 && (xy[0] !== '.' || xy[1] !== '.')) dirty = true
     } else if (line.startsWith('? ')) {
-      untracked++
+      untracked = true
     }
   }
 
-  return { branch, upstream, ahead, behind, conflicts, staged, unstaged, untracked }
+  return { branch, upstream, ahead, behind, conflicts, dirty, untracked }
 }
 
 /** Resolve a path that may start with `~`. */
@@ -95,6 +101,13 @@ export function expandTilde(p: string): string {
 export interface RepoProbeDeps {
   /** Run git in `cwd`, resolving to stdout. Rejects if git does. */
   git(cwd: string, args: string[]): Promise<string>
+  /**
+   * Run a git command that contacts a remote. Separate from `git` because it is
+   * a network call: it gets a longer timeout, and it is pinned so it can never
+   * stop and wait for a password — a background poll that blocks on a
+   * credential prompt no one can see would hang until the timeout every minute.
+   */
+  gitRemote(cwd: string, args: string[]): Promise<string>
   /** A path's modification time in ms, or null if it does not exist. */
   mtimeMs(path: string): Promise<number | null>
 }
@@ -102,6 +115,20 @@ export interface RepoProbeDeps {
 export const REAL_REPO_PROBE_DEPS: RepoProbeDeps = {
   async git(cwd, args) {
     return (await execFileAsync('git', args, { cwd, timeout: EXEC_TIMEOUT_MS })).stdout
+  },
+  async gitRemote(cwd, args) {
+    return (await execFileAsync('git', args, {
+      cwd,
+      timeout: REMOTE_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        // Fail rather than ask. Both halves matter: the first stops git's own
+        // username/password prompt, the second stops ssh asking for a key
+        // passphrase or to confirm an unknown host.
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND ?? 'ssh'} -o BatchMode=yes`,
+      },
+    })).stdout
   },
   async mtimeMs(path) {
     try {
@@ -245,6 +272,18 @@ export class RepoProbe {
   private factsRemote: string | null = null
   /** False once `git status` has told us this directory is not a repository. */
   private isRepo = true
+  /** The upstream `status()` last reported, e.g. `origin/main`. */
+  private upstream: string | null = null
+  /** The commit the remote had for our upstream when we last asked it. */
+  private remoteHead: string | null = null
+  /** Whether `remoteHead` names a commit this checkout does not have. */
+  private behindRemote = false
+  /**
+   * Whether the last `status()` reported anything to pull, from either source.
+   * This — not `behindRemote` alone — is what the badge shows, and so what
+   * decides whether asking the remote again could tell us anything.
+   */
+  private behindAnySource = false
 
   constructor(cwd: string, deps: RepoProbeDeps = REAL_REPO_PROBE_DEPS) {
     this.cwd = expandTilde(cwd)
@@ -291,6 +330,7 @@ export class RepoProbe {
     this.isRepo = true
 
     const porcelain = parsePorcelain(statusOut)
+    this.upstream = porcelain.upstream
     // The remote the facts are read against: the one this branch tracks if it
     // tracks anything, else the conventional `origin`.
     const remote = porcelain.upstream?.split('/')[0] ?? 'origin'
@@ -299,10 +339,72 @@ export class RepoProbe {
     if (this.facts === null || remote !== this.factsRemote || fingerprint !== this.lastFingerprint) {
       this.facts = await this.readFacts(remote)
       this.factsRemote = remote
+      // The repository moved, which is the only way a commit we were missing
+      // can have arrived. Re-asking locally is what clears the badge after a
+      // pull, and it costs nothing next to the walk we just did.
+      if (this.remoteHead !== null) {
+        this.behindRemote = !(await this.haveCommit(this.remoteHead))
+      }
     }
     this.lastFingerprint = fingerprint
 
-    return { ...porcelain, ...this.facts }
+    // `git status` only knows what the last fetch told it, so it reports the
+    // remote as of whenever that was. Our own check is the fresher of the two,
+    // and either one seeing something is enough to light the badge.
+    this.behindAnySource = porcelain.behind || this.behindRemote
+    return { ...porcelain, ...this.facts, behind: this.behindAnySource }
+  }
+
+  /**
+   * Ask the remote whether it has anything this checkout does not, and report
+   * whether the answer changed.
+   *
+   * This is `ls-remote` rather than `fetch` on purpose. All the card shows is
+   * whether something is waiting, and `ls-remote` answers exactly that for a
+   * fraction of the cost — on a large monorepo 1.3s against 9.5s — without
+   * writing a single byte into the repository, so it can never take a lock a
+   * terminal's own `git` is waiting on.
+   *
+   * Once the answer is yes it stops asking. The badge is already lit and no
+   * further news can change it; `status()` clears it again when a pull lands.
+   */
+  async checkRemote(): Promise<boolean> {
+    if (!this.isRepo || this.behindAnySource || this.upstream === null) return false
+
+    const slash = this.upstream.indexOf('/')
+    if (slash <= 0) return false
+    const remote = this.upstream.slice(0, slash)
+    const branch = this.upstream.slice(slash + 1)
+
+    let head: string | null
+    try {
+      // `--heads <branch>` is matched by the server under protocol v2, so a repo
+      // with thousands of refs still answers with one line.
+      const stdout = await this.deps.gitRemote(this.cwd, ['ls-remote', '--heads', remote, branch])
+      head = stdout.split('\n').find((line) => line.trim() !== '')?.split('\t')[0]?.trim() ?? null
+    } catch {
+      // Offline, no credentials, or the remote is gone. Say nothing rather than
+      // claim the repo is up to date.
+      return false
+    }
+    if (head === null || !/^[0-9a-f]{40}$/.test(head)) return false
+
+    this.remoteHead = head
+    const behind = !(await this.haveCommit(head))
+    if (behind === this.behindRemote) return false
+    this.behindRemote = behind
+    this.behindAnySource ||= behind
+    return true
+  }
+
+  /** Whether this checkout already has the commit the remote is pointing at. */
+  private async haveCommit(sha: string): Promise<boolean> {
+    try {
+      await this.git(['cat-file', '-e', `${sha}^{commit}`])
+      return true
+    } catch {
+      return false
+    }
   }
 
   /** Drop every cached answer, so the next `status()` re-reads the repo whole. */
@@ -312,6 +414,10 @@ export class RepoProbe {
     this.facts = null
     this.factsRemote = null
     this.isRepo = true
+    this.upstream = null
+    this.remoteHead = null
+    this.behindRemote = false
+    this.behindAnySource = false
   }
 
   /**

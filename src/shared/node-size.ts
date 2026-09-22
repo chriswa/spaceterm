@@ -1,3 +1,5 @@
+import type { GitStatus } from './state'
+import { formatGitStatusLine } from './git-status'
 // Shared size constants and computation used by both client and server.
 
 export const DEFAULT_COLS = 160
@@ -275,7 +277,7 @@ export function resizeDraftSize(
 
 export type NodeLike =
   | { type: 'terminal'; cols: number; rows: number }
-  | { type: 'directory'; cwd: string; gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null }
+  | { type: 'directory'; cwd: string; gitStatus?: GitStatus | null }
   | { type: 'file' }
   | { type: 'title'; text: string }
   | { type: 'markdown'; width: number; height: number }
@@ -283,23 +285,17 @@ export type NodeLike =
   | { type: 'meta-doc'; width: number; height: number }
 
 /** Compute the auto-scaled folder width for a directory node from its text content. */
-export function directoryFolderWidth(cwd: string, gitStatus?: { branch: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number } | null): number {
+export function directoryFolderWidth(cwd: string, gitStatus?: GitStatus | null): number {
   const cwdWidth = cwd.length * DIR_CWD_CHAR_WIDTH
 
   let gitWidth = 0
   if (gitStatus === null) {
     gitWidth = 'not git controlled'.length * DIR_GIT_CHAR_WIDTH
   } else if (gitStatus) {
-    // Mirror formatGitStatus: "branch ⇡N ⇣N +N !N ?N =N (XXm old)"
-    const parts: string[] = [gitStatus.branch ?? 'detached']
-    if (gitStatus.ahead > 0) parts.push(`x${gitStatus.ahead}`)    // ⇡ = 1 char in monospace
-    if (gitStatus.behind > 0) parts.push(`x${gitStatus.behind}`)
-    if (gitStatus.staged > 0) parts.push(`+${gitStatus.staged}`)
-    if (gitStatus.unstaged > 0) parts.push(`!${gitStatus.unstaged}`)
-    if (gitStatus.untracked > 0) parts.push(`?${gitStatus.untracked}`)
-    if (gitStatus.conflicts > 0) parts.push(`=${gitStatus.conflicts}`)
-    // Fetch age: worst case is "(never fetched)" = 15 chars
-    const totalLen = parts.join(' ').length + 1 + 15
+    // The line the card actually draws, plus the fetch age appended after it,
+    // whose longest form is "(never fetched)". Every mark is one monospace
+    // column, so the string's length is the column count.
+    const totalLen = formatGitStatusLine(gitStatus).length + 1 + '(never fetched)'.length
     gitWidth = totalLen * DIR_GIT_CHAR_WIDTH
   }
 

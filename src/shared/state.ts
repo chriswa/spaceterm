@@ -226,12 +226,16 @@ export interface GitStatus {
    * was never pushed" from "this repo is local by design".
    */
   hasRemote: boolean
-  ahead: number
-  behind: number
-  conflicts: number
-  staged: number               // total staged changes
-  unstaged: number             // total unstaged modifications + deletions
-  untracked: number
+  /**
+   * These are yes/no rather than counts on purpose. What a directory node has
+   * to answer is "does this need my attention", and a number never changed that
+   * answer — it only made the card churn every time a build wrote a file.
+   */
+  ahead: boolean               // commits here the upstream does not have
+  behind: boolean              // commits on the remote this checkout does not have
+  conflicts: boolean
+  dirty: boolean               // tracked files differ from HEAD, staged or not
+  untracked: boolean
   lastFetchTimestamp: number | null  // epoch ms from FETCH_HEAD mtime
 }
 

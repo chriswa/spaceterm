@@ -10,7 +10,7 @@ import type { GitStatus } from './state'
 export type GitBadgeKind =
   /** HEAD is somewhere other than the repo's default branch. */
   | 'off-default'
-  /** The upstream has commits this checkout does not, as of the last fetch. */
+  /** The remote has commits this checkout does not. */
   | 'behind'
   /** This checkout has commits the remote does not — or no remote branch at all. */
   | 'ahead'
@@ -56,7 +56,7 @@ export function isOffDefaultBranch(gs: GitStatus): boolean {
  * permanent arrow.
  */
 export function hasUnpushedWork(gs: GitStatus): boolean {
-  if (gs.ahead > 0) return true
+  if (gs.ahead) return true
   return gs.hasRemote && gs.branch !== null && gs.upstream === null
 }
 
@@ -69,8 +69,7 @@ function offDefaultLabel(gs: GitStatus): string {
 
 /** Long-form phrasing for the `ahead` badge — the two cases read differently. */
 function aheadLabel(gs: GitStatus): string {
-  if (gs.ahead > 0) return `${gs.ahead} commit${gs.ahead === 1 ? '' : 's'} to push`
-  return 'branch has never been pushed'
+  return gs.ahead ? 'commits to push' : 'branch has never been pushed'
 }
 
 /**
@@ -80,16 +79,40 @@ function aheadLabel(gs: GitStatus): string {
 export function gitBadges(gs: GitStatus): GitBadge[] {
   const badges: GitBadge[] = []
   if (isOffDefaultBranch(gs)) badges.push({ kind: 'off-default', label: offDefaultLabel(gs) })
-  if (gs.behind > 0) {
-    badges.push({ kind: 'behind', label: `${gs.behind} commit${gs.behind === 1 ? '' : 's'} to pull` })
-  }
+  if (gs.behind) badges.push({ kind: 'behind', label: 'commits to pull' })
   if (hasUnpushedWork(gs)) badges.push({ kind: 'ahead', label: aheadLabel(gs) })
   // Staged and unstaged share one badge: both mean tracked files differ from
   // HEAD, and `git add` should not make a dirty tree look clean.
-  const dirty = gs.staged + gs.unstaged
-  if (dirty > 0) badges.push({ kind: 'dirty', label: `${dirty} uncommitted change${dirty === 1 ? '' : 's'}` })
-  if (gs.untracked > 0) {
-    badges.push({ kind: 'untracked', label: `${gs.untracked} untracked file${gs.untracked === 1 ? '' : 's'}` })
-  }
+  if (gs.dirty) badges.push({ kind: 'dirty', label: 'uncommitted changes' })
+  if (gs.untracked) badges.push({ kind: 'untracked', label: 'untracked files' })
   return badges
+}
+
+/**
+ * The marks the status line puts after the branch name, in badge order.
+ *
+ * One character each, so a caller sizing a monospace line can count them
+ * directly rather than guessing.
+ */
+const STATUS_MARKS: Array<{ mark: string; applies: (gs: GitStatus) => boolean }> = [
+  { mark: '⇡', applies: hasUnpushedWork },
+  { mark: '⇣', applies: (gs) => gs.behind },
+  { mark: '!', applies: (gs) => gs.dirty },
+  { mark: '?', applies: (gs) => gs.untracked },
+  { mark: '=', applies: (gs) => gs.conflicts },
+]
+
+/**
+ * The one-line summary a directory node shows beside its folder: the branch,
+ * then a mark for each thing that wants attention.
+ *
+ * Defined here rather than in the card because the card is not the only caller
+ * — the folder is sized from this line's length before it is ever rendered, and
+ * a width computed from a different format than the one drawn is a folder that
+ * clips its own text.
+ */
+export function formatGitStatusLine(gs: GitStatus): string {
+  const marks = STATUS_MARKS.filter(({ applies }) => applies(gs)).map(({ mark }) => mark).join('')
+  const branch = gs.branch ?? 'detached'
+  return marks === '' ? branch : `${branch} ${marks}`
 }
