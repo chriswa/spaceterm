@@ -36,7 +36,7 @@ import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { labelMaskShape, layOutElapsedLabel, layOutNodeLabel, type NodeLabel } from './lib/node-label'
+import { labelMaskShape, layOutNodeLabel, layOutStatusLabel, type NodeLabel } from './lib/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
@@ -241,23 +241,24 @@ export function App() {
   }, [nodeList, fileContents])
 
   /**
-   * "Quiet for how long" captions under the agent cards.
+   * Status captions under the agent cards — a prompt-cache countdown while one
+   * is running, otherwise how long ago the agent last spoke.
    *
    * Split from the name captions rather than laid out in the same pass because
    * only these depend on the clock: keeping them apart means a tick re-measures
-   * the handful of elapsed boxes instead of re-wrapping every name on the
-   * canvas to arrive at the identical answer.
+   * the handful of status boxes instead of re-wrapping every name on the canvas
+   * to arrive at the identical answer.
    */
-  const elapsedLabels = useMemo(() => {
+  const statusLabels = useMemo(() => {
     const laidOut: NodeLabel[] = []
     for (const node of nodeList) {
-      const label = layOutElapsedLabel(node, coarseNow)
+      const label = layOutStatusLabel(node, coarseNow)
       if (label) laidOut.push(label)
     }
     return laidOut
   }, [nodeList, coarseNow])
 
-  const nodeLabels = useMemo(() => [...nameLabels, ...elapsedLabels], [nameLabels, elapsedLabels])
+  const nodeLabels = useMemo(() => [...nameLabels, ...statusLabels], [nameLabels, statusLabels])
 
   /**
    * Where the edges must be painted back out.

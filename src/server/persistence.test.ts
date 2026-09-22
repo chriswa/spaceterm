@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { StatePersister, serializeState } from './persistence'
+import { StatePersister, serializeState, EPHEMERAL_STATE_FIELDS } from './persistence'
 import { CURRENT_STATE_VERSION } from './state-migrations'
 import { FakePersistenceIO as FakeIO } from './testing/fake-persistence'
 import type { ServerState } from '../shared/state'
@@ -230,19 +230,21 @@ describe('StatePersister.load', () => {
 })
 
 describe('serializeState', () => {
-  it('strips ephemeral gitStatus at any depth', () => {
+  it('strips every ephemeral field at any depth', () => {
+    // Driven by the exported list rather than a hand-written one, so a field
+    // added there is covered here without anyone remembering to add a case.
+    // Which fields belong on that list is asserted in persistence-roundtrip.
+    const ephemeral = Object.fromEntries(EPHEMERAL_STATE_FIELDS.map((f) => [f, 'set']))
     const state = makeState({
       nodes: {
-        a: {
-          id: 'a',
-          type: 'directory',
-          gitStatus: { branch: 'main' }
-        } as never
+        a: { id: 'a', type: 'directory', ...ephemeral } as never
       }
     })
 
     const parsed = JSON.parse(serializeState(state))
-    expect(parsed.nodes.a.gitStatus).toBeUndefined()
+    for (const field of EPHEMERAL_STATE_FIELDS) {
+      expect(parsed.nodes.a[field], `${field} survived serialisation`).toBeUndefined()
+    }
     expect(parsed.nodes.a.id).toBe('a')
   })
 })

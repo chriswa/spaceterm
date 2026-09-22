@@ -127,6 +127,33 @@ export interface TerminalNodeData extends BaseNodeData {
    * on load, so a surface that has a past acquires the value at startup.
    */
   lastAgentActivityAt?: number
+  /**
+   * epoch ms — when this surface's Anthropic prompt cache goes cold, or absent
+   * when nothing is known to be cached.
+   *
+   * Claude only. It is read out of the transcript, where every assistant entry
+   * states the cache TTL it was written at, so this is a reading rather than an
+   * estimate. See `readCacheWarmth` for how the anchor and the TTL are picked.
+   *
+   * A value in the past is not wrong, just spent: the cache has expired and the
+   * caption stops showing a countdown. Ephemeral, because it describes a cache
+   * living in Anthropic's infrastructure rather than anything on this machine —
+   * it is re-derived when the transcript is backfilled at startup.
+   */
+  cacheWarmUntil?: number
+  /**
+   * How many tokens the warm prompt cache holds — the context that would have
+   * to be paid for again if it went cold, and so what makes one expiring
+   * session worth more attention than another.
+   *
+   * Set and cleared with {@link cacheWarmUntil}; ephemeral for the same reason.
+   */
+  cacheWarmTokens?: number
+  /**
+   * True when {@link cacheWarmUntil} is an estimate rather than a reading, so
+   * the caption can mark it. See `CacheWarmth.estimated` for who sets it.
+   */
+  cacheWarmEstimated?: boolean
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean

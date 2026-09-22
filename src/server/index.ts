@@ -34,6 +34,10 @@ import { computePlacement } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
+import { CacheWarmthTracker } from './cache-warmth'
+import { readClaudeCacheTouch } from './claude-cache-warmth'
+import { CodexCacheReader } from './codex-cache-warmth'
+import { cursorCacheWarmth } from './cursor-cache-warmth'
 import { SessionFileWatcher } from './session-file-watcher'
 import { readRestartFlag, clearRestartFlag, watchRestartFlag } from './restart-flag'
 import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
@@ -2397,6 +2401,10 @@ async function startServer(): Promise<void> {
     broadcastClaudeStateDecisionTime: (id, ts) => stateManager.updateClaudeStateDecisionTime(id, ts),
   })
 
+  const claudeCacheWarmth = new CacheWarmthTracker((_surfaceId, entry) => readClaudeCacheTouch(entry))
+  const codexCacheReader = new CodexCacheReader()
+  const codexCacheWarmth = new CacheWarmthTracker(codexCacheReader.read)
+
   // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + plan cache + state routing
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
     publishSessionLineCount(surfaceId, totalLineCount)
@@ -2414,6 +2422,12 @@ async function startServer(): Promise<void> {
     if (newestEntryTime > 0) {
       stateManager.recordAgentActivity(surfaceId, newestEntryTime, { reset: isBackfill })
     }
+
+    // How long the surface's prompt cache has left, and how much is riding on
+    // it. Read from the same entries rather than timed here: each one states
+    // the TTL its request was cached at.
+    const warmth = claudeCacheWarmth.observe(surfaceId, newEntries, { reset: isBackfill })
+    if (warmth) stateManager.setCacheWarmth(surfaceId, warmth)
 
     // Plan-cache tracking: scan assistant entries for plan file writes and ExitPlanMode.
     // This runs for both backfill and live entries (plan file paths need to be ready
@@ -2468,6 +2482,11 @@ async function startServer(): Promise<void> {
       stateManager.recordAgentActivity(surfaceId, newestEntryTime, { reset: isBackfill })
     }
 
+    // Codex states no cache lifetime, so `CodexCacheReader` supplies OpenAI's
+    // documented one for the model the rollout names.
+    const warmth = codexCacheWarmth.observe(surfaceId, newEntries, { reset: isBackfill })
+    if (warmth) stateManager.setCacheWarmth(surfaceId, warmth)
+
     for (const entry of newEntries) {
       if (entry.type !== 'event_msg') continue
       const payload = entry.payload as Record<string, unknown> | undefined
@@ -2489,7 +2508,12 @@ async function startServer(): Promise<void> {
     // genuine activity now — stamp it Date.now(); skip backfill, which we can't
     // place in time. (Cursor's hooks already feed the historical picture.)
     if (!isBackfill && newEntries.length > 0) {
-      stateManager.recordAgentActivity(surfaceId, Date.now())
+      const now = Date.now()
+      stateManager.recordAgentActivity(surfaceId, now)
+      // Cursor reports no cache counters and no model, so the deadline is the
+      // shortest lifetime it could have — see `cursor-cache-warmth.ts` — and it
+      // is marked estimated, with no size to go with it.
+      stateManager.setCacheWarmth(surfaceId, cursorCacheWarmth(now))
     }
     claudeStateMachine.handleCursorTranscriptEntries(surfaceId, newEntries)
   })

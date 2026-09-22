@@ -75,14 +75,16 @@ export const REAL_PERSISTENCE_IO: PersistenceIO = {
  *
  * These are re-derived at startup and are worse than useless on disk: a stale
  * `gitStatus` shows the branch and dirty count from whenever the app last quit,
- * which reads as current until the first poll replaces it seconds later.
+ * which reads as current until the first poll replaces it seconds later, and a
+ * `cacheWarmUntil` describes a prompt cache living in Anthropic's
+ * infrastructure, which nothing on this machine outlived.
  *
  * Named and exported rather than inlined in the replacer so the round-trip test
  * can assert this exact list — a field added here without a reason, or a field
  * that stops being ephemeral, both show up as a failing test instead of as a
  * document that quietly loses data.
  */
-export const EPHEMERAL_STATE_FIELDS = ['gitStatus'] as const
+export const EPHEMERAL_STATE_FIELDS = ['gitStatus', 'cacheWarmUntil', 'cacheWarmTokens', 'cacheWarmEstimated'] as const
 
 const EPHEMERAL_FIELD_SET: ReadonlySet<string> = new Set(EPHEMERAL_STATE_FIELDS)
 

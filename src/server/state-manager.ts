@@ -18,6 +18,7 @@ import type {
 } from '../shared/state'
 import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
+import type { CacheWarmth } from './cache-warmth'
 import { StatePersister } from './persistence'
 import { serverLog } from './server-log'
 import { abbreviateCwd, scanCwdMismatches, scanDescendantCwdMismatches } from './cwd-alerts'
@@ -1597,6 +1598,37 @@ export class StateManager {
     else if (agent === 'quiet') node.lastAgentActivityAt = timestamp
     if (interacted === 'broadcast' || agent === 'broadcast') this.applyPatch(node, patch)
     this.schedulePersist()
+  }
+
+  /**
+   * Record when this surface's prompt cache goes cold, how many tokens it holds
+   * when that is known, and whether the deadline was read or estimated.
+   *
+   * Monotonic: every request against a live cache refreshes it, so the deadline
+   * only moves forward, and an out-of-order transcript entry must not drag it
+   * back. A cache that genuinely expires does so by the clock passing the
+   * deadline, which needs no signal here.
+   *
+   * Broadcast without a persist: the field is in `EPHEMERAL_STATE_FIELDS`, so
+   * scheduling a save would write the document out again to store nothing.
+   */
+  setCacheWarmth(ptySessionId: PtySessionId, warmth: CacheWarmth): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node || (node.cacheWarmUntil !== undefined && warmth.warmUntil <= node.cacheWarmUntil)) return
+    const patch: Partial<TerminalNodeData> = { cacheWarmUntil: warmth.warmUntil }
+    // The size travels with the deadline it describes, and only when known —
+    // Cursor reports none, and overwriting a real count with `undefined` would
+    // lose the one number that ranks an expiring session against its neighbours.
+    if (warmth.tokens !== undefined && warmth.tokens !== node.cacheWarmTokens) {
+      patch.cacheWarmTokens = warmth.tokens
+    }
+    // Normalised against the absent case, so a surface whose readings are
+    // measured never carries the field at all rather than carrying `false`.
+    const estimated = warmth.estimated === true
+    if (estimated !== (node.cacheWarmEstimated === true)) {
+      patch.cacheWarmEstimated = estimated || undefined
+    }
+    this.applyPatch(node, patch)
   }
 
   // --- Directory operations ---

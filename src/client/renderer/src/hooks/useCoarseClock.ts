@@ -10,9 +10,11 @@ import { ELAPSED_TICK_MS } from '../lib/elapsed-label'
  * edge mask built out of those — recomputes once per step instead of on every
  * render that happens to land in between.
  *
- * The step is far coarser than a second because the captions never show
- * seconds. A per-second clock would re-lay every label sixty times a minute to
- * produce the same text fifty-nine of them.
+ * The step is a second, which is the finest unit the captions show: a cache
+ * countdown's last minute ticks down one second at a time. Quantising is what
+ * keeps that affordable — the elapsed captions are laid out in their own memo,
+ * so a tick re-measures those few boxes and leaves every name on the canvas
+ * alone.
  */
 export function useCoarseClock(): number {
   const [now, setNow] = useState(() => Math.floor(Date.now() / ELAPSED_TICK_MS) * ELAPSED_TICK_MS)

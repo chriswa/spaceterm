@@ -1,5 +1,6 @@
 import { CARD_AGENT_MARK_HEIGHT, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './constants'
-import { formatElapsedShort } from './elapsed-label'
+import { formatCountdownShort, formatElapsedShort } from './elapsed-label'
+import { formatTokensShort } from './token-count'
 import { measureCard } from '../../../../shared/card-types'
 import type { NodeData } from '../../../../shared/state'
 import type { NodeId } from '../../../../shared/ids'
@@ -66,7 +67,9 @@ export function nodeLabelText(data: NodeData, markdownContent?: string): string 
  * Two thirds for an agent surface's label, so the two read as different kinds
  * of thing at a glance: a title node is a heading someone placed on the canvas,
  * a label is a caption the canvas derived. Both are bold Menlo at label scale,
- * and size is what tells them apart.
+ * and size is what tells them apart. A live prompt-cache countdown borrows this
+ * size too — see `layOutStatusLabel` for why that one is drawn to be read from
+ * a distance where the age below a quiet card is not.
  *
  * A markdown node's label is half that again. A document's h1 is a heading
  * inside something you can already read, where an agent surface's label is the
@@ -199,7 +202,7 @@ export function wrapLabel(text: string): string[] {
  * Which caption this is. A node can supply one of each, so this is half of a
  * label's identity — the other half is `nodeId`, and neither is unique alone.
  */
-export type NodeLabelKind = 'name' | 'elapsed'
+export type NodeLabelKind = 'name' | 'status'
 
 /** A laid-out label, ready to draw. */
 export interface NodeLabel {
@@ -307,44 +310,86 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
  * this caption is a reading of the card rather than a caption floating near it,
  * so it wants to sit close enough to be read as part of it.
  */
-export function elapsedCardGap(scale: number): number {
+export function statusCardGap(scale: number): number {
   return (TITLE_LINE_HEIGHT - TITLE_HEIGHT / 2) * scale
 }
 
 /**
- * Lay out the "quiet for how long" caption under an agent surface's card.
+ * Lay out the status caption under an agent surface's card.
  *
  * Below rather than above because the name is already above: the two captions
  * answer different questions — which surface is this, and is it still moving —
  * and stacking them would make the second look like a second line of the first.
- * Drawn at the markdown label's size, the canvas's smallest, because it is a
- * reading of the card rather than a name for it.
  *
- * Reads `lastAgentActivityAt` and not `lastInteractedAt`, which is the whole
- * point of that field existing: the latter also advances on the human's
+ * One caption, two readings, and which one it shows is which one is worth
+ * having. While the prompt cache is warm it counts that down and says how much
+ * context is riding on it — `22s (185k)` — and says nothing about age, because
+ * the deadline is the thing with a decision attached: go back now and that
+ * context is still cheap. The two halves answer the halves of that decision,
+ * urgency and stake, and neither ranks surfaces on its own — 22 seconds on a
+ * 20k session is not worth crossing the room for. Once the cache is cold the
+ * decision is gone, and what is left to know is how long ago this was —
+ * `14m cold`.
+ *
+ * Neither reading is labelled beyond that word. A countdown needs no name on
+ * it: it is set in the larger of the two sizes, it carries a token count no age
+ * ever does, and the only other thing a caption can say is `cold`. Spelling out
+ * what the big number measures would spend a third of the line telling the
+ * reader what its absence from the other case already tells them.
+ *
+ * The size is dropped when the agent does not report one, and a deadline the
+ * server could only estimate is marked `4m?`. Cursor is both cases at once:
+ * it reports no token counts, and will not say which provider served a request,
+ * so its lifetime is a floor across all of them rather than a reading. The
+ * question mark is what keeps its cards from being compared against Claude's as
+ * though the two numbers were equally good.
+ *
+ * The countdown is drawn at the name caption's size and the age at the canvas's
+ * smallest, so the two are told apart before either is read: a card counting
+ * down is legible from across the canvas, and a row of quiet ones stays quiet.
+ * That difference is also what lets the countdown go unlabelled.
+ * Both are one line — `labelBox` measures the longest line, and neither string
+ * is long enough to want wrapping.
+ *
+ * The age reads `lastAgentActivityAt` and not `lastInteractedAt`, which is the
+ * whole point of that field existing: the latter also advances on the human's
  * keystrokes, so typing into a stalled surface would reset its caption to `0m`
  * and make it look alive. This caption is a reading of the agent.
  *
- * Returns `null` for a non-agent surface, and for one that has never been heard
- * from — no transcript, no hooks. A surface with a past acquires the value when
- * the server backfills its transcript at startup, so an absent one means
+ * Returns `null` for a non-agent surface, and for one nothing is known about —
+ * no transcript, no hooks. A surface with a past acquires its timestamp when
+ * the server backfills its transcript at startup, so nothing known means
  * nothing has been said yet, and no caption beats an invented number.
  */
-export function layOutElapsedLabel(node: NodeData, now: number): NodeLabel | null {
+export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null {
   if (node.type !== 'terminal') return null
-  const since = node.lastAgentActivityAt
-  if (since === undefined) return null
 
-  const lines = [formatElapsedShort(now - since)]
-  const textScale = MARKDOWN_LABEL_TEXT_SCALE
+  const warmFor = node.cacheWarmUntil === undefined ? 0 : node.cacheWarmUntil - now
+  const since = node.lastAgentActivityAt
+
+  let text: string
+  let textScale: number
+  if (warmFor > 0) {
+    const size = node.cacheWarmTokens
+    const countdown = `${formatCountdownShort(warmFor)}${node.cacheWarmEstimated ? '?' : ''}`
+    text = size === undefined ? countdown : `${countdown} (${formatTokensShort(size)})`
+    textScale = LABEL_TEXT_SCALE
+  } else if (since !== undefined) {
+    text = `${formatElapsedShort(now - since)} cold`
+    textScale = MARKDOWN_LABEL_TEXT_SCALE
+  } else {
+    return null
+  }
+
+  const lines = [text]
   const box = labelBox(lines, textScale)
   return {
-    kind: 'elapsed',
+    kind: 'status',
     nodeId: node.id,
     lines,
     textScale,
     x: node.x,
-    y: node.y + measureCard(node).height / 2 + elapsedCardGap(textScale) + box.height / 2,
+    y: node.y + measureCard(node).height / 2 + statusCardGap(textScale) + box.height / 2,
     anchorX: node.x,
     anchorY: node.y,
     ...box

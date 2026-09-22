@@ -1228,6 +1228,74 @@ describe('patched fields are broadcast exactly as applied', () => {
     expect((h.sm.getNode(nid('t1')) as TerminalNodeData).lastInteractedAt).toBe(60_000)
   })
 
+  it('setCacheWarmth broadcasts the deadline and only ever moves it forward', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.updates.length = 0
+
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_600_000, tokens: 185_000 })
+    expect(patchedFields(h, nid('t1'))).toEqual([{ cacheWarmUntil: 3_600_000, cacheWarmTokens: 185_000 }])
+
+    // Every request against a live cache refreshes it, so the deadline climbs;
+    // an out-of-order transcript entry must not drag it back.
+    h.updates.length = 0
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_000_000, tokens: 999 })
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_600_000, tokens: 999 })
+    expect(h.updates).toHaveLength(0)
+
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_900_000, tokens: 190_000 })
+    expect(patchedFields(h, nid('t1'))).toEqual([{ cacheWarmUntil: 3_900_000, cacheWarmTokens: 190_000 }])
+  })
+
+  it('setCacheWarmth leaves a known size alone when the agent reports none', () => {
+    // Cursor reports no counters at all, and so does a Claude entry that only
+    // refreshed the cache; overwriting with undefined would lose the one number
+    // that ranks an expiring session against its neighbours.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_600_000, tokens: 185_000 })
+    h.updates.length = 0
+
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_900_000 })
+
+    expect(patchedFields(h, nid('t1'))).toEqual([{ cacheWarmUntil: 3_900_000 }])
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).cacheWarmTokens).toBe(185_000)
+  })
+
+  it('setCacheWarmth marks an estimated deadline, and leaves a read one unmarked', () => {
+    // Only Cursor estimates. A surface whose readings are measured carries no
+    // field at all rather than carrying `false`.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    createTerminal(h.sm, 't2')
+
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_600_000, estimated: true })
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).cacheWarmEstimated).toBe(true)
+
+    h.sm.setCacheWarmth(pid('t2'), { warmUntil: 3_600_000, tokens: 185_000 })
+    expect((h.sm.getNode(nid('t2')) as TerminalNodeData).cacheWarmEstimated).toBeUndefined()
+    expect(patchedFields(h, nid('t2'))).toEqual([{ cacheWarmUntil: 3_600_000, cacheWarmTokens: 185_000 }])
+  })
+
+  it('setCacheWarmth repeats an unchanged size rather than re-broadcasting it', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_600_000, tokens: 185_000 })
+    h.updates.length = 0
+
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_900_000, tokens: 185_000 })
+
+    expect(patchedFields(h, nid('t1'))).toEqual([{ cacheWarmUntil: 3_900_000 }])
+  })
+
+  it('leaves cacheWarmUntil unset on a surface with no cache reading', () => {
+    // Codex and Cursor never write it; absent means "no countdown", not "cold".
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).cacheWarmUntil).toBeUndefined()
+    expect((h.sm.getNode(nid('t1')) as TerminalNodeData).cacheWarmTokens).toBeUndefined()
+  })
+
   it('reorderCrabs broadcasts one sortOrder per moved terminal', () => {
     const h = harness()
     createTerminal(h.sm, 't1')
