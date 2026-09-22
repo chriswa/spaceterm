@@ -6,6 +6,8 @@ import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
 import { ExtraCliArgsBody } from './ExtraCliArgsBody'
+import { RootCwdBody } from './RootCwdBody'
+import { RootCwdGlyph } from './icons/RootCwdGlyph'
 import { AlertsBody } from './AlertsBody'
 import { useNodeStore } from '../stores/nodeStore'
 import { sendSetAlertsReadTimestamp } from '../lib/server-sync'
@@ -45,6 +47,12 @@ export interface NodeActionBarProps {
    * that *could* have skills and does not is worth being able to see.
    */
   agentMeta?: { available: boolean; open: boolean; onToggle: (id: NodeId) => void }
+  /**
+   * The root node's default working directory — the root only. `value` is
+   * absent when none is set, which is a state the button has to show rather
+   * than hide: "nothing yet" is exactly when you want to set one.
+   */
+  rootCwd?: { value?: string; onChange: (cwd: string) => void }
   showClose?: boolean
   /**
    * True when archiving this node takes a whole branch with it, so the click
@@ -73,7 +81,7 @@ export function NodeActionBar({
   archivedChildren, onOpenArchiveSearch,
   onStartReparent, isReparenting,
   onStartResize, isResizing,
-  onAddNode, agentMeta, showClose, hasChildren = false, onClose,
+  onAddNode, agentMeta, rootCwd, showClose, hasChildren = false, onClose,
   variant = 'card',
   onActionInvoked,
 }: NodeActionBarProps & {
@@ -94,6 +102,9 @@ export function NodeActionBar({
   const [alertsOpen, setAlertsOpen] = useState(false)
   const alertsBtnRef = useRef<HTMLButtonElement>(null)
   const alertsBodyRef = useRef<HTMLDivElement>(null)
+  const [rootCwdOpen, setRootCwdOpen] = useState(false)
+  const rootCwdBtnRef = useRef<HTMLButtonElement>(null)
+  const rootCwdBodyRef = useRef<HTMLDivElement>(null)
   const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
   const alertsReadTimestamp = useNodeStore(s => s.nodes[nodeId]?.alertsReadTimestamp)
   const unreadCount = alerts.filter(a => a.timestamp > (alertsReadTimestamp ?? 0)).length
@@ -120,8 +131,9 @@ export function NodeActionBar({
       if (addNodeOpen) setAddNodeOpen(false)
       if (cliArgsOpen) setCliArgsOpen(false)
       if (alertsOpen) setAlertsOpen(false)
+      if (rootCwdOpen) setRootCwdOpen(false)
     }
-  }, [focused, sessionsOpen, addNodeOpen, cliArgsOpen, alertsOpen, variant])
+  }, [focused, sessionsOpen, addNodeOpen, cliArgsOpen, alertsOpen, rootCwdOpen, variant])
 
   // Dismiss sessions panel on outside click
   useEffect(() => {
@@ -176,6 +188,19 @@ export function NodeActionBar({
     return () => document.removeEventListener('mousedown', handler, { capture: true })
   }, [alertsOpen])
 
+  // Dismiss the root working-directory editor on outside click
+  useEffect(() => {
+    if (!rootCwdOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (rootCwdBodyRef.current?.contains(target)) return
+      if (rootCwdBtnRef.current?.contains(target)) return
+      setRootCwdOpen(false)
+    }
+    document.addEventListener('mousedown', handler, { capture: true })
+    return () => document.removeEventListener('mousedown', handler, { capture: true })
+  }, [rootCwdOpen])
+
   // Close color picker on outside click
   useEffect(() => {
     if (!pickerOpen) return
@@ -227,6 +252,20 @@ export function NodeActionBar({
     setAlertsOpen(false)
     setCliArgsOpen(prev => !prev)
   }, [])
+
+  const toggleRootCwd = useCallback(() => {
+    setSessionsOpen(false)
+    setAddNodeOpen(false)
+    setCliArgsOpen(false)
+    setAlertsOpen(false)
+    setRootCwdOpen(prev => !prev)
+  }, [])
+
+  const handleRootCwdSubmit = useCallback((cwd: string) => {
+    setRootCwdOpen(false)
+    rootCwd?.onChange(cwd)
+    onActionInvoked?.()
+  }, [rootCwd, onActionInvoked])
 
   const handleAddNodeSelect = useCallback((type: AddNodeType) => {
     setAddNodeOpen(false)
@@ -439,6 +478,18 @@ export function NodeActionBar({
           </svg>
         </button>
       )}
+      {rootCwd && (
+        <button
+          ref={rootCwdBtnRef}
+          className={`node-titlebar__root-cwd-btn${rootCwdOpen ? ' node-titlebar__root-cwd-btn--active' : ''}`}
+          data-tooltip={rootCwd.value ? `Default directory — ${rootCwd.value}` : 'Set the default directory'}
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); toggleRootCwd() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <RootCwdGlyph />
+        </button>
+      )}
       {onAddNode && (
         <button
           ref={addNodeBtnRef}
@@ -481,6 +532,11 @@ export function NodeActionBar({
       {cliArgsOpen && onExtraCliArgs && (
         <div className="card-shell__cli-args-body" style={popupStyle} ref={cliArgsBodyRef}>
           <ExtraCliArgsBody initialValue={extraCliArgs ?? ''} onRestart={handleCliArgsRestart} />
+        </div>
+      )}
+      {rootCwdOpen && rootCwd && (
+        <div className="card-shell__root-cwd-body" style={popupStyle} ref={rootCwdBodyRef}>
+          <RootCwdBody initialValue={rootCwd.value ?? ''} onSubmit={handleRootCwdSubmit} />
         </div>
       )}
       {alertsOpen && alerts.length > 0 && (

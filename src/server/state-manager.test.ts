@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { homedir } from 'os'
 import { StateManager, ARCHIVAL_PROTECTION_MS, type StateManagerDeps } from './state-manager'
 import { StatePersister } from './persistence'
 import { CURRENT_STATE_VERSION } from './state-migrations'
@@ -1558,5 +1559,66 @@ describe('setAlert', () => {
     const md = h.sm.createMarkdown(ROOT_NODE_ID, 0, 0, 'hi')
     h.sm.setAlert(md.id, 'launch-failed', 'boom', 1000)
     expect(h.sm.getNode(md.id)?.alerts).toHaveLength(1)
+  })
+})
+
+describe('StateManager root working directory', () => {
+  it('starts with none', () => {
+    const { sm } = harness()
+    expect(sm.getRootCwd()).toBeUndefined()
+  })
+
+  it('abbreviates a path under home, so it matches what a directory card stores', () => {
+    const { sm } = harness()
+    sm.setRootCwd(`${homedir()}/research`)
+    expect(sm.getRootCwd()).toBe('~/research')
+  })
+
+  it('keeps a path outside home as it is', () => {
+    const { sm } = harness()
+    sm.setRootCwd('/var/work')
+    expect(sm.getRootCwd()).toBe('/var/work')
+  })
+
+  it('clears on an empty string', () => {
+    const { sm } = harness()
+    sm.setRootCwd('/var/work')
+    sm.setRootCwd('')
+    expect(sm.getRootCwd()).toBeUndefined()
+  })
+
+  it('persists, so a restart starts where you left off', () => {
+    const { sm, io } = harness()
+    sm.setRootCwd('/var/work')
+    io.advance(DEBOUNCE)
+    expect(JSON.parse(io.stored!).rootCwd).toBe('/var/work')
+  })
+
+  it('restores from a persisted document', () => {
+    const { sm } = harness({ version: CURRENT_STATE_VERSION, nodes: {}, rootCwd: '~/research' })
+    expect(sm.getRootCwd()).toBe('~/research')
+  })
+
+  it('writes nothing when the value has not changed', () => {
+    const { sm, io } = harness()
+    sm.setRootCwd('/var/work')
+    io.advance(DEBOUNCE)
+    const writes = io.writes.length
+    sm.setRootCwd('/var/work')
+    io.advance(DEBOUNCE)
+    expect(io.writes.length).toBe(writes)
+  })
+
+  it('alerts a top-level agent surface that no longer sits in it', () => {
+    const { sm, updates } = harness()
+    const term = createTerminal(sm, 't1')
+    recordAgentSession(sm, 't1', 'sess-1')
+    sm.updateCwd(pid('t1'), '/elsewhere')
+    updates.length = 0
+
+    sm.setRootCwd('/var/work')
+
+    const alerted = updates.find((u) => u.nodeId === term.id && u.fields.alerts)
+    expect(alerted?.fields.alerts?.[0].type).toBe('cwd-mismatch')
   })
 })

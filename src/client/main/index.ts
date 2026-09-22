@@ -439,6 +439,10 @@ function setupIPC(): void {
     await client!.directoryCwd(nodeId, cwd)
   })
 
+  ipcMain.handle('node:set-root-cwd', async (_event, cwd: string) => {
+    await client!.setRootCwd(cwd)
+  })
+
   ipcMain.handle('node:directory-git-fetch', async (_event, nodeId: NodeId) => {
     await client!.directoryGitFetch(nodeId)
   })
@@ -793,6 +797,12 @@ function wireClientEvents(): void {
   client!.on('saved-viewports', (viewports: Record<string, { x: number; y: number; width: number; height: number }>) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('viewports:saved', viewports)
+    }
+  })
+
+  client!.on('root-cwd', (cwd: string | undefined) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('node:root-cwd', cwd)
     }
   })
 

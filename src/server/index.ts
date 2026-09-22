@@ -108,7 +108,7 @@ function gatherAncestorPrompt(nodes: Record<string, NodeData>, startNodeId: Node
       parts.push(node.content)
     }
     if (node.type === 'file' && node.filePath) {
-      parts.push(resolveFilePath(node.filePath, getAncestorCwd(nodes, node.parentId)))
+      parts.push(resolveFilePath(node.filePath, ancestorCwd(nodes, node.parentId)))
     }
   }
   // Reverse so outermost ancestors come first
@@ -219,6 +219,18 @@ const clients = new Set<ClientConnection>()
 let daemonClient: DaemonClient
 let sessionManager: SessionManager
 let stateManager: StateManager
+
+/**
+ * `getAncestorCwd` with the root node's default working directory supplied.
+ *
+ * Every cwd question asked in this file goes through here rather than calling
+ * the shared walk directly, so a surface hung straight off the root inherits
+ * `ServerState.rootCwd` wherever it is asked about — spawning, reparenting,
+ * resolving a file card's path — instead of at whichever site remembered to.
+ */
+function ancestorCwd(nodes: Record<string, NodeData>, nodeId: NodeId): string | undefined {
+  return getAncestorCwd(nodes, nodeId, stateManager.getRootCwd())
+}
 let snapshotManager: SnapshotManager
 let sessionFileWatcher: SessionFileWatcher
 let restartFlagWatcher: (() => void) | null = null
@@ -479,7 +491,7 @@ function startFileBackedWatch(node: MarkdownNodeData): void {
   const nodes = stateManager.getState().nodes
   const parent = nodes[node.parentId]
   if (parent?.type !== 'file') return
-  const path = resolveFilePath(parent.filePath, getAncestorCwd(nodes, parent.id))
+  const path = resolveFilePath(parent.filePath, ancestorCwd(nodes, parent.id))
   fileContentManager.startWatching(node.id, parent.id, path)
 }
 
@@ -1355,7 +1367,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         fileContentManager.stopWatching(msg.nodeId)
         stateManager.reparentNode(msg.nodeId, msg.newParentId)
         if (newParent?.type === 'file') {
-          const rpCwd = getAncestorCwd(stateManager.getState().nodes, newParent.id)
+          const rpCwd = ancestorCwd(stateManager.getState().nodes, newParent.id)
           const rpPath = resolveFilePath(newParent.filePath, rpCwd)
           fileContentManager.startWatching(msg.nodeId, newParent.id, rpPath)
         }
@@ -1400,7 +1412,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         if (node?.type === 'markdown' && node.fileBacked) {
           const newParent = stateManager.getNode(node.parentId)
           if (newParent?.type === 'file') {
-            const cwd = getAncestorCwd(stateManager.getState().nodes, newParent.id)
+            const cwd = ancestorCwd(stateManager.getState().nodes, newParent.id)
             const filePath = resolveFilePath(newParent.filePath, cwd)
             fileContentManager.startWatching(id, newParent.id, filePath)
           }
@@ -1624,7 +1636,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       try {
         stateManager.updateFilePath(msg.nodeId, msg.filePath)
         // Update watchers for file-backed child markdowns
-        const fpCwd = getAncestorCwd(stateManager.getState().nodes, msg.nodeId)
+        const fpCwd = ancestorCwd(stateManager.getState().nodes, msg.nodeId)
         const fpResolvedPath = resolveFilePath(msg.filePath, fpCwd)
         const allNodes = stateManager.getState().nodes
         for (const child of Object.values(allNodes)) {
@@ -1670,7 +1682,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const mdFileBacked = mdParent?.type === 'file'
       const mdNode = stateManager.createMarkdown(msg.parentId, posX, posY, undefined, mdFileBacked || undefined)
       if (mdFileBacked && mdParent.type === 'file') {
-        const mdCwd = getAncestorCwd(stateManager.getState().nodes, mdParent.id)
+        const mdCwd = ancestorCwd(stateManager.getState().nodes, mdParent.id)
         const mdResolvedPath = resolveFilePath(mdParent.filePath, mdCwd)
         fileContentManager.startWatching(mdNode.id, mdParent.id, mdResolvedPath)
       }
@@ -2022,6 +2034,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       stateManager.setSavedViewport(msg.slot, msg.bounds)
       serverLog(`[save-viewport] slot=${msg.slot} bounds=(${Math.round(msg.bounds.x)},${Math.round(msg.bounds.y)} ${Math.round(msg.bounds.width)}x${Math.round(msg.bounds.height)}) -> broadcasting to ${clients.size} clients`)
       broadcastToAll({ type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
+      break
+    }
+
+    case 'set-root-cwd': {
+      try {
+        stateManager.setRootCwd(msg.cwd)
+        broadcastToAll({ type: 'root-cwd', cwd: stateManager.getRootCwd() })
+        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      } catch (err: any) {
+        console.error(`set-root-cwd failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `set-root-cwd failed: ${err.message}` })
+      }
       break
     }
 
@@ -2669,7 +2693,7 @@ async function startServer(): Promise<void> {
     if (node.type === 'markdown' && node.fileBacked) {
       const parent = allStartupNodes[node.parentId]
       if (parent?.type === 'file') {
-        const fbCwd = getAncestorCwd(allStartupNodes, parent.id)
+        const fbCwd = ancestorCwd(allStartupNodes, parent.id)
         const fbPath = resolveFilePath(parent.filePath, fbCwd)
         fileContentManager.startWatching(node.id, parent.id, fbPath)
         console.log(`[startup] Watching file-backed markdown ${node.id.slice(0, 8)} → ${fbPath}`)
@@ -2707,6 +2731,10 @@ async function startServer(): Promise<void> {
 
     // Send the shared saved viewport slots to the new client
     send(socket, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
+
+    // Same for the root node's working directory, which the client needs before
+    // it can tell you where a top-level card is about to be created.
+    send(socket, { type: 'root-cwd', cwd: stateManager.getRootCwd() })
 
     // Availability is pushed on change, which a client that connected after the
     // last change would never have heard. Replay what is known.

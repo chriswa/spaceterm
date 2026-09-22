@@ -5,6 +5,8 @@ import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/stat
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
 import { NodeActionBar } from './NodeActionBar'
+import { RootCwdBody } from './RootCwdBody'
+import { RootCwdGlyph } from './icons/RootCwdGlyph'
 import type { NodeActionBarProps } from './NodeActionBar'
 import { nodeActionRegistry } from '../lib/action-registry'
 import { hasLiveChildren } from '../lib/tree-utils'
@@ -49,6 +51,8 @@ interface CardShellProps {
   isResizing?: boolean
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   agentMeta?: { available: boolean; open: boolean; onToggle: (id: NodeId) => void }
+  /** The root node's default working directory — see `NodeActionBarProps`. */
+  rootCwd?: { value?: string; onChange: (cwd: string) => void }
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   className?: string
@@ -67,7 +71,7 @@ export function CardShell({
   archivedChildren, onClose, onColorChange, onOpenArchiveSearch,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
-  onAddNode, agentMeta, onExtraCliArgs, extraCliArgs,
+  onAddNode, agentMeta, rootCwd, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, children
 }: CardShellProps) {
 
@@ -107,7 +111,7 @@ export function CardShell({
     archivedChildren, onOpenArchiveSearch,
     onStartReparent, isReparenting,
     onStartResize, isResizing,
-    onAddNode, agentMeta, showClose, hasChildren, onClose,
+    onAddNode, agentMeta, rootCwd, showClose, hasChildren, onClose,
   }
 
   // Register action props so FloatingToolbar can read them
@@ -118,13 +122,17 @@ export function CardShell({
   const [hiddenAddNodeOpen, setHiddenAddNodeOpen] = useState(false)
   const hiddenAddNodeBtnRef = useRef<HTMLButtonElement>(null)
   const hiddenAddNodeBodyRef = useRef<HTMLDivElement>(null)
+  const [hiddenRootCwdOpen, setHiddenRootCwdOpen] = useState(false)
+  const hiddenRootCwdBtnRef = useRef<HTMLButtonElement>(null)
+  const hiddenRootCwdBodyRef = useRef<HTMLDivElement>(null)
 
   // Close hidden-head popups when node loses focus
   useEffect(() => {
     if (!focused) {
       if (hiddenAddNodeOpen) setHiddenAddNodeOpen(false)
+      if (hiddenRootCwdOpen) setHiddenRootCwdOpen(false)
     }
-  }, [focused, hiddenAddNodeOpen])
+  }, [focused, hiddenAddNodeOpen, hiddenRootCwdOpen])
 
   // Dismiss hidden add-node on outside click
   useEffect(() => {
@@ -139,6 +147,19 @@ export function CardShell({
     return () => document.removeEventListener('mousedown', handler, { capture: true })
   }, [hiddenAddNodeOpen])
 
+  // Dismiss the hidden-head root directory editor on outside click
+  useEffect(() => {
+    if (!hiddenRootCwdOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (hiddenRootCwdBodyRef.current?.contains(target)) return
+      if (hiddenRootCwdBtnRef.current?.contains(target)) return
+      setHiddenRootCwdOpen(false)
+    }
+    document.addEventListener('mousedown', handler, { capture: true })
+    return () => document.removeEventListener('mousedown', handler, { capture: true })
+  }, [hiddenRootCwdOpen])
+
   const handleHiddenArchiveClick = useCallback(() => {
     onOpenArchiveSearch?.(nodeId)
   }, [nodeId, onOpenArchiveSearch])
@@ -151,6 +172,16 @@ export function CardShell({
     setHiddenAddNodeOpen(false)
     onAddNode?.(nodeId, type)
   }, [nodeId, onAddNode])
+
+  const toggleHiddenRootCwd = useCallback(() => {
+    setHiddenAddNodeOpen(false)
+    setHiddenRootCwdOpen(prev => !prev)
+  }, [])
+
+  const handleHiddenRootCwdSubmit = useCallback((cwd: string) => {
+    setHiddenRootCwdOpen(false)
+    rootCwd?.onChange(cwd)
+  }, [rootCwd])
 
   const hiddenHeadActions = headVariant === 'hidden' ? (
     <div className="card-shell__hidden-head-actions">
@@ -166,6 +197,17 @@ export function CardShell({
         </svg>
         <span className="node-titlebar__archive-count" style={archivedChildren.length >= 100 ? { fontSize: 7 } : archivedChildren.length >= 10 ? { fontSize: 8 } : undefined}>{archivedChildren.length}</span>
       </button>
+      {rootCwd && (
+        <button
+          ref={hiddenRootCwdBtnRef}
+          className={`node-titlebar__root-cwd-btn card-shell__root-cwd-btn${hiddenRootCwdOpen ? ' node-titlebar__root-cwd-btn--active' : ''}`}
+          data-tooltip={rootCwd.value ? `Default directory — ${rootCwd.value}` : 'Set the default directory'}
+          onClick={(e) => { e.stopPropagation(); toggleHiddenRootCwd() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <RootCwdGlyph />
+        </button>
+      )}
       {onAddNode && (
         <button
           ref={hiddenAddNodeBtnRef}
@@ -246,6 +288,11 @@ export function CardShell({
           {headVariant === 'hidden' && hiddenAddNodeOpen && onAddNode && (
             <div className="card-shell__add-node-body card-shell__add-node-body--scaled" ref={hiddenAddNodeBodyRef}>
               <AddNodeBody onSelect={handleHiddenAddNodeSelect} />
+            </div>
+          )}
+          {headVariant === 'hidden' && hiddenRootCwdOpen && rootCwd && (
+            <div className="card-shell__add-node-body card-shell__add-node-body--scaled" ref={hiddenRootCwdBodyRef}>
+              <RootCwdBody initialValue={rootCwd.value ?? ''} onSubmit={handleHiddenRootCwdSubmit} />
             </div>
           )}
           {children}

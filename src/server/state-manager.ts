@@ -432,6 +432,31 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  /** The working directory the root node supplies, or undefined for none. */
+  getRootCwd(): string | undefined {
+    return this.state.rootCwd
+  }
+
+  /**
+   * Set the root node's working directory, or clear it with an empty string.
+   *
+   * Abbreviated on the way in, exactly as `createDirectory` does, so the stored
+   * form is the one the UI shows and the one `normalizeCwd` compares against.
+   *
+   * Every surface is re-evaluated afterwards rather than just the root's own
+   * children: a surface anywhere in the graph inherits from the root as soon as
+   * no directory card stands between it and the origin, and "descendants of the
+   * root" is not something `scanDescendantCwdMismatches` can walk — the root
+   * has no entry in `state.nodes` to start from.
+   */
+  setRootCwd(cwd: string): void {
+    const next = cwd.trim() ? abbreviateCwd(cwd.trim()) : undefined
+    if (next === this.state.rootCwd) return
+    this.state.rootCwd = next
+    this.schedulePersist()
+    this.recheckAllCwdAlerts()
+  }
+
   getNode(id: NodeId): NodeData | undefined {
     return this.state.nodes[id]
   }
@@ -1807,12 +1832,19 @@ export class StateManager {
 
   /** Scan all existing Claude terminals for cwd-mismatch alerts on startup. */
   private initialAlertScan(): void {
-    this.applyAlertChanges(scanCwdMismatches(this.state.nodes, Date.now()))
+    this.recheckAllCwdAlerts()
+  }
+
+  /** Re-evaluate cwd alerts for every terminal on the canvas. */
+  recheckAllCwdAlerts(): void {
+    this.applyAlertChanges(scanCwdMismatches(this.state.nodes, Date.now(), this.state.rootCwd))
   }
 
   /** Re-evaluate cwd alerts for a node and everything beneath it. */
   recheckDescendantCwdAlerts(nodeId: NodeId): void {
-    this.applyAlertChanges(scanDescendantCwdMismatches(this.state.nodes, nodeId, Date.now()))
+    this.applyAlertChanges(
+      scanDescendantCwdMismatches(this.state.nodes, nodeId, Date.now(), this.state.rootCwd)
+    )
   }
 
   /**

@@ -1,6 +1,7 @@
 import { useNodeStore } from '../stores/nodeStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { usePeerStore } from '../stores/peerStore'
+import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSummaryChatStore } from '../stores/summaryChatStore'
@@ -170,6 +171,12 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
+    window.api.node.onRootCwd((cwd) => {
+      useRootCwdStore.getState().set(cwd)
+    })
+  )
+
+  cleanupFns.push(
     window.api.node.onRestartRequired((required, reason) => {
       useRestartRequiredStore.getState().set(required, reason)
     })
@@ -184,6 +191,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     store.applyServerState(serverState)
     syncUndoBuffer(serverState.undoBuffer ?? [], serverState.undoCursor)
     useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
+    useRootCwdStore.getState().set(serverState.rootCwd)
 
     // Authoritative on reload: the PUSH above only fires when the flag changes
     // while the socket stays open, which a renderer refresh does not repeat.
@@ -255,6 +263,11 @@ export async function sendDirectoryAdd(parentId: NodeId, cwd: string, x?: number
 
 export async function sendDirectoryCwd(nodeId: NodeId, cwd: string): Promise<void> {
   await window.api.node.directoryCwd(nodeId, cwd)
+}
+
+/** Set the root node's working directory; an empty string clears it. */
+export async function sendRootCwd(cwd: string): Promise<void> {
+  await window.api.node.setRootCwd(cwd)
 }
 
 export async function sendFileAdd(parentId: NodeId, filePath: string, x?: number, y?: number): Promise<{ nodeId: NodeId }> {

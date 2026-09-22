@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { FakeBridge, installFakeBridge } from '../testing/fake-bridge'
 import {
   initServerSync, destroyServerSync,
-  sendMove, sendRename, sendArchive, sendTerminalCreate, sendMarkdownContent
+  sendMove, sendRename, sendArchive, sendTerminalCreate, sendMarkdownContent, sendRootCwd
 } from './server-sync'
 import { useNodeStore } from '../stores/nodeStore'
 import { usePeerStore } from '../stores/peerStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
+import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { resetAudioAvailabilityForTest } from './sounds'
 import type { NodeData, ServerState } from '../../../../shared/state'
@@ -83,6 +84,28 @@ describe('initServerSync', () => {
     await initServerSync()
 
     expect(useSavedViewportStore.getState().viewports['3']).toEqual({ x: 1, y: 2, width: 100, height: 80 })
+  })
+
+  it('hydrates the root working directory from the pull', async () => {
+    bridge.responses.syncRequest = { ...serverState(), rootCwd: '~/research' }
+    await initServerSync()
+
+    expect(useRootCwdStore.getState().cwd).toBe('~/research')
+  })
+
+  it('clears the root working directory when the server reports none', async () => {
+    useRootCwdStore.getState().set('~/stale')
+    bridge.responses.syncRequest = serverState()
+    await initServerSync()
+
+    expect(useRootCwdStore.getState().cwd).toBeUndefined()
+  })
+
+  it('takes a pushed root working directory', async () => {
+    await initServerSync()
+    bridge.emit.rootCwd('~/research')
+
+    expect(useRootCwdStore.getState().cwd).toBe('~/research')
   })
 
   it('survives a server that is not connected yet', async () => {
@@ -316,5 +339,14 @@ describe('the fake bridge itself', () => {
 
   it('emitting to a session nobody subscribed to is a no-op, as the real bridge is', () => {
     expect(() => bridge.emit.ptyData(pid('nobody'), 'data')).not.toThrow()
+  })
+})
+
+describe('sendRootCwd', () => {
+  it('reaches the bridge', async () => {
+    await initServerSync()
+    await sendRootCwd('~/research')
+
+    expect(bridge.calls.some((c) => c.method === 'node.setRootCwd' && c.args[0] === '~/research')).toBe(true)
   })
 })

@@ -103,6 +103,11 @@ export interface NodeApi {
 
   directoryAdd(parentId: NodeId, cwd: string, x?: number, y?: number): Promise<{ nodeId: NodeId }>
   directoryCwd(nodeId: NodeId, cwd: string): Promise<void>
+  /**
+   * Set the working directory the root node supplies to everything hung off it.
+   * An empty string clears it, leaving top-level cards with no inherited cwd.
+   */
+  setRootCwd(cwd: string): Promise<void>
   directoryGitFetch(nodeId: NodeId): Promise<void>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
 
@@ -154,6 +159,8 @@ export interface NodeApi {
   onPeerDisconnected(callback: (clientId: string) => void): () => void
   onPeerCameraBounds(callback: (clientId: string, bounds: CameraBounds) => void): () => void
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
+  /** The root node's working directory, pushed on connect and on every change. */
+  onRootCwd(callback: (cwd: string | undefined) => void): () => void
   /** Live changes to the restart-required flag (PUSH). See restartFlagStatus for the PULL. */
   onRestartRequired(callback: (required: boolean, reason: string) => void): () => void
   /** Whether a host has an agent-meta branch to show, as the server learns it (PUSH). */

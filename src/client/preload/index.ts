@@ -75,6 +75,7 @@ const nodeApi: NodeApi = {
   crabReorder: (order: string[]) => ipcRenderer.invoke('node:crab-reorder', order),
   directoryAdd: (parentId, cwd, x?, y?) => ipcRenderer.invoke('node:directory-add', parentId, cwd, x, y),
   directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
+  setRootCwd: (cwd) => ipcRenderer.invoke('node:set-root-cwd', cwd),
   directoryGitFetch: (nodeId) => ipcRenderer.invoke('node:directory-git-fetch', nodeId),
   validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
   fileAdd: (parentId, filePath, x?, y?) => ipcRenderer.invoke('node:file-add', parentId, filePath, x, y),
@@ -165,6 +166,11 @@ const nodeApi: NodeApi = {
     const listener = (_event: Electron.IpcRendererEvent, viewports: Record<string, { x: number; y: number; width: number; height: number }>) => callback(viewports)
     ipcRenderer.on('viewports:saved', listener)
     return () => ipcRenderer.removeListener('viewports:saved', listener)
+  },
+  onRootCwd: (callback: (cwd: string | undefined) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, cwd: string | undefined) => callback(cwd)
+    ipcRenderer.on('node:root-cwd', listener)
+    return () => ipcRenderer.removeListener('node:root-cwd', listener)
   },
   onRestartRequired: (callback: (required: boolean, reason: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, required: boolean, reason: string) => callback(required, reason)

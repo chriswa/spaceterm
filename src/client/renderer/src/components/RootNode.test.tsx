@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
+import { installFakeBridge } from '../testing/fake-bridge'
 import { fireEvent, render, cleanup } from '@testing-library/react'
 import { RootNode } from './RootNode'
 import { ROOT_NODE_RADIUS } from '../lib/constants'
@@ -15,7 +16,10 @@ import { ROOT_CHROME_SCALE } from '../../../../shared/card-types'
  * other card's action bar. Both were wrong at once when the node grew.
  */
 
-function renderRoot(focused: boolean) {
+function renderRoot(
+  focused: boolean,
+  rootCwd?: { value?: string; onChange: (cwd: string) => void }
+) {
   return render(
     <RootNode
       focused={focused}
@@ -24,6 +28,7 @@ function renderRoot(focused: boolean) {
       archivedChildren={[]}
       onOpenArchiveSearch={vi.fn()}
       onAddNode={vi.fn()}
+      rootCwd={rootCwd}
     />
   )
 }
@@ -87,5 +92,68 @@ describe('the root node’s buttons', () => {
     fireEvent.click(container.querySelector('.card-shell__add-btn')!)
     const popup = container.querySelector('.card-shell__add-node-body')
     expect(popup?.classList.contains('card-shell__add-node-body--scaled')).toBe(true)
+  })
+})
+
+/**
+ * The root node's working directory: the default everything hung off the root
+ * inherits, which is the only setting the root itself carries.
+ */
+describe('the root node’s working directory', () => {
+  it('adds a button to the row when the root can supply one', () => {
+    const { container } = renderRoot(true, { onChange: vi.fn() })
+    expect(container.querySelectorAll('.card-shell__hidden-head-actions button').length).toBe(3)
+  })
+
+  it('opens an editor holding the directory already set', () => {
+    const { container } = renderRoot(true, { value: '~/research', onChange: vi.fn() })
+    fireEvent.click(container.querySelector('.card-shell__root-cwd-btn')!)
+    expect(container.querySelector<HTMLInputElement>('.root-cwd-body__input')!.value).toBe('~/research')
+  })
+
+  it('opens an empty editor when none is set yet', () => {
+    const { container } = renderRoot(true, { onChange: vi.fn() })
+    fireEvent.click(container.querySelector('.card-shell__root-cwd-btn')!)
+    expect(container.querySelector<HTMLInputElement>('.root-cwd-body__input')!.value).toBe('')
+  })
+
+  it('reports a new directory once it checks out', async () => {
+    installFakeBridge(globalThis as never)
+    const onChange = vi.fn()
+    const { container } = renderRoot(true, { onChange })
+    fireEvent.click(container.querySelector('.card-shell__root-cwd-btn')!)
+    const input = container.querySelector('.root-cwd-body__input')!
+    fireEvent.change(input, { target: { value: '~/research' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith('~/research'))
+  })
+
+  it('refuses a directory that is not there, leaving the editor open', async () => {
+    const bridge = installFakeBridge(globalThis as never)
+    bridge.responses.validate = { valid: false, error: 'No such directory' }
+    const onChange = vi.fn()
+    const { container } = renderRoot(true, { onChange })
+    fireEvent.click(container.querySelector('.card-shell__root-cwd-btn')!)
+    const input = container.querySelector('.root-cwd-body__input')!
+    fireEvent.change(input, { target: { value: '~/nope' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await vi.waitFor(() => expect(container.querySelector('.root-cwd-body__error')).not.toBeNull())
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('clears the default on an empty value, which is how you remove it', async () => {
+    installFakeBridge(globalThis as never)
+    const onChange = vi.fn()
+    const { container } = renderRoot(true, { value: '~/research', onChange })
+    fireEvent.click(container.querySelector('.card-shell__root-cwd-btn')!)
+    const input = container.querySelector('.root-cwd-body__input')!
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(''))
+  })
+
+  it('has no button at all when the root supplies no directory setting', () => {
+    const { container } = renderRoot(true)
+    expect(container.querySelector('.card-shell__root-cwd-btn')).toBeNull()
   })
 })

@@ -52,12 +52,13 @@ export function abbreviateCwd(p: string): string {
 export function evaluateCwdMismatch(
   nodes: Record<string, NodeData>,
   node: TerminalNodeData,
-  now: number
+  now: number,
+  rootCwd?: string
 ): { alerts: NodeAlert[] | undefined } | null {
   // Only agent surfaces have a meaningful working directory to disagree about.
   if (node.claudeSessionHistory.length === 0) return null
 
-  const parentCwd = getAncestorCwd(nodes, node.parentId)
+  const parentCwd = getAncestorCwd(nodes, node.parentId, rootCwd)
   const alerts = node.alerts ?? []
   const existing = alerts.some((a) => a.type === CWD_MISMATCH)
 
@@ -78,15 +79,22 @@ export function evaluateCwdMismatch(
   return null
 }
 
-/** Every terminal in the graph whose cwd alert needs changing. */
+/**
+ * Every terminal in the graph whose cwd alert needs changing.
+ *
+ * `rootCwd` is the root node's default working directory, which surfaces at the
+ * top level inherit — so changing it can make an agent that had nothing to
+ * disagree with start disagreeing, and this is the scan that settles it.
+ */
 export function scanCwdMismatches(
   nodes: Record<string, NodeData>,
-  now: number
+  now: number,
+  rootCwd?: string
 ): Array<{ node: TerminalNodeData; alerts: NodeAlert[] | undefined }> {
   const changes: Array<{ node: TerminalNodeData; alerts: NodeAlert[] | undefined }> = []
   for (const node of Object.values(nodes)) {
     if (node.type !== 'terminal') continue
-    const change = evaluateCwdMismatch(nodes, node, now)
+    const change = evaluateCwdMismatch(nodes, node, now, rootCwd)
     if (change) changes.push({ node, alerts: change.alerts })
   }
   return changes
@@ -101,7 +109,8 @@ export function scanCwdMismatches(
 export function scanDescendantCwdMismatches(
   nodes: Record<string, NodeData>,
   rootId: NodeId,
-  now: number
+  now: number,
+  rootCwd?: string
 ): Array<{ node: TerminalNodeData; alerts: NodeAlert[] | undefined }> {
   const changes: Array<{ node: TerminalNodeData; alerts: NodeAlert[] | undefined }> = []
   const queue: NodeId[] = [rootId]
@@ -115,7 +124,7 @@ export function scanDescendantCwdMismatches(
     if (!node) continue
 
     if (node.type === 'terminal') {
-      const change = evaluateCwdMismatch(nodes, node, now)
+      const change = evaluateCwdMismatch(nodes, node, now, rootCwd)
       if (change) changes.push({ node, alerts: change.alerts })
     }
 

@@ -419,6 +419,27 @@ export interface ServerState {
    * authored.
    */
   backgroundLedgers: Record<string, PersistedSurfaceLedger>
+  /**
+   * The working directory the root node supplies, abbreviated (`~/research`).
+   *
+   * The terminus of cwd inheritance: a card hung directly off the root has no
+   * ancestor with a cwd, so without this every surface at the top level starts
+   * in `$HOME` — and the only way to say otherwise was to put a directory card
+   * in front of everything. `getAncestorCwd` returns this when its walk reaches
+   * the root, which is what makes one setting reach agent launches, new
+   * directory cards, and file-path resolution alike.
+   *
+   * Top-level rather than a field on a node for the reason `metaHosts` gives:
+   * the root is not in `state.nodes` and has nowhere else to keep anything.
+   *
+   * Deliberately NOT what the root's agent-meta branch reads. That one is the
+   * user-level `~/.claude` — skills and a CLAUDE.md that apply wherever you
+   * work — which is a different thing from where work happens to start today.
+   * See `AgentMetaManager.hostDir`.
+   *
+   * Absent means no default: inheritance ends with nothing, exactly as before.
+   */
+  rootCwd?: string
 }
 
 /** What kind of background work a launch represents. Mirrors `LaunchKind`. */

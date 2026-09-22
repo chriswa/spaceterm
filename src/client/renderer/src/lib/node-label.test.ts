@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES,
-  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap
+  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel
 } from './node-label'
 import { ELAPSED_TICK_MS, formatCountdownShort } from './elapsed-label'
-import { TITLE_LINE_HEIGHT } from '../../../../shared/node-size'
+import { ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from '../../../../shared/node-size'
 import { measureCard } from '../../../../shared/card-types'
 import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../../../../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../../../../shared/ids'
@@ -469,5 +469,35 @@ describe('layOutStatusLabel', () => {
     expect(layOutStatusLabel(terminal({ lastInteractedAt: NOW }), NOW)).toBeNull()
     expect(layOutStatusLabel(agent({ lastAgentActivityAt: undefined }), NOW)).toBeNull()
     expect(layOutStatusLabel(markdown({ lastInteractedAt: NOW }), NOW)).toBeNull()
+  })
+})
+
+describe('layOutRootCwdLabel', () => {
+  it('has nothing to say when no default is set', () => {
+    expect(layOutRootCwdLabel(undefined)).toBeNull()
+    expect(layOutRootCwdLabel('   ')).toBeNull()
+  })
+
+  it('captions the root with the path', () => {
+    expect(layOutRootCwdLabel('~/research')!.lines).toEqual(['~/research'])
+  })
+
+  it('belongs to the root node, so clicking it navigates there', () => {
+    expect(layOutRootCwdLabel('~/research')!.nodeId).toBe(ROOT_NODE_ID)
+  })
+
+  it('sits below the drawn disc, centred on the origin, clear of the circle', () => {
+    const label = layOutRootCwdLabel('~/research')!
+    expect(label.x).toBe(0)
+    expect(label.y - label.height / 2).toBeCloseTo(ROOT_DISC_RADIUS + statusCardGap(label.textScale))
+  })
+
+  it('anchors its edge mask at the origin the edges converge on', () => {
+    const label = layOutRootCwdLabel('~/research')!
+    expect([label.anchorX, label.anchorY]).toEqual([0, 0])
+  })
+
+  it('is its own kind, so it cannot collide with another label on the root', () => {
+    expect(layOutRootCwdLabel('~/research')!.kind).toBe('root-cwd')
   })
 })

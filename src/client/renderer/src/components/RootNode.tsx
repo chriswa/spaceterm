@@ -16,6 +16,11 @@ interface RootNodeProps {
   onOpenArchiveSearch: (nodeId: NodeId) => void
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
   agentMeta?: { available: boolean; open: boolean; onToggle: (id: NodeId) => void }
+  /**
+   * The default working directory everything hung off the root inherits.
+   * `value` is absent until one is set.
+   */
+  rootCwd?: { value?: string; onChange: (cwd: string) => void }
   onReparentTarget?: (id: NodeId) => void
 }
 
@@ -32,7 +37,7 @@ interface RootNodeProps {
  */
 const HIDDEN_ACTIONS_HEIGHT = 28
 
-export function RootNode({ focused, selected, onClick, archivedChildren, onOpenArchiveSearch, onAddNode, agentMeta, onReparentTarget }: RootNodeProps) {
+export function RootNode({ focused, selected, onClick, archivedChildren, onOpenArchiveSearch, onAddNode, agentMeta, rootCwd, onReparentTarget }: RootNodeProps) {
   const size = ROOT_NODE_RADIUS * 2
   const visualSize = ROOT_DISC_RADIUS * 2
   const { Component: RootNodeVisual } = useFacet('rootNode')
@@ -67,6 +72,7 @@ export function RootNode({ focused, selected, onClick, archivedChildren, onOpenA
       onOpenArchiveSearch={onOpenArchiveSearch}
       onAddNode={onAddNode}
       agentMeta={agentMeta}
+      rootCwd={rootCwd}
       onMouseDown={handleMouseDown}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(ROOT_NODE_ID) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}

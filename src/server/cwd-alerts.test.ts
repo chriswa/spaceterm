@@ -264,3 +264,47 @@ describe('scanDescendantCwdMismatches', () => {
     expect(scanDescendantCwdMismatches(graph(), asNodeId('ghost'), NOW)).toEqual([])
   })
 })
+
+describe('the root node default working directory', () => {
+  it('raises an alert on a top-level surface that wandered off it', () => {
+    const term = terminal('t1', 'root', { cwd: '/elsewhere' })
+    const change = evaluateCwdMismatch(graph(term), term, NOW, '~/research')
+    expect(change?.alerts?.[0].type).toBe('cwd-mismatch')
+  })
+
+  it('names the root default as the parent in the message', () => {
+    const term = terminal('t1', 'root', { cwd: '/elsewhere' })
+    const change = evaluateCwdMismatch(graph(term), term, NOW, '~/research')
+    expect(change?.alerts?.[0].message).toContain('~/research')
+  })
+
+  it('leaves a top-level surface still sitting in it alone', () => {
+    const term = terminal('t1', 'root', { cwd: `${HOME}/research` })
+    expect(evaluateCwdMismatch(graph(term), term, NOW, '~/research')).toBeNull()
+  })
+
+  it('clears an alert that the new default agrees with', () => {
+    const term = terminal('t1', 'root', { cwd: '/repo', alerts: [MISMATCH] })
+    const change = evaluateCwdMismatch(graph(term), term, NOW, '/repo')
+    expect(change?.alerts).toBeUndefined()
+  })
+
+  it('says nothing about a top-level surface when no default is set', () => {
+    const term = terminal('t1', 'root', { cwd: '/elsewhere' })
+    expect(evaluateCwdMismatch(graph(term), term, NOW)).toBeNull()
+  })
+
+  it('is not consulted when a directory card stands between', () => {
+    const dir = directory('d1', 'root', '/repo')
+    const term = terminal('t1', 'd1', { cwd: '/repo' })
+    expect(evaluateCwdMismatch(graph(dir, term), term, NOW, '~/research')).toBeNull()
+  })
+
+  it('reaches every surface a whole-graph scan visits', () => {
+    const top = terminal('t1', 'root', { cwd: '/elsewhere' })
+    const dir = directory('d1', 'root', '/repo')
+    const nested = terminal('t2', 'd1', { cwd: '/repo' })
+    const changes = scanCwdMismatches(graph(top, dir, nested), NOW, '~/research')
+    expect(changes.map((c) => c.node.id)).toEqual(['t1'])
+  })
+})

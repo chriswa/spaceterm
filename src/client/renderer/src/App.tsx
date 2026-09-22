@@ -36,17 +36,18 @@ import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { labelMaskShape, layOutNodeLabel, layOutStatusLabel, type NodeLabel } from './lib/node-label'
+import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from './lib/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useDimStaleStore } from './stores/dimStaleStore'
 import { useSavedViewportStore } from './stores/savedViewportStore'
+import { useRootCwdStore } from './stores/rootCwdStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -190,6 +191,7 @@ export function App() {
   })
 
   // Subscribe to store
+  const rootCwd = useRootCwdStore(s => s.cwd)
   const nodes = useNodeStore(s => s.nodes)
   const nodeList = useNodeStore(s => s.nodeList)
   const liveTerminals = useNodeStore(s => s.liveTerminals)
@@ -258,7 +260,21 @@ export function App() {
     return laidOut
   }, [nodeList, coarseNow])
 
-  const nodeLabels = useMemo(() => [...nameLabels, ...statusLabels], [nameLabels, statusLabels])
+  /**
+   * The root node's working directory, captioned under the disc while the root
+   * is focused. Only then: it is a setting rather than a reading, so it belongs
+   * on screen when you are looking at the thing it belongs to, and the origin
+   * of an idle canvas stays a landmark.
+   */
+  const rootCwdLabel = useMemo(
+    () => (focusedId === ROOT_NODE_ID ? layOutRootCwdLabel(rootCwd) : null),
+    [focusedId, rootCwd]
+  )
+
+  const nodeLabels = useMemo(
+    () => (rootCwdLabel ? [...nameLabels, ...statusLabels, rootCwdLabel] : [...nameLabels, ...statusLabels]),
+    [nameLabels, statusLabels, rootCwdLabel]
+  )
 
   /**
    * Where the edges must be painted back out.
@@ -719,9 +735,8 @@ export function App() {
   const cwdMapRef = useRef(new Map<NodeId, string>())
 
   const getParentCwd = useCallback((parentId: NodeId): string | undefined => {
-    if (parentId === 'root') return undefined
     const allNodes = useNodeStore.getState().nodes
-    return getAncestorCwd(allNodes, parentId, cwdMapRef.current)
+    return getAncestorCwd(allNodes, parentId, cwdMapRef.current, useRootCwdStore.getState().cwd)
   }, [])
 
   const flashNode = useCallback((nodeId: NodeId) => {
@@ -1897,6 +1912,18 @@ export function App() {
     sendDirectoryCwd(id, newCwd)
   }, [])
 
+  /**
+   * Set the root node's default working directory.
+   *
+   * Applied optimistically so the caption under the disc changes with the
+   * click; the server's broadcast confirms it moments later and is what every
+   * other client sees. An empty string clears the default.
+   */
+  const handleRootCwdChange = useCallback((newCwd: string) => {
+    useRootCwdStore.getState().set(newCwd.trim() || undefined)
+    void sendRootCwd(newCwd)
+  }, [])
+
   const handleFilePathChange = useCallback((id: NodeId, newFilePath: string) => {
     sendFilePath(id, newFilePath)
   }, [])
@@ -2601,6 +2628,7 @@ export function App() {
             open: metaGroups.some((g) => g.hostId === ROOT_NODE_ID && g.groupKind === 'meta'),
             onToggle: handleAgentMetaToggle
           }}
+          rootCwd={{ value: rootCwd, onChange: handleRootCwdChange }}
           onReparentTarget={handleReparentTarget}
         />
         {liveTerminals.map((t) => (
@@ -2765,7 +2793,7 @@ export function App() {
             key={f.id}
             {...cardProps(f)}
             filePath={f.filePath}
-            inheritedCwd={getAncestorCwd(nodes, f.id, cwdMapRef.current)}
+            inheritedCwd={getAncestorCwd(nodes, f.id, cwdMapRef.current, rootCwd)}
             onFilePathChange={handleFilePathChange}
           />
         ))}

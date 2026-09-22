@@ -73,23 +73,33 @@ export function hasLiveChildren(
 /**
  * Walk up the ancestor chain from `startNodeId`, returning the first CWD found.
  * Checks the live cwdMap (from PTY tracking) first, then static node data.
+ *
+ * `rootCwd` is the default the root node supplies — `ServerState.rootCwd` — and
+ * is what the walk answers with once it reaches the root having found nothing.
+ * Mirrors server-side `getAncestorCwd`; the two must agree, because the client
+ * decides the cwd a new surface launches with and the server decides whether
+ * that surface has since wandered off it.
+ *
+ * A walk that runs off a dangling parent returns `rootCwd` too: it got to the
+ * top of a broken chain, which is the same place a whole walk ends up.
  */
 export function getAncestorCwd(
   nodes: Record<string, NodeData>,
   startNodeId: string,
-  cwdMap: Map<string, string>
+  cwdMap: Map<string, string>,
+  rootCwd?: string
 ): string | undefined {
   let current = startNodeId
   while (current && current !== 'root') {
     const node = nodes[current]
-    if (!node) return undefined
+    if (!node) return rootCwd
     const cwd = cwdMap.get(current)
       ?? (node.type === 'terminal' ? node.cwd : undefined)
       ?? (node.type === 'directory' ? node.cwd : undefined)
     if (cwd) return cwd
     current = node.parentId
   }
-  return undefined
+  return rootCwd
 }
 
 /**

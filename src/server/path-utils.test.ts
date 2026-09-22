@@ -124,4 +124,31 @@ describe('getAncestorCwd', () => {
     const map = nodes(['a', { type: 'markdown', parentId: 'gone' }])
     expect(getAncestorCwd(map, nid('a'))).toBeUndefined()
   })
+
+  describe('the root node default', () => {
+    it('answers with it when the walk reaches the root having found nothing', () => {
+      const map = nodes(['a', { type: 'markdown', parentId: 'root' }])
+      expect(getAncestorCwd(map, nid('a'), '~/research')).toBe('~/research')
+    })
+
+    it('does not override a directory the chain actually supplies', () => {
+      const map = nodes(
+        ['a', { type: 'markdown', parentId: 'dir' }],
+        ['dir', { type: 'directory', parentId: 'root', cwd: '/repo' }],
+      )
+      expect(getAncestorCwd(map, nid('a'), '~/research')).toBe('/repo')
+    })
+
+    it('answers with it for a node that does not exist', () => {
+      expect(getAncestorCwd(nodes(), nid('missing'), '~/research')).toBe('~/research')
+    })
+
+    it('answers with it when a cycle cuts the walk short', () => {
+      const map = nodes(
+        ['a', { type: 'markdown', parentId: 'b' }],
+        ['b', { type: 'markdown', parentId: 'a' }],
+      )
+      expect(getAncestorCwd(map, nid('a'), '~/research')).toBe('~/research')
+    })
+  })
 })

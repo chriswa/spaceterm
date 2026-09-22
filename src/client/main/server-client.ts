@@ -175,6 +175,9 @@ export class ServerClient extends EventEmitter {
       case 'saved-viewports':
         this.emit('saved-viewports', msg.viewports)
         return
+      case 'root-cwd':
+        this.emit('root-cwd', msg.cwd)
+        return
       case 'restart-required':
         this.emit('restart-required', msg.required, msg.reason)
         return
@@ -410,6 +413,11 @@ export class ServerClient extends EventEmitter {
 
   async directoryCwd(nodeId: NodeId, cwd: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'directory-cwd', nodeId, cwd })
+  }
+
+  /** Set the root node's working directory; an empty string clears it. */
+  async setRootCwd(cwd: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'set-root-cwd', cwd })
   }
 
   async directoryGitFetch(nodeId: NodeId): Promise<ServerMessage> {

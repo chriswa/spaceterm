@@ -399,6 +399,19 @@ export interface DirectoryCwdMessage {
   cwd: string
 }
 
+/**
+ * Set (or clear, with an empty string) the directory the root node supplies.
+ *
+ * Named for the action rather than the field, so it cannot be confused with the
+ * `root-cwd` broadcast that carries the answer back out — the same split
+ * `save-viewport` / `saved-viewports` draws.
+ */
+export interface SetRootCwdMessage {
+  type: 'set-root-cwd'
+  seq: number
+  cwd: string
+}
+
 export interface DirectoryGitFetchMessage {
   type: 'directory-git-fetch'
   seq: number
@@ -860,6 +873,7 @@ export type ClientMessage =
   | SpeakToggleMessage
   | SpeakStopMessage
   | SaveViewportMessage
+  | SetRootCwdMessage
 
 // --- Server → Client messages ---
 
@@ -1169,6 +1183,15 @@ export interface FocusSurfaceMessage {
   nodeId: NodeId | null
 }
 
+/**
+ * The root node's working directory. Sent on connect and broadcast on every
+ * change; `cwd` is absent when the root supplies none.
+ */
+export interface RootCwdMessage {
+  type: 'root-cwd'
+  cwd?: string
+}
+
 /** Full set of saved viewport slots (slot -> bounds). Sent on connect and broadcast on every save. */
 export interface SavedViewportsMessage {
   type: 'saved-viewports'
@@ -1415,5 +1438,6 @@ export type ServerMessage =
   | PeerCameraBoundsMessage
   | FocusSurfaceMessage
   | SavedViewportsMessage
+  | RootCwdMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage

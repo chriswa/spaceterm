@@ -149,6 +149,7 @@ export class FakeBridge implements Api {
   private readonly peerDisconnected = new Set<(clientId: string) => void>()
   private readonly peerCameraBounds = new Set<(clientId: string, bounds: CameraBounds) => void>()
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
+  private readonly rootCwd = new Set<(cwd: string | undefined) => void>()
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
   private readonly agentMetaAvailability = new Set<(nodeId: NodeId, available: boolean) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
@@ -230,6 +231,9 @@ export class FakeBridge implements Api {
     },
     savedViewports: (viewports: Record<string, CameraBounds>): void => {
       for (const fn of this.savedViewports) fn(viewports)
+    },
+    rootCwd: (cwd: string | undefined): void => {
+      for (const fn of this.rootCwd) fn(cwd)
     },
     restartRequired: (required: boolean, reason: string): void => {
       for (const fn of this.restartRequired) fn(required, reason)
@@ -314,6 +318,7 @@ export class FakeBridge implements Api {
     directoryAdd: (parentId, cwd, x, y) =>
       this.reply('node.directoryAdd', { nodeId: this.responses.newNodeId }, parentId, cwd, x, y),
     directoryCwd: (nodeId, cwd) => this.reply('node.directoryCwd', undefined, nodeId, cwd),
+    setRootCwd: (cwd) => this.reply('node.setRootCwd', undefined, cwd),
     directoryGitFetch: (nodeId) => this.reply('node.directoryGitFetch', undefined, nodeId),
     validateDirectory: (p) => this.reply('node.validateDirectory', this.responses.validate, p),
 
@@ -363,6 +368,7 @@ export class FakeBridge implements Api {
     onPeerDisconnected: (cb) => subscribe(this.peerDisconnected, cb),
     onPeerCameraBounds: (cb) => subscribe(this.peerCameraBounds, cb),
     onSavedViewports: (cb) => subscribe(this.savedViewports, cb),
+    onRootCwd: (cb) => subscribe(this.rootCwd, cb),
     onRestartRequired: (cb) => subscribe(this.restartRequired, cb),
     onAgentMetaAvailability: (cb) => subscribe(this.agentMetaAvailability, cb),
     restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag)
