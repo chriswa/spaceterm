@@ -1,15 +1,46 @@
-import { execFile } from 'child_process'
-import { stat } from 'fs/promises'
-import { promisify } from 'util'
-import { join, resolve as pathResolve } from 'path'
-import { homedir } from 'os'
 import type { GitStatus, DirectoryNodeData } from '../shared/state'
 import type { NodeId } from '../shared/ids'
+import { RepoProbe, expandTilde } from './repo-probe'
+import { WorktreeWatcher } from './worktree-watcher'
 
-const execFileAsync = promisify(execFile)
+/**
+ * How often every repo gets a full `git status` regardless of what the
+ * filesystem said.
+ *
+ * This is a backstop, not the main mechanism. FSEvents coalesces and drops
+ * events under load, and a watch can die with its directory, so a repo that
+ * went quiet for the wrong reason still gets re-read — just not often enough to
+ * cost anything.
+ */
+export const SWEEP_INTERVAL_MS = 30_000
 
-const POLL_INTERVAL_MS = 60_000
-const EXEC_TIMEOUT_MS = 5_000
+/**
+ * How often every repo's `.git` metadata mtimes get a look.
+ *
+ * Stat calls only, no subprocess, so this is cheap enough to run every second.
+ * It covers the same ground as the watcher for branch switches, commits and
+ * fetches, and earns its keep when a filesystem event goes missing: the repo is
+ * caught in a second rather than at the next sweep.
+ */
+export const METADATA_INTERVAL_MS = 1_000
+
+/**
+ * The most often one repository will be asked for its status, however much its
+ * files are churning. A build writing into a gitignored directory can produce
+ * hundreds of events a second; this is what stops that from turning into
+ * hundreds of `git status` runs.
+ */
+export const MIN_POLL_INTERVAL_MS = 1_000
+
+/**
+ * How long to let filesystem events settle before reading the repo.
+ *
+ * Saving one file produces several events, and an editor that writes to a
+ * temporary file and renames produces them across two paths. Waiting a moment
+ * turns that burst into a single `git status` — and reads the tree after the
+ * write rather than during it — at a cost no one can perceive.
+ */
+export const WATCH_SETTLE_MS = 100
 
 type GetDirectoryNodes = () => DirectoryNodeData[]
 type OnGitStatus = (nodeId: NodeId, gitStatus: GitStatus | null) => void
@@ -17,20 +48,29 @@ type OnGitStatus = (nodeId: NodeId, gitStatus: GitStatus | null) => void
 /** Cancels a scheduled callback. Calling it after the callback ran is a no-op. */
 export type CancelScheduled = () => void
 
+/** The part of a `WorktreeWatcher` the poller drives. */
+export interface DirectoryWatcher {
+  sync(dirs: Set<string>): void
+  dispose(): void
+}
+
 /**
- * The three things the poller reaches outside itself: git, the filesystem, and
- * timers. Injecting them lets the dedup/caching/spreading logic be tested
- * without a repo on disk or a minute of wall-clock.
+ * What a poller needs beyond the node list: a way to interrogate one repo, a
+ * way to watch directories, and timers. Injecting them lets the scheduling,
+ * throttling and caching be tested without a repo on disk or a second of
+ * wall-clock.
  */
 export interface GitStatusPollerDeps {
-  /** `git status --porcelain=v2 --branch` output for `cwd`, or null if not a repo. */
-  gitStatus(cwd: string): Promise<GitStatus | null>
+  /** A probe for one already-tilde-expanded working directory. */
+  createProbe(cwd: string): Pick<RepoProbe, 'status' | 'metadataMoved' | 'reset'>
+  createWatcher(onChange: (cwd: string) => void): DirectoryWatcher
   scheduleInterval(fn: () => void, ms: number): CancelScheduled
   scheduleTimeout(fn: () => void, ms: number): CancelScheduled
 }
 
 export const REAL_GIT_STATUS_POLLER_DEPS: GitStatusPollerDeps = {
-  gitStatus: runGitStatus,
+  createProbe: (cwd) => new RepoProbe(cwd),
+  createWatcher: (onChange) => new WorktreeWatcher(onChange),
   scheduleInterval(fn, ms) {
     const timer = setInterval(fn, ms)
     return () => clearInterval(timer)
@@ -41,222 +81,29 @@ export const REAL_GIT_STATUS_POLLER_DEPS: GitStatusPollerDeps = {
   }
 }
 
-/**
- * The parts of a `GitStatus` that `git status` does not report — each one its
- * own command against the repo. Grouped so the assembly of a `GitStatus` has a
- * single shape, and so a new fact cannot be added without every construction
- * site being told about it.
- */
-export interface RepoFacts {
-  lastFetchTimestamp: number | null
-  defaultBranch: string | null
-  hasRemote: boolean
-}
-
-/** What a repo we could not interrogate beyond `git status` looks like. */
-export const UNKNOWN_REPO_FACTS: RepoFacts = {
-  lastFetchTimestamp: null,
-  defaultBranch: null,
-  hasRemote: false,
-}
-
-/** Parse `git status --porcelain=v2 --branch` output, and fold in `facts`. */
-export function parseGitStatus(stdout: string, facts: RepoFacts): GitStatus {
-  return { ...parsePorcelain(stdout), ...facts }
-}
-
-/** The subset of a `GitStatus` that `git status --porcelain=v2 --branch` reports. */
-function parsePorcelain(stdout: string): Omit<GitStatus, keyof RepoFacts> {
-  let branch: string | null = null
-  let upstream: string | null = null
-  let ahead = 0
-  let behind = 0
-  let conflicts = 0
-  let staged = 0
-  let unstaged = 0
-  let untracked = 0
-
-  for (const line of stdout.split('\n')) {
-    if (line.startsWith('# branch.head ')) {
-      const val = line.slice('# branch.head '.length)
-      branch = val === '(detached)' ? null : val
-    } else if (line.startsWith('# branch.upstream ')) {
-      upstream = line.slice('# branch.upstream '.length)
-    } else if (line.startsWith('# branch.ab ')) {
-      const match = line.match(/\+(\d+) -(\d+)/)
-      if (match) {
-        ahead = parseInt(match[1], 10)
-        behind = parseInt(match[2], 10)
-      }
-    } else if (line.startsWith('u ')) {
-      // Unmerged (conflict) entry
-      conflicts++
-    } else if (line.startsWith('1 ') || line.startsWith('2 ')) {
-      // Changed entry: "1 XY ..." or "2 XY ..."
-      const xy = line.split(' ')[1]
-      if (xy && xy.length >= 2) {
-        const x = xy[0] // staged
-        const y = xy[1] // unstaged
-        if (x !== '.') staged++
-        if (y !== '.') unstaged++
-      }
-    } else if (line.startsWith('? ')) {
-      untracked++
-    }
-  }
-
-  return { branch, upstream, ahead, behind, conflicts, staged, unstaged, untracked }
-}
-
-/**
- * Resolve a path that may start with `~`.
- */
-function expandTilde(p: string): string {
-  if (p.startsWith('~')) {
-    return join(homedir(), p.slice(1))
-  }
-  return p
-}
-
-/** Runs a git command in one repo, resolving to its stdout. */
-type GitRunner = (args: string[]) => Promise<string>
-
-/**
- * Where a repo's default branch is looked for, best answer first.
- *
- * `refs/remotes/<remote>/HEAD` is the repo's own recorded answer — a symbolic
- * ref that `git clone` sets from what the server advertises, and that
- * `git remote set-head` refreshes. Everything after it is the main/master
- * convention, tried on the remote before the local branches so a checkout that
- * only has a feature branch locally still resolves.
- */
-function defaultBranchRefs(remote: string): string[] {
-  return [
-    `refs/remotes/${remote}/HEAD`,
-    `refs/remotes/${remote}/main`,
-    `refs/remotes/${remote}/master`,
-    'refs/heads/main',
-    'refs/heads/master',
-  ]
-}
-
-/**
- * A full or `:short` ref reduced to a bare branch name, or null if it does not
- * name one. Handles the three spellings `defaultBranchRefs` can yield a hit in:
- * `refs/heads/main`, `refs/remotes/origin/main`, and the `origin/main` that
- * `%(symref:short)` prints.
- */
-function branchNameFromRef(ref: string, remote: string): string | null {
-  for (const prefix of [`refs/remotes/${remote}/`, 'refs/heads/', `${remote}/`]) {
-    if (ref.startsWith(prefix)) {
-      const name = ref.slice(prefix.length)
-      // A bare HEAD is the pointer, not the branch it failed to resolve to.
-      return name === '' || name === 'HEAD' ? null : name
-    }
-  }
-  return null
-}
-
-/**
- * The branch this repo treats as its default, or null if it never recorded one
- * and has no main/master to fall back on.
- *
- * One `for-each-ref` covering every candidate, rather than a command per
- * candidate: refs that do not exist are simply absent from the output, so the
- * priority order is applied here against what came back.
- */
-async function readDefaultBranch(git: GitRunner, remote: string): Promise<string | null> {
-  const candidates = defaultBranchRefs(remote)
-  let stdout: string
-  try {
-    stdout = await git(['for-each-ref', '--format=%(refname)%09%(symref:short)', ...candidates])
-  } catch {
-    return null
-  }
-
-  const symrefByName = new Map<string, string>()
-  for (const line of stdout.split('\n')) {
-    if (line === '') continue
-    const [refname, symref = ''] = line.split('\t')
-    symrefByName.set(refname, symref)
-  }
-
-  for (const candidate of candidates) {
-    const symref = symrefByName.get(candidate)
-    if (symref === undefined) continue
-    // `refs/remotes/<remote>/HEAD` is symbolic — its target is the answer.
-    // The rest are ordinary refs, and name the branch themselves.
-    const name = branchNameFromRef(symref !== '' ? symref : candidate, remote)
-    if (name !== null) return name
-  }
-  return null
-}
-
-/** Whether the repo has any remote configured. */
-async function readHasRemote(git: GitRunner): Promise<boolean> {
-  try {
-    return (await git(['remote'])).trim() !== ''
-  } catch {
-    return false
-  }
-}
-
-/**
- * When this repo last fetched, from `FETCH_HEAD`'s mtime.
- *
- * Read out of `--git-common-dir` rather than `--git-dir`, so a worktree reports
- * the fetch its main checkout ran — remote-tracking refs are shared between
- * them, so a per-worktree answer would be wrong.
- */
-async function readLastFetchTimestamp(git: GitRunner, resolvedCwd: string): Promise<number | null> {
-  try {
-    const commonDir = pathResolve(resolvedCwd, (await git(['rev-parse', '--git-common-dir'])).trim())
-    return (await stat(join(commonDir, 'FETCH_HEAD'))).mtimeMs
-  } catch {
-    // No FETCH_HEAD: cloned and never fetched since, or not a repo at all.
-    return null
-  }
-}
-
-/**
- * Collect a directory's git status. Returns null if it is not a git repo.
- *
- * `git status` runs first because its upstream line names the remote the rest
- * of the questions are asked against; the three that follow are independent of
- * each other and run together.
- */
-async function runGitStatus(cwd: string): Promise<GitStatus | null> {
-  const resolvedCwd = expandTilde(cwd)
-  const git: GitRunner = async (args) =>
-    (await execFileAsync('git', args, { cwd: resolvedCwd, timeout: EXEC_TIMEOUT_MS })).stdout
-
-  let statusOut: string
-  try {
-    statusOut = await git(['status', '--porcelain=v2', '--branch'])
-  } catch {
-    // Not a git repo, or git is not available.
-    return null
-  }
-
-  const porcelain = parsePorcelain(statusOut)
-  // The remote the default branch is read from: the one this branch tracks if
-  // it tracks anything, else the conventional `origin`.
-  const remote = porcelain.upstream?.split('/')[0] ?? 'origin'
-
-  const [lastFetchTimestamp, defaultBranch, hasRemote] = await Promise.all([
-    readLastFetchTimestamp(git, resolvedCwd),
-    readDefaultBranch(git, remote),
-    readHasRemote(git),
-  ])
-
-  return { ...porcelain, lastFetchTimestamp, defaultBranch, hasRemote }
+/** A poll currently running for one cwd, and whether another was asked for meanwhile. */
+interface ActivePoll {
+  rerun: boolean
 }
 
 export class GitStatusPoller {
-  private cancelInterval: CancelScheduled | null = null
-  /** Staggered per-cwd polls from the current cycle, cancelled on dispose. */
-  private pendingPolls = new Set<CancelScheduled>()
+  private cancelSweep: CancelScheduled | null = null
+  private cancelMetadataWatch: CancelScheduled | null = null
+  /** Every timer this poller has armed, so dispose can cancel the lot. */
+  private timers = new Set<CancelScheduled>()
   private cache = new Map<NodeId, string>() // nodeId → JSON.stringify(GitStatus)
+  /** One probe per resolved cwd, so its cached facts survive between polls. */
+  private probes = new Map<string, ReturnType<GitStatusPollerDeps['createProbe']>>()
+  /** Resolved cwds with a poll in flight — a repo is never polled twice at once. */
+  private active = new Map<string, ActivePoll>()
+  /** cwds waiting out `WATCH_SETTLE_MS` before being polled. */
+  private settling = new Map<string, CancelScheduled>()
+  /** cwds polled within the last `MIN_POLL_INTERVAL_MS`. */
+  private cooldown = new Map<string, CancelScheduled>()
+  /** cwds that changed during their cooldown, to poll when it lifts. */
+  private wanted = new Set<string>()
+  private watcher: DirectoryWatcher
+  private disposed = false
   private getDirectoryNodes: GetDirectoryNodes
   private onGitStatus: OnGitStatus
   private deps: GitStatusPollerDeps
@@ -269,9 +116,11 @@ export class GitStatusPoller {
     this.getDirectoryNodes = getDirectoryNodes
     this.onGitStatus = onGitStatus
     this.deps = deps
-    this.cancelInterval = this.deps.scheduleInterval(() => this.pollAll(), POLL_INTERVAL_MS)
+    this.watcher = this.deps.createWatcher((cwd) => this.requestPoll(cwd))
+    this.cancelSweep = this.deps.scheduleInterval(() => this.sweep(), SWEEP_INTERVAL_MS)
+    this.cancelMetadataWatch = this.deps.scheduleInterval(() => this.checkMetadata(), METADATA_INTERVAL_MS)
     // Poll all directories immediately on startup
-    this.pollAll()
+    this.sweep()
   }
 
   removeNode(nodeId: NodeId): void {
@@ -280,71 +129,176 @@ export class GitStatusPoller {
 
   /**
    * Immediately poll a specific node (e.g. after its cwd changes).
-   * Invalidates the cache so the result always fires the callback.
+   * Invalidates the cache so the result always fires the callback, and discards
+   * the probe's cached answers, which described the directory it used to be.
    */
   pollNode(nodeId: NodeId): void {
-    const nodes = this.getDirectoryNodes()
-    const node = nodes.find(n => n.id === nodeId)
+    const node = this.getDirectoryNodes().find(n => n.id === nodeId)
     if (!node) return
+    const cwd = expandTilde(node.cwd)
     this.cache.delete(nodeId)
-    this.deps.gitStatus(node.cwd).then((result) => {
-      const json = JSON.stringify(result)
-      this.cache.set(nodeId, json)
-      this.onGitStatus(nodeId, result)
-    }).catch(() => {
-      // Ignore — will retry on next cycle
-    })
+    this.probeFor(cwd).reset()
+    // Asked for by hand, so it jumps the throttle.
+    this.pollCwd(cwd)
   }
 
   dispose(): void {
-    this.cancelInterval?.()
-    this.cancelInterval = null
-    // Staggered polls from the current cycle would otherwise keep firing —
-    // and keep the process alive — for up to a full poll interval after
-    // dispose. Same shape as the DaemonClient reconnect-after-dispose bug.
-    for (const cancel of this.pendingPolls) cancel()
-    this.pendingPolls.clear()
+    this.disposed = true
+    this.cancelSweep?.()
+    this.cancelSweep = null
+    this.cancelMetadataWatch?.()
+    this.cancelMetadataWatch = null
+    this.watcher.dispose()
+    // Staggered sweep polls, settle delays and cooldowns would otherwise keep
+    // firing — and keep the process alive — after dispose. Same shape as the
+    // DaemonClient reconnect-after-dispose bug.
+    for (const cancel of this.timers) cancel()
+    this.timers.clear()
+    this.settling.clear()
+    this.cooldown.clear()
+    this.wanted.clear()
   }
 
-  private pollAll(): void {
-    const nodes = this.getDirectoryNodes()
-    if (nodes.length === 0) return
+  /** Arm a timer that `dispose` knows about, and that forgets itself when it fires. */
+  private later(fn: () => void, ms: number): CancelScheduled {
+    // Holder rather than a `let` the callback closes over before assignment.
+    const handle: { cancel?: CancelScheduled } = {}
+    handle.cancel = this.deps.scheduleTimeout(() => {
+      if (handle.cancel) this.timers.delete(handle.cancel)
+      fn()
+    }, ms)
+    this.timers.add(handle.cancel)
+    return handle.cancel
+  }
 
-    // Group node IDs by resolved cwd to deduplicate
-    const cwdToNodeIds = new Map<string, NodeId[]>()
-    for (const node of nodes) {
-      const resolved = expandTilde(node.cwd)
-      const existing = cwdToNodeIds.get(resolved)
-      if (existing) {
-        existing.push(node.id)
-      } else {
-        cwdToNodeIds.set(resolved, [node.id])
-      }
+  /** The resolved cwds currently on the canvas, deduplicated. */
+  private uniqueCwds(): Set<string> {
+    const cwds = new Set<string>()
+    for (const node of this.getDirectoryNodes()) cwds.add(expandTilde(node.cwd))
+    return cwds
+  }
+
+  private probeFor(cwd: string): ReturnType<GitStatusPollerDeps['createProbe']> {
+    let probe = this.probes.get(cwd)
+    if (!probe) {
+      probe = this.deps.createProbe(cwd)
+      this.probes.set(cwd, probe)
     }
+    return probe
+  }
 
-    const uniqueCwds = [...cwdToNodeIds.entries()]
-    // Spread checks evenly across the poll interval
-    const spacing = uniqueCwds.length > 1
-      ? POLL_INTERVAL_MS / uniqueCwds.length
-      : 0
+  /**
+   * A full `git status` for every repo, spread evenly across the sweep interval
+   * so a dozen of them never run at once. Also the moment the watcher is
+   * brought back in line with the canvas, and any dead watch re-armed.
+   */
+  private sweep(): void {
+    const live = this.uniqueCwds()
 
-    for (let i = 0; i < uniqueCwds.length; i++) {
-      const [cwd, nodeIds] = uniqueCwds[i]
-      // Holder rather than a `let` the callback closes over before assignment.
-      const handle: { cancel?: CancelScheduled } = {}
-      handle.cancel = this.deps.scheduleTimeout(() => {
-        if (handle.cancel) this.pendingPolls.delete(handle.cancel)
-        this.deps.gitStatus(cwd).then((result) => {
-          const json = JSON.stringify(result)
-          for (const nodeId of nodeIds) {
-            if (json !== this.cache.get(nodeId)) {
-              this.cache.set(nodeId, json)
-              this.onGitStatus(nodeId, result)
-            }
-          }
-        }).catch(() => { /* retry next cycle */ })
-      }, i * spacing)
-      this.pendingPolls.add(handle.cancel)
+    // Directories that have left the canvas keep no probe, and no cached facts.
+    for (const cwd of [...this.probes.keys()]) {
+      if (!live.has(cwd)) this.probes.delete(cwd)
+    }
+    this.watcher.sync(live)
+    if (live.size === 0) return
+
+    const cwds = [...live]
+    const spacing = cwds.length > 1 ? SWEEP_INTERVAL_MS / cwds.length : 0
+    for (let i = 0; i < cwds.length; i++) {
+      const cwd = cwds[i]
+      this.later(() => this.pollCwd(cwd), i * spacing)
+    }
+  }
+
+  /**
+   * Ask every repo whether its `.git` metadata moved, and poll the ones that
+   * say yes. Repos already being polled are skipped — that poll will read the
+   * new state anyway.
+   */
+  private checkMetadata(): void {
+    for (const cwd of this.uniqueCwds()) {
+      if (this.active.has(cwd)) continue
+      this.probeFor(cwd).metadataMoved()
+        .then((moved) => { if (moved) this.requestPoll(cwd) })
+        .catch(() => { /* the sweep will read it regardless */ })
+    }
+  }
+
+  /**
+   * Something says this repo changed. Poll it once the event burst has settled,
+   * and no more than once per `MIN_POLL_INTERVAL_MS` however much it churns.
+   *
+   * The throttle is built from timers rather than timestamps so it behaves
+   * identically under a fake clock.
+   */
+  private requestPoll(cwd: string): void {
+    if (this.disposed) return
+    // Already queued, one way or another.
+    if (this.settling.has(cwd) || this.wanted.has(cwd)) return
+    if (this.cooldown.has(cwd)) {
+      this.wanted.add(cwd)
+      return
+    }
+    this.settling.set(cwd, this.later(() => {
+      this.settling.delete(cwd)
+      this.pollCwd(cwd)
+    }, WATCH_SETTLE_MS))
+  }
+
+  /**
+   * Poll one repo now, or — if it is already being polled — note that another
+   * poll is wanted once that one lands. Without the second half, a poll
+   * requested while a slow `git status` is in flight would simply be dropped.
+   */
+  private pollCwd(cwd: string): void {
+    if (this.disposed) return
+    const active = this.active.get(cwd)
+    if (active) {
+      active.rerun = true
+      return
+    }
+    void this.runPoll(cwd)
+  }
+
+  private async runPoll(cwd: string): Promise<void> {
+    const active: ActivePoll = { rerun: false }
+    this.active.set(cwd, active)
+    try {
+      this.publish(cwd, await this.probeFor(cwd).status())
+    } catch {
+      // Ignore — the next sweep retries.
+    } finally {
+      this.active.delete(cwd)
+    }
+    if (this.disposed) return
+    this.startCooldown(cwd)
+    if (active.rerun) void this.runPoll(cwd)
+  }
+
+  /**
+   * Hold this repo off for `MIN_POLL_INTERVAL_MS`, then poll it once more if
+   * anything asked while it was held.
+   */
+  private startCooldown(cwd: string): void {
+    this.cooldown.get(cwd)?.()
+    this.cooldown.set(cwd, this.later(() => {
+      this.cooldown.delete(cwd)
+      if (this.wanted.delete(cwd)) this.pollCwd(cwd)
+    }, MIN_POLL_INTERVAL_MS))
+  }
+
+  /**
+   * Hand the result to every node pointing at this cwd whose last-seen status
+   * differs. The node list is re-read here rather than captured before the
+   * poll, so a node added or moved while git was running gets the right answer.
+   */
+  private publish(cwd: string, result: GitStatus | null): void {
+    const json = JSON.stringify(result)
+    for (const node of this.getDirectoryNodes()) {
+      if (expandTilde(node.cwd) !== cwd) continue
+      if (json === this.cache.get(node.id)) continue
+      this.cache.set(node.id, json)
+      this.onGitStatus(node.id, result)
     }
   }
 }
