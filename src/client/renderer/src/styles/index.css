@@ -3512,7 +3512,7 @@ html, body, #root {
   border-radius: 0 0 8px 8px;
 }
 
-/* ── Help Modal (Cmd+?) ──────────────────────────────────────────── */
+/* ── Help Modal ────────────────────────────────────────────────── */
 .help-modal {
   position: absolute;
   inset: 2.5%;

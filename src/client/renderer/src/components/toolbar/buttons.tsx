@@ -383,7 +383,7 @@ export function ThemePicker() {
 
 export function HelpButton({ onClick }: { onClick: () => void }) {
   return (
-    <button className="toolbar__btn" onClick={onClick} data-tooltip="Help (⌘?)" data-tooltip-no-flip>
+    <button className="toolbar__btn" onClick={onClick} data-tooltip="Help" data-tooltip-no-flip>
       ?
     </button>
   )

@@ -2076,14 +2076,6 @@ export function App() {
         return
       }
 
-      // Cmd+? (Cmd+Shift+/ or Cmd+/): toggle help modal
-      if (e.metaKey && (e.key === '?' || e.key === '/')) {
-        e.preventDefault()
-        e.stopPropagation()
-        setHelpVisible(v => !v)
-        return
-      }
-
       // Cmd+F: open terminal search (before isEditable guard so it works from search input)
       if (e.metaKey && e.key === 'f') {
         const opener = terminalSearchOpeners.get(focusRef.current!)

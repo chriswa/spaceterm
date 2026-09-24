@@ -1,6 +1,6 @@
 /**
  * Central registry of all keyboard shortcuts, mouse interactions, and hidden
- * features. Drives the HelpModal (Cmd+?) so that every discoverable
+ * features. Drives the HelpModal so that every discoverable
  * interaction is documented in one place.
  *
  * Groups are rendered in array order — put the most essential stuff first so
@@ -33,14 +33,6 @@ const LEFT    = '\u2190'   // ←
 const RIGHT   = '\u2192'   // →
 
 export const helpGroups: HelpGroup[] = [
-  // ── Help ────────────────────────────────────────────────────────────
-  {
-    title: 'Help',
-    entries: [
-      { keys: `${MAC_CMD} ?`,            name: 'Help' },
-    ],
-  },
-
   // ── Getting Around ──────────────────────────────────────────────────
   {
     title: 'Getting Around',
