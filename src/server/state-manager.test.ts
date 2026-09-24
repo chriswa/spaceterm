@@ -1314,6 +1314,20 @@ describe('patched fields are broadcast exactly as applied', () => {
     expect(h.updates).toHaveLength(0)
   })
 
+  it('setNodeStamp stores and broadcasts the stamp, and "none" clears it', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.updates.length = 0
+
+    h.sm.setNodeStamp(nid('t1'), 'bang')
+    expect(h.sm.getNode(nid('t1'))?.stamp).toBe('bang')
+    expect(patchedFields(h, nid('t1'))).toEqual([{ stamp: 'bang' }])
+
+    h.updates.length = 0
+    h.sm.setNodeStamp(nid('t1'), 'none')
+    expect(patchedFields(h, nid('t1'))).toEqual([{ stamp: 'none' }])
+  })
+
   it('leaves cacheWarmUntil unset on a surface with no cache reading', () => {
     // Codex and Cursor never write it; absent means "no countdown", not "cold".
     const h = harness()

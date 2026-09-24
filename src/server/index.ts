@@ -52,7 +52,7 @@ import { SessionStatusObserver, type ObservedSurface } from './claude-state/sess
 import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../shared/state'
+import { isNodeStamp, type MarkdownNodeData, type NodeData, type TerminalNodeData } from '../shared/state'
 import { forkSession, computeForkName, sessionFilePath } from './session-fork'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
@@ -1308,6 +1308,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'node-set-color': {
       stateManager.setNodeColor(msg.nodeId, msg.colorPresetId)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'node-set-stamp': {
+      // The one field here the wire could fill with anything: every renderer
+      // path draws from NODE_STAMPS, so an unknown value is refused, not stored.
+      if (isNodeStamp(msg.stamp)) stateManager.setNodeStamp(msg.nodeId, msg.stamp)
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }

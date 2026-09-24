@@ -9,7 +9,7 @@ import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '..
 import { classifyWheelEvent } from '../lib/wheel-gesture'
 import { type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
-import type { ArchivedNode, TerminalSessionEntry, CcSessionStatus } from '../../../../shared/state'
+import type { ArchivedNode, TerminalSessionEntry, CcSessionStatus, NodeStamp } from '../../../../shared/state'
 import type { ClaudeSessionEntry, SnapshotMessage, SnapshotRow } from '../../../../shared/protocol'
 import { planRepaint, type PaintedState } from '../lib/snapshot-diff'
 import { glyphGrowth, rowsToRepaint, snapshotLod } from '../lib/snapshot-lod'
@@ -183,6 +183,7 @@ interface TerminalCardProps {
   onRename: (id: NodeId, name: string) => void
   archivedChildren: ArchivedNode[]
   onColorChange: (id: NodeId, color: string) => void
+  onStampChange: (id: NodeId, stamp: NodeStamp) => void
   onOpenArchiveSearch: (nodeId: NodeId) => void
   claudeSessionHistory?: ClaudeSessionEntry[]
   agentType?: AgentType
@@ -214,7 +215,7 @@ interface TerminalCardProps {
 
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
-  onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onOpenArchiveSearch,
+  onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onStampChange, onOpenArchiveSearch,
   claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
@@ -1092,7 +1093,7 @@ export function TerminalCard({
   // Mousedown handler: drag-to-move or click-to-hard-focus
   const handleMouseDown = (e: React.MouseEvent) => {
     // Don't interfere with header buttons or color picker
-    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__archive-btn, .node-titlebar__sessions-btn, .node-titlebar__reparent-btn, .archive-body, .terminal-search-bar')) return
+    if ((e.target as HTMLElement).closest('.node-titlebar__close, .node-titlebar__color-btn, .node-titlebar__color-picker, .node-titlebar__stamp-btn, .node-titlebar__stamp-picker, .node-titlebar__archive-btn, .node-titlebar__sessions-btn, .node-titlebar__reparent-btn, .archive-body, .terminal-search-bar')) return
 
     const isInteractiveTitle = !!(e.target as HTMLElement).closest('.terminal-card__left-area')
 
@@ -1288,6 +1289,7 @@ export function TerminalCard({
     window.api.diffFiles(prev, curr)
   } : undefined
 
+  const isAgentSurface = crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex'
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const resizingNodeId = useResizeStore(s => s.resizingNodeId)
 
@@ -1324,6 +1326,7 @@ export function TerminalCard({
       onSessionRevive={onSessionRevive}
       onClose={onClose}
       onColorChange={onColorChange}
+      onStampChange={isAgentSurface ? onStampChange : undefined}
       onOpenArchiveSearch={onOpenArchiveSearch}
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
@@ -1361,7 +1364,7 @@ export function TerminalCard({
       }}
       behindContent={
         <>
-          {(crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex') && (
+          {isAgentSurface && (
             <div
               className={`terminal-card__crab-behind${agentBehindClass}${crabAppearance.unviewed ? ' terminal-card__crab-behind--dancing' : ''}${unreadToggleable ? ' terminal-card__crab-behind--toggles-unread' : ''}${backgroundTarget !== null ? ' terminal-card__crab-behind--toggles-background' : ''}`}
               title={crabTitle}

@@ -6,7 +6,7 @@ import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSummaryChatStore } from '../stores/summaryChatStore'
 import { useRestartRequiredStore } from '../stores/restartRequiredStore'
-import type { NodeData } from '../../../../shared/state'
+import type { NodeData, NodeStamp } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
@@ -227,6 +227,10 @@ export async function sendRename(nodeId: NodeId, name: string): Promise<void> {
 
 export async function sendSetColor(nodeId: NodeId, colorPresetId: string): Promise<void> {
   await window.api.node.setColor(nodeId, colorPresetId)
+}
+
+export async function sendSetStamp(nodeId: NodeId, stamp: NodeStamp): Promise<void> {
+  await window.api.node.setStamp(nodeId, stamp)
 }
 
 export async function sendBringToFront(nodeId: NodeId): Promise<void> {

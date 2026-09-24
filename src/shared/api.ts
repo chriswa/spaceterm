@@ -30,7 +30,7 @@ import type {
   SummaryChatUiState,
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
-import type { NodeData, ServerState } from './state'
+import type { NodeData, NodeStamp, ServerState } from './state'
 import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
@@ -68,6 +68,7 @@ export interface NodeApi {
   batchMove(moves: Array<{ nodeId: NodeId; x: number; y: number }>): Promise<void>
   rename(nodeId: NodeId, name: string): Promise<void>
   setColor(nodeId: NodeId, colorPresetId: string): Promise<void>
+  setStamp(nodeId: NodeId, stamp: NodeStamp): Promise<void>
   /** Archive a node and everything beneath it, as one restorable entry. */
   archive(nodeId: NodeId): Promise<void>
   /**

@@ -13,6 +13,7 @@ import type { SummaryChatMode, SummaryChatToggleResult } from '../../shared/api'
 import { LineParser } from '../../server/line-parser'
 import { unhandledVariant } from '../../shared/exhaustive'
 import type { NodeId, PtySessionId } from '../../shared/ids'
+import type { NodeStamp } from '../../shared/state'
 import { log } from './logger'
 
 const INITIAL_RECONNECT_DELAY = 200
@@ -361,6 +362,10 @@ export class ServerClient extends EventEmitter {
 
   async nodeSetColor(nodeId: NodeId, colorPresetId: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'node-set-color', nodeId, colorPresetId })
+  }
+
+  async nodeSetStamp(nodeId: NodeId, stamp: NodeStamp): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'node-set-stamp', nodeId, stamp })
   }
 
   async nodeArchive(nodeId: NodeId): Promise<ServerMessage> {

@@ -75,6 +75,8 @@ export interface BaseNodeData {
   lastInteractedAt?: number
   name?: string | null
   colorPresetId?: string
+  /** A mark drawn beside the card. Absent means `'none'`. See {@link NODE_STAMPS}. */
+  stamp?: NodeStamp
   archivedChildren: ArchivedNode[]
   alerts?: NodeAlert[]
   alertsReadTimestamp?: number  // epoch ms, set by client
@@ -329,6 +331,18 @@ export type NodeData =
   | TitleNodeData
   | MetaGroupNodeData
   | MetaDocNodeData
+
+/**
+ * The marks a node can carry beside it, chosen from its action bar. Only agent
+ * surfaces offer the picker today; the field lives on every node so another
+ * card kind can offer it without a protocol change.
+ */
+export const NODE_STAMPS = ['none', 'star', 'bang'] as const
+export type NodeStamp = typeof NODE_STAMPS[number]
+
+export function isNodeStamp(value: unknown): value is NodeStamp {
+  return (NODE_STAMPS as readonly unknown[]).includes(value)
+}
 
 /**
  * Whether a surface's cache countdown is muted: shown small and grey on the

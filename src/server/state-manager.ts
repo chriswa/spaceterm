@@ -14,7 +14,8 @@ import type {
   ArchivedNode,
   ArchivedDescendant,
   GitStatus,
-  AlertType
+  AlertType,
+  NodeStamp
 } from '../shared/state'
 import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
@@ -837,6 +838,14 @@ export class StateManager {
     if (!node || this.refuseEphemeral(node, 'setNodeColor')) return
     node.colorPresetId = colorPresetId
     this.onNodeUpdate(nodeId, { colorPresetId })
+    this.schedulePersist()
+  }
+
+  setNodeStamp(nodeId: NodeId, stamp: NodeStamp): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || this.refuseEphemeral(node, 'setNodeStamp')) return
+    node.stamp = stamp
+    this.onNodeUpdate(nodeId, { stamp })
     this.schedulePersist()
   }
 

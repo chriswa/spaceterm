@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ColorPreset } from '../lib/color-presets'
 import { COLOR_PRESETS } from '../lib/color-presets'
-import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
+import { NODE_STAMPS, type ArchivedNode, type NodeStamp, type TerminalSessionEntry } from '../../../../shared/state'
+import { STAMP_LABELS, StampGlyph } from './StampGlyph'
 import { SessionsBody } from './SessionsBody'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
@@ -28,6 +29,8 @@ export interface NodeActionBarProps {
   onDiffPlans?: () => void
   showColorPicker?: boolean
   onColorChange: (id: NodeId, color: string) => void
+  /** Offers the stamp picker — agent surfaces today. */
+  onStampChange?: (id: NodeId, stamp: NodeStamp) => void
   pastSessions?: TerminalSessionEntry[]
   currentSessionIndex?: number
   onSessionsToggled?: (nodeId: NodeId, open: boolean) => void
@@ -76,7 +79,7 @@ export interface NodeActionBarProps {
 export function NodeActionBar({
   nodeId, preset, focused,
   onShipIt, onFork, onExtraCliArgs, extraCliArgs,
-  onDiffPlans, showColorPicker, onColorChange,
+  onDiffPlans, showColorPicker, onColorChange, onStampChange,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   archivedChildren, onOpenArchiveSearch,
   onStartReparent, isReparenting,
@@ -91,6 +94,8 @@ export function NodeActionBar({
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const [stampPickerOpen, setStampPickerOpen] = useState(false)
+  const stampPickerRef = useRef<HTMLDivElement>(null)
   const sessionsBtnRef = useRef<HTMLButtonElement>(null)
   const sessionsBodyRef = useRef<HTMLDivElement>(null)
   const [addNodeOpen, setAddNodeOpen] = useState(false)
@@ -107,6 +112,7 @@ export function NodeActionBar({
   const rootCwdBodyRef = useRef<HTMLDivElement>(null)
   const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
   const alertsReadTimestamp = useNodeStore(s => s.nodes[nodeId]?.alertsReadTimestamp)
+  const stamp = useNodeStore(s => s.nodes[nodeId]?.stamp ?? 'none')
   const unreadCount = alerts.filter(a => a.timestamp > (alertsReadTimestamp ?? 0)).length
   const hasUnread = unreadCount > 0
 
@@ -212,6 +218,18 @@ export function NodeActionBar({
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [pickerOpen])
+
+  // Close stamp picker on outside click
+  useEffect(() => {
+    if (!stampPickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (stampPickerRef.current && !stampPickerRef.current.contains(e.target as Node)) {
+        setStampPickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [stampPickerOpen])
 
   const toggleAlerts = useCallback(() => {
     setSessionsOpen(false)
@@ -388,6 +406,39 @@ export function NodeActionBar({
                   style={{ backgroundColor: p.titleBarBg }}
                   onClick={(e) => { e.stopPropagation(); onColorChange(nodeId, p.id); setPickerOpen(false); onActionInvoked?.() }}
                 />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {onStampChange && (
+        <div style={{ position: 'relative' }} ref={stampPickerRef}>
+          <button
+            className="node-titlebar__stamp-btn"
+            data-tooltip="Stamp"
+            style={preset ? { color: preset.titleBarFg } : undefined}
+            onClick={(e) => { e.stopPropagation(); setStampPickerOpen(prev => !prev) }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              {/* A rubber stamp: handle, neck, pad. */}
+              <circle cx="7" cy="3" r="2" />
+              <path d="M6 5 L6 8 M8 5 L8 8" />
+              <rect x="2" y="8" width="10" height="3" rx="0.8" />
+              <line x1="2" y1="13" x2="12" y2="13" />
+            </svg>
+          </button>
+          {stampPickerOpen && (
+            <div className="node-titlebar__stamp-picker" onMouseDown={(e) => e.stopPropagation()}>
+              {NODE_STAMPS.map((s) => (
+                <button
+                  key={s}
+                  className={`node-titlebar__stamp-option node-stamp--${s}${stamp === s ? ' node-titlebar__stamp-option--current' : ''}`}
+                  data-tooltip={STAMP_LABELS[s]}
+                  onClick={(e) => { e.stopPropagation(); onStampChange(nodeId, s); setStampPickerOpen(false); onActionInvoked?.() }}
+                >
+                  {s === 'none' ? <span className="node-titlebar__stamp-none" /> : <StampGlyph stamp={s} />}
+                </button>
               ))}
             </div>
           )}

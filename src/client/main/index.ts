@@ -13,6 +13,7 @@ import { readAgentMemoryBytes } from './agent-memory'
 import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
 import type { LaunchPrefs } from '../../shared/launch-prefs'
 import type { NodeId, PtySessionId } from '../../shared/ids'
+import type { NodeStamp } from '../../shared/state'
 import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
 
 /**
@@ -371,6 +372,10 @@ function setupIPC(): void {
 
   ipcMain.handle('node:set-color', async (_event, nodeId: NodeId, colorPresetId: string) => {
     await client!.nodeSetColor(nodeId, colorPresetId)
+  })
+
+  ipcMain.handle('node:set-stamp', async (_event, nodeId: NodeId, stamp: NodeStamp) => {
+    await client!.nodeSetStamp(nodeId, stamp)
   })
 
   ipcMain.handle('node:archive', async (_event, nodeId: NodeId) => {

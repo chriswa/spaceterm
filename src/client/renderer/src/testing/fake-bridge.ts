@@ -291,6 +291,7 @@ export class FakeBridge implements Api {
     batchMove: (moves) => this.reply('node.batchMove', undefined, moves),
     rename: (nodeId, name) => this.reply('node.rename', undefined, nodeId, name),
     setColor: (nodeId, colorPresetId) => this.reply('node.setColor', undefined, nodeId, colorPresetId),
+    setStamp: (nodeId, stamp) => this.reply('node.setStamp', undefined, nodeId, stamp),
     archive: (nodeId) => this.reply('node.archive', undefined, nodeId),
     unarchive: (parentNodeId, archivedNodeId) =>
       this.reply('node.unarchive', undefined, parentNodeId, archivedNodeId),

@@ -1077,6 +1077,101 @@ html, body, #root {
   transform: scale(1.15);
 }
 
+.node-titlebar__stamp-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__stamp-btn:hover {
+  background: #181825;
+  color: #cdd6f4 !important;
+}
+
+.node-titlebar__stamp-picker {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  display: flex;
+  gap: 3px;
+  padding: 6px;
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+}
+
+.node-titlebar__stamp-option {
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  background: #11111b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-titlebar__stamp-option:hover {
+  border-color: #cdd6f4;
+  transform: scale(1.15);
+}
+
+.node-titlebar__stamp-option--current {
+  border-color: #89b4fa;
+}
+
+/* An empty box struck through, as the colour picker's "inherit" swatch is. */
+.node-titlebar__stamp-none {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    to top right,
+    transparent calc(50% - 1px), #6c7086 calc(50% - 1px),
+    #6c7086 calc(50% + 1px), transparent calc(50% + 1px)
+  );
+}
+
+/* A node's stamp: left of the card, half its height, centred on it. The shell
+   is the card's box, so the percentages are the card's. */
+.node-stamp {
+  position: absolute;
+  right: calc(100% + 40px);
+  top: 25%;
+  height: 50%;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+/* Colour lives on the kind rather than on `.node-stamp`, so the picker's
+   options share it. */
+.node-stamp--star { color: #ffffff; }
+.node-stamp--bang { color: #ff4d4d; }
+
+/* Runs one way per second and back the next: a full 2s cycle. */
+.node-stamp.node-stamp--bang svg {
+  animation: node-stamp-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes node-stamp-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.5; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .node-stamp svg { animation: none !important; }
+}
+
 .node-titlebar__close {
   width: 20px;
   height: 20px;

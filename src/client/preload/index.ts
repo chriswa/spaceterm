@@ -59,6 +59,7 @@ const nodeApi: NodeApi = {
   batchMove: (moves) => ipcRenderer.invoke('node:batch-move', moves),
   rename: (nodeId, name) => ipcRenderer.invoke('node:rename', nodeId, name),
   setColor: (nodeId, colorPresetId) => ipcRenderer.invoke('node:set-color', nodeId, colorPresetId),
+  setStamp: (nodeId, stamp) => ipcRenderer.invoke('node:set-stamp', nodeId, stamp),
   archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
   unarchive: (parentNodeId, path) => ipcRenderer.invoke('node:unarchive', parentNodeId, path),
   archiveDelete: (parentNodeId, path) => ipcRenderer.invoke('node:archive-delete', parentNodeId, path),

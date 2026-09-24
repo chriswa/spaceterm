@@ -263,6 +263,13 @@ export interface NodeSetColorMessage {
   colorPresetId: string
 }
 
+export interface NodeSetStampMessage {
+  type: 'node-set-stamp'
+  seq: number
+  nodeId: NodeId
+  stamp: NodeStamp
+}
+
 export interface NodeArchiveMessage {
   type: 'node-archive'
   seq: number
@@ -840,6 +847,7 @@ export type ClientMessage =
   | NodeBatchMoveMessage
   | NodeRenameMessage
   | NodeSetColorMessage
+  | NodeSetStampMessage
   | NodeArchiveMessage
   | NodeUnarchiveMessage
   | NodeArchiveDeleteMessage
@@ -978,7 +986,7 @@ export interface ClaudeSessionLineCountMessage {
 
 // --- Server → Client node state messages ---
 
-import type { ServerState, NodeData } from './state'
+import type { ServerState, NodeData, NodeStamp } from './state'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 
 export interface SyncStateMessage {

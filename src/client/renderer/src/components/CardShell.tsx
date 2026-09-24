@@ -5,6 +5,7 @@ import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/stat
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
 import { NodeActionBar } from './NodeActionBar'
+import { StampMark } from './StampGlyph'
 import { RootCwdBody } from './RootCwdBody'
 import { RootCwdGlyph } from './icons/RootCwdGlyph'
 import type { NodeActionBarProps } from './NodeActionBar'
@@ -36,6 +37,7 @@ interface CardShellProps {
   archivedChildren: ArchivedNode[]
   onClose: (id: NodeId) => void
   onColorChange: (id: NodeId, color: string) => void
+  onStampChange?: NodeActionBarProps['onStampChange']
   onOpenArchiveSearch?: (nodeId: NodeId) => void
   pastSessions?: TerminalSessionEntry[]
   currentSessionIndex?: number
@@ -81,7 +83,7 @@ export function CardShell({
   nodeId, x, y, width, height, zIndex, focused,
   headVariant, titleContent, headStyle, preset,
   showClose = true, showColorPicker = true,
-  archivedChildren, onClose, onColorChange, onOpenArchiveSearch,
+  archivedChildren, onClose, onColorChange, onStampChange, onOpenArchiveSearch,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
   onAddNode, agentMeta, rootCwd, onExtraCliArgs, extraCliArgs,
@@ -95,6 +97,8 @@ export function CardShell({
   // the scale most: it is drawn at label scale.
   const nodeType = useNodeStore(s => s.nodes[nodeId]?.type)
   const chromeScale = nodeId === ROOT_NODE_ID ? ROOT_CHROME_SCALE : cardChromeScale(nodeType)
+
+  const stampValue = useNodeStore(s => s.nodes[nodeId]?.stamp)
 
   // Alert badge (visible when unfocused)
   const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
@@ -119,7 +123,7 @@ export function CardShell({
   const actionBarProps: NodeActionBarProps = {
     nodeId, preset, focused,
     onShipIt, onFork, onExtraCliArgs, extraCliArgs,
-    onDiffPlans, showColorPicker, onColorChange,
+    onDiffPlans, showColorPicker, onColorChange, onStampChange,
     pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
     archivedChildren, onOpenArchiveSearch,
     onStartReparent, isReparenting,
@@ -269,6 +273,7 @@ export function CardShell({
       onMouseLeave={onMouseLeave}
     >
       {behindContent}
+      <StampMark stamp={stampValue} />
       {hasAlerts && !focused && (
         <div className={`card-shell__alert-badge${hasUnread ? ' card-shell__alert-badge--unread' : ''}`}>
           <svg width="60" height="60" viewBox="0 0 16 16" fill="none" strokeLinecap="round" strokeLinejoin="round">
