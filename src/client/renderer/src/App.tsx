@@ -51,7 +51,7 @@ import { useRootCwdStore } from './stores/rootCwdStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendStampAdd, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendStampAdd, sendCacheTimerMute, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -74,7 +74,7 @@ import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionF
 import { pressSummaryChatChord, REAL_CHORD_CUES } from './lib/summary-chat-chord'
 import { summaryChatChordFor, shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
 import { tieredZIndex } from '../../../shared/card-types'
-import type { NodeData } from '../../../shared/state'
+import { isCacheTimerMuted, type NodeData } from '../../../shared/state'
 import type { AgentType } from '../../../shared/agent-type'
 
 /**
@@ -349,7 +349,7 @@ export function App() {
       if (node.type !== 'terminal') continue
       const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0, node.agentType)
       const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt, cacheWarmUntil: node.cacheWarmUntil, cacheWarmEstimated: node.cacheWarmEstimated })
+      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt, cacheWarmUntil: isCacheTimerMuted(node) ? undefined : node.cacheWarmUntil, cacheWarmEstimated: node.cacheWarmEstimated })
     }
 
     entries.sort((a, b) => a.sortOrder - b.sortOrder)
@@ -2633,6 +2633,7 @@ export function App() {
           resolvedPresets={resolvedPresets}
           nodeFreshness={nodeFreshness}
           onLabelClick={focusParentOfNode}
+          onCacheTimerMute={sendCacheTimerMute}
         />
         <RootNode
           focused={focusedId === ROOT_NODE_ID}

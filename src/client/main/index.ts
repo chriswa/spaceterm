@@ -526,6 +526,10 @@ function setupIPC(): void {
     return {}
   })
 
+  ipcMain.handle('node:cache-timer-mute', async (_event, nodeId: NodeId, muted: boolean) => {
+    await client!.cacheTimerMute(nodeId, muted)
+  })
+
   ipcMain.handle('node:fork-session', async (_event, nodeId: NodeId) => {
     const resp = await client!.forkSession(nodeId)
     if (resp.type === 'created') {

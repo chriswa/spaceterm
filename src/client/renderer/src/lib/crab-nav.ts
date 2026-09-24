@@ -31,7 +31,10 @@ export interface CrabEntry {
   sortOrder: number
   title: string
   claudeStateDecidedAt?: number
-  /** The surface's prompt-cache deadline, for the timer under its icon. */
+  /**
+   * The surface's prompt-cache deadline, for the timer under its icon. Left
+   * unset while the countdown is muted, which keeps the icon's timer hidden.
+   */
   cacheWarmUntil?: number
   cacheWarmEstimated?: boolean
 }

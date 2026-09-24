@@ -489,6 +489,10 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'stamp-add', parentId, stamp, x, y })
   }
 
+  async cacheTimerMute(nodeId: NodeId, muted: boolean): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'cache-timer-mute', nodeId, muted })
+  }
+
   async forkSession(nodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'fork-session', nodeId })
   }

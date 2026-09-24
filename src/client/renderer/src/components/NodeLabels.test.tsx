@@ -10,7 +10,7 @@ import { asNodeId, type NodeId } from '../../../../shared/ids'
  *
  * The interesting parts are not the text — they are the things that keep a
  * caption from being mistaken for the node it captions: it wears that node's
- * colour, it navigates relative to it, and it must not answer to the two
+ * colour, its name navigates relative to it, and it must not answer to the two
  * selectors the viewport uses to find cards.
  */
 
@@ -27,10 +27,11 @@ function label(overrides: Partial<NodeLabel> = {}): NodeLabel {
 
 function renderLabels(labels: NodeLabel[], onClick = vi.fn(), freshness = new Map<NodeId, number>()) {
   const presets = { [NODE]: COLOR_PRESET_MAP['teal'] }
+  const onMute = vi.fn()
   const { container } = render(
-    <NodeLabels labels={labels} resolvedPresets={presets} nodeFreshness={freshness} onLabelClick={onClick} />
+    <NodeLabels labels={labels} resolvedPresets={presets} nodeFreshness={freshness} onLabelClick={onClick} onCacheTimerMute={onMute} />
   )
-  return { container, onClick }
+  return { container, onClick, onMute }
 }
 
 afterEach(cleanup)
@@ -73,6 +74,25 @@ describe('NodeLabels', () => {
     const { container, onClick } = renderLabels([label()])
     fireEvent.click(container.querySelector('.node-label')!)
     expect(onClick).toHaveBeenCalledWith(NODE)
+  })
+
+  it('mutes a live countdown when clicked, and unmutes a muted one', () => {
+    const { container, onClick, onMute } = renderLabels([
+      label({ kind: 'status', lines: ['4:32'], deadline: 1_000 }),
+      label({ kind: 'status', nodeId: asNodeId('term-2'), lines: ['1:00'], deadline: 2_000, muted: true })
+    ])
+    const [watched, muted] = container.querySelectorAll('.node-label')
+    fireEvent.click(watched)
+    fireEvent.click(muted)
+    expect(onMute.mock.calls).toEqual([[NODE, true], [asNodeId('term-2'), false]])
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when a cold caption is clicked', () => {
+    const { container, onClick, onMute } = renderLabels([label({ kind: 'status', lines: ['cold 3m ago'] })])
+    fireEvent.click(container.querySelector('.node-label')!)
+    expect(onClick).not.toHaveBeenCalled()
+    expect(onMute).not.toHaveBeenCalled()
   })
 
   it('counts as canvas chrome, so it never starts a pan or an edge split', () => {

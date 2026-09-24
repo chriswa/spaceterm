@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type CSSProperties } from 'react'
-import { deadlineExtended, type NodeLabel } from '../lib/node-label'
+import { deadlineExtended, labelClickAction, type NodeLabel } from '../lib/node-label'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import { staleFilter } from '../lib/dim-stale'
 import type { NodeId } from '../../../../shared/ids'
@@ -11,6 +11,8 @@ interface NodeLabelsProps {
   /** "Dim stale nodes" freshness, so a label drains with the node that supplies it. */
   nodeFreshness: Map<NodeId, number>
   onLabelClick: (nodeId: NodeId) => void
+  /** Mute or unmute a surface's cache countdown — see `labelClickAction`. */
+  onCacheTimerMute: (nodeId: NodeId, muted: boolean) => void
 }
 
 /**
@@ -28,11 +30,12 @@ interface NodeLabelsProps {
  * attribute means "this element *is* that node", which the cmd-click and flash
  * paths both rely on, and a label is a caption for one rather than the node.
  *
- * Clicking one navigates, but nothing about it says so — no cursor change, no
+ * Clicking a name navigates, and clicking a live countdown mutes it (see
+ * `labelClickAction`), but nothing about either says so — no cursor change, no
  * hover state. A caption that lit up under the pointer read as a control the
  * canvas was offering rather than as a name written on the canvas.
  */
-export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClick }: NodeLabelsProps) {
+export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClick, onCacheTimerMute }: NodeLabelsProps) {
   return (
     <>
       {labels.map((label) => (
@@ -45,6 +48,7 @@ export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClic
           fg={label.fg ?? (resolvedPresets[label.nodeId] ?? DEFAULT_PRESET).titleBarBg}
           freshness={nodeFreshness.get(label.nodeId) ?? 1}
           onLabelClick={onLabelClick}
+          onCacheTimerMute={onCacheTimerMute}
         />
       ))}
     </>
@@ -59,9 +63,10 @@ interface NodeLabelViewProps {
   fg: string
   freshness: number
   onLabelClick: (nodeId: NodeId) => void
+  onCacheTimerMute: (nodeId: NodeId, muted: boolean) => void
 }
 
-function NodeLabelView({ label, fg, freshness, onLabelClick }: NodeLabelViewProps) {
+function NodeLabelView({ label, fg, freshness, onLabelClick, onCacheTimerMute }: NodeLabelViewProps) {
   const textRef = useRef<HTMLSpanElement>(null)
   const prevDeadlineRef = useRef<number | undefined>(undefined)
   const mountedRef = useRef(false)
@@ -94,7 +99,11 @@ function NodeLabelView({ label, fg, freshness, onLabelClick }: NodeLabelViewProp
         '--node-label-text-scale': label.textScale,
         filter: staleFilter(freshness)
       } as CSSProperties}
-      onClick={() => onLabelClick(label.nodeId)}
+      onClick={() => {
+        const action = labelClickAction(label)
+        if (action === 'navigate') onLabelClick(label.nodeId)
+        else if (action === 'toggle-cache-mute') onCacheTimerMute(label.nodeId, !label.muted)
+      }}
     >
       <span ref={textRef} className="node-label__text">{label.lines.join('\n')}</span>
     </div>

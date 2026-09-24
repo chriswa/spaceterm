@@ -1825,6 +1825,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'cache-timer-mute': {
+      stateManager.setCacheTimerMuted(msg.nodeId, msg.muted)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'set-claude-status-unread': {
       claudeStateMachine.handleClientMarkUnread(msg.sessionId, msg.unread)
       break

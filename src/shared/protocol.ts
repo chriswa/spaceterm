@@ -471,6 +471,13 @@ export interface StampAddMessage {
   y?: number
 }
 
+export interface CacheTimerMuteMessage {
+  type: 'cache-timer-mute'
+  seq: number
+  nodeId: NodeId
+  muted: boolean
+}
+
 export interface ValidateFileMessage {
   type: 'validate-file'
   seq: number
@@ -869,6 +876,7 @@ export type ClientMessage =
   | ValidateFileMessage
   | TitleAddMessage
   | TitleTextMessage
+  | CacheTimerMuteMessage
   | StampAddMessage
   | ForkSessionMessage
   | TerminalRestartMessage

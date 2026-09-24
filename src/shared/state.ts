@@ -155,6 +155,22 @@ export interface TerminalNodeData extends BaseNodeData {
    * the caption can mark it. See `CacheWarmth.estimated` for who sets it.
    */
   cacheWarmEstimated?: boolean
+  /**
+   * The {@link cacheWarmUntil} the user muted the countdown at, or absent (or
+   * `null`) while it is watched. Unmuting writes `null` rather than clearing the
+   * field, because a patch travels as JSON and an `undefined` field would not
+   * arrive.
+   *
+   * The deadline itself rather than a flag, so the mute lasts exactly as long
+   * as the cache it was set against: the agent's next request refreshes the
+   * cache, moves the deadline, and the countdown is watched again without
+   * anything having to clear this. Read it through `isCacheTimerMuted`.
+   *
+   * Persisted, unlike the deadline. The deadline is re-derived from the
+   * transcript at startup to the same value, so a mute set before a restart
+   * still matches it afterwards.
+   */
+  cacheTimerMutedAt?: number | null
   claudeState: ClaudeState
   claudeStateDecidedAt?: number
   claudeStatusUnread: boolean
@@ -327,6 +343,15 @@ export type NodeData =
   | MetaGroupNodeData
   | MetaDocNodeData
   | StampNodeData
+
+/**
+ * Whether a surface's cache countdown is muted: shown small and grey on the
+ * canvas and left out of the toolbar. Only a mute set against the current
+ * deadline counts — see {@link TerminalNodeData.cacheTimerMutedAt}.
+ */
+export function isCacheTimerMuted(node: Pick<TerminalNodeData, 'cacheWarmUntil' | 'cacheTimerMutedAt'>): boolean {
+  return typeof node.cacheTimerMutedAt === 'number' && node.cacheTimerMutedAt === node.cacheWarmUntil
+}
 
 /**
  * Compile-time check that the node union and the CardType registry describe the

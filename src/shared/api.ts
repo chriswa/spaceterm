@@ -135,6 +135,8 @@ export interface NodeApi {
 
   titleAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }>
   titleText(nodeId: NodeId, text: string): Promise<void>
+  /** Mute or watch a surface's cache countdown. Muting a cold surface does nothing. */
+  cacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void>
 
   stampAdd(parentId: NodeId, stamp: StampKind, x?: number, y?: number): Promise<{ nodeId: NodeId }>
 

@@ -335,6 +335,10 @@ export async function sendStampAdd(parentId: NodeId, stamp: StampKind, x?: numbe
   return window.api.node.stampAdd(parentId, stamp, x, y)
 }
 
+export async function sendCacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void> {
+  await window.api.node.cacheTimerMute(nodeId, muted)
+}
+
 export async function sendTerminalReincarnate(
   nodeId: NodeId,
   options?: CreateOptions

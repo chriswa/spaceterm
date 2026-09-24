@@ -1668,6 +1668,22 @@ export class StateManager {
     this.applyPatch(node, patch)
   }
 
+  /**
+   * Mute a surface's cache countdown against its current deadline, or watch it
+   * again. Muting a surface with no live cache does nothing: there is no
+   * countdown to quieten, and a mute pinned to a spent deadline would never
+   * match another one anyway.
+   */
+  setCacheTimerMuted(nodeId: NodeId, muted: boolean, now = Date.now()): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'terminal') return
+    const next = muted && node.cacheWarmUntil !== undefined && node.cacheWarmUntil > now
+      ? node.cacheWarmUntil
+      : null
+    if (next === (node.cacheTimerMutedAt ?? null)) return
+    this.patchNode(node, { cacheTimerMutedAt: next })
+  }
+
   // --- Directory operations ---
 
   createDirectory(parentId: NodeId, x: number, y: number, cwd: string): DirectoryNodeData {

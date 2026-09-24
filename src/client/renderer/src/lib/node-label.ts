@@ -1,7 +1,7 @@
 import { CARD_AGENT_MARK_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './constants'
 import { cacheCountdownText, formatCountdownClock, formatElapsedShort } from './elapsed-label'
 import { measureCard } from '../../../../shared/card-types'
-import type { NodeData } from '../../../../shared/state'
+import { isCacheTimerMuted, type NodeData } from '../../../../shared/state'
 import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
 /**
@@ -218,6 +218,8 @@ export interface NodeLabel {
    * view can see it move — see `deadlineExtended`.
    */
   deadline?: number
+  /** A hot status caption whose countdown the user has muted. */
+  muted?: boolean
   /** Centre of the label, directly above the node's card. */
   x: number
   y: number
@@ -359,6 +361,10 @@ export const COLD_LABEL_FG = '#aaaaaa'
  * A deadline the server could only estimate is marked `4:32?` — see
  * `cacheCountdownText`, which the toolbar's per-surface timers share.
  *
+ * A muted countdown keeps its clock but takes the cold caption's size and
+ * colour, so it drops back among the quiet cards until the agent next refreshes
+ * its cache — see `isCacheTimerMuted`.
+ *
  * The age reads `lastAgentActivityAt` and not `lastInteractedAt`, which is the
  * whole point of that field existing: the latter also advances on the human's
  * keystrokes, so typing into a stalled surface would reset its caption to `0m`
@@ -378,9 +384,11 @@ export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null
   let text: string
   let textScale: number
   let fg: string | undefined
+  const muted = countdown !== null && isCacheTimerMuted(node)
   if (countdown !== null) {
     text = countdown
-    textScale = LABEL_TEXT_SCALE
+    textScale = muted ? MARKDOWN_LABEL_TEXT_SCALE : LABEL_TEXT_SCALE
+    if (muted) fg = COLD_LABEL_FG
   } else if (since !== undefined) {
     text = `cold ${formatElapsedShort(now - since)} ago`
     textScale = MARKDOWN_LABEL_TEXT_SCALE
@@ -398,12 +406,27 @@ export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null
     textScale,
     fg,
     deadline: countdown !== null ? node.cacheWarmUntil : undefined,
+    muted: muted || undefined,
     x: node.x,
     y: node.y + measureCard(node).height / 2 + statusCardGap(textScale) + box.height / 2,
     anchorX: node.x,
     anchorY: node.y,
     ...box
   }
+}
+
+/**
+ * What clicking a caption does.
+ *
+ * A name navigates relative to the node it names. A status caption is a
+ * reading of its card rather than a way to it: while it counts down, clicking
+ * it mutes or unmutes the countdown, and once the cache is cold it does nothing.
+ */
+export type LabelClickAction = 'navigate' | 'toggle-cache-mute' | null
+
+export function labelClickAction(label: Pick<NodeLabel, 'kind' | 'deadline'>): LabelClickAction {
+  if (label.kind !== 'status') return 'navigate'
+  return label.deadline !== undefined ? 'toggle-cache-mute' : null
 }
 
 /**

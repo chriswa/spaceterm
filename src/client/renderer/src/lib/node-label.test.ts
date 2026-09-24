@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES,
-  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel, COLD_LABEL_FG, deadlineExtended
+  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel, COLD_LABEL_FG, deadlineExtended,
+  labelClickAction
 } from './node-label'
 import { ELAPSED_TICK_MS } from './elapsed-label'
 import { ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from '../../../../shared/node-size'
@@ -464,6 +465,41 @@ describe('layOutStatusLabel', () => {
     expect(layOutStatusLabel(terminal({ lastInteractedAt: NOW }), NOW)).toBeNull()
     expect(layOutStatusLabel(agent({ lastAgentActivityAt: undefined }), NOW)).toBeNull()
     expect(layOutStatusLabel(markdown({ lastInteractedAt: NOW }), NOW)).toBeNull()
+  })
+
+  describe('muted countdown', () => {
+    const DEADLINE = NOW + 4 * 60_000
+
+    it('keeps its clock but takes the cold caption\'s size and colour', () => {
+      const label = layOutStatusLabel(agent({ cacheWarmUntil: DEADLINE, cacheTimerMutedAt: DEADLINE }), NOW)!
+      expect(label.lines).toEqual(['4:00'])
+      expect(label.muted).toBe(true)
+      expect(label.fg).toBe(COLD_LABEL_FG)
+      expect(label.textScale).toBe(MARKDOWN_LABEL_TEXT_SCALE)
+    })
+
+    it('lapses once a refresh moves the deadline past the one it was set at', () => {
+      const label = layOutStatusLabel(agent({ cacheWarmUntil: DEADLINE + 60_000, cacheTimerMutedAt: DEADLINE }), NOW)!
+      expect(label.muted).toBeUndefined()
+      expect(label.fg).toBeUndefined()
+      expect(label.textScale).toBe(LABEL_TEXT_SCALE)
+    })
+
+    it('reads as watched when unmuted with null', () => {
+      expect(layOutStatusLabel(agent({ cacheWarmUntil: DEADLINE, cacheTimerMutedAt: null }), NOW)!.muted).toBeUndefined()
+    })
+  })
+
+  describe('labelClickAction', () => {
+    it('toggles the mute on a live countdown, and does nothing on a cold caption', () => {
+      expect(labelClickAction(layOutStatusLabel(agent({ cacheWarmUntil: NOW + 60_000 }), NOW)!)).toBe('toggle-cache-mute')
+      expect(labelClickAction(layOutStatusLabel(agent(), NOW)!)).toBeNull()
+    })
+
+    it('navigates from a name or the root\'s working directory', () => {
+      expect(labelClickAction(layOutNodeLabel(agent({ name: 'Deploy' }))!)).toBe('navigate')
+      expect(labelClickAction(layOutRootCwdLabel('~/src')!)).toBe('navigate')
+    })
   })
 
   describe('deadlineExtended', () => {

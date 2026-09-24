@@ -1289,6 +1289,31 @@ describe('patched fields are broadcast exactly as applied', () => {
     expect(patchedFields(h, nid('t1'))).toEqual([{ cacheWarmUntil: 3_900_000 }])
   })
 
+  it('setCacheTimerMuted pins the mute to the live deadline, and unmutes with null', () => {
+    // null rather than undefined: the patch travels as JSON, which drops undefined.
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_600_000 })
+    h.updates.length = 0
+
+    h.sm.setCacheTimerMuted(nid('t1'), true, 1_000)
+    expect(patchedFields(h, nid('t1'))).toEqual([{ cacheTimerMutedAt: 3_600_000 }])
+
+    h.updates.length = 0
+    h.sm.setCacheTimerMuted(nid('t1'), false, 1_000)
+    expect(patchedFields(h, nid('t1'))).toEqual([{ cacheTimerMutedAt: null }])
+  })
+
+  it('setCacheTimerMuted does nothing on a surface whose cache is cold', () => {
+    const h = harness()
+    createTerminal(h.sm, 't1')
+    h.sm.setCacheWarmth(pid('t1'), { warmUntil: 3_600_000 })
+    h.updates.length = 0
+
+    h.sm.setCacheTimerMuted(nid('t1'), true, 3_600_000)
+    expect(h.updates).toHaveLength(0)
+  })
+
   it('leaves cacheWarmUntil unset on a surface with no cache reading', () => {
     // Codex and Cursor never write it; absent means "no countdown", not "cold".
     const h = harness()
