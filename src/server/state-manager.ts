@@ -21,7 +21,6 @@ import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import type { CacheWarmth } from './cache-warmth'
 import { StatePersister } from './persistence'
 import { serverLog } from './server-log'
-import { stripArchivedStamps } from './temp-strip-stamps'
 import { abbreviateCwd, scanCwdMismatches, scanDescendantCwdMismatches } from './cwd-alerts'
 import {
   asNodeId,
@@ -275,12 +274,6 @@ export class StateManager {
     // caller has to remember that the map might be missing.
     if (!this.state.metaHosts) this.state.metaHosts = {}
     if (!this.state.backgroundLedgers) this.state.backgroundLedgers = {}
-    // TEMPORARY: see temp-strip-stamps.ts.
-    const strippedStamps = stripArchivedStamps(this.state)
-    if (strippedStamps > 0) {
-      serverLog(`[temp-strip-stamps] removed ${strippedStamps} archived stamp entries`)
-      this.schedulePersist()
-    }
 
     // Scan all existing Claude terminals for cwd-mismatch alerts.
     // This catches mismatches that existed before the alert system was deployed
