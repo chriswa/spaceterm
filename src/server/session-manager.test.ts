@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { DaemonClient } from './daemon-client'
 import { SessionManager, type SessionManagerDeps } from './session-manager'
 import { FakeDaemon } from './testing/fake-daemon'
+import { FakeLoginEnv } from './testing/fake-login-env'
 import { asNodeId as nid, asPtySessionId as pid, asClaudeSessionId as cid } from '../shared/ids'
 import { DEFAULT_COLS, DEFAULT_ROWS, MAX_COLS, MIN_ROWS } from '../shared/node-size'
 
@@ -23,12 +24,12 @@ function recorder() {
   } satisfies SessionManagerDeps
 }
 
-async function setup() {
+async function setup(loginEnv = new FakeLoginEnv()) {
   const daemon = new FakeDaemon()
   const client = new DaemonClient(() => {}, { transport: daemon, reconnectDelayMs: 1 })
   await client.connect()
   const deps = recorder()
-  const manager = new SessionManager(client, deps)
+  const manager = new SessionManager(client, { ...deps, loginEnv })
   return { daemon, client, deps, manager }
 }
 
@@ -74,6 +75,55 @@ describe('SessionManager create', () => {
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+
+  it('starts a command from the captured login environment, not the server\'s', async () => {
+    vi.stubEnv('SERVER_ONLY', 'stale')
+    try {
+      const { daemon, manager, client } = await setup(
+        new FakeLoginEnv({ FROM_LOGIN: 'fresh', CLAUDECODE: '1' })
+      )
+      manager.create({ command: 'claude', args: [] })
+      const env = sent(daemon, 'create')[0].env as Record<string, string>
+      expect(env.FROM_LOGIN).toBe('fresh')
+      expect(env).not.toHaveProperty('SERVER_ONLY')
+      // The capture is scrubbed too: its shell inherited the server's env.
+      expect(env).not.toHaveProperty('CLAUDECODE')
+      client.dispose()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('falls back to the server environment before the first capture lands', async () => {
+    vi.stubEnv('SERVER_ONLY', 'stale')
+    try {
+      const { daemon, manager, client } = await setup(new FakeLoginEnv(null))
+      manager.create({ command: 'claude', args: [] })
+      const env = sent(daemon, 'create')[0].env as Record<string, string>
+      expect(env.SERVER_ONLY).toBe('stale')
+      client.dispose()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('leaves a shell on the server environment, since it reads the rc files itself', async () => {
+    const { daemon, manager, client } = await setup(new FakeLoginEnv({ FROM_LOGIN: 'fresh' }))
+    manager.create()
+    const env = sent(daemon, 'create')[0].env as Record<string, string>
+    expect(env).not.toHaveProperty('FROM_LOGIN')
+    client.dispose()
+  })
+
+  it('refreshes the login environment after spawning a command, not a shell', async () => {
+    const loginEnv = new FakeLoginEnv()
+    const { manager, client } = await setup(loginEnv)
+    manager.create()
+    expect(loginEnv.refreshes).toBe(0)
+    manager.create({ command: 'claude', args: [] })
+    expect(loginEnv.refreshes).toBe(1)
+    client.dispose()
   })
 
   it('passes the surface id to the PTY environment', async () => {

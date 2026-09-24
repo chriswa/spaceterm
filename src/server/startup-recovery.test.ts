@@ -5,6 +5,7 @@ import { StatePersister } from './persistence'
 import { SessionManager } from './session-manager'
 import { DaemonClient } from './daemon-client'
 import { FakeDaemon } from './testing/fake-daemon'
+import { FakeLoginEnv } from './testing/fake-login-env'
 import { FakePersistenceIO } from './testing/fake-persistence'
 import { CURRENT_STATE_VERSION } from './state-migrations'
 import { respawnTerminal, type TerminalRespawnDeps } from './terminal-respawn'
@@ -101,7 +102,8 @@ async function harness(options: HarnessOptions = {}) {
   await daemonClient.connect()
   const sessionManager = new SessionManager(daemonClient, {
     onData: () => {}, onExit: () => {}, onTitleHistory: () => {},
-    onCwd: () => {}, onClaudeSessionHistory: () => {}
+    onCwd: () => {}, onClaudeSessionHistory: () => {},
+    loginEnv: new FakeLoginEnv(),
   })
 
   const respawnDeps: TerminalRespawnDeps = {

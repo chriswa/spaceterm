@@ -5,6 +5,7 @@ import { DataBatcher } from './data-batcher'
 import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
 import { scrubInheritedAgentEnv } from './spawn-env'
+import { LoginShellEnv, type LoginEnvSource } from './login-env'
 import { serverLog } from './server-log'
 import { expandTilde } from './cwd'
 import { TitleParser } from './title-parser'
@@ -76,6 +77,8 @@ export interface SessionManagerDeps {
   onTitleHistory: TitleHistoryCallback
   onCwd: CwdCallback
   onClaudeSessionHistory: ClaudeSessionHistoryCallback
+  /** Fresh environment for command surfaces; defaults to capturing `$SHELL -l -i`. */
+  loginEnv?: LoginEnvSource
 }
 
 export class SessionManager {
@@ -86,6 +89,7 @@ export class SessionManager {
   private onTitleHistory: TitleHistoryCallback
   private onCwd: CwdCallback
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
+  private loginEnv: LoginEnvSource
 
   constructor(daemon: DaemonClient, deps: SessionManagerDeps) {
     this.daemon = daemon
@@ -94,6 +98,7 @@ export class SessionManager {
     this.onTitleHistory = deps.onTitleHistory
     this.onCwd = deps.onCwd
     this.onClaudeSessionHistory = deps.onClaudeSessionHistory
+    this.loginEnv = deps.loginEnv ?? new LoginShellEnv()
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -112,10 +117,14 @@ export class SessionManager {
     const resolvedCwd = expandTilde(options?.cwd)
     const cwd = resolvedCwd && existsSync(resolvedCwd) ? resolvedCwd : home
 
-    // Never forward the identity of whichever agent session happened to start
-    // this server — see spawn-env.ts for the failure that causes.
-    const baseEnv = scrubInheritedAgentEnv(process.env)
     const isCommand = !!options?.command
+    // A shell re-reads the user's rc files itself; a command gets exec'd
+    // directly, so it needs the login environment captured on its behalf —
+    // see login-env.ts. Until the first capture lands, fall back to ours.
+    // Either way, never forward the identity of whichever agent session
+    // happened to start this server — see spawn-env.ts for why.
+    const loginEnv = isCommand ? this.loginEnv.current() : null
+    const baseEnv = scrubInheritedAgentEnv(loginEnv ?? process.env)
     const executable = isCommand ? options!.command! : shell
     const args = isCommand ? (options!.args || []) : ['-l']
     // Only apply shell integration env when spawning a shell (not a command)
@@ -154,6 +163,10 @@ export class SessionManager {
 
     // Set up local processing pipeline (TitleParser, DataBatcher, ScrollbackBuffer).
     this.initLocalSession(sessionId, cwd, cols, rows)
+
+    // Pick up anything the startup-file watch can't see (files the rc files
+    // source, `launchctl setenv`) in time for the next command surface.
+    if (isCommand) this.loginEnv.refresh()
 
     return { sessionId, cols, rows }
   }
