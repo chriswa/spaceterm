@@ -2418,6 +2418,11 @@ export function App() {
   const handleNodeReady = useCallback((nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => {
     if (focusRef.current !== nodeId) return
     if (pinnedFocusRef.current) return
+    // Cards report their bounds whenever they move while focused. During a
+    // drag that would have the camera chase the node, and since the drag is
+    // measured in screen pixels, the node would then lag and jitter under a
+    // moving camera. The camera holds still until the drag ends.
+    if (draggingRef.current.has(nodeId)) return
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
     const vw = viewport.clientWidth
