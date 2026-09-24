@@ -148,24 +148,3 @@ export function isDescendantOf(
   }
   return false
 }
-
-/**
- * What dropping `srcId` onto `targetId` in reparent mode would do.
- *
- * `swap` when the target is the source's own child (the two trade places),
- * `invalid` when the move would be a no-op, create a cycle, or make a stamp a
- * parent — stamps are always leaves, see `StateManager.hostFor`. The preview
- * edge and the drop itself both ask this, so they cannot disagree.
- */
-export function reparentOutcome(
-  nodes: Record<string, NodeData>,
-  srcId: NodeId,
-  targetId: NodeId
-): 'reparent' | 'swap' | 'invalid' {
-  const src = nodes[srcId]
-  if (!src || targetId === srcId || src.parentId === targetId) return 'invalid'
-  if (nodes[targetId]?.type === 'stamp') return 'invalid'
-  if (isImmediateChildOf(nodes, targetId, srcId)) return 'swap'
-  if (isDescendantOf(nodes, targetId, srcId)) return 'invalid'
-  return 'reparent'
-}

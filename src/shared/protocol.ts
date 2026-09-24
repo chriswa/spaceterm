@@ -462,15 +462,6 @@ export interface TitleTextMessage {
   text: string
 }
 
-export interface StampAddMessage {
-  type: 'stamp-add'
-  seq: number
-  parentId: NodeId
-  stamp: StampKind
-  x?: number
-  y?: number
-}
-
 export interface CacheTimerMuteMessage {
   type: 'cache-timer-mute'
   seq: number
@@ -877,7 +868,6 @@ export type ClientMessage =
   | TitleAddMessage
   | TitleTextMessage
   | CacheTimerMuteMessage
-  | StampAddMessage
   | ForkSessionMessage
   | TerminalRestartMessage
   | CrabReorderMessage
@@ -990,7 +980,6 @@ export interface ClaudeSessionLineCountMessage {
 
 import type { ServerState, NodeData } from './state'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
-import type { StampKind } from './stamps'
 
 export interface SyncStateMessage {
   type: 'sync-state'

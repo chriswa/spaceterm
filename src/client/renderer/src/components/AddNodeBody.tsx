@@ -2,51 +2,18 @@ import crabIcon from '../assets/crab.png'
 import codexAgentIcon from '../assets/codex-agent.png'
 import type { AgentType } from '../../../../shared/agent-type'
 import type { CardType } from '../../../../shared/card-types'
-import { STAMP_KINDS, STAMP_LABELS, type StampKind } from '../../../../shared/stamps'
-import { StampArt } from './StampArt'
-
-/** A stamp in the add menu. The card type alone does not say which glyph. */
-export type StampAddType = `stamp:${StampKind}`
 
 /**
- * What the add menu can create: a card of any registered type, one entry per
- * agent (all of which produce a terminal card, pre-launched with that CLI), and
- * one per stamp.
+ * What the add menu can create: a card of any registered type, plus one entry
+ * per agent (all of which produce a terminal card, pre-launched with that CLI).
  */
-export type AddNodeType = AgentType | Exclude<CardType, 'stamp'> | StampAddType
-
-export function stampAddType(kind: StampKind): StampAddType {
-  return `stamp:${kind}`
-}
-
-export function isStampAddType(type: AddNodeType): type is StampAddType {
-  return type.startsWith('stamp:')
-}
-
-export function stampKindOf(type: StampAddType): StampKind {
-  return type.slice('stamp:'.length) as StampKind
-}
+export type AddNodeType = AgentType | CardType
 
 interface AddNodeBodyProps {
   onSelect: (type: AddNodeType) => void
-  /**
-   * Whether stamps are offered. Off where the new node must be able to take a
-   * child — splitting an edge puts the new node between parent and child, and
-   * a stamp is always a leaf.
-   */
-  includeStamps?: boolean
 }
 
-type Item = { type: AddNodeType; label: string; hint: string; icon: JSX.Element }
-
-export const STAMP_ITEMS: Item[] = STAMP_KINDS.map((kind) => ({
-  type: stampAddType(kind),
-  label: STAMP_LABELS[kind],
-  hint: '',
-  icon: <StampArt kind={kind} size={14} />,
-}))
-
-const items: Item[] = [
+const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.Element }> = [
   {
     type: 'claude',
     label: 'Claude Code',
@@ -148,11 +115,7 @@ const items: Item[] = [
   },
 ]
 
-export function AddNodeBody({ onSelect, includeStamps = true }: AddNodeBodyProps) {
-  return <AddNodeList items={includeStamps ? [...items, ...STAMP_ITEMS] : items} onSelect={onSelect} />
-}
-
-export function AddNodeList({ items, onSelect }: { items: Item[]; onSelect: (type: AddNodeType) => void }) {
+export function AddNodeBody({ onSelect }: AddNodeBodyProps) {
   return (
     <div className="add-node-body" onMouseDown={(e) => e.stopPropagation()}>
       {items.map((item) => (

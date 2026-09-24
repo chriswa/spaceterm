@@ -34,7 +34,6 @@ import type { NodeData, ServerState } from './state'
 import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
-import type { StampKind } from './stamps'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
 
@@ -137,8 +136,6 @@ export interface NodeApi {
   titleText(nodeId: NodeId, text: string): Promise<void>
   /** Mute or watch a surface's cache countdown. Muting a cold surface does nothing. */
   cacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void>
-
-  stampAdd(parentId: NodeId, stamp: StampKind, x?: number, y?: number): Promise<{ nodeId: NodeId }>
 
   setClaudeStatusUnread(sessionId: PtySessionId, unread: boolean): void
   setClaudeStatusAsleep(sessionId: PtySessionId, asleep: boolean): void

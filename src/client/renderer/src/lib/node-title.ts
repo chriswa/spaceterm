@@ -1,5 +1,4 @@
 import type { NodeData } from '../../../../shared/state'
-import { STAMP_LABELS } from '../../../../shared/stamps'
 
 /** Terminal-specific subtitle: shell title history joined with ↼ separators */
 export function terminalSubtitle(shellTitleHistory: string[]): string {
@@ -30,7 +29,6 @@ export function nodeDisplayTitle(data: NodeData): string {
   if (data.type === 'directory') return data.cwd
   if (data.type === 'title') return data.text || '[Untitled]'
   if (data.type === 'file') return data.filePath
-  if (data.type === 'stamp') return STAMP_LABELS[data.stamp]
   return data.id.slice(0, 8)
 }
 

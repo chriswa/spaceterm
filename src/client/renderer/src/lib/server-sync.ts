@@ -16,7 +16,6 @@ import { showToast } from './toast'
 import { pokeFrames } from './frame-policy'
 import type { CreateOptions, SoundName } from '../../../../shared/protocol'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
-import type { StampKind } from '../../../../shared/stamps'
 
 /** Play notification sound if enabled. */
 function playUnreadSound(): void {
@@ -329,10 +328,6 @@ export async function sendTitleAdd(parentId: NodeId, x?: number, y?: number): Pr
 
 export async function sendTitleText(nodeId: NodeId, text: string): Promise<void> {
   await window.api.node.titleText(nodeId, text)
-}
-
-export async function sendStampAdd(parentId: NodeId, stamp: StampKind, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
-  return window.api.node.stampAdd(parentId, stamp, x, y)
 }
 
 export async function sendCacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void> {

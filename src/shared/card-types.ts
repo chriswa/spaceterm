@@ -12,7 +12,6 @@ import {
   TITLE_CHAR_WIDTH,
   TITLE_H_PADDING,
   TITLE_MIN_WIDTH,
-  STAMP_SIZE,
   LABEL_NODE_SCALE,
   DEFAULT_COLS,
   DEFAULT_ROWS,
@@ -30,7 +29,7 @@ import {
  * node-size.ts, node-placement, state-manager, App.tsx's card maps and
  * AddNodeBody — this names it once and makes the size rules exhaustive.
  */
-export type CardType = 'terminal' | 'markdown' | 'directory' | 'file' | 'title' | 'meta-group' | 'meta-doc' | 'stamp'
+export type CardType = 'terminal' | 'markdown' | 'directory' | 'file' | 'title' | 'meta-group' | 'meta-doc'
 
 /** Every card type, in add-menu order. */
 export const CARD_TYPES: readonly CardType[] = [
@@ -40,8 +39,7 @@ export const CARD_TYPES: readonly CardType[] = [
   'file',
   'title',
   'meta-group',
-  'meta-doc',
-  'stamp'
+  'meta-doc'
 ]
 
 /**
@@ -134,7 +132,7 @@ export interface CardTypeSpec {
 }
 
 /** Tiers are a million apart so a node's own z-index can never cross one. */
-const TIER = { base: 0, directory: 1_000_000, title: 2_000_000, stamp: 3_000_000 } as const
+const TIER = { base: 0, directory: 1_000_000, title: 2_000_000 } as const
 
 /** Focusing a label-ish card zooms no closer than this. See `focusMaxZoom`. */
 const LABEL_FOCUS_MAX_ZOOM = 0.15
@@ -199,17 +197,6 @@ export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
     contentSized: true,
     zIndexTier: TIER.base,
     focusMaxZoom: null
-  },
-  stamp: {
-    type: 'stamp',
-    label: 'Stamp',
-    defaultSize: { width: STAMP_SIZE, height: STAMP_SIZE },
-    contentSized: false,
-    // Stamps mark things, so they sit on top of everything they mark.
-    zIndexTier: TIER.stamp,
-    // Drawn at label scale, so focused like a title: the chrome above it is
-    // then enlarged to match, and focusing shows the stamp in context.
-    focusMaxZoom: LABEL_FOCUS_MAX_ZOOM
   }
 }
 
@@ -295,8 +282,6 @@ export function measureCard(node: NodeLike): Size {
       // Client-measured, like markdown: the collapsed face is as tall as its
       // description wraps, and the expanded one as tall as the document.
       return { width: node.width, height: node.height }
-    case 'stamp':
-      return { width: STAMP_SIZE, height: STAMP_SIZE }
     default:
       return assertNever(node, 'measureCard')
   }

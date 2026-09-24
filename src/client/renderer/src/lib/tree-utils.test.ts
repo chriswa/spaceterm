@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { NodeData } from '../../../../shared/state'
 import { asNodeId } from '../../../../shared/ids'
-import { hasLiveChildren, getDescendantIds, getAncestorCwd, reparentOutcome } from './tree-utils'
+import { hasLiveChildren, getDescendantIds, getAncestorCwd } from './tree-utils'
 
 /**
  * `hasLiveChildren` decides whether archiving asks first: a node with live
@@ -85,29 +85,5 @@ describe('getAncestorCwd', () => {
   it('falls back to the root default off a dangling parent', () => {
     const tree = withCwds(['a', 'gone'])
     expect(getAncestorCwd(tree, 'a', NO_LIVE_CWDS, '~/research')).toBe('~/research')
-  })
-})
-
-describe('reparentOutcome', () => {
-  const typed = (...rows: [id: string, parentId: string, type: NodeData['type']][]): Record<string, NodeData> =>
-    Object.fromEntries(rows.map(([id, parentId, type]) => [id, { id: asNodeId(id), parentId: asNodeId(parentId), type } as NodeData]))
-  const tree = typed(
-    ['a', 'root', 'title'],
-    ['b', 'a', 'title'],
-    ['c', 'b', 'title'],
-    ['s', 'root', 'stamp']
-  )
-  const outcome = (src: string, target: string) => reparentOutcome(tree, asNodeId(src), asNodeId(target))
-
-  it('moves a node under an unrelated one', () => expect(outcome('s', 'c')).toBe('reparent'))
-  it('swaps with an immediate child', () => expect(outcome('a', 'b')).toBe('swap'))
-  it('refuses a deeper descendant, itself, and its current parent', () => {
-    expect(outcome('a', 'c')).toBe('invalid')
-    expect(outcome('a', 'a')).toBe('invalid')
-    expect(outcome('b', 'a')).toBe('invalid')
-  })
-  it('never lets a stamp become a parent', () => {
-    expect(outcome('a', 's')).toBe('invalid')
-    expect(outcome('c', 's')).toBe('invalid')
   })
 })
