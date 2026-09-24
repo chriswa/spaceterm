@@ -175,6 +175,10 @@ export async function launchApp(
       // want it when a test fails in a way the DOM does not explain — so it is
       // the one that asks. `npm run test:e2e:headed`, or SPACETERM_HEADED=1.
       SPACETERM_HEADLESS: process.env.SPACETERM_HEADED === '1' ? '0' : '1',
+      // The app pins its DevTools port to 9222, which the operator's own
+      // Spaceterm already holds; a second bind fails and Playwright never
+      // connects. Port 0 lets Chromium pick a free one and report it.
+      SPACETERM_DEBUG_PORT: '0',
       // dbus is absent in the container; without this Electron logs a scary
       // connection failure on every launch that reads like a real error.
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
