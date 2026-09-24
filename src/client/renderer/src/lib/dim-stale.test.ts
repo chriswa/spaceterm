@@ -4,6 +4,7 @@ import {
   ACTIVE_HOURS_OPTIONS,
   activeMillisBetween,
   computeNodeFreshness,
+  lastActivityAt,
   OLDEST_BAND_AGE_MULTIPLE,
   STALE_BANDS,
   STALE_FRESHNESS,
@@ -95,14 +96,41 @@ describe('activeMillisBetween (home hours)', () => {
   })
 })
 
-// computeNodeFreshness only reads `parentId` and `lastInteractedAt`.
-function nodes(defs: Array<{ id: string; parentId: string; at?: number }>): Record<string, NodeData> {
+// computeNodeFreshness only reads `parentId` and `lastActivityAt`'s inputs.
+function nodes(defs: Array<{ id: string; parentId: string; at?: number; agentAt?: number }>): Record<string, NodeData> {
   const out: Record<string, NodeData> = {}
   for (const d of defs) {
-    out[d.id] = { id: d.id, parentId: d.parentId, lastInteractedAt: d.at } as unknown as NodeData
+    out[d.id] = {
+      id: d.id,
+      parentId: d.parentId,
+      lastInteractedAt: d.at,
+      ...(d.agentAt !== undefined ? { type: 'terminal', lastAgentActivityAt: d.agentAt } : { type: 'markdown' })
+    } as unknown as NodeData
   }
   return out
 }
+
+describe('lastActivityAt', () => {
+  it('ages an agent surface by its agent, as its cold-for caption does', () => {
+    // PTY output or a keystroke an hour ago must not keep a surface whose agent
+    // went quiet yesterday lit.
+    const [n] = Object.values(nodes([{ id: 'a', parentId: 'root', at: 5_000, agentAt: 1_000 }]))
+    expect(lastActivityAt(n)).toBe(1_000)
+  })
+
+  it('falls back to lastInteractedAt where there is no agent reading', () => {
+    const [plain] = Object.values(nodes([{ id: 'a', parentId: 'root', at: 5_000 }]))
+    expect(lastActivityAt(plain)).toBe(5_000)
+  })
+
+  it('dims an agent surface whose agent is quiet despite recent interaction', () => {
+    const NOW = at(0, 12, 12) // Monday noon
+    const freshness = computeNodeFreshness(nodes([
+      { id: 'a', parentId: 'root', at: at(0, 12, 11), agentAt: at(0, 8, 9) }
+    ]), NOW)
+    expect(freshness.get(asNodeId('a'))).toBe(STALE_FRESHNESS.fading)
+  })
+})
 
 describe('computeNodeFreshness (work hours)', () => {
   const NOW = at(0, 12, 12) // Monday noon

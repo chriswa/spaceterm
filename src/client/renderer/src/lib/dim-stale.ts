@@ -264,6 +264,26 @@ export function activeMillisBetween(
 }
 
 /**
+ * When `node` last did something the lens should count, in epoch ms.
+ *
+ * An agent surface is aged by its agent: `lastAgentActivityAt`, the same
+ * reading its `cold for` caption counts up from (`layOutStatusLabel`), so a
+ * card's dimming and the caption under it tell one story. `lastInteractedAt`
+ * would also advance on PTY output and the human's keystrokes, which keeps a
+ * surface lit that nobody — agent included — has moved in hours.
+ *
+ * Everything else, and an agent surface that has not been heard from yet, falls
+ * back to `lastInteractedAt`: there is no agent to read, and a card with no
+ * timestamp at all would drain the moment it was created.
+ */
+export function lastActivityAt(node: NodeData): number | undefined {
+  if (node.type === 'terminal' && node.lastAgentActivityAt !== undefined) {
+    return node.lastAgentActivityAt
+  }
+  return node.lastInteractedAt
+}
+
+/**
  * Freshness for each node, based on how long its whole subtree (the node and
  * every descendant) has gone untouched. A node stays as colourful as its
  * freshest descendant, so interacting with one leaf keeps its whole ancestor
@@ -275,7 +295,7 @@ export function activeMillisBetween(
  * reaches every older band proportionally sooner. `schedule` decides which
  * wall-clock time counts towards it at all.
  *
- * O(n): subtree freshness is the max `lastInteractedAt` over a node's subtree,
+ * O(n): subtree freshness is the max {@link lastActivityAt} over a node's subtree,
  * computed once bottom-up with memoization (and a cycle guard, since the tree is
  * derived from `parentId` links rather than trusted structure).
  */
@@ -298,7 +318,8 @@ export function computeNodeFreshness(
     const cached = subtreeMax.get(id)
     if (cached !== undefined) return cached
     subtreeMax.set(id, 0) // cycle guard: a re-entrant visit reads 0, not undefined
-    let max = nodes[id]?.lastInteractedAt ?? 0
+    const node = nodes[id]
+    let max = node ? lastActivityAt(node) ?? 0 : 0
     for (const child of childIds.get(id) ?? []) {
       max = Math.max(max, visit(child))
     }
