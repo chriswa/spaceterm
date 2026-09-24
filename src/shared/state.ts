@@ -3,6 +3,7 @@ import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { AgentType } from './agent-type'
 import type { CardType } from './card-types'
 import type { UndoEntry } from './undo-types'
+import type { StampKind } from './stamps'
 
 // --- Claude state enum ---
 
@@ -256,6 +257,18 @@ export interface TitleNodeData extends BaseNodeData {
 }
 
 /**
+ * A glyph dropped on the canvas: a star, a warning mark.
+ *
+ * In the tree like any node, so it can be reparented, archived with a branch
+ * and found by the same walks — but always a leaf, and its edge is never drawn
+ * (see `StateManager.hostFor`, and the edge list in `App.tsx`).
+ */
+export interface StampNodeData extends BaseNodeData {
+  type: 'stamp'
+  stamp: StampKind
+}
+
+/**
  * The header card of a generated agent-meta branch, and of the Skills group
  * nested inside it.
  *
@@ -313,6 +326,7 @@ export type NodeData =
   | TitleNodeData
   | MetaGroupNodeData
   | MetaDocNodeData
+  | StampNodeData
 
 /**
  * Compile-time check that the node union and the CardType registry describe the

@@ -92,6 +92,7 @@ const nodeApi: NodeApi = {
   markdownSetMaxWidth: (nodeId, maxWidth) => ipcRenderer.invoke('node:markdown-set-max-width', nodeId, maxWidth),
   titleAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:title-add', parentId, x, y),
   titleText: (nodeId, text) => ipcRenderer.invoke('node:title-text', nodeId, text),
+  stampAdd: (parentId, stamp, x?, y?) => ipcRenderer.invoke('node:stamp-add', parentId, stamp, x, y),
 
   recordInteraction: (nodeId: NodeId) => ipcRenderer.send('node:record-interaction', nodeId),
   setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),

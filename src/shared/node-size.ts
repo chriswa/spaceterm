@@ -198,6 +198,9 @@ export const TITLE_CHAR_WIDTH = 66 * MENLO_ADVANCE_RATIO * LABEL_NODE_SCALE  // 
 export const TITLE_H_PADDING = 72 * LABEL_NODE_SCALE                        // 36px padding on each side
 export const TITLE_MIN_WIDTH = 360 * LABEL_NODE_SCALE
 
+// Stamps are square, half the height of a one-line title including its border.
+export const STAMP_SIZE = TITLE_HEIGHT / 2
+
 // --- Agent-meta cards ---
 
 /**
@@ -283,6 +286,7 @@ export type NodeLike =
   | { type: 'markdown'; width: number; height: number }
   | { type: 'meta-group'; label: string }
   | { type: 'meta-doc'; width: number; height: number }
+  | { type: 'stamp' }
 
 /** Compute the auto-scaled folder width for a directory node from its text content. */
 export function directoryFolderWidth(cwd: string, gitStatus?: GitStatus | null): number {

@@ -31,7 +31,8 @@ import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { computePlacement } from './node-placement'
-import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
+import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, STAMP_SIZE } from '../shared/node-size'
+import { isStampKind } from '../shared/stamps'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
@@ -1790,6 +1791,23 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       } catch (err: any) {
         console.error(`title-add failed: ${err.message}`)
         send(client.socket, { type: 'server-error', message: `title-add failed: ${err.message}` })
+      }
+      break
+    }
+
+    case 'stamp-add': {
+      try {
+        // The kind arrives off the wire; one the renderer cannot draw would be
+        // an invisible node that still takes clicks.
+        if (!isStampKind(msg.stamp)) throw new Error(`unknown stamp kind ${JSON.stringify(msg.stamp)}`)
+        const pos = msg.x != null && msg.y != null
+          ? { x: msg.x, y: msg.y }
+          : computePlacement(stateManager.getState().nodes, msg.parentId, { width: STAMP_SIZE, height: STAMP_SIZE })
+        const stampNode = stateManager.createStamp(msg.parentId, pos.x, pos.y, msg.stamp)
+        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: stampNode.id })
+      } catch (err: any) {
+        console.error(`stamp-add failed: ${err.message}`)
+        send(client.socket, { type: 'server-error', message: `stamp-add failed: ${err.message}` })
       }
       break
     }

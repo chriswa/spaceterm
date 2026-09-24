@@ -10,6 +10,7 @@ import type {
   DirectoryNodeData,
   FileNodeData,
   TitleNodeData,
+  StampNodeData,
   TerminalSessionEntry,
   ArchivedNode,
   ArchivedDescendant,
@@ -33,6 +34,7 @@ import {
   type ClaudeSessionId
 } from '../shared/ids'
 import type { AgentType } from '../shared/agent-type'
+import type { StampKind } from '../shared/stamps'
 import { isDisposable } from '../shared/node-utils'
 import { findAncestor, lookupIn } from '../shared/node-ancestry'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
@@ -467,7 +469,8 @@ export class StateManager {
    * Create a terminal node for a newly spawned PTY session.
    */
   createTerminal(spec: NewTerminalSpec): TerminalNodeData {
-    const { sessionId, parentId, x, y, cols, rows, cwd, name, insertAfterNodeId, agentType } = spec
+    const { sessionId, x, y, cols, rows, cwd, name, insertAfterNodeId, agentType } = spec
+    const parentId = this.hostFor(spec.parentId)
     const zIndex = this.state.nextZIndex++
     const now = new Date().toISOString()
     const seedHistory = spec.initialTitleHistory ?? []
@@ -876,6 +879,10 @@ export class StateManager {
     // parentId would already be on disk pointing at nothing.
     const newParent = this.state.nodes[newParentId]
     if (newParent && this.refuseEphemeral(newParent, 'reparent-onto')) return
+    if (newParent?.type === 'stamp') {
+      serverLog(`[stamp] Refused reparent of ${nodeId} onto stamp ${newParentId}`)
+      return
+    }
     node.parentId = newParentId
     this.onNodeUpdate(nodeId, { parentId: newParentId })
     this.schedulePersist()
@@ -894,6 +901,11 @@ export class StateManager {
     const child = this.state.nodes[childId]
     if (!parent || !child) return
     if (child.parentId !== nodeId) return
+    // The child would become the parent's parent. See `hostFor`.
+    if (child.type === 'stamp') {
+      serverLog(`[stamp] Refused swap that would make stamp ${childId} a parent`)
+      return
+    }
 
     const oldParentOfP = parent.parentId
 
@@ -1659,6 +1671,7 @@ export class StateManager {
   // --- Directory operations ---
 
   createDirectory(parentId: NodeId, x: number, y: number, cwd: string): DirectoryNodeData {
+    parentId = this.hostFor(parentId)
     cwd = abbreviateCwd(cwd)
 
     const id = asNodeId(randomUUID())
@@ -1707,6 +1720,7 @@ export class StateManager {
   // --- File operations ---
 
   createFile(parentId: NodeId, x: number, y: number, filePath: string): FileNodeData {
+    parentId = this.hostFor(parentId)
     const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
 
@@ -1738,6 +1752,7 @@ export class StateManager {
   // --- Markdown operations ---
 
   createMarkdown(parentId: NodeId, x: number, y: number, content?: string, fileBacked?: boolean): MarkdownNodeData {
+    parentId = this.hostFor(parentId)
     const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
 
@@ -1785,6 +1800,7 @@ export class StateManager {
   // --- Title operations ---
 
   createTitle(parentId: NodeId, x: number, y: number, text?: string): TitleNodeData {
+    parentId = this.hostFor(parentId)
     const id = asNodeId(randomUUID())
     const zIndex = this.state.nextZIndex++
 
@@ -1811,6 +1827,43 @@ export class StateManager {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'title') return
     this.patchNode(node, { text })
+  }
+
+  // --- Stamp operations ---
+
+  createStamp(parentId: NodeId, x: number, y: number, stamp: StampKind): StampNodeData {
+    const id = asNodeId(randomUUID())
+    const node: StampNodeData = {
+      id,
+      type: 'stamp',
+      lastInteractedAt: Date.now(),
+      parentId: this.hostFor(parentId),
+      x,
+      y,
+      zIndex: this.state.nextZIndex++,
+      stamp,
+      archivedChildren: [],
+      colorPresetId: 'inherit'
+    }
+
+    this.state.nodes[id] = node
+    this.onNodeAdd(node)
+    this.schedulePersist()
+    return node
+  }
+
+  /**
+   * The node that actually takes a child asked to hang off `parentId`.
+   *
+   * Stamps are always leaves: the canvas never draws a stamp's edges, so a
+   * child of one would look parentless. Asking to add under a stamp (Cmd+T with
+   * a stamp focused, say) adds a sibling of it instead. Every `create*` routes
+   * its parent through here, and `reparentNode`/`swapParentChild` refuse the
+   * moves that would make a stamp a parent, so no path can break the rule.
+   */
+  private hostFor(parentId: NodeId): NodeId {
+    const parent = this.state.nodes[parentId]
+    return parent?.type === 'stamp' ? parent.parentId : parentId
   }
 
   // --- Alerts ---

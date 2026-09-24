@@ -13,6 +13,7 @@ import { readAgentMemoryBytes } from './agent-memory'
 import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
 import type { LaunchPrefs } from '../../shared/launch-prefs'
 import type { NodeId, PtySessionId } from '../../shared/ids'
+import type { StampKind } from '../../shared/stamps'
 import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
 
 /**
@@ -517,6 +518,12 @@ function setupIPC(): void {
 
   ipcMain.handle('node:title-text', async (_event, nodeId: NodeId, text: string) => {
     await client!.titleText(nodeId, text)
+  })
+
+  ipcMain.handle('node:stamp-add', async (_event, parentId: NodeId, stamp: StampKind, x?: number, y?: number) => {
+    const resp = await client!.stampAdd(parentId, stamp, x, y)
+    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
+    return {}
   })
 
   ipcMain.handle('node:fork-session', async (_event, nodeId: NodeId) => {

@@ -74,6 +74,13 @@ interface CardShellProps {
    * size on screen.
    */
   glow?: { color: string; blur: number; spread: number; pulse: boolean }
+  /**
+   * What part of the card takes the pointer. `box` (the default) is the whole
+   * rect. `painted` is only the SVG shapes marked `stamp-art__ink`, plus the
+   * action bar while focused — everything else lets clicks through to what is
+   * underneath. See `.card-shell--painted-hit`.
+   */
+  hitTest?: 'box' | 'painted'
   children: ReactNode
 }
 
@@ -85,7 +92,7 @@ export function CardShell({
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
   onAddNode, agentMeta, rootCwd, onExtraCliArgs, extraCliArgs,
-  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, glow, children
+  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, glow, hitTest = 'box', children
 }: CardShellProps) {
 
   // Chrome that must stay legible at the card type's focus zoom. Published as a
@@ -243,7 +250,7 @@ export function CardShell({
       // The focused modifier is on the shell, not on the per-card element, so
       // chrome the shell itself owns — the hidden-head buttons — can hide when
       // the node is not focused the way each card's own action bar does.
-      className={`card-shell canvas-node${focused ? ' card-shell--focused' : ''}${glow ? ' card-shell--glow' : ''}${glow?.pulse ? ' card-shell--glow-pulse' : ''}`}
+      className={`card-shell canvas-node${focused ? ' card-shell--focused' : ''}${glow ? ' card-shell--glow' : ''}${glow?.pulse ? ' card-shell--glow-pulse' : ''}${hitTest === 'painted' ? ' card-shell--painted-hit' : ''}`}
       data-node-id={nodeId}
       style={{
         position: 'absolute',

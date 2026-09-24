@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, MetaGroupNodeData, MetaDocNodeData, ArchivedNode } from '../../../../shared/state'
+import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, MetaGroupNodeData, MetaDocNodeData, StampNodeData, ArchivedNode } from '../../../../shared/state'
 import { measureCard as nodePixelSize } from '../../../../shared/card-types'
 import { assertNever } from '../../../../shared/exhaustive'
 import { type NodeId } from '../../../../shared/ids'
@@ -27,6 +27,7 @@ interface NodeStoreState {
   directories: DirectoryNodeData[]
   files: FileNodeData[]
   titles: TitleNodeData[]
+  stamps: StampNodeData[]
   metaGroups: MetaGroupNodeData[]
   metaDocs: MetaDocNodeData[]
 
@@ -88,6 +89,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
   const directories: DirectoryNodeData[] = []
   const files: FileNodeData[] = []
   const titles: TitleNodeData[] = []
+  const stamps: StampNodeData[] = []
   const metaGroups: MetaGroupNodeData[] = []
   const metaDocs: MetaDocNodeData[] = []
 
@@ -97,6 +99,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
       case 'directory': directories.push(node); break
       case 'file': files.push(node); break
       case 'title': titles.push(node); break
+      case 'stamp': stamps.push(node); break
       case 'markdown': markdowns.push(node); break
       case 'meta-group': metaGroups.push(node); break
       case 'meta-doc': metaDocs.push(node); break
@@ -111,7 +114,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
     }
   }
 
-  return { nodeList, liveTerminals, markdowns, directories, files, titles, metaGroups, metaDocs }
+  return { nodeList, liveTerminals, markdowns, directories, files, titles, stamps, metaGroups, metaDocs }
 }
 
 function mergeNodes(
@@ -144,6 +147,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   directories: [],
   files: [],
   titles: [],
+  stamps: [],
   metaGroups: [],
   metaDocs: [],
   nodeList: [],

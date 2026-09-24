@@ -462,6 +462,15 @@ export interface TitleTextMessage {
   text: string
 }
 
+export interface StampAddMessage {
+  type: 'stamp-add'
+  seq: number
+  parentId: NodeId
+  stamp: StampKind
+  x?: number
+  y?: number
+}
+
 export interface ValidateFileMessage {
   type: 'validate-file'
   seq: number
@@ -860,6 +869,7 @@ export type ClientMessage =
   | ValidateFileMessage
   | TitleAddMessage
   | TitleTextMessage
+  | StampAddMessage
   | ForkSessionMessage
   | TerminalRestartMessage
   | CrabReorderMessage
@@ -972,6 +982,7 @@ export interface ClaudeSessionLineCountMessage {
 
 import type { ServerState, NodeData } from './state'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
+import type { StampKind } from './stamps'
 
 export interface SyncStateMessage {
   type: 'sync-state'

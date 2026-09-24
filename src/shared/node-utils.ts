@@ -28,6 +28,9 @@ export function isDisposable(node: NodeData): boolean {
       return false
     case 'title':
       return node.text.trim() === ''
+    case 'stamp':
+      // A stamp is one click to put back, so closing one deletes it outright.
+      return true
     default:
       return false
   }

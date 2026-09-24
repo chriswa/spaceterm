@@ -13,6 +13,7 @@ import type { SummaryChatMode, SummaryChatToggleResult } from '../../shared/api'
 import { LineParser } from '../../server/line-parser'
 import { unhandledVariant } from '../../shared/exhaustive'
 import type { NodeId, PtySessionId } from '../../shared/ids'
+import type { StampKind } from '../../shared/stamps'
 import { log } from './logger'
 
 const INITIAL_RECONNECT_DELAY = 200
@@ -482,6 +483,10 @@ export class ServerClient extends EventEmitter {
 
   async titleText(nodeId: NodeId, text: string): Promise<ServerMessage> {
     return this.sendRequest({ type: 'title-text', nodeId, text })
+  }
+
+  async stampAdd(parentId: NodeId, stamp: StampKind, x?: number, y?: number): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'stamp-add', parentId, stamp, x, y })
   }
 
   async forkSession(nodeId: NodeId): Promise<ServerMessage> {

@@ -10,7 +10,10 @@ import { MetaDocCard } from './components/MetaDocCard'
 import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
 import { TitleCard } from './components/TitleCard'
-import type { AddNodeType } from './components/AddNodeBody'
+import { StampCard } from './components/StampCard'
+import { StampMenu } from './components/StampMenu'
+import { isStampAddType, stampKindOf, type AddNodeType } from './components/AddNodeBody'
+import type { StampKind } from '../../../shared/stamps'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
 import { Toolbar } from './components/Toolbar'
@@ -38,7 +41,7 @@ import type { Camera } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from './lib/node-label'
-import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
+import { reparentOutcome, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
 import { useNodeStore, nodePixelSize } from './stores/nodeStore'
@@ -48,7 +51,7 @@ import { useRootCwdStore } from './stores/rootCwdStore'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
+import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendStampAdd, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -165,6 +168,7 @@ export function App() {
   const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: NodeId | null; toNodeId: NodeId; ts: number } | null>(null)
   const focusRestoredRef = useRef(false)
   const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
+  const [stampMenu, setStampMenu] = useState<{ worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
   const [edgeSplit, setEdgeSplit] = useState<{ parentId: NodeId; childId: NodeId; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
   const cmdClickPendingRef = useRef<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
   const shiftClickPendingRef = useRef(false)
@@ -219,6 +223,7 @@ export function App() {
   const directories = useNodeStore(s => s.directories)
   const files = useNodeStore(s => s.files)
   const titles = useNodeStore(s => s.titles)
+  const stamps = useNodeStore(s => s.stamps)
   const fileContents = useNodeStore(s => s.fileContents)
   const metaGroups = useNodeStore(s => s.metaGroups)
   const metaDocs = useNodeStore(s => s.metaDocs)
@@ -232,8 +237,11 @@ export function App() {
   const bringToFront = useNodeStore(s => s.bringToFront)
   const nodeFreshness = useDimStaleStore(s => s.nodeFreshness)
 
+  // Stamps are in the tree but their edges are never drawn — only the preview
+  // while one is being reparented, which is `reparentEdgeRef`, not this. Being
+  // leaves, dropping them cannot orphan anyone else's edge.
   const treeLineNodes = useMemo(() =>
-    nodeList.map((n): TreeLineNode => ({
+    nodeList.filter((n) => n.type !== 'stamp').map((n): TreeLineNode => ({
       id: n.id,
       parentId: n.parentId,
       x: n.x,
@@ -371,11 +379,7 @@ export function App() {
     const tgtNode = reparentHoveredNodeId === 'root'
       ? { x: 0, y: 0 }
       : allNodes[reparentHoveredNodeId]
-    const isImmediateChild = isImmediateChildOf(allNodes, reparentHoveredNodeId, reparentingNodeId)
-    const isInvalid = reparentHoveredNodeId === reparentingNodeId ||
-      (!isImmediateChild && isDescendantOf(allNodes, reparentHoveredNodeId, reparentingNodeId)) ||
-      (srcNode && srcNode.parentId === reparentHoveredNodeId)
-    if (isInvalid || !srcNode || !tgtNode) {
+    if (reparentOutcome(allNodes, reparentingNodeId, reparentHoveredNodeId) === 'invalid' || !srcNode || !tgtNode) {
       reparentEdgeRef.current = null
       return
     }
@@ -1054,18 +1058,15 @@ export function App() {
 
     const allNodes = useNodeStore.getState().nodes
     const srcNode = allNodes[srcId]
-    const isImmediateChild = isImmediateChildOf(allNodes, targetId, srcId)
-    const isInvalid = targetId === srcId ||
-      (!isImmediateChild && isDescendantOf(allNodes, targetId, srcId)) ||
-      (srcNode && srcNode.parentId === targetId)
+    const outcome = reparentOutcome(allNodes, srcId, targetId)
 
-    if (isInvalid) {
+    if (outcome === 'invalid') {
       useReparentStore.getState().reset()
       handleNodeFocus(srcId)
       return
     }
 
-    if (isImmediateChild) {
+    if (outcome === 'swap') {
       sendSwapParentChild(srcId, targetId)
     } else {
       sendReparent(srcId, targetId)
@@ -1971,6 +1972,10 @@ export function App() {
   }, [agentSelectorParentId, spawnNode])
 
   const createChildNode = useCallback(async (parentNodeId: NodeId, type: AddNodeType, hint?: { x: number; y: number }): Promise<NodeId> => {
+    if (isStampAddType(type)) {
+      const r = await sendStampAdd(parentNodeId, stampKindOf(type), hint?.x, hint?.y)
+      return r.nodeId
+    }
     const cwd = getParentCwd(parentNodeId)
     let nodeId: NodeId
     switch (type) {
@@ -2007,6 +2012,15 @@ export function App() {
     const nodeId = await createChildNode(parentNodeId, type)
     await navigateToNode(nodeId)
   }, [createChildNode, navigateToNode])
+
+  // A stamp from the canvas menu hangs off the root and stays where it was
+  // dropped: no focus, no camera move, so you can keep stamping.
+  const handleStampMenuSelect = useCallback((kind: StampKind) => {
+    const menu = stampMenu
+    if (!menu) return
+    setStampMenu(null)
+    void sendStampAdd(ROOT_NODE_ID, kind, menu.worldPoint.x, menu.worldPoint.y)
+  }, [stampMenu])
 
   const handleEdgeSplitSelect = useCallback(async (type: AddNodeType) => {
     const split = edgeSplit
@@ -2545,6 +2559,15 @@ export function App() {
       }
       return
     }
+    // Cmd+click on bare canvas: pick a stamp to drop at that point.
+    if (e.metaKey) {
+      const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+      if (!viewport) return
+      const rect = viewport.getBoundingClientRect()
+      const worldPoint = screenToCanvas({ x: e.clientX - rect.left, y: e.clientY - rect.top }, cameraRef.current)
+      setStampMenu({ worldPoint, screenX: e.clientX, screenY: e.clientY })
+      return
+    }
     if (focusRef.current) {
       handleUnfocus()
       if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
@@ -2553,7 +2576,7 @@ export function App() {
       handleUnfocus()
       if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
     }
-  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, hoveredEdgeRef, clearHoveredEdge])
+  }, [handleUnfocus, flyToUnfocusZoom, handleNodeFocus, hoveredEdgeRef, clearHoveredEdge, cameraRef])
 
   /**
    * The props every canvas card takes, built once per card.
@@ -2716,6 +2739,13 @@ export function App() {
             onTextChange={handleTitleTextChange}
           />
         ))}
+        {stamps.map((st) => (
+          <StampCard
+            key={st.id}
+            {...cardProps(st)}
+            stamp={st.stamp}
+          />
+        ))}
         {directories.map((d) => (
           <DirectoryCard
             key={d.id}
@@ -2830,6 +2860,14 @@ export function App() {
           screenY={quickActions.screenY}
           preset={resolvedPresets[quickActions.nodeId]}
           onDismiss={() => setQuickActions(null)}
+        />
+      )}
+      {stampMenu && (
+        <StampMenu
+          screenX={stampMenu.screenX}
+          screenY={stampMenu.screenY}
+          onSelect={handleStampMenuSelect}
+          onDismiss={() => setStampMenu(null)}
         />
       )}
       {edgeSplit && (

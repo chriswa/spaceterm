@@ -343,6 +343,8 @@ export class FakeBridge implements Api {
     titleAdd: (parentId, x, y) =>
       this.reply('node.titleAdd', { nodeId: this.responses.newNodeId }, parentId, x, y),
     titleText: (nodeId, text) => this.reply('node.titleText', undefined, nodeId, text),
+    stampAdd: (parentId, stamp, x, y) =>
+      this.reply('node.stampAdd', { nodeId: this.responses.newNodeId }, parentId, stamp, x, y),
 
     setClaudeStatusUnread: (sessionId, unread) =>
       this.record('node.setClaudeStatusUnread', sessionId, unread),
