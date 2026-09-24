@@ -167,6 +167,10 @@ html, body, #root {
 }
 
 .toolbar__crab {
+  /* Block, so the slot is exactly the icon's 20px — an inline button leaves a
+     descender gap under it, which puts the icon off-centre in the bar and throws
+     off everything positioned from the slot's edges. */
+  display: block;
   -webkit-mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-position: center;
@@ -296,13 +300,32 @@ html, body, #root {
   animation-delay: 0.85s;
 }
 
+/* Above the icon, since the cache timer holds the space below it. The toolbar
+   leaves 11px between a crab slot and its top edge (42px bar, 20px slot), so a
+   13px bubble at -10px keeps a pixel of the bar above it and never reaches the
+   canvas. */
 .toolbar__summary-bubble {
   position: absolute;
   left: 50%;
-  bottom: -9px;
+  top: -10px;
   width: 16px;
   height: 13px;
   transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* A surface's prompt-cache countdown, in the 11px under its icon. */
+.toolbar__crab-timer {
+  position: absolute;
+  top: calc(100% + 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 8px;
+  line-height: 8px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
   pointer-events: none;
 }
 

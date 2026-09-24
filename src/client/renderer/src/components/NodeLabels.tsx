@@ -1,5 +1,5 @@
-import type { CSSProperties } from 'react'
-import type { NodeLabel } from '../lib/node-label'
+import { useLayoutEffect, useRef, type CSSProperties } from 'react'
+import { deadlineExtended, type NodeLabel } from '../lib/node-label'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import { staleFilter } from '../lib/dim-stale'
 import type { NodeId } from '../../../../shared/ids'
@@ -35,30 +35,68 @@ interface NodeLabelsProps {
 export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClick }: NodeLabelsProps) {
   return (
     <>
-      {labels.map((label) => {
-        const freshness = nodeFreshness.get(label.nodeId) ?? 1
-        return (
-          <div
-            // A node supplies at most one label of each kind, so the pair is
-            // the identity — `nodeId` alone would collide the moment a card
-            // carried both its name and its elapsed caption.
-            key={`${label.kind}:${label.nodeId}`}
-            className="node-label canvas-node"
-            style={{
-              left: label.x - label.width / 2,
-              top: label.y - label.height / 2,
-              width: label.width,
-              height: label.height,
-              '--node-label-fg': (resolvedPresets[label.nodeId] ?? DEFAULT_PRESET).titleBarBg,
-              '--node-label-text-scale': label.textScale,
-              filter: staleFilter(freshness)
-            } as CSSProperties}
-            onClick={() => onLabelClick(label.nodeId)}
-          >
-            <span className="node-label__text">{label.lines.join('\n')}</span>
-          </div>
-        )
-      })}
+      {labels.map((label) => (
+        <NodeLabelView
+          // A node supplies at most one label of each kind, so the pair is
+          // the identity — `nodeId` alone would collide the moment a card
+          // carried both its name and its elapsed caption.
+          key={`${label.kind}:${label.nodeId}`}
+          label={label}
+          fg={label.fg ?? (resolvedPresets[label.nodeId] ?? DEFAULT_PRESET).titleBarBg}
+          freshness={nodeFreshness.get(label.nodeId) ?? 1}
+          onLabelClick={onLabelClick}
+        />
+      ))}
     </>
+  )
+}
+
+/** How long a refreshed countdown takes to settle from white back to its colour. */
+const DEADLINE_FLASH_MS = 1000
+
+interface NodeLabelViewProps {
+  label: NodeLabel
+  fg: string
+  freshness: number
+  onLabelClick: (nodeId: NodeId) => void
+}
+
+function NodeLabelView({ label, fg, freshness, onLabelClick }: NodeLabelViewProps) {
+  const textRef = useRef<HTMLSpanElement>(null)
+  const prevDeadlineRef = useRef<number | undefined>(undefined)
+  const mountedRef = useRef(false)
+
+  // Flash white and fade back when the cache deadline moves later. Layout
+  // effect, so the white frame is the first one painted with the new number.
+  useLayoutEffect(() => {
+    const isFirst = !mountedRef.current
+    mountedRef.current = true
+    const prev = prevDeadlineRef.current
+    prevDeadlineRef.current = label.deadline
+    const el = textRef.current
+    if (!el || !deadlineExtended(prev, label.deadline, isFirst)) return
+    // Web Animations is absent under jsdom.
+    el.animate?.(
+      { color: ['#ffffff', getComputedStyle(el).color] },
+      { duration: DEADLINE_FLASH_MS, easing: 'ease-out' }
+    )
+  }, [label.deadline])
+
+  return (
+    <div
+      className="node-label canvas-node"
+      style={{
+        left: label.x - label.width / 2,
+        top: label.y - label.height / 2,
+        width: label.width,
+        height: label.height,
+        '--node-label-fg': fg,
+        '--node-label-text-scale': label.textScale,
+        filter: staleFilter(freshness)
+      } as CSSProperties}
+      onClick={() => onLabelClick(label.nodeId)}
+    >
+      <span ref={textRef} className="node-label__text">{label.lines.join('\n')}</span>
+    </div>
   )
 }

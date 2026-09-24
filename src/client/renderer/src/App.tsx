@@ -341,7 +341,7 @@ export function App() {
       if (node.type !== 'terminal') continue
       const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0, node.agentType)
       const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt })
+      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt, cacheWarmUntil: node.cacheWarmUntil, cacheWarmEstimated: node.cacheWarmEstimated })
     }
 
     entries.sort((a, b) => a.sortOrder - b.sortOrder)
@@ -2813,6 +2813,7 @@ export function App() {
         onCrabReorder={handleCrabReorder}
         selectedNodeId={focusedId}
         crabNavEvent={crabNavEvent}
+        now={coarseNow}
         onHelpClick={() => setHelpVisible(v => !v)}
         keycastEnabled={keycastEnabled}
         onKeycastToggle={() => setKeycastEnabled(v => { const next = !v; localStorage.setItem('toolbar.keycast', String(next)); return next })}

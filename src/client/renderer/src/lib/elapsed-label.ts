@@ -1,25 +1,19 @@
 /**
- * A span of time written in the shortest form that still reads as an answer —
- * how long a surface has been quiet, how long its prompt cache has left.
+ * Spans of time written for the captions under agent surfaces: how long a
+ * surface has been quiet, and how long its prompt cache has left.
  *
- * Single resolution, deliberately: one unit, never "1h 20m". The caption is
- * read from across the canvas alongside dozens of others, and its job is to
- * separate "just now" from "this morning" from "last week" at a glance — a
- * second component buys precision nobody is reading at that distance and costs
- * the scannability the whole row depends on.
- *
- * Rounded to the nearest whole unit, not truncated. Truncating reads as a lower
- * bound you can rely on, which is a nice property, but it puts a boundary
- * exactly where the numbers live: a cache refreshed to a full hour truncates to
- * `1h` for one second and `59m` for the remaining fifty-nine minutes, so a
- * surface an agent is actively working in flickers between the two every time
- * it sends a message. Rounding moves that boundary to the middle of the unit,
- * where nothing lands repeatedly — the same cache now holds at `1h` until it
- * genuinely falls below 59½ minutes.
+ * Ages are one unit, never "1h 20m". The caption is read from across the canvas
+ * alongside dozens of others, and its job is to separate "just now" from "this
+ * morning" from "last week" at a glance — a second component buys precision
+ * nobody is reading at that distance and costs the scannability the whole row
+ * depends on. They are rounded to the nearest whole unit, so a boundary sits in
+ * the middle of a unit rather than exactly on it.
  *
  * Days are the last unit. Weeks, months and years each need the reader to do
  * arithmetic to compare them against the days beside them, and a surface nobody
  * has touched in 40 days is already saying everything `40d` says.
+ *
+ * Countdowns are a clock instead — see {@link formatCountdownClock}.
  */
 
 const SECOND_MS = 1_000
@@ -30,10 +24,10 @@ const DAY_MS = 24 * HOUR_MS
 /**
  * How often the captions are recomputed.
  *
- * A second, set by the cache countdown — the one part of a caption that shows
- * seconds, and the part anyone actually watches as it runs out. The elapsed
- * half still changes only on a minute boundary, so most ticks re-derive the
- * identical string for it; that waste is the price of the countdown moving when
+ * A second, set by the cache countdown — the one caption that shows seconds,
+ * and the one anyone actually watches as it runs out. An age still changes
+ * only on a minute boundary, so most ticks re-derive the identical string for
+ * it; that waste is the price of the countdown moving when
  * it should, and it is bounded by the elapsed captions having their own memo
  * (see `useCoarseClock`), so a tick never re-wraps a name on the canvas.
  */
@@ -46,7 +40,7 @@ export const ELAPSED_TICK_MS = 1_000
  * day — it spoke a moment ago, this morning, last week — and no part of that
  * answer changes on the second; a number ticking away under a card would draw
  * the eye across the canvas to report nothing. A deadline is read for the
- * opposite reason and does show seconds — see {@link formatCountdownShort}.
+ * opposite reason and does show seconds — see {@link formatCountdownClock}.
  *
  * A negative span — a timestamp from the future, which clock skew between the
  * server and this client can produce — reads as `0m`, the nearest true thing.
@@ -57,24 +51,59 @@ export function formatElapsedShort(elapsedMs: number): string {
 }
 
 /**
- * `remainingMs` written as one unit, with seconds: `22s`, `3m`, `1h`.
+ * `remainingMs` written as a ticking clock: `4:32`, `0:07`, `58:00`.
  *
- * The same ladder as {@link formatElapsedShort} with one more rung at the
- * bottom, because a deadline is read for what it is about to do rather than for
- * where it sits in the day. A five-minute cache spends a fifth of its life
- * under a minute, and `0m` for the whole of that last stretch would hide the
- * only part worth watching.
+ * A clock rather than a unit, so a countdown and an age never share a shape:
+ * an age is a coarse `14m`, a deadline is `m:ss` with its seconds visibly
+ * moving, which is how a timer on any appliance says it is running out.
  *
- * The rung is taken at the same half-unit boundary as the rest, so seconds show
- * up to half a minute and `1m` covers the rest of it.
+ * Minutes are not rolled up into hours. No cache lives much past an hour, and
+ * `60:00` falling to `59:59` keeps the caption one width, where `1:00:00`
+ * would shrink by three characters on its first tick.
  *
- * Only ever called on a positive span: an expired cache shows the surface's age
- * instead of a countdown at zero.
+ * Seconds are rounded down. The `now` this is measured against is quantised
+ * down to the second, so it runs up to a second behind the real clock and the
+ * span is up to a second long; rounding up on top of that shows a fresh
+ * hour-long cache as `60:01`.
  */
-export function formatCountdownShort(remainingMs: number): string {
-  const minutes = Math.round(remainingMs / MINUTE_MS)
-  if (minutes >= 1) return fromMinutes(remainingMs, minutes)
-  return `${Math.max(0, Math.round(remainingMs / SECOND_MS))}s`
+export function formatCountdownClock(remainingMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(remainingMs / SECOND_MS))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+/**
+ * `remainingMs` as rounded whole minutes — `4m`, `60m` — for the toolbar, where
+ * a row of ticking seconds is more motion than the bar can carry.
+ *
+ * Never `0m`: the last half minute of a live cache reads `1m`, since `0m`
+ * would say it had already gone cold.
+ */
+export function formatCountdownMinutes(remainingMs: number): string {
+  return `${Math.max(1, Math.round(remainingMs / MINUTE_MS))}m`
+}
+
+/**
+ * A surface's prompt-cache countdown, or `null` once the cache is cold or was
+ * never reported. `format` writes the remaining span — the canvas uses
+ * `formatCountdownClock`, the toolbar `formatCountdownMinutes`.
+ *
+ * A deadline the server could only estimate is marked `4:32?`. That is Cursor:
+ * it will not say which provider served a request, so its lifetime is a floor
+ * across all of them rather than a reading. The question mark is what keeps
+ * its surfaces from being compared against Claude's as though the two numbers
+ * were equally good.
+ */
+export function cacheCountdownText(
+  cacheWarmUntil: number | undefined,
+  estimated: boolean | undefined,
+  now: number,
+  format: (remainingMs: number) => string
+): string | null {
+  const warmFor = cacheWarmUntil === undefined ? 0 : cacheWarmUntil - now
+  if (warmFor <= 0) return null
+  return `${format(warmFor)}${estimated ? '?' : ''}`
 }
 
 /**

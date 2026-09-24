@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES,
-  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel
+  LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel, COLD_LABEL_FG, deadlineExtended
 } from './node-label'
-import { ELAPSED_TICK_MS, formatCountdownShort } from './elapsed-label'
+import { ELAPSED_TICK_MS } from './elapsed-label'
 import { ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from '../../../../shared/node-size'
 import { measureCard } from '../../../../shared/card-types'
 import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../../../../shared/state'
@@ -344,54 +344,49 @@ describe('layOutStatusLabel', () => {
 
   it('counts a warm prompt cache down, and says nothing about age while it does', () => {
     const warm = agent({ cacheWarmUntil: NOW + 57 * 60_000 })
-    expect(layOutStatusLabel(warm, NOW)!.lines).toEqual(['T-57m'])
+    expect(layOutStatusLabel(warm, NOW)!.lines).toEqual(['57:00'])
 
     // The countdown goes down to seconds, where an age holds at `0m`.
-    expect(layOutStatusLabel(agent({ cacheWarmUntil: NOW + 22_000 }), NOW)!.lines).toEqual(['T-22s'])
+    expect(layOutStatusLabel(agent({ cacheWarmUntil: NOW + 22_000 }), NOW)!.lines).toEqual(['0:22'])
   })
 
-  it('marks each reading at its start, so the first glyph tells them apart', () => {
-    // Neither caption names what it measures: `T-` opens the countdown and
-    // `cold for` opens the age, so the two never begin the same way.
+  it('gives the countdown and the age different shapes', () => {
+    // A ticking clock for the deadline, a coarse unit and `ago` for the age.
     const warm = layOutStatusLabel(agent({ cacheWarmUntil: NOW + 22_000 }), NOW)!
-    expect(warm.lines.join('')).not.toMatch(/TTL|left|cache/i)
-    expect(warm.lines[0].startsWith('T-')).toBe(true)
+    expect(warm.lines[0]).toMatch(/^\d+:\d\d$/)
 
     const cold = layOutStatusLabel(agent(), NOW)!
-    expect(cold.lines).toEqual(['cold for 3m'])
-    expect(cold.lines[0].startsWith('T-')).toBe(false)
+    expect(cold.lines).toEqual(['cold 3m ago'])
   })
 
-  it('signs the countdown without negating it, since the span itself is positive', () => {
-    // A launch clock, not arithmetic: the cache has 22 seconds left, not minus
-    // twenty-two. The formatter stays sign-free so it reads the same anywhere.
-    expect(formatCountdownShort(22_000)).toBe('22s')
-    expect(layOutStatusLabel(agent({ cacheWarmUntil: NOW + 22_000 }), NOW)!.lines).toEqual(['T-22s'])
+  it('wears the node colour while hot and a fixed grey once cold', () => {
+    expect(layOutStatusLabel(agent({ cacheWarmUntil: NOW + 22_000 }), NOW)!.fg).toBeUndefined()
+    expect(layOutStatusLabel(agent(), NOW)!.fg).toBe(COLD_LABEL_FG)
   })
 
   it('shows the span alone, whatever size the server reports alongside it', () => {
     // The size is still collected and broadcast; the caption just carries one
     // number, and the one that has to be read now is the one running out.
     const big = agent({ cacheWarmUntil: NOW + 22_000, cacheWarmTokens: 185_018 })
-    expect(layOutStatusLabel(big, NOW)!.lines).toEqual(['T-22s'])
+    expect(layOutStatusLabel(big, NOW)!.lines).toEqual(['0:22'])
 
     const none = agent({ cacheWarmUntil: NOW + 22_000, cacheWarmTokens: undefined })
-    expect(layOutStatusLabel(none, NOW)!.lines).toEqual(['T-22s'])
+    expect(layOutStatusLabel(none, NOW)!.lines).toEqual(['0:22'])
   })
 
   it('marks an estimated deadline, so it is not read as a measured one', () => {
     // Cursor's lifetime is a floor across every provider it routes to, where
     // Claude's is stated per request. The two must not compare as equals.
     const cursor = agent({ agentType: 'cursor', cacheWarmUntil: NOW + 4 * 60_000, cacheWarmEstimated: true })
-    expect(layOutStatusLabel(cursor, NOW)!.lines).toEqual(['T-4m?'])
+    expect(layOutStatusLabel(cursor, NOW)!.lines).toEqual(['4:00?'])
 
     const claude = agent({ cacheWarmUntil: NOW + 4 * 60_000 })
-    expect(layOutStatusLabel(claude, NOW)!.lines).toEqual(['T-4m'])
+    expect(layOutStatusLabel(claude, NOW)!.lines).toEqual(['4:00'])
   })
 
   it('drops the mark with the countdown once the cache is cold', () => {
     const node = agent({ cacheWarmUntil: NOW + 1_000, cacheWarmEstimated: true })
-    expect(layOutStatusLabel(node, NOW + 1_000)!.lines).toEqual(['cold for 3m'])
+    expect(layOutStatusLabel(node, NOW + 1_000)!.lines).toEqual(['cold 3m ago'])
   })
 
   it('keeps the caption to one line, never wrapping it', () => {
@@ -401,17 +396,17 @@ describe('layOutStatusLabel', () => {
   })
 
   it('shows the age once the cache is cold, in one unit and no seconds', () => {
-    expect(layOutStatusLabel(agent(), NOW)!.lines).toEqual(['cold for 3m'])
-    expect(layOutStatusLabel(agent({ lastAgentActivityAt: NOW - 20_000 }), NOW)!.lines).toEqual(['cold for 0m'])
-    expect(layOutStatusLabel(agent({ lastAgentActivityAt: NOW - 100 * 60_000 }), NOW)!.lines).toEqual(['cold for 2h'])
+    expect(layOutStatusLabel(agent(), NOW)!.lines).toEqual(['cold 3m ago'])
+    expect(layOutStatusLabel(agent({ lastAgentActivityAt: NOW - 20_000 }), NOW)!.lines).toEqual(['cold 0m ago'])
+    expect(layOutStatusLabel(agent({ lastAgentActivityAt: NOW - 100 * 60_000 }), NOW)!.lines).toEqual(['cold 2h ago'])
   })
 
   it('switches from countdown to age the moment the deadline passes', () => {
     // Nothing tells the client the cache expired; the deadline simply passes.
     const node = agent({ cacheWarmUntil: NOW + 1_000 })
-    expect(layOutStatusLabel(node, NOW)!.lines).toEqual(['T-1s'])
-    expect(layOutStatusLabel(node, NOW + 1_000)!.lines).toEqual(['cold for 3m'])
-    expect(layOutStatusLabel(node, NOW + 60_000)!.lines).toEqual(['cold for 4m'])
+    expect(layOutStatusLabel(node, NOW)!.lines).toEqual(['0:01'])
+    expect(layOutStatusLabel(node, NOW + 1_000)!.lines).toEqual(['cold 3m ago'])
+    expect(layOutStatusLabel(node, NOW + 60_000)!.lines).toEqual(['cold 4m ago'])
   })
 
   it('draws the countdown large and the age small, so the two are told apart unread', () => {
@@ -422,14 +417,14 @@ describe('layOutStatusLabel', () => {
   it('shows the age for an agent that reports no cache at all', () => {
     // Codex and Cursor leave the field unset; so does a Claude surface whose
     // transcript has not been read yet.
-    expect(layOutStatusLabel(agent({ cacheWarmUntil: undefined }), NOW)!.lines).toEqual(['cold for 3m'])
+    expect(layOutStatusLabel(agent({ cacheWarmUntil: undefined }), NOW)!.lines).toEqual(['cold 3m ago'])
   })
 
   it('counts down a cache on a surface whose age is not known yet', () => {
     // The two readings come from different fields, so neither depends on the
     // other being present.
     const node = agent({ lastAgentActivityAt: undefined, cacheWarmUntil: NOW + 60_000 })
-    expect(layOutStatusLabel(node, NOW)!.lines).toEqual(['T-1m'])
+    expect(layOutStatusLabel(node, NOW)!.lines).toEqual(['1:00'])
   })
 
   it('is a function of the quantised clock, so it does not flicker within a tick', () => {
@@ -442,7 +437,7 @@ describe('layOutStatusLabel', () => {
     for (let t = NOW; t < NOW + ELAPSED_TICK_MS; t += 97) {
       texts.add(layOutStatusLabel(node, tick(t))!.lines.join(''))
     }
-    expect([...texts]).toEqual(['T-1m'])
+    expect([...texts]).toEqual(['1:00'])
   })
 
   it('reports the node it reads, so a click navigates there like any label', () => {
@@ -455,20 +450,44 @@ describe('layOutStatusLabel', () => {
     // The whole reason lastAgentActivityAt exists: typing into a stalled
     // surface must not make it read as alive.
     const stalled = agent({ lastAgentActivityAt: NOW - 2 * 60 * 60_000, lastInteractedAt: NOW })
-    expect(layOutStatusLabel(stalled, NOW)!.lines).toEqual(['cold for 2h'])
+    expect(layOutStatusLabel(stalled, NOW)!.lines).toEqual(['cold 2h ago'])
   })
 
   it('captions a plain terminal an agent has since spoken on', () => {
     // Membership is the field itself, which only the agent path writes \u2014 so a
     // surface with no agentType still qualifies once one has run in it.
     const legacy = terminal({ lastAgentActivityAt: NOW - 60_000 })
-    expect(layOutStatusLabel(legacy, NOW)!.lines).toEqual(['cold for 1m'])
+    expect(layOutStatusLabel(legacy, NOW)!.lines).toEqual(['cold 1m ago'])
   })
 
   it('captions nothing that no agent has spoken on', () => {
     expect(layOutStatusLabel(terminal({ lastInteractedAt: NOW }), NOW)).toBeNull()
     expect(layOutStatusLabel(agent({ lastAgentActivityAt: undefined }), NOW)).toBeNull()
     expect(layOutStatusLabel(markdown({ lastInteractedAt: NOW }), NOW)).toBeNull()
+  })
+
+  describe('deadlineExtended', () => {
+    it('fires when a refresh moves the deadline later, whatever the lifetime', () => {
+      // Five minutes, half an hour, an hour: only the direction matters.
+      expect(deadlineExtended(NOW + 60_000, NOW + 5 * 60_000, false)).toBe(true)
+      expect(deadlineExtended(NOW + 60_000, NOW + 30 * 60_000, false)).toBe(true)
+      expect(deadlineExtended(NOW + 60_000, NOW + 60 * 60_000, false)).toBe(true)
+    })
+
+    it('fires when a cold caption turns hot', () => {
+      expect(deadlineExtended(undefined, NOW + 5 * 60_000, false)).toBe(true)
+    })
+
+    it('stays still while counting down, going cold, or first appearing', () => {
+      expect(deadlineExtended(NOW + 60_000, NOW + 60_000, false)).toBe(false)
+      expect(deadlineExtended(NOW + 60_000, undefined, false)).toBe(false)
+      expect(deadlineExtended(undefined, NOW + 60_000, true)).toBe(false)
+    })
+
+    it('is carried on hot status labels only', () => {
+      expect(layOutStatusLabel(agent({ cacheWarmUntil: NOW + 60_000 }), NOW)!.deadline).toBe(NOW + 60_000)
+      expect(layOutStatusLabel(agent({ cacheWarmUntil: NOW - 1 }), NOW)!.deadline).toBeUndefined()
+    })
   })
 })
 

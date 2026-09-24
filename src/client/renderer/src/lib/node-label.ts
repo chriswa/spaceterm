@@ -1,5 +1,5 @@
 import { CARD_AGENT_MARK_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './constants'
-import { formatCountdownShort, formatElapsedShort } from './elapsed-label'
+import { cacheCountdownText, formatCountdownClock, formatElapsedShort } from './elapsed-label'
 import { measureCard } from '../../../../shared/card-types'
 import type { NodeData } from '../../../../shared/state'
 import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
@@ -211,6 +211,13 @@ export interface NodeLabel {
   lines: string[]
   /** Text size relative to a title node — see `labelTextScale`. */
   textScale: number
+  /** Text colour in place of the node's preset colour, when the caption has its own. */
+  fg?: string
+  /**
+   * The cache deadline a hot status caption counts down to. Carried so the
+   * view can see it move — see `deadlineExtended`.
+   */
+  deadline?: number
   /** Centre of the label, directly above the node's card. */
   x: number
   y: number
@@ -314,6 +321,16 @@ export function statusCardGap(scale: number): number {
 }
 
 /**
+ * The colour of a `cold … ago` caption, whatever the node's preset.
+ *
+ * The preset colours fully desaturated — what "Dim stale nodes" would reach at
+ * `saturate(0)` — land between #9c9c9c (red) and #c1c1c1 (green); this sits in
+ * that range, so a cold caption reads as a drained version of any tint rather
+ * than as a tint of its own.
+ */
+export const COLD_LABEL_FG = '#aaaaaa'
+
+/**
  * Lay out the status caption under an agent surface's card.
  *
  * Below rather than above because the name is already above: the two captions
@@ -321,37 +338,26 @@ export function statusCardGap(scale: number): number {
  * and stacking them would make the second look like a second line of the first.
  *
  * One caption, two readings, and which one it shows is which one is worth
- * having. While the prompt cache is warm it counts that down — `T-22s` — and
- * says nothing about age, because the deadline is the thing with a decision
+ * having. While the prompt cache is warm it is a clock counting down — `4:32` —
+ * and says nothing about age, because the deadline is the thing with a decision
  * attached: go back now and the context is still cheap. Once the cache is cold
  * the decision is gone, and what is left to know is how long ago this was —
- * `cold for 14m`.
+ * `cold 14m ago`.
+ *
+ * The two never share a shape. A ticking `m:ss` is how a timer says it is
+ * running out; a coarse unit followed by `ago` is how a timestamp says it is
+ * receding. Size and colour separate them before either is read: the clock is
+ * drawn at the name caption's size in the node's colour, so a card counting
+ * down is legible from across the canvas, and the age at the canvas's smallest
+ * size in `COLD_LABEL_FG`, so a row of quiet ones stays quiet.
  *
  * Just the span, no size. `cacheWarmTokens` is collected and broadcast — it is
  * what separates a 20k session expiring from a 500k one — but a caption read
  * from across the canvas carries one number well and two poorly, and the one
  * that has to be read now is the one that is running out.
  *
- * Each reading is marked at its start rather than named at its end, so the two
- * are distinguished by the first glyph on the line instead of the last word.
- * `T-` is borrowed from a launch clock and is not arithmetic — the span it
- * prefixes is positive — but it says the number is running down towards a
- * deadline, where `cold for` says the one beside it is running up away from a
- * deadline already passed. Both also read as English left to right, which
- * neither did while the qualifier trailed the number.
- *
- * A deadline the server could only estimate is marked `T-4m?`. That is Cursor:
- * it will not say which provider served a request, so its lifetime is a floor
- * across all of them rather than a reading. The question mark is what keeps its
- * cards from being compared against Claude's as though the two numbers were
- * equally good.
- *
- * The countdown is drawn at the name caption's size and the age at the canvas's
- * smallest, so the two are told apart before either is read: a card counting
- * down is legible from across the canvas, and a row of quiet ones stays quiet.
- * Size separates them at a distance, `T-` and `cold for` at reading range.
- * Both are one line — `labelBox` measures the longest line, and neither string
- * is long enough to want wrapping.
+ * A deadline the server could only estimate is marked `4:32?` — see
+ * `cacheCountdownText`, which the toolbar's per-surface timers share.
  *
  * The age reads `lastAgentActivityAt` and not `lastInteractedAt`, which is the
  * whole point of that field existing: the latter also advances on the human's
@@ -366,17 +372,19 @@ export function statusCardGap(scale: number): number {
 export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null {
   if (node.type !== 'terminal') return null
 
-  const warmFor = node.cacheWarmUntil === undefined ? 0 : node.cacheWarmUntil - now
+  const countdown = cacheCountdownText(node.cacheWarmUntil, node.cacheWarmEstimated, now, formatCountdownClock)
   const since = node.lastAgentActivityAt
 
   let text: string
   let textScale: number
-  if (warmFor > 0) {
-    text = `T-${formatCountdownShort(warmFor)}${node.cacheWarmEstimated ? '?' : ''}`
+  let fg: string | undefined
+  if (countdown !== null) {
+    text = countdown
     textScale = LABEL_TEXT_SCALE
   } else if (since !== undefined) {
-    text = `cold for ${formatElapsedShort(now - since)}`
+    text = `cold ${formatElapsedShort(now - since)} ago`
     textScale = MARKDOWN_LABEL_TEXT_SCALE
+    fg = COLD_LABEL_FG
   } else {
     return null
   }
@@ -388,12 +396,30 @@ export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null
     nodeId: node.id,
     lines,
     textScale,
+    fg,
+    deadline: countdown !== null ? node.cacheWarmUntil : undefined,
     x: node.x,
     y: node.y + measureCard(node).height / 2 + statusCardGap(textScale) + box.height / 2,
     anchorX: node.x,
     anchorY: node.y,
     ...box
   }
+}
+
+/**
+ * Whether a caption's cache deadline has just moved later — the agent spoke and
+ * refreshed its cache — which is when the caption flashes.
+ *
+ * Compared as deadlines rather than by looking for a full-lifetime reading,
+ * because the lifetime differs by agent (Claude's is five minutes or an hour,
+ * Codex's half an hour, Cursor's five minutes) and a refresh lands wherever the
+ * countdown happened to be. A cold caption turning hot counts: its cache was
+ * just written. One going cold does not, and neither does a caption appearing
+ * for the first time, which is a load rather than a refresh.
+ */
+export function deadlineExtended(prev: number | undefined, next: number | undefined, isFirst: boolean): boolean {
+  if (isFirst || next === undefined) return false
+  return prev === undefined || next > prev
 }
 
 /**

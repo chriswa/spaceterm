@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCountdownShort, formatElapsedShort } from './elapsed-label'
+import { formatCountdownClock, formatCountdownMinutes, formatElapsedShort } from './elapsed-label'
 
 const SECOND = 1000
 const MINUTE = 60 * SECOND
@@ -56,40 +56,35 @@ describe('formatElapsedShort', () => {
   })
 })
 
-describe('formatCountdownShort', () => {
-  it('counts whole seconds up to half a minute, where an age would say "0m"', () => {
-    expect(formatCountdownShort(0)).toBe('0s')
-    expect(formatCountdownShort(22 * SECOND)).toBe('22s')
-    expect(formatCountdownShort(29 * SECOND)).toBe('29s')
+describe('formatCountdownClock', () => {
+  it('writes minutes and zero-padded seconds', () => {
+    expect(formatCountdownClock(4 * MINUTE + 32 * SECOND)).toBe('4:32')
+    expect(formatCountdownClock(7 * SECOND)).toBe('0:07')
+    expect(formatCountdownClock(58 * MINUTE)).toBe('58:00')
   })
 
-  it('takes the seconds rung at the same half-unit boundary as every other', () => {
-    expect(formatCountdownShort(31 * SECOND)).toBe('1m')
-    expect(formatCountdownShort(89 * SECOND)).toBe('1m')
-    expect(formatCountdownShort(91 * SECOND)).toBe('2m')
+  it('never rolls minutes into hours, so the width holds across the hour', () => {
+    expect(formatCountdownClock(HOUR)).toBe('60:00')
+    expect(formatCountdownClock(HOUR - SECOND)).toBe('59:59')
   })
 
-  it('is the elapsed ladder from a minute up', () => {
-    for (const ms of [MINUTE, 3 * MINUTE + 40 * SECOND, HOUR - 1, HOUR, 25 * HOUR]) {
-      expect(formatCountdownShort(ms)).toBe(formatElapsedShort(ms))
-    }
+  it('rounds seconds down, so a fresh hour against a lagging clock reads 60:00', () => {
+    // `now` is quantised down to the second, so a just-refreshed deadline can
+    // be up to a second more than an hour away.
+    expect(formatCountdownClock(HOUR + 999)).toBe('60:00')
+    expect(formatCountdownClock(4 * MINUTE + 32 * SECOND + 999)).toBe('4:32')
+  })
+})
+
+describe('formatCountdownMinutes', () => {
+  it('rounds to whole minutes', () => {
+    expect(formatCountdownMinutes(4 * MINUTE + 29 * SECOND)).toBe('4m')
+    expect(formatCountdownMinutes(4 * MINUTE + 30 * SECOND)).toBe('5m')
+    expect(formatCountdownMinutes(HOUR)).toBe('60m')
   })
 
-  it('holds a refreshed cache steady instead of flickering off its own boundary', () => {
-    // The reason this rounds rather than truncates. An agent working in a
-    // surface refreshes its cache every message, so the countdown is repeatedly
-    // set to just under a whole hour — which truncation renders as `59m` while
-    // the untouched cache next to it reads `1h`.
-    for (let ms = HOUR; ms > HOUR - 30 * SECOND; ms -= SECOND) {
-      expect(formatCountdownShort(ms), `${ms}ms should still read as an hour`).toBe('1h')
-    }
-    expect(formatCountdownShort(59 * MINUTE + 30 * SECOND)).toBe('1h')
-    expect(formatCountdownShort(59 * MINUTE + 29 * SECOND)).toBe('59m')
-  })
-
-  it('only ever shows one unit', () => {
-    for (const ms of [9 * SECOND, 90 * MINUTE, 25 * HOUR]) {
-      expect(formatCountdownShort(ms)).toMatch(/^\d+[smhd]$/)
-    }
+  it('never says 0m while the cache is still warm', () => {
+    expect(formatCountdownMinutes(20 * SECOND)).toBe('1m')
+    expect(formatCountdownMinutes(1)).toBe('1m')
   })
 })

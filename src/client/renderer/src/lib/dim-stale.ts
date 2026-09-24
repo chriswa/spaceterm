@@ -267,7 +267,7 @@ export function activeMillisBetween(
  * When `node` last did something the lens should count, in epoch ms.
  *
  * An agent surface is aged by its agent: `lastAgentActivityAt`, the same
- * reading its `cold for` caption counts up from (`layOutStatusLabel`), so a
+ * reading its `cold … ago` caption counts up from (`layOutStatusLabel`), so a
  * card's dimming and the caption under it tell one story. `lastInteractedAt`
  * would also advance on PTY output and the human's keystrokes, which keeps a
  * surface lit that nobody — agent included — has moved in hours.

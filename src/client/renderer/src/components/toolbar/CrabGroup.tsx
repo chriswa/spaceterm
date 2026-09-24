@@ -4,6 +4,7 @@ import cursorAgentIcon from '../../assets/cursor-agent.png'
 import codexAgentIcon from '../../assets/codex-agent.png'
 import terminalIcon from '../../assets/terminal.png'
 import type { AgentIndicatorKind, CrabEntry } from '../../lib/crab-nav'
+import { cacheCountdownText, formatCountdownMinutes } from '../../lib/elapsed-label'
 import { CrabDance } from '../../lib/crab-dance'
 import { FrameLimiter } from '../../lib/frame-policy'
 import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVisible'
@@ -71,9 +72,10 @@ export interface CrabGroupProps {
   onCrabReorder: (order: NodeId[]) => void
   selectedNodeId: NodeId | null
   crabNavEvent: CrabNavEvent
+  now: number
 }
 
-export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent }: CrabGroupProps) {
+export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent, now }: CrabGroupProps) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const summaryTargetNodeId = useSummaryChatStore(s => s.targetNodeId)
   const summaryPhase = useSummaryChatStore(s => s.phase)
@@ -482,6 +484,9 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
           // independent flags (`speaking ? … : thinking ? …`), which quietly
           // hid the fact that the server could report both at once.
           const summaryState = BUBBLE_STATE[summaryPhase[crab.nodeId] ?? 'ready']
+          // Hot only: a cold surface's age is on its canvas caption, and a row
+          // of ages here would bury the few timers that are running out.
+          const countdown = cacheCountdownText(crab.cacheWarmUntil, crab.cacheWarmEstimated, now, formatCountdownMinutes)
           return (
           <div
             key={crab.nodeId}
@@ -511,6 +516,7 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
               data-tooltip-no-flip
             />
             {summaryTarget && <SummaryBubble state={summaryState} />}
+            {countdown !== null && <span className="toolbar__crab-timer">{countdown}</span>}
           </div>
           )
       })}

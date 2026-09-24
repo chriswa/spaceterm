@@ -78,6 +78,8 @@ export interface ToolbarHost {
   onCrabReorder: (order: NodeId[]) => void
   selectedNodeId: NodeId | null
   crabNavEvent: CrabNavEvent
+  /** The captions' quantised clock, which the crabs' cache timers count down against. */
+  now: number
   onStepOut: () => void
 }
 
@@ -160,6 +162,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
         onCrabReorder={h.onCrabReorder}
         selectedNodeId={h.selectedNodeId}
         crabNavEvent={h.crabNavEvent}
+        now={h.now}
       />
     )
   },

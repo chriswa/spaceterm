@@ -31,6 +31,9 @@ export interface CrabEntry {
   sortOrder: number
   title: string
   claudeStateDecidedAt?: number
+  /** The surface's prompt-cache deadline, for the timer under its icon. */
+  cacheWarmUntil?: number
+  cacheWarmEstimated?: boolean
 }
 
 /** Longest `waitingFor` the footer will render before eliding. */
