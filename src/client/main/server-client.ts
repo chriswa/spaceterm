@@ -210,6 +210,7 @@ export class ServerClient extends EventEmitter {
       case 'mutation-ack':
       case 'node-add-ack':
       case 'validate-directory-result':
+      case 'directory-command-result':
       case 'validate-file-result':
       case 'client-hello-result':
       case 'summary-chat-toggle-result':
@@ -427,6 +428,14 @@ export class ServerClient extends EventEmitter {
 
   async directoryGitFetch(nodeId: NodeId): Promise<ServerMessage> {
     return this.sendRequest({ type: 'directory-git-fetch', nodeId })
+  }
+
+  async directoryGitRun(nodeId: NodeId, command: 'pull' | 'push'): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'directory-git-run', nodeId, command })
+  }
+
+  async directoryOpenGitHubDesktop(nodeId: NodeId): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'directory-open-github-desktop', nodeId })
   }
 
   async validateDirectory(path: string): Promise<ServerMessage> {

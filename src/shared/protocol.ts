@@ -39,7 +39,7 @@ export const MIN_SCRIPT_PROTOCOL_VERSION = 1
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 3
+export const CLIENT_PROTOCOL_VERSION = 4
 
 /**
  * Oldest client protocol this build still serves.
@@ -342,6 +342,7 @@ export interface TerminalCreateMessage {
   options?: CreateOptions
   initialTitleHistory?: string[]
   initialName?: string
+  /** Typed into the shell, followed by Enter, once it draws its first prompt. */
   initialInput?: string
 }
 
@@ -423,6 +424,38 @@ export interface DirectoryGitFetchMessage {
   type: 'directory-git-fetch'
   seq: number
   nodeId: NodeId
+}
+
+/**
+ * Run `git pull` or `git push` for a directory node, in a new terminal child of
+ * it that closes itself on success. Answered with a `directory-command-result`
+ * once the command finishes — the terminal exiting, or its shell coming back
+ * to a prompt, which means the command failed and the terminal stays open.
+ */
+export interface DirectoryGitRunMessage {
+  type: 'directory-git-run'
+  seq: number
+  nodeId: NodeId
+  command: 'pull' | 'push'
+}
+
+/**
+ * Open a directory node's repo in GitHub Desktop (`github .`). Answered with a
+ * `directory-command-result`.
+ */
+export interface DirectoryOpenGitHubDesktopMessage {
+  type: 'directory-open-github-desktop'
+  seq: number
+  nodeId: NodeId
+}
+
+/** How a command run in a directory node's cwd on the client's behalf ended. */
+export interface DirectoryCommandResult {
+  type: 'directory-command-result'
+  seq: number
+  ok: boolean
+  /** The command's stderr, or why it could not be run. */
+  error?: string
 }
 
 export interface ValidateDirectoryMessage {
@@ -869,6 +902,8 @@ export type ClientMessage =
   | DirectoryAddMessage
   | DirectoryCwdMessage
   | DirectoryGitFetchMessage
+  | DirectoryGitRunMessage
+  | DirectoryOpenGitHubDesktopMessage
   | ValidateDirectoryMessage
   | FileAddMessage
   | FilePathMessage
@@ -1439,6 +1474,7 @@ export type ServerMessage =
   | NodeAddAckMessage
   | SnapshotMessage
   | ValidateDirectoryResult
+  | DirectoryCommandResult
   | ValidateFileResult
   | FileContentMessage
   | PlanCacheUpdateMessage

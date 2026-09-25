@@ -13,6 +13,7 @@ import { useReparentStore } from '../stores/reparentStore'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { type NodeId } from '../../../../shared/ids'
+import type { CommandOutcome } from '../../../../shared/api'
 
 const DRAG_THRESHOLD = 5
 const DEFAULT_BG = '#1e1e2e'
@@ -67,18 +68,60 @@ const BADGE_GLYPHS: Record<GitBadgeKind, ReactNode> = {
 }
 
 /**
+ * What clicking a badge does, for the badges that do anything. `busy` is the
+ * tooltip while it runs; `verb` names it in the tooltip otherwise.
+ */
+interface BadgeAction {
+  verb: string
+  busy: string
+  run: (nodeId: NodeId) => Promise<CommandOutcome>
+}
+
+const OPEN_IN_GITHUB_DESKTOP: BadgeAction = {
+  verb: 'open in GitHub Desktop',
+  busy: 'opening GitHub Desktop…',
+  run: (nodeId) => window.api.node.directoryOpenGitHubDesktop(nodeId),
+}
+
+const BADGE_ACTIONS: Partial<Record<GitBadgeKind, BadgeAction>> = {
+  behind: { verb: 'pull', busy: 'pulling…', run: (nodeId) => window.api.node.directoryGitRun(nodeId, 'pull') },
+  ahead: { verb: 'push', busy: 'pushing…', run: (nodeId) => window.api.node.directoryGitRun(nodeId, 'push') },
+  dirty: OPEN_IN_GITHUB_DESKTOP,
+  untracked: OPEN_IN_GITHUB_DESKTOP,
+}
+
+/**
+ * The action a badge is running, or just failed at. `failed` lasts only as
+ * long as the red flash; the error itself is kept in `BadgeErrors`.
+ */
+type BadgeActionState = { kind: GitBadgeKind; phase: 'running' | 'failed' } | null
+
+/** The last error each badge's action ended in, cleared when it is next run. */
+type BadgeErrors = Partial<Record<GitBadgeKind, string>>
+
+/** How long a badge stays red after its action fails. */
+const ACTION_FAILED_FLASH_MS = 1000
+
+/**
  * The badge row that hangs under the folder: one coin per thing the repo wants
  * noticing, centred, in the folder's own two colours.
  *
- * Absolutely positioned and non-interactive on purpose. The folder's width is
- * computed from its text on both the client and the server
- * (`directoryFolderWidth`), and the canvas behind the row stays draggable —
- * what the badges say in shorthand, the git status line above them says in
- * words, and its tooltip says in full.
+ * Absolutely positioned outside the folder, which is sized from its text on
+ * both the client and the server (`directoryFolderWidth`). Grabbing a badge
+ * drags the node like grabbing the folder does; a click without a drag runs
+ * the badge's entry in `BADGE_ACTIONS`, and does nothing for a badge without
+ * one. While an action runs a spark circles its badge, and a failure flashes
+ * it red.
  */
 function GitBadges(
-  { gitStatus, preset, onMouseDown }:
-  { gitStatus: GitStatus; preset?: ColorPreset; onMouseDown: (e: React.MouseEvent) => void }
+  { gitStatus, preset, action, errors, onBadgeMouseDown }:
+  {
+    gitStatus: GitStatus
+    preset?: ColorPreset
+    action: BadgeActionState
+    errors: BadgeErrors
+    onBadgeMouseDown: (e: React.MouseEvent, kind: GitBadgeKind) => void
+  }
 ): ReactNode {
   const badges = gitBadges(gitStatus)
   if (badges.length === 0) return null
@@ -87,30 +130,43 @@ function GitBadges(
   return (
     <div
       className="directory-card__badges"
-      onMouseDown={onMouseDown}
       style={{ '--badge-face': face, '--badge-mark': mark } as React.CSSProperties}
     >
-      {badges.map(badge => (
-        <svg
-          key={badge.kind}
-          className="directory-card__badge"
-          role="img"
-          aria-label={badge.label}
-          data-tooltip={badge.label}
-          // The row hangs below the node, so the folder is what a tooltip above
-          // it would cover.
-          data-tooltip-placement="bottom"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle className="directory-card__badge-face" cx="12" cy="12" r="12" stroke="none" />
-          {BADGE_GLYPHS[badge.kind]}
-        </svg>
-      ))}
+      {badges.map(badge => {
+        const def = BADGE_ACTIONS[badge.kind]
+        const phase = action?.kind === badge.kind ? action.phase : null
+        const lastError = errors[badge.kind]
+        const tooltip = !def ? badge.label
+          : phase === 'running' ? def.busy
+          : lastError !== undefined ? `${badge.label} — ${def.verb} failed: ${lastError}`
+          : `${badge.label} — click to ${def.verb}`
+        const stateClass = phase ? ` directory-card__badge--${phase}` : ''
+        return (
+          <svg
+            key={badge.kind}
+            className={`directory-card__badge${def ? ' directory-card__badge--action' : ''}${stateClass}`}
+            role="img"
+            aria-label={badge.label}
+            data-tooltip={tooltip}
+            // The row hangs below the node, so the folder is what a tooltip above
+            // it would cover.
+            data-tooltip-placement="bottom"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            onMouseDown={(e) => onBadgeMouseDown(e, badge.kind)}
+          >
+            <circle className="directory-card__badge-face" cx="12" cy="12" r="12" stroke="none" />
+            {BADGE_GLYPHS[badge.kind]}
+            {phase === 'running' && (
+              <circle className="directory-card__badge-spark" cx="12" cy="12" r="11" pathLength={100} />
+            )}
+          </svg>
+        )
+      })}
     </div>
   )
 }
@@ -180,6 +236,8 @@ export function DirectoryCard({
   const [editValue, setEditValue] = useState(cwd)
   const [error, setError] = useState<string | null>(null)
   const [fetching, setFetching] = useState(false)
+  const [badgeAction, setBadgeAction] = useState<BadgeActionState>(null)
+  const [badgeErrors, setBadgeErrors] = useState<BadgeErrors>({})
   const inputRef = useRef<HTMLInputElement>(null)
   const measureRef = useRef<HTMLSpanElement>(null)
   const gitMeasureRef = useRef<HTMLSpanElement>(null)
@@ -206,6 +264,33 @@ export function DirectoryCard({
   useEffect(() => {
     setFetching(false)
   }, [lastFetchTs])
+
+  // The red flash is brief; the error it stands for stays in the tooltip.
+  useEffect(() => {
+    if (badgeAction?.phase !== 'failed') return
+    const timer = setTimeout(() => setBadgeAction(null), ACTION_FAILED_FLASH_MS)
+    return () => clearTimeout(timer)
+  }, [badgeAction])
+
+  // One action at a time per node: a second click while one runs is dropped.
+  const runBadgeAction = useCallback(async (kind: GitBadgeKind) => {
+    const def = BADGE_ACTIONS[kind]
+    if (!def || badgeAction?.phase === 'running') return
+    setBadgeAction({ kind, phase: 'running' })
+    setBadgeErrors(({ [kind]: _cleared, ...rest }) => rest)
+    let result: CommandOutcome
+    try {
+      result = await def.run(id)
+    } catch (err) {
+      result = { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+    if (result.ok) {
+      setBadgeAction(null)
+    } else {
+      setBadgeErrors(errs => ({ ...errs, [kind]: result.error ?? `${def.verb} failed` }))
+      setBadgeAction({ kind, phase: 'failed' })
+    }
+  }, [id, badgeAction])
 
   // Compute the git status display text for measurement (includes fetch-age for width)
   const gitStatusCore = gitStatus ? formatGitStatusLine(gitStatus) : ''
@@ -318,8 +403,9 @@ export function DirectoryCard({
     }
   }, [validateAndSave, cancelEditing])
 
-  // Drag handler — same pattern as MarkdownCard
-  const handleMouseDown = (e: React.MouseEvent) => {
+  // Drag handler — same pattern as MarkdownCard. `onClick` replaces what a
+  // press without a drag does; by default it focuses the node.
+  const handleMouseDown = (e: React.MouseEvent, onClick?: () => void) => {
     if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-body')) return
 
     // Don't start drag if clicking the input while editing
@@ -354,6 +440,8 @@ export function DirectoryCard({
       window.removeEventListener('mouseup', onMouseUp)
       if (dragging) {
         onDragEnd?.(id)
+      } else if (onClick) {
+        onClick()
       } else if (useReparentStore.getState().reparentingNodeId) {
         onReparentTarget?.(id)
       } else if (!editing) {
@@ -393,7 +481,15 @@ export function DirectoryCard({
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
       behindContent={
         gitStatus
-          ? <GitBadges gitStatus={gitStatus} preset={preset} onMouseDown={handleMouseDown} />
+          ? (
+            <GitBadges
+              gitStatus={gitStatus}
+              preset={preset}
+              action={badgeAction}
+              errors={badgeErrors}
+              onBadgeMouseDown={(e, kind) => handleMouseDown(e, () => { void runBadgeAction(kind) })}
+            />
+          )
           : null
       }
     >

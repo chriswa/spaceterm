@@ -19,6 +19,7 @@
  * restating them.
  */
 import type {
+  DirectoryCommandResult,
   CameraBounds,
   ClaudeSessionEntry,
   CreateOptions,
@@ -61,6 +62,9 @@ export interface PtyApi {
   onClaudeSessionLineCount(sessionId: PtySessionId, callback: (lineCount: number) => void): () => void
   onPlanCacheUpdate(sessionId: PtySessionId, callback: (count: number, files: string[]) => void): () => void
 }
+
+/** How a command the server ran in a directory node's cwd ended. */
+export type CommandOutcome = Pick<DirectoryCommandResult, 'ok' | 'error'>
 
 export interface NodeApi {
   syncRequest(): Promise<ServerState>
@@ -110,6 +114,13 @@ export interface NodeApi {
    */
   setRootCwd(cwd: string): Promise<void>
   directoryGitFetch(nodeId: NodeId): Promise<void>
+  /**
+   * Run `git pull`/`git push` in a new terminal child of the directory node.
+   * Resolves when the command finishes; on failure its terminal stays open.
+   */
+  directoryGitRun(nodeId: NodeId, command: 'pull' | 'push'): Promise<CommandOutcome>
+  /** Open the directory in GitHub Desktop, via its `github` CLI. */
+  directoryOpenGitHubDesktop(nodeId: NodeId): Promise<CommandOutcome>
   validateDirectory(path: string): Promise<{ valid: boolean; error?: string }>
 
   fileAdd(parentId: NodeId, filePath: string, x?: number, y?: number): Promise<{ nodeId: NodeId }>

@@ -46,6 +46,7 @@ import { ClaudeStateMachine } from './claude-state'
 import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
+import { PromptedCommands } from './prompted-command'
 import { AgentMetaManager } from './agent-meta-manager'
 import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
@@ -238,6 +239,7 @@ let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
 let gitStatusPoller: GitStatusPoller
+let promptedCommands: PromptedCommands
 let agentMetaManager: AgentMetaManager
 let agentMetaAvailability: AgentMetaAvailability
 let sessionStatusObserver: SessionStatusObserver
@@ -1091,6 +1093,64 @@ function handleIngestMessage(msg: IngestMessage): void {
   }
 }
 
+/**
+ * Spawn a pty and hang a terminal node for it off `parentId` — at `x`/`y` if
+ * given, otherwise wherever placement finds room.
+ */
+function spawnTerminalNode(
+  parentId: NodeId,
+  options: CreateOptions | undefined,
+  extra: { x?: number; y?: number; initialTitleHistory?: string[]; name?: string; agentType?: AgentType },
+): { sessionId: PtySessionId; cols: number; rows: number } {
+  const { sessionId, cols, rows } = sessionManager.create(options)
+  snapshotManager.addSession(sessionId, cols, rows)
+  const cwd = sessionManager.getCwd(sessionId)
+  const pos = extra.x != null && extra.y != null
+    ? { x: extra.x, y: extra.y }
+    : computePlacement(stateManager.getState().nodes, parentId, terminalPixelSize(cols, rows))
+  console.log(`[terminal-create] parent=${parentId.slice(0, 8)} termPos=(${pos.x}, ${pos.y}) requestedPos=(${extra.x}, ${extra.y})`)
+  stateManager.createTerminal({
+    sessionId, parentId, x: pos.x, y: pos.y, cols, rows, cwd,
+    initialTitleHistory: extra.initialTitleHistory, name: extra.name, agentType: extra.agentType
+  })
+  if (extra.initialTitleHistory?.length) {
+    sessionManager.seedTitleHistory(sessionId, extra.initialTitleHistory)
+  }
+  return { sessionId, cols, rows }
+}
+
+/**
+ * Run a command in a directory node's cwd for a client, and answer with a
+ * `directory-command-result` once it exits. `env` is layered over the server's
+ * own.
+ */
+function runInDirectory(
+  client: ClientConnection,
+  seq: number,
+  nodeId: NodeId,
+  command: string,
+  args: string[],
+  opts: { timeout: number; env?: Record<string, string> },
+): void {
+  const reply = (ok: boolean, error?: string) =>
+    send(client.socket, { type: 'directory-command-result', seq, ok, error })
+  const dirNode = stateManager.getNode(nodeId)
+  if (!dirNode || dirNode.type !== 'directory') {
+    reply(false, 'not a directory node')
+    return
+  }
+  const env = { ...process.env, ...opts.env }
+  execFile(command, args, { cwd: resolveFilePath(dirNode.cwd), timeout: opts.timeout, env }, (err, _stdout, stderr) => {
+    if (!err) {
+      reply(true)
+      return
+    }
+    const error = stderr.trim() || err.message
+    serverLog(`[${command} ${args.join(' ')}] ${dirNode.cwd}: ${sanitizeForLog(error)}`)
+    reply(false, error)
+  })
+}
+
 /** What this build serves on the client socket. */
 const CLIENT_PROTOCOL_RANGE = { min: MIN_CLIENT_PROTOCOL_VERSION, current: CLIENT_PROTOCOL_VERSION }
 
@@ -1446,34 +1506,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         } else {
           options = msg.options
         }
-        const { sessionId, cols, rows } = sessionManager.create(options)
-        snapshotManager.addSession(sessionId, cols, rows)
-        const cwd = sessionManager.getCwd(sessionId)
-        let posX: number
-        let posY: number
-        if (msg.x != null && msg.y != null) {
-          posX = msg.x
-          posY = msg.y
-        } else {
-          const pos = computePlacement(stateManager.getState().nodes, msg.parentId, terminalPixelSize(cols, rows))
-          posX = pos.x
-          posY = pos.y
-        }
-        const parentNode = stateManager.getNode(msg.parentId)
-        console.log(`[terminal-create] parent=${msg.parentId.slice(0, 8)} parentPos=(${parentNode?.x}, ${parentNode?.y}) parentSize=(${parentNode?.type === 'markdown' ? parentNode.width : '?'}x${parentNode?.type === 'markdown' ? parentNode.height : '?'}) termPos=(${posX}, ${posY}) clientPos=(${msg.x}, ${msg.y}) initialInput=${!!msg.initialInput}`)
-        stateManager.createTerminal({
-          sessionId, parentId: msg.parentId, x: posX, y: posY, cols, rows, cwd,
-          initialTitleHistory: msg.initialTitleHistory, name: msg.initialName, agentType
+        const { sessionId, cols, rows } = spawnTerminalNode(msg.parentId, options, {
+          x: msg.x, y: msg.y, initialTitleHistory: msg.initialTitleHistory, name: msg.initialName, agentType,
         })
-        if (msg.initialTitleHistory?.length) {
-          sessionManager.seedTitleHistory(sessionId, msg.initialTitleHistory)
-        }
         send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
-        if (msg.initialInput) {
-          setTimeout(() => {
-            sessionManager.write(sessionId, msg.initialInput! + '\n')
-          }, 100)
-        }
+        if (msg.initialInput) promptedCommands.run(sessionId, msg.initialInput)
       } catch (err: any) {
         console.error(`terminal-create failed: ${err.message}`)
         send(client.socket, { type: 'server-error', message: `terminal-create failed: ${err.message}` })
@@ -1601,6 +1638,42 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         })
       })
       send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'directory-git-run': {
+      // In a visible terminal rather than the background, so a failure leaves
+      // its output — and any credential prompt — on screen. `&& exit` closes
+      // the terminal when the command succeeds.
+      const dirNode = stateManager.getNode(msg.nodeId)
+      if (!dirNode || dirNode.type !== 'directory') {
+        send(client.socket, { type: 'directory-command-result', seq: msg.seq, ok: false, error: 'not a directory node' })
+        break
+      }
+      const label = `git ${msg.command}`
+      const reply = (ok: boolean, error?: string) =>
+        send(client.socket, { type: 'directory-command-result', seq: msg.seq, ok, error })
+      try {
+        const { sessionId } = spawnTerminalNode(msg.nodeId, { cwd: resolveFilePath(dirNode.cwd) }, { name: label })
+        promptedCommands.run(sessionId, `${label} && exit`, (outcome) => {
+          gitStatusPoller.pollNode(msg.nodeId)
+          if (outcome.kind === 'exited' && outcome.exitCode === 0) reply(true)
+          else if (outcome.kind === 'exited') reply(false, `terminal exited (code ${outcome.exitCode})`)
+          else reply(false, 'see its terminal')
+        })
+      } catch (err: any) {
+        reply(false, err.message)
+      }
+      break
+    }
+
+    case 'directory-open-github-desktop': {
+      // GitHub Desktop's CLI shim installs to /usr/local/bin, which a server
+      // started outside a login shell may not have on PATH.
+      runInDirectory(client, msg.seq, msg.nodeId, 'github', ['.'], {
+        timeout: 15_000,
+        env: { PATH: `${process.env.PATH ?? ''}:/usr/local/bin:/opt/homebrew/bin` },
+      })
       break
     }
 
@@ -2265,6 +2338,7 @@ async function startServer(): Promise<void> {
   await daemonClient.connect()
   console.log('[startup] Connected to PTY daemon')
 
+  promptedCommands = new PromptedCommands({ write: (sessionId, data) => sessionManager.write(sessionId, data) })
   sessionManager = new SessionManager(daemonClient, {
     // broadcast to attached clients + feed snapshot manager
     onData: (sessionId, data) => {
@@ -2273,6 +2347,8 @@ async function startServer(): Promise<void> {
     },
     // broadcast to all attached clients + update state
     onExit: (sessionId, exitCode) => {
+      promptedCommands.onExit(sessionId, exitCode)
+
       // Log every PTY exit with its final output. A surface that "dies
       // immediately" (bad CLI flag, failed MCP, startup crash) leaves its
       // reason in the last lines of scrollback — captured here before the
@@ -2397,6 +2473,8 @@ async function startServer(): Promise<void> {
     // update state (node-updated broadcast handles client sync)
     onCwd: (sessionId, cwd) => {
       stateManager.updateCwd(sessionId, cwd)
+      // Every prompt reports its cwd, so this doubles as "a prompt was drawn".
+      promptedCommands.onPrompt(sessionId)
     },
     // update state (node-updated broadcast handles client sync)
     onClaudeSessionHistory: (sessionId, history) => {

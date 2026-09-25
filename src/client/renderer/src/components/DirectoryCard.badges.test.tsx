@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, cleanup, fireEvent } from '@testing-library/react'
-import { installFakeBridge } from '../testing/fake-bridge'
+import { render, cleanup, fireEvent, act } from '@testing-library/react'
+import { installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { DirectoryCard } from './DirectoryCard'
 import { useNodeStore } from '../stores/nodeStore'
 import { asNodeId } from '../../../../shared/ids'
@@ -62,8 +62,10 @@ function badgeCount(gitStatus: GitStatus): number {
   return badgeRow(gitStatus)?.querySelectorAll('.directory-card__badge').length ?? 0
 }
 
+let bridge: FakeBridge
+
 beforeEach(() => {
-  installFakeBridge(globalThis as never)
+  bridge = installFakeBridge(globalThis as never)
   useNodeStore.setState({ nodes: {} })
 })
 afterEach(cleanup)
@@ -112,7 +114,7 @@ describe('how it is drawn', () => {
     const row = badgeRow(status({ branch: 'wip', upstream: 'origin/wip', untracked: true }))!
     const tips = [...row.querySelectorAll('.directory-card__badge')]
       .map(b => b.getAttribute('data-tooltip'))
-    expect(tips).toEqual(['on wip, not the default branch main', 'untracked files'])
+    expect(tips).toEqual(['on wip, not the default branch main', 'untracked files — click to open in GitHub Desktop'])
   })
 
   it('places those tooltips below, clear of the folder', () => {
@@ -147,5 +149,75 @@ describe('the status tooltip', () => {
     expect(tooltip).toContain('commits to pull')
     expect(tooltip).toContain('branch has never been pushed')
     expect(tooltip).toContain('untracked files')
+  })
+})
+
+function click(el: Element): void {
+  fireEvent.mouseDown(el, { clientX: 0, clientY: 0 })
+  fireEvent(window, new MouseEvent('mouseup'))
+}
+
+function badgeOf(container: HTMLElement, label: string): Element {
+  return container.querySelector(`.directory-card__badge[aria-label="${label}"]`)!
+}
+
+describe('clicking a badge', () => {
+  it('pulls when the badge is the one for commits to pull', () => {
+    const { container } = render(<DirectoryCard {...props(status({ behind: true }))} />)
+    click(badgeOf(container, 'commits to pull'))
+    expect(bridge.lastCall('node.directoryGitRun')).toEqual([asNodeId('dir1'), 'pull'])
+  })
+
+  it('pushes when the badge is the one for commits to push', () => {
+    const { container } = render(<DirectoryCard {...props(status({ ahead: true }))} />)
+    click(badgeOf(container, 'commits to push'))
+    expect(bridge.lastCall('node.directoryGitRun')).toEqual([asNodeId('dir1'), 'push'])
+  })
+
+  it.each(['uncommitted changes', 'untracked files'])('opens GitHub Desktop from %s', (label) => {
+    const { container } = render(<DirectoryCard {...props(status({ dirty: true, untracked: true }))} />)
+    click(badgeOf(container, label))
+    expect(bridge.callsTo('node.directoryOpenGitHubDesktop')).toHaveLength(1)
+  })
+
+  it('does nothing for a badge without an action, not even focus the node', () => {
+    const onFocus = vi.fn()
+    const { container } = render(
+      <DirectoryCard {...props(status({ branch: 'wip', upstream: 'origin/wip' }))} onFocus={onFocus} />
+    )
+    for (const badge of container.querySelectorAll('.directory-card__badge')) click(badge)
+    expect(onFocus).not.toHaveBeenCalled()
+    expect(bridge.calls.filter(c => c.method.startsWith('node.directory'))).toHaveLength(0)
+  })
+
+  it('sparks while the pull runs and ignores clicks until it finishes', async () => {
+    let finish!: (r: { ok: boolean }) => void
+    vi.spyOn(bridge.node, 'directoryGitRun').mockReturnValue(new Promise(r => { finish = r }))
+    const { container } = render(<DirectoryCard {...props(status({ behind: true }))} />)
+    const badge = badgeOf(container, 'commits to pull')
+    click(badge)
+    expect(badge.classList).toContain('directory-card__badge--running')
+    expect(badge.querySelector('.directory-card__badge-spark')).not.toBeNull()
+    click(badge)
+    expect(bridge.node.directoryGitRun).toHaveBeenCalledTimes(1)
+    await act(async () => finish({ ok: true }))
+    expect(badge.classList).not.toContain('directory-card__badge--running')
+  })
+
+  it('flashes red for a second when the pull fails, and says so in the tooltip', async () => {
+    vi.useFakeTimers()
+    try {
+      bridge.responses.command = { ok: false, error: 'see its terminal' }
+      const { container } = render(<DirectoryCard {...props(status({ behind: true }))} />)
+      const badge = badgeOf(container, 'commits to pull')
+      await act(async () => click(badge))
+      expect(badge.classList).toContain('directory-card__badge--failed')
+      expect(badge.getAttribute('data-tooltip')).toContain('pull failed: see its terminal')
+      act(() => { vi.advanceTimersByTime(1000) })
+      expect(badge.classList).not.toContain('directory-card__badge--failed')
+      expect(badge.getAttribute('data-tooltip')).toContain('pull failed: see its terminal')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

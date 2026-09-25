@@ -1,4 +1,5 @@
 import type {
+  CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi
 } from '../../../../shared/api'
@@ -77,6 +78,8 @@ export interface FakeBridgeResponses {
   sessionInfo: SessionInfo
   attach: AttachResult
   validate: { valid: boolean; error?: string }
+  /** What every directory command (`directoryGitRun`, …) resolves to. */
+  command: CommandOutcome
   newNodeId: NodeId
   /** What a `tts.toggle` press resolves to. */
   speakOutcome: SpeakOutcome
@@ -116,6 +119,7 @@ export class FakeBridge implements Api {
     sessionInfo: { sessionId: 'pty-fake' as PtySessionId, cols: 80, rows: 24 },
     attach: { scrollback: '' },
     validate: { valid: true },
+    command: { ok: true },
     newNodeId: 'node-fake' as NodeId,
     speakOutcome: 'started',
     launchPrefs: { ...DEFAULT_LAUNCH_PREFS },
@@ -321,6 +325,9 @@ export class FakeBridge implements Api {
     directoryCwd: (nodeId, cwd) => this.reply('node.directoryCwd', undefined, nodeId, cwd),
     setRootCwd: (cwd) => this.reply('node.setRootCwd', undefined, cwd),
     directoryGitFetch: (nodeId) => this.reply('node.directoryGitFetch', undefined, nodeId),
+    directoryGitRun: (nodeId, command) => this.reply('node.directoryGitRun', this.responses.command, nodeId, command),
+    directoryOpenGitHubDesktop: (nodeId) =>
+      this.reply('node.directoryOpenGitHubDesktop', this.responses.command, nodeId),
     validateDirectory: (p) => this.reply('node.validateDirectory', this.responses.validate, p),
 
     fileAdd: (parentId, filePath, x, y) =>

@@ -14,6 +14,8 @@ import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
 import type { LaunchPrefs } from '../../shared/launch-prefs'
 import type { NodeId, PtySessionId } from '../../shared/ids'
 import type { NodeStamp } from '../../shared/state'
+import type { ServerMessage } from '../../shared/protocol'
+import type { CommandOutcome } from '../../shared/api'
 import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
 
 /**
@@ -61,6 +63,11 @@ let pendingFocusId: string | null = null
 // or `null` for "the request matched nothing — zoom out". Undefined means
 // nothing is pending, which `null` can no longer stand for.
 let pendingFocus: { nodeId: NodeId | null } | undefined
+
+function commandResult(resp: ServerMessage): CommandOutcome {
+  if (resp.type === 'directory-command-result') return { ok: resp.ok, error: resp.error }
+  throw new Error(`Unexpected response: ${resp.type}`)
+}
 
 function requestFocus(id: string): void {
   if (client?.isConnected()) {
@@ -451,6 +458,12 @@ function setupIPC(): void {
   ipcMain.handle('node:directory-git-fetch', async (_event, nodeId: NodeId) => {
     await client!.directoryGitFetch(nodeId)
   })
+
+  ipcMain.handle('node:directory-git-run', async (_event, nodeId: NodeId, command: 'pull' | 'push') =>
+    commandResult(await client!.directoryGitRun(nodeId, command)))
+
+  ipcMain.handle('node:directory-open-github-desktop', async (_event, nodeId: NodeId) =>
+    commandResult(await client!.directoryOpenGitHubDesktop(nodeId)))
 
   ipcMain.handle('node:validate-directory', async (_event, path: string) => {
     const resp = await client!.validateDirectory(path)
