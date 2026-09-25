@@ -1,5 +1,5 @@
 import type {
-  CommandOutcome,
+  AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi
 } from '../../../../shared/api'
@@ -93,6 +93,8 @@ export interface FakeBridgeResponses {
   agentMetaOpen: boolean
   /** What the availability PULL reports. */
   agentMetaAvailability: Array<{ nodeId: NodeId; available: boolean }>
+  /** What `agentSearch` resolves to. */
+  agentSearch: AgentSearchResponse
   /** Bytes reported by the toolbar's agent-memory poll; `null` = no daemon. */
   agentMemoryBytes: number | null
 }
@@ -126,6 +128,7 @@ export class FakeBridge implements Api {
     activeLaunchPrefs: { ...DEFAULT_LAUNCH_PREFS },
     agentMetaOpen: true,
     agentMetaAvailability: [],
+    agentSearch: { ok: true, pass: 'titles', hits: [], noneProbability: 1, costUsd: 0 },
     restartFlag: { required: false, reason: '' },
     agentMemoryBytes: null
   }
@@ -342,6 +345,7 @@ export class FakeBridge implements Api {
     markdownContent: (nodeId, content) => this.reply('node.markdownContent', undefined, nodeId, content),
     agentMetaToggle: (nodeId) => this.reply('node.agentMetaToggle', this.responses.agentMetaOpen, nodeId),
     agentMetaAvailabilityStatus: () => this.reply('node.agentMetaAvailabilityStatus', this.responses.agentMetaAvailability),
+    agentSearch: (query) => this.reply('node.agentSearch', this.responses.agentSearch, query),
     agentMetaRescan: (nodeId) => this.reply('node.agentMetaRescan', undefined, nodeId),
     metaDocResize: (nodeId, width, height) => this.reply('node.metaDocResize', undefined, nodeId, width, height),
     metaDocContent: (nodeId, content) => this.reply('node.metaDocContent', undefined, nodeId, content),

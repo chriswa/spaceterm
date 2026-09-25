@@ -15,7 +15,7 @@ import type { LaunchPrefs } from '../../shared/launch-prefs'
 import type { NodeId, PtySessionId } from '../../shared/ids'
 import type { NodeStamp } from '../../shared/state'
 import type { ServerMessage } from '../../shared/protocol'
-import type { CommandOutcome } from '../../shared/api'
+import type { AgentSearchResponse, CommandOutcome } from '../../shared/api'
 import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
 
 /**
@@ -503,6 +503,13 @@ function setupIPC(): void {
 
   ipcMain.handle('node:markdown-set-max-width', async (_event, nodeId: NodeId, maxWidth: number) => {
     await client!.markdownSetMaxWidth(nodeId, maxWidth)
+  })
+
+  ipcMain.handle('node:agent-search', async (_event, query: string): Promise<AgentSearchResponse> => {
+    const resp = await client!.agentSearch(query)
+    if (resp.type !== 'agent-search-result') throw new Error(`Unexpected response: ${resp.type}`)
+    const { type: _type, seq: _seq, ...result } = resp
+    return result
   })
 
   ipcMain.handle('node:agent-meta-availability-status', async () => {

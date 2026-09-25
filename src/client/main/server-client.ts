@@ -217,6 +217,7 @@ export class ServerClient extends EventEmitter {
       case 'speak-toggle-result':
       case 'agent-meta-toggle-result':
       case 'agent-meta-availability-result':
+      case 'agent-search-result':
         this.resolvePending(msg.seq, msg)
         return
 
@@ -468,6 +469,10 @@ export class ServerClient extends EventEmitter {
 
   async markdownSetMaxWidth(nodeId: NodeId, maxWidth: number): Promise<ServerMessage> {
     return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
+  }
+
+  async agentSearch(query: string): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'agent-search', query })
   }
 
   async agentMetaAvailabilityStatus(): Promise<ServerMessage> {

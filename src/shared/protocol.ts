@@ -859,7 +859,41 @@ export interface AgentMetaAvailabilityResult {
   entries: Array<{ nodeId: NodeId; available: boolean }>
 }
 
+/** Which Jev passes an agent search ran. See `src/server/agent-search.ts`. */
+export type AgentSearchPass = 'titles' | 'transcripts'
+
+export interface AgentSearchHit {
+  nodeId: NodeId
+  probability: number
+}
+
+/**
+ * Ask Jev which agent surface — live, or one of the most recently archived —
+ * a free-text query is about. Answered with an `agent-search-result`.
+ */
+export interface AgentSearchMessage {
+  type: 'agent-search'
+  seq: number
+  query: string
+}
+
+export type AgentSearchResult =
+  | {
+      type: 'agent-search-result'
+      seq: number
+      ok: true
+      /** The last pass that ran: `transcripts` means both did. */
+      pass: AgentSearchPass
+      /** Every candidate, most probable first. */
+      hits: AgentSearchHit[]
+      noneProbability: number
+      /** Summed over every pass that ran; null if a pass could not be priced. */
+      costUsd: number | null
+    }
+  | { type: 'agent-search-result'; seq: number; ok: false; error: string }
+
 export type ClientMessage =
+  | AgentSearchMessage
   | AgentMetaAvailabilityQueryMessage
   | AgentMetaToggleMessage
   | AgentMetaRescanMessage
@@ -1452,6 +1486,7 @@ export type ScriptResponse =
 
 export type ServerMessage =
   | AgentMetaAvailabilityResult
+  | AgentSearchResult
   | AgentMetaToggleResult
   | AgentMetaAvailabilityMessage
   | ModMessage

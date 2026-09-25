@@ -3269,6 +3269,45 @@ html, body, #root {
   color: #ff5c8a;
 }
 
+/* Agent search (Cmd+F with no terminal focused), built on the search modal */
+.agent-search__summary {
+  display: flex;
+  gap: 16px;
+  padding: 8px 20px;
+  min-height: 18px;
+  font-size: 12px;
+  color: #a6adc8;
+  border-bottom: 1px solid #313244;
+  flex-shrink: 0;
+}
+
+.agent-search__pass--titles { color: #a6e3a1; }
+.agent-search__pass--transcripts { color: #f9e2af; }
+.agent-search__error { color: #ff5c8a; }
+
+.agent-search__card {
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+}
+
+.agent-search__percent {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  color: #cdd6f4;
+  text-align: right;
+}
+
+.agent-search__archived-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid #f9e2af;
+  border-radius: 4px;
+  color: #f9e2af;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* Add-node button in title bar */
 .node-titlebar__add-btn {
   width: 20px;

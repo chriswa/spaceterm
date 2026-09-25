@@ -17,6 +17,7 @@ import { Toolbar } from './components/Toolbar'
 import { FloatingToolbar } from './components/FloatingToolbar'
 import { EdgeSplitMenu } from './components/EdgeSplitMenu'
 import { SearchModal } from './components/SearchModal'
+import { AgentSearchModal } from './components/AgentSearchModal'
 import { HelpModal } from './components/HelpModal'
 import { KeycastOverlay } from './components/KeycastOverlay'
 import { PeerCameraOverlay } from './components/PeerCameraOverlay'
@@ -128,6 +129,9 @@ export function App() {
   const [searchMode, setSearchMode] = useState<SearchMode>({ kind: 'global' })
   const searchVisibleRef = useRef(false)
   searchVisibleRef.current = searchVisible
+  const [agentSearchVisible, setAgentSearchVisible] = useState(false)
+  const agentSearchVisibleRef = useRef(false)
+  agentSearchVisibleRef.current = agentSearchVisible
   const [helpVisible, setHelpVisible] = useState(false)
   const helpVisibleRef = useRef(false)
   helpVisibleRef.current = helpVisible
@@ -978,6 +982,7 @@ export function App() {
 
   const handleCrabClick = useCallback((nodeId: NodeId, metaKey: boolean) => {
     setSearchVisible(false)
+    setAgentSearchVisible(false)
     setHelpVisible(false)
     if (nodeId === 'root') {
       handleNodeFocus(nodeId)
@@ -1126,6 +1131,7 @@ export function App() {
    */
   const handleReviveNode = useCallback(async (archiveParentId: NodeId, path: NodeId[], focusNodeId: NodeId) => {
     setSearchVisible(false)
+    setAgentSearchVisible(false)
     await handleUnarchive(archiveParentId, path)
     await navigateToNode(focusNodeId)
   }, [handleUnarchive, navigateToNode])
@@ -2072,19 +2078,24 @@ export function App() {
         e.preventDefault()
         e.stopPropagation()
         setSearchMode({ kind: 'global' })
+        setAgentSearchVisible(false)
         setSearchVisible(v => !v)
         return
       }
 
-      // Cmd+F: open terminal search (before isEditable guard so it works from search input)
+      // Cmd+F: find in the focused terminal, or with no terminal focused, toggle
+      // agent search (before isEditable guard so it works from either input)
       if (e.metaKey && e.key === 'f') {
-        const opener = terminalSearchOpeners.get(focusRef.current!)
+        e.preventDefault()
+        e.stopPropagation()
+        const opener = focusRef.current ? terminalSearchOpeners.get(focusRef.current) : undefined
         if (opener) {
-          e.preventDefault()
-          e.stopPropagation()
           opener()
-          return
+        } else {
+          setSearchVisible(false)
+          setAgentSearchVisible(v => !v)
         }
+        return
       }
 
       // Cmd+Ctrl+X: one press of the Summary Chat chord. It summarizes the focused
@@ -2380,8 +2391,9 @@ export function App() {
 
       // Escape: close search/help modal, close terminal search, cancel reparent mode, or stop TTS
       if (e.key === 'Escape') {
-        if (searchVisibleRef.current) {
+        if (searchVisibleRef.current || agentSearchVisibleRef.current) {
           setSearchVisible(false)
+          setAgentSearchVisible(false)
           return
         }
         if (helpVisibleRef.current) {
@@ -2440,6 +2452,7 @@ export function App() {
     // Search/help modals handle their own wheel events
     if ((e.target as HTMLElement).closest('.search-modal') || (e.target as HTMLElement).closest('.help-modal')) return
     setSearchVisible(false)
+    setAgentSearchVisible(false)
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
@@ -2458,6 +2471,7 @@ export function App() {
 
   const handleCanvasPanStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
+    setAgentSearchVisible(false)
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
@@ -2498,6 +2512,7 @@ export function App() {
 
   const handleRtsSelectStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
+    setAgentSearchVisible(false)
     setHelpVisible(false)
     setQuickActions(null)
     setEdgeSplit(null)
@@ -2509,6 +2524,7 @@ export function App() {
 
   const handleCanvasUnfocus = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
+    setAgentSearchVisible(false)
     setHelpVisible(false)
     const srcId = useReparentStore.getState().reparentingNodeId
     if (srcId) {
@@ -2607,7 +2623,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><AgentSearchModal visible={agentSearchVisible} resolvedPresets={resolvedPresets} onDismiss={() => setAgentSearchVisible(false)} onNavigateToNode={(id) => { setAgentSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
         <PeerCameraOverlay />
         <ResizeGhost />
         <NodeLabels

@@ -19,6 +19,7 @@
  * restating them.
  */
 import type {
+  AgentSearchResult,
   DirectoryCommandResult,
   CameraBounds,
   ClaudeSessionEntry,
@@ -65,6 +66,9 @@ export interface PtyApi {
 
 /** How a command the server ran in a directory node's cwd ended. */
 export type CommandOutcome = Pick<DirectoryCommandResult, 'ok' | 'error'>
+
+/** An `agent-search-result` without its wire envelope. */
+export type AgentSearchResponse = AgentSearchResult extends infer R ? (R extends unknown ? Omit<R, 'type' | 'seq'> : never) : never
 
 export interface NodeApi {
   syncRequest(): Promise<ServerState>
@@ -186,6 +190,11 @@ export interface NodeApi {
    * up, would never hear anything and would show every button greyed out.
    */
   agentMetaAvailabilityStatus(): Promise<Array<{ nodeId: NodeId; available: boolean }>>
+  /**
+   * Ask Jev which agent surface a free-text query is about. Takes seconds, and
+   * spends money: one or two TypeSafe requests. See `src/server/agent-search.ts`.
+   */
+  agentSearch(query: string): Promise<AgentSearchResponse>
   /**
    * Current restart-required state (PULL). Authoritative on every renderer
    * (re)load — the PUSH above does not repeat across a reload that keeps the

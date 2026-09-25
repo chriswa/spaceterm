@@ -25,6 +25,8 @@ import { probeCapabilities, formatCapabilityReport } from './capabilities'
 import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirstPtySession, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
+import { LoginShellEnv } from './login-env'
+import { agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
 import { serverLog, sanitizeForLog } from './server-log'
 import { expandTilde } from './cwd'
 import { DaemonClient } from './daemon-client'
@@ -219,6 +221,12 @@ const clients = new Set<ClientConnection>()
 
 let daemonClient: DaemonClient
 let sessionManager: SessionManager
+/** Shared by terminal spawns and the `jev` CLI, which needs `TYPESAFE_API_KEY` from the rc files. */
+let loginEnv: LoginShellEnv
+const agentSearchDeps: AgentSearchDeps = {
+  runJev: jevCliRunner(() => loginEnv.current() ?? process.env),
+  transcriptTail,
+}
 let stateManager: StateManager
 
 /**
@@ -339,6 +347,15 @@ function trackPendingTurn(
 function transcriptPathForNode(nodeId: NodeId): string | undefined {
   const node = stateManager.getNode(nodeId)
   if (!node || node.type !== 'terminal') return undefined
+  return transcriptPathForTerminal(node)
+}
+
+/**
+ * Also answers for an archived terminal: the watchers only know live
+ * sessions, so it falls back to locating the file from the last recorded
+ * agent session id.
+ */
+function transcriptPathForTerminal(node: TerminalNodeData): string | undefined {
   // The watcher cache is the fast path, but it can be empty after a search
   // budget expires before Cursor creates the JSONL. Fall back to an on-demand
   // locate using the conversation id we already persisted.
@@ -351,8 +368,12 @@ function transcriptPathForNode(nodeId: NodeId): string | undefined {
       return cursorSessionFileWatcher.getFilePath(node.sessionId)
         ?? (latestAgentSessionId ? findCursorTranscript(latestAgentSessionId) : undefined)
     case 'claude':
-    default:
-      return sessionFileWatcher.getFilePath(node.sessionId)
+    default: {
+      const watched = sessionFileWatcher.getFilePath(node.sessionId)
+      if (watched || !latestAgentSessionId || !node.cwd) return watched
+      const located = sessionFilePath(node.cwd, latestAgentSessionId)
+      return fs.existsSync(located) ? located : undefined
+    }
   }
 }
 
@@ -1777,6 +1798,26 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'agent-search': {
+      const seq = msg.seq
+      const { nodes, rootArchivedChildren } = stateManager.getState()
+      const candidates = collectAgentSurfaces(nodes, rootArchivedChildren).map(({ data, archived }) => ({
+        nodeId: data.id,
+        title: agentSurfaceTitle(data),
+        cwd: data.cwd,
+        archived,
+        transcriptPath: transcriptPathForTerminal(data),
+      }))
+      searchAgentSurfaces(msg.query, candidates, agentSearchDeps).then(
+        (outcome) => send(client.socket, { type: 'agent-search-result', seq, ok: true, ...outcome }),
+        (err: Error) => {
+          serverLog(`[agent-search] failed: ${err.message}`)
+          send(client.socket, { type: 'agent-search-result', seq, ok: false, error: err.message })
+        },
+      )
+      break
+    }
+
     case 'agent-meta-availability-query': {
       send(client.socket, {
         type: 'agent-meta-availability-result',
@@ -2339,7 +2380,9 @@ async function startServer(): Promise<void> {
   console.log('[startup] Connected to PTY daemon')
 
   promptedCommands = new PromptedCommands({ write: (sessionId, data) => sessionManager.write(sessionId, data) })
+  loginEnv = new LoginShellEnv()
   sessionManager = new SessionManager(daemonClient, {
+    loginEnv,
     // broadcast to attached clients + feed snapshot manager
     onData: (sessionId, data) => {
       snapshotManager.write(sessionId, data)

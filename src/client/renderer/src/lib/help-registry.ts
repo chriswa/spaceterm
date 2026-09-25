@@ -80,7 +80,8 @@ export const helpGroups: HelpGroup[] = [
     title: 'Search & Find',
     entries: [
       { keys: `${MAC_CMD} K`, name: 'Node search' },
-      { keys: `${MAC_CMD} F`,            name: 'Find in terminal' },
+      { keys: `${MAC_CMD} F`,            name: 'Find in terminal', notes: 'When a terminal is focused' },
+      { keys: `${MAC_CMD} F`,            name: 'Agent search (Jev)', notes: 'When no terminal is focused; Enter to search' },
       { keys: `${MAC_CMD} P`,            name: 'Summarize focused agent chat aloud', notes: 'Press again to cut the answer off' },
     ],
   },
