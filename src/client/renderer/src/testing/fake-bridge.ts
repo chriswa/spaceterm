@@ -345,7 +345,7 @@ export class FakeBridge implements Api {
     markdownContent: (nodeId, content) => this.reply('node.markdownContent', undefined, nodeId, content),
     agentMetaToggle: (nodeId) => this.reply('node.agentMetaToggle', this.responses.agentMetaOpen, nodeId),
     agentMetaAvailabilityStatus: () => this.reply('node.agentMetaAvailabilityStatus', this.responses.agentMetaAvailability),
-    agentSearch: (query) => this.reply('node.agentSearch', this.responses.agentSearch, query),
+    agentSearch: (query, mode) => this.reply('node.agentSearch', this.responses.agentSearch, query, mode),
     agentMetaRescan: (nodeId) => this.reply('node.agentMetaRescan', undefined, nodeId),
     metaDocResize: (nodeId, width, height) => this.reply('node.metaDocResize', undefined, nodeId, width, height),
     metaDocContent: (nodeId, content) => this.reply('node.metaDocContent', undefined, nodeId, content),

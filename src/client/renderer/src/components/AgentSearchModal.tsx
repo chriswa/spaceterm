@@ -31,7 +31,7 @@ function passSummary(result: AgentSearchSuccess): string {
  * Cmd+F with no terminal focused: ask Jev which agent surface a query is about.
  *
  * A search only fires on Enter or the Search button, since each one costs
- * money. The last search and its results persist (see agentSearchStore), and
+ * money. When it stopped at titles, a button re-asks with transcripts. The last search and its results persist (see agentSearchStore), and
  * each hit is looked up in the current canvas when drawn, so a surface
  * archived or restored since the search shows as it is now.
  */
@@ -40,6 +40,7 @@ export function AgentSearchModal({ visible, resolvedPresets, onDismiss, onNaviga
   const setQuery = useAgentSearchStore(s => s.setQuery)
   const status = useAgentSearchStore(s => s.status)
   const search = useAgentSearchStore(s => s.search)
+  const searchTranscripts = useAgentSearchStore(s => s.searchTranscripts)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const nodes = useNodeStore(s => s.nodes)
@@ -96,13 +97,20 @@ export function AgentSearchModal({ visible, resolvedPresets, onDismiss, onNaviga
       </div>
 
       <div className="agent-search__summary" data-testid="agent-search-summary">
-        {status.kind === 'searching' && <span>Asking Jev… · {formatCost(0)}</span>}
+        {status.kind === 'searching' && (
+          <span>{status.mode === 'auto' ? `Asking Jev… · ${formatCost(0)}` : 'Asking Jev again with transcripts…'}</span>
+        )}
         {status.kind === 'error' && <span className="agent-search__error">Search failed: {status.error}</span>}
         {result && (
           <>
             <span className={`agent-search__pass agent-search__pass--${result.pass}`}>{passSummary(result)}</span>
             <span>{formatCost(result.costUsd)}</span>
             <span>No match: {Math.round(result.noneProbability * 100)}%</span>
+            {result.pass === 'titles' && (
+              <button className="agent-search__rerun" onClick={() => void searchTranscripts()}>
+                Search transcripts too
+              </button>
+            )}
           </>
         )}
       </div>

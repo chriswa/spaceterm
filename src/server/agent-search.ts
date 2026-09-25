@@ -1,7 +1,7 @@
 import { spawn } from 'child_process'
 import type { ArchivedNode, NodeData, TerminalNodeData } from '../shared/state'
 import type { NodeId } from '../shared/ids'
-import type { AgentSearchHit, AgentSearchPass } from '../shared/protocol'
+import type { AgentSearchHit, AgentSearchMode, AgentSearchPass } from '../shared/protocol'
 import { archivesOwnedBy, groupNodes } from '../shared/archive-tree'
 import { readTranscript } from './summary-chat'
 
@@ -11,7 +11,8 @@ import { readTranscript } from './summary-chat'
  *
  * Two passes. The first describes each surface by its title and directory
  * only, which is cheap. If no surface reaches {@link TITLE_PASS_THRESHOLD}, the
- * second asks again with the tail of each surface's transcript added.
+ * second asks again with the tail of each surface's transcript added. The
+ * user can also ask for the second pass alone after the first stopped.
  */
 
 /** Top probability the titles-only pass must reach to skip the transcript pass. */
@@ -150,18 +151,23 @@ export async function searchAgentSurfaces(
   query: string,
   candidates: AgentSearchCandidate[],
   deps: AgentSearchDeps,
+  mode: AgentSearchMode = 'auto',
 ): Promise<AgentSearchOutcome> {
   if (candidates.length === 0) {
-    return { pass: 'titles', hits: [], noneProbability: 1, costUsd: 0 }
+    return { pass: mode === 'auto' ? 'titles' : 'transcripts', hits: [], noneProbability: 1, costUsd: 0 }
   }
 
-  const titleResponse = await deps.runJev(buildRequest(query, candidates, (c) => ({
-    title: c.title,
-    directory: c.cwd ?? '',
-  })))
-  const titlePass = readHits(titleResponse, candidates)
-  if ((titlePass.hits[0]?.probability ?? 0) >= TITLE_PASS_THRESHOLD) {
-    return { pass: 'titles', ...titlePass, costUsd: titleResponse._cost_estimate }
+  let titleCost: number | null = 0
+  if (mode === 'auto') {
+    const titleResponse = await deps.runJev(buildRequest(query, candidates, (c) => ({
+      title: c.title,
+      directory: c.cwd ?? '',
+    })))
+    const titlePass = readHits(titleResponse, candidates)
+    if ((titlePass.hits[0]?.probability ?? 0) >= TITLE_PASS_THRESHOLD) {
+      return { pass: 'titles', ...titlePass, costUsd: titleResponse._cost_estimate }
+    }
+    titleCost = titleResponse._cost_estimate
   }
 
   const transcriptResponse = await deps.runJev(buildRequest(query, candidates, (c) => ({
@@ -172,7 +178,7 @@ export async function searchAgentSurfaces(
   return {
     pass: 'transcripts',
     ...readHits(transcriptResponse, candidates),
-    costUsd: addCost(titleResponse._cost_estimate, transcriptResponse._cost_estimate),
+    costUsd: addCost(titleCost, transcriptResponse._cost_estimate),
   }
 }
 

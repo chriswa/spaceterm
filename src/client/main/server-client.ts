@@ -1,6 +1,6 @@
 import * as net from 'net'
 import { EventEmitter } from 'events'
-import { SOCKET_PATH, CLIENT_PROTOCOL_VERSION } from '../../shared/protocol'
+import { SOCKET_PATH, CLIENT_PROTOCOL_VERSION, type AgentSearchMode } from '../../shared/protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -471,8 +471,8 @@ export class ServerClient extends EventEmitter {
     return this.sendRequest({ type: 'markdown-set-max-width', nodeId, maxWidth })
   }
 
-  async agentSearch(query: string): Promise<ServerMessage> {
-    return this.sendRequest({ type: 'agent-search', query })
+  async agentSearch(query: string, mode: AgentSearchMode): Promise<ServerMessage> {
+    return this.sendRequest({ type: 'agent-search', query, mode })
   }
 
   async agentMetaAvailabilityStatus(): Promise<ServerMessage> {

@@ -1808,7 +1808,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         archived,
         transcriptPath: transcriptPathForTerminal(data),
       }))
-      searchAgentSurfaces(msg.query, candidates, agentSearchDeps).then(
+      searchAgentSurfaces(msg.query, candidates, agentSearchDeps, msg.mode).then(
         (outcome) => send(client.socket, { type: 'agent-search-result', seq, ok: true, ...outcome }),
         (err: Error) => {
           serverLog(`[agent-search] failed: ${err.message}`)

@@ -19,6 +19,7 @@
  * restating them.
  */
 import type {
+  AgentSearchMode,
   AgentSearchResult,
   DirectoryCommandResult,
   CameraBounds,
@@ -194,7 +195,7 @@ export interface NodeApi {
    * Ask Jev which agent surface a free-text query is about. Takes seconds, and
    * spends money: one or two TypeSafe requests. See `src/server/agent-search.ts`.
    */
-  agentSearch(query: string): Promise<AgentSearchResponse>
+  agentSearch(query: string, mode: AgentSearchMode): Promise<AgentSearchResponse>
   /**
    * Current restart-required state (PULL). Authoritative on every renderer
    * (re)load — the PUSH above does not repeat across a reload that keeps the

@@ -86,6 +86,24 @@ describe('AgentSearchModal', () => {
     expect(p.onNavigateToNode).toHaveBeenCalledWith('live')
   })
 
+  it('offers the transcripts pass after a titles-only search, for the shown query, adding its cost', async () => {
+    bridge.responses.agentSearch = { ok: true, pass: 'titles', hits: [{ nodeId: asNodeId('live'), probability: 0.8 }], noneProbability: 0.2, costUsd: 0.0001 }
+    const view = render(<AgentSearchModal {...props()} />)
+    const input = view.getByPlaceholderText(/agent session/)
+    fireEvent.change(input, { target: { value: 'jev' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const rerun = await view.findByRole('button', { name: 'Search transcripts too' })
+
+    fireEvent.change(input, { target: { value: 'something else' } })
+    bridge.responses.agentSearch = { ok: true, pass: 'transcripts', hits: [{ nodeId: asNodeId('live'), probability: 0.9 }], noneProbability: 0.1, costUsd: 0.0003 }
+    fireEvent.click(rerun)
+
+    await waitFor(() => expect(view.getByTestId('agent-search-summary').textContent).toContain('$0.000400'))
+    expect(bridge.callsTo('node.agentSearch').at(-1)?.args).toEqual(['jev', 'transcripts'])
+    expect(view.getByTestId('agent-search-summary').textContent).toContain('Titles, then transcripts')
+    expect(view.queryByRole('button', { name: 'Search transcripts too' })).toBeNull()
+  })
+
   it('persists the last search so reopening shows it again', async () => {
     await searchFor('bugbot')
     expect(JSON.parse(localStorage.getItem('agentSearch.last')!)).toMatchObject({ query: 'bugbot', result: { costUsd: 0.000321 } })

@@ -14,7 +14,7 @@ import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
 import type { LaunchPrefs } from '../../shared/launch-prefs'
 import type { NodeId, PtySessionId } from '../../shared/ids'
 import type { NodeStamp } from '../../shared/state'
-import type { ServerMessage } from '../../shared/protocol'
+import type { AgentSearchMode, ServerMessage } from '../../shared/protocol'
 import type { AgentSearchResponse, CommandOutcome } from '../../shared/api'
 import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
 
@@ -505,8 +505,8 @@ function setupIPC(): void {
     await client!.markdownSetMaxWidth(nodeId, maxWidth)
   })
 
-  ipcMain.handle('node:agent-search', async (_event, query: string): Promise<AgentSearchResponse> => {
-    const resp = await client!.agentSearch(query)
+  ipcMain.handle('node:agent-search', async (_event, query: string, mode: AgentSearchMode): Promise<AgentSearchResponse> => {
+    const resp = await client!.agentSearch(query, mode)
     if (resp.type !== 'agent-search-result') throw new Error(`Unexpected response: ${resp.type}`)
     const { type: _type, seq: _seq, ...result } = resp
     return result

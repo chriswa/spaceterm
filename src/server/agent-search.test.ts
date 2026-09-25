@@ -110,6 +110,14 @@ describe('searchAgentSurfaces', () => {
     expect(outcome.costUsd).toBeCloseTo(0.003)
   })
 
+  it('runs only the transcripts pass when asked to', async () => {
+    const { deps, requests } = fakeJev([{ probabilities: { s0: 0.4 }, cost: 0.002 }])
+    const outcome = await searchAgentSurfaces('q', [candidate('a', '/t/a')], deps, 'transcripts')
+    expect(requests).toHaveLength(1)
+    expect(optionsOf(requests[0]).s0.recent_transcript).toBe('tail of /t/a')
+    expect(outcome).toMatchObject({ pass: 'transcripts', costUsd: 0.002 })
+  })
+
   it('reports an unknown total cost if either pass could not be priced', async () => {
     const { deps } = fakeJev([{ probabilities: { s0: 0.2 }, cost: null }, { probabilities: { s0: 0.3 }, cost: 0.002 }])
     expect((await searchAgentSurfaces('q', [candidate('a')], deps)).costUsd).toBeNull()

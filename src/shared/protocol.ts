@@ -862,6 +862,13 @@ export interface AgentMetaAvailabilityResult {
 /** Which Jev passes an agent search ran. See `src/server/agent-search.ts`. */
 export type AgentSearchPass = 'titles' | 'transcripts'
 
+/**
+ * `auto` runs the titles pass, then the transcripts pass only if needed.
+ * `transcripts` runs just the transcripts pass, for when the user wants it
+ * after an `auto` search stopped at titles.
+ */
+export type AgentSearchMode = 'auto' | 'transcripts'
+
 export interface AgentSearchHit {
   nodeId: NodeId
   probability: number
@@ -875,6 +882,8 @@ export interface AgentSearchMessage {
   type: 'agent-search'
   seq: number
   query: string
+  /** Absent means `auto`. */
+  mode?: AgentSearchMode
 }
 
 export type AgentSearchResult =
@@ -887,7 +896,7 @@ export type AgentSearchResult =
       /** Every candidate, most probable first. */
       hits: AgentSearchHit[]
       noneProbability: number
-      /** Summed over every pass that ran; null if a pass could not be priced. */
+      /** Summed over the passes this request ran; null if a pass could not be priced. */
       costUsd: number | null
     }
   | { type: 'agent-search-result'; seq: number; ok: false; error: string }
