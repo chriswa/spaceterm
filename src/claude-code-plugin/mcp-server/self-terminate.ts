@@ -68,7 +68,7 @@ export const selfTerminateTool = defineTool({
     'spaceterm surface. A surface launched as an agent surface is archived, and can be restored ' +
     'later by un-archiving it; an agent started by hand inside a plain terminal is killed on its ' +
     'own, leaving the terminal open. ' +
-    'DANGER: Only use this if explicitly asked to "self terminate". The language must be precise.',
+    'DANGER: Only use this if explicitly asked to "self-terminate" by the operator or a skill. The language must be precise.',
   inputSchema: z.object({}),
   async handler() {
     const agent = findAgentProcess(process.ppid)
