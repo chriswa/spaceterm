@@ -225,3 +225,15 @@ describe('the effort signs on the agent mark', () => {
     expect(stepsIn(container)).toBeNull()
   })
 })
+
+describe('the model in the footer', () => {
+  it('names the effort beside the model', () => {
+    const { container } = render(<TerminalCard {...props({ claudeModel: 'Opus 5.5', claudeEffort: 'high' })} />)
+    expect(container.textContent).toContain('Opus 5.5 — high')
+  })
+
+  it('spells out thinking switched off', () => {
+    const { container } = render(<TerminalCard {...props({ claudeModel: 'Sonnet 5.5', claudeEffort: 'off' })} />)
+    expect(container.textContent).toContain('Sonnet 5.5 — thinking off')
+  })
+})

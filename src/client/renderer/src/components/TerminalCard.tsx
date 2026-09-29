@@ -1296,6 +1296,9 @@ export function TerminalCard({
   } : undefined
 
   const hat = modelHat(crabAppearance.kind, claudeModel)
+  // Claude Code's `off` means thinking disabled, which reads as a bare word.
+  const effortLabel = claudeEffort === 'off' ? 'thinking off' : claudeEffort
+  const modelLabel = [claudeModel, effortLabel].filter(Boolean).join(' \u2014 ')
   const isAgentSurface = crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex'
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const resizingNodeId = useResizeStore(s => s.resizingNodeId)
@@ -1464,7 +1467,7 @@ export function TerminalCard({
                 <span>&nbsp;|&nbsp;</span>
                 <span>{claudeStateLabel(claudeState)}</span>
                 {ccLabel && <><span>&nbsp;/&nbsp;</span><span title="Claude Code's own status, for comparison">{ccLabel}</span></>}
-                {claudeModel && <><span>&nbsp;|&nbsp;</span><span>{claudeModel}</span></>}
+                {modelLabel && <><span>&nbsp;|&nbsp;</span><span>{modelLabel}</span></>}
               </>
             )}
             <span>&nbsp;|&nbsp;Last Interacted:&nbsp;{interactedLabel}</span>
