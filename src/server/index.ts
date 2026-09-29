@@ -64,6 +64,7 @@ import { SummaryChat } from './summary-chat'
 import { DirectSpeech } from './direct-speech'
 import { VoiceOperator } from './voice-operator'
 import { PendingTurnCache } from './pending-turn'
+import { parseClaudeEffort } from '../shared/claude-effort'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -1096,6 +1097,8 @@ function handleIngestMessage(msg: IngestMessage): void {
       if (model?.display_name) {
         stateManager.updateClaudeModel(msg.surfaceId, model.display_name)
       }
+      const effort = parseClaudeEffort(msg.payload as Record<string, unknown> | undefined)
+      if (effort) stateManager.updateClaudeEffort(msg.surfaceId, effort)
 
       // Cursor (and similar) often skip SessionStart; statusLine still carries session_id.
       if (msg.payload && typeof msg.payload === 'object') {

@@ -109,8 +109,9 @@ describe('canFitAt around captions', () => {
     const onLabel = { x: label.x, y: label.y }
     expect(clear(onLabel, small, map['a'], nodePixelSize(map['a'] as never))).toBe(true)
     expect(canFitAt(map, onLabel, small, NOW)).toBe(false)
-    // Just past the label's top edge plus the margin.
-    const above = { x: label.x, y: label.y - label.height / 2 - PLACEMENT_MARGIN - small.height / 2 }
+    // Just past the label's top edge plus the margin — by a pixel, since the
+    // boundary itself is decided by floating-point rounding.
+    const above = { x: label.x, y: label.y - label.height / 2 - PLACEMENT_MARGIN - small.height / 2 - 1 }
     expect(canFitAt(map, above, small, NOW)).toBe(true)
   })
 

@@ -29,6 +29,11 @@ import crabIcon from '../assets/crab.png'
 import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
 import megaphoneIcon from '../assets/megaphone.png'
+import { modelHat } from '../lib/model-hat'
+import { CrabHat } from './CrabHat'
+import { CrabEffortSigns } from './CrabEffortSigns'
+import { crabEffortSteps } from '../lib/crab-effort'
+import type { ClaudeEffort } from '../../../../shared/claude-effort'
 import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
@@ -191,6 +196,7 @@ interface TerminalCardProps {
   /** Background launches the server has stopped counting as blocking — 0 or absent means there is nothing to wait on again. */
   claudeDismissedBackground?: number
   claudeModel?: string
+  claudeEffort?: ClaudeEffort
   /** Claude Code's own status for this surface — footer only, Claude surfaces only. */
   ccStatus?: CcSessionStatus | null
   ccWaitingFor?: string | null
@@ -216,7 +222,7 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onStampChange, onOpenArchiveSearch,
-  claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, ccStatus, ccWaitingFor, onExit, onNodeReady,
+  claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
@@ -1289,6 +1295,7 @@ export function TerminalCard({
     window.api.diffFiles(prev, curr)
   } : undefined
 
+  const hat = modelHat(crabAppearance.kind, claudeModel)
   const isAgentSurface = crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex'
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
   const resizingNodeId = useResizeStore(s => s.resizingNodeId)
@@ -1372,9 +1379,6 @@ export function TerminalCard({
               onClick={handleCrabBehindClick}
               onContextMenu={handleCrabBehindContextMenu}
               style={{
-                maskImage: `url(${agentIconUrl})`,
-                WebkitMaskImage: `url(${agentIconUrl})`,
-                backgroundColor: CRAB_COLORS[crabAppearance.color],
                 // Both as custom properties rather than a `transform`: the
                 // dance keyframes animate `transform`, and an inline one would
                 // lose to them outright — which used to un-flip a sleeping
@@ -1382,7 +1386,18 @@ export function TerminalCard({
                 '--crab-bounce-scale': 2.5,
                 ...(crabAppearance.asleep ? { '--crab-rotate': '180deg' } : {}),
               } as React.CSSProperties}
-            />
+            >
+              <span
+                className="terminal-card__crab-mark"
+                style={{
+                  maskImage: `url(${agentIconUrl})`,
+                  WebkitMaskImage: `url(${agentIconUrl})`,
+                  backgroundColor: CRAB_COLORS[crabAppearance.color],
+                }}
+              />
+              {hat && <CrabHat hat={hat} className="terminal-card__crab-hat" />}
+              <CrabEffortSigns steps={crabEffortSteps(crabAppearance.kind, claudeEffort)} className="terminal-card__crab-effort" />
+            </div>
           )}
           {isSpeaking && (
             <div

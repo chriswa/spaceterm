@@ -191,3 +191,37 @@ describe('clicking the agent mark above a card', () => {
     expect(container.querySelector('.terminal-card__crab-behind')).toBeNull()
   })
 })
+
+describe('the model hat on the agent mark', () => {
+  const hatIn = (container: HTMLElement) =>
+    crabIn(container).querySelector<HTMLElement>('.crab-hat')?.dataset.hat ?? null
+
+  it('follows a mid-session model switch', () => {
+    const { container, rerender } = render(<TerminalCard {...props({ claudeModel: 'Sonnet 5.5' })} />)
+    expect(hatIn(container)).toBe('cap')
+    rerender(<TerminalCard {...props({ claudeModel: 'Haiku 4.5' })} />)
+    expect(hatIn(container)).toBe('dunce')
+    rerender(<TerminalCard {...props({ claudeModel: 'Opus 5.5' })} />)
+    expect(hatIn(container)).toBeNull()
+  })
+
+  it('is part of the click target, so a click on it still toggles unread', () => {
+    const { container } = render(<TerminalCard {...props({ claudeModel: 'Fable 5.1' })} />)
+    fireEvent.click(crabIn(container).querySelector('.crab-hat')!)
+    expect(bridge.lastCall('node.setClaudeStatusUnread')).toEqual([pid('term-1'), true])
+  })
+})
+
+describe('the effort signs on the agent mark', () => {
+  const stepsIn = (container: HTMLElement) =>
+    crabIn(container).querySelector<SVGElement>('.crab-effort')?.dataset.steps ?? null
+
+  it('shows how far the surface is from the default effort, and follows a switch', () => {
+    const { container, rerender } = render(<TerminalCard {...props({ claudeEffort: 'max' })} />)
+    expect(stepsIn(container)).toBe('2')
+    rerender(<TerminalCard {...props({ claudeEffort: 'low' })} />)
+    expect(stepsIn(container)).toBe('-2')
+    rerender(<TerminalCard {...props({ claudeEffort: 'high' })} />)
+    expect(stepsIn(container)).toBeNull()
+  })
+})

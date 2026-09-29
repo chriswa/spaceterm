@@ -171,37 +171,62 @@ html, body, #root {
      descender gap under it, which puts the icon off-centre in the bar and throws
      off everything positioned from the slot's edges. */
   display: block;
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.2s ease;
+}
+
+/* The icon, in the button's colour. Masked here rather than on the button so
+   the hat, a sibling, escapes the mask but still takes the button's hover,
+   selection, flip and dance transforms. */
+.toolbar__crab-mark {
+  position: absolute;
+  inset: 0;
+  background-color: currentColor;
   -webkit-mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-position: center;
   mask-size: contain;
   mask-repeat: no-repeat;
   mask-position: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  transition: transform 0.2s ease;
 }
 
 /* Cursor/Codex marks fill their square canvas more than the crab/terminal marks — shrink in the toolbar only. */
-.toolbar__crab--cursor,
-.toolbar__crab--codex {
+.toolbar__crab--cursor .toolbar__crab-mark,
+.toolbar__crab--codex .toolbar__crab-mark {
   -webkit-mask-size: 80%;
   mask-size: 80%;
 }
 
-.toolbar__crab--codex {
+.toolbar__crab--codex .toolbar__crab-mark {
   -webkit-mask-size: 97%;
   -webkit-mask-position: center calc(50% - 1px);
   mask-size: 97%;
   mask-position: center calc(50% - 1px);
 }
 
-.toolbar__crab--cursor {
+.toolbar__crab--cursor .toolbar__crab-mark {
   -webkit-mask-position: center calc(50% - 1px);
   mask-position: center calc(50% - 1px);
+}
+
+/* On the hat's line: see `.terminal-card__crab-effort`. */
+.toolbar__crab-effort {
+  height: 2.5px;
+  top: -0.15px;
+}
+
+/* The 128x85 crab, contained in 20x20, starts 3.4px down; the hat's brim
+   overlaps that top edge by half a pixel. */
+.toolbar__crab-hat {
+  left: 5.5px;
+  bottom: 16.1px;
+  width: 9px;
 }
 
 .toolbar__crab:hover,
@@ -214,17 +239,14 @@ html, body, #root {
 }
 
 .toolbar__crab--white {
-  background-color: #ffffff;
   color: #ffffff;
 }
 
 .toolbar__crab--red {
-  background-color: #ff3366;
   color: #ff3366;
 }
 
 .toolbar__crab--purple {
-  background-color: #bb55ff;
   color: #bb55ff;
 }
 
@@ -233,27 +255,22 @@ html, body, #root {
 }
 
 .toolbar__crab--gray {
-  background-color: #888888;
   color: #888888;
 }
 
 .toolbar__crab--orange {
-  background-color: #ca7c5e;
   color: #ca7c5e;
 }
 
 .toolbar__crab--green {
-  background-color: #44cc77;
   color: #44cc77;
 }
 
 .toolbar__crab--yellow {
-  background-color: #e6c34d;
   color: #e6c34d;
 }
 
 .toolbar__crab--asleep {
-  background-color: #555555;
   color: #555555;
   transform: rotate(180deg);
 }
@@ -2745,12 +2762,6 @@ html, body, #root {
      through to a background pan or deselect. */
   pointer-events: auto;
   cursor: default;
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-position: center;
   /* Rotation as a variable rather than an inline `transform`, so the asleep
      flip and the dance can compose. The dance animates `transform` and would
      otherwise clobber an inline one outright - which is what used to happen,
@@ -2758,6 +2769,64 @@ html, body, #root {
      `translate` above stays untouched: it is the positioning, and is why this
      is `transform` and not the individual `rotate` property. */
   transform: rotate(var(--crab-rotate, 0deg));
+}
+
+/* The icon itself. The mask lives here rather than on the element above so
+   that the hat, a sibling, is not clipped by it but still dances, flips and
+   brightens with the crab. */
+.terminal-card__crab-mark {
+  position: absolute;
+  inset: 0;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+}
+
+/* Sits on the crab's flat top, which spans the full box width for the crab
+   mark (only Claude surfaces wear hats). Width 45% of the icon and the hat's
+   3:2 art make it ~45% of the icon's height. Labels above the card are spaced
+   for it by `CARD_HAT_HEIGHT` in shared/node-size.ts — keep the two in step. */
+.terminal-card__crab-hat {
+  left: 27.5%;
+  bottom: 96%;
+  width: 45%;
+}
+
+.crab-effort {
+  position: absolute;
+  overflow: visible;
+  fill: #f2f2f2;
+}
+
+.crab-effort--less {
+  right: 75.5%;
+}
+
+.crab-effort--more {
+  left: 75.5%;
+}
+
+.crab-hat {
+  position: absolute;
+  aspect-ratio: 3 / 2;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center bottom;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center bottom;
+}
+
+/* Effort signs, on the hat's line: minuses end just left of where the hat
+   sits and pluses start just right of it, hat or no hat. Sized in the box's
+   height, which here is 85/128 of its width: a sign is 12.5% of the width
+   tall, centred 12.3% of the width above the crab's top. */
+.terminal-card__crab-effort {
+  height: 18.8%;
+  top: -27.9%;
 }
 
 /* Only offered as a target in the states where one of its two clicks does

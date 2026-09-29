@@ -1,6 +1,7 @@
 import { type NodeId } from '../../../../shared/ids'
 import type { AgentType } from '../../../../shared/agent-type'
 import type { CcSessionStatus } from '../../../../shared/state'
+import type { ModelHat } from './model-hat'
 export type CrabColor = 'white' | 'red' | 'green' | 'purple' | 'orange' | 'yellow' | 'gray' | 'asleep'
 
 /** Hex colors for each crab color variant. Matches the toolbar CSS classes. */
@@ -25,6 +26,9 @@ export interface CrabEntry {
   claudeSessionIds: string[]
   kind: AgentIndicatorKind
   color: CrabColor
+  hat: ModelHat | null
+  /** Effort levels above (+) or below (−) the operator's default. */
+  effortSteps: number
   unviewed: boolean
   asleep: boolean
   createdAt: string

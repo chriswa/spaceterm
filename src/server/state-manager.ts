@@ -34,6 +34,7 @@ import {
   type ClaudeSessionId
 } from '../shared/ids'
 import type { AgentType } from '../shared/agent-type'
+import type { ClaudeEffort } from '../shared/claude-effort'
 import { isDisposable } from '../shared/node-utils'
 import { findAncestor, lookupIn } from '../shared/node-ancestry'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
@@ -1492,6 +1493,12 @@ export class StateManager {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node || node.claudeModel === model) return
     this.patchNode(node, { claudeModel: model })
+  }
+
+  updateClaudeEffort(ptySessionId: PtySessionId, effort: ClaudeEffort): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node || node.claudeEffort === effort) return
+    this.patchNode(node, { claudeEffort: effort })
   }
 
   /**

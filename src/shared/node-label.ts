@@ -1,4 +1,4 @@
-import { CARD_AGENT_MARK_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './node-size'
+import { CARD_AGENT_MARK_HEIGHT, CARD_HAT_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './node-size'
 import { cacheCountdownText, formatCountdownClock, formatElapsedShort } from './elapsed-label'
 import { measureCard } from './card-types'
 import { isCacheTimerMuted, type NodeData } from './state'
@@ -99,8 +99,11 @@ export function labelTextScale(node: NodeData): number {
  * entirely pushes the label far enough away that it stops reading as attached
  * to its card, and the mark is a watermark behind the card rather than a label
  * of its own to be respected.
+ *
+ * A model hat sits on top of the mark and raises the artwork by its full
+ * height, so that is added on top.
  */
-export const LABEL_CARD_GAP = CARD_AGENT_MARK_HEIGHT / 4
+export const LABEL_CARD_GAP = CARD_AGENT_MARK_HEIGHT / 4 + CARD_HAT_HEIGHT
 
 
 /** World-space footprint of a label drawn as `lines` at text scale `scale`. */

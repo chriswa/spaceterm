@@ -6,6 +6,8 @@ import terminalIcon from '../../assets/terminal.png'
 import type { AgentIndicatorKind, CrabEntry } from '../../lib/crab-nav'
 import { cacheCountdownText, formatCountdownMinutes } from '../../../../../shared/elapsed-label'
 import { CrabDance } from '../../lib/crab-dance'
+import { CrabHat } from '../CrabHat'
+import { CrabEffortSigns } from '../CrabEffortSigns'
 import { FrameLimiter } from '../../lib/frame-policy'
 import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVisible'
 import { useHoveredCardStore } from '../../stores/hoveredCardStore'
@@ -141,7 +143,7 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
         const maskUrl = indicatorIconUrl(prev.kind)
         const maskSize = prev.kind === 'codex' ? '97%' : prev.kind === 'cursor' ? '80%' : 'contain'
         const maskPosition = prev.kind === 'codex' ? 'center calc(50% - 1px)' : prev.kind === 'cursor' ? 'center calc(50% - 1px)' : 'center'
-        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;-webkit-mask-image:url(${maskUrl});mask-image:url(${maskUrl});-webkit-mask-size:${maskSize};mask-size:${maskSize};-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:${maskPosition};mask-position:${maskPosition};`
+        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;background-color:currentColor;-webkit-mask-image:url(${maskUrl});mask-image:url(${maskUrl});-webkit-mask-size:${maskSize};mask-size:${maskSize};-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:${maskPosition};mask-position:${maskPosition};`
         el.appendChild(phantom)
 
         const anim = phantom.animate(
@@ -502,7 +504,6 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
           >
             <button
               className={`toolbar__crab toolbar__crab--${crab.color}${indicatorKindClass(crab.kind)}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
-              style={{ WebkitMaskImage: `url(${indicatorIconUrl(crab.kind)})`, maskImage: `url(${indicatorIconUrl(crab.kind)})` }}
               onMouseDown={(e) => handleCrabMouseDown(e, i)}
               onMouseEnter={() => {
                 if (!isDraggingRef.current) {
@@ -514,7 +515,14 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
               }}
               data-tooltip={crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title}
               data-tooltip-no-flip
-            />
+            >
+              <span
+                className="toolbar__crab-mark"
+                style={{ WebkitMaskImage: `url(${indicatorIconUrl(crab.kind)})`, maskImage: `url(${indicatorIconUrl(crab.kind)})` }}
+              />
+              {crab.hat && <CrabHat hat={crab.hat} className="toolbar__crab-hat" />}
+              <CrabEffortSigns steps={crab.effortSteps} className="toolbar__crab-effort" />
+            </button>
             {summaryTarget && <SummaryBubble state={summaryState} />}
             {countdown !== null && <span className="toolbar__crab-timer">{countdown}</span>}
           </div>

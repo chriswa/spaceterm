@@ -67,6 +67,8 @@ import { undoNeedsConfirmation, undoConfirmationVerb } from '../../../shared/und
 import type { ClaudeSessionEntry, CreateOptions } from '../../../shared/protocol'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
+import { modelHat } from './lib/model-hat'
+import { crabEffortSteps } from './lib/crab-effort'
 import { deriveToolbarIndicator } from './lib/crab-nav'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 import { pressSummaryChatChord, REAL_CHORD_CUES } from './lib/summary-chat-chord'
@@ -345,7 +347,7 @@ export function App() {
       if (node.type !== 'terminal') continue
       const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0, node.agentType)
       const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt, cacheWarmUntil: isCacheTimerMuted(node) ? undefined : node.cacheWarmUntil, cacheWarmEstimated: node.cacheWarmEstimated })
+      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, hat: modelHat(appearance.kind, node.claudeModel), effortSteps: crabEffortSteps(appearance.kind, node.claudeEffort), unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt, cacheWarmUntil: isCacheTimerMuted(node) ? undefined : node.cacheWarmUntil, cacheWarmEstimated: node.cacheWarmEstimated })
     }
 
     entries.sort((a, b) => a.sortOrder - b.sortOrder)
@@ -2686,6 +2688,7 @@ export function App() {
             claudeState={t.claudeState}
             claudeDismissedBackground={t.claudeDismissedBackground}
             claudeModel={t.claudeModel}
+            claudeEffort={t.claudeEffort}
             ccStatus={t.ccStatus}
             ccWaitingFor={t.ccWaitingFor}
             onNodeReady={handleNodeReady}
