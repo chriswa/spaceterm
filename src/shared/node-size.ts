@@ -215,10 +215,10 @@ export const TITLE_MIN_WIDTH = 360 * LABEL_NODE_SCALE
 export const CARD_AGENT_MARK_HEIGHT = 68 * LABEL_NODE_SCALE
 
 /**
- * Height of the model hat a Claude mark can wear on top of its head.
+ * Height of the model hat an agent mark can wear on top of its head.
  *
  * `.terminal-card__crab-hat` is 45% of the 50px claude mark's width (128:85
- * art) with 3:2 hat art. Only Claude surfaces off Opus wear one, but like
+ * art) with 3:2 hat art. Only surfaces on a non-Opus Claude model wear one, but like
  * `CARD_AGENT_MARK_HEIGHT` it is reserved above every card, so a label does
  * not jump when a surface switches model and labels above sibling cards stay
  * level. **Mirrors the CSS**: change one and the other has to follow.

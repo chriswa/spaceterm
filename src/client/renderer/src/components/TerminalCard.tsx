@@ -33,7 +33,7 @@ import { modelHat } from '../lib/model-hat'
 import { CrabHat } from './CrabHat'
 import { CrabEffortSigns } from './CrabEffortSigns'
 import { crabEffortSteps } from '../lib/crab-effort'
-import type { ClaudeEffort } from '../../../../shared/claude-effort'
+import type { AgentEffort } from '../../../../shared/agent-effort'
 import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, CRAB_COLORS, ccStatusLabel } from '../lib/crab-nav'
 import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
@@ -196,7 +196,7 @@ interface TerminalCardProps {
   /** Background launches the server has stopped counting as blocking — 0 or absent means there is nothing to wait on again. */
   claudeDismissedBackground?: number
   claudeModel?: string
-  claudeEffort?: ClaudeEffort
+  claudeEffort?: AgentEffort
   /** Claude Code's own status for this surface — footer only, Claude surfaces only. */
   ccStatus?: CcSessionStatus | null
   ccWaitingFor?: string | null

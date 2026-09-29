@@ -2785,9 +2785,9 @@ html, body, #root {
   -webkit-mask-position: center;
 }
 
-/* Sits on the crab's flat top, which spans the full box width for the crab
-   mark (only Claude surfaces wear hats). Width 45% of the icon and the hat's
-   3:2 art make it ~45% of the icon's height. Labels above the card are spaced
+/* Sits on the crab's flat top, which spans the full box width; the square
+   Cursor and Codex marks reuse the same box-relative placement. Width 45% of
+   the icon and the hat's 3:2 art make it ~45% of the crab's height. Labels above the card are spaced
    for it by `CARD_HAT_HEIGHT` in shared/node-size.ts — keep the two in step. */
 .terminal-card__crab-hat {
   left: 27.5%;

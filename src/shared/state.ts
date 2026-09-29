@@ -1,7 +1,7 @@
 import type { ClaudeSessionEntry, CameraBounds } from './protocol'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { AgentType } from './agent-type'
-import type { ClaudeEffort } from './claude-effort'
+import type { AgentEffort } from './agent-effort'
 import type { CardType } from './card-types'
 import type { UndoEntry } from './undo-types'
 
@@ -179,8 +179,8 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeStatusUnread: boolean
   claudeStatusAsleep: boolean
   claudeModel?: string
-  /** The surface's thinking effort, from its status line. */
-  claudeEffort?: ClaudeEffort
+  /** The surface's thinking effort, a level on its agent's `EFFORT_SCALES`. */
+  claudeEffort?: AgentEffort
   /**
    * Claude Code's own status for this surface, and the reason when it is
    * `waiting`. Ephemeral and deliberately NOT persisted: it describes a live

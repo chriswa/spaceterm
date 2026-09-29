@@ -18,8 +18,10 @@ describe('modelHat', () => {
     expect(modelHat('claude', 'Mystery 9')).toBeNull()
   })
 
-  it('only hats Claude surfaces', () => {
-    expect(modelHat('cursor', 'Sonnet 5.5')).toBeNull()
+  it('hats any agent running a Claude model, and nothing else', () => {
+    expect(modelHat('cursor', 'Sonnet 5.5')).toBe('cap')
+    expect(modelHat('cursor', 'Grok 4.5 High Fast')).toBeNull()
+    expect(modelHat('codex', 'gpt-5.6-terra')).toBeNull()
     expect(modelHat('terminal', 'Haiku 4.5')).toBeNull()
   })
 })

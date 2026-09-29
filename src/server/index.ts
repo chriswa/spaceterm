@@ -64,7 +64,7 @@ import { SummaryChat } from './summary-chat'
 import { DirectSpeech } from './direct-speech'
 import { VoiceOperator } from './voice-operator'
 import { PendingTurnCache } from './pending-turn'
-import { parseClaudeEffort } from '../shared/claude-effort'
+import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -1097,7 +1097,7 @@ function handleIngestMessage(msg: IngestMessage): void {
       if (model?.display_name) {
         stateManager.updateClaudeModel(msg.surfaceId, model.display_name)
       }
-      const effort = parseClaudeEffort(msg.payload as Record<string, unknown> | undefined)
+      const effort = parseStatusLineEffort(msg.payload as Record<string, unknown> | undefined)
       if (effort) stateManager.updateClaudeEffort(msg.surfaceId, effort)
 
       // Cursor (and similar) often skip SessionStart; statusLine still carries session_id.
@@ -2652,6 +2652,16 @@ async function startServer(): Promise<void> {
     // documented one for the model the rollout names.
     const warmth = codexCacheWarmth.observe(surfaceId, newEntries, { reset: isBackfill })
     if (warmth) stateManager.setCacheWarmth(surfaceId, warmth)
+
+    // Codex sends no status line, so the model and effort the footer and the
+    // crab show come from each turn's `turn_context` instead.
+    for (const entry of newEntries) {
+      if (entry.type !== 'turn_context') continue
+      const payload = entry.payload as Record<string, unknown> | undefined
+      if (typeof payload?.model === 'string') stateManager.updateClaudeModel(surfaceId, payload.model)
+      const effort = parseCodexEffort(payload)
+      if (effort) stateManager.updateClaudeEffort(surfaceId, effort)
+    }
 
     for (const entry of newEntries) {
       if (entry.type !== 'event_msg') continue
