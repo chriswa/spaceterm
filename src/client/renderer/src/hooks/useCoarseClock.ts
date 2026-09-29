@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ELAPSED_TICK_MS } from '../lib/elapsed-label'
+import { ELAPSED_TICK_MS } from '../../../../shared/elapsed-label'
 
 /**
  * A wall clock that advances in `ELAPSED_TICK_MS` steps, for the elapsed

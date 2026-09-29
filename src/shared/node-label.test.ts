@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest'
 import {
   nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES,
   LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel, COLD_LABEL_FG, deadlineExtended,
-  labelClickAction
+  labelClickAction, agentCaptionReserve, type NodeLabel, type CaptionReserve
 } from './node-label'
 import { ELAPSED_TICK_MS } from './elapsed-label'
-import { ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from '../../../../shared/node-size'
-import { measureCard } from '../../../../shared/card-types'
-import type { MarkdownNodeData, NodeData, TerminalNodeData } from '../../../../shared/state'
-import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../../../../shared/ids'
+import { ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from './node-size'
+import { measureCard } from './card-types'
+import type { MarkdownNodeData, NodeData, TerminalNodeData } from './state'
+import { asNodeId, asPtySessionId, ROOT_NODE_ID } from './ids'
 
 const base = {
   id: asNodeId('n1'),
@@ -554,5 +554,41 @@ describe('layOutRootCwdLabel', () => {
 
   it('is its own kind, so it cannot collide with another label on the root', () => {
     expect(layOutRootCwdLabel('~/research')!.kind).toBe('root-cwd')
+  })
+})
+
+describe('agentCaptionReserve', () => {
+  const NOW = 1_000_000_000
+  const card = terminal({ x: 0, y: 0 })
+  const size = measureCard(card)
+  const [above, below] = agentCaptionReserve(size)
+
+  function contains(r: CaptionReserve, label: NodeLabel): boolean {
+    const eps = 1e-6
+    return (
+      label.x - label.width / 2 >= r.dx - r.width / 2 - eps && label.x + label.width / 2 <= r.dx + r.width / 2 + eps &&
+      label.y - label.height / 2 >= r.dy - r.height / 2 - eps && label.y + label.height / 2 <= r.dy + r.height / 2 + eps
+    )
+  }
+
+  it('reserves twice the card width above it', () => {
+    expect(above.width).toBe(size.width * 2)
+    expect(above.dy).toBeLessThan(-size.height / 2)
+  })
+
+  it('holds a full three-line name label', () => {
+    const name = Array.from({ length: 40 }, (_, i) => `w${i}`).join(' ')
+    const label = layOutNodeLabel(terminal({ name }))!
+    expect(label.lines).toHaveLength(MAX_LABEL_LINES)
+    expect(label.height).toBeCloseTo(above.height)
+    expect(label.y).toBeCloseTo(above.dy)
+  })
+
+  it('holds the widest countdown, and the cold caption it becomes', () => {
+    const hot = layOutStatusLabel(terminal({ cacheWarmUntil: NOW + 3_600_000, cacheWarmEstimated: true }), NOW)!
+    expect(hot.lines).toEqual(['60:00?'])
+    expect(contains(below, hot)).toBe(true)
+    const cold = layOutStatusLabel(terminal({ lastAgentActivityAt: NOW - 30 * 60_000 }), NOW)!
+    expect(contains(below, cold)).toBe(true)
   })
 })

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type CSSProperties } from 'react'
-import { deadlineExtended, labelClickAction, type NodeLabel } from '../lib/node-label'
+import { deadlineExtended, labelClickAction, type NodeLabel } from '../../../../shared/node-label'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import { staleFilter } from '../lib/dim-stale'
 import type { NodeId } from '../../../../shared/ids'

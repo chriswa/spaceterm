@@ -1,5 +1,6 @@
 import type { NodeData } from '../shared/state'
 import { measureCard as nodePixelSize } from '../shared/card-types'
+import { agentCaptionReserve, layOutNodeLabel, layOutStatusLabel, type CaptionReserve } from '../shared/node-label'
 import {
   terminalPixelSize,
   ROOT_NODE_RADIUS,
@@ -25,20 +26,18 @@ interface Edge {
 }
 
 // --- Helpers ---
+//
+// Every position in this module — node.x/y, the `position` and `positionHint`
+// arguments, and the returned point — is a card centre, matching how the
+// renderer draws cards.
 
 function nodeCenter(node: NodeData): { x: number; y: number } {
-  const size = nodePixelSize(node)
-  return { x: node.x + size.width / 2, y: node.y + size.height / 2 }
+  return { x: node.x, y: node.y }
 }
 
 function nodeRect(node: NodeData): Rect {
   const size = nodePixelSize(node)
-  return {
-    cx: node.x + size.width / 2,
-    cy: node.y + size.height / 2,
-    hw: size.width / 2,
-    hh: size.height / 2
-  }
+  return { cx: node.x, cy: node.y, hw: size.width / 2, hh: size.height / 2 }
 }
 
 function rectsOverlap(a: Rect, b: Rect, margin: number): boolean {
@@ -59,10 +58,19 @@ function pointToSegmentDistance(px: number, py: number, x1: number, y1: number, 
 
 // --- Spatial context ---
 
-function buildRects(nodes: Record<string, NodeData>): Rect[] {
+/**
+ * Everything a new card must keep clear of: each card, plus the captions drawn
+ * above and below it. Captions are laid out with the renderer's own functions,
+ * so the space reserved is the space drawn. A status caption's text depends on
+ * the clock, hence `now`.
+ */
+function buildRects(nodes: Record<string, NodeData>, now: number): Rect[] {
   const rects: Rect[] = []
   for (const node of Object.values(nodes)) {
     rects.push(nodeRect(node))
+    for (const label of [layOutNodeLabel(node), layOutStatusLabel(node, now)]) {
+      if (label) rects.push({ cx: label.x, cy: label.y, hw: label.width / 2, hh: label.height / 2 })
+    }
   }
   return rects
 }
@@ -128,21 +136,46 @@ function bestAngle(
   return normalize(bestMid)
 }
 
+// --- New node footprint ---
+
+/**
+ * The card being placed, plus any space it should keep free around itself for
+ * captions it does not have yet — see `agentCaptionReserve`.
+ */
+export interface NewNodeFootprint {
+  width: number
+  height: number
+  reserved?: readonly CaptionReserve[]
+}
+
+/** The rects a new node would occupy with its card centred at (cx, cy). */
+/** An agent surface of `cols` × `rows`, with room kept for its name and status captions. */
+export function agentSurfaceFootprint(cols: number, rows: number): NewNodeFootprint {
+  const card = terminalPixelSize(cols, rows)
+  return { ...card, reserved: agentCaptionReserve(card) }
+}
+
+function footprintRects(footprint: NewNodeFootprint, cx: number, cy: number): Rect[] {
+  const rects: Rect[] = [{ cx, cy, hw: footprint.width / 2, hh: footprint.height / 2 }]
+  for (const r of footprint.reserved ?? []) {
+    rects.push({ cx: cx + r.dx, cy: cy + r.dy, hw: r.width / 2, hh: r.height / 2 })
+  }
+  return rects
+}
+
+function collides(existing: readonly Rect[], candidate: readonly Rect[]): boolean {
+  return candidate.some(c => existing.some(r => rectsOverlap(r, c, PLACEMENT_MARGIN)))
+}
+
 // --- Fit check ---
 
 export function canFitAt(
   nodes: Record<string, NodeData>,
   position: { x: number; y: number },
-  size: { width: number; height: number }
+  footprint: NewNodeFootprint,
+  now = Date.now()
 ): boolean {
-  const existingRects = buildRects(nodes)
-  const candidateRect: Rect = {
-    cx: position.x + size.width / 2,
-    cy: position.y + size.height / 2,
-    hw: size.width / 2,
-    hh: size.height / 2
-  }
-  return !existingRects.some(r => rectsOverlap(r, candidateRect, PLACEMENT_MARGIN))
+  return !collides(buildRects(nodes, now), footprintRects(footprint, position.x, position.y))
 }
 
 // --- Main placement ---
@@ -150,10 +183,11 @@ export function canFitAt(
 export function computePlacement(
   nodes: Record<string, NodeData>,
   parentId: string,
-  newNodeSize: { width: number; height: number },
-  positionHint?: { x: number; y: number }
+  newNodeSize: NewNodeFootprint,
+  positionHint?: { x: number; y: number },
+  now = Date.now()
 ): { x: number; y: number } {
-  const existingRects = buildRects(nodes)
+  const existingRects = buildRects(nodes, now)
   const existingEdges = buildEdges(nodes)
 
   // Parent center
@@ -173,8 +207,8 @@ export function computePlacement(
       return { x: 0, y: 0 }
     }
     const pSize = nodePixelSize(parent)
-    parentCx = parent.x + pSize.width / 2
-    parentCy = parent.y + pSize.height / 2
+    parentCx = parent.x
+    parentCy = parent.y
     parentHW = pSize.width / 2
     parentHH = pSize.height / 2
   }
@@ -211,22 +245,19 @@ export function computePlacement(
 
   // Position hint handling (for edge-split)
   if (positionHint) {
-    const hintRect: Rect = { cx: positionHint.x + newHW, cy: positionHint.y + newHH, hw: newHW, hh: newHH }
-    const overlaps = existingRects.some(r => rectsOverlap(r, hintRect, PLACEMENT_MARGIN))
-    if (!overlaps) {
+    if (!collides(existingRects, footprintRects(newNodeSize, positionHint.x, positionHint.y))) {
       return positionHint
     }
     // Search nearby positions around the hint
-    const hintCx = positionHint.x + newHW
-    const hintCy = positionHint.y + newHH
+    const hintCx = positionHint.x
+    const hintCy = positionHint.y
     for (const dist of [100, 200, 300]) {
       for (let i = 0; i < 12; i++) {
         const angle = (i / 12) * Math.PI * 2
         const cx = hintCx + Math.cos(angle) * dist
         const cy = hintCy + Math.sin(angle) * dist
-        const candidateRect: Rect = { cx, cy, hw: newHW, hh: newHH }
-        if (!existingRects.some(r => rectsOverlap(r, candidateRect, PLACEMENT_MARGIN))) {
-          return { x: cx - newHW, y: cy - newHH }
+        if (!collides(existingRects, footprintRects(newNodeSize, cx, cy))) {
+          return { x: cx, y: cy }
         }
       }
     }
@@ -250,7 +281,7 @@ export function computePlacement(
   const distanceRings = [idealDist, idealDist * 1.25, idealDist * 1.5, idealDist * 2, idealDist * 3, idealDist * 4]
 
   let bestScore = Infinity
-  let bestPos = { x: parentCx - newHW, y: parentCy - newHH } // fallback
+  let bestPos = { x: parentCx, y: parentCy } // fallback
   let fallbackPos = bestPos
 
   for (const dist of distanceRings) {
@@ -261,10 +292,8 @@ export function computePlacement(
 
       const cx = parentCx + Math.cos(angle) * dist
       const cy = parentCy + Math.sin(angle) * dist
-      const candidateRect: Rect = { cx, cy, hw: newHW, hh: newHH }
-
-      // Hard reject: overlap with existing node
-      if (existingRects.some(r => rectsOverlap(r, candidateRect, PLACEMENT_MARGIN))) {
+      // Hard reject: overlap with an existing node or caption
+      if (collides(existingRects, footprintRects(newNodeSize, cx, cy))) {
         continue
       }
 
@@ -292,18 +321,23 @@ export function computePlacement(
       // Score: distance from parent (soft, weight=0.1) — prefer closer
       const distToParent = Math.hypot(cx - parentCx, cy - parentCy)
 
-      const score = edgeOcclusion * 2 + gpPenalty * 5 + distToParent * 0.1
+      // Score: deviation from the preferred angle (soft, weight=10 per radian).
+      // Without it every clear candidate on a ring ties, and floating-point
+      // noise in the other terms decides which side of the parent wins.
+      const deviation = Math.abs(offsetAngle)
+
+      const score = edgeOcclusion * 2 + gpPenalty * 5 + distToParent * 0.1 + deviation * 10
 
       if (score < bestScore) {
         bestScore = score
-        bestPos = { x: cx - newHW, y: cy - newHH }
+        bestPos = { x: cx, y: cy }
       }
     }
 
     // Update fallback to farthest ring at best angle
     const fbCx = parentCx + Math.cos(startAngle) * dist
     const fbCy = parentCy + Math.sin(startAngle) * dist
-    fallbackPos = { x: fbCx - newHW, y: fbCy - newHH }
+    fallbackPos = { x: fbCx, y: fbCy }
   }
 
   // If no valid candidate found (all rejected), use fallback

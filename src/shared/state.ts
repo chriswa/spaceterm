@@ -59,6 +59,7 @@ export interface NodeAlert {
 export interface BaseNodeData {
   id: NodeId
   parentId: NodeId // ROOT_NODE_ID for top-level
+  /** World coordinates of the card's centre, not its top-left corner. */
   x: number
   y: number
   zIndex: number

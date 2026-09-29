@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent } from '@testing-library/react'
 import { NodeLabels } from './NodeLabels'
-import type { NodeLabel } from '../lib/node-label'
+import type { NodeLabel } from '../../../../shared/node-label'
 import { COLOR_PRESET_MAP, DEFAULT_PRESET } from '../lib/color-presets'
 import { asNodeId, type NodeId } from '../../../../shared/ids'
 

@@ -32,7 +32,7 @@ import { expandTilde } from './cwd'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
-import { computePlacement } from './node-placement'
+import { agentSurfaceFootprint, computePlacement } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { LineParser } from './line-parser'
@@ -737,7 +737,7 @@ const scriptApi = new ScriptApi({
       snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
       // Place the new terminal below the specified parent, not the source node.
-      const forkPos = computePlacement(stateManager.getState().nodes, parentId, terminalPixelSize(forkCols, forkRows))
+      const forkPos = computePlacement(stateManager.getState().nodes, parentId, agentSurfaceFootprint(forkCols, forkRows))
       stateManager.createTerminal({
         sessionId: forkPtyId, parentId, x: forkPos.x, y: forkPos.y, cols: forkCols, rows: forkRows,
         cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory, name: forkName, insertAfterNodeId: sourceNodeId
@@ -948,7 +948,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         const spawnOptions = agentDrivers.claude.buildCreateOptions({ cwd: spawnCwd, prompt: fullPrompt })
         const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
         snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
-        const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, terminalPixelSize(spawnCols, spawnRows))
+        const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, agentSurfaceFootprint(spawnCols, spawnRows))
         stateManager.createTerminal({
           sessionId: spawnSessionId, parentId: spawnParentNodeId, x: spawnPos.x, y: spawnPos.y,
           cols: spawnCols, rows: spawnRows, cwd: spawnCwd, name: msg.title
@@ -999,7 +999,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
-        const forkPos = computePlacement(stateManager.getState().nodes, forkSrcNodeId, terminalPixelSize(forkCols, forkRows))
+        const forkPos = computePlacement(stateManager.getState().nodes, forkSrcNodeId, agentSurfaceFootprint(forkCols, forkRows))
         stateManager.createTerminal({
           sessionId: forkPtyId, parentId: forkSrcNodeId, x: forkPos.x, y: forkPos.y,
           cols: forkCols, rows: forkRows, cwd: forkCwd,
@@ -1128,7 +1128,11 @@ function spawnTerminalNode(
   const cwd = sessionManager.getCwd(sessionId)
   const pos = extra.x != null && extra.y != null
     ? { x: extra.x, y: extra.y }
-    : computePlacement(stateManager.getState().nodes, parentId, terminalPixelSize(cols, rows))
+    : computePlacement(
+      stateManager.getState().nodes,
+      parentId,
+      extra.agentType ? agentSurfaceFootprint(cols, rows) : terminalPixelSize(cols, rows),
+    )
   console.log(`[terminal-create] parent=${parentId.slice(0, 8)} termPos=(${pos.x}, ${pos.y}) requestedPos=(${extra.x}, ${extra.y})`)
   stateManager.createTerminal({
     sessionId, parentId, x: pos.x, y: pos.y, cols, rows, cwd,
@@ -1990,7 +1994,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           })
           const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
           snapshotManager.addSession(forkPtyId, forkCols, forkRows)
-          const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, terminalPixelSize(forkCols, forkRows))
+          const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, agentSurfaceFootprint(forkCols, forkRows))
           stateManager.createTerminal({
             sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
             cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,
@@ -2023,7 +2027,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const { sessionId: forkPtyId, cols: forkCols, rows: forkRows } = sessionManager.create(forkOptions)
         snapshotManager.addSession(forkPtyId, forkCols, forkRows)
 
-        const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, terminalPixelSize(forkCols, forkRows))
+        const forkPos = computePlacement(stateManager.getState().nodes, forkParentId, agentSurfaceFootprint(forkCols, forkRows))
         stateManager.createTerminal({
           sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
           cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,

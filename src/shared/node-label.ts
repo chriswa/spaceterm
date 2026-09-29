@@ -1,8 +1,8 @@
-import { CARD_AGENT_MARK_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './constants'
+import { CARD_AGENT_MARK_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './node-size'
 import { cacheCountdownText, formatCountdownClock, formatElapsedShort } from './elapsed-label'
-import { measureCard } from '../../../../shared/card-types'
-import { isCacheTimerMuted, type NodeData } from '../../../../shared/state'
-import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
+import { measureCard } from './card-types'
+import { isCacheTimerMuted, type NodeData } from './state'
+import { ROOT_NODE_ID, type NodeId } from './ids'
 
 /**
  * Node labels: a node's name, drawn on the canvas directly above its card.
@@ -271,6 +271,16 @@ export function labelMaskShape(label: NodeLabel): {
   }
 }
 
+/** Vertical offset from a card's centre to the centre of the name label above it. */
+function nameLabelOffsetY(cardHeight: number, labelHeight: number): number {
+  return -(cardHeight / 2 + LABEL_CARD_GAP + labelHeight / 2)
+}
+
+/** Vertical offset from a card's centre to the centre of the status caption below it. */
+function statusLabelOffsetY(cardHeight: number, labelHeight: number, scale: number): number {
+  return cardHeight / 2 + statusCardGap(scale) + labelHeight / 2
+}
+
 /**
  * Lay out the label for one node. Returns `null` when it contributes none.
  *
@@ -296,7 +306,7 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
     lines,
     textScale,
     x: node.x,
-    y: node.y - measureCard(node).height / 2 - LABEL_CARD_GAP - box.height / 2,
+    y: node.y + nameLabelOffsetY(measureCard(node).height, box.height),
     anchorX: node.x,
     anchorY: node.y,
     ...box
@@ -408,7 +418,7 @@ export function layOutStatusLabel(node: NodeData, now: number): NodeLabel | null
     deadline: countdown !== null ? node.cacheWarmUntil : undefined,
     muted: muted || undefined,
     x: node.x,
-    y: node.y + measureCard(node).height / 2 + statusCardGap(textScale) + box.height / 2,
+    y: node.y + statusLabelOffsetY(measureCard(node).height, box.height, textScale),
     anchorX: node.x,
     anchorY: node.y,
     ...box
@@ -480,4 +490,41 @@ export function layOutRootCwdLabel(cwd: string | undefined): NodeLabel | null {
     anchorY: 0,
     ...box
   }
+}
+
+/** A box positioned relative to a card's centre. */
+export interface CaptionReserve {
+  dx: number
+  dy: number
+  width: number
+  height: number
+}
+
+/**
+ * The space a freshly spawned agent surface should keep free for the captions
+ * it is about to grow: a name above it and a status caption below.
+ *
+ * The name slot is a full `MAX_LABEL_LINES` tall and twice the card's width,
+ * since the agent will usually name its surface within moments and the wrap it
+ * picks is not known yet. The status slot fits the widest countdown, a
+ * one-hour cache's estimated `60:00?`, and the cold caption it later becomes.
+ */
+export function agentCaptionReserve(card: { width: number; height: number }): CaptionReserve[] {
+  const name = labelBox(Array.from({ length: MAX_LABEL_LINES }, () => ''), LABEL_TEXT_SCALE)
+  // The cold caption's gap shrinks with its text, so it starts nearer the card
+  // than the countdown does; the reserve spans both.
+  const status = [
+    { lines: ['60:00?'], scale: LABEL_TEXT_SCALE },
+    { lines: ['cold 59m ago'], scale: MARKDOWN_LABEL_TEXT_SCALE },
+  ].map(({ lines, scale }) => {
+    const box = labelBox(lines, scale)
+    const cy = statusLabelOffsetY(card.height, box.height, scale)
+    return { width: box.width, top: cy - box.height / 2, bottom: cy + box.height / 2 }
+  })
+  const top = Math.min(...status.map((b) => b.top))
+  const bottom = Math.max(...status.map((b) => b.bottom))
+  return [
+    { dx: 0, dy: nameLabelOffsetY(card.height, name.height), width: card.width * 2, height: name.height },
+    { dx: 0, dy: (top + bottom) / 2, width: Math.max(...status.map((b) => b.width)), height: bottom - top },
+  ]
 }

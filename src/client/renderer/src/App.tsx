@@ -38,7 +38,7 @@ import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCa
 import type { Camera } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from './lib/node-label'
+import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from '../../../shared/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
