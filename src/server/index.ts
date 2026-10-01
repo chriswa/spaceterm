@@ -52,7 +52,6 @@ import { PromptedCommands } from './prompted-command'
 import { AgentMetaManager } from './agent-meta-manager'
 import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
-import { PlanCacheManager } from './plan-cache'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
 import { isNodeStamp, type MarkdownNodeData, type NodeData, type TerminalNodeData } from '../shared/state'
@@ -187,12 +186,26 @@ function isNonClaudeAgent(agentType: AgentType | undefined): boolean {
   return !agentDriver(agentType).capabilities.claudeTranscript
 }
 
+/**
+ * What one client receives for one terminal session. A single value rather than
+ * two independent sets, so a client can never be sent both — they used to be
+ * separate, and an unfocused card received rendered snapshots *and* the raw
+ * byte stream only a live xterm can use, for every surface on the canvas.
+ *
+ * - `live`: raw `data` and `exit`, following an `attach` that sent the
+ *   serialized emulator state. Only a focused card asks for this.
+ * - `snapshot`: periodic rendered `snapshot` frames.
+ *
+ * No entry means nothing session-specific. Surface metadata (context %, Claude
+ * state, …) is node state and reaches every client through `node-updated`
+ * regardless, so nothing should ever subscribe just to learn about a surface.
+ */
+type TerminalSubscription = 'live' | 'snapshot'
+
 interface ClientConnection {
   id: string
   socket: net.Socket
-  attachedSessions: Set<string>
-  /** Sessions where this client wants snapshot mode instead of live data */
-  snapshotSessions: Set<string>
+  subscriptions: Map<PtySessionId, TerminalSubscription>
   /**
    * Sessions mid-attach: live output is queued here instead of being sent,
    * until the serialized state has been captured and sent. Guarantees a clean
@@ -252,7 +265,6 @@ let promptedCommands: PromptedCommands
 let agentMetaManager: AgentMetaManager
 let agentMetaAvailability: AgentMetaAvailability
 let sessionStatusObserver: SessionStatusObserver
-let planCacheManager: PlanCacheManager
 let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
@@ -477,10 +489,7 @@ function releaseNodeResources(node: NodeData): void {
   if (node.type === 'terminal' && node.alive) {
     snapshotManager.removeSession(node.sessionId)
     sessionManager.destroy(node.sessionId)
-    clients.forEach((c) => {
-      c.attachedSessions.delete(node.sessionId)
-      c.snapshotSessions.delete(node.sessionId)
-    })
+    unsubscribeAll(node.sessionId)
   }
   fileContentManager.stopWatching(node.id)
   gitStatusPoller.removeNode(node.id)
@@ -593,9 +602,17 @@ function reviveArchivedSurfaceForFocus(id: string): NodeId | undefined {
   return stateManager.getNode(match.data.id) ? match.data.id : undefined
 }
 
+/** Forget every client's subscription to a session that no longer exists. */
+function unsubscribeAll(sessionId: PtySessionId): void {
+  clients.forEach((client) => {
+    client.subscriptions.delete(sessionId)
+    client.attachBuffers.delete(sessionId)
+  })
+}
+
 function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void {
   clients.forEach((client) => {
-    if (client.attachedSessions.has(sessionId)) {
+    if (client.subscriptions.get(sessionId) === 'live') {
       // Mid-attach: queue instead of sending, so live output is held until the
       // serialized state has been captured and sent (see the 'attach' handler).
       const buffer = client.attachBuffers.get(sessionId)
@@ -603,26 +620,6 @@ function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void 
       else send(client.socket, msg)
     }
   })
-}
-
-/**
- * Record the surface's remaining-context reading and tell attached clients.
- *
- * Split out because it happens from three places (Claude status line, Codex
- * telemetry, and the JSONL watcher's sibling below) and each used to write the
- * value to two owners and rely on a SessionManager callback for the broadcast.
- * The store reports whether the value actually changed, which is what used to
- * gate the broadcast.
- */
-function publishContextPercent(sessionId: PtySessionId, contextRemainingPercent: number): void {
-  if (!stateManager.updateClaudeContextPercent(sessionId, contextRemainingPercent)) return
-  broadcastToAttached(sessionId, { type: 'claude-context', sessionId, contextRemainingPercent })
-}
-
-/** {@link publishContextPercent} for the transcript line count. */
-function publishSessionLineCount(sessionId: PtySessionId, lineCount: number): void {
-  if (!stateManager.updateClaudeSessionLineCount(sessionId, lineCount)) return
-  broadcastToAttached(sessionId, { type: 'claude-session-line-count', sessionId, lineCount })
 }
 
 function broadcastToAll(msg: ServerMessage): void {
@@ -1088,7 +1085,7 @@ function handleIngestMessage(msg: IngestMessage): void {
           }
         }
         if (remainingPercent != null) {
-          publishContextPercent(msg.surfaceId, remainingPercent)
+          stateManager.updateClaudeContextPercent(msg.surfaceId, remainingPercent)
         }
       }
 
@@ -1283,22 +1280,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'attach': {
       const sessionId = msg.sessionId
 
-      // Send cached plan files after the 'attached' message (deferred into the
-      // serialize callback below) so ordering is preserved.
-      const sendPlanCache = () => {
-        const claudeSessionId = sessionManager.getLastClaudeSessionId(sessionId)
-        if (!claudeSessionId) return
-        const planFiles = planCacheManager.getVersions(claudeSessionId)
-        if (planFiles.length >= 2) {
-          send(client.socket, {
-            type: 'plan-cache-update',
-            sessionId,
-            count: planFiles.length,
-            files: planFiles
-          })
-        }
-      }
-
       // We replay terminal state by serializing the server-side headless
       // emulator (scrollback + screen + modes + alt buffer) rather than the
       // truncated raw byte buffer, which loses the one-time mode-setup
@@ -1310,7 +1291,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // attachBuffers (see broadcastToAttached) instead of being sent, and the
       // drain barrier inside serializeForAttach captures exactly the data
       // parsed before this point.
-      client.attachedSessions.add(sessionId)
+      client.subscriptions.set(sessionId, 'live')
       const liveBuffer: ServerMessage[] = []
       client.attachBuffers.set(sessionId, liveBuffer)
 
@@ -1322,23 +1303,23 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           type: 'attached',
           seq: msg.seq,
           sessionId,
-          scrollback: state ?? '',
-          claudeContextPercent: stateManager.getClaudeContextPercent(sessionId) ?? undefined,
-          claudeSessionLineCount: stateManager.getClaudeSessionLineCount(sessionId) ?? undefined
+          scrollback: state ?? ''
         })
 
         // Stop buffering and flush queued live output in order — everything
         // after the serialized cut. Subsequent output goes live normally.
+        // Skipped when this attach was superseded mid-drain: the card lost
+        // focus (snapshot mode dropped the buffer) or re-attached (a newer
+        // buffer owns the session now), and either way this output is stale.
+        if (client.attachBuffers.get(sessionId) !== liveBuffer) return
         client.attachBuffers.delete(sessionId)
         for (const queued of liveBuffer) send(client.socket, queued)
-
-        sendPlanCache()
       })
       break
     }
 
     case 'detach': {
-      client.attachedSessions.delete(msg.sessionId)
+      client.subscriptions.delete(msg.sessionId)
       client.attachBuffers.delete(msg.sessionId)
       send(client.socket, { type: 'detached', seq: msg.seq, sessionId: msg.sessionId })
       break
@@ -1346,10 +1327,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'destroy': {
       sessionManager.destroy(msg.sessionId)
-      // Remove from all clients' attached sets
-      clients.forEach((c) => {
-        c.attachedSessions.delete(msg.sessionId)
-      })
+      unsubscribeAll(msg.sessionId)
       send(client.socket, { type: 'destroyed', seq: msg.seq })
       break
     }
@@ -1602,8 +1580,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const { sessionId: newPtyId, cols: rCols, rows: rRows } = respawnTerminal(
           msg.nodeId, (size) => sessionManager.create({ ...rOptions, ...size }), RESPAWN_DEPS)
         stateManager.setAlert(msg.nodeId, 'launch-failed', null)
-        // Auto-attach client to the new PTY session
-        client.attachedSessions.add(newPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
       } catch (err: any) {
         console.error(`terminal-reincarnate failed: ${err.message}`)
@@ -1884,12 +1860,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'set-terminal-mode': {
       if (msg.mode === 'snapshot') {
-        client.snapshotSessions.add(msg.sessionId)
+        // Replaces a live subscription: the raw stream stops here, and a later
+        // focus re-attaches, which re-sends the serialized state it needs.
+        client.subscriptions.set(msg.sessionId, 'snapshot')
+        client.attachBuffers.delete(msg.sessionId)
         // Send an immediate snapshot so the client has something to render
         const snap = snapshotManager.snapshotNow(msg.sessionId)
         if (snap) send(client.socket, snap)
-      } else {
-        client.snapshotSessions.delete(msg.sessionId)
+      } else if (client.subscriptions.get(msg.sessionId) === 'snapshot') {
+        // Stop snapshots. The live stream itself starts at `attach`, which the
+        // client sends next; a live subscription that somehow arrived first is
+        // left alone rather than torn down.
+        client.subscriptions.delete(msg.sessionId)
       }
       break
     }
@@ -2006,7 +1988,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           if (forkNode.shellTitleHistory?.length) {
             sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
           }
-          client.attachedSessions.add(forkPtyId)
           send(client.socket, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
           console.log(`[fork-session] Forked Codex terminal ${msg.nodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (from ${sourceSessionId.slice(0, 8)})`)
           break
@@ -2040,7 +2021,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
         }
 
-        client.attachedSessions.add(forkPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
         console.log(`[fork-session] Forked terminal ${msg.nodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (claude session ${newClaudeSessionId.slice(0, 8)})`)
       } catch (err: any) {
@@ -2110,10 +2090,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           codexSessionFileWatcher.unwatch(oldSessionId)
           cursorSessionFileWatcher.unwatch(oldSessionId)
           sessionManager.destroy(oldSessionId)
-          clients.forEach((c) => {
-            c.attachedSessions.delete(oldSessionId)
-            c.snapshotSessions.delete(oldSessionId)
-          })
+          unsubscribeAll(oldSessionId)
         }
 
         const restartOptions: CreateOptions = {
@@ -2136,8 +2113,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           isRetry: false
         })
 
-        // Auto-attach client
-        client.attachedSessions.add(newPtyId)
         send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: restartCols, rows: restartRows })
         serverLog(`[terminal-restart] Restarted terminal ${msg.nodeId.slice(0, 8)} with new session ${newPtyId.slice(0, 8)} resume=${resumeId ? resumeId.slice(0, 8) : '(none)'} extraCliArgs=${msg.extraCliArgs || '(none)'}`)
       } catch (err: any) {
@@ -2361,7 +2336,7 @@ async function startServer(): Promise<void> {
   // Initialize SnapshotManager — sends periodic snapshots to clients in snapshot mode
   snapshotManager = new SnapshotManager((snapshot) => {
     clients.forEach((client) => {
-      if (client.snapshotSessions.has(snapshot.sessionId)) {
+      if (client.subscriptions.get(snapshot.sessionId) === 'snapshot') {
         send(client.socket, snapshot)
       }
     })
@@ -2482,10 +2457,7 @@ async function startServer(): Promise<void> {
 
           broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
           scriptApi.broadcast('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
-          clients.forEach((client) => {
-            client.attachedSessions.delete(sessionId)
-            client.snapshotSessions.delete(sessionId)
-          })
+          unsubscribeAll(sessionId)
           return
         }
         if (recovery.kind === 'give-up') {
@@ -2510,11 +2482,7 @@ async function startServer(): Promise<void> {
       stateManager.terminalExited(sessionId, exitCode)
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
       scriptApi.broadcast('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
-      // Remove from all clients' attached/snapshot sets
-      clients.forEach((client) => {
-        client.attachedSessions.delete(sessionId)
-        client.snapshotSessions.delete(sessionId)
-      })
+      unsubscribeAll(sessionId)
     },
     // update state (node-updated broadcast handles client sync)
     onTitleHistory: (sessionId, history) => {
@@ -2531,9 +2499,6 @@ async function startServer(): Promise<void> {
       stateManager.updateClaudeSessionHistory(sessionId, history)
     }
   })
-
-  // Initialize PlanCacheManager — caches plan file revisions for diffing
-  planCacheManager = new PlanCacheManager()
 
   // Initialize SessionTitleSummarizer — generates 3-word titles from session transcripts
   sessionTitleSummarizer = new SessionTitleSummarizer({
@@ -2573,7 +2538,7 @@ async function startServer(): Promise<void> {
 
   // Initialize SessionFileWatcher — watches Claude session JSONL files for line count + plan cache + state routing
   sessionFileWatcher = new SessionFileWatcher((surfaceId, newEntries, totalLineCount, isBackfill) => {
-    publishSessionLineCount(surfaceId, totalLineCount)
+    stateManager.updateClaudeSessionLineCount(surfaceId, totalLineCount)
 
     // The newest transcript entry's timestamp is genuine agent activity. On
     // backfill (the whole file re-read when the watch starts) we `reset`, so a
@@ -2594,39 +2559,6 @@ async function startServer(): Promise<void> {
     // the TTL its request was cached at.
     const warmth = claudeCacheWarmth.observe(surfaceId, newEntries, { reset: isBackfill })
     if (warmth) stateManager.setCacheWarmth(surfaceId, warmth)
-
-    // Plan-cache tracking: scan assistant entries for plan file writes and ExitPlanMode.
-    // This runs for both backfill and live entries (plan file paths need to be ready
-    // for future snapshots), but ExitPlanMode snapshotting only runs live.
-    for (const entry of newEntries) {
-      if (entry.type !== 'assistant') continue
-      const assistantContent = (entry.message as any)?.content
-      if (!Array.isArray(assistantContent)) continue
-      for (const block of assistantContent) {
-        if (block.type !== 'tool_use') continue
-        if ((block.name === 'Write' || block.name === 'Edit') &&
-            typeof block.input?.file_path === 'string' &&
-            block.input.file_path.includes('/.claude/plans/')) {
-          planCacheManager.trackPlanFile(surfaceId, block.input.file_path)
-        }
-        // Only snapshot on live ExitPlanMode — during backfill the file on disk
-        // only has its latest content, so snapshots would be misleading.
-        if (!isBackfill && block.name === 'ExitPlanMode') {
-          const claudeSessionId = sessionManager.getLastClaudeSessionId(surfaceId)
-          if (claudeSessionId) {
-            const files = planCacheManager.snapshot(surfaceId, claudeSessionId)
-            if (files.length >= 2) {
-              broadcastToAttached(surfaceId, {
-                type: 'plan-cache-update',
-                sessionId: surfaceId,
-                count: files.length,
-                files
-              })
-            }
-          }
-        }
-      }
-    }
 
     // Delegate state routing to the state machine
     claudeStateMachine.handleJsonlEntries(surfaceId, newEntries, isBackfill)
@@ -2674,7 +2606,7 @@ async function startServer(): Promise<void> {
       if (typeof usedTokens !== 'number' || !Number.isFinite(usedTokens) || usedTokens < 0 ||
           typeof windowTokens !== 'number' || !Number.isFinite(windowTokens) || windowTokens <= 0) continue
       const remainingPercent = Math.max(0, Math.min(100, (1 - usedTokens / windowTokens) * 100))
-      publishContextPercent(surfaceId, remainingPercent)
+      stateManager.updateClaudeContextPercent(surfaceId, remainingPercent)
     }
   })
 
@@ -2860,8 +2792,7 @@ async function startServer(): Promise<void> {
     const client: ClientConnection = {
       id: randomUUID(),
       socket,
-      attachedSessions: new Set(),
-      snapshotSessions: new Set(),
+      subscriptions: new Map(),
       attachBuffers: new Map(),
       parser: new LineParser((msg) => {
         handleMessage(client, msg as ClientMessage)

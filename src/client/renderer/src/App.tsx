@@ -2689,6 +2689,8 @@ export function App() {
             claudeDismissedBackground={t.claudeDismissedBackground}
             claudeModel={t.claudeModel}
             claudeEffort={t.claudeEffort}
+            claudeContextPercent={t.claudeContextPercent}
+            claudeSessionLineCount={t.claudeSessionLineCount}
             ccStatus={t.ccStatus}
             ccWaitingFor={t.ccWaitingFor}
             onNodeReady={handleNodeReady}

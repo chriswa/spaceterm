@@ -48,7 +48,6 @@ interface CardShellProps {
   onStartResize?: (id: NodeId) => void
   onShipIt?: (id: NodeId) => void
   onFork?: (id: NodeId) => void
-  onDiffPlans?: () => void
   isReparenting?: boolean
   isResizing?: boolean
   onAddNode?: (parentNodeId: NodeId, type: AddNodeType) => void
@@ -85,7 +84,7 @@ export function CardShell({
   showClose = true, showColorPicker = true,
   archivedChildren, onClose, onColorChange, onStampChange, onOpenArchiveSearch,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
-  onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onDiffPlans, isReparenting, isResizing,
+  onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, isReparenting, isResizing,
   onAddNode, agentMeta, rootCwd, onExtraCliArgs, extraCliArgs,
   className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, glow, children
 }: CardShellProps) {
@@ -123,7 +122,7 @@ export function CardShell({
   const actionBarProps: NodeActionBarProps = {
     nodeId, preset, focused,
     onShipIt, onFork, onExtraCliArgs, extraCliArgs,
-    onDiffPlans, showColorPicker, onColorChange, onStampChange,
+    showColorPicker, onColorChange, onStampChange,
     pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
     archivedChildren, onOpenArchiveSearch,
     onStartReparent, isReparenting,

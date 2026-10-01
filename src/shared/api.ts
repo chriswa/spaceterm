@@ -42,14 +42,13 @@ export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
 
 /**
  * `pty:attach` forwards exactly the fields carried by the `attached` wire message
- * (see `AttachedMessage` in ./protocol). It does NOT include shellTitleHistory,
- * cwd, or claudeSessionHistory — those reach the renderer via node-updated
- * broadcasts, not via attach.
+ * (see `AttachedMessage` in ./protocol): the terminal's serialized state and
+ * nothing else. Surface metadata — context %, line count, title history, cwd,
+ * claudeSessionHistory — is node state and arrives via node-updated, so nothing
+ * needs to attach to learn about a surface; attaching starts the raw stream.
  */
 export interface AttachResult {
   scrollback: string
-  claudeContextPercent?: number
-  claudeSessionLineCount?: number
 }
 
 export interface PtyApi {
@@ -60,9 +59,6 @@ export interface PtyApi {
   destroy(sessionId: PtySessionId): Promise<void>
   onData(sessionId: PtySessionId, callback: (data: string) => void): () => void
   onExit(sessionId: PtySessionId, callback: (exitCode: number) => void): () => void
-  onClaudeContext(sessionId: PtySessionId, callback: (percent: number) => void): () => void
-  onClaudeSessionLineCount(sessionId: PtySessionId, callback: (lineCount: number) => void): () => void
-  onPlanCacheUpdate(sessionId: PtySessionId, callback: (count: number, files: string[]) => void): () => void
 }
 
 /** How a command the server ran in a directory node's cwd ended. */
@@ -322,7 +318,6 @@ export interface Api {
   restartSpaceterm(): Promise<void>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
-  diffFiles(fileA: string, fileB: string): Promise<void>
   tts: TtsApi
   perf: PerfApi
   window: WindowApi

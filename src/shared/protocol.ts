@@ -39,7 +39,7 @@ export const MIN_SCRIPT_PROTOCOL_VERSION = 1
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 4
+export const CLIENT_PROTOCOL_VERSION = 5
 
 /**
  * Oldest client protocol this build still serves.
@@ -53,6 +53,12 @@ export const CLIENT_PROTOCOL_VERSION = 4
  * `cartesia-read` subprocess that no longer exists on any machine. A v2 client
  * therefore loses nothing here that it had — everything else it asks for is
  * answered exactly as before.
+ *
+ * v4 and below are also still served. They read a surface's context % and
+ * transcript line count from `claude-context`/`claude-session-line-count` and
+ * `attached`, which v5 dropped in favour of the node fields `node-updated`
+ * already carried — so an older client's card footer shows neither. It also
+ * loses the plan-diff button, which was removed.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2
 
@@ -1023,8 +1029,6 @@ export interface AttachedMessage {
   seq: number
   sessionId: PtySessionId
   scrollback: string
-  claudeContextPercent?: number
-  claudeSessionLineCount?: number
 }
 
 export interface DetachedMessage {
@@ -1048,18 +1052,6 @@ export interface ExitMessage {
   type: 'exit'
   sessionId: PtySessionId
   exitCode: number
-}
-
-export interface ClaudeContextMessage {
-  type: 'claude-context'
-  sessionId: PtySessionId
-  contextRemainingPercent: number
-}
-
-export interface ClaudeSessionLineCountMessage {
-  type: 'claude-session-line-count'
-  sessionId: PtySessionId
-  lineCount: number
 }
 
 // --- Server → Client node state messages ---
@@ -1129,13 +1121,6 @@ export interface FileContentMessage {
   type: 'file-content'
   nodeId: NodeId   // markdown node ID
   content: string  // full file contents
-}
-
-export interface PlanCacheUpdateMessage {
-  type: 'plan-cache-update'
-  sessionId: PtySessionId
-  count: number
-  files: string[]
 }
 
 export interface ServerErrorMessage {
@@ -1508,8 +1493,6 @@ export type ServerMessage =
   | DestroyedMessage
   | DataMessage
   | ExitMessage
-  | ClaudeContextMessage
-  | ClaudeSessionLineCountMessage
   | SyncStateMessage
   | NodeUpdatedMessage
   | NodeAddedMessage
@@ -1521,7 +1504,6 @@ export type ServerMessage =
   | DirectoryCommandResult
   | ValidateFileResult
   | FileContentMessage
-  | PlanCacheUpdateMessage
   | ServerErrorMessage
   | PlaySoundServerMessage
   | SpeakToggleResultMessage

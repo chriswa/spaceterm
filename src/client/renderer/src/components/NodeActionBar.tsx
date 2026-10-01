@@ -26,7 +26,6 @@ export interface NodeActionBarProps {
   onFork?: (id: NodeId) => void
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
-  onDiffPlans?: () => void
   showColorPicker?: boolean
   onColorChange: (id: NodeId, color: string) => void
   /** Offers the stamp picker — agent surfaces today. */
@@ -79,7 +78,7 @@ export interface NodeActionBarProps {
 export function NodeActionBar({
   nodeId, preset, focused,
   onShipIt, onFork, onExtraCliArgs, extraCliArgs,
-  onDiffPlans, showColorPicker, onColorChange, onStampChange,
+  showColorPicker, onColorChange, onStampChange,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   archivedChildren, onOpenArchiveSearch,
   onStartReparent, isReparenting,
@@ -355,22 +354,6 @@ export function NodeActionBar({
           onMouseDown={(e) => e.stopPropagation()}
         >
           <span className="node-titlebar__cli-args-text">&gt;_</span>
-        </button>
-      )}
-      {onDiffPlans && (
-        <button
-          className="node-titlebar__diff-plans-btn"
-          data-tooltip="Diff plan versions"
-          style={preset ? { color: preset.titleBarFg } : undefined}
-          onClick={(e) => { e.stopPropagation(); onDiffPlans(); onActionInvoked?.() }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="4" y1="2" x2="4" y2="12" />
-            <line x1="10" y1="2" x2="10" y2="12" />
-            <line x1="2" y1="5" x2="6" y2="5" />
-            <line x1="8" y1="9" x2="12" y2="9" />
-          </svg>
         </button>
       )}
       {showColorPicker && (

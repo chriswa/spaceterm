@@ -125,6 +125,25 @@ describe('an unfocused terminal', () => {
     // not throw, i.e. nothing registered a handler that assumes a live xterm.
     expect(registeredFor(nid('term-1'))).toEqual([])
   })
+
+  it('does not attach — it asks for snapshots and nothing else', () => {
+    // Attaching starts the raw byte stream, which only a live xterm can use.
+    // Cards used to attach on mount just to read their context %, so every
+    // surface on the canvas streamed raw output to the client as well as its
+    // snapshots — invisible on a local socket, ruinous on a phone's link.
+    render(<TerminalCard {...props()} />)
+    expect(bridge.callsTo('pty.attach')).toEqual([])
+    expect(bridge.lastCall('node.setTerminalMode')).toEqual([pid('term-1'), 'snapshot'])
+  })
+
+  it('shows its context and line count from node state, with no attach', () => {
+    const claudeSessionHistory = [{ claudeSessionId: 'abcdef12-session', reason: 'startup', timestamp: '2026-10-01T00:00:00Z' }]
+    const { container } = render(
+      <TerminalCard {...props({ claudeSessionHistory, claudeContextPercent: 42.5, claudeSessionLineCount: 917 })} />
+    )
+    expect(container.textContent).toContain('Remaining context: 42.50%')
+    expect(container.textContent).toContain('(917)')
+  })
 })
 
 describe('a focused terminal', () => {

@@ -30,27 +30,6 @@ const ptyApi: PtyApi = {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
-  onClaudeContext: (sessionId, callback) => {
-    const channel = `pty:claude-context:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, percent: number) => callback(percent)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-  onClaudeSessionLineCount: (sessionId, callback) => {
-    const channel = `pty:claude-session-line-count:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, lineCount: number) => callback(lineCount)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-  onPlanCacheUpdate: (sessionId, callback) => {
-    const channel = `pty:plan-cache-update:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, count: number, files: string[]) => callback(count, files)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
 }
 
 const nodeApi: NodeApi = {
@@ -201,7 +180,6 @@ const api: Api = {
   restartSpaceterm: (): Promise<void> => ipcRenderer.invoke('app:restart-spaceterm'),
   writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
-  diffFiles: (fileA: string, fileB: string) => ipcRenderer.invoke('shell:diffFiles', fileA, fileB),
   window: {
     fitToWorkArea: (): Promise<void> => ipcRenderer.invoke('window:fit-to-work-area'),
     onVisibilityChanged: (callback: (visible: boolean) => void): (() => void) => {

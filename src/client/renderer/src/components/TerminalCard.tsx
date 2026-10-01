@@ -197,6 +197,10 @@ interface TerminalCardProps {
   claudeDismissedBackground?: number
   claudeModel?: string
   claudeEffort?: AgentEffort
+  /** Remaining context, as last reported for this surface. */
+  claudeContextPercent?: number
+  /** Lines in the agent's transcript. */
+  claudeSessionLineCount?: number
   /** Claude Code's own status for this surface — footer only, Claude surfaces only. */
   ccStatus?: CcSessionStatus | null
   ccWaitingFor?: string | null
@@ -222,7 +226,7 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onStampChange, onOpenArchiveSearch,
-  claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, ccStatus, ccWaitingFor, onExit, onNodeReady,
+  claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, claudeContextPercent, claudeSessionLineCount, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
 }: TerminalCardProps) {
@@ -246,12 +250,9 @@ export function TerminalCard({
 
   const isSpeaking = useSpeakingStore((s) => id in s.speaking)
 
-  const [claudeContextPercent, setClaudeContextPercent] = useState<number | undefined>(undefined)
-  const [claudeSessionLineCount, setClaudeSessionLineCount] = useState<number | undefined>(undefined)
   const [, setTick] = useState(0)
   const [xtermReady, setXtermReady] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [planCacheFiles, setPlanCacheFiles] = useState<string[]>([])
   const searchOpenRef = useRef(false)
 
   // Re-render every 30s so "Last Interacted" stays current
@@ -580,9 +581,6 @@ export function TerminalCard({
         flushPendingData()
         markReady()
       }
-      if (result.claudeContextPercent !== undefined) {
-        setClaudeContextPercent(result.claudeContextPercent)
-      }
     }).catch(() => {
       // Session may not exist on server — still unblock so we don't get stuck on snapshot
       replayingScrollback = false
@@ -763,37 +761,6 @@ export function TerminalCard({
       term.dispose()
     }
   }, [focused, sessionId])
-
-  // Subscribe to claude context updates (always, not just when focused)
-  useEffect(() => {
-    const cleanup = window.api.pty.onClaudeContext(sessionId, (percent) => {
-      setClaudeContextPercent(percent)
-    })
-    // Also fetch current value on mount
-    window.api.pty.attach(sessionId).then((result) => {
-      if (result.claudeContextPercent !== undefined) {
-        setClaudeContextPercent(result.claudeContextPercent)
-      }
-      if (result.claudeSessionLineCount !== undefined) {
-        setClaudeSessionLineCount(result.claudeSessionLineCount)
-      }
-    }).catch(() => {})
-    return cleanup
-  }, [sessionId])
-
-  // Subscribe to claude session line count updates (always, not just when focused)
-  useEffect(() => {
-    return window.api.pty.onClaudeSessionLineCount(sessionId, (lineCount) => {
-      setClaudeSessionLineCount(lineCount)
-    })
-  }, [sessionId])
-
-  // Subscribe to plan cache updates (always, not just when focused)
-  useEffect(() => {
-    return window.api.pty.onPlanCacheUpdate(sessionId, (_count, files) => {
-      setPlanCacheFiles(files)
-    })
-  }, [sessionId])
 
   // Tint xterm background to match color preset
   useEffect(() => {
@@ -1290,11 +1257,6 @@ export function TerminalCard({
     ? claudeSessionHistory[claudeSessionHistory.length - 1]
     : null
 
-  const handleDiffPlans = planCacheFiles.length >= 2 ? () => {
-    const [prev, curr] = planCacheFiles.slice(-2)
-    window.api.diffFiles(prev, curr)
-  } : undefined
-
   const hat = modelHat(crabAppearance.kind, claudeModel)
   // Claude Code's `off` means thinking disabled, which reads as a bare word.
   const effortLabel = claudeEffort === 'off' ? 'thinking off' : claudeEffort
@@ -1350,7 +1312,6 @@ export function TerminalCard({
           : undefined
       }
       extraCliArgs={extraCliArgs}
-      onDiffPlans={handleDiffPlans}
       onAddNode={onAddNode}
       isReparenting={reparentingNodeId === id}
       isResizing={resizingNodeId === id}

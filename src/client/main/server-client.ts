@@ -125,12 +125,6 @@ export class ServerClient extends EventEmitter {
       case 'exit':
         this.emit('exit', msg.sessionId, msg.exitCode)
         return
-      case 'claude-context':
-        this.emit('claude-context', msg.sessionId, msg.contextRemainingPercent)
-        return
-      case 'claude-session-line-count':
-        this.emit('claude-session-line-count', msg.sessionId, msg.lineCount)
-        return
       case 'node-updated':
         this.emit('node-updated', msg.nodeId, msg.fields)
         return
@@ -145,9 +139,6 @@ export class ServerClient extends EventEmitter {
         return
       case 'snapshot':
         this.emit('snapshot', msg.sessionId, msg)
-        return
-      case 'plan-cache-update':
-        this.emit('plan-cache-update', msg.sessionId, msg.count, msg.files)
         return
       case 'play-sound':
         this.emit('play-sound', msg.sound)
@@ -326,9 +317,9 @@ export class ServerClient extends EventEmitter {
     return { required: resp.required, reason: resp.reason }
   }
 
-  async attach(sessionId: PtySessionId): Promise<{ scrollback: string; claudeContextPercent?: number; claudeSessionLineCount?: number }> {
+  async attach(sessionId: PtySessionId): Promise<{ scrollback: string }> {
     const resp = await this.sendRequest({ type: 'attach', sessionId })
-    if (resp.type === 'attached') return { scrollback: resp.scrollback, claudeContextPercent: resp.claudeContextPercent, claudeSessionLineCount: resp.claudeSessionLineCount }
+    if (resp.type === 'attached') return { scrollback: resp.scrollback }
     throw new Error('Unexpected response')
   }
 

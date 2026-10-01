@@ -169,9 +169,6 @@ export class FakeBridge implements Api {
   // --- per-session channels ---
   private readonly ptyData: SessionListeners<(data: string) => void> = new Map()
   private readonly ptyExit: SessionListeners<(exitCode: number) => void> = new Map()
-  private readonly ptyContext: SessionListeners<(percent: number) => void> = new Map()
-  private readonly ptyLineCount: SessionListeners<(lineCount: number) => void> = new Map()
-  private readonly ptyPlanCache: SessionListeners<(count: number, files: string[]) => void> = new Map()
   private readonly snapshot: SessionListeners<(snapshot: SnapshotMessage) => void> = new Map()
 
   // ─── recording ────────────────────────────────────────────────────────────
@@ -267,12 +264,6 @@ export class FakeBridge implements Api {
       fireForSession(this.ptyData, sessionId, (fn) => fn(data)),
     ptyExit: (sessionId: PtySessionId, exitCode: number): void =>
       fireForSession(this.ptyExit, sessionId, (fn) => fn(exitCode)),
-    claudeContext: (sessionId: PtySessionId, percent: number): void =>
-      fireForSession(this.ptyContext, sessionId, (fn) => fn(percent)),
-    claudeSessionLineCount: (sessionId: PtySessionId, lineCount: number): void =>
-      fireForSession(this.ptyLineCount, sessionId, (fn) => fn(lineCount)),
-    planCacheUpdate: (sessionId: PtySessionId, count: number, files: string[]): void =>
-      fireForSession(this.ptyPlanCache, sessionId, (fn) => fn(count, files)),
     snapshot: (sessionId: PtySessionId, snapshot: SnapshotMessage): void =>
       fireForSession(this.snapshot, sessionId, (fn) => fn(snapshot))
   }
@@ -286,10 +277,7 @@ export class FakeBridge implements Api {
     destroy: (sessionId) => this.reply('pty.destroy', undefined, sessionId),
     write: (sessionId, data) => this.record('pty.write', sessionId, data),
     onData: (sessionId, cb) => subscribeToSession(this.ptyData, sessionId, cb),
-    onExit: (sessionId, cb) => subscribeToSession(this.ptyExit, sessionId, cb),
-    onClaudeContext: (sessionId, cb) => subscribeToSession(this.ptyContext, sessionId, cb),
-    onClaudeSessionLineCount: (sessionId, cb) => subscribeToSession(this.ptyLineCount, sessionId, cb),
-    onPlanCacheUpdate: (sessionId, cb) => subscribeToSession(this.ptyPlanCache, sessionId, cb)
+    onExit: (sessionId, cb) => subscribeToSession(this.ptyExit, sessionId, cb)
   }
 
   readonly node: NodeApi = {
@@ -440,8 +428,6 @@ export class FakeBridge implements Api {
   writeDebugLog = (content: string): Promise<string> =>
     this.reply('writeDebugLog', '/tmp/fake-debug.log', content)
   openExternal = (url: string): Promise<void> => this.reply('openExternal', undefined, url)
-  diffFiles = (fileA: string, fileB: string): Promise<void> =>
-    this.reply('diffFiles', undefined, fileA, fileB)
 }
 
 /**

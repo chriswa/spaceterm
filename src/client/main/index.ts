@@ -2,7 +2,6 @@ import { app, BrowserWindow, clipboard, contentTracing, ipcMain, net, protocol, 
 import * as path from 'path'
 import { pathToFileURL } from 'url'
 import { mkdirSync, writeFileSync } from 'fs'
-import { execFile } from 'child_process'
 import { join } from 'path'
 import { SOCKET_DIR, type SummaryChatMode } from '../../shared/protocol'
 import { ServerClient } from './server-client'
@@ -273,24 +272,16 @@ function setupVisibilityTracking(): void {
 
 function setupIPC(): void {
   ipcMain.handle('pty:create', async (_event, options?: Record<string, unknown>) => {
-    const session = await client!.create(options as any)
-    // Auto-attach so we receive data events for this session. The `attached`
-    // message carries only scrollback + claude context/line count (see
-    // AttachedMessage in shared/protocol); shellTitleHistory, cwd and
-    // claudeSessionHistory reach the renderer via node-updated broadcasts, so
-    // there is nothing here to forward.
-    await client!.attach(session.sessionId)
-    return session
+    // No attach here, nor after any other create below: the raw stream is
+    // only for a focused card, and TerminalCard attaches when it takes focus.
+    return client!.create(options as any)
   })
 
   ipcMain.handle('pty:list', async () => {
     return client!.list()
   })
 
-  ipcMain.handle('pty:attach', async (_event, sessionId: PtySessionId) => {
-    const { scrollback, claudeContextPercent, claudeSessionLineCount } = await client!.attach(sessionId)
-    return { scrollback, claudeContextPercent, claudeSessionLineCount }
-  })
+  ipcMain.handle('pty:attach', (_event, sessionId: PtySessionId) => client!.attach(sessionId))
 
   ipcMain.on('pty:write', (_event, sessionId: PtySessionId, data: string) => {
     client!.write(sessionId, data)
@@ -308,13 +299,6 @@ function setupIPC(): void {
     } else {
       logger.log(`[openExternal] blocked url=${url} (unsupported protocol)`)
     }
-  })
-
-  ipcMain.handle('shell:diffFiles', (_event, fileA: string, fileB: string) => {
-    logger.log(`[diffFiles] cursor --diff '${fileA}' '${fileB}'`)
-    execFile('cursor', ['--diff', fileA, fileB], (err) => {
-      if (err) logger.log(`[diffFiles] error: ${err.message}`)
-    })
   })
 
   ipcMain.handle('debug:write-log', (_event, content: string) => {
@@ -420,8 +404,6 @@ function setupIPC(): void {
   ipcMain.handle('node:terminal-create', async (_event, parentId: NodeId, options?: Record<string, unknown>, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string) => {
     const resp = await client!.terminalCreate(parentId, options as any, initialTitleHistory, initialName, x, y, initialInput)
     if (resp.type === 'created') {
-      // Auto-attach so we receive data events for this session
-      await client!.attach(resp.sessionId)
       return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
     }
     throw new Error('Unexpected response')
@@ -434,8 +416,6 @@ function setupIPC(): void {
   ipcMain.handle('node:terminal-reincarnate', async (_event, nodeId: NodeId, options?: Record<string, unknown>) => {
     const resp = await client!.terminalReincarnate(nodeId, options as any)
     if (resp.type === 'created') {
-      // Auto-attach so we receive data events for the new session
-      await client!.attach(resp.sessionId)
       return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
     }
     throw new Error('Unexpected response')
@@ -551,7 +531,6 @@ function setupIPC(): void {
   ipcMain.handle('node:fork-session', async (_event, nodeId: NodeId) => {
     const resp = await client!.forkSession(nodeId)
     if (resp.type === 'created') {
-      await client!.attach(resp.sessionId)
       return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
     }
     throw new Error('Unexpected response')
@@ -562,7 +541,6 @@ function setupIPC(): void {
     try {
       const resp = await client!.terminalRestart(nodeId, extraCliArgs)
       if (resp.type === 'created') {
-        await client!.attach(resp.sessionId)
         logger.log(`[terminal-restart] Success node=${nodeId.slice(0, 8)} → session=${resp.sessionId.slice(0, 8)}`)
         return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
       }
@@ -719,18 +697,6 @@ function wireClientEvents(): void {
     }
   })
 
-  client!.on('claude-context', (sessionId: PtySessionId, contextRemainingPercent: number) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:claude-context:${sessionId}`, contextRemainingPercent)
-    }
-  })
-
-  client!.on('claude-session-line-count', (sessionId: PtySessionId, lineCount: number) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:claude-session-line-count:${sessionId}`, lineCount)
-    }
-  })
-
   // Mod envelopes, relayed straight through. This process reads `modId` only
   // to put it back on the wire — see ModMessage in shared/protocol.
   client!.on('mod', (modId: string, event: string, payload: unknown) => {
@@ -766,12 +732,6 @@ function wireClientEvents(): void {
   client!.on('snapshot', (sessionId: PtySessionId, snapshot: Record<string, unknown>) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`snapshot:${sessionId}`, snapshot)
-    }
-  })
-
-  client!.on('plan-cache-update', (sessionId: PtySessionId, count: number, files: string[]) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:plan-cache-update:${sessionId}`, count, files)
     }
   })
 
