@@ -123,22 +123,37 @@ export function useEdgeHover(
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
 
-    const onMouseMove = (e: MouseEvent) => {
+    // Pointer events, and only a real mouse's. A touch screen fakes a
+    // mousemove at every tap and never sends the mouseleave that would end it,
+    // so a mouse listener kept a phantom cursor at the last tap point — and as
+    // the canvas panned, every edge that slid under it lit up its split dot.
+    // A touch now clears the position instead of setting it.
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') {
+        mouseScreenRef.current = null
+        return
+      }
       mouseScreenRef.current = { x: e.clientX, y: e.clientY }
       // Check if the mouse target is inside a canvas-node
       const target = e.target as HTMLElement
       overNodeRef.current = !!target.closest('.canvas-node')
     }
 
-    const onMouseLeave = () => {
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') mouseScreenRef.current = null
+    }
+
+    const onPointerLeave = () => {
       mouseScreenRef.current = null
     }
 
-    viewport.addEventListener('mousemove', onMouseMove)
-    viewport.addEventListener('mouseleave', onMouseLeave)
+    viewport.addEventListener('pointermove', onPointerMove)
+    viewport.addEventListener('pointerdown', onPointerDown)
+    viewport.addEventListener('pointerleave', onPointerLeave)
     return () => {
-      viewport.removeEventListener('mousemove', onMouseMove)
-      viewport.removeEventListener('mouseleave', onMouseLeave)
+      viewport.removeEventListener('pointermove', onPointerMove)
+      viewport.removeEventListener('pointerdown', onPointerDown)
+      viewport.removeEventListener('pointerleave', onPointerLeave)
     }
   }, [])
 
