@@ -6,6 +6,8 @@ import type { NodeId } from '../shared/ids'
 import { TerminalView } from './TerminalView'
 import { Composer } from './Composer'
 import { useVisualViewportVars } from './viewport'
+import { Dictation } from './dictation'
+import { primeCues } from './cues'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -38,6 +40,8 @@ export function MobileApp() {
    * itself would not raise it.
    */
   const keyboardKeeperRef = useRef<HTMLInputElement>(null)
+  /** Listening started by the tap that opened the composer; see Composer's startDictation. */
+  const [openingDictation, setOpeningDictation] = useState<Promise<Dictation> | null>(null)
 
   // Back to where we were after a reload, once the surface is known again.
   const restoring = useNodeStore((s) => {
@@ -82,13 +86,28 @@ export function MobileApp() {
           nodeId={focusedTerminal}
           onClose={closeTerminal}
           onCompose={() => {
+            // All inside the tap, which is what lets iOS raise the keyboard,
+            // open the microphone and play sound.
             keyboardKeeperRef.current?.focus()
+            primeCues()
+            const dictation = Dictation.begin(window.api.dictation)
+            dictation.catch(() => undefined) // reported by the composer
+            setOpeningDictation(dictation)
             setComposerFor(focusedTerminal)
           }}
         />
       )}
       <input ref={keyboardKeeperRef} className="mobile-keyboard-keeper" aria-hidden tabIndex={-1} />
-      {composerFor && <Composer nodeId={composerFor} onClose={() => setComposerFor(null)} />}
+      {composerFor && (
+        <Composer
+          nodeId={composerFor}
+          startDictation={openingDictation}
+          onClose={() => {
+            setComposerFor(null)
+            setOpeningDictation(null)
+          }}
+        />
+      )}
     </>
   )
 }

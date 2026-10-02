@@ -86,7 +86,26 @@ textarea, input, [contenteditable="true"], .cm-content {
   color: var(--m-text);
   padding-top: var(--m-safe-top);
 }
-.mobile-composer { z-index: 2147483200; }
+.mobile-composer {
+  z-index: 2147483200;
+  /* Everything above the keyboard, whether or not it is up: the space it takes
+     is left empty when it is down, so the button bar sits directly on top of
+     it and never moves. See useVisualViewportVars for --m-kb-height. */
+  top: var(--m-vv-top, 0px);
+  bottom: auto;
+  height: calc(var(--m-layout-height, 100%) - var(--m-kb-height, 336px));
+}
+/* The keyboard's space, kept blank when it is down rather than showing the
+   terminal behind. */
+.mobile-composer::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: var(--m-kb-height, 336px);
+  background: var(--m-bg);
+}
 
 .mobile-term__bar {
   display: flex;
@@ -195,7 +214,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 .mobile-composer__text {
   flex: 1;
   min-height: 0;
-  margin: 12px 12px calc(12px + var(--m-safe-bottom));
+  margin: 12px 12px 0;
   padding: 12px;
   border: 1px solid var(--m-border);
   border-radius: 12px;
@@ -217,7 +236,8 @@ textarea, input, [contenteditable="true"], .cm-content {
 .mobile-composer__actions {
   display: flex;
   gap: 8px;
-  padding: 12px 12px 0;
+  padding: 8px 12px;
+  flex: none;
 }
 .mobile-btn--icon { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; }
 .mobile-btn--mic { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }

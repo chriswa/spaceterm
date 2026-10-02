@@ -5,6 +5,7 @@ import type { NodeId } from '../shared/ids'
 import { Dictation } from './dictation'
 import { insertDictation } from './pcm'
 import { nextRecall, promptStore } from './prompt-store'
+import { playCue, primeCues } from './cues'
 
 /**
  * Write a prompt away from the TUI — dictate, edit, then ship it to a surface.
@@ -24,7 +25,16 @@ const keepFocus = (e: { preventDefault(): void }) => e.preventDefault()
 
 type MicState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'transcribing' }
 
-export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => void }) {
+export function Composer({ nodeId, onClose, startDictation }: {
+  nodeId: NodeId
+  onClose: () => void
+  /**
+   * Listening already begun by the tap that opened this — it has to start
+   * inside that tap, or iOS will not let it record. Dictating is what the
+   * composer opens into.
+   */
+  startDictation?: Promise<Dictation> | null
+}) {
   const node = useNodeStore((s) => s.nodes[nodeId])
   const store = useMemo(() => promptStore(nodeId), [nodeId])
   const [text, setTextState] = useState(() => store.draft())
@@ -53,7 +63,9 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
   // Leaving with the mic open throws the audio away rather than leaking it.
   const micRef = useRef(mic)
   micRef.current = mic
+  const closedRef = useRef(false)
   useEffect(() => () => {
+    closedRef.current = true
     const m = micRef.current
     if (m.kind === 'listening') m.dictation.cancel()
   }, [])
@@ -62,29 +74,56 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
     cursorRef.current = areaRef.current?.selectionStart ?? text.length
   }
 
-  const toggleMic = async () => {
+  /** Voice Operator's cues throughout: started, finished, pasted — and its failure tones. */
+  const listen = async (pending: Promise<Dictation>) => {
     setError(null)
-    if (mic.kind === 'idle') {
-      rememberCursor()
-      setMic({ kind: 'starting' })
-      try {
-        const dictation = await Dictation.begin(window.api.dictation)
-        setMic({ kind: 'listening', dictation })
-      } catch (err) {
-        setMic({ kind: 'idle' })
-        setError(err instanceof Error ? err.message : String(err))
+    rememberCursor()
+    setMic({ kind: 'starting' })
+    try {
+      const dictation = await pending
+      if (closedRef.current) {
+        dictation.cancel()
+        return
       }
+      setMic({ kind: 'listening', dictation })
+      // As on the desktop, the start cue means "safe to talk": it plays only
+      // once the microphone is live.
+      playCue('listeningStarted')
+    } catch (err) {
+      setMic({ kind: 'idle' })
+      playCue('captureFailed')
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Open straight into dictation when the tap that opened us started it.
+  const startedRef = useRef(false)
+  useEffect(() => {
+    if (startedRef.current || !startDictation) return
+    startedRef.current = true
+    void listen(startDictation)
+  }, [startDictation])
+
+  const toggleMic = async () => {
+    if (mic.kind === 'idle') {
+      primeCues()
+      void listen(Dictation.begin(window.api.dictation))
       return
     }
     if (mic.kind !== 'listening') return
+    playCue('listeningFinished')
     setMic({ kind: 'transcribing' })
     try {
       const transcript = await mic.dictation.finish()
       const current = areaRef.current?.value ?? text
       const next = insertDictation(current, Math.min(cursorRef.current, current.length), transcript)
       cursorRef.current = next.cursor
-      setText(next.text)
+      if (next.text !== current) {
+        setText(next.text)
+        playCue('pasted')
+      }
     } catch (err) {
+      playCue('transcriptionFailed')
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setMic({ kind: 'idle' })
@@ -118,17 +157,22 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
         <button className="mobile-btn" onClick={onClose}>‹ Terminal</button>
         <span className="mobile-term__title">To: {node ? nodeDisplayTitle(node) : 'surface gone'}</span>
       </header>
-      {/* Above the text, so the keyboard never covers them. */}
+      <textarea
+        ref={areaRef}
+        className="mobile-composer__text"
+        value={text}
+        placeholder="Dictate or type, edit, then ship it to the surface."
+        onChange={(e) => {
+          setText(e.target.value)
+          cursorRef.current = e.target.selectionStart
+        }}
+        onSelect={rememberCursor}
+        autoCorrect="on"
+        autoCapitalize="sentences"
+      />
+      {error && <div className="mobile-composer__error" role="alert">{error}</div>}
+      {/* Directly above the keyboard, and fixed there: see .mobile-composer. */}
       <div className="mobile-composer__actions">
-        <button
-          className={`mobile-btn mobile-btn--mic${mic.kind === 'listening' ? ' mobile-btn--recording' : ''}`}
-          onMouseDown={keepFocus}
-          onClick={toggleMic}
-          disabled={mic.kind === 'starting' || mic.kind === 'transcribing'}
-        >
-          {mic.kind === 'listening' && <span className="mobile-recording-dot" />}
-          {micLabel}
-        </button>
         <button className="mobile-btn" onMouseDown={keepFocus} onClick={() => setText('')} disabled={!text}>Clear</button>
         <button
           className="mobile-btn mobile-btn--icon"
@@ -144,6 +188,15 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
           </svg>
         </button>
         <button
+          className={`mobile-btn mobile-btn--mic${mic.kind === 'listening' ? ' mobile-btn--recording' : ''}`}
+          onMouseDown={keepFocus}
+          onClick={toggleMic}
+          disabled={mic.kind === 'starting' || mic.kind === 'transcribing'}
+        >
+          {mic.kind === 'listening' && <span className="mobile-recording-dot" />}
+          {micLabel}
+        </button>
+        <button
           className="mobile-btn mobile-btn--accent mobile-btn--ship"
           onClick={ship}
           disabled={!live || !text.trim() || shipping || mic.kind !== 'idle'}
@@ -152,20 +205,6 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
           {shipping ? 'Shipping…' : 'Ship it'}
         </button>
       </div>
-      <textarea
-        ref={areaRef}
-        className="mobile-composer__text"
-        value={text}
-        placeholder="Dictate or type, edit, then ship it to the surface."
-        onChange={(e) => {
-          setText(e.target.value)
-          cursorRef.current = e.target.selectionStart
-        }}
-        onSelect={rememberCursor}
-        autoCorrect="on"
-        autoCapitalize="sentences"
-      />
-      {error && <div className="mobile-composer__error" role="alert">{error}</div>}
     </div>
   )
 }
