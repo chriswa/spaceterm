@@ -2,33 +2,36 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TerminalCard } from '@/components/TerminalCard'
 import { useNodeStore } from '@/stores/nodeStore'
 import type { Camera } from '@/lib/camera'
-import { terminalPixelSize } from '../shared/node-size'
-import { nodeDisplayTitle } from '@/lib/node-title'
+import { bareTerminalGridFor, bareTerminalPixelSize } from '../shared/node-size'
 import type { NodeId } from '../shared/ids'
 import { KeyRow } from './KeyRow'
+import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
 
 /**
- * One terminal surface, full screen.
+ * One terminal surface, filling the screen and nothing else.
  *
- * It is the desktop's own `TerminalCard`, focused — the same xterm, the same
- * attach and scrollback replay, the same input handling — scaled to the phone
- * and scrollable. The canvas keeps its snapshot card for the same surface (see
- * surfacePresenterStore), and gets snapshots back when this closes.
+ * It is the desktop's own `TerminalCard` — the same xterm, attach, replay and
+ * input handling — without its title bar and footer, and with the surface
+ * *borrowed* at a grid that fits this screen: the server remembers its own
+ * size and gives it back when this closes, when the phone disconnects, or at
+ * its next start (see `terminalBorrowSize`).
  *
- * The pty keeps its size. A phone resizing a surface would reflow it on the
- * laptop too, so this shows the 160-column screen as it is and lets you pan.
+ * Every touch goes to the gesture layer, never to xterm: drag up/down to
+ * scroll, flick sideways to leave, tap to compose, long-press to type with the
+ * keyboard and the extra keys. See terminal-gesture.ts.
  */
 
-const SCALE_KEY = 'mobile.terminalScale'
-const MIN_SCALE = 0.35
-const MAX_SCALE = 1.2
+/** Text size as a fraction of the desktop's. ~55 columns on a 390-pt-wide phone. */
+const DEFAULT_SCALE = 0.85
+/** Wait for the keyboard's animation to finish resizing before re-borrowing. */
+const BORROW_SETTLE_MS = 150
 
-function storedScale(): number {
+function fontScale(): number {
   try {
-    const v = Number(localStorage.getItem(SCALE_KEY))
-    if (v >= MIN_SCALE && v <= MAX_SCALE) return v
+    const v = Number(localStorage.getItem('mobile.terminalScale'))
+    if (v >= 0.5 && v <= 1.5) return v
   } catch { /* private mode */ }
-  return 0.6
+  return DEFAULT_SCALE
 }
 
 const noop = () => undefined
@@ -36,124 +39,195 @@ const noop = () => undefined
 export function TerminalView({ nodeId, onClose, onCompose }: {
   nodeId: NodeId
   onClose: () => void
+  /** Called from inside the tap's touch handler, so it may take focus. */
   onCompose: () => void
 }) {
   const node = useNodeStore((s) => s.nodes[nodeId])
-  const [scale, setScale] = useState(storedScale)
-  const cameraRef = useRef<Camera>({ x: 0, y: 0, z: scale })
-  cameraRef.current = { x: 0, y: 0, z: scale }
-  const shellRef = useRef<HTMLDivElement>(null)
-  const [extent, setExtent] = useState({ width: 0, height: 0 })
-
   const terminal = node?.type === 'terminal' ? node : null
   const sessionId = terminal?.sessionId
+  const [scale] = useState(fontScale)
+  const cameraRef = useRef<Camera>({ x: 0, y: 0, z: scale })
+  const areaRef = useRef<HTMLDivElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [area, setArea] = useState({ width: 0, height: 0 })
+  const [keyboard, setKeyboard] = useState(false)
+  const [swipeDx, setSwipeDx] = useState(0)
+  const [pressArmed, setPressArmed] = useState(false)
 
-  // Hand the surface back to the canvas card on the way out: this card held
-  // the live subscription, and the canvas card is waiting on snapshots.
+  // Hand the surface back to the canvas card on the way out (this card held
+  // the live subscription), and give the surface its own size back.
   useEffect(() => {
     if (!sessionId) return
     return () => window.api.node.setTerminalMode(sessionId, 'snapshot')
   }, [sessionId])
+  useEffect(() => () => { void window.api.node.terminalReturnSize(nodeId).catch(noop) }, [nodeId])
 
-  useEffect(() => {
-    try { localStorage.setItem(SCALE_KEY, String(scale)) } catch { /* private mode */ }
-  }, [scale])
-
-  // The card's chrome adds height the pixel size does not include; measure it.
   useLayoutEffect(() => {
-    const shell = shellRef.current?.querySelector<HTMLElement>('.card-shell')
-    if (!shell) return
-    const measure = () => setExtent({ width: shell.offsetWidth, height: shell.offsetHeight })
+    const el = areaRef.current
+    if (!el) return
+    const measure = () => setArea((a) =>
+      a.width === el.clientWidth && a.height === el.clientHeight ? a : { width: el.clientWidth, height: el.clientHeight })
     measure()
     const ro = new ResizeObserver(measure)
-    ro.observe(shell)
+    ro.observe(el)
     return () => ro.disconnect()
-  }, [sessionId])
+  }, [])
+
+  // Borrow the grid that fits — again whenever the space changes, which is
+  // mostly the keyboard opening and closing.
+  const want = area.width > 0 ? bareTerminalGridFor(area.width, area.height, scale) : null
+  const current = terminal ? { cols: terminal.cols, rows: terminal.rows } : null
+  useEffect(() => {
+    if (!want || !current || !terminal?.alive) return
+    if (want.cols === current.cols && want.rows === current.rows) return
+    const timer = setTimeout(() => {
+      void window.api.node.terminalBorrowSize(nodeId, want.cols, want.rows).catch(noop)
+    }, BORROW_SETTLE_MS)
+    return () => clearTimeout(timer)
+  }, [nodeId, want?.cols, want?.rows, current?.cols, current?.rows, terminal?.alive])
+
+  // ─── gestures ────────────────────────────────────────────────────────────
+
+  const gestureRef = useRef(new TerminalGesture())
+  const armTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const xtermScreen = () => cardRef.current?.querySelector<HTMLElement>('.xterm-screen') ?? null
+  const textarea = () => cardRef.current?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea') ?? null
+
+  /**
+   * A finger drag, as the wheel event a trackpad would have sent — so the
+   * card's own wheel routing decides whether that means the TUI's mouse
+   * protocol, its arrow keys, or the shell's scrollback, exactly as on the desktop.
+   */
+  const scrollBy = (deltaY: number, clientX: number, clientY: number) => {
+    xtermScreen()?.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: deltaY / scale, deltaMode: WheelEvent.DOM_DELTA_PIXEL, clientX, clientY, bubbles: true, cancelable: true
+    }))
+  }
+
+  useEffect(() => {
+    const el = areaRef.current
+    if (!el) return
+    const g = gestureRef.current
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0]
+      g.begin(t.clientX, t.clientY, e.timeStamp)
+      clearTimeout(armTimer.current)
+      armTimer.current = setTimeout(() => { if (g.isStill()) setPressArmed(true) }, LONG_PRESS_MS)
+    }
+    const onMove = (e: TouchEvent) => {
+      e.preventDefault()
+      const t = e.touches[0]
+      const move = g.move(t.clientX, t.clientY)
+      if (move.kind !== 'none') {
+        clearTimeout(armTimer.current)
+        setPressArmed(false)
+      }
+      if (move.kind === 'scroll') scrollBy(move.deltaY, t.clientX, t.clientY)
+      else if (move.kind === 'swipe') setSwipeDx(move.dx)
+    }
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length > 0) return
+      // No synthetic mouse events or click: xterm must never see the touch.
+      e.preventDefault()
+      clearTimeout(armTimer.current)
+      setPressArmed(false)
+      setSwipeDx(0)
+      const outcome = g.end(e.timeStamp)
+      if (outcome === 'tap') onCompose()
+      else if (outcome === 'long-press') {
+        // Inside the touch handler, or iOS will not raise the keyboard.
+        textarea()?.focus()
+        setKeyboard(true)
+      } else if (outcome === 'exit') onClose()
+    }
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd, { passive: false })
+    el.addEventListener('touchcancel', onEnd, { passive: false })
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+      clearTimeout(armTimer.current)
+    }
+  }, [onClose, onCompose])
+
+  // The keyboard's own dismiss (and any other blur) ends typing mode.
+  useEffect(() => {
+    if (!keyboard) return
+    const ta = textarea()
+    if (!ta) return
+    const onBlur = () => setKeyboard(false)
+    ta.addEventListener('blur', onBlur)
+    return () => ta.removeEventListener('blur', onBlur)
+  }, [keyboard])
 
   if (!terminal) {
     return (
-      <div className="mobile-term">
-        <header className="mobile-term__bar">
-          <button className="mobile-btn" onClick={onClose}>‹ Canvas</button>
-          <span className="mobile-term__title">Surface gone</span>
-        </header>
+      <div className="mobile-term mobile-term--gone" onClick={onClose}>
+        <p>This surface is gone. Tap to return to the canvas.</p>
       </div>
     )
   }
 
-  const size = terminalPixelSize(terminal.cols, terminal.rows)
-  const zoomBy = (factor: number) =>
-    setScale((s) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round(s * factor * 100) / 100)))
-
-  const focusKeyboard = () => {
-    shellRef.current?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea')?.focus()
-  }
+  const size = bareTerminalPixelSize(terminal.cols, terminal.rows)
+  cameraRef.current = { x: 0, y: 0, z: scale }
 
   return (
-    <div className="mobile-term">
-      <header className="mobile-term__bar">
-        <button className="mobile-btn" onClick={onClose}>‹ Canvas</button>
-        <span className="mobile-term__title">{nodeDisplayTitle(terminal)}</span>
-        <button className="mobile-btn" onClick={() => zoomBy(1 / 1.15)} aria-label="Smaller">A−</button>
-        <button className="mobile-btn" onClick={() => zoomBy(1.15)} aria-label="Larger">A+</button>
-        <button className="mobile-btn mobile-btn--accent" onClick={onCompose}>Compose</button>
-      </header>
-      <div className="mobile-term__scroll">
-        <div style={{ width: (extent.width || size.width) * scale, height: (extent.height || size.height) * scale, position: 'relative' }}>
-          <div
-            ref={shellRef}
-            className="mobile-term__card"
-            style={{ transform: `scale(${scale})`, width: size.width, height: size.height }}
-          >
-            <TerminalCard
-              id={terminal.id}
-              sessionId={terminal.sessionId}
-              x={size.width / 2}
-              y={size.height / 2}
-              cols={terminal.cols}
-              rows={terminal.rows}
-              zIndex={1}
-              zoom={scale}
-              name={terminal.name ?? undefined}
-              colorPresetId={terminal.colorPresetId}
-              shellTitleHistory={terminal.shellTitleHistory}
-              cwd={terminal.cwd}
-              focused
-              selected
-              anyNodeFocused
-              claudeStatusUnread={terminal.claudeStatusUnread}
-              claudeStatusAsleep={terminal.claudeStatusAsleep}
-              scrollMode={false}
-              onFocus={noop}
-              onUnfocus={onClose}
-              onDisableScrollMode={noop}
-              onForwardWheelToCanvas={noop}
-              onClose={noop}
-              onMove={noop}
-              onRename={noop}
-              archivedChildren={terminal.archivedChildren}
-              onColorChange={noop}
-              onStampChange={noop}
-              onOpenArchiveSearch={noop}
-              claudeSessionHistory={terminal.claudeSessionHistory}
-              agentType={terminal.agentType}
-              claudeState={terminal.claudeState}
-              claudeDismissedBackground={terminal.claudeDismissedBackground}
-              claudeModel={terminal.claudeModel}
-              claudeEffort={terminal.claudeEffort}
-              claudeContextPercent={terminal.claudeContextPercent}
-              claudeSessionLineCount={terminal.claudeSessionLineCount}
-              ccStatus={terminal.ccStatus}
-              ccWaitingFor={terminal.ccWaitingFor}
-              terminalSessions={terminal.terminalSessions}
-              extraCliArgs={terminal.extraCliArgs}
-              lastInteractedAt={terminal.lastInteractedAt}
-              cameraRef={cameraRef}
-            />
-          </div>
+    <div className={`mobile-term${keyboard ? ' mobile-term--typing' : ''}`}>
+      <div
+        ref={areaRef}
+        className="mobile-term__area"
+        style={swipeDx ? { transform: `translateX(${swipeDx}px)`, opacity: Math.max(0.4, 1 - Math.abs(swipeDx) / 300) } : undefined}
+      >
+        <div ref={cardRef} className="mobile-term__card" style={{ transform: `scale(${scale})`, width: size.width, height: size.height }}>
+          <TerminalCard
+            id={terminal.id}
+            sessionId={terminal.sessionId}
+            x={size.width / 2}
+            y={size.height / 2}
+            cols={terminal.cols}
+            rows={terminal.rows}
+            zIndex={1}
+            zoom={scale}
+            name={terminal.name ?? undefined}
+            colorPresetId={terminal.colorPresetId}
+            shellTitleHistory={terminal.shellTitleHistory}
+            cwd={terminal.cwd}
+            focused
+            selected={false}
+            anyNodeFocused
+            claudeStatusUnread={terminal.claudeStatusUnread}
+            claudeStatusAsleep={terminal.claudeStatusAsleep}
+            scrollMode
+            onFocus={noop}
+            onUnfocus={noop}
+            onDisableScrollMode={noop}
+            onForwardWheelToCanvas={noop}
+            onClose={noop}
+            onMove={noop}
+            onRename={noop}
+            archivedChildren={terminal.archivedChildren}
+            onColorChange={noop}
+            onStampChange={noop}
+            onOpenArchiveSearch={noop}
+            claudeSessionHistory={terminal.claudeSessionHistory}
+            agentType={terminal.agentType}
+            claudeState={terminal.claudeState}
+            claudeModel={terminal.claudeModel}
+            claudeEffort={terminal.claudeEffort}
+            terminalSessions={terminal.terminalSessions}
+            lastInteractedAt={terminal.lastInteractedAt}
+            cameraRef={cameraRef}
+            chromeless
+            autoFocus={false}
+          />
         </div>
+        {pressArmed && <div className="mobile-term__press" aria-hidden />}
       </div>
-      <KeyRow sessionId={terminal.sessionId} onKeyboard={focusKeyboard} />
+      {keyboard && <KeyRow sessionId={terminal.sessionId} onHide={() => textarea()?.blur()} />}
     </div>
   )
 }

@@ -109,6 +109,13 @@ export interface TerminalNodeData extends BaseNodeData {
   sessionId: PtySessionId
   cols: number
   rows: number
+  /**
+   * Set while a phone has borrowed this surface's grid to fit its screen (see
+   * `StateManager.borrowTerminalSize`): the size to give back. Persisted on
+   * purpose. A server that dies mid-borrow finds it on startup and restores it,
+   * so a phone's grid can never quietly become the surface's real size.
+   */
+  homeSize?: { cols: number; rows: number }
   exitCode?: number // set when alive → false
   cwd?: string
   extraCliArgs?: string

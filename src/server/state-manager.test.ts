@@ -1661,3 +1661,53 @@ describe('StateManager root working directory', () => {
     expect(alerted?.fields.alerts?.[0].type).toBe('cwd-mismatch')
   })
 })
+
+describe('borrowing a terminal size', () => {
+  it('fits the borrower, remembers the home size, and gives it back', () => {
+    const { sm } = harness()
+    const t = createTerminal(sm, 's1')
+    expect(sm.borrowTerminalSize(t.id, 50, 40)).toBe(true)
+    expect(sm.getNode(t.id)).toMatchObject({ cols: 50, rows: 40, homeSize: { cols: 80, rows: 24 } })
+
+    expect(sm.returnTerminalSize(t.id)).toEqual({ cols: 80, rows: 24 })
+    const back = sm.getNode(t.id) as TerminalNodeData
+    expect([back.cols, back.rows, back.homeSize]).toEqual([80, 24, undefined])
+  })
+
+  it('keeps the original home size through a re-borrow, such as the keyboard opening', () => {
+    const { sm } = harness()
+    const t = createTerminal(sm, 's1')
+    sm.borrowTerminalSize(t.id, 50, 40)
+    sm.borrowTerminalSize(t.id, 50, 22)
+    expect(sm.returnTerminalSize(t.id)).toEqual({ cols: 80, rows: 24 })
+  })
+
+  it('persists the home size, so a server that dies mid-borrow can still restore it', () => {
+    const { sm, io } = harness()
+    const t = createTerminal(sm, 's1')
+    sm.borrowTerminalSize(t.id, 50, 40)
+    sm.persistImmediate()
+    const saved = io.lastWritten<ServerState>().nodes[t.id] as TerminalNodeData
+    expect(saved.homeSize).toEqual({ cols: 80, rows: 24 })
+
+    const { sm: restarted } = harness(io.lastWritten())
+    expect(restarted.borrowedTerminals()).toEqual([t.id])
+    expect(restarted.returnTerminalSize(t.id)).toEqual({ cols: 80, rows: 24 })
+    expect(restarted.borrowedTerminals()).toEqual([])
+  })
+
+  it('ends the borrow when someone deliberately resizes the surface', () => {
+    const { sm } = harness()
+    const t = createTerminal(sm, 's1')
+    sm.borrowTerminalSize(t.id, 50, 40)
+    sm.updateTerminalSize(pid('s1'), 120, 30)
+    expect(sm.returnTerminalSize(t.id)).toBeUndefined()
+    expect(sm.getNode(t.id)).toMatchObject({ cols: 120, rows: 30 })
+  })
+
+  it('returns nothing for a surface that was never borrowed', () => {
+    const { sm } = harness()
+    const t = createTerminal(sm, 's1')
+    expect(sm.returnTerminalSize(t.id)).toBeUndefined()
+  })
+})

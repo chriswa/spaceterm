@@ -8,18 +8,23 @@ import '@/styles/index.css'
 import './mobile.css'
 
 /**
- * The pairing token. Arrives once in the URL fragment — which a browser never
- * sends to any server — and is kept in this browser from then on.
+ * The pairing token. Arrives in the URL fragment — which a browser never sends
+ * to any server — and is kept there as well as in this browser's storage.
+ *
+ * Kept in the URL deliberately: iOS gives a home-screen web app storage of its
+ * own, separate from the browser it was added from, so "Add to Home Screen"
+ * must save a URL that still carries the token or the app opens unpaired.
  */
 function takeToken(): string | null {
   const fromHash = new URLSearchParams(window.location.hash.slice(1)).get('token')
   try {
     if (fromHash) {
       localStorage.setItem('spaceterm.token', fromHash)
-      history.replaceState(null, '', window.location.pathname + window.location.search)
       return fromHash
     }
-    return localStorage.getItem('spaceterm.token')
+    const stored = localStorage.getItem('spaceterm.token')
+    if (stored) history.replaceState(null, '', `${window.location.pathname}${window.location.search}#token=${encodeURIComponent(stored)}`)
+    return stored
   } catch {
     return fromHash
   }

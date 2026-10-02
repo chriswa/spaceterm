@@ -1405,10 +1405,44 @@ export class StateManager {
 
   // --- Terminal metadata updates (from SessionManager callbacks) ---
 
+  /**
+   * A deliberate resize. It also ends any borrow (see `borrowTerminalSize`):
+   * the size someone just chose is the surface's own from now on.
+   */
   updateTerminalSize(ptySessionId: PtySessionId, cols: number, rows: number): void {
     const node = this.getTerminalBySession(ptySessionId)
     if (!node) return
-    this.patchNode(node, { cols, rows })
+    this.patchNode(node, node.homeSize ? { cols, rows, homeSize: undefined } : { cols, rows })
+  }
+
+  /**
+   * Size a surface for a client that needs a different grid for a while — the
+   * phone fitting a terminal to its screen — remembering the size to return to.
+   * Borrowing again while borrowed keeps the original home size. False when
+   * the node is not a terminal.
+   */
+  borrowTerminalSize(nodeId: NodeId, cols: number, rows: number): boolean {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'terminal') return false
+    const homeSize = node.homeSize ?? { cols: node.cols, rows: node.rows }
+    this.patchNode(node, { cols, rows, homeSize })
+    return true
+  }
+
+  /** Give a borrowed surface its own size back: that size, or undefined if it was not borrowed. */
+  returnTerminalSize(nodeId: NodeId): { cols: number; rows: number } | undefined {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'terminal' || !node.homeSize) return undefined
+    const home = node.homeSize
+    this.patchNode(node, { cols: home.cols, rows: home.rows, homeSize: undefined })
+    return home
+  }
+
+  /** Surfaces still on a borrowed size — at startup, all of them have lost their borrower. */
+  borrowedTerminals(): NodeId[] {
+    return Object.values(this.state.nodes)
+      .filter((n) => n.type === 'terminal' && n.homeSize !== undefined)
+      .map((n) => n.id)
   }
 
   updateCwd(ptySessionId: PtySessionId, cwd: string): void {

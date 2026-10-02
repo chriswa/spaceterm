@@ -101,6 +101,13 @@ export interface NodeApi {
     initialInput?: string,
   ): Promise<SessionInfo>
   terminalResize(nodeId: NodeId, cols: number, rows: number): Promise<void>
+  /**
+   * Fit a surface to this client for a while, without changing its own size:
+   * the server gives that back on `terminalReturnSize`, on disconnect, or at
+   * its next start. See `TerminalBorrowSizeMessage`.
+   */
+  terminalBorrowSize(nodeId: NodeId, cols: number, rows: number): Promise<void>
+  terminalReturnSize(nodeId: NodeId): Promise<void>
   terminalReincarnate(nodeId: NodeId, options?: CreateOptions): Promise<SessionInfo>
   terminalRestart(nodeId: NodeId, extraCliArgs: string): Promise<SessionInfo>
   forkSession(nodeId: NodeId): Promise<SessionInfo>

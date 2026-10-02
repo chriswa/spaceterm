@@ -2,8 +2,8 @@
   "name": "Spaceterm",
   "short_name": "Spaceterm",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#11111b",
   "theme_color": "#11111b",
-  "start_url": "./",
   "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
 }

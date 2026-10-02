@@ -32,16 +32,33 @@ export const MAX_ROWS = DEFAULT_ROWS * 2
  * this is what stands between a typo and a wrapped window size.
  */
 export function clampTerminalSize(cols: number, rows: number): { cols: number; rows: number } {
-  const safe = (value: number, min: number, max: number): number => {
-    // NaN has no side to be clamped to; anything else, including ±Infinity,
-    // falls out of the min/max below on the correct side.
-    if (Number.isNaN(value)) return min
-    return Math.min(max, Math.max(min, Math.round(value)))
-  }
   return {
-    cols: safe(cols, MIN_COLS, MAX_COLS),
-    rows: safe(rows, MIN_ROWS, MAX_ROWS)
+    cols: clampOne(cols, MIN_COLS, MAX_COLS),
+    rows: clampOne(rows, MIN_ROWS, MAX_ROWS)
   }
+}
+
+/**
+ * The floor for a *borrowed* size (a phone fitting a surface to its screen).
+ * Far below `MIN_COLS`, which is a floor for sizes someone chooses on the
+ * desktop: a borrow exists precisely to fit a screen narrower than that, and
+ * is given back afterwards. Below this, no TUI can draw anything at all.
+ */
+export const MIN_BORROW_COLS = 20
+export const MIN_BORROW_ROWS = 5
+
+export function clampBorrowedTerminalSize(cols: number, rows: number): { cols: number; rows: number } {
+  return {
+    cols: clampOne(cols, MIN_BORROW_COLS, MAX_COLS),
+    rows: clampOne(rows, MIN_BORROW_ROWS, MAX_ROWS)
+  }
+}
+
+function clampOne(value: number, min: number, max: number): number {
+  // NaN has no side to be clamped to; anything else, including ±Infinity,
+  // falls out of the min/max below on the correct side.
+  if (Number.isNaN(value)) return min
+  return Math.min(max, Math.max(min, Math.round(value)))
 }
 
 /**
@@ -99,6 +116,8 @@ export const CHROME_H_NO_FOOTER =
   HEADER_PADDING_V * 2 + HEADER_CONTENT_H + HEADER_BORDER_BOTTOM +
   BODY_PADDING_TOP
 export const CHROME_H = CHROME_H_NO_FOOTER + FOOTER_HEIGHT
+/** A chromeless terminal card (the phone's full-screen view): border and body padding only. */
+export const CHROME_H_BARE = CARD_BORDER * 2 + BODY_PADDING_TOP
 
 // Markdown node dimensions
 export const MARKDOWN_DEFAULT_WIDTH = 400
@@ -251,6 +270,26 @@ export const META_GROUP_DROP = 260
 
 // Placement
 export const PLACEMENT_MARGIN = 80
+
+/** Pixel size of a chromeless terminal card: no title bar, no footer. */
+export function bareTerminalPixelSize(cols: number, rows: number): { width: number; height: number } {
+  return {
+    width: Math.ceil(cols * CELL_WIDTH + CHROME_W),
+    height: Math.ceil(rows * CELL_HEIGHT + CHROME_H_BARE)
+  }
+}
+
+/**
+ * The largest grid whose chromeless card, drawn at `scale`, fits in
+ * `width` × `height` CSS pixels — the inverse of `bareTerminalPixelSize`.
+ * Never below `MIN_BORROW_COLS` × `MIN_BORROW_ROWS`.
+ */
+export function bareTerminalGridFor(width: number, height: number, scale: number): { cols: number; rows: number } {
+  return {
+    cols: Math.max(MIN_BORROW_COLS, Math.floor((width / scale - CHROME_W) / CELL_WIDTH)),
+    rows: Math.max(MIN_BORROW_ROWS, Math.floor((height / scale - CHROME_H_BARE) / CELL_HEIGHT))
+  }
+}
 
 export function terminalPixelSize(cols: number, rows: number, hasFooter = true): { width: number; height: number } {
   return {

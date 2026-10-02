@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
+  clampBorrowedTerminalSize,
+  MIN_BORROW_COLS,
+  MIN_BORROW_ROWS,
+  bareTerminalGridFor,
+  bareTerminalPixelSize,
   ROOT_NODE_RADIUS,
   ROOT_DISC_RADIUS,
   ROOT_DISC_INSET,
@@ -151,5 +156,36 @@ describe('root node geometry', () => {
     expect(ROOT_DISC_RADIUS).toBeGreaterThan(0)
     expect(ROOT_DISC_RADIUS).toBeLessThan(ROOT_NODE_RADIUS)
     expect(ROOT_DISC_INSET).toBeGreaterThan(0)
+  })
+})
+
+describe('bareTerminalGridFor', () => {
+  // Phone-ish areas and scales: the grid it picks must fit, and one more
+  // column or row must not — the property, not particular numbers.
+  const cases: Array<[number, number, number]> = [[390, 700, 0.85], [393, 659, 1], [430, 820, 0.7], [844, 340, 0.85]]
+  it.each(cases)('fills %ix%i at scale %f without overflowing', (w, h, scale) => {
+    const { cols, rows } = bareTerminalGridFor(w, h, scale)
+    const fits = (c: number, r: number) => {
+      const px = bareTerminalPixelSize(c, r)
+      return px.width * scale <= w + 1 && px.height * scale <= h + 1
+    }
+    expect(fits(cols, rows)).toBe(true)
+    expect(fits(cols + 1, rows)).toBe(false)
+    expect(fits(cols, rows + 1)).toBe(false)
+  })
+
+  it('never offers a grid too small for any TUI', () => {
+    expect(bareTerminalGridFor(10, 10, 1)).toEqual({ cols: 20, rows: 5 })
+  })
+})
+
+describe('clampBorrowedTerminalSize', () => {
+  it('allows the narrow grid a phone needs, which a chosen size may not have', () => {
+    expect(clampBorrowedTerminalSize(55, 47)).toEqual({ cols: 55, rows: 47 })
+    expect(clampTerminalSize(55, 47).cols).toBe(MIN_COLS)
+  })
+  it('still refuses a grid nothing can draw in, and a giant one', () => {
+    expect(clampBorrowedTerminalSize(3, 1)).toEqual({ cols: MIN_BORROW_COLS, rows: MIN_BORROW_ROWS })
+    expect(clampBorrowedTerminalSize(1e6, NaN)).toEqual({ cols: MAX_COLS, rows: MIN_BORROW_ROWS })
   })
 })

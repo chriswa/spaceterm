@@ -33,7 +33,7 @@ import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { agentSurfaceFootprint, computePlacement } from './node-placement'
-import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
+import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrowedTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
@@ -617,6 +617,31 @@ function unsubscribeAll(sessionId: PtySessionId): void {
 }
 
 /**
+ * Which client is borrowing each surface's size (see
+ * StateManager.borrowTerminalSize). In memory only: the borrowers are
+ * connections, and none survive a restart — startup returns every size.
+ */
+const terminalBorrowers = new Map<NodeId, string>()
+
+/** Put a surface's pty and headless emulator at its node's current size. */
+function applyNodeSize(nodeId: NodeId): void {
+  const node = stateManager.getNode(nodeId)
+  if (!node || node.type !== 'terminal') return
+  // A dead surface has neither; both no-op, and a revive spawns at the node's size.
+  sessionManager.resize(node.sessionId, node.cols, node.rows)
+  snapshotManager.resize(node.sessionId, node.cols, node.rows)
+}
+
+/** End a borrow, whoever held it, and put the surface back at its own size. */
+function returnBorrowedSize(nodeId: NodeId, why: string): void {
+  terminalBorrowers.delete(nodeId)
+  const home = stateManager.returnTerminalSize(nodeId)
+  if (!home) return
+  applyNodeSize(nodeId)
+  serverLog(`[borrow] ${nodeId.slice(0, 8)} back to ${home.cols}x${home.rows} (${why})`)
+}
+
+/**
  * Paste text into a live surface and (usually) submit it. Every way of
  * shipping — the client's `ship-it`, the scripts socket — goes through here.
  */
@@ -693,6 +718,9 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
     close() {
       if (!clients.delete(client)) return
       remoteDictation.cancelAllFor(client.id)
+      for (const [nodeId, owner] of terminalBorrowers) {
+        if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
+      }
       console.log(`Client disconnected id=${client.id.slice(0, 8)} (${clients.size} total)`)
       broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
     }
@@ -1442,6 +1470,26 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'terminal-borrow-size': {
+      const { cols, rows } = clampBorrowedTerminalSize(msg.cols, msg.rows)
+      if (!stateManager.borrowTerminalSize(msg.nodeId, cols, rows)) {
+        send(client.link, { type: 'server-error', seq: msg.seq, message: 'Only a terminal surface can be resized' })
+        break
+      }
+      terminalBorrowers.set(msg.nodeId, client.id)
+      applyNodeSize(msg.nodeId)
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'terminal-return-size': {
+      // Only the borrower gives it back; another client's stale return must
+      // not cut someone else's borrow short.
+      if (terminalBorrowers.get(msg.nodeId) === client.id) returnBorrowedSize(msg.nodeId, 'returned')
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'ship-it': {
       const target = stateManager.getNode(msg.nodeId)
       if (!target || target.type !== 'terminal' || !target.alive) {
@@ -1656,7 +1704,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // no-op, and the size lands on the node so a revive spawns at it.
       sessionManager.resize(ptyId, cols, rows)
       snapshotManager.resize(ptyId, cols, rows)
+      // A deliberate resize ends any borrow; this size is the surface's own now.
       stateManager.updateTerminalSize(ptyId, cols, rows)
+      terminalBorrowers.delete(msg.nodeId)
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -2838,6 +2888,11 @@ async function startServer(): Promise<void> {
   // pty, and nothing will ever key on those ids again.
   const reapedLedgers = stateManager.reapBackgroundLedgers()
   if (reapedLedgers > 0) serverLog(`[startup] Reaped ${reapedLedgers} stale background ledger(s)`)
+
+  // A surface still on a borrowed size lost its borrower with the last server:
+  // give its size back before any client sees it. Reattach adopted the pty's
+  // (borrowed) size above, which is exactly what this undoes.
+  for (const nodeId of stateManager.borrowedTerminals()) returnBorrowedSize(nodeId, 'startup')
 
   // --- Claude Code's own session status, paired with ours ---
   // Reads ~/.claude/sessions/<pid>.json, logs how its busy/waiting/idle status

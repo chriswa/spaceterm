@@ -10,11 +10,14 @@ import { useEffect, useRef } from 'react'
  * never produces touch events.
  *
  * A tap is left alone: below the slop distance nothing is prevented, so the
- * browser still turns it into the click that focuses a card.
+ * browser still turns it into the click that focuses a card. A finger held
+ * still is a long press — the touch version of a desktop ⌘-click — and its
+ * click is suppressed, so it does not also focus whatever it was held on.
  */
 
 /** Movement below this many pixels is still a tap. */
 const TAP_SLOP_PX = 8
+const LONG_PRESS_MS = 500
 
 export interface TouchCameraControls {
   pan(dx: number, dy: number): void
@@ -22,6 +25,8 @@ export interface TouchCameraControls {
   getZoom(): number
   /** A pan or pinch has begun — the canvas equivalent of a background drag. */
   onGestureStart(): void
+  /** A finger held still on one spot. */
+  onLongPress?(point: { x: number; y: number }): void
 }
 
 type Point = { x: number; y: number }
@@ -41,8 +46,12 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
     let last: Point | null = null
     let panning = false
     let pinch: { startDistance: number; startZoom: number; last: Point } | null = null
+    let pressTimer: ReturnType<typeof setTimeout> | undefined
+    let longPressed = false
+    const cancelPress = () => clearTimeout(pressTimer)
 
     const begin = () => {
+      cancelPress()
       if (!panning && !pinch) controlsRef.current.onGestureStart()
     }
 
@@ -51,6 +60,14 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
         origin = last = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         panning = false
         pinch = null
+        longPressed = false
+        const at = origin
+        cancelPress()
+        pressTimer = setTimeout(() => {
+          if (panning || pinch || !controlsRef.current.onLongPress) return
+          longPressed = true
+          controlsRef.current.onLongPress(at)
+        }, LONG_PRESS_MS)
       } else if (e.touches.length === 2) {
         begin()
         const [a, b] = [e.touches[0], e.touches[1]]
@@ -83,6 +100,10 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
 
     const onEnd = (e: TouchEvent) => {
       if (e.touches.length === 0) {
+        cancelPress()
+        // The press already did something; it must not also become a click.
+        if (longPressed && e.cancelable) e.preventDefault()
+        longPressed = false
         origin = last = null
         panning = false
         pinch = null
@@ -97,9 +118,10 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
 
     el.addEventListener('touchstart', onStart, { passive: true })
     el.addEventListener('touchmove', onMove, { passive: false })
-    el.addEventListener('touchend', onEnd, { passive: true })
-    el.addEventListener('touchcancel', onEnd, { passive: true })
+    el.addEventListener('touchend', onEnd, { passive: false })
+    el.addEventListener('touchcancel', onEnd, { passive: false })
     return () => {
+      cancelPress()
       el.removeEventListener('touchstart', onStart)
       el.removeEventListener('touchmove', onMove)
       el.removeEventListener('touchend', onEnd)

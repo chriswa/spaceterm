@@ -23,12 +23,13 @@ function setup() {
   const viewport = document.createElement('div')
   viewport.className = 'canvas-viewport'
   document.body.appendChild(viewport)
-  const controls = { pan: vi.fn(), zoom: vi.fn(), getZoom: () => 1, onGestureStart: vi.fn() }
+  const controls = { pan: vi.fn(), zoom: vi.fn(), getZoom: () => 1, onGestureStart: vi.fn(), onLongPress: vi.fn() }
   render(<Harness controls={controls} />)
   return { viewport, controls }
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   cleanup()
   document.body.innerHTML = ''
 })
@@ -58,5 +59,26 @@ describe('useTouchCamera', () => {
     touch(viewport, 'touchstart', [[100, 100], [200, 100]])
     touch(viewport, 'touchmove', [[50, 100], [250, 100]])
     expect(controls.zoom).toHaveBeenLastCalledWith({ x: 150, y: 100 }, 2)
+  })
+
+  it('a finger held still is a long press, and its click is suppressed', () => {
+    vi.useFakeTimers()
+    const { viewport, controls } = setup()
+    touch(viewport, 'touchstart', [[120, 140]])
+    vi.advanceTimersByTime(499)
+    expect(controls.onLongPress).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(controls.onLongPress).toHaveBeenCalledWith({ x: 120, y: 140 })
+    expect(touch(viewport, 'touchend', [])).toBe(true)
+  })
+
+  it('a finger that moves is not a long press', () => {
+    vi.useFakeTimers()
+    const { viewport, controls } = setup()
+    touch(viewport, 'touchstart', [[120, 140]])
+    touch(viewport, 'touchmove', [[150, 140]])
+    vi.advanceTimersByTime(1000)
+    expect(controls.onLongPress).not.toHaveBeenCalled()
+    expect(touch(viewport, 'touchend', [])).toBe(false)
   })
 })

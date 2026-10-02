@@ -93,24 +93,68 @@ html, body {
   font: 600 15px/1.2 -apple-system, system-ui, sans-serif;
 }
 
-.mobile-term__scroll {
+/* The full-screen terminal: sized to the visible area, so the keyboard and key
+   row push it up rather than covering it (see useVisualViewportVars). */
+.mobile-term:not(.mobile-term--gone) {
+  top: var(--m-vv-top, 0px);
+  bottom: auto;
+  height: var(--m-vv-height, 100%);
+  padding-bottom: var(--m-safe-bottom);
+}
+.mobile-term--typing:not(.mobile-term--gone) { padding-bottom: 0; }
+.mobile-term--gone {
+  align-items: center;
+  justify-content: center;
+  font: 16px/1.4 -apple-system, system-ui, sans-serif;
+  color: var(--m-dim);
+}
+.mobile-term__area {
+  position: relative;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  overflow: hidden;
+  /* Every touch is a gesture (terminal-gesture.ts); none reach xterm or the page. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .mobile-term__card {
   position: absolute;
   left: 0;
   top: 0;
   transform-origin: 0 0;
+  pointer-events: none;
+}
+/* The hover actions a hidden-head card keeps for the desktop. */
+.mobile-term .card-shell__hidden-head-actions { display: none; }
+.mobile-term__press {
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 3px var(--m-accent);
+  pointer-events: none;
+  animation: mobile-press-in 120ms ease-out;
+}
+@keyframes mobile-press-in { from { opacity: 0; } }
+
+/* Takes focus inside the tap that opens the composer; see MobileApp. */
+.mobile-keyboard-keeper {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  font-size: 16px;
+  pointer-events: none;
 }
 
 .mobile-keys {
   display: flex;
   gap: 6px;
-  padding: 8px 8px calc(8px + var(--m-safe-bottom));
+  padding: 6px 8px;
   overflow-x: auto;
   border-top: 1px solid var(--m-border);
   background: var(--m-surface);

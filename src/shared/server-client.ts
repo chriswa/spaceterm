@@ -505,6 +505,14 @@ export class ServerClient {
     return this.ack({ type: 'terminal-resize', nodeId, cols, rows })
   }
 
+  terminalBorrowSize(nodeId: NodeId, cols: number, rows: number): Promise<void> {
+    return this.ack({ type: 'terminal-borrow-size', nodeId, cols, rows })
+  }
+
+  terminalReturnSize(nodeId: NodeId): Promise<void> {
+    return this.ack({ type: 'terminal-return-size', nodeId })
+  }
+
   terminalReincarnate(nodeId: NodeId, options?: CreateOptions): Promise<SessionInfo> {
     return this.session({ type: 'terminal-reincarnate', nodeId, options })
   }

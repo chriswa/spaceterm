@@ -5,7 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
 import { attachWebGLRenderer } from '../lib/webgl-renderer'
 import { alignTerminalCellWidth, watchDevicePixelRatio } from '../lib/cell-metrics'
-import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize } from '../lib/constants'
+import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize, bareTerminalPixelSize } from '../lib/constants'
 import { classifyWheelEvent } from '../lib/wheel-gesture'
 import { type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
@@ -221,6 +221,13 @@ interface TerminalCardProps {
   onHoverUnfocus?: () => void
   onAddNode?: (parentNodeId: NodeId, type: import('./AddNodeBody').AddNodeType) => void
   cameraRef: React.MutableRefObject<Camera>
+  /** Just the terminal: no title bar, no footer. The phone's full-screen view. */
+  chromeless?: boolean
+  /**
+   * Take keyboard focus on becoming focused. Default true; off on the phone,
+   * where focus raises the on-screen keyboard over half the screen.
+   */
+  autoFocus?: boolean
 }
 
 export function TerminalCard({
@@ -228,7 +235,8 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onStampChange, onOpenArchiveSearch,
   claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, claudeContextPercent, claudeSessionLineCount, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef
+  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef,
+  chromeless = false, autoFocus = true
 }: TerminalCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
   const nodeTint = useFacet('nodeTint')
@@ -280,9 +288,9 @@ export function TerminalCard({
   const scrollModeRef = useRef(false)
   scrollModeRef.current = scrollMode
 
-  // Derive pixel size from cols/rows — all terminals now have a footer
-  const hasFooter = true
-  const { width, height } = terminalPixelSize(cols, rows, hasFooter)
+  // Derive pixel size from cols/rows — every canvas terminal has a footer
+  const hasFooter = !chromeless
+  const { width, height } = chromeless ? bareTerminalPixelSize(cols, rows) : terminalPixelSize(cols, rows, hasFooter)
 
   // Mount terminal (only when focused)
   useEffect(() => {
@@ -776,7 +784,7 @@ export function TerminalCard({
     if (!term) return
 
     if (focused) {
-      term.focus()
+      if (autoFocus) term.focus()
     } else {
       term.blur()
     }
@@ -1274,7 +1282,7 @@ export function TerminalCard({
       height={height}
       zIndex={zIndex}
       focused={focused}
-      headVariant="visible"
+      headVariant={chromeless ? 'hidden' : 'visible'}
       titleContent={
         <TerminalTitleBarContent
           name={name}
@@ -1393,7 +1401,7 @@ export function TerminalCard({
           }}
         />
       </div>
-      {(() => {
+      {!chromeless && (() => {
         const pct = lastClaudeSession ? Math.max(0, Math.min(100, claudeContextPercent ?? 100)) : 100
         const bright = preset ? preset.titleBarBg : '#6c7086'
         const dark = preset ? preset.terminalBg : '#181825'

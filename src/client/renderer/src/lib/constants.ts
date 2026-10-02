@@ -34,6 +34,7 @@ export {
   MAX_COLS,
   MAX_ROWS,
   terminalPixelSize,
+  bareTerminalPixelSize,
   terminalSizeFromCorner,
   resizeDraftSize
 } from '../../../../shared/node-size'

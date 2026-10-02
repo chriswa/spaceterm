@@ -42,6 +42,15 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
 
   useEffect(() => saveDraft(nodeId, text), [nodeId, text])
 
+  // Arrive ready to type, cursor at the end of the draft. The tap that opened
+  // this already raised the keyboard (see MobileApp's keeper); this moves it here.
+  useEffect(() => {
+    const area = areaRef.current
+    if (!area) return
+    area.focus()
+    area.setSelectionRange(area.value.length, area.value.length)
+  }, [])
+
   // Leaving with the mic open throws the audio away rather than leaking it.
   const micRef = useRef(mic)
   micRef.current = mic
@@ -105,7 +114,7 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
   return (
     <div className="mobile-composer" role="dialog" aria-label="Compose a prompt">
       <header className="mobile-term__bar">
-        <button className="mobile-btn" onClick={onClose}>Close</button>
+        <button className="mobile-btn" onClick={onClose}>‹ Terminal</button>
         <span className="mobile-term__title">To: {node ? nodeDisplayTitle(node) : 'surface gone'}</span>
       </header>
       <textarea

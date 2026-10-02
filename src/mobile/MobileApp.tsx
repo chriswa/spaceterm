@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { App } from '@/App'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { useNodeStore } from '@/stores/nodeStore'
@@ -6,6 +6,7 @@ import type { NodeId } from '../shared/ids'
 import { TerminalView } from './TerminalView'
 import { Composer } from './Composer'
 import { SurfaceList } from './SurfaceList'
+import { useVisualViewportVars } from './viewport'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -30,6 +31,15 @@ export function MobileApp() {
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
   const [listOpen, setListOpen] = useState(false)
+  useVisualViewportVars()
+
+  /**
+   * Focused inside the tap that opens the composer, so iOS raises the keyboard
+   * there and then; the composer's text box takes the focus over once it
+   * mounts, and the keyboard stays up. Focus taken any later than the tap
+   * itself would not raise it.
+   */
+  const keyboardKeeperRef = useRef<HTMLInputElement>(null)
 
   // Back to where we were after a reload, once the surface is known again.
   const restoring = useNodeStore((s) => {
@@ -75,9 +85,13 @@ export function MobileApp() {
           key={focusedTerminal}
           nodeId={focusedTerminal}
           onClose={closeTerminal}
-          onCompose={() => setComposerFor(focusedTerminal)}
+          onCompose={() => {
+            keyboardKeeperRef.current?.focus()
+            setComposerFor(focusedTerminal)
+          }}
         />
       )}
+      <input ref={keyboardKeeperRef} className="mobile-keyboard-keeper" aria-hidden tabIndex={-1} />
       {composerFor && <Composer nodeId={composerFor} onClose={() => setComposerFor(null)} />}
     </>
   )

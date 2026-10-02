@@ -18,12 +18,28 @@ const KEYS: Array<{ label: string; bytes: string; title: string }> = [
   { label: '⏎', bytes: '\r', title: 'Enter' },
   // Ink reads ESC+CR as meta+return: a newline in Claude's prompt, not a submit.
   { label: '⇧⏎', bytes: '\x1b\r', title: 'Newline without submitting' },
-  { label: '^C', bytes: '\x03', title: 'Ctrl+C' }
+  { label: '^C', bytes: '\x03', title: 'Ctrl+C' },
+  { label: '^D', bytes: '\x04', title: 'Ctrl+D' },
+  { label: '^R', bytes: '\x12', title: 'Ctrl+R' },
+  { label: '^L', bytes: '\x0c', title: 'Ctrl+L' },
+  { label: '^U', bytes: '\x15', title: 'Ctrl+U' },
+  { label: 'home', bytes: '\x1b[H', title: 'Home' },
+  { label: 'end', bytes: '\x1b[F', title: 'End' },
+  { label: 'pgup', bytes: '\x1b[5~', title: 'Page Up' },
+  { label: 'pgdn', bytes: '\x1b[6~', title: 'Page Down' },
+  { label: '|', bytes: '|', title: 'Pipe' },
+  { label: '~', bytes: '~', title: 'Tilde' },
+  { label: '/', bytes: '/', title: 'Slash' },
+  { label: '-', bytes: '-', title: 'Dash' }
 ]
 
 const keepFocus = (e: { preventDefault(): void }) => e.preventDefault()
 
-export function KeyRow({ sessionId, onKeyboard }: { sessionId: PtySessionId; onKeyboard: () => void }) {
+/**
+ * Shown above the on-screen keyboard while typing into a terminal, and
+ * scrollable sideways, so there is room for every key a TUI might want.
+ */
+export function KeyRow({ sessionId, onHide }: { sessionId: PtySessionId; onHide: () => void }) {
   const send = (bytes: string) => window.api.pty.write(sessionId, bytes)
   return (
     <div className="mobile-keys" role="toolbar" aria-label="Terminal keys">
@@ -44,12 +60,12 @@ export function KeyRow({ sessionId, onKeyboard }: { sessionId: PtySessionId; onK
       ))}
       <button
         className="mobile-keys__key mobile-keys__key--wide"
-        title="Type into the terminal"
+        title="Hide the keyboard"
         onPointerDown={keepFocus}
         onMouseDown={keepFocus}
-        onClick={onKeyboard}
+        onClick={onHide}
       >
-        ⌨
+        ⌄
       </button>
     </div>
   )

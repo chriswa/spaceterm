@@ -2510,6 +2510,11 @@ export function App() {
       setQuickActions(null)
       setEdgeSplit(null)
       if (focusRef.current && !pinnedFocusRef.current) handleUnfocus()
+    },
+    // The touch version of ⌘-click: the quick-actions toolbar for that node.
+    onLongPress: ({ x, y }) => {
+      const nodeId = document.elementFromPoint(x, y)?.closest('[data-node-id]')?.getAttribute('data-node-id')
+      if (nodeId) setQuickActions({ nodeId: nodeId as NodeId, screenX: x, screenY: y })
     }
   })
 

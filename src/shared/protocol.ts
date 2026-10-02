@@ -366,6 +366,28 @@ export interface DictationCancelMessage {
   id: string
 }
 
+/**
+ * Borrow a terminal surface's grid — the phone fitting it to its screen. The
+ * server remembers the surface's own size (persisted, as `homeSize`) and gives
+ * it back on `terminal-return-size`, on this client's disconnect, or on the
+ * next server start. Re-borrowing while borrowed resizes again. Replies
+ * `mutation-ack`.
+ */
+export interface TerminalBorrowSizeMessage {
+  type: 'terminal-borrow-size'
+  seq: number
+  nodeId: NodeId
+  cols: number
+  rows: number
+}
+
+/** End this client's borrow. A no-op for a surface it does not hold. Replies `mutation-ack`. */
+export interface TerminalReturnSizeMessage {
+  type: 'terminal-return-size'
+  seq: number
+  nodeId: NodeId
+}
+
 export interface TerminalResizeMessage {
   type: 'terminal-resize'
   seq: number
@@ -923,6 +945,8 @@ export type AgentSearchResult =
 
 export type ClientMessage =
   | ShipItMessage
+  | TerminalBorrowSizeMessage
+  | TerminalReturnSizeMessage
   | DictationStartMessage
   | DictationAudioMessage
   | DictationFinishMessage
