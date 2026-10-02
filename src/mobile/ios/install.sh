@@ -20,8 +20,9 @@ devices_json="$(mktemp)"
 trap 'rm -f "$devices_json"' EXIT
 xcrun devicectl list devices --json-output "$devices_json" >/dev/null
 
-# "<coredevice identifier> <hardware udid> <name>" for each paired iPhone, best first.
-read -r device_id _udid device_name < <(python3 - "$devices_json" "${SPACETERM_IOS_DEVICE:-}" <<'PY'
+# "<coredevice identifier>\t<name>" of the best paired iPhone. Tab-separated:
+# names have spaces in them ("Chris’s iPhone").
+IFS=$'\t' read -r device_id device_name < <(python3 - "$devices_json" "${SPACETERM_IOS_DEVICE:-}" <<'PY'
 import json, sys
 devices = json.load(open(sys.argv[1]))["result"]["devices"]
 want = sys.argv[2]
@@ -33,10 +34,10 @@ for d in devices:
     name = props.get("name", "")
     if want and want not in (name, d["identifier"], hw.get("udid")):
         continue
-    found.append((conn.get("tunnelState") == "connected", d["identifier"], hw.get("udid", ""), name))
+    found.append((conn.get("tunnelState") == "connected", d["identifier"], name))
 found.sort(reverse=True)
 if found:
-    print(*found[0][1:])
+    print(found[0][1], found[0][2], sep="\t")
 PY
 ) || true
 
@@ -46,7 +47,7 @@ if [ -z "${device_id:-}" ]; then
   echo "trust this Mac and turn on Settings → Privacy & Security → Developer Mode."
   exit 1
 fi
-echo "Building for $device_name…"
+echo "Building for ${device_name}…"
 
 # Built against the SDK rather than a destination: a destination makes Xcode
 # want the whole iOS platform component (simulators included) downloaded first.
@@ -70,4 +71,4 @@ codesign --verify "$app" 2>/dev/null || { echo "Build or signing failed; see the
 echo "Installing…"
 xcrun devicectl device install app --device "$device_id" "$app" >/dev/null
 xcrun devicectl device process launch --device "$device_id" --terminate-existing "$bundle_id" >/dev/null
-echo "Spaceterm is running on $device_name."
+echo "Spaceterm is running on ${device_name}."
