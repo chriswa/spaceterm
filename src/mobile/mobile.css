@@ -15,12 +15,25 @@
   --m-danger: #f38ba8;
   --m-safe-top: env(safe-area-inset-top, 0px);
   --m-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --m-safe-left: env(safe-area-inset-left, 0px);
+  --m-safe-right: env(safe-area-inset-right, 0px);
 }
 
 html, body {
   background: var(--m-bg);
+  /* No long-press text selection or callout anywhere: on a phone it is always
+     an accident. Real text fields opt back in below. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
+}
+
+textarea, input, [contenteditable="true"], .cm-content {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 /* The canvas pans and pinches itself (useTouchCamera); the page must not. */
@@ -44,20 +57,20 @@ html, body {
 .mobile-btn--accent { background: var(--m-accent); border-color: var(--m-accent); color: #11111b; }
 .mobile-btn--recording { background: var(--m-danger); border-color: var(--m-danger); color: #11111b; }
 
+/* Tucked into the corner, out of the canvas's way. */
 .mobile-fab {
   position: fixed;
-  right: 16px;
-  /* Clear of the desktop toolbar along the bottom edge. */
-  bottom: calc(88px + var(--m-safe-bottom));
+  right: calc(10px + var(--m-safe-right));
+  bottom: calc(6px + var(--m-safe-bottom));
   z-index: 2147483000;
-  width: 56px;
-  height: 56px;
-  border-radius: 28px;
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
   border: 1px solid var(--m-border);
-  background: var(--m-surface);
-  color: var(--m-text);
-  font-size: 24px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  background: rgba(24, 24, 37, 0.75);
+  color: var(--m-dim);
+  font-size: 18px;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ─── terminal view ─────────────────────────────────────────────────────── */
@@ -181,7 +194,7 @@ html, body {
 .mobile-composer__text {
   flex: 1;
   min-height: 0;
-  margin: 12px;
+  margin: 12px 12px calc(12px + var(--m-safe-bottom));
   padding: 12px;
   border: 1px solid var(--m-border);
   border-radius: 12px;
@@ -193,7 +206,7 @@ html, body {
   outline: none;
 }
 .mobile-composer__error {
-  margin: 0 12px 8px;
+  margin: 12px 12px 0;
   padding: 10px 12px;
   border-radius: 10px;
   background: rgba(243, 139, 168, 0.15);
@@ -203,7 +216,7 @@ html, body {
 .mobile-composer__actions {
   display: flex;
   gap: 8px;
-  padding: 0 12px calc(12px + var(--m-safe-bottom));
+  padding: 12px 12px 0;
 }
 .mobile-btn--mic { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .mobile-btn--ship { flex: 1; }
@@ -216,51 +229,126 @@ html, body {
 }
 @keyframes mobile-pulse { 50% { opacity: 0.3; } }
 
-/* ─── surface list ──────────────────────────────────────────────────────── */
+/* ─── toolbar sheet ─────────────────────────────────────────────────────── */
 
-.mobile-sheet {
+/* App's toolbar, opened as a sheet (Toolbar variant="sheet"): every button and
+   readout in a strip, then the surfaces as rows. */
+.toolbar-sheet {
   position: fixed;
   inset: 0;
   z-index: 2147483150;
   background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: flex-end;
 }
-.mobile-sheet__panel {
-  width: 100%;
-  max-height: 80vh;
+.toolbar-sheet__panel {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  border-radius: 16px 16px 0 0;
   background: var(--m-bg);
-  color: var(--m-text);
-  padding-bottom: var(--m-safe-bottom);
-  overflow: hidden;
+  padding: var(--m-safe-top) var(--m-safe-right) var(--m-safe-bottom) var(--m-safe-left);
 }
-.mobile-list {
-  list-style: none;
-  margin: 0;
+.toolbar.toolbar--sheet {
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   padding: 0;
-  overflow-y: auto;
+  background: transparent;
 }
-.mobile-list__item {
-  width: 100%;
+.toolbar__strip {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border: none;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  flex: none;
   border-bottom: 1px solid var(--m-border);
+  background: #000;
+}
+.toolbar__strip > * { flex: none; }
+/* Menus open upward from the desktop's bottom bar; here they would leave the
+   screen, and the sideways scroll would clip them. Pinned below the strip. */
+.toolbar--sheet .toolbar__menu {
+  position: fixed;
+  top: calc(var(--m-safe-top) + 60px);
+  bottom: auto;
+  left: 12px;
+  right: auto;
+  transform: none;
+  margin: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.toolbar__crabs--list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: block;
+  position: relative;
+}
+.toolbar__crab-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--m-border);
+  background: var(--m-bg);
+  margin: 0;
+}
+.toolbar__crab-row.toolbar__crab-slot--dragging {
+  position: relative;
+  z-index: 2;
+  background: var(--m-raised);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.toolbar__crab-row-icon {
+  position: relative;
+  flex: none;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* The cache timer sits under the icon, as on the desktop, but in flow. */
+.toolbar__crab-row-icon .toolbar__crab-timer {
+  position: static;
+  transform: none;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 12px;
+}
+/* The desktop's 20px icon, enlarged for a thumb; scale composes with the
+   dance's translate and rotate rather than replacing them. */
+.toolbar__crab-row-icon .toolbar__crab {
+  scale: 1.3;
+}
+.toolbar__crab-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: none;
   background: transparent;
   color: var(--m-text);
   text-align: left;
+  padding: 6px 0;
   font: 16px/1.3 -apple-system, system-ui, sans-serif;
 }
-.mobile-list__dot { flex: none; width: 14px; height: 14px; border-radius: 7px; }
-.mobile-list__dot--unviewed { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35); }
-.mobile-list__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mobile-list__kind { color: var(--m-dim); font-size: 13px; }
-.mobile-list__empty { padding: 24px 16px; color: var(--m-dim); }
+.toolbar__crab-row-handle {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--m-dim);
+  font-size: 22px;
+  /* A drag on the handle is a reorder, never a scroll of the list. */
+  touch-action: none;
+}
 
 /* ─── pairing ───────────────────────────────────────────────────────────── */
 

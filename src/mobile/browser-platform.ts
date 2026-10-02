@@ -60,8 +60,7 @@ export function browserPlatform(): PlatformApi {
       onMetrics: () => () => undefined,
       getLaunchPrefs: async () => DEFAULT_LAUNCH_PREFS,
       setLaunchPrefs: async () => DEFAULT_LAUNCH_PREFS,
-      getActiveLaunchPrefs: async () => DEFAULT_LAUNCH_PREFS,
-      getAgentMemory: async () => null
+      getActiveLaunchPrefs: async () => DEFAULT_LAUNCH_PREFS
     }
   }
 }

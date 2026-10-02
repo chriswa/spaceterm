@@ -388,6 +388,12 @@ export interface TerminalReturnSizeMessage {
   nodeId: NodeId
 }
 
+/** Total memory of every process under the PTY daemon. Replies `agent-memory-result`. */
+export interface AgentMemoryQueryMessage {
+  type: 'agent-memory-query'
+  seq: number
+}
+
 export interface TerminalResizeMessage {
   type: 'terminal-resize'
   seq: number
@@ -945,6 +951,7 @@ export type AgentSearchResult =
 
 export type ClientMessage =
   | ShipItMessage
+  | AgentMemoryQueryMessage
   | TerminalBorrowSizeMessage
   | TerminalReturnSizeMessage
   | DictationStartMessage
@@ -1534,7 +1541,15 @@ export interface DictationResultMessage {
   text: string
 }
 
+export interface AgentMemoryResultMessage {
+  type: 'agent-memory-result'
+  seq: number
+  /** Bytes, or null when no daemon is running. */
+  bytes: number | null
+}
+
 export type ServerMessage =
+  | AgentMemoryResultMessage
   | DictationStartedMessage
   | DictationResultMessage
   | AgentMetaAvailabilityResult

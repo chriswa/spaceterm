@@ -80,6 +80,8 @@ export interface ToolbarHost {
   crabNavEvent: CrabNavEvent
   /** The captions' quantised clock, which the crabs' cache timers count down against. */
   now: number
+  /** How the crab group lays out; see `CrabGroupProps.layout`. Set by `Toolbar`. */
+  crabLayout?: 'row' | 'list'
   onStepOut: () => void
 }
 
@@ -157,6 +159,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
     // how "conditionally present" is expressed, rather than a flag on the entry.
     render: (h) => h.crabs.length === 0 ? null : (
       <CrabGroup
+        layout={h.crabLayout}
         crabs={h.crabs}
         onCrabClick={h.onCrabClick}
         onCrabReorder={h.onCrabReorder}

@@ -1,15 +1,19 @@
 import { execFile } from 'child_process'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
 import { promisify } from 'util'
-import * as logger from './logger'
+import { SOCKET_DIR } from '../shared/protocol'
+import { serverLog } from './server-log'
 import { parsePsOutput, sumDescendantRss } from './ps-tree'
 
 const execFileAsync = promisify(execFile)
 
 /**
  * How much memory the agents are using, for the toolbar's readout.
+ *
+ * Measured by the server, on the machine the agents run on, so every client
+ * shows the same number — a phone has no `ps` of this Mac to run. It used to
+ * live in Electron's main process.
  *
  * Every PTY Spaceterm runs is a child of the pty-daemon — that is the whole
  * point of the daemon — so "all running agents" is exactly "the daemon's
@@ -21,14 +25,9 @@ const execFileAsync = promisify(execFile)
  * scaffolding for the power monitor and is off by default; this is always-on
  * toolbar furniture, and one `ps` per second should not require switching a
  * `ioreg` pair on alongside it.
- *
- * The path resolution matches `SOCKET_DIR` in `src/shared/protocol.ts`. It is
- * duplicated rather than imported because that module is the server↔client
- * protocol and pulls in the rest of it; the rule is two lines and has never
- * changed.
  */
 
-const DAEMON_PID_FILE = join(process.env.SPACETERM_HOME ?? join(homedir(), '.spaceterm'), 'pty-daemon.pid')
+const DAEMON_PID_FILE = join(SOCKET_DIR, 'pty-daemon.pid')
 
 async function readDaemonPid(): Promise<number | null> {
   try {
@@ -54,7 +53,7 @@ export async function readAgentMemoryBytes(): Promise<number | null> {
     const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,rss='], { maxBuffer: 8 * 1024 * 1024 })
     return sumDescendantRss(parsePsOutput(stdout), daemonPid)
   } catch (err: unknown) {
-    logger.log('[agent-memory] ps failed: ' + (err instanceof Error ? err.message : String(err)))
+    serverLog('[agent-memory] ps failed: ' + (err instanceof Error ? err.message : String(err)))
     return null
   }
 }

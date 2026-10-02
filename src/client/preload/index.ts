@@ -44,8 +44,7 @@ const host: ElectronHost = {
       onMetrics: (callback: (sample: SystemMetricsSample) => void) => listen('system:metrics', callback),
       getLaunchPrefs: () => ipcRenderer.invoke('system:get-launch-prefs'),
       setLaunchPrefs: (patch) => ipcRenderer.invoke('system:set-launch-prefs', patch),
-      getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs'),
-      getAgentMemory: () => ipcRenderer.invoke('system:agent-memory')
+      getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs')
     }
   },
   pipe: {

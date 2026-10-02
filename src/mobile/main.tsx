@@ -44,6 +44,8 @@ if (!token) {
 } else {
   // Before anything renders: the canvas must never mount a live terminal in a card.
   useSurfacePresenterStore.getState().setExternal(true)
+  // No bar along the bottom; the corner button opens the toolbar as a sheet.
+  useSurfacePresenterStore.getState().setToolbarSheet(true)
   // `window.api` must exist before App's modules run, as on the desktop.
   void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile').then(async () => {
     const { MobileApp } = await import('./MobileApp')

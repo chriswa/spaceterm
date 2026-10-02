@@ -381,7 +381,8 @@ export interface PlatformApi {
   onFocusRequest(callback: (id: string) => void): () => void
   perf: PerfApi
   window: Omit<WindowApi, 'onFocusNode'>
-  system: SystemApi
+  /** Agent memory is measured by the server, not the host; see `createApi`. */
+  system: Omit<SystemApi, 'getAgentMemory'>
 }
 
 export type ServerPipeEventKind = 'open' | 'data' | 'close'

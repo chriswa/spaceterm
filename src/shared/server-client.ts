@@ -306,7 +306,8 @@ export class ServerClient {
       case 'agent-meta-availability-result':
       case 'agent-search-result':
       case 'dictation-started':
-      case 'dictation-result': {
+      case 'dictation-result':
+      case 'agent-memory-result': {
         const pending = this.pending.get(msg.seq)
         if (!pending) return
         this.pending.delete(msg.seq)
@@ -699,6 +700,13 @@ export class ServerClient {
    */
   sendMod(modId: string, event: string, payload: unknown): void {
     this.fireAndForget({ type: 'mod', modId, event, payload })
+  }
+
+  /** Memory of every process under the PTY daemon, measured on the server. */
+  async agentMemory(): Promise<number | null> {
+    const resp = await this.request({ type: 'agent-memory-query' })
+    if (resp.type === 'agent-memory-result') return resp.bytes
+    return unexpected(resp)
   }
 
   // ─── dictation ────────────────────────────────────────────────────────────

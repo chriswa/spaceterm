@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, ccStatusLabel } from './crab-nav'
+import { deriveToolbarIndicator, unreadIsLegible, backgroundToggleIsLegible, ccStatusLabel, reorderFromList } from './crab-nav'
+import { asNodeId } from '../../../../shared/ids'
 
 /**
  * deriveToolbarIndicator maps a surface's agent state onto the toolbar crab's
@@ -224,5 +225,28 @@ describe('ccStatusLabel', () => {
     expect(ccStatusLabel('claude', null, null)).toBeNull()
     // A waitingFor with no status is not a status.
     expect(ccStatusLabel('claude', undefined, 'dialog open')).toBeNull()
+  })
+})
+
+describe('reorderFromList', () => {
+  // Toolbar order a, b, c, d shows in the list as d, c, b, a.
+  const order = ['a', 'b', 'c', 'd'].map(asNodeId)
+
+  it('moving the top row to the bottom makes it first in the toolbar', () => {
+    expect(reorderFromList(order, 0, 3)).toEqual(['d', 'a', 'b', 'c'])
+  })
+
+  it('moving the bottom row to the top makes it last in the toolbar', () => {
+    expect(reorderFromList(order, 3, 0)).toEqual(['b', 'c', 'd', 'a'])
+  })
+
+  it('a move by one swaps neighbours in the stored order too', () => {
+    // list d,c,b,a → move c (row 1) up to row 0 → c,d,b,a → toolbar a,b,d,c
+    expect(reorderFromList(order, 1, 0)).toEqual(['a', 'b', 'd', 'c'])
+  })
+
+  it('does not change the order it was given', () => {
+    reorderFromList(order, 0, 3)
+    expect(order).toEqual(['a', 'b', 'c', 'd'])
   })
 })

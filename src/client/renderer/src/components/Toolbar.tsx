@@ -9,6 +9,8 @@ import {
 
 export type { CrabNavEvent } from './toolbar/CrabGroup'
 
+const CRAB_GROUP = 'crab-group'
+
 /**
  * The toolbar is now the arrangement of its slots and nothing else.
  *
@@ -18,9 +20,17 @@ export type { CrabNavEvent } from './toolbar/CrabGroup'
  * into standalone and host-driven.
  */
 
-export type ToolbarProps = ToolbarHost
+export type ToolbarProps = ToolbarHost & {
+  /**
+   * `bar`, along the bottom of the desktop window. `sheet`, the phone's: every
+   * button and readout in one strip that scrolls sideways, the readouts last,
+   * then the surfaces as a list rather than a row of icons.
+   */
+  variant?: 'bar' | 'sheet'
+}
 
-export function Toolbar(props: ToolbarProps) {
+export function Toolbar({ variant = 'bar', ...host }: ToolbarProps) {
+  const props: ToolbarHost = variant === 'sheet' ? { ...host, crabLayout: 'list' } : host
   // A keyed Fragment, not a wrapper element: `.toolbar__zoom > :last-child` in
   // the stylesheet selects the final *element* in the status slot, and a
   // wrapper — even at `display: contents` — would win that match and drop the
@@ -29,6 +39,21 @@ export function Toolbar(props: ToolbarProps) {
   const render = (widget: ToolbarWidget) => (
     <Fragment key={widget.id}>{renderToolbarWidget(widget, props)}</Fragment>
   )
+
+  if (variant === 'sheet') {
+    const strip = [
+      ...widgetsInSlot('buttons', TOOLBAR_WIDGETS),
+      ...widgetsInSlot('surfaces', TOOLBAR_WIDGETS).filter((w) => w.id !== CRAB_GROUP),
+      ...widgetsInSlot('status', TOOLBAR_WIDGETS)
+    ]
+    const crabs = TOOLBAR_WIDGETS.find((w) => w.id === CRAB_GROUP)
+    return (
+      <div className="toolbar toolbar--sheet">
+        <div className="toolbar__strip">{strip.map(render)}</div>
+        {crabs && render(crabs)}
+      </div>
+    )
+  }
 
   return (
     <div className="toolbar">

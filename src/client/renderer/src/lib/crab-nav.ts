@@ -281,3 +281,17 @@ function crabTier(crab: CrabEntry): number {
     case 'asleep':     return 99
   }
 }
+
+/**
+ * A reorder made in the phone's surface list, as the toolbar order to store.
+ *
+ * The list shows the toolbar's order reversed — newest, the row's rightmost,
+ * at the top — so a row moved from `fromRow` to `toRow` there is a move in the
+ * other direction in the stored order.
+ */
+export function reorderFromList(toolbarOrder: NodeId[], fromRow: number, toRow: number): NodeId[] {
+  const list = [...toolbarOrder].reverse()
+  const [moved] = list.splice(fromRow, 1)
+  list.splice(toRow, 0, moved)
+  return list.reverse()
+}

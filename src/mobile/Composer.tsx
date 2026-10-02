@@ -16,6 +16,9 @@ import { insertDictation } from './pcm'
  * failure worth designing against.
  */
 
+/** A button press that must not take focus from the text (and so dismiss the keyboard). */
+const keepFocus = (e: { preventDefault(): void }) => e.preventDefault()
+
 const draftKey = (nodeId: NodeId) => `mobile.draft.${nodeId}`
 
 function loadDraft(nodeId: NodeId): string {
@@ -117,6 +120,27 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
         <button className="mobile-btn" onClick={onClose}>‹ Terminal</button>
         <span className="mobile-term__title">To: {node ? nodeDisplayTitle(node) : 'surface gone'}</span>
       </header>
+      {/* Above the text, so the keyboard never covers them. */}
+      <div className="mobile-composer__actions">
+        <button
+          className={`mobile-btn mobile-btn--mic${mic.kind === 'listening' ? ' mobile-btn--recording' : ''}`}
+          onMouseDown={keepFocus}
+          onClick={toggleMic}
+          disabled={mic.kind === 'starting' || mic.kind === 'transcribing'}
+        >
+          {mic.kind === 'listening' && <span className="mobile-recording-dot" />}
+          {micLabel}
+        </button>
+        <button className="mobile-btn" onMouseDown={keepFocus} onClick={() => setText('')} disabled={!text}>Clear</button>
+        <button
+          className="mobile-btn mobile-btn--accent mobile-btn--ship"
+          onClick={ship}
+          disabled={!live || !text.trim() || shipping || mic.kind !== 'idle'}
+          title={live ? 'Paste into the surface and submit' : 'This surface is not running'}
+        >
+          {shipping ? 'Shipping…' : 'Ship it'}
+        </button>
+      </div>
       <textarea
         ref={areaRef}
         className="mobile-composer__text"
@@ -131,25 +155,6 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
         autoCapitalize="sentences"
       />
       {error && <div className="mobile-composer__error" role="alert">{error}</div>}
-      <footer className="mobile-composer__actions">
-        <button
-          className={`mobile-btn mobile-btn--mic${mic.kind === 'listening' ? ' mobile-btn--recording' : ''}`}
-          onClick={toggleMic}
-          disabled={mic.kind === 'starting' || mic.kind === 'transcribing'}
-        >
-          {mic.kind === 'listening' && <span className="mobile-recording-dot" />}
-          {micLabel}
-        </button>
-        <button className="mobile-btn" onClick={() => setText('')} disabled={!text}>Clear</button>
-        <button
-          className="mobile-btn mobile-btn--accent mobile-btn--ship"
-          onClick={ship}
-          disabled={!live || !text.trim() || shipping || mic.kind !== 'idle'}
-          title={live ? 'Paste into the surface and submit' : 'This surface is not running'}
-        >
-          {shipping ? 'Shipping…' : 'Ship it'}
-        </button>
-      </footer>
     </div>
   )
 }

@@ -3,7 +3,7 @@ import crabIcon from '../../assets/crab.png'
 import cursorAgentIcon from '../../assets/cursor-agent.png'
 import codexAgentIcon from '../../assets/codex-agent.png'
 import terminalIcon from '../../assets/terminal.png'
-import type { AgentIndicatorKind, CrabEntry } from '../../lib/crab-nav'
+import { reorderFromList, type AgentIndicatorKind, type CrabEntry } from '../../lib/crab-nav'
 import { cacheCountdownText, formatCountdownMinutes } from '../../../../../shared/elapsed-label'
 import { CrabDance } from '../../lib/crab-dance'
 import { CrabHat } from '../CrabHat'
@@ -69,6 +69,13 @@ function indicatorKindClass(kind: AgentIndicatorKind): string {
 }
 
 export interface CrabGroupProps {
+  /**
+   * `row`, the desktop toolbar's: icons side by side in the operator's order.
+   * `list`, the phone's surface sheet: one row per surface with its title,
+   * newest (the row's rightmost) first, reordered by a drag handle. The icons,
+   * hats, effort signs, timers and dance are the same either way.
+   */
+  layout?: 'row' | 'list'
   crabs: CrabEntry[]
   onCrabClick: (nodeId: NodeId, metaKey: boolean) => void
   onCrabReorder: (order: NodeId[]) => void
@@ -77,7 +84,7 @@ export interface CrabGroupProps {
   now: number
 }
 
-export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent, now }: CrabGroupProps) {
+export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent, now }: CrabGroupProps) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
   const summaryTargetNodeId = useSummaryChatStore(s => s.targetNodeId)
   const summaryPhase = useSummaryChatStore(s => s.phase)
@@ -105,7 +112,8 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
   // pollute measurements → bogus deltas → more animations.
   useLayoutEffect(() => {
     const el = containerRef.current
-    if (!el) return
+    // The list moves its rows itself while dragging; these are horizontal measures.
+    if (!el || layout === 'list') return
 
     const prevCrabs = prevCrabsRef.current
     const oldPositions = positionsRef.current
@@ -200,7 +208,7 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
 
     positionsRef.current = newPositions
     prevCrabsRef.current = crabs
-  }, [crabs])
+  }, [crabs, layout])
 
   // Beat-synced glow/bounce/rock animation loop
   useEffect(() => {
@@ -395,7 +403,7 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
 
   // Triangle navigation indicator animation
   useEffect(() => {
-    if (!crabNavEvent || !containerRef.current || !triangleRef.current) return
+    if (layout === 'list' || !crabNavEvent || !containerRef.current || !triangleRef.current) return
 
     const container = containerRef.current
     const triangle = triangleRef.current
@@ -466,7 +474,102 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
         clearTimeout(fadeTimeout)
       }
     }
-  }, [crabNavEvent])
+  }, [crabNavEvent, layout])
+
+  /** The crab itself — the same element in either layout, which is what the dance loop animates. */
+  const crabButton = (crab: CrabEntry, props: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button
+      className={`toolbar__crab toolbar__crab--${crab.color}${indicatorKindClass(crab.kind)}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
+      {...props}
+    >
+      <span
+        className="toolbar__crab-mark"
+        style={{ WebkitMaskImage: `url(${indicatorIconUrl(crab.kind)})`, maskImage: `url(${indicatorIconUrl(crab.kind)})` }}
+      />
+      {crab.hat && <CrabHat hat={crab.hat} className="toolbar__crab-hat" />}
+      <CrabEffortSigns steps={crab.effortSteps} className="toolbar__crab-effort" />
+    </button>
+  )
+
+  if (layout === 'list') {
+    // Newest first: the row's rightmost crab heads the list.
+    const rows = [...crabs].reverse()
+
+    /**
+     * Drag a row by its handle to reorder. Pointer events, so a finger and a
+     * mouse both work; the handle is `touch-action: none`, so the drag is not
+     * also a scroll of the list.
+     */
+    const startRowDrag = (e: React.PointerEvent, rowIndex: number) => {
+      const container = containerRef.current
+      if (!container) return
+      e.preventDefault()
+      const slots = Array.from(container.querySelectorAll<HTMLElement>('.toolbar__crab-slot'))
+      const centers = slots.map((s) => s.offsetTop + s.offsetHeight / 2)
+      const stride = centers.length > 1 ? centers[1] - centers[0] : slots[0]?.offsetHeight ?? 40
+      const dragged = slots[rowIndex]
+      const startY = e.clientY
+      let target = rowIndex
+      isDraggingRef.current = true
+      dragged.classList.add('toolbar__crab-slot--dragging')
+
+      const onMove = (ev: PointerEvent) => {
+        const dy = ev.clientY - startY
+        dragged.style.transform = `translateY(${dy}px)`
+        const center = centers[rowIndex] + dy
+        let idx = centers.filter((c) => c < center).length
+        if (idx > rowIndex) idx--
+        target = Math.max(0, Math.min(idx, slots.length - 1))
+        slots.forEach((slot, i) => {
+          if (i === rowIndex) return
+          const shift = target < rowIndex && i >= target && i < rowIndex ? stride
+            : target > rowIndex && i > rowIndex && i <= target ? -stride : 0
+          slot.style.transform = shift ? `translateY(${shift}px)` : ''
+        })
+      }
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+        slots.forEach((slot) => { slot.style.transform = '' })
+        dragged.classList.remove('toolbar__crab-slot--dragging')
+        isDraggingRef.current = false
+        if (target === rowIndex) return
+        onCrabReorder(reorderFromList(crabs.map((c) => c.nodeId), rowIndex, target))
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    }
+
+    return (
+      <div className="toolbar__crabs toolbar__crabs--list" ref={containerRef}>
+        {rows.map((crab, i) => {
+          const countdown = cacheCountdownText(crab.cacheWarmUntil, crab.cacheWarmEstimated, now, formatCountdownMinutes)
+          const open = () => onCrabClick(crab.nodeId, false)
+          return (
+            <div key={crab.nodeId} className="toolbar__crab-slot toolbar__crab-row" data-node-id={crab.nodeId}>
+              <div className="toolbar__crab-row-icon">
+                {crabButton(crab, { onClick: open })}
+                {crab.nodeId === summaryTargetNodeId && (
+                  <SummaryBubble state={BUBBLE_STATE[summaryPhase[crab.nodeId] ?? 'ready']} />
+                )}
+                {countdown !== null && <span className="toolbar__crab-timer">{countdown}</span>}
+              </div>
+              <button className="toolbar__crab-row-title" onClick={open}>{crab.title}</button>
+              <span
+                className="toolbar__crab-row-handle"
+                aria-label="Drag to reorder"
+                onPointerDown={(e) => startRowDrag(e, i)}
+              >
+                ≡
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
 
   // Compress crab icons when there are more than 20 so they overlap
   const FULL_COUNT = 20
@@ -502,27 +605,19 @@ export function CrabGroup({ crabs, onCrabClick, onCrabReorder, selectedNodeId, c
               } : {}),
             }}
           >
-            <button
-              className={`toolbar__crab toolbar__crab--${crab.color}${indicatorKindClass(crab.kind)}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
-              onMouseDown={(e) => handleCrabMouseDown(e, i)}
-              onMouseEnter={() => {
+            {crabButton(crab, {
+              onMouseDown: (e) => handleCrabMouseDown(e, i),
+              onMouseEnter: () => {
                 if (!isDraggingRef.current) {
                   useHoveredCardStore.getState().setToolbarHoveredNode(crab.nodeId)
                 }
-              }}
-              onMouseLeave={() => {
+              },
+              onMouseLeave: () => {
                 useHoveredCardStore.getState().setToolbarHoveredNode(null)
-              }}
-              data-tooltip={crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title}
-              data-tooltip-no-flip
-            >
-              <span
-                className="toolbar__crab-mark"
-                style={{ WebkitMaskImage: `url(${indicatorIconUrl(crab.kind)})`, maskImage: `url(${indicatorIconUrl(crab.kind)})` }}
-              />
-              {crab.hat && <CrabHat hat={crab.hat} className="toolbar__crab-hat" />}
-              <CrabEffortSigns steps={crab.effortSteps} className="toolbar__crab-effort" />
-            </button>
+              },
+              'data-tooltip': crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title,
+              'data-tooltip-no-flip': true
+            } as React.ButtonHTMLAttributes<HTMLButtonElement>)}
             {summaryTarget && <SummaryBubble state={summaryState} />}
             {countdown !== null && <span className="toolbar__crab-timer">{countdown}</span>}
           </div>

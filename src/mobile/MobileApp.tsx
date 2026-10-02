@@ -5,12 +5,11 @@ import { useNodeStore } from '@/stores/nodeStore'
 import type { NodeId } from '../shared/ids'
 import { TerminalView } from './TerminalView'
 import { Composer } from './Composer'
-import { SurfaceList } from './SurfaceList'
 import { useVisualViewportVars } from './viewport'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
- * for whichever terminal is focused, a surface list, and a composer.
+ * for whichever terminal is focused, the toolbar as a sheet, and a composer.
  *
  * The canvas is the desktop's own `App`, untouched but for one flag (see
  * surfacePresenterStore): focusing a terminal works as it always has, and
@@ -30,7 +29,6 @@ function rememberOpen(nodeId: NodeId | null): void {
 export function MobileApp() {
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
-  const [listOpen, setListOpen] = useState(false)
   useVisualViewportVars()
 
   /**
@@ -69,16 +67,14 @@ export function MobileApp() {
     <>
       <App />
       {!focusedTerminal && (
-        <button className="mobile-fab" onClick={() => setListOpen(true)} aria-label="Surfaces">☰</button>
-      )}
-      {listOpen && (
-        <SurfaceList
-          onPick={(nodeId) => {
-            setListOpen(false)
-            useSurfacePresenterStore.getState().requestFocus(nodeId)
-          }}
-          onClose={() => setListOpen(false)}
-        />
+        // Opens the toolbar, which on the phone is a sheet with the surfaces in it.
+        <button
+          className="mobile-fab"
+          onClick={() => useSurfacePresenterStore.getState().setToolbarSheetOpen(true)}
+          aria-label="Toolbar and surfaces"
+        >
+          ☰
+        </button>
       )}
       {focusedTerminal && (
         <TerminalView

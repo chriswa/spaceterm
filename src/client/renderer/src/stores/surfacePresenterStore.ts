@@ -26,6 +26,14 @@ interface SurfacePresenterState {
    * behave the same on both.
    */
   focusRequest: { nodeId: NodeId; seq: number } | null
+  /**
+   * The toolbar as a sheet opened on demand (the phone), instead of a bar
+   * along the bottom. App renders it either way; this only says how.
+   */
+  toolbarSheet: boolean
+  toolbarSheetOpen: boolean
+  setToolbarSheet(sheet: boolean): void
+  setToolbarSheetOpen(open: boolean): void
   setExternal(external: boolean): void
   publishFocusedTerminal(nodeId: NodeId | null): void
   requestUnfocus(): void
@@ -37,6 +45,10 @@ export const useSurfacePresenterStore = create<SurfacePresenterState>((set) => (
   focusedTerminal: null,
   unfocusRequests: 0,
   focusRequest: null,
+  toolbarSheet: false,
+  toolbarSheetOpen: false,
+  setToolbarSheet: (toolbarSheet) => set({ toolbarSheet }),
+  setToolbarSheetOpen: (toolbarSheetOpen) => set({ toolbarSheetOpen }),
   setExternal: (external) => set({ external }),
   publishFocusedTerminal: (nodeId) => set((s) => (s.focusedTerminal === nodeId ? s : { focusedTerminal: nodeId })),
   requestUnfocus: () => set((s) => ({ unfocusRequests: s.unfocusRequests + 1 })),

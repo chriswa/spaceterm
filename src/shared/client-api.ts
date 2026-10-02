@@ -157,7 +157,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
         cb(m.nodeId as NodeId | null)
       })
     },
-    system: platform.system,
+    system: { ...platform.system, getAgentMemory: () => client.agentMemory() },
     mods: {
       send: (modId, event, payload) => client.sendMod(modId, event, payload),
       // Filtered here so a mod never sees another's traffic by accident.

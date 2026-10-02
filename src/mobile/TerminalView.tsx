@@ -105,6 +105,9 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
     if (!el) return
     const g = gestureRef.current
     const onStart = (e: TouchEvent) => {
+      // Owning the touch from its start is what stops WebKit beginning a
+      // long-press text selection; every outcome is decided here, not by it.
+      e.preventDefault()
       const t = e.touches[0]
       g.begin(t.clientX, t.clientY, e.timeStamp)
       clearTimeout(armTimer.current)
@@ -136,7 +139,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
         setKeyboard(true)
       } else if (outcome === 'exit') onClose()
     }
-    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchstart', onStart, { passive: false })
     el.addEventListener('touchmove', onMove, { passive: false })
     el.addEventListener('touchend', onEnd, { passive: false })
     el.addEventListener('touchcancel', onEnd, { passive: false })

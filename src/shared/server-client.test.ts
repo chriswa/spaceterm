@@ -143,7 +143,7 @@ describe('createApi', () => {
     system: {
       setMetricsEnabled: () => undefined, onMetrics: () => () => undefined,
       getLaunchPrefs: async () => ({ highPerformanceGpu: false }), setLaunchPrefs: async () => ({ highPerformanceGpu: false }),
-      getActiveLaunchPrefs: async () => ({ highPerformanceGpu: false }), getAgentMemory: async () => null
+      getActiveLaunchPrefs: async () => ({ highPerformanceGpu: false })
     }
   }
 

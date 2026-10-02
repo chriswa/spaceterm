@@ -1433,6 +1433,8 @@ export function App() {
   // which one that is, and give up focus when it says the view has closed.
   // See surfacePresenterStore.
   const presentTerminalsExternally = useSurfacePresenterStore((s) => s.external)
+  const toolbarSheet = useSurfacePresenterStore((s) => s.toolbarSheet)
+  const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
   useEffect(() => {
     const node = focusedId ? useNodeStore.getState().nodes[focusedId] : undefined
     useSurfacePresenterStore.getState().publishFocusedTerminal(node?.type === 'terminal' ? node.id : null)
@@ -2869,22 +2871,39 @@ export function App() {
           style={{ display: 'none', position: 'absolute', pointerEvents: 'none', zIndex: 999999 }}
         />
       </Canvas>
-      <Toolbar
-        crabs={crabs}
-        onCrabClick={handleCrabClick}
-        onCrabReorder={handleCrabReorder}
-        selectedNodeId={focusedId}
-        crabNavEvent={crabNavEvent}
-        now={coarseNow}
-        onHelpClick={() => setHelpVisible(v => !v)}
-        keycastEnabled={keycastEnabled}
-        onKeycastToggle={() => setKeycastEnabled(v => { const next = !v; localStorage.setItem('toolbar.keycast', String(next)); return next })}
-        onDebugCapture={handleDebugCapture}
-        onInertiaLogDump={handleInertiaLogDump}
-        restartingSpaceterm={restartingSpaceterm}
-        onRestartSpaceterm={handleRestartSpaceterm}
-        onStepOut={stepOut}
-      />
+      {(() => {
+        const toolbarProps = {
+          crabs,
+          onCrabClick: handleCrabClick,
+          onCrabReorder: handleCrabReorder,
+          selectedNodeId: focusedId,
+          crabNavEvent,
+          now: coarseNow,
+          onHelpClick: () => setHelpVisible(v => !v),
+          keycastEnabled,
+          onKeycastToggle: () => setKeycastEnabled(v => { const next = !v; localStorage.setItem('toolbar.keycast', String(next)); return next }),
+          onDebugCapture: handleDebugCapture,
+          onInertiaLogDump: handleInertiaLogDump,
+          restartingSpaceterm,
+          onRestartSpaceterm: handleRestartSpaceterm,
+          onStepOut: stepOut
+        }
+        if (!toolbarSheet) return <Toolbar {...toolbarProps} />
+        if (!toolbarSheetOpen) return null
+        const closeSheet = () => useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+        // The phone's: the same toolbar, opened as a sheet; picking a surface closes it.
+        return (
+          <div className="toolbar-sheet" onClick={closeSheet}>
+            <div className="toolbar-sheet__panel" onClick={(e) => e.stopPropagation()}>
+              <Toolbar
+                {...toolbarProps}
+                variant="sheet"
+                onCrabClick={(nodeId, metaKey) => { closeSheet(); handleCrabClick(nodeId, metaKey) }}
+              />
+            </div>
+          </div>
+        )
+      })()}
       {quickActions && resolvedPresets[quickActions.nodeId] && (
         <FloatingToolbar
           nodeId={quickActions.nodeId}

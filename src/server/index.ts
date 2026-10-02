@@ -37,6 +37,7 @@ import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrow
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
+import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
 import { refreshMobileBuild, realMobileBuildDeps } from './mobile-build'
@@ -1487,6 +1488,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // not cut someone else's borrow short.
       if (terminalBorrowers.get(msg.nodeId) === client.id) returnBorrowedSize(msg.nodeId, 'returned')
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'agent-memory-query': {
+      const seq = msg.seq
+      void readAgentMemoryBytes().then((bytes) => send(client.link, { type: 'agent-memory-result', seq, bytes }))
       break
     }
 
