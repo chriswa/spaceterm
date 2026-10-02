@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { TerminalGesture, LONG_PRESS_MS, EXIT_DISTANCE_PX } from './terminal-gesture'
+import { TerminalGesture, LONG_PRESS_MS, EXIT_DISTANCE_PX, FLICK_DISTANCE_PX } from './terminal-gesture'
 
 describe('TerminalGesture', () => {
   it('a quick touch without movement is a tap', () => {
@@ -19,11 +19,29 @@ describe('TerminalGesture', () => {
   it('a vertical drag scrolls by how far the finger moved, finger-up positive', () => {
     const g = new TerminalGesture()
     g.begin(100, 300, 0)
-    expect(g.move(100, 285)).toEqual({ kind: 'scroll', deltaY: 15 })
-    expect(g.move(102, 260)).toEqual({ kind: 'scroll', deltaY: 25 })
-    expect(g.move(100, 270)).toEqual({ kind: 'scroll', deltaY: -10 })
+    // The first scroll includes the travel before the direction was decided.
+    expect(g.move(100, 280)).toEqual({ kind: 'scroll', deltaY: 20 })
+    expect(g.move(102, 255)).toEqual({ kind: 'scroll', deltaY: 25 })
+    expect(g.move(100, 265)).toEqual({ kind: 'scroll', deltaY: -10 })
     // Neither a tap nor a press once it has scrolled, however long it took.
     expect(g.end(5000)).toBe('none')
+  })
+
+  it('a thumb arc that starts out sideways is still a scroll', () => {
+    // 25 across and 18 up at the decision point — far from flat enough to be a swipe.
+    const g = new TerminalGesture()
+    g.begin(100, 300, 0)
+    expect(g.move(125, 282).kind).toBe('scroll')
+    g.move(140, 200)
+    expect(g.end(150)).toBe('none')
+  })
+
+  it('a swipe that drifts into a vertical drag does not leave', () => {
+    const g = new TerminalGesture()
+    g.begin(300, 300, 0)
+    expect(g.move(270, 305).kind).toBe('swipe')
+    g.move(150, 200)
+    expect(g.end(100)).toBe('none')
   })
 
   it('stays a scroll once it is one, even if the finger drifts sideways', () => {
@@ -44,21 +62,36 @@ describe('TerminalGesture', () => {
     }
   })
 
-  it('a short horizontal flick leaves; the same distance dragged slowly does not', () => {
+  it('a quick horizontal flick leaves; the same distance dragged slowly does not', () => {
     const quick = new TerminalGesture()
     quick.begin(200, 300, 0)
-    quick.move(140, 300)
-    expect(quick.end(80)).toBe('exit')
+    quick.move(200 - FLICK_DISTANCE_PX - 5, 302)
+    expect(quick.end(100)).toBe('exit')
 
     const slow = new TerminalGesture()
     slow.begin(200, 300, 0)
-    slow.move(140, 300)
+    slow.move(200 - FLICK_DISTANCE_PX - 5, 302)
     expect(slow.end(1000)).toBe('none')
+  })
+
+  it('a short quick sideways nudge does not leave', () => {
+    const g = new TerminalGesture()
+    g.begin(200, 300, 0)
+    g.move(140, 301)
+    expect(g.end(60)).toBe('none')
+  })
+
+  it('movement past the slop that never picks a direction is neither a tap nor a press', () => {
+    const g = new TerminalGesture()
+    g.begin(100, 100, 0)
+    g.move(108, 108)
+    expect(g.isStill()).toBe(false)
+    expect(g.end(LONG_PRESS_MS + 100)).toBe('none')
   })
 
   it('reports how far a swipe has gone, for feedback while dragging', () => {
     const g = new TerminalGesture()
     g.begin(200, 300, 0)
-    expect(g.move(170, 302)).toEqual({ kind: 'swipe', dx: -30 })
+    expect(g.move(170, 303)).toEqual({ kind: 'swipe', dx: -30 })
   })
 })
