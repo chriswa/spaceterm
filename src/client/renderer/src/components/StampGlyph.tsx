@@ -39,9 +39,9 @@ export function StampGlyph({ stamp }: { stamp: VisibleStamp }) {
 }
 
 /**
- * The marks beside a card: to its left, half its height, vertically centred.
- * The auto-stamp sits next to the card and a manual stamp to its left.
- * Rendered as a child of the card shell, whose box is the card's.
+ * The marks beside a card, half its height and vertically centred: a manual
+ * stamp to its left, the auto-stamp to its right. Rendered as a child of the
+ * card shell, whose box is the card's.
  */
 export function StampMark({ stamp, autoStamp, autoStampColor, onRegenerateAutoStamp }: {
   stamp: NodeStamp | undefined
@@ -53,14 +53,20 @@ export function StampMark({ stamp, autoStamp, autoStampColor, onRegenerateAutoSt
   const manual = stamp && stamp !== 'none' ? stamp : undefined
   if (!manual && !autoStamp) return null
   return (
-    <div className="node-stamps">
+    <>
       {manual && (
-        <div className={`node-stamp node-stamp--${manual}`} aria-label={STAMP_LABELS[manual]}>
-          <StampGlyph stamp={manual} />
+        <div className="node-stamp-side node-stamp-side--left">
+          <div className={`node-stamp node-stamp--${manual}`} aria-label={STAMP_LABELS[manual]}>
+            <StampGlyph stamp={manual} />
+          </div>
         </div>
       )}
-      {autoStamp && <AutoStampMark autoStamp={autoStamp} color={autoStampColor} onRegenerate={onRegenerateAutoStamp} />}
-    </div>
+      {autoStamp && (
+        <div className="node-stamp-side node-stamp-side--right">
+          <AutoStampMark autoStamp={autoStamp} color={autoStampColor} onRegenerate={onRegenerateAutoStamp} />
+        </div>
+      )}
+    </>
   )
 }
 

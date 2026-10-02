@@ -1167,18 +1167,23 @@ html, body, #root {
   );
 }
 
-/* A node's stamps: left of the card, half its height, centred on it. The shell
-   is the card's box, so the percentages are the card's. The auto-stamp is the
-   one beside the card; a manual stamp sits to its left. */
-.node-stamps {
+/* A node's stamps, half its height and centred on it: a manual stamp to the
+   left of the card, the auto-stamp to the right. The shell is the card's box,
+   so the percentages are the card's. */
+.node-stamp-side {
   position: absolute;
-  right: calc(100% + 40px);
   top: 25%;
   height: 50%;
   display: flex;
-  justify-content: flex-end;
-  gap: 40px;
   pointer-events: none;
+}
+.node-stamp-side--left {
+  right: calc(100% + 60px);
+  justify-content: flex-end;
+}
+.node-stamp-side--right {
+  left: calc(100% + 60px);
+  justify-content: flex-start;
 }
 
 .node-stamp {

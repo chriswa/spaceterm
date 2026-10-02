@@ -107,13 +107,12 @@ describe('an auto-stamp', () => {
     })
   }
 
-  it('is drawn as a mask of its SVG, beside the card and right of a manual stamp', () => {
+  it('is drawn as a mask of its SVG, right of the card, with a manual stamp on the left', () => {
     const { container } = render(<TerminalCard {...props()} />)
     setAutoStamp('star', { title: 'Fix the parser', status: 'ready', svg: SVG, description: 'A wrench.', previousDescriptions: ['A wrench.'], costUsd: 0.01 })
 
-    const marks = [...container.querySelector('.node-stamps')!.children]
-    expect(marks.map((m) => m.className)).toEqual(['node-stamp node-stamp--star', 'node-stamp-auto node-stamp-auto--ready'])
-    const auto = marks[1] as HTMLElement
+    expect(container.querySelector('.node-stamp-side--left > .node-stamp--star')).not.toBeNull()
+    const auto = container.querySelector('.node-stamp-side--right > .node-stamp-auto--ready') as HTMLElement
     expect(auto.style.maskImage).toContain(encodeURIComponent(SVG))
     expect(auto.innerHTML).toBe('')
     expect(auto.title).toBe('$0.010 spent')
