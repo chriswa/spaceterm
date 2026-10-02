@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { Momentum, VelocityTracker } from '../lib/touch-momentum'
 
 /**
  * Touch for the canvas camera: one finger pans, two pinch-zoom about their
@@ -13,6 +14,10 @@ import { useEffect, useRef } from 'react'
  * browser still turns it into the click that focuses a card. A finger held
  * still is a long press — the touch version of a desktop ⌘-click — and its
  * click is suppressed, so it does not also focus whatever it was held on.
+ *
+ * A pan that is still moving when the finger lifts carries on and eases to a
+ * stop, the way iOS scroll views do (see touch-momentum.ts); the next touch
+ * catches it.
  */
 
 /** Movement below this many pixels is still a tap. */
@@ -50,13 +55,42 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
     let longPressed = false
     const cancelPress = () => clearTimeout(pressTimer)
 
+    const tracker = new VelocityTracker()
+    let glideFrame = 0
+    const stopGlide = () => {
+      cancelAnimationFrame(glideFrame)
+      glideFrame = 0
+    }
+    /** Carry the pan on from the finger's release velocity until it decays away. */
+    const glide = (vx: number, vy: number) => {
+      const momentum = new Momentum(vx, vy)
+      if (!momentum.moving) return
+      let last = performance.now()
+      const frame = (now: number) => {
+        const step = momentum.step(now - last)
+        last = now
+        if (!step) {
+          glideFrame = 0
+          return
+        }
+        // pan() takes the camera's motion, which is opposite to the finger's.
+        controlsRef.current.pan(-step.dx, -step.dy)
+        glideFrame = requestAnimationFrame(frame)
+      }
+      glideFrame = requestAnimationFrame(frame)
+    }
+
     const begin = () => {
       cancelPress()
       if (!panning && !pinch) controlsRef.current.onGestureStart()
     }
 
     const onStart = (e: TouchEvent) => {
+      // A touch catches a glide in progress, as on any iOS scroll view.
+      stopGlide()
+      tracker.reset()
       if (e.touches.length === 1) {
+        tracker.add(e.touches[0].clientX, e.touches[0].clientY, e.timeStamp)
         origin = last = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         panning = false
         pinch = null
@@ -96,6 +130,7 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
       e.preventDefault()
       controlsRef.current.pan(last.x - t.clientX, last.y - t.clientY)
       last = { x: t.clientX, y: t.clientY }
+      tracker.add(t.clientX, t.clientY, e.timeStamp)
     }
 
     const onEnd = (e: TouchEvent) => {
@@ -103,6 +138,10 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
         cancelPress()
         // The press already did something; it must not also become a click.
         if (longPressed && e.cancelable) e.preventDefault()
+        if (panning && !pinch && !longPressed) {
+          const { vx, vy } = tracker.velocity(e.timeStamp)
+          glide(vx, vy)
+        }
         longPressed = false
         origin = last = null
         panning = false
@@ -113,6 +152,7 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
         panning = true
         last = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         origin = last
+        tracker.reset()
       }
     }
 
@@ -122,6 +162,7 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
     el.addEventListener('touchcancel', onEnd, { passive: false })
     return () => {
       cancelPress()
+      stopGlide()
       el.removeEventListener('touchstart', onStart)
       el.removeEventListener('touchmove', onMove)
       el.removeEventListener('touchend', onEnd)

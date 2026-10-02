@@ -6,10 +6,11 @@ import { useTouchCamera, type TouchCameraControls } from './useTouchCamera'
  * jsdom has no `Touch` constructor, so touches are plain objects on a plain
  * event — which is all the hook reads.
  */
-function touch(el: Element, type: string, points: Array<[number, number]>): boolean {
+function touch(el: Element, type: string, points: Array<[number, number]>, timeStamp?: number): boolean {
   const event = new Event(type, { bubbles: true, cancelable: true })
   const touches = points.map(([clientX, clientY], identifier) => ({ identifier, clientX, clientY }))
   Object.defineProperty(event, 'touches', { value: touches })
+  if (timeStamp !== undefined) Object.defineProperty(event, 'timeStamp', { value: timeStamp })
   el.dispatchEvent(event)
   return event.defaultPrevented
 }
@@ -80,5 +81,49 @@ describe('useTouchCamera', () => {
     vi.advanceTimersByTime(1000)
     expect(controls.onLongPress).not.toHaveBeenCalled()
     expect(touch(viewport, 'touchend', [])).toBe(false)
+  })
+
+  describe('momentum', () => {
+    const fling = (viewport: Element, endAt: number) => {
+      touch(viewport, 'touchstart', [[300, 300]], 1000)
+      touch(viewport, 'touchmove', [[280, 300]], 1016)
+      touch(viewport, 'touchmove', [[240, 300]], 1032)
+      touch(viewport, 'touchmove', [[200, 300]], 1048)
+      touch(viewport, 'touchend', [], endAt)
+    }
+
+    it('a flicked pan keeps going after release, the way the finger was going', () => {
+      vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+      const { viewport, controls } = setup()
+      fling(viewport, 1050)
+      const duringDrag = controls.pan.mock.calls.length
+      vi.advanceTimersByTime(200)
+      const glide = controls.pan.mock.calls.slice(duringDrag)
+      expect(glide.length).toBeGreaterThan(3)
+      // The finger moved left, so the camera keeps moving the way pan() was already being told.
+      expect(glide.every(([dx]) => dx > 0)).toBe(true)
+      // And it slows.
+      expect(glide[glide.length - 1][0]).toBeLessThan(glide[0][0])
+    })
+
+    it('a finger that stopped before lifting does not glide', () => {
+      vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+      const { viewport, controls } = setup()
+      fling(viewport, 1300)
+      const duringDrag = controls.pan.mock.calls.length
+      vi.advanceTimersByTime(200)
+      expect(controls.pan.mock.calls.length).toBe(duringDrag)
+    })
+
+    it('a new touch catches a glide in progress', () => {
+      vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+      const { viewport, controls } = setup()
+      fling(viewport, 1050)
+      vi.advanceTimersByTime(50)
+      touch(viewport, 'touchstart', [[100, 100]], 1200)
+      const caught = controls.pan.mock.calls.length
+      vi.advanceTimersByTime(500)
+      expect(controls.pan.mock.calls.length).toBe(caught)
+    })
   })
 })
