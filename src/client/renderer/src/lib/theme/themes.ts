@@ -85,6 +85,20 @@ const FALLBACK_THEME: Theme = {
 const BUILT_IN_THEMES: readonly Theme[] = [
   FALLBACK_THEME,
   {
+    // The default floor with each stone faintly tinted by its angle, for
+    // telling one machine's canvas from another's at a glance.
+    id: 'rainbow-pavers',
+    label: 'Rainbow Pavers',
+    blurb: 'Pavers in muted colours that turn round the root node — still, textured',
+    facets: {
+      background: BACKGROUNDS.rainbowPavers,
+      edges: EDGES.static,
+      rootNode: ROOT_NODES.reticle,
+      cardChrome: CARD_CHROMES.technical,
+      nodeTint: NODE_TINTS.neutral,
+    },
+  },
+  {
     // The look this app shipped with, and the cheapest animated one.
     id: 'ember',
     label: 'Ember',

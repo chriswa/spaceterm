@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ROOT_DISC_RADIUS } from '../../../../../shared/node-size'
-import { PAVER_BG_FRAG, PAVER_LATTICE, PAVER_TONE } from './paver-background'
+import { PAVER_BG_FRAG, PAVER_LATTICE, PAVER_TONE, RAINBOW_PAVER_BG_FRAG } from './paver-background'
 
 /**
  * What the paver background has to keep being.
@@ -349,5 +349,18 @@ describe('the shader', () => {
     for (const [name, full] of Object.entries(MODULATION)) {
       expect(src, name).toContain(`const float ${name} = ${(full * CONTRAST).toFixed(4)};`)
     }
+  })
+})
+
+describe('the rainbow variant', () => {
+  it('is the grey floor with a hue applied, and nothing else changed', () => {
+    // Everything up to the tint is shared, so a retune of the grey floor is a
+    // retune of this one too.
+    const extra = RAINBOW_PAVER_BG_FRAG.split('\n').filter(line => !PAVER_BG_FRAG.includes(line))
+    expect(extra.join('\n')).toContain('tone *= hueTint(')
+    expect(extra.join('\n')).toContain('ground *= hueTint(')
+    expect(PAVER_BG_FRAG).not.toContain('hueTint')
+    // Still a still background.
+    expect(RAINBOW_PAVER_BG_FRAG).not.toMatch(/\biTime\b/)
   })
 })

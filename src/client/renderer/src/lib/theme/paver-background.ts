@@ -301,10 +301,63 @@ const modGlsl = (m: typeof MODULATION, contrast: number): string =>
     .join('\n')
 
 /* ------------------------------------------------------------------ */
+/*  Hue                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The rainbow variant: each stone tinted by the angle of its centre about the
+ * origin, so the hue goes once round the colour wheel per lap of the floor.
+ *
+ * Meant to tell two machines apart at a glance, so it has to be obvious that
+ * the stones differ while still being the same dark furniture as the grey
+ * floor. The tint is a multiplier with a mean of one across the three
+ * channels, so it shifts a stone's colour without changing its energy, and
+ * the grey floor's tone, grain and lighting all carry over untouched. The
+ * mortar stays grey, which is most of what keeps it reading as stone rather
+ * than as a colour wheel.
+ */
+interface PaverHue {
+  /** How far each channel may swing from grey, as a fraction of the tone. */
+  saturation: number
+  /**
+   * How far, in turns of the colour wheel, a stone may stray from its angle's
+   * hue. Neighbours in one course are only a few degrees apart, so without
+   * this a course is a smooth gradient rather than separate coloured stones.
+   */
+  jitter: number
+}
+
+const RAINBOW: PaverHue = { saturation: 0.4, jitter: 0.12 }
+
+/** GLSL for the hue variant, or nothing for the grey floor. */
+const hueGlsl = (hue: PaverHue | null) => ({
+  decl: hue === null ? '' : `
+const float HUE_SATURATION = ${hue.saturation.toFixed(4)};
+const float HUE_JITTER = ${hue.jitter.toFixed(4)};
+
+/**
+ * A channel multiplier for a hue given in turns. The three cosines are a third
+ * of a turn apart, so they sum to a constant and the multiplier's mean is one
+ * at every hue.
+ */
+vec3 hueTint(float turns) {
+  vec3 wheel = 1.0 + cos(TAU * (turns - vec3(0.0, 1.0 / 3.0, 2.0 / 3.0)));
+  return mix(vec3(1.0), wheel, HUE_SATURATION);
+}
+`,
+  // The stone's centre is at a = cell + 0.5, so its angle in turns is that,
+  // less the course's phase, over the count. The far ground takes the pixel's
+  // own angle, so the floor stays recognisable zoomed all the way out.
+  apply: hue === null ? '' : `
+  tone *= hueTint((cell + 0.5 - phase) / count + (id.y - 0.5) * HUE_JITTER);
+  ground *= hueTint(theta / TAU);`,
+})
+
+/* ------------------------------------------------------------------ */
 /*  The shader                                                         */
 /* ------------------------------------------------------------------ */
 
-export const PAVER_BG_FRAG = `
+const paverFrag = (hue: PaverHue | null): string => `
 precision highp float;
 uniform vec2 uOrigin;
 uniform float uZoom;
@@ -329,7 +382,7 @@ const float WARP_SCALE = ${(1 / WARP_WAVELENGTH).toFixed(6)};
 
 /** Where the light comes from, in world space. Up and to the left on screen. */
 const vec2 LIGHT = vec2(-0.5547, 0.8321);
-
+${hueGlsl(hue).decl}
 /**
  * Hashes without trig. Small integer inputs throughout — stone and course
  * indices, and noise lattice points in a stone's own frame — so there is no
@@ -494,6 +547,7 @@ ${GRAIN_OCTAVES.map(([wavelength, weight], i) => `  grain += (vnoise(gp * ${(1 /
   tone *= 1.0 - band * BAND_DARKEN;
   tone *= 1.0 + grain * GRAIN_STONE;
   tone *= 1.0 + chamfer * (facing * CHAMFER_LIGHT - CHAMFER_SHADE);
+${hueGlsl(hue).apply}
 
   vec3 mortar = MORTAR * (1.0 + grain * GRAIN_MORTAR);
   vec3 col = mix(mortar, tone, stone);
@@ -502,6 +556,11 @@ ${GRAIN_OCTAVES.map(([wavelength, weight], i) => `  grain += (vnoise(gp * ${(1 /
   gl_FragColor = vec4(linearToSrgb(col), 1.0);
 }
 `
+
+export const PAVER_BG_FRAG = paverFrag(null)
+
+/** The same floor with every stone tinted by its angle. See `PaverHue`. */
+export const RAINBOW_PAVER_BG_FRAG = paverFrag(RAINBOW)
 
 /**
  * The lattice's parameters, exported so the tests measure the shader's own
