@@ -389,6 +389,15 @@ export interface TerminalReturnSizeMessage {
 }
 
 /** Total memory of every process under the PTY daemon. Replies `agent-memory-result`. */
+/**
+ * A log line from a client with no log file of its own — the phone — written
+ * into the server's log so it can be read on the Mac. Fire-and-forget.
+ */
+export interface ClientLogMessage {
+  type: 'client-log'
+  message: string
+}
+
 export interface AgentMemoryQueryMessage {
   type: 'agent-memory-query'
   seq: number
@@ -951,6 +960,7 @@ export type AgentSearchResult =
 
 export type ClientMessage =
   | ShipItMessage
+  | ClientLogMessage
   | AgentMemoryQueryMessage
   | TerminalBorrowSizeMessage
   | TerminalReturnSizeMessage

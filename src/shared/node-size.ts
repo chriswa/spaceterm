@@ -116,8 +116,13 @@ export const CHROME_H_NO_FOOTER =
   HEADER_PADDING_V * 2 + HEADER_CONTENT_H + HEADER_BORDER_BOTTOM +
   BODY_PADDING_TOP
 export const CHROME_H = CHROME_H_NO_FOOTER + FOOTER_HEIGHT
-/** A chromeless terminal card (the phone's full-screen view): border and body padding only. */
-export const CHROME_H_BARE = CARD_BORDER * 2 + BODY_PADDING_TOP
+/**
+ * A chromeless terminal card (the phone's full-screen view) has no frame at
+ * all — see `.terminal-card--chromeless` — so only the body's padding and the
+ * scrollbar gutter remain.
+ */
+export const CHROME_W_BARE = CHROME_W - CARD_BORDER * 2
+export const CHROME_H_BARE = BODY_PADDING_TOP
 
 // Markdown node dimensions
 export const MARKDOWN_DEFAULT_WIDTH = 400
@@ -271,11 +276,15 @@ export const META_GROUP_DROP = 260
 // Placement
 export const PLACEMENT_MARGIN = 80
 
-/** Pixel size of a chromeless terminal card: no title bar, no footer. */
-export function bareTerminalPixelSize(cols: number, rows: number): { width: number; height: number } {
+/**
+ * Pixel size of a chromeless terminal card: no title bar, no footer. It takes
+ * the row height the terminal actually renders at, which on a phone need not
+ * be `CELL_HEIGHT` (see `renderedCellHeight` in the renderer).
+ */
+export function bareTerminalPixelSize(cols: number, rows: number, cellHeight = CELL_HEIGHT): { width: number; height: number } {
   return {
-    width: Math.ceil(cols * CELL_WIDTH + CHROME_W),
-    height: Math.ceil(rows * CELL_HEIGHT + CHROME_H_BARE)
+    width: Math.ceil(cols * CELL_WIDTH + CHROME_W_BARE),
+    height: Math.ceil(rows * cellHeight + CHROME_H_BARE)
   }
 }
 
@@ -284,10 +293,12 @@ export function bareTerminalPixelSize(cols: number, rows: number): { width: numb
  * `width` × `height` CSS pixels — the inverse of `bareTerminalPixelSize`.
  * Never below `MIN_BORROW_COLS` × `MIN_BORROW_ROWS`.
  */
-export function bareTerminalGridFor(width: number, height: number, scale: number): { cols: number; rows: number } {
+export function bareTerminalGridFor(
+  width: number, height: number, scale: number, cellHeight = CELL_HEIGHT
+): { cols: number; rows: number } {
   return {
-    cols: Math.max(MIN_BORROW_COLS, Math.floor((width / scale - CHROME_W) / CELL_WIDTH)),
-    rows: Math.max(MIN_BORROW_ROWS, Math.floor((height / scale - CHROME_H_BARE) / CELL_HEIGHT))
+    cols: Math.max(MIN_BORROW_COLS, Math.floor((width / scale - CHROME_W_BARE) / CELL_WIDTH)),
+    rows: Math.max(MIN_BORROW_ROWS, Math.floor((height / scale - CHROME_H_BARE) / cellHeight))
   }
 }
 

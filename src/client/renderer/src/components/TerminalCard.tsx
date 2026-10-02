@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { SearchAddon } from '@xterm/addon-search'
 import { attachWebGLRenderer } from '../lib/webgl-renderer'
-import { alignTerminalCellWidth, watchDevicePixelRatio } from '../lib/cell-metrics'
+import { alignTerminalCellWidth, renderedCellHeight, watchDevicePixelRatio } from '../lib/cell-metrics'
 import { CELL_WIDTH, CELL_HEIGHT, BODY_PADDING_TOP, terminalPixelSize, bareTerminalPixelSize } from '../lib/constants'
 import { classifyWheelEvent } from '../lib/wheel-gesture'
 import { type ColorPreset } from '../lib/color-presets'
@@ -229,6 +229,12 @@ interface TerminalCardProps {
    * where focus raises the on-screen keyboard over half the screen.
    */
   autoFocus?: boolean
+  /**
+   * The row height the terminal really renders at, once known — chromeless
+   * only. A card that must fill a space exactly sizes its grid from this; see
+   * `renderedCellHeight`.
+   */
+  onRowHeight?: (height: number) => void
 }
 
 export function TerminalCard({
@@ -237,7 +243,7 @@ export function TerminalCard({
   claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, claudeContextPercent, claudeSessionLineCount, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef,
-  chromeless = false, autoFocus = true
+  chromeless = false, autoFocus = true, onRowHeight
 }: TerminalCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
   const nodeTint = useFacet('nodeTint')
@@ -291,7 +297,13 @@ export function TerminalCard({
 
   // Derive pixel size from cols/rows — every canvas terminal has a footer
   const hasFooter = !chromeless
-  const { width, height } = chromeless ? bareTerminalPixelSize(cols, rows) : terminalPixelSize(cols, rows, hasFooter)
+  // A chromeless card is sized from the rows its terminal really draws; every
+  // canvas card keeps the grid unit everything else on the canvas multiplies.
+  const [renderedRowHeight, setRenderedRowHeight] = useState(CELL_HEIGHT)
+  const rowHeight = chromeless ? renderedRowHeight : CELL_HEIGHT
+  const onRowHeightRef = useRef(onRowHeight)
+  onRowHeightRef.current = onRowHeight
+  const { width, height } = chromeless ? bareTerminalPixelSize(cols, rows, rowHeight) : terminalPixelSize(cols, rows, hasFooter)
 
   // Mount terminal (only when focused)
   useEffect(() => {
@@ -359,9 +371,23 @@ export function TerminalCard({
     // display change, which re-rounds every cell against the new pixel ratio.
     const alignCells = (): void => {
       alignTerminalCellWidth(term, (message) => window.api.log(`[TerminalCard ${id.slice(0, 8)}] ${message}`))
+      if (!chromeless) return
+      const measured = renderedCellHeight(term)
+      if (measured === null) return
+      if (measured !== CELL_HEIGHT) {
+        window.api.log(`[TerminalCard ${id.slice(0, 8)}] [CellMetrics] row height renders at ${measured}, not ${CELL_HEIGHT}; sizing from it`)
+      }
+      setRenderedRowHeight(measured)
+      onRowHeightRef.current?.(measured)
     }
     alignCells()
     const unwatchDpr = watchDevicePixelRatio(alignCells)
+    // Again once the first frame is drawn: a web font that finished loading
+    // after mount re-measures the cell.
+    const afterFirstRender = term.onRender(() => {
+      afterFirstRender.dispose()
+      alignCells()
+    })
 
     // Clean clipboard text on copy (when the toolbar toggle is enabled): strip
     // trailing whitespace, Claude Code prefixes, and common indent. When the
@@ -766,6 +792,7 @@ export function TerminalCard({
       cleanupData()
       cleanupExit()
       unwatchDpr()
+      afterFirstRender.dispose()
       disposeRenderer()
       term.dispose()
     }
@@ -1140,7 +1167,8 @@ export function TerminalCard({
       : 'terminal-card--focused'
     : selected ? 'terminal-card--selected' : ''
   const rtsSelectActive = useRtsSelectStore(s => s.active)
-  const focusGlowColor = focused && !rtsSelectActive ? nodeTint.borderColor(x, y, scrollMode ? 1.3 : 1) : undefined
+  // A chromeless card is only the terminal: no border to colour, nothing to glow.
+  const focusGlowColor = focused && !rtsSelectActive && !chromeless ? nodeTint.borderColor(x, y, scrollMode ? 1.3 : 1) : undefined
   const crabAppearance = deriveToolbarIndicator(claudeState, claudeStatusUnread ?? false, claudeStatusAsleep ?? false, (claudeSessionHistory?.length ?? 0) > 0, agentType)
   const anyToolbarHover = useHoveredCardStore(s => s.toolbarHoveredNodeId) != null
   const toolbarHovered = useHoveredCardStore(s => s.toolbarHoveredNodeId) === id
@@ -1328,7 +1356,7 @@ export function TerminalCard({
       // the preview copies pixels from this card's snapshot canvas, and the two
       // are centred on the same point at different sizes, so leaving both
       // visible shows the same content twice, offset.
-      className={`terminal-card ${focusClass}${resizingNodeId === id ? ' terminal-card--resize-source' : ''}`}
+      className={`terminal-card ${focusClass}${chromeless ? ' terminal-card--chromeless' : ''}${resizingNodeId === id ? ' terminal-card--resize-source' : ''}`}
       style={cardGlowStyle}
       glow={cardGlow}
       cardRef={cardRef}
@@ -1342,7 +1370,7 @@ export function TerminalCard({
         useHoveredCardStore.getState().setHoveredNode(null)
         onHoverUnfocus?.()
       }}
-      behindContent={
+      behindContent={chromeless ? undefined : (
         <>
           {isAgentSurface && (
             <div
@@ -1380,12 +1408,12 @@ export function TerminalCard({
             />
           )}
         </>
-      }
+      )}
     >
       {searchOpen && searchAddonRef.current && (
         <TerminalSearchBar searchAddon={searchAddonRef.current} onClose={closeSearch} />
       )}
-      <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none', flex: 'none', height: rows * CELL_HEIGHT + BODY_PADDING_TOP }} />
+      <div className="terminal-card__body" ref={containerRef} style={{ display: focused ? undefined : 'none', flex: 'none', height: rows * rowHeight + BODY_PADDING_TOP }} />
       <div style={
         !focused
           ? { position: 'relative' as const, padding: '2px 2px 0 2px', flex: 'none', height: rows * CELL_HEIGHT + BODY_PADDING_TOP }

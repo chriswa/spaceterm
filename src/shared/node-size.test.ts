@@ -167,7 +167,7 @@ describe('bareTerminalGridFor', () => {
     const { cols, rows } = bareTerminalGridFor(w, h, scale)
     const fits = (c: number, r: number) => {
       const px = bareTerminalPixelSize(c, r)
-      return px.width * scale <= w + 1 && px.height * scale <= h + 1
+      return px.width * scale <= w + 1e-6 && px.height * scale <= h + 1e-6
     }
     expect(fits(cols, rows)).toBe(true)
     expect(fits(cols + 1, rows)).toBe(false)

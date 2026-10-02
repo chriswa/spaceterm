@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { installApi } from '@/lib/install-api'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
-import { browserPlatform } from './browser-platform'
+import { browserPlatform, forwardLogs } from './browser-platform'
 import '@/styles/index.css'
 import './mobile.css'
 
@@ -47,7 +47,8 @@ if (!token) {
   // No bar along the bottom; the corner button opens the toolbar as a sheet.
   useSurfacePresenterStore.getState().setToolbarSheet(true)
   // `window.api` must exist before App's modules run, as on the desktop.
-  void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile').then(async () => {
+  void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile').then(async (client) => {
+    forwardLogs((message) => client.clientLog(message))
     const { MobileApp } = await import('./MobileApp')
     root.render(
       <StrictMode>

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TerminalCard } from '@/components/TerminalCard'
 import { useNodeStore } from '@/stores/nodeStore'
 import type { Camera } from '@/lib/camera'
-import { bareTerminalGridFor, bareTerminalPixelSize } from '../shared/node-size'
+import { bareTerminalGridFor, bareTerminalPixelSize, CELL_HEIGHT } from '../shared/node-size'
 import type { NodeId } from '../shared/ids'
 import { KeyRow } from './KeyRow'
 import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
@@ -53,6 +53,8 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
   const [keyboard, setKeyboard] = useState(false)
   const [swipeDx, setSwipeDx] = useState(0)
   const [pressArmed, setPressArmed] = useState(false)
+  /** The row height the terminal really draws at on this phone; see TerminalCard's onRowHeight. */
+  const [rowHeight, setRowHeight] = useState(CELL_HEIGHT)
   /** How far a pinch has closed, for the view to shrink with it; 1 when not pinching. */
   const [pinchScale, setPinchScale] = useState(1)
 
@@ -77,12 +79,13 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
 
   // Borrow the grid that fits — again whenever the space changes, which is
   // mostly the keyboard opening and closing.
-  const want = area.width > 0 ? bareTerminalGridFor(area.width, area.height, scale) : null
+  const want = area.width > 0 ? bareTerminalGridFor(area.width, area.height, scale, rowHeight) : null
   const current = terminal ? { cols: terminal.cols, rows: terminal.rows } : null
   useEffect(() => {
     if (!want || !current || !terminal?.alive) return
     if (want.cols === current.cols && want.rows === current.rows) return
     const timer = setTimeout(() => {
+      window.api.log(`[terminal-view] area ${area.width}x${area.height} at scale ${scale}, row ${rowHeight}px → ${want.cols}x${want.rows}`)
       void window.api.node.terminalBorrowSize(nodeId, want.cols, want.rows).catch(noop)
     }, BORROW_SETTLE_MS)
     return () => clearTimeout(timer)
@@ -190,7 +193,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
     )
   }
 
-  const size = bareTerminalPixelSize(terminal.cols, terminal.rows)
+  const size = bareTerminalPixelSize(terminal.cols, terminal.rows, rowHeight)
   cameraRef.current = { x: 0, y: 0, z: scale }
 
   return (
@@ -245,6 +248,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
             cameraRef={cameraRef}
             chromeless
             autoFocus={false}
+            onRowHeight={setRowHeight}
           />
         </div>
         {pressArmed && <div className="mobile-term__press" aria-hidden />}

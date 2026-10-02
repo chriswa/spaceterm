@@ -858,6 +858,13 @@ html, body, #root {
   contain-intrinsic-size: auto 600px 400px;
 }
 
+/* Just the terminal (the phone's full-screen view): no frame, no corners. The
+   chromeless sizes in node-size.ts leave the border out to match. */
+.terminal-card.terminal-card--chromeless {
+  border: none;
+  border-radius: 0;
+}
+
 .terminal-card:hover {
   border-color: #585b70;
 }

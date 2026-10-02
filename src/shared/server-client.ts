@@ -702,6 +702,11 @@ export class ServerClient {
     this.fireAndForget({ type: 'mod', modId, event, payload })
   }
 
+  /** Put a line in the server's log, for a client that has nowhere else to write. */
+  clientLog(message: string): void {
+    this.fireAndForget({ type: 'client-log', message })
+  }
+
   /** Memory of every process under the PTY daemon, measured on the server. */
   async agentMemory(): Promise<number | null> {
     const resp = await this.request({ type: 'agent-memory-query' })

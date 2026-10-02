@@ -6,12 +6,25 @@ import { DEFAULT_LAUNCH_PREFS } from '../shared/launch-prefs'
  * shared with the desktop; this is only what Electron's main process would
  * otherwise provide, and most of it has no meaning on a phone.
  *
- * Logs stay in memory (`window.spacetermLog`): there is no file to write, and
- * a page's console is not somewhere anyone will look.
+ * Logs are kept in memory (`window.spacetermLog`) and, once connected, sent to
+ * the server's log (see `forwardLogs`): there is no file to write here, and a
+ * phone's console is not somewhere anyone will look.
  */
 
 const LOG_LIMIT = 500
 const logBuffer: string[] = []
+
+/** Where log lines also go once the page has a server to send them to. */
+let forward: ((message: string) => void) | null = null
+
+/**
+ * Also send every log line to the server's log, starting with what was
+ * buffered before the connection — so the phone's logs can be read on the Mac.
+ */
+export function forwardLogs(send: (message: string) => void): void {
+  forward = send
+  logBuffer.forEach(send)
+}
 
 declare global {
   interface Window {
@@ -23,6 +36,7 @@ function log(message: string): void {
   logBuffer.push(`${new Date().toISOString()} ${message}`)
   if (logBuffer.length > LOG_LIMIT) logBuffer.splice(0, logBuffer.length - LOG_LIMIT)
   window.spacetermLog = logBuffer
+  forward?.(message)
 }
 
 function listen(target: EventTarget, events: string[], read: () => boolean, callback: (value: boolean) => void): () => void {

@@ -37,6 +37,23 @@ export function renderedCellWidth(term: Terminal): number | null {
 }
 
 /**
+ * The row height xterm's renderer is drawing at, in CSS px; null as for the width.
+ *
+ * Not aligned the way the width is: xterm will not take a line height below 1,
+ * so a row that renders taller than `CELL_HEIGHT` cannot be pulled down onto
+ * it. On the desktop the two agree. Where they do not — iOS rounds Menlo's
+ * line box up — a card that must fit exactly (the phone's) sizes itself from
+ * this instead.
+ */
+export function renderedCellHeight(term: Terminal): number | null {
+  const dimensions = (term as unknown as {
+    _core?: { _renderService?: { dimensions?: { css?: { cell?: { height?: number } } } } }
+  })._core?._renderService?.dimensions
+  const height = dimensions?.css?.cell?.height
+  return typeof height === 'number' && Number.isFinite(height) && height > 0 ? height : null
+}
+
+/**
  * The `letterSpacing` that pulls a rendered cell onto the grid.
  *
  * Both renderers compute `cell = round(glyph advance) + Math.round(letterSpacing)`

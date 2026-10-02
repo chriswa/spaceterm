@@ -1491,6 +1491,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'client-log': {
+      serverLog(`[${client.name ?? 'client'} ${client.id.slice(0, 8)}] ${String(msg.message).slice(0, 2000)}`)
+      break
+    }
+
     case 'agent-memory-query': {
       const seq = msg.seq
       void readAgentMemoryBytes().then((bytes) => send(client.link, { type: 'agent-memory-result', seq, bytes }))

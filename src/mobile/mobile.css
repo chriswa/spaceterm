@@ -112,9 +112,10 @@ textarea, input, [contenteditable="true"], .cm-content {
   top: var(--m-vv-top, 0px);
   bottom: auto;
   height: var(--m-vv-height, 100%);
-  padding-bottom: var(--m-safe-bottom);
+  /* All the way down, under the home indicator and the rounded corners: the
+     bottom rows of most TUIs are the ones least needed, and every row counts. */
+  padding-bottom: 0;
 }
-.mobile-term--typing:not(.mobile-term--gone) { padding-bottom: 0; }
 .mobile-term--gone {
   align-items: center;
   justify-content: center;
