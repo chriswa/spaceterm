@@ -30,6 +30,8 @@ process that may hold Wispr's rotating tokens.
 
 ```
 npm run mobile:build      # → out/mobile, served by the server on 127.0.0.1:7391
+                          #   (the server also rebuilds it in the background on
+                          #   startup whenever a source is newer than the build)
 npm run mobile:link       # prints the pairing URL (and the tailscale serve step)
 ```
 

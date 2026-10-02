@@ -39,6 +39,7 @@ import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
+import { refreshMobileBuild, realMobileBuildDeps } from './mobile-build'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
 import { readClaudeCacheTouch } from './claude-cache-warmth'
@@ -2917,9 +2918,13 @@ async function startServer(): Promise<void> {
   // SPACETERM_WEB_PORT=0 turns it off.
   const webPort = Number(process.env.SPACETERM_WEB_PORT ?? DEFAULT_WEB_PORT)
   if (webPort > 0) {
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const mobileOut = path.join(repoRoot, 'out', 'mobile')
+    // Not awaited: startup never waits on a bundle build.
+    void refreshMobileBuild(mobileOut, realMobileBuildDeps(repoRoot, mobileOut, serverLog))
     startWebGateway({
       port: webPort,
-      staticRoot: path.resolve(__dirname, '..', '..', 'out', 'mobile'),
+      staticRoot: mobileOut,
       token: loadOrCreateWebToken(SOCKET_DIR),
       accept: acceptClient,
       log: serverLog

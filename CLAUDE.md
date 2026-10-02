@@ -9,6 +9,7 @@
 - `menubar/` — SpacetermBar, the macOS menu bar app that supervises the server
   and client in place of `npm run dev` (Swift, separate from the npm build).
   `menubar/README.md` covers its restart policy and how to verify it headless.
+- `src/mobile/README.md` — the phone web app: what it shares with the desktop client, and how it reaches the server.
 
 ## After making changes
 
