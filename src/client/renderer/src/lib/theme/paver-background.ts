@@ -306,50 +306,59 @@ const modGlsl = (m: typeof MODULATION, contrast: number): string =>
 
 /**
  * The rainbow variant: each stone tinted by the angle of its centre about the
- * origin, so the hue goes once round the colour wheel per lap of the floor.
+ * origin, so the hue goes once round the colour wheel per lap of the floor,
+ * red at the top and turning clockwise through yellow, green and blue.
  *
  * Meant to tell two machines apart at a glance, so it has to be obvious that
  * the stones differ while still being the same dark furniture as the grey
- * floor. The tint is a multiplier with a mean of one across the three
- * channels, so it shifts a stone's colour without changing its energy, and
- * the grey floor's tone, grain and lighting all carry over untouched. The
- * mortar stays grey, which is most of what keeps it reading as stone rather
- * than as a colour wheel.
+ * floor. The wheel is OKLCH's: every hue at the same perceived lightness and
+ * chroma, so no part of the floor looks brighter or louder than another the
+ * way yellow and blue do on an RGB wheel. The tint is a multiplier, OKLab's
+ * `L = 1` at the given chroma, and OKLab's cube root makes the ratio of chroma
+ * to lightness scale-free, so multiplying a stone of any tone by it gives the
+ * same hue at the same relative chroma. Every stone's own tone, grain and
+ * lighting carry over from the grey floor untouched. The mortar stays grey,
+ * which is most of what keeps it reading as stone rather than as a colour
+ * wheel.
  */
 interface PaverHue {
-  /** How far each channel may swing from grey, as a fraction of the tone. */
-  saturation: number
-  /**
-   * How far, in turns of the colour wheel, a stone may stray from its angle's
-   * hue. Neighbours in one course are only a few degrees apart, so without
-   * this a course is a smooth gradient rather than separate coloured stones.
-   */
-  jitter: number
+  /** OKLab chroma of the tint, relative to the stone's own lightness. */
+  chroma: number
+  /** The OKLCH hue placed at the top of the floor, in degrees. */
+  topHue: number
 }
 
-const RAINBOW: PaverHue = { saturation: 0.4, jitter: 0.12 }
+const RAINBOW: PaverHue = { chroma: 0.09, topHue: 29 }
 
 /** GLSL for the hue variant, or nothing for the grey floor. */
 const hueGlsl = (hue: PaverHue | null) => ({
   decl: hue === null ? '' : `
-const float HUE_SATURATION = ${hue.saturation.toFixed(4)};
-const float HUE_JITTER = ${hue.jitter.toFixed(4)};
+const float HUE_CHROMA = ${hue.chroma.toFixed(4)};
+const float HUE_TOP = ${((hue.topHue * Math.PI) / 180).toFixed(6)};
 
 /**
- * A channel multiplier for a hue given in turns. The three cosines are a third
- * of a turn apart, so they sum to a constant and the multiplier's mean is one
- * at every hue.
+ * A channel multiplier for a direction on the floor, given in turns
+ * anticlockwise from +x: OKLCH at L = 1, converted to linear sRGB.
  */
 vec3 hueTint(float turns) {
-  vec3 wheel = 1.0 + cos(TAU * (turns - vec3(0.0, 1.0 / 3.0, 2.0 / 3.0)));
-  return mix(vec3(1.0), wheel, HUE_SATURATION);
+  float h = HUE_TOP + TAU * (0.25 - turns);
+  vec2 ab = HUE_CHROMA * vec2(cos(h), sin(h));
+  vec3 lms = vec3(
+    1.0 + 0.3963377774 * ab.x + 0.2158037573 * ab.y,
+    1.0 - 0.1055613458 * ab.x - 0.0638541728 * ab.y,
+    1.0 - 0.0894841775 * ab.x - 1.2914855480 * ab.y);
+  lms = lms * lms * lms;
+  return max(mat3(
+     4.0767416621, -1.2684380046, -0.0041960863,
+    -3.3077115913,  2.6097574011, -0.7034186147,
+     0.2309699292, -0.3413193965,  1.7076147010) * lms, 0.0);
 }
 `,
   // The stone's centre is at a = cell + 0.5, so its angle in turns is that,
   // less the course's phase, over the count. The far ground takes the pixel's
   // own angle, so the floor stays recognisable zoomed all the way out.
   apply: hue === null ? '' : `
-  tone *= hueTint((cell + 0.5 - phase) / count + (id.y - 0.5) * HUE_JITTER);
+  tone *= hueTint((cell + 0.5 - phase) / count);
   ground *= hueTint(theta / TAU);`,
 })
 
