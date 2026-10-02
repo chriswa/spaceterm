@@ -319,7 +319,7 @@ const modGlsl = (m: typeof MODULATION, contrast: number): string =>
  * untouched. The mortar stays grey, which is most of what keeps it reading as
  * stone rather than as a coloured sheet.
  */
-interface PaverHue {
+export interface PaverHue {
   /** OKLab chroma of the tint, relative to the stone's own lightness. */
   chroma: number
   /** OKLCH hue, in degrees. */
@@ -349,7 +349,13 @@ const vec3 TINT = ${glslVec3(tintOf(hue))};
 /*  The shader                                                         */
 /* ------------------------------------------------------------------ */
 
-const paverFrag = (hue: PaverHue | null): string => `
+/**
+ * Everything ahead of `main` that does not depend on how the floor is cut:
+ * uniforms, palette, the joint and chamfer, the warp, the light, the hashes
+ * and noise, and the sRGB encode. Shared with `./polygon-paver-background`,
+ * so the hex and triangle floors are the same stone laid to another pattern.
+ */
+export const paverPreludeGlsl = (hue: PaverHue | null): string => `
 precision highp float;
 uniform vec2 uOrigin;
 uniform float uZoom;
@@ -359,12 +365,6 @@ ${paletteGlsl(atContrast(PALETTE, CONTRAST))}
 ${modGlsl(MODULATION, CONTRAST)}
 
 const float TAU = 6.28318530718;
-const float FOLLOW  = ${FOLLOW.toFixed(4)};
-const float RIM_COURSE = ${RIM_COURSE}.0;
-/** 1 / the radius at which the course coordinate is RIM_COURSE. */
-const float INV_RIM = ${(1 / ROOT_DISC_RADIUS).toFixed(9)};
-const float ASPECT  = ${ASPECT.toFixed(4)};
-const float MIN_PAVERS = ${MIN_PAVERS}.0;
 const float JOINT   = ${JOINT.toFixed(2)};
 const float CORNER  = ${CORNER.toFixed(2)};
 const float CHAMFER = ${CHAMFER.toFixed(2)};
@@ -433,8 +433,13 @@ float grainAlive(float wavelength, float fp) {
 }
 
 ${LINEAR_TO_SRGB_GLSL}
+`
 
-void main() {
+/**
+ * The opening of `main`: the pixel's world position, warped, in polar form.
+ * Declares `worldPerPx`, `warped`, `r` and `theta`.
+ */
+export const PAVER_WARP_GLSL = `
   float worldPerPx = 1.0 / (uZoom * uDpr);
   vec2 world = (gl_FragCoord.xy - uOrigin) * worldPerPx;
 
@@ -447,7 +452,81 @@ void main() {
   // atan(0, 0) is undefined; the one pixel on the origin is nudged onto the +x
   // axis. It sits under the root node, but a NaN there survives every mix below.
   float theta = atan(warped.y, warped.x + step(raw, 1e-5));
+`
 
+/**
+ * The close of `main`: grain, coverage, chamfer, tone and the fade to the
+ * ground. Expects the lattice to have declared, in world units:
+ *
+ * - `p`: the pixel in the stone's own frame;
+ * - `id`: three random numbers for the stone;
+ * - `d`: signed distance to the stone's outline, joint included;
+ * - `facing`: how squarely the nearest edge faces the light, -1 to 1;
+ * - `quietStone`: how much of the stones survives the footprint;
+ * - `band`: 1 on a soldier course, 0 elsewhere;
+ * - `bandWave`: the soldier rhythm as a continuous wave, 1 on a soldier course.
+ *
+ * `chamferWidth` is a GLSL expression for how far in the chamfer reaches, for
+ * a floor whose stones carry their own; the default is Pavers' fixed one.
+ */
+export const paverFinishGlsl = (hue: PaverHue | null, chamferWidth = 'CHAMFER'): string => `
+  float chamferWidth = ${chamferWidth};
+  float quietChamfer = smoothstep(chamferWidth, chamferWidth * 0.25, worldPerPx);
+
+  // Grain: four octaves in the stone's own frame. The offset is the stone's
+  // hash, so no two stones share a patch of it and it breaks at every joint.
+  // Each octave fades on its own as its wavelength closes on the footprint.
+  vec2 gp = p + id.yz * 1024.0;
+  float grain = 0.0;
+${GRAIN_OCTAVES.map(([wavelength, weight], i) => `  grain += (vnoise(gp * ${(1 / wavelength).toFixed(5)} + ${(i * 7.3).toFixed(1)}) - 0.5)
+    * ${weight.toFixed(2)} * grainAlive(${wavelength.toFixed(1)}, worldPerPx);`).join('\n')}
+
+  // Coverage of the stone, antialiased over one pixel, and the chamfer: a
+  // bevel from the edge inward, squared so it is a lip rather than a cushion.
+  float aa = 0.5 * worldPerPx + 1e-6;
+  float stone = 1.0 - smoothstep(-aa, aa, d);
+  float chamfer = smoothstep(-chamferWidth, 0.0, d);
+  chamfer *= chamfer * quietChamfer;
+
+  // From far enough away that no stone is visible the soldier rhythm is the
+  // only thing left, so the ground the floor fades to carries it as a soft
+  // ring — what a floor looks like from a long way up, and the one navigation
+  // cue this background keeps at the zoom floor.
+  vec3 ground = GROUND * (1.0 - (bandWave - 0.5) * GROUND_BAND);
+
+  vec3 tone = mix(STONE_DARK, STONE_LIGHT, id.x * 0.85 + 0.075);
+  tone *= 1.0 - band * BAND_DARKEN;
+  tone *= 1.0 + grain * GRAIN_STONE;
+  tone *= 1.0 + chamfer * (facing * CHAMFER_LIGHT - CHAMFER_SHADE);
+${hueGlsl(hue).apply}
+
+  vec3 mortar = MORTAR * (1.0 + grain * GRAIN_MORTAR);
+  vec3 col = mix(mortar, tone, stone);
+  col = mix(ground, col, quietStone);
+
+  gl_FragColor = vec4(linearToSrgb(col), 1.0);
+`
+
+/**
+ * The course lattice's constants, for a stone aiming at `aspect` times as
+ * wide as its course is deep. Shared with `./polygon-paver-background`.
+ */
+export const paverCourseConstsGlsl = (aspect: number): string => `
+const float FOLLOW  = ${FOLLOW.toFixed(4)};
+const float RIM_COURSE = ${RIM_COURSE}.0;
+/** 1 / the radius at which the course coordinate is RIM_COURSE. */
+const float INV_RIM = ${(1 / ROOT_DISC_RADIUS).toFixed(9)};
+const float ASPECT  = ${aspect.toFixed(4)};
+const float MIN_PAVERS = ${MIN_PAVERS}.0;
+`
+
+/**
+ * The courses, after `PAVER_WARP_GLSL`. Declares the course coordinate `v`,
+ * the course `row` and the pixel's fraction `fy` up it, the course's
+ * `depth`, its stone `count` and `phase`, and `a`, the angle measured
+ * in stones.
+ */
+export const PAVER_COURSE_GLSL = `
   // Courses: whole values of v, spaced dr ~ r^GROWTH apart, with a boundary
   // on the root disc's rim.
   float lr = log2(r * INV_RIM);
@@ -469,6 +548,13 @@ void main() {
   // joints of one course never line up with the next.
   float phase = hash12(vec2(row, 7.0));
   float a = theta * count / TAU + phase;
+`
+
+const paverFrag = (hue: PaverHue | null): string => `${paverPreludeGlsl(hue)}
+${paverCourseConstsGlsl(ASPECT)}
+void main() {
+${PAVER_WARP_GLSL}
+${PAVER_COURSE_GLSL}
   float cell = mod(floor(a), count);
   float fx = fract(a) - 0.5;
 
@@ -502,50 +588,17 @@ void main() {
   vec2 light = vec2(dot(LIGHT, tangent), dot(LIGHT, radial));
   float facing = dot(nrm, light);
 
-  // How much of each scale of detail survives the pixel footprint — every
-  // gradient here is in world units, so the footprint is worldPerPx itself.
-  // Retired coarsest last, and each before it goes sub-pixel, so the canvas
-  // fades to its ground rather than to a pale average of itself. The stones'
-  // own fade is measured against the local course depth, since that is what
-  // grows.
-  float quietChamfer = smoothstep(CHAMFER, CHAMFER * 0.25, worldPerPx);
+  // How much of the stones survives the pixel footprint — every gradient here
+  // is in world units, so the footprint is worldPerPx itself. Retired before
+  // they go sub-pixel, so the canvas fades to its ground rather than to a pale
+  // average of itself, and measured against the local course depth, since
+  // that is what grows.
   float quietStone = smoothstep(depth / 3.0, depth / 14.0, worldPerPx);
 
-  // Grain: four octaves in the stone's own frame. The offset is the stone's
-  // hash, so no two stones share a patch of it and it breaks at every joint.
-  // Each octave fades on its own as its wavelength closes on the footprint.
-  vec2 gp = p + id.yz * 1024.0;
-  float grain = 0.0;
-${GRAIN_OCTAVES.map(([wavelength, weight], i) => `  grain += (vnoise(gp * ${(1 / wavelength).toFixed(5)} + ${(i * 7.3).toFixed(1)}) - 0.5)
-    * ${weight.toFixed(2)} * grainAlive(${wavelength.toFixed(1)}, worldPerPx);`).join('\n')}
-
-  // Coverage of the stone, antialiased over one pixel, and the chamfer: a
-  // bevel from the edge inward, squared so it is a lip rather than a cushion.
-  float aa = 0.5 * worldPerPx + 1e-6;
-  float stone = 1.0 - smoothstep(-aa, aa, d);
-  float chamfer = smoothstep(-CHAMFER, 0.0, d);
-  chamfer *= chamfer * quietChamfer;
-
-  // Every BANDth course is laid darker — a soldier course. Up close it is one
-  // course of darker stones; from far enough away that no stone is visible it
-  // is the only thing left, so the ground the floor fades to carries the same
-  // rhythm as a soft ring, which is what a floor looks like from a long way up
-  // and is the one navigation cue this background keeps at the zoom floor.
+  // Every BANDth course is laid darker — a soldier course.
   float band = 1.0 - min(mod(row, BAND), 1.0);
   float bandWave = abs(fract((v - 0.5) / BAND) - 0.5) * 2.0;
-  vec3 ground = GROUND * (1.0 - (bandWave - 0.5) * GROUND_BAND);
-
-  vec3 tone = mix(STONE_DARK, STONE_LIGHT, id.x * 0.85 + 0.075);
-  tone *= 1.0 - band * BAND_DARKEN;
-  tone *= 1.0 + grain * GRAIN_STONE;
-  tone *= 1.0 + chamfer * (facing * CHAMFER_LIGHT - CHAMFER_SHADE);
-${hueGlsl(hue).apply}
-
-  vec3 mortar = MORTAR * (1.0 + grain * GRAIN_MORTAR);
-  vec3 col = mix(mortar, tone, stone);
-  col = mix(ground, col, quietStone);
-
-  gl_FragColor = vec4(linearToSrgb(col), 1.0);
+${paverFinishGlsl(hue)}
 }
 `
 

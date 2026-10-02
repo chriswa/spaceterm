@@ -9,6 +9,7 @@ import {
   STATIC_EDGE_FRAG,
 } from './shaders'
 import { CRIMSON_PAVER_BG_FRAG, PAVER_BG_FRAG, TEAL_PAVER_BG_FRAG } from './paver-background'
+import { HEX_PAVER_BG_FRAG, TRIANGLE_PAVER_BG_FRAG } from './polygon-paver-background'
 import { DiscRootNode, OrbRootNode, ReticleRootNode, type RootNodeVisualProps } from './root-node'
 import { NODE_TINTS, type NodeTintFacet } from './node-tint'
 import { registerFacet } from './registry'
@@ -159,6 +160,9 @@ export const BACKGROUNDS = {
   pavers: { id: 'pavers', label: 'Pavers', frag: PAVER_BG_FRAG, animatedHz: 0 },
   tealPavers: { id: 'teal-pavers', label: 'Teal pavers', frag: TEAL_PAVER_BG_FRAG, animatedHz: 0 },
   crimsonPavers: { id: 'crimson-pavers', label: 'Crimson pavers', frag: CRIMSON_PAVER_BG_FRAG, animatedHz: 0 },
+  // The same stone cut to hexagons and triangles. See `./polygon-paver-background`.
+  hexPavers: { id: 'hex-pavers', label: 'Hex pavers', frag: HEX_PAVER_BG_FRAG, animatedHz: 0 },
+  trianglePavers: { id: 'triangle-pavers', label: 'Triangle pavers', frag: TRIANGLE_PAVER_BG_FRAG, animatedHz: 0 },
 } as const satisfies Record<string, BackgroundFacet>
 
 export const EDGES = {

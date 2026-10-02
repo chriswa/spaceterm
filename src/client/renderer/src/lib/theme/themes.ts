@@ -111,6 +111,30 @@ const BUILT_IN_THEMES: readonly Theme[] = [
     },
   },
   {
+    id: 'hex-pavers',
+    label: 'Hex Pavers',
+    blurb: 'Pavers cut to hexagons, growing outward from the root node — still, textured',
+    facets: {
+      background: BACKGROUNDS.hexPavers,
+      edges: EDGES.static,
+      rootNode: ROOT_NODES.reticle,
+      cardChrome: CARD_CHROMES.technical,
+      nodeTint: NODE_TINTS.neutral,
+    },
+  },
+  {
+    id: 'triangle-pavers',
+    label: 'Triangle Pavers',
+    blurb: 'Pavers cut to triangles, growing outward from the root node — still, textured',
+    facets: {
+      background: BACKGROUNDS.trianglePavers,
+      edges: EDGES.static,
+      rootNode: ROOT_NODES.reticle,
+      cardChrome: CARD_CHROMES.technical,
+      nodeTint: NODE_TINTS.neutral,
+    },
+  },
+  {
     // The look this app shipped with, and the cheapest animated one.
     id: 'ember',
     label: 'Ember',

@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { e2eBlocker, launchApp, type LaunchedApp } from './electron-app'
 import * as shaders from '../client/renderer/src/lib/theme/shaders'
 import { CRIMSON_PAVER_BG_FRAG, PAVER_BG_FRAG, TEAL_PAVER_BG_FRAG } from '../client/renderer/src/lib/theme/paver-background'
+import { HEX_PAVER_BG_FRAG, TRIANGLE_PAVER_BG_FRAG } from '../client/renderer/src/lib/theme/polygon-paver-background'
 
 /**
  * Every shader this repo ships, compiled by a real driver.
@@ -29,7 +30,7 @@ if (blocker) console.warn(`[e2e] skipping: ${blocker}`)
 
 /** Fragment shader sources, by export name. */
 const FRAGMENTS: [string, string][] = [
-  ...Object.entries({ ...shaders, PAVER_BG_FRAG, TEAL_PAVER_BG_FRAG, CRIMSON_PAVER_BG_FRAG })
+  ...Object.entries({ ...shaders, PAVER_BG_FRAG, TEAL_PAVER_BG_FRAG, CRIMSON_PAVER_BG_FRAG, HEX_PAVER_BG_FRAG, TRIANGLE_PAVER_BG_FRAG })
     .filter((entry): entry is [string, string] =>
       entry[0].endsWith('_FRAG') && typeof entry[1] === 'string'),
 ]
