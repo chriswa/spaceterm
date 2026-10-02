@@ -109,6 +109,11 @@ export function MobileApp() {
             setComposerFor(null)
             setOpeningDictation(null)
           }}
+          onExitToCanvas={() => {
+            // Unmounting the composer cancels any dictation in progress.
+            setOpeningDictation(null)
+            closeTerminal()
+          }}
         />
       )}
     </>

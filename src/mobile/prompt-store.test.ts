@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { promptStore, nextRecall, HISTORY_LIMIT, type PromptStorage } from './prompt-store'
+import { promptStore, HISTORY_LIMIT, type PromptStorage } from './prompt-store'
 import { asNodeId } from '../shared/ids'
 
 function memoryStorage(): PromptStorage & { data: Map<string, string> } {
@@ -41,6 +41,20 @@ describe('promptStore', () => {
     expect(store.history()[0]).toBe(`p${HISTORY_LIMIT + 4}`)
   })
 
+  it('clearing keeps the text recoverable, like shipping', () => {
+    const store = promptStore(asNodeId('a'), memoryStorage())
+    store.setDraft('half a thought')
+    store.cleared('half a thought')
+    expect(store.draft()).toBe('')
+    expect(store.history()).toEqual(['half a thought'])
+  })
+
+  it('clearing nothing remembers nothing', () => {
+    const store = promptStore(asNodeId('a'), memoryStorage())
+    store.cleared('')
+    expect(store.history()).toEqual([])
+  })
+
   it('survives storage that throws', () => {
     const broken: PromptStorage = {
       getItem: () => { throw new Error('denied') },
@@ -51,27 +65,5 @@ describe('promptStore', () => {
     expect(() => store.shipped('x')).not.toThrow()
     expect(store.draft()).toBe('')
     expect(store.history()).toEqual([])
-  })
-})
-
-describe('nextRecall', () => {
-  const history = ['newest', 'middle', 'oldest']
-
-  it('brings back the last prompt into an empty composer', () => {
-    expect(nextRecall('', history)).toBe('newest')
-  })
-
-  it('steps further back each time', () => {
-    expect(nextRecall('newest', history)).toBe('middle')
-    expect(nextRecall('middle', history)).toBe('oldest')
-    expect(nextRecall('oldest', history)).toBeNull()
-  })
-
-  it('will not throw away new writing', () => {
-    expect(nextRecall('something new', history)).toBeNull()
-  })
-
-  it('has nothing to recall with no history', () => {
-    expect(nextRecall('', [])).toBeNull()
   })
 })

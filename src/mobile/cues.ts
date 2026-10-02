@@ -58,6 +58,8 @@ export function playCue(cue: Cue): void {
     source.buffer = buffer
     source.connect(gain).connect(context.destination)
     source.start()
+    // In the server log, so a cue that seems quiet or missing can be traced.
+    window.api?.log(`[cue] ${cue} (audio ${context.state})`)
   } catch {
     // No audio device, or a policy refusal: the cue is skipped.
   }

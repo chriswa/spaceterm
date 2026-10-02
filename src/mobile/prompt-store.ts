@@ -2,7 +2,7 @@ import type { NodeId } from '../shared/ids'
 
 /**
  * One surface's composer text, kept in this browser: the draft in progress,
- * and the prompts already shipped, newest first.
+ * and what it held before — prompts shipped and drafts cleared — newest first.
  *
  * Written at the moment of each change, never from an effect after a render.
  * Shipping used to clear the draft by setting the text to '' and closing the
@@ -21,7 +21,9 @@ export interface PromptStore {
   setDraft(text: string): void
   /** The draft was sent: remember it, and start the next one empty. */
   shipped(text: string): void
-  /** Shipped prompts, newest first. */
+  /** The draft was cleared: remembered the same way, so a clear can be taken back. */
+  cleared(text: string): void
+  /** What the draft held before — shipped or cleared — newest first. */
   history(): string[]
 }
 
@@ -41,27 +43,20 @@ export function promptStore(nodeId: NodeId, storage: PromptStorage = localStorag
     else storage.removeItem(draftKey)
   }, undefined)
 
+  /** Put the draft into history (newest first, no repeats) and empty it. */
+  const shelve = (text: string) => {
+    if (text) {
+      const next = [text, ...history().filter((t) => t !== text)].slice(0, HISTORY_LIMIT)
+      attempt(() => storage.setItem(historyKey, JSON.stringify(next)), undefined)
+    }
+    setDraft('')
+  }
+
   return {
     draft: () => attempt(() => storage.getItem(draftKey) ?? '', ''),
     setDraft,
-    shipped(text) {
-      const next = [text, ...history().filter((t) => t !== text)].slice(0, HISTORY_LIMIT)
-      attempt(() => storage.setItem(historyKey, JSON.stringify(next)), undefined)
-      setDraft('')
-    },
+    shipped: (text) => shelve(text),
+    cleared: (text) => shelve(text),
     history
   }
-}
-
-/**
- * What the recall button brings back next: the newest prompt when the draft is
- * empty, then each older one in turn while the draft still holds the one it
- * last recalled. Null when there is nothing further back — or when the draft
- * holds new writing, which recalling would throw away.
- */
-export function nextRecall(draft: string, history: string[]): string | null {
-  if (draft === '') return history[0] ?? null
-  const at = history.indexOf(draft)
-  if (at === -1) return null
-  return history[at + 1] ?? null
 }
