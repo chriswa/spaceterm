@@ -351,18 +351,6 @@ export class SessionManager {
     }
   }
 
-  /** Inject a title using the same LRU logic as the OSC title callback. */
-  injectTitle(sessionId: PtySessionId, title: string): void {
-    const session = this.sessions.get(sessionId)
-    if (!session) return
-    const normalized = normalizeShellTitle(title)
-    if (!normalized || isSpuriousTitle(normalized)) return
-    const { shellTitleHistory } = session
-    if (rememberShellTitle(shellTitleHistory, normalized)) {
-      this.onTitleHistory(sessionId, shellTitleHistory)
-    }
-  }
-
   getLastClaudeSessionId(sessionId: PtySessionId): ClaudeSessionId | null {
     return this.sessions.get(sessionId)?.lastClaudeSessionId ?? null
   }

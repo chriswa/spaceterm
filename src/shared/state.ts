@@ -121,6 +121,13 @@ export interface TerminalNodeData extends BaseNodeData {
   exitCode?: number // set when alive → false
   cwd?: string
   extraCliArgs?: string
+  /**
+   * Set on a fork until its first real prompt names it (see `ForkTitler`).
+   * `parentTitle` is the source surface's title at fork time, which the name
+   * is written against. `null` clears it, since an `undefined` field would not
+   * survive the JSON patch.
+   */
+  pendingForkTitle?: { parentTitle: string | null } | null
   /** Which agent CLI this surface runs. Absent = plain terminal or legacy Claude (inferred from session history). */
   agentType?: AgentType
   /**

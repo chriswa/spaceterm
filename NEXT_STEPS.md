@@ -309,8 +309,6 @@ done last session; kept so the reasoning is not lost.
 
 ## Things deliberately not done
 
-- **`session-title-summarizer.ts` has no seam.** It is hard-disabled at
-  `const ENABLED = Boolean(false)`. Add the seam when it is turned back on.
 - **No UTF-8 sanitizer.** The ESC-eats-the-escape defect does not reproduce
   against current xterm.js — tested by driving `@xterm/headless` with the exact
   bytes rather than assumed. See the rewritten `Potential UTF Bug Fix.md`. The

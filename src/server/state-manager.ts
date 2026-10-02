@@ -202,6 +202,8 @@ export interface NewTerminalSpec {
    */
   insertAfterNodeId?: NodeId
   agentType?: AgentType
+  /** Marks a fork to be named by its first prompt; see `ForkTitler`. */
+  pendingForkTitle?: { parentTitle: string | null }
 }
 
 /**
@@ -415,6 +417,12 @@ export class StateManager {
     return override?.kind === 'protected' && now < override.until
   }
 
+  clearPendingForkTitle(nodeId: NodeId): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'terminal' || !node.pendingForkTitle) return
+    this.patchNode(node, { pendingForkTitle: null })
+  }
+
   /** Update extra CLI args on a terminal node, broadcast, and persist. */
   updateExtraCliArgs(nodeId: NodeId, extraCliArgs: string): void {
     const node = this.state.nodes[nodeId]
@@ -539,7 +547,8 @@ export class StateManager {
       archivedChildren: [],
       colorPresetId: 'inherit',
       ...(name ? { name } : {}),
-      ...(agentType ? { agentType } : {})
+      ...(agentType ? { agentType } : {}),
+      ...(spec.pendingForkTitle ? { pendingForkTitle: spec.pendingForkTitle } : {})
     }
 
     this.state.nodes[nodeId] = node

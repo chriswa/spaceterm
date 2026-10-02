@@ -6,17 +6,6 @@ import { asClaudeSessionId, type ClaudeSessionId } from '../shared/ids'
 
 const CLAUDE_PROJECTS_DIR = path.join(homedir(), '.claude', 'projects')
 
-/**
- * Compute the display name for a forked session.
- * Falls back to "Untitled (fork)" when the source has no name,
- * and avoids double-suffixing when forking a fork.
- */
-export function computeForkName(sourceName: string | undefined | null): string {
-  if (!sourceName) return 'Untitled (fork)'
-  if (sourceName.endsWith('(fork)') || sourceName.endsWith('(Fork)')) return sourceName
-  return `${sourceName} (fork)`
-}
-
 function cwdToSlug(cwd: string): string {
   return cwd.replaceAll('/', '-')
 }

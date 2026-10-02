@@ -61,10 +61,10 @@ import { SessionStatusObserver, type ObservedSurface } from './claude-state/sess
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
 import { isNodeStamp, type MarkdownNodeData, type NodeData, type TerminalNodeData } from '../shared/state'
-import { forkSession, computeForkName, sessionFilePath } from './session-fork'
+import { forkSession, sessionFilePath } from './session-fork'
+import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
-import { SessionTitleSummarizer } from './session-title-summarizer'
 import { SummaryChat } from './summary-chat'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
@@ -270,7 +270,7 @@ let agentMetaAvailability: AgentMetaAvailability
 let sessionStatusObserver: SessionStatusObserver
 let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
-let sessionTitleSummarizer: SessionTitleSummarizer
+let forkTitler: ForkTitler
 let summaryChat: SummaryChat
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
@@ -828,7 +828,6 @@ const scriptApi = new ScriptApi({
       }
       if (!sourceClaudeSessionId) return reject(new Error('no session transcript file found on disk'))
 
-      const forkName = computeForkName(forkNode.name)
       const newClaudeSessionId = forkSession(forkCwd, sourceClaudeSessionId)
       const forkOptions = agentDrivers.claude.buildCreateOptions({
         cwd: forkCwd,
@@ -842,7 +841,8 @@ const scriptApi = new ScriptApi({
       const forkPos = computePlacement(stateManager.getState().nodes, parentId, agentSurfaceFootprint(forkCols, forkRows))
       stateManager.createTerminal({
         sessionId: forkPtyId, parentId, x: forkPos.x, y: forkPos.y, cols: forkCols, rows: forkRows,
-        cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory, name: forkName, insertAfterNodeId: sourceNodeId
+        cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory, insertAfterNodeId: sourceNodeId,
+        name: FORK_LABEL, pendingForkTitle: { parentTitle: surfaceTitle(forkNode) }
       })
       if (forkNode.shellTitleHistory?.length) {
         sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
@@ -982,16 +982,9 @@ function handleIngestMessage(msg: IngestMessage): void {
         }
       }
 
-      // Generate auto-summary title on UserPromptSubmit (fire-and-forget).
-      // Summarizer parses Claude JSONL only — skip for Cursor/Codex surfaces.
-      if (hookType === 'UserPromptSubmit' && msg.payload && typeof msg.payload === 'object') {
-        if (!isNonClaudeAgent(surfaceAgentType(msg.surfaceId))) {
-          const transcriptPath = 'transcript_path' in msg.payload ? String(msg.payload.transcript_path) : ''
-          const claudeSessionId = 'session_id' in msg.payload ? asClaudeSessionId(String(msg.payload.session_id)) : ''
-          if (transcriptPath && claudeSessionId) {
-            sessionTitleSummarizer.summarize(msg.surfaceId, transcriptPath, claudeSessionId)
-          }
-        }
+      if (hookType === 'UserPromptSubmit' && msg.payload && typeof msg.payload === 'object' && 'prompt' in msg.payload) {
+        const promptNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+        if (promptNodeId) void forkTitler.onPrompt(promptNodeId, msg.payload.prompt)
       }
       break
     }
@@ -1105,7 +1098,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         stateManager.createTerminal({
           sessionId: forkPtyId, parentId: forkSrcNodeId, x: forkPos.x, y: forkPos.y,
           cols: forkCols, rows: forkRows, cwd: forkCwd,
-          initialTitleHistory: forkSrcNode.shellTitleHistory, name: msg.title
+          initialTitleHistory: forkSrcNode.shellTitleHistory, name: forkName(msg.title)
         })
         if (forkSrcNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkSrcNode.shellTitleHistory)
@@ -2148,7 +2141,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           break
         }
 
-        const forkName = computeForkName(forkNode.name)
+        const pendingForkTitle = { parentTitle: surfaceTitle(forkNode) }
         const forkParentId = msg.nodeId
 
         if (forkDriver.capabilities.forkStrategy === 'native') {
@@ -2169,7 +2162,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           stateManager.createTerminal({
             sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
             cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,
-            name: forkName, insertAfterNodeId: msg.nodeId, agentType: 'codex'
+            name: FORK_LABEL, pendingForkTitle, insertAfterNodeId: msg.nodeId, agentType: 'codex'
           })
           if (forkNode.shellTitleHistory?.length) {
             sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
@@ -2201,7 +2194,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         stateManager.createTerminal({
           sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
           cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,
-          name: forkName, insertAfterNodeId: msg.nodeId
+          name: FORK_LABEL, pendingForkTitle, insertAfterNodeId: msg.nodeId
         })
         if (forkNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
@@ -2697,9 +2690,15 @@ async function startServer(): Promise<void> {
     }
   })
 
-  // Initialize SessionTitleSummarizer — generates 3-word titles from session transcripts
-  sessionTitleSummarizer = new SessionTitleSummarizer({
-    injectTitle: (sessionId, title) => sessionManager.injectTitle(sessionId, title),
+  forkTitler = new ForkTitler({
+    async ask(prompt) {
+      const response = await askClaudePrint({ prompt, model: 'haiku', noThinking: true, tag: 'fork-title' })
+      return response.result
+    },
+    getNode: (nodeId) => stateManager.getNode(nodeId),
+    clearPending: (nodeId) => stateManager.clearPendingForkTitle(nodeId),
+    rename: (nodeId, name) => stateManager.renameNode(nodeId, name),
+    log: serverLog,
   })
 
   // Initialize PotentialErrorDetector — identifies stopped API errors without writing to the PTY.
