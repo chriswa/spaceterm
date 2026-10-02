@@ -14,6 +14,7 @@
     "mobile:dev": "vite build --watch --config src/mobile/vite.config.ts",
     "mobile:link": "tsx src/cli/mobile-link.ts",
     "mobile:ios": "src/mobile/ios/install.sh",
+    "mobile:energy": "src/mobile/ios/energy.sh",
     "client:preview": "electron-vite preview",
     "client:package": "electron-vite build && electron-builder",
     "start": "npm run client:build && concurrently --restart-tries -1 --restart-after 0 \"npm run server:dev\" \"npm run client:preview\"",

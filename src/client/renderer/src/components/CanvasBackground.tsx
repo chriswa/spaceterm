@@ -7,10 +7,17 @@ import { resolveFacets } from '../lib/theme/themes'
 import type { BackgroundFacet, EdgeFacet } from '../lib/theme/facets'
 import { BG_VERT_SRC, EDGE_VERT_SRC } from '../lib/theme/shaders'
 import { CanvasFrameGate } from '../lib/canvas-frame-gate'
-import { FrameLimiter, quantizeClock } from '../lib/frame-policy'
+import { FrameLimiter, onUserInput, quantizeClock } from '../lib/frame-policy'
 import { chromeNeedsEdgeMask } from '../lib/card-surface'
 import { isCardOnScreen, type WorldRect } from '../lib/viewport'
 import { STALE_FRESHNESS_LEVELS } from '../lib/dim-stale'
+
+/** Unchanged frames (about half a second) before the loop rests. */
+const REST_AFTER_FRAMES = 30
+/** How often a resting loop still checks for a change it was not woken for. */
+const REST_POLL_MS = 250
+/** `rafRef` while resting: non-zero, so `startLoop` sees the loop as running. */
+const RESTING = -1
 
 export interface TreeLineNode {
   id: NodeId
@@ -402,7 +409,41 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     observer.observe(canvas)
     measure(window.devicePixelRatio)
 
-    const tick = (now: number) => {
+    /**
+     * The loop rests when it has nothing to do. Asking for every frame and
+     * then deciding not to draw it still costs a frame's worth of bookkeeping
+     * and keeps the display timer running: on a phone, about a fifth of a CPU
+     * for a canvas nobody is touching. After `REST_AFTER_FRAMES` unchanged
+     * frames, with nothing animating, it checks only every `REST_POLL_MS` —
+     * which still catches a change from elsewhere, a card the server added —
+     * and user input wakes it for the very next frame.
+     */
+    // Declared ahead of the rest helpers, which schedule it; assigned below.
+    let tick: (now: number) => void = () => undefined
+    let unchangedFrames = 0
+    let restTimer: ReturnType<typeof setTimeout> | undefined
+    const scheduleNext = (changed: boolean, animating: boolean) => {
+      unchangedFrames = changed || animating ? 0 : unchangedFrames + 1
+      if (unchangedFrames < REST_AFTER_FRAMES) {
+        rafRef.current = requestAnimationFrame(tick)
+        return
+      }
+      rafRef.current = RESTING
+      restTimer = setTimeout(() => {
+        restTimer = undefined
+        rafRef.current = requestAnimationFrame(tick)
+      }, REST_POLL_MS)
+    }
+    const wake = () => {
+      if (rafRef.current !== RESTING) return
+      clearTimeout(restTimer)
+      restTimer = undefined
+      unchangedFrames = 0
+      rafRef.current = requestAnimationFrame(tick)
+    }
+    const unsubInput = onUserInput(wake)
+
+    tick = (now: number): void => {
       const res = resources
       if (!res) {
         // Context lost; `webglcontextrestored` restarts the loop. Clearing the
@@ -439,6 +480,9 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       // clock has to redraw both — which is why quantising them separately is
       // sound but skipping only one of the two passes would not be.
       const edgeClock = quantizeClock(now - edgeT0, facets.edges.animatedHz)
+      // A theme layer with its own clock redraws on that clock, so the loop
+      // must keep its frames; it can rest only when everything is still.
+      const animating = bgClock !== null || (edgeClock !== null && edgesRef.current.length > 0)
       const edgeTime = (edgeClock ?? 0) / 2000
 
       // Opaque card chrome hides whatever is behind it without any help from
@@ -475,7 +519,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
         selection: selectionRef.current,
         reparentEdge: reparentEdgeRef.current,
       }, now)) {
-        rafRef.current = requestAnimationFrame(tick)
+        scheduleNext(false, animating)
         return
       }
 
@@ -680,7 +724,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
         }
       }
 
-      rafRef.current = requestAnimationFrame(tick)
+      scheduleNext(true, animating)
     }
 
     // A frame composited before the window went away is not there when it comes
@@ -694,7 +738,12 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
       limiter.reset()
       rafRef.current = requestAnimationFrame(tick)
     }
-    const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
+    const stopLoop = () => {
+      clearTimeout(restTimer)
+      restTimer = undefined
+      if (rafRef.current > 0) cancelAnimationFrame(rafRef.current)
+      rafRef.current = 0
+    }
 
     // Hidden, minimised, or occluded — see `useWindowVisible` for why occlusion
     // is the case this must not miss.
@@ -731,6 +780,7 @@ export function CanvasBackground({ cameraRef, edgesRef, maskRectsRef, selectionR
     return () => {
       stopLoop()
       unsubVisibility()
+      unsubInput()
       canvas.removeEventListener('webglcontextlost', onContextLost)
       canvas.removeEventListener('webglcontextrestored', onContextRestored)
       observer.disconnect()

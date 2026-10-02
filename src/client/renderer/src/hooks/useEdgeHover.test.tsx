@@ -74,4 +74,26 @@ describe('useEdgeHover', () => {
     frame()
     expect(latest).toBeNull()
   })
+
+  it('runs no frame loop at all until a mouse appears, and stops when it goes', () => {
+    // A touch screen never has a mouse; a loop hit-testing nothing every frame
+    // was a constant cost there.
+    const raf = vi.spyOn(window, 'requestAnimationFrame')
+    raf.mockClear()
+    pointer(viewport, 'pointerdown', 'touch', 100, 100)
+    frame()
+    frame()
+    expect(raf).not.toHaveBeenCalled()
+
+    pointer(viewport, 'pointermove', 'mouse', 1000, 2)
+    frame()
+    expect(raf).toHaveBeenCalled()
+
+    viewport.dispatchEvent(new MouseEvent('pointerleave'))
+    frame()
+    raf.mockClear()
+    frame()
+    frame()
+    expect(raf).not.toHaveBeenCalled()
+  })
 })

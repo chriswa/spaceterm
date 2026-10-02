@@ -1,6 +1,4 @@
 import { useEffect, useRef } from 'react'
-import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVisible'
-import { FrameLimiter } from '../frame-policy'
 
 /**
  * Implementations of the `rootNode` facet.
@@ -135,9 +133,6 @@ export function ReticleRootNode({ size, focused }: RootNodeVisualProps) {
 /** Ceiling on the orb's backing store, in device pixels. See the cap in use. */
 const ORB_MAX_PX = 512
 
-/** See `FrameLimiter` in the orb's loop for why this is well below the display's. */
-const ORB_HZ = 30
-
 const ORB_VERT_SRC = `
 attribute vec2 a_position;
 void main() {
@@ -199,17 +194,13 @@ function compileShader(gl: WebGLRenderingContext, type: number, src: string): We
 }
 
 /**
- * The expensive one: the same seven-octave noise the nebula background runs,
- * on an 80×80 canvas, every frame.
- *
- * It stops on window-hide like `CanvasBackground` does. A facet that animates
- * has to opt into that itself — an orb left spinning behind a hidden window is
- * exactly the sort of thing the power monitor was built to catch, and it is
- * invisible by definition.
+ * The same seven-octave noise the nebula background runs, on an 80×80 canvas —
+ * drawn once. It used to roil at 30fps for the life of the window, which is a
+ * steady GPU cost for a mark nobody watches move; a still frame of the noise
+ * looks the same at a glance and costs nothing after the first draw.
  */
 export function OrbRootNode({ size, focused }: RootNodeVisualProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const rafRef = useRef<number>(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -262,39 +253,14 @@ export function OrbRootNode({ size, focused }: RootNodeVisualProps) {
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
-    // Random phase so two windows do not animate in lockstep.
-    const t0 = performance.now() - (Math.random() * 2_000_000 - 1_000_000)
-
-    // Seven octaves of 3D noise per pixel, so this is worth rate-limiting even
-    // at `ORB_MAX_PX`. The orb's own motion is a slow roil; 30 is well above
-    // what it resolves to.
-    const limiter = new FrameLimiter(ORB_HZ)
-
-    const tick = (now: number) => {
-      rafRef.current = requestAnimationFrame(tick)
-      if (!limiter.shouldRun(now)) return
-      gl.uniform1f(timeLoc, (now - t0) / 3333)
-      gl.viewport(0, 0, px, px)
-      gl.clearColor(0, 0, 0, 0)
-      gl.clear(gl.COLOR_BUFFER_BIT)
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
-    }
-
-    const startLoop = () => {
-      if (rafRef.current) return
-      limiter.reset()
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    const stopLoop = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0 } }
-
-    const unsubVisibility = onWindowVisibleChange((visible) => {
-      if (visible) startLoop(); else stopLoop()
-    })
-    if (isWindowVisible()) startLoop()
+    // A random phase, so the still frame is not the same blob everywhere.
+    gl.uniform1f(timeLoc, Math.random() * 600)
+    gl.viewport(0, 0, px, px)
+    gl.clearColor(0, 0, 0, 0)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
     return () => {
-      stopLoop()
-      unsubVisibility()
       gl.deleteProgram(prog)
       gl.deleteShader(vs)
       gl.deleteShader(fs)

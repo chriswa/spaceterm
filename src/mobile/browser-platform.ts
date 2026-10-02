@@ -39,6 +39,24 @@ function log(message: string): void {
   forward?.(message)
 }
 
+/**
+ * Whether the canvas is hidden behind a full-screen view (the terminal). The
+ * renderer pauses every canvas loop — background, thumbnails, the rest — when
+ * told the window is not visible; a canvas nobody can see under the terminal
+ * view is, for that purpose, not visible.
+ */
+let canvasCovered = false
+const visibilityListeners = new Set<(visible: boolean) => void>()
+const canvasVisible = () => document.visibilityState === 'visible' && !canvasCovered
+const announceVisibility = () => visibilityListeners.forEach((cb) => cb(canvasVisible()))
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', announceVisibility)
+
+export function setCanvasCovered(covered: boolean): void {
+  if (covered === canvasCovered) return
+  canvasCovered = covered
+  announceVisibility()
+}
+
 function listen(target: EventTarget, events: string[], read: () => boolean, callback: (value: boolean) => void): () => void {
   const handler = () => callback(read())
   events.forEach((e) => target.addEventListener(e, handler))
@@ -64,8 +82,10 @@ export function browserPlatform(): PlatformApi {
     },
     window: {
       fitToWorkArea: async () => undefined,
-      onVisibilityChanged: (cb) =>
-        listen(document, ['visibilitychange'], () => document.visibilityState === 'visible', cb),
+      onVisibilityChanged: (cb) => {
+        visibilityListeners.add(cb)
+        return () => { visibilityListeners.delete(cb) }
+      },
       onFocusChanged: (cb) =>
         listen(window, ['focus', 'blur'], () => document.hasFocus(), cb)
     },

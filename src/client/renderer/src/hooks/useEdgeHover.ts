@@ -116,6 +116,8 @@ export function useEdgeHover(
   const hoveredEdgeRef = useRef<HoveredEdge | null>(null)
   // Track last known screen-space mouse position and whether mouse is over a node
   const mouseScreenRef = useRef<{ x: number; y: number } | null>(null)
+  /** Starts the hover loop; set by the loop's effect, called when a mouse appears. */
+  const wakeLoopRef = useRef<() => void>(() => undefined)
   const overNodeRef = useRef(false)
 
   // Track mouse position and whether it's over a canvas node
@@ -134,6 +136,7 @@ export function useEdgeHover(
         return
       }
       mouseScreenRef.current = { x: e.clientX, y: e.clientY }
+      wakeLoopRef.current()
       // Check if the mouse target is inside a canvas-node
       const target = e.target as HTMLElement
       overNodeRef.current = !!target.closest('.canvas-node')
@@ -172,11 +175,24 @@ export function useEdgeHover(
 
     let rafId = 0
 
+    // Runs only while a mouse is over the canvas: a frame loop that kept
+    // going with no pointer would hit-test nothing, sixty times a second,
+    // forever — on a touch screen, where there is never a mouse, for the life
+    // of the page.
     const tick = () => {
+      const mouse = mouseScreenRef.current
+      if (!mouse) {
+        rafId = 0
+        if (hoveredEdgeRef.current) {
+          hoveredEdgeRef.current = null
+          setHoveredEdge(null)
+        }
+        lastInputRef.current = null
+        return
+      }
       rafId = requestAnimationFrame(tick)
 
-      const mouse = mouseScreenRef.current
-      if (!mouse || overNodeRef.current) {
+      if (overNodeRef.current) {
         if (hoveredEdgeRef.current) {
           hoveredEdgeRef.current = null
           setHoveredEdge(null)
@@ -224,8 +240,9 @@ export function useEdgeHover(
     // Hit-testing every edge against a cursor behind a hidden window is work
     // for a hover that cannot be seen and a click that cannot be made. This
     // loop was the one that never gated on visibility.
-    const startLoop = () => { if (!rafId) rafId = requestAnimationFrame(tick) }
+    const startLoop = () => { if (!rafId && mouseScreenRef.current && isWindowVisible()) rafId = requestAnimationFrame(tick) }
     const stopLoop = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0 } }
+    wakeLoopRef.current = startLoop
 
     const unsubVisibility = onWindowVisibleChange((visible) => {
       if (visible) startLoop(); else stopLoop()
@@ -235,6 +252,7 @@ export function useEdgeHover(
     return () => {
       stopLoop()
       unsubVisibility()
+      wakeLoopRef.current = () => undefined
     }
   }, [cameraRef, edgesRef, reparentActive])
 

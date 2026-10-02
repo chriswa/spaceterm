@@ -8,6 +8,7 @@ import { Composer } from './Composer'
 import { useVisualViewportVars } from './viewport'
 import { Dictation } from './dictation'
 import { primeCues } from './cues'
+import { setCanvasCovered } from './browser-platform'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -59,6 +60,8 @@ export function MobileApp() {
 
   useEffect(() => {
     if (focusedTerminal) rememberOpen(focusedTerminal)
+    // The terminal view covers the whole canvas: let it stop drawing.
+    setCanvasCovered(focusedTerminal !== null)
   }, [focusedTerminal])
 
   const closeTerminal = () => {

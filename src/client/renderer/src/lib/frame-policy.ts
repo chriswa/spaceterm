@@ -121,6 +121,21 @@ export function pokeFrames(now: number = performance.now()): void {
   activeUntil = now + ACTIVITY_TAIL_MS
 }
 
+const inputListeners = new Set<() => void>()
+
+/**
+ * Called on direct user input — a pointer, a key, a wheel — and nothing else.
+ *
+ * For a loop that rests when nothing changes and must be awake by the next
+ * frame once someone touches the canvas. Narrower than `pokeFrames` on
+ * purpose: that also fires for every server update, which arrive several
+ * times a second while agents work, and a loop woken by those never rests.
+ */
+export function onUserInput(cb: () => void): () => void {
+  inputListeners.add(cb)
+  return () => { inputListeners.delete(cb) }
+}
+
 /**
  * Frames per second anything may draw at right now. Zero means draw nothing.
  *
@@ -241,8 +256,11 @@ if (typeof window !== 'undefined') {
   // immediate. Attached here, not in a component: the overlays that already
   // listen for input are conditionally mounted, so any of them would be a place
   // this could silently stop happening.
-  const poke = () => pokeFrames()
-  for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const) {
+  const poke = () => {
+    pokeFrames()
+    inputListeners.forEach((cb) => cb())
+  }
+  for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'touchmove'] as const) {
     window.addEventListener(type, poke, { capture: true, passive: true })
   }
 }
