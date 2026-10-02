@@ -4,6 +4,7 @@ import {
   finalAgentMessage,
   parseTranscript,
   redactUnheard,
+  renderModelRequest,
   type SummaryChatDeps,
   type TranscriptMessage
 } from './summary-chat'
@@ -18,7 +19,14 @@ type SpeakingEvent = { nodeId: NodeId; speaking: boolean; voice?: string }
 type StatusEvent = { nodeId: NodeId; state: string; message?: string }
 
 /**
- * A scripted stand-in for the two HTTP services SummaryChat talks to. Routes are
+ * Haiku is routed through FakeHttp under this pseudo-URL, so a test scripts and
+ * inspects it exactly like Voice Operator. A route answers `{ result }`; the
+ * recorded body is the `ModelRequest`.
+ */
+const MODEL_ROUTE = 'claude-print-daemon/ask'
+
+/**
+ * A scripted stand-in for the services SummaryChat talks to. Routes are
  * matched by URL substring so a test only has to describe the calls it cares
  * about; anything unrouted is a 404, which SummaryChat treats as "service
  * absent".
@@ -97,7 +105,6 @@ interface Harness {
 function harness(options: {
   transcript?: TranscriptMessage[]
   voiceOperatorRunning?: boolean
-  oauthToken?: () => string
   sleepSpy?: (ms: number) => void
   /**
    * Park the speech monitor on its inter-poll sleep instead of resolving it,
@@ -108,7 +115,7 @@ function harness(options: {
 } = {}): Harness {
   const http = new FakeHttp()
   // Sensible defaults: Haiku answers, Voice Operator accepts and finishes.
-  http.on('api.anthropic.com', { content: [{ type: 'text', text: 'A concise summary.' }] })
+  http.on(MODEL_ROUTE, { result: 'A concise summary.' })
   http.on('/v1/voices', { voices: [{ id: 'voice-a' }, { id: 'voice-b' }, { id: 'af_nicole' }] })
   http.on('/v1/speech', { id: 'speech-1', state: 'completed' })
   options.configure?.(http)
@@ -122,7 +129,12 @@ function harness(options: {
     fetch: http.fetch,
     readDiscovery: () => (options.voiceOperatorRunning === false ? undefined : { port: 8123 }),
     readTranscript: () => options.transcript ?? [{ role: 'user', text: 'do the thing' }],
-    oauthToken: options.oauthToken ?? (() => 'token-abc'),
+    askModel: async (request, signal) => {
+      const response = await http.fetch(`fake://${MODEL_ROUTE}`, { method: 'POST', body: JSON.stringify(request), signal })
+      if (!response.ok) throw new Error(`model returned ${response.status}`)
+      const { result } = (await response.json()) as { result: string }
+      return { text: result, claudeSessionId: 'claude-session-1', source: 'spare' }
+    },
     audit: {
       writeSnapshot: (auditId) => `/fake/${auditId}.initial-prompt.txt`,
       append: (entry) => audits.push(entry)
@@ -171,9 +183,9 @@ function states(h: Harness): string[] {
   return h.statuses.map((s) => s.state)
 }
 
-/** Calls to the Messages API, ignoring background voice-list refreshes. */
+/** Calls to Haiku, ignoring background voice-list refreshes. */
 function haikuCalls(h: Harness): HttpCall[] {
-  return h.http.calls.filter((c) => c.url.includes('api.anthropic.com'))
+  return h.http.calls.filter((c) => c.url.includes(MODEL_ROUTE))
 }
 
 /**
@@ -188,9 +200,9 @@ function newestPrompt(h: Harness): string {
 }
 
 /**
- * The previous answer as Haiku sees it on the newest request. Because the
- * Messages API is stateless the whole history is resent every turn, so this is
- * where an unheard tail would resurface if it were not redacted.
+ * The previous answer as Haiku sees it on the newest request. The whole
+ * history is resent every turn, so this is where an unheard tail would
+ * resurface if it were not redacted.
  */
 function lastAnswerSent(h: Harness): string | undefined {
   const calls = haikuCalls(h)
@@ -206,7 +218,7 @@ function spokenText(h: Harness): string {
 
 /** Script what Haiku answers, when a test needs a specific number of sentences. */
 function answers(http: FakeHttp, text: string): void {
-  http.on('api.anthropic.com', { content: [{ type: 'text', text }] })
+  http.on(MODEL_ROUTE, { result: text })
 }
 
 describe('start', () => {
@@ -252,18 +264,18 @@ describe('start', () => {
     expect(states(h)).not.toContain('error')
   })
 
-  it('sends the transcript to Haiku with the OAuth credential', async () => {
+  it('sends the transcript to Haiku', async () => {
     const h = harness({ transcript: [{ role: 'user', text: 'fix the parser' }] })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
-    const haiku = h.http.calls.find((c) => c.url.includes('api.anthropic.com'))
+    const haiku = h.http.calls.find((c) => c.url.includes(MODEL_ROUTE))
     expect(haiku?.method).toBe('POST')
     expect(JSON.stringify(haiku?.body)).toContain('fix the parser')
   })
 
   it('speaks the text Haiku returned', async () => {
     const h = harness({
-      configure: (http) => http.on('api.anthropic.com', { content: [{ type: 'text', text: 'All done.' }] })
+      configure: (http) => http.on(MODEL_ROUTE, { result: 'All done.' })
     })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
@@ -274,7 +286,7 @@ describe('start', () => {
   it('reports an error and still settles when Haiku fails', async () => {
     const h = harness({
       configure: (http) =>
-        http.on('api.anthropic.com', () => new Response('nope', { status: 500 }))
+        http.on(MODEL_ROUTE, () => new Response('nope', { status: 500 }))
     })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
@@ -283,9 +295,9 @@ describe('start', () => {
     expect(states(h)).toContain('ready')
   })
 
-  it('reports an error when the OAuth credential is unavailable', async () => {
+  it('reports an error when claude-print-daemon cannot be run', async () => {
     const h = harness({
-      oauthToken: () => { throw new Error('Claude Code OAuth credential is unavailable') }
+      configure: (http) => http.on(MODEL_ROUTE, () => { throw new Error('spawn claude-print-daemon ENOENT') })
     })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
@@ -294,7 +306,7 @@ describe('start', () => {
 
   it('reports an error when Haiku returns no text blocks', async () => {
     const h = harness({
-      configure: (http) => http.on('api.anthropic.com', { content: [] })
+      configure: (http) => http.on(MODEL_ROUTE, { result: '' })
     })
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
 
@@ -312,6 +324,26 @@ describe('start', () => {
       sourceAgentSessionId: 'agent-session-1'
     })
     expect(h.audits.some((a) => a.event === 'haiku-response')).toBe(true)
+  })
+
+  it('records which Claude Code session produced the answer', async () => {
+    const h = harness()
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
+
+    expect(h.audits.find((a) => a.event === 'haiku-response')).toMatchObject({
+      provider: 'claude-print-daemon', claudeSessionId: 'claude-session-1', source: 'spare'
+    })
+  })
+
+  it('records why Haiku failed in the audit trail', async () => {
+    const h = harness({
+      configure: (http) => http.on(MODEL_ROUTE, () => { throw new Error('daemon returned 502: session x (spare): claude exited') })
+    })
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
+
+    expect(h.audits.find((a) => a.event === 'haiku-failed')).toMatchObject({
+      kind: 'initial', error: expect.stringContaining('claude exited')
+    })
   })
 
   it('records the answer text, not just how long it was', async () => {
@@ -710,7 +742,7 @@ describe('cancelAll', () => {
 
   it('drops a summary that is still waiting on Haiku', async () => {
     const gate = deferred<unknown>()
-    const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
+    const h = harness({ configure: (http) => http.on(MODEL_ROUTE, () => gate.promise) })
     void h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(3)
     expect(states(h)).toEqual(['target', 'thinking'])
@@ -723,7 +755,7 @@ describe('cancelAll', () => {
 
     // Even if the reply arrives anyway, nothing is spoken and nothing settles
     // a surface that has already been settled by someone else.
-    gate.resolve({ content: [{ type: 'text', text: 'too late' }] })
+    gate.resolve({ result: 'too late' })
     await flush()
     expect(h.http.calls.some((c) => c.method === 'POST' && c.url.includes('/v1/speech'))).toBe(false)
     expect(states(h).filter((s) => s === 'ready')).toHaveLength(1)
@@ -734,7 +766,7 @@ describe('cancelAll', () => {
     // not a failure to report: it would put an error toast on screen every
     // single time the chord was used to stop something.
     const gate = deferred<unknown>()
-    const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
+    const h = harness({ configure: (http) => http.on(MODEL_ROUTE, () => gate.promise) })
     const started = h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await flush(2)
 
@@ -918,11 +950,11 @@ describe('toggle', () => {
     // The chirp confirms a gesture. One that waited for Haiku would arrive
     // seconds after the key, by which time a second press has its own meaning.
     const gate = deferred<unknown>()
-    const h = harness({ configure: (http) => http.on('api.anthropic.com', () => gate.promise) })
+    const h = harness({ configure: (http) => http.on(MODEL_ROUTE, () => gate.promise) })
 
     expect(await h.chat.toggle(NODE, { transcriptPath: '/t.jsonl' })).toEqual({ outcome: 'started' })
 
-    gate.resolve({ content: [{ type: 'text', text: 'A concise summary.' }] })
+    gate.resolve({ result: 'A concise summary.' })
     await flush()
   })
 
@@ -1067,7 +1099,7 @@ describe('followUp', () => {
 
     await h.chat.followUp('why did it fail?')
 
-    const haiku = h.http.calls.find((c) => c.url.includes('api.anthropic.com'))
+    const haiku = h.http.calls.find((c) => c.url.includes(MODEL_ROUTE))
     expect(JSON.stringify(haiku?.body)).toContain('why did it fail?')
   })
 
@@ -1137,7 +1169,7 @@ describe('followUp', () => {
     await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
     await h.chat.followUp('and then?')
 
-    const haiku = h.http.calls.filter((c) => c.url.includes('api.anthropic.com'))
+    const haiku = h.http.calls.filter((c) => c.url.includes(MODEL_ROUTE))
     const last = haiku[haiku.length - 1].body as { messages: unknown[] }
     // initial prompt, initial answer, follow-up
     expect(last.messages.length).toBeGreaterThanOrEqual(3)
@@ -1225,6 +1257,30 @@ describe('dispose', () => {
 
     await h.tickVoiceRefresh()
     expect(h.http.calls).toHaveLength(0)
+  })
+})
+
+describe('renderModelRequest', () => {
+  it('is the instructions and the message alone on a first turn', () => {
+    const prompt = renderModelRequest({ instructions: 'Be brief.', messages: [{ role: 'user', content: 'Summarize.' }] })
+    expect(prompt).toBe('<instructions>\nBe brief.\n</instructions>\n\nSummarize.')
+  })
+
+  it('quotes earlier turns in order and ends with the latest message', () => {
+    const prompt = renderModelRequest({
+      instructions: 'Be brief.',
+      messages: [
+        { role: 'user', content: 'Summarize.' },
+        { role: 'assistant', content: 'It fixed the parser. *INTERRUPTED*' },
+        { role: 'user', content: 'The listener asks: why?' },
+      ],
+    })
+    const summarize = prompt.indexOf('<user>\nSummarize.\n</user>')
+    const answer = prompt.indexOf('<you>\nIt fixed the parser. *INTERRUPTED*\n</you>')
+    expect(summarize).toBeGreaterThan(prompt.indexOf('</instructions>'))
+    expect(answer).toBeGreaterThan(summarize)
+    expect(prompt.endsWith('\n\nThe listener asks: why?')).toBe(true)
+    expect(prompt.slice(answer)).not.toContain('<user>\nThe listener asks')
   })
 })
 
@@ -2039,8 +2095,8 @@ describe('a verbatim conversation catching up on its first follow-up', () => {
 
     await h.chat.followUp('which parser?')
 
-    const system = (haikuCalls(h)[0].body as { system: Array<{ text: string }> }).system
-    expect(system.map((s) => s.text).join(' ')).toContain('do not summarize it back to them')
+    const { instructions } = haikuCalls(h)[0].body as { instructions: string }
+    expect(instructions).toContain('do not summarize it back to them')
   })
 
   // Once it has caught up it is an ordinary conversation: the second question

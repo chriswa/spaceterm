@@ -1,9 +1,9 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { homedir, userInfo } from 'os'
+import { homedir } from 'os'
 import { randomUUID } from 'crypto'
-import { execFileSync } from 'child_process'
 import { serverLog } from './server-log'
+import { askClaudePrint } from './claude-print'
 import type { NodeId } from '../shared/ids'
 import type { ClaudeState } from '../shared/state'
 import type { PendingTurn } from './pending-turn'
@@ -19,8 +19,6 @@ const MAX_MESSAGES = 24
 const MAX_CHARS = 48_000
 const SUMMARY_CHAT_DIR = path.join(process.env.SPACETERM_HOME ?? path.join(homedir(), '.spaceterm'), 'summary-chat')
 const AUDIT_PATH = path.join(SUMMARY_CHAT_DIR, 'sessions.jsonl')
-const HAIKU_URL = 'https://api.anthropic.com/v1/messages'
-const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_HAIKU_HISTORY_MESSAGES = 12
 /**
  * How many of a run's tool calls are named individually.
@@ -119,9 +117,9 @@ const VERBATIM_SYSTEM_PROMPT = `You are a fast voice companion helping a user un
 /**
  * Marks where a spoken answer was cut off, in the history resent to Haiku.
  *
- * The Messages API is stateless: every turn resends the whole conversation, so
- * an answer the listener never heard the end of would otherwise come back
- * verbatim and be treated as delivered. See `redactUnheard`.
+ * Every turn resends the whole conversation, so an answer the listener never
+ * heard the end of would otherwise come back verbatim and be treated as
+ * delivered. See `redactUnheard`.
  */
 const INTERRUPTED_MARKER = '*INTERRUPTED*'
 
@@ -147,6 +145,28 @@ const PENDING_TURN_CAUTION: Partial<Record<ClaudeState, string>> = {
 
 export type TranscriptMessage = { role: 'user' | 'assistant'; text: string }
 type HaikuMessage = { role: 'user' | 'assistant'; content: string }
+/**
+ * One request for a Haiku answer: the conversation's instructions and its
+ * bounded history, ending with the new user message.
+ *
+ * The history is held here and resent whole, rather than kept in a Claude Code
+ * session, because `redactLastAnswer` rewrites it after an interruption.
+ */
+export interface ModelRequest {
+  instructions: string
+  messages: HaikuMessage[]
+}
+
+/** Haiku's reply, and where it came from, so an answer can be traced to its Claude Code session. */
+export interface ModelAnswer {
+  text: string
+  /** The claude-print-daemon session that produced it. Its transcript is under `~/.claude-print-daemon/work`. */
+  claudeSessionId?: string
+  /** How the daemon got a process for it: `spare`, `cold`, … */
+  source?: string
+  wallMs?: number
+  costUsd?: number
+}
 /** What one press of the chord did, and why, if it did nothing. */
 export type ToggleResult =
   | { outcome: Exclude<SummaryChatToggleOutcome, 'rejected'> }
@@ -281,20 +301,20 @@ interface Conversation {
 }
 
 /**
- * Everything SummaryChat reaches outside its own process: two HTTP services
- * (Anthropic's Messages API and the local Voice Operator), the filesystem, the
- * macOS Keychain, and a timer. Each is narrow enough to fake, which is what
- * makes the conversation lifecycle testable without a network or a keychain.
+ * Everything SummaryChat reaches outside its own process: Haiku, the local
+ * Voice Operator over HTTP, the filesystem, and a timer. Each is narrow enough
+ * to fake, which is what makes the conversation lifecycle testable without a
+ * network or a model.
  */
 export interface SummaryChatDeps {
-  /** HTTP. Same shape as global `fetch`. */
+  /** HTTP, for Voice Operator. Same shape as global `fetch`. */
   fetch: typeof fetch
+  /** Haiku's answer to one request. Rejects on failure or abort. */
+  askModel(request: ModelRequest, signal: AbortSignal): Promise<ModelAnswer>
   /** Voice Operator's discovery document, or undefined when it is not running. */
   readDiscovery(): { port?: unknown } | undefined
   /** Parse an agent transcript off disk. Returns [] when unreadable. */
   readTranscript(filePath: string): TranscriptMessage[]
-  /** Claude Code's OAuth credential. Throws when unavailable. */
-  oauthToken(): string
   /** Audit trail. Best-effort — failures must not break a conversation. */
   audit: SummaryChatAudit
   /** Run `fn` every `ms` milliseconds. Returns a cancel function. */
@@ -335,8 +355,23 @@ export const REAL_SUMMARY_CHAT_DEPS: SummaryChatDeps = {
       return undefined
     }
   },
+  async askModel(request, signal) {
+    const response = await askClaudePrint({
+      prompt: renderModelRequest(request),
+      model: 'haiku',
+      noThinking: true,
+      tag: 'summary-chat',
+      signal,
+    })
+    return {
+      text: response.result,
+      claudeSessionId: response.session_id,
+      source: response.source,
+      wallMs: response.wall_ms,
+      costUsd: response.total_cost_usd,
+    }
+  },
   readTranscript,
-  oauthToken: claudeCodeOAuthToken,
   audit: REAL_SUMMARY_CHAT_AUDIT,
   scheduleInterval(fn, ms) {
     const timer = setInterval(fn, ms)
@@ -702,14 +737,17 @@ export class SummaryChat {
     try {
       // Initial only. On a follow-up the listener has already been warned, and
       // repeating it every turn would cost them the warning's meaning.
-      const text = await this.askHaiku(
+      const { text, from } = await this.askHaiku(
         conversation, prompt, attempt, kind === 'initial' ? conversation.caution : undefined,
       )
+      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} ${kind} answered by claude-print-daemon session ${from.claudeSessionId ?? '?'} (${from.source ?? '?'}, ${from.wallMs ?? '?'}ms, $${from.costUsd?.toFixed(4) ?? '?'})`)
       // Audited before the ownership check: the request was made and the tokens
       // were spent, whether or not anyone still wants the answer.
       this.deps.audit.append({
         event: 'haiku-response', auditId: conversation.auditId, nodeId: conversation.nodeId,
-        kind, provider: 'messages-api', responseCharacters: text.length,
+        kind, provider: 'claude-print-daemon', responseCharacters: text.length,
+        claudeSessionId: from.claudeSessionId ?? null, source: from.source ?? null,
+        wallMs: from.wallMs ?? null, costUsd: from.costUsd ?? null,
         // The text itself, not just its length. Whether the answer was worth
         // hearing is the first question asked when nothing comes out of the
         // speakers, and a character count cannot answer it.
@@ -721,7 +759,12 @@ export class SummaryChat {
       // A cancelled request is not a failure. Reporting one would put an error
       // toast on screen every time the listener deliberately cut an answer off.
       if (!attempt.isCurrent) return
-      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} Haiku failed: ${err instanceof Error ? err.message : String(err)}`)
+      const message = err instanceof Error ? err.message : String(err)
+      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} Haiku failed: ${message}`)
+      this.deps.audit.append({
+        event: 'haiku-failed', auditId: conversation.auditId, nodeId: conversation.nodeId,
+        kind, provider: 'claude-print-daemon', error: message,
+      })
       this.onStatusChanged(conversation.nodeId, 'error', 'Summary Chat could not reach Haiku.')
     } finally {
       // Only the owner settles. A superseded or cancelled attempt leaves the
@@ -745,46 +788,23 @@ export class SummaryChat {
   }
 
   /**
-   * Voice Operator's former low-latency path: call Haiku's Messages endpoint
-   * directly with the Claude Code OAuth credential kept in the macOS Keychain.
-   * Keep a bounded history locally because this endpoint is stateless.
+   * Ask Haiku, through claude-print-daemon's warm Haiku spare. Every request
+   * starts a fresh Claude Code session carrying the whole bounded history,
+   * because the history is ours to edit: see `ModelRequest`.
    */
   private async askHaiku(
     conversation: Conversation, prompt: string, attempt: Attempt, caution?: string,
-  ): Promise<string> {
+  ): Promise<{ text: string; from: Omit<ModelAnswer, 'text'> }> {
     const pending: HaikuMessage = { role: 'user', content: prompt }
     const messages = boundedHaikuHistory([...conversation.haikuHistory, pending])
-    const response = await this.deps.fetch(HAIKU_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${this.deps.oauthToken()}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-        'anthropic-version': '2023-06-01',
-        'user-agent': 'claude-code/2.1.47',
-      },
-      body: JSON.stringify({
-        model: HAIKU_MODEL,
-        max_tokens: 250,
-        system: [
-          { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
-          { type: 'text', text: conversation.systemPrompt },
-        ],
-        messages,
-      }),
+    const { text: raw, ...from } = await this.deps.askModel(
+      { instructions: conversation.systemPrompt, messages },
       // Two ways to stop waiting: the request took too long, or nobody wants
-      // the answer any more. Cancelling mid-summary drops the Haiku call rather
-      // than paying for a reply that will be thrown away.
-      signal: AbortSignal.any([attempt.signal, AbortSignal.timeout(30_000)]),
-    })
-    if (!response.ok) throw new Error(`Messages API returned ${response.status}`)
-    const payload = await response.json() as { content?: Array<{ type?: string; text?: string }> }
-    const text = payload.content
-      ?.filter(block => block.type === 'text' && typeof block.text === 'string')
-      .map(block => block.text!)
-      .join('')
-      .trim()
-    if (!text) throw new Error('Messages API returned no text')
+      // the answer any more.
+      AbortSignal.any([attempt.signal, AbortSignal.timeout(30_000)]),
+    )
+    const text = raw.trim()
+    if (!text) throw new Error('Haiku returned no text')
     // The caution joins the answer here, before it is either stored or spoken,
     // so the stored string and the spoken string stay the same string.
     // `redactUnheard` maps Voice Operator's `character_offset` onto the stored
@@ -792,7 +812,7 @@ export class SummaryChat {
     // every interruption offset by its length, silently.
     const answer = caution ? `${caution} ${text}` : text
     conversation.haikuHistory = boundedHaikuHistory([...conversation.haikuHistory, pending, { role: 'assistant', content: answer }])
-    return answer
+    return { text: answer, from }
   }
 
   /**
@@ -1171,8 +1191,8 @@ function isBareContinuation(text: string): boolean {
 /**
  * Rewrite a spoken answer to only the part the listener actually heard.
  *
- * The Messages API is stateless — `askHaiku` resends the whole history on every
- * turn — so an answer that was cut off mid-flow would keep being presented to
+ * `askHaiku` resends the whole history on every turn, so an answer that was
+ * cut off mid-flow would keep being presented to
  * Haiku as though all of it had been delivered. It would then answer "as I
  * said…" about words nobody heard. Redacting the tail is what makes the resent
  * history match the listener's experience.
@@ -1230,17 +1250,24 @@ function boundedHaikuHistory(history: HaikuMessage[]): HaikuMessage[] {
   return [history[0], ...history.slice(-(MAX_HAIKU_HISTORY_MESSAGES - 1))]
 }
 
-function claudeCodeOAuthToken(): string {
-  const account = process.env.USER || process.env.LOGNAME || userInfo().username
-  try {
-    const raw = execFileSync('/usr/bin/security', [
-      'find-generic-password', '-s', 'Claude Code-credentials', '-a', account, '-w',
-    ], { encoding: 'utf8', timeout: 3_000, stdio: ['ignore', 'pipe', 'ignore'] })
-    const credentials = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: unknown } }
-    const token = credentials.claudeAiOauth?.accessToken
-    if (typeof token === 'string' && token) return token
-  } catch { /* Present the same generic failure regardless of Keychain details. */ }
-  throw new Error('Claude Code OAuth credential is unavailable')
+/**
+ * A `ModelRequest` as the single user message of a fresh Claude Code session.
+ *
+ * Claude Code's system prompt is left empty and the instructions travel here,
+ * so every request can share the daemon's one warm Haiku spare. Earlier turns
+ * are quoted as a transcript, and the reply is asked for the last message only.
+ */
+export function renderModelRequest(request: ModelRequest): string {
+  const earlier = request.messages.slice(0, -1)
+  const latest = request.messages[request.messages.length - 1]
+  const parts = [`<instructions>\n${request.instructions}\n</instructions>`]
+  if (earlier.length) {
+    const turns = earlier.map(m => m.role === 'user' ? `<user>\n${m.content}\n</user>` : `<you>\n${m.content}\n</you>`)
+    parts.push(`<conversation_so_far>\n${turns.join('\n')}\n</conversation_so_far>`)
+    parts.push('Reply to the latest message below, following the instructions and continuing the conversation so far.')
+  }
+  parts.push(latest.content)
+  return parts.join('\n\n')
 }
 
 export function readTranscript(filePath: string): TranscriptMessage[] {

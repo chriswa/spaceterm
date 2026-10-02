@@ -1,15 +1,15 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { homedir, userInfo } from 'os'
-import { execFileSync } from 'child_process'
+import { homedir } from 'os'
 import { SOCKET_DIR } from '../shared/protocol'
+import { CLAUDE_PRINT_BIN } from './claude-print'
 
 /**
  * What optional integrations are available on this machine, and what degrades
  * without each one.
  *
- * Several features are best-effort by design: Summary Chat needs a Claude Code
- * OAuth credential from the macOS Keychain and a running Voice Operator, and
+ * Several features are best-effort by design: Summary Chat needs
+ * claude-print-daemon and a running Voice Operator, and
  * background-work reconciliation needs `pgrep`. Each already fails softly —
  * which is right, but means a user on a machine without them sees a feature
  * that quietly does nothing and no indication why.
@@ -33,31 +33,20 @@ export interface Capability {
 }
 
 export interface CapabilityDeps {
-  /**
-   * True when `command` runs and exits zero.
-   *
-   * Only for probes where the exit code means something — `security
-   * find-generic-password` fails when the credential is absent. Not a presence
-   * check: a tool that exits non-zero on "no match" would be reported missing
-   * when it is fine.
-   */
-  canRun(command: string, args: string[]): boolean
+  /** The executable `command` resolves to on PATH, or undefined. */
+  which(command: string): string | undefined
   /** True when a path exists and is executable. */
   isExecutable(filePath: string): boolean
   /** True when a path exists. */
   exists(filePath: string): boolean
-  /** The current user's login name, for the Keychain lookup. */
-  username(): string
 }
 
 export const REAL_CAPABILITY_DEPS: CapabilityDeps = {
-  canRun(command, args) {
-    try {
-      execFileSync(command, args, { timeout: 5_000, stdio: 'ignore' })
-      return true
-    } catch {
-      return false
-    }
+  which(command) {
+    const candidates = command.includes('/')
+      ? [command]
+      : (process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, command))
+    return candidates.find(candidate => REAL_CAPABILITY_DEPS.isExecutable(candidate))
   },
   isExecutable(filePath) {
     try {
@@ -68,7 +57,6 @@ export const REAL_CAPABILITY_DEPS: CapabilityDeps = {
     }
   },
   exists: (filePath) => fs.existsSync(filePath),
-  username: () => process.env.USER || process.env.LOGNAME || userInfo().username
 }
 
 /**
@@ -87,19 +75,15 @@ const VOICE_OPERATOR_DISCOVERY = path.join(
 export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): Capability[] {
   const capabilities: Capability[] = []
 
-  // macOS Keychain. Summary Chat reuses Claude Code's own OAuth credential
-  // rather than asking for a separate API key.
-  const credential = deps.canRun('/usr/bin/security', [
-    'find-generic-password', '-s', 'Claude Code-credentials', '-a', deps.username(), '-w'
-  ])
+  // Summary Chat reaches Haiku through claude-print-daemon, which runs the
+  // signed-in Claude Code. The binary is enough: it starts the daemon itself.
+  const claudePrint = deps.which(CLAUDE_PRINT_BIN)
   capabilities.push({
-    id: 'claude-oauth',
-    name: 'Claude Code OAuth credential',
-    available: credential,
-    detail: credential
-      ? 'found in the login keychain'
-      : 'not readable — macOS only, and requires Claude Code to have been signed in',
-    affects: credential ? '' : 'Summary Chat cannot reach Haiku and reports an error when invoked'
+    id: 'claude-print-daemon',
+    name: 'claude-print-daemon',
+    available: claudePrint !== undefined,
+    detail: claudePrint ?? `${CLAUDE_PRINT_BIN} not found on PATH (build it from ~/claude-print-daemon with go install)`,
+    affects: claudePrint ? '' : 'Summary Chat cannot reach Haiku and reports an error when invoked'
   })
 
   const voice = deps.exists(VOICE_OPERATOR_DISCOVERY)
