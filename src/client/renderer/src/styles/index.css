@@ -1167,17 +1167,56 @@ html, body, #root {
   );
 }
 
-/* A node's stamp: left of the card, half its height, centred on it. The shell
-   is the card's box, so the percentages are the card's. */
-.node-stamp {
+/* A node's stamps: left of the card, half its height, centred on it. The shell
+   is the card's box, so the percentages are the card's. The auto-stamp is the
+   one beside the card; a manual stamp sits to its left. */
+.node-stamps {
   position: absolute;
   right: calc(100% + 40px);
   top: 25%;
   height: 50%;
   display: flex;
   justify-content: flex-end;
+  gap: 40px;
   pointer-events: none;
 }
+
+.node-stamp {
+  height: 100%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* A generated icon, drawn as a mask over a flat fill. */
+.node-stamp-auto {
+  height: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: none;
+  background-color: var(--node-stamp-auto-color, #cdd6f4);
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+.node-stamp-auto:hover { filter: brightness(1.25); }
+.node-stamp-auto--generating {
+  cursor: progress;
+  animation: node-stamp-pulse 1s ease-in-out infinite alternate;
+}
+/* Before the first icon arrives, or after one fails, a ring holds the place. */
+.node-stamp-auto--empty {
+  background: none;
+  border: 8px dashed var(--node-stamp-auto-color, #6c7086);
+  border-radius: 50%;
+  opacity: 0.6;
+}
+.node-stamp-auto--failed.node-stamp-auto--empty { border-color: #ff4d4d; }
 
 /* Colour lives on the kind rather than on `.node-stamp`, so the picker's
    options share it. */
@@ -1193,7 +1232,7 @@ html, body, #root {
   to { opacity: 0.5; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .node-stamp svg { animation: none !important; }
+  .node-stamp svg, .node-stamp-auto { animation: none !important; }
 }
 
 .node-titlebar__close {

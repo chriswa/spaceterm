@@ -66,6 +66,8 @@ import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { SessionTitleSummarizer } from './session-title-summarizer'
 import { SummaryChat } from './summary-chat'
+import { AutoStamper } from './auto-stamp'
+import { askClaudePrint } from './claude-print'
 import { DirectSpeech } from './direct-speech'
 import { VoiceOperator } from './voice-operator'
 import { PendingTurnCache } from './pending-turn'
@@ -270,6 +272,8 @@ let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let sessionTitleSummarizer: SessionTitleSummarizer
 let summaryChat: SummaryChat
+/** Undefined until startup builds it; node updates arrive before then. */
+let autoStamper: AutoStamper | undefined
 /**
  * Speech for text nobody had to generate: the MCP `TTS` tool, `spaceterm-speak`,
  * and the speak-the-selection chord. Constructed eagerly — unlike SummaryChat,
@@ -701,6 +705,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   // Same for the root node's working directory, which the client needs before
   // it can tell you where a top-level card is about to be created.
   send(link, { type: 'root-cwd', cwd: stateManager.getRootCwd() })
+  send(link, { type: 'auto-stamps-enabled', enabled: stateManager.getAutoStampsEnabled() })
 
   // Availability is pushed on change, which a client that connected after the
   // last change would never have heard. Replay what is known.
@@ -1551,6 +1556,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'node-regenerate-auto-stamp': {
+      autoStamper?.regenerate(msg.nodeId)
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'node-set-stamp': {
       // The one field here the wire could fill with anything: every renderer
       // path draws from NODE_STAMPS, so an unknown value is refused, not stored.
@@ -2322,6 +2333,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'set-auto-stamps-enabled': {
+      stateManager.setAutoStampsEnabled(msg.enabled === true)
+      serverLog(`[auto-stamp] generation turned ${stateManager.getAutoStampsEnabled() ? 'on' : 'off'}`)
+      broadcastToAll({ type: 'auto-stamps-enabled', enabled: stateManager.getAutoStampsEnabled() })
+      // Turning it on catches up every surface whose icon is missing or stale.
+      if (stateManager.getAutoStampsEnabled()) autoStamper?.resume()
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'set-root-cwd': {
       try {
         stateManager.setRootCwd(msg.cwd)
@@ -2492,6 +2513,7 @@ async function startServer(): Promise<void> {
     onNodeUpdate: (nodeId, fields) => {
       broadcastToAll({ type: 'node-updated', nodeId, fields })
       scriptApi.broadcast('node-updated', nodeId, { type: 'node-updated', nodeId, fields })
+      if ('name' in fields || 'shellTitleHistory' in fields) autoStamper?.titleMaybeChanged(nodeId)
     },
     onNodeAdd: (node) => {
       broadcastToAll({ type: 'node-added', node })
@@ -2809,6 +2831,23 @@ async function startServer(): Promise<void> {
       broadcastToAll({ type: 'summary-chat-status', nodeId, state, message })
     },
   )
+
+  autoStamper = new AutoStamper({
+    async ask(prompt, signal) {
+      const response = await askClaudePrint({ prompt, model: 'sonnet', tag: 'auto-stamp', signal })
+      return { text: response.result, costUsd: response.total_cost_usd, claudeSessionId: response.session_id }
+    },
+    getNode: (nodeId) => stateManager.getNode(nodeId),
+    getNodes: () => stateManager.getNodes(),
+    isEnabled: () => stateManager.getAutoStampsEnabled(),
+    setAutoStamp: (nodeId, autoStamp) => stateManager.setNodeAutoStamp(nodeId, autoStamp),
+    schedule(fn, ms) {
+      const timer = setTimeout(fn, ms)
+      return () => clearTimeout(timer)
+    },
+    log: serverLog,
+  })
+  autoStamper.resume()
 
   // --- Startup: reconcile with daemon sessions, then revive remaining terminals ---
   //

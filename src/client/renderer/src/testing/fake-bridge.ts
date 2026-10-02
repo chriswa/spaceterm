@@ -157,6 +157,7 @@ export class FakeBridge implements Api {
   private readonly peerCameraBounds = new Set<(clientId: string, bounds: CameraBounds) => void>()
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly rootCwd = new Set<(cwd: string | undefined) => void>()
+  private readonly autoStampsEnabled = new Set<(enabled: boolean) => void>()
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
   private readonly agentMetaAvailability = new Set<(nodeId: NodeId, available: boolean) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
@@ -236,6 +237,9 @@ export class FakeBridge implements Api {
     savedViewports: (viewports: Record<string, CameraBounds>): void => {
       for (const fn of this.savedViewports) fn(viewports)
     },
+    autoStampsEnabled: (enabled: boolean): void => {
+      for (const fn of this.autoStampsEnabled) fn(enabled)
+    },
     rootCwd: (cwd: string | undefined): void => {
       for (const fn of this.rootCwd) fn(cwd)
     },
@@ -287,6 +291,7 @@ export class FakeBridge implements Api {
     rename: (nodeId, name) => this.reply('node.rename', undefined, nodeId, name),
     setColor: (nodeId, colorPresetId) => this.reply('node.setColor', undefined, nodeId, colorPresetId),
     setStamp: (nodeId, stamp) => this.reply('node.setStamp', undefined, nodeId, stamp),
+    regenerateAutoStamp: (nodeId) => this.reply('node.regenerateAutoStamp', undefined, nodeId),
     archive: (nodeId) => this.reply('node.archive', undefined, nodeId),
     unarchive: (parentNodeId, archivedNodeId) =>
       this.reply('node.unarchive', undefined, parentNodeId, archivedNodeId),
@@ -318,6 +323,7 @@ export class FakeBridge implements Api {
       this.reply('node.directoryAdd', { nodeId: this.responses.newNodeId }, parentId, cwd, x, y),
     directoryCwd: (nodeId, cwd) => this.reply('node.directoryCwd', undefined, nodeId, cwd),
     setRootCwd: (cwd) => this.reply('node.setRootCwd', undefined, cwd),
+    setAutoStampsEnabled: (enabled) => this.reply('node.setAutoStampsEnabled', undefined, enabled),
     directoryGitFetch: (nodeId) => this.reply('node.directoryGitFetch', undefined, nodeId),
     directoryGitRun: (nodeId, command) => this.reply('node.directoryGitRun', this.responses.command, nodeId, command),
     directoryOpenGitHubDesktop: (nodeId) =>
@@ -373,6 +379,7 @@ export class FakeBridge implements Api {
     onPeerCameraBounds: (cb) => subscribe(this.peerCameraBounds, cb),
     onSavedViewports: (cb) => subscribe(this.savedViewports, cb),
     onRootCwd: (cb) => subscribe(this.rootCwd, cb),
+    onAutoStampsEnabled: (cb) => subscribe(this.autoStampsEnabled, cb),
     onRestartRequired: (cb) => subscribe(this.restartRequired, cb),
     onAgentMetaAvailability: (cb) => subscribe(this.agentMetaAvailability, cb),
     restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag)

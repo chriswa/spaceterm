@@ -74,6 +74,8 @@ export interface NodeApi {
   rename(nodeId: NodeId, name: string): Promise<void>
   setColor(nodeId: NodeId, colorPresetId: string): Promise<void>
   setStamp(nodeId: NodeId, stamp: NodeStamp): Promise<void>
+  /** Replace the node's auto-stamp with a different icon. */
+  regenerateAutoStamp(nodeId: NodeId): Promise<void>
   /** Archive a node and everything beneath it, as one restorable entry. */
   archive(nodeId: NodeId): Promise<void>
   /**
@@ -126,6 +128,8 @@ export interface NodeApi {
    * An empty string clears it, leaving top-level cards with no inherited cwd.
    */
   setRootCwd(cwd: string): Promise<void>
+  /** Turn auto-stamp generation on or off, for every client. */
+  setAutoStampsEnabled(enabled: boolean): Promise<void>
   directoryGitFetch(nodeId: NodeId): Promise<void>
   /**
    * Run `git pull`/`git push` in a new terminal child of the directory node.
@@ -188,6 +192,8 @@ export interface NodeApi {
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
   /** The root node's working directory, pushed on connect and on every change. */
   onRootCwd(callback: (cwd: string | undefined) => void): () => void
+  /** Whether auto-stamp generation is on, pushed on connect and on every change. */
+  onAutoStampsEnabled(callback: (enabled: boolean) => void): () => void
   /** Live changes to the restart-required flag (PUSH). See restartFlagStatus for the PULL. */
   onRestartRequired(callback: (required: boolean, reason: string) => void): () => void
   /** Whether a host has an agent-meta branch to show, as the server learns it (PUSH). */

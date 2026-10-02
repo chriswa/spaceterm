@@ -1,4 +1,5 @@
-import type { NodeStamp } from '../../../../shared/state'
+import type { CSSProperties, MouseEvent } from 'react'
+import type { AutoStamp, NodeStamp } from '../../../../shared/state'
 
 type VisibleStamp = Exclude<NodeStamp, 'none'>
 
@@ -38,14 +39,63 @@ export function StampGlyph({ stamp }: { stamp: VisibleStamp }) {
 }
 
 /**
- * The stamp beside a card: to its left, half its height, vertically centred.
+ * The marks beside a card: to its left, half its height, vertically centred.
+ * The auto-stamp sits next to the card and a manual stamp to its left.
  * Rendered as a child of the card shell, whose box is the card's.
  */
-export function StampMark({ stamp }: { stamp: NodeStamp | undefined }) {
-  if (!stamp || stamp === 'none') return null
+export function StampMark({ stamp, autoStamp, autoStampColor, onRegenerateAutoStamp }: {
+  stamp: NodeStamp | undefined
+  autoStamp?: AutoStamp
+  /** The fill an auto-stamp is drawn in. */
+  autoStampColor?: string
+  onRegenerateAutoStamp?: () => void
+}) {
+  const manual = stamp && stamp !== 'none' ? stamp : undefined
+  if (!manual && !autoStamp) return null
   return (
-    <div className={`node-stamp node-stamp--${stamp}`} aria-label={STAMP_LABELS[stamp]}>
-      <StampGlyph stamp={stamp} />
+    <div className="node-stamps">
+      {manual && (
+        <div className={`node-stamp node-stamp--${manual}`} aria-label={STAMP_LABELS[manual]}>
+          <StampGlyph stamp={manual} />
+        </div>
+      )}
+      {autoStamp && <AutoStampMark autoStamp={autoStamp} color={autoStampColor} onRegenerate={onRegenerateAutoStamp} />}
     </div>
+  )
+}
+
+/**
+ * A generated icon, drawn as a mask over a flat fill: whatever colours or
+ * markup the model put in the SVG, only its shape shows and nothing in it runs.
+ * Clicking asks for a different one.
+ */
+function AutoStampMark({ autoStamp, color, onRegenerate }: {
+  autoStamp: AutoStamp
+  color?: string
+  onRegenerate?: () => void
+}) {
+  const { svg, status } = autoStamp
+  // Quoted: WebKit drops an unquoted data URL in a mask (see the hat masks).
+  const mask = svg ? `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}")` : undefined
+  // Every icon drawn for this node, regenerations included. The reason for a
+  // failure is in the server log, under [auto-stamp].
+  const spent = `$${autoStamp.costUsd.toFixed(3)} spent`
+  return (
+    <button
+      type="button"
+      className={`node-stamp-auto node-stamp-auto--${status}${svg ? '' : ' node-stamp-auto--empty'}`}
+      style={{
+        ...(mask ? { maskImage: mask, WebkitMaskImage: mask } : {}),
+        ...(color ? { '--node-stamp-auto-color': color } : {}),
+      } as CSSProperties}
+      title={spent}
+      aria-label={`Auto stamp: ${autoStamp.description ?? autoStamp.title}. ${spent}`}
+      // Kept off the canvas, which would otherwise start a drag or a focus.
+      onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+      onClick={(e: MouseEvent) => {
+        e.stopPropagation()
+        if (status !== 'generating') onRegenerate?.()
+      }}
+    />
   )
 }

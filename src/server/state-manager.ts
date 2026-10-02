@@ -15,6 +15,7 @@ import type {
   ArchivedDescendant,
   GitStatus,
   AlertType,
+  AutoStamp,
   NodeStamp
 } from '../shared/state'
 import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
@@ -459,6 +460,22 @@ export class StateManager {
     this.recheckAllCwdAlerts()
   }
 
+  /** Whether auto-stamps are drawn. On unless turned off. */
+  getAutoStampsEnabled(): boolean {
+    return this.state.autoStampsEnabled !== false
+  }
+
+  setAutoStampsEnabled(enabled: boolean): void {
+    if (enabled === this.getAutoStampsEnabled()) return
+    this.state.autoStampsEnabled = enabled
+    this.schedulePersist()
+  }
+
+  /** Every live node, for sweeps that consider them all. */
+  getNodes(): NodeData[] {
+    return Object.values(this.state.nodes)
+  }
+
   getNode(id: NodeId): NodeData | undefined {
     return this.state.nodes[id]
   }
@@ -840,6 +857,12 @@ export class StateManager {
     node.colorPresetId = colorPresetId
     this.onNodeUpdate(nodeId, { colorPresetId })
     this.schedulePersist()
+  }
+
+  setNodeAutoStamp(nodeId: NodeId, autoStamp: AutoStamp): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || this.refuseEphemeral(node, 'setNodeAutoStamp')) return
+    this.patchNode(node, { autoStamp })
   }
 
   setNodeStamp(nodeId: NodeId, stamp: NodeStamp): void {

@@ -3,6 +3,8 @@ import { usePerfStore } from '../../stores/perfStore'
 import { useCameraLockStore } from '../../stores/cameraLockStore'
 import { useNotificationSoundStore } from '../../stores/notificationSoundStore'
 import { useCopyCleanupStore } from '../../stores/copyCleanupStore'
+import { useAutoStampsEnabledStore } from '../../stores/autoStampsEnabledStore'
+import { sendAutoStampsEnabled } from '../../lib/server-sync'
 import { useThemeStore } from '../../stores/themeStore'
 import { usePowerMonitorStore } from '../../stores/powerMonitorStore'
 import { useFramePolicyStore } from '../../stores/framePolicyStore'
@@ -24,7 +26,7 @@ import {
   type ActiveHoursId,
 } from '../../lib/dim-stale'
 import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon } from './icons'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -225,6 +227,22 @@ export function NotificationSoundToggle() {
   )
 }
 
+
+export function AutoStampToggle() {
+  const enabled = useAutoStampsEnabledStore(s => s.enabled)
+  return (
+    <button
+      className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
+      // The store follows the server's broadcast rather than the click, so
+      // every client, this one included, shows what the server decided.
+      onClick={() => { void sendAutoStampsEnabled(!enabled) }}
+      data-tooltip={enabled ? 'Auto Stamp Generation — Stop drawing icons for surfaces' : 'Auto Stamp Generation — Draw an icon for each surface from its title'}
+      data-tooltip-no-flip
+    >
+      <AutoStampIcon />
+    </button>
+  )
+}
 
 export function CopyCleanupToggle() {
   const enabled = useCopyCleanupStore(s => s.enabled)

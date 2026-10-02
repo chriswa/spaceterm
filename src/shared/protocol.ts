@@ -244,6 +244,13 @@ export interface NodeSetStampMessage {
   stamp: NodeStamp
 }
 
+/** Generate a different auto-stamp icon for a node. See `AutoStamp`. */
+export interface NodeRegenerateAutoStampMessage {
+  type: 'node-regenerate-auto-stamp'
+  seq: number
+  nodeId: NodeId
+}
+
 export interface NodeArchiveMessage {
   type: 'node-archive'
   seq: number
@@ -475,6 +482,13 @@ export interface SetRootCwdMessage {
   type: 'set-root-cwd'
   seq: number
   cwd: string
+}
+
+/** Turn auto-stamp generation on or off for every client. Answered by `auto-stamps-enabled`. */
+export interface SetAutoStampsEnabledMessage {
+  type: 'set-auto-stamps-enabled'
+  seq: number
+  enabled: boolean
 }
 
 export interface DirectoryGitFetchMessage {
@@ -990,6 +1004,7 @@ export type ClientMessage =
   | NodeRenameMessage
   | NodeSetColorMessage
   | NodeSetStampMessage
+  | NodeRegenerateAutoStampMessage
   | NodeArchiveMessage
   | NodeUnarchiveMessage
   | NodeArchiveDeleteMessage
@@ -1034,6 +1049,7 @@ export type ClientMessage =
   | SpeakStopMessage
   | SaveViewportMessage
   | SetRootCwdMessage
+  | SetAutoStampsEnabledMessage
 
 // --- Server → Client messages ---
 
@@ -1331,6 +1347,12 @@ export interface RootCwdMessage {
   cwd?: string
 }
 
+/** Whether auto-stamp generation is on. Sent on connect and broadcast on every change. */
+export interface AutoStampsEnabledMessage {
+  type: 'auto-stamps-enabled'
+  enabled: boolean
+}
+
 /** Full set of saved viewport slots (slot -> bounds). Sent on connect and broadcast on every save. */
 export interface SavedViewportsMessage {
   type: 'saved-viewports'
@@ -1600,5 +1622,6 @@ export type ServerMessage =
   | FocusSurfaceMessage
   | SavedViewportsMessage
   | RootCwdMessage
+  | AutoStampsEnabledMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage

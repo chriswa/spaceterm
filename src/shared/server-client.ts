@@ -65,7 +65,7 @@ export type ServerEventType =
   | 'mod' | 'data' | 'exit' | 'node-updated' | 'node-added' | 'node-removed'
   | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active' | 'speaking-changed'
   | 'summary-chat-status' | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
-  | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'restart-required'
+  | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required'
   | 'agent-meta-availability' | 'server-error'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -269,6 +269,7 @@ export class ServerClient {
       case 'focus-surface':
       case 'saved-viewports':
       case 'root-cwd':
+      case 'auto-stamps-enabled':
       case 'restart-required':
       case 'agent-meta-availability':
         this.emit(msg)
@@ -463,6 +464,10 @@ export class ServerClient {
     return this.ack({ type: 'node-set-stamp', nodeId, stamp })
   }
 
+  nodeRegenerateAutoStamp(nodeId: NodeId): Promise<void> {
+    return this.ack({ type: 'node-regenerate-auto-stamp', nodeId })
+  }
+
   nodeArchive(nodeId: NodeId): Promise<void> {
     return this.ack({ type: 'node-archive', nodeId })
   }
@@ -560,6 +565,10 @@ export class ServerClient {
   /** Set the root node's working directory; an empty string clears it. */
   setRootCwd(cwd: string): Promise<void> {
     return this.ack({ type: 'set-root-cwd', cwd })
+  }
+
+  setAutoStampsEnabled(enabled: boolean): Promise<void> {
+    return this.ack({ type: 'set-auto-stamps-enabled', enabled })
   }
 
   directoryGitFetch(nodeId: NodeId): Promise<void> {

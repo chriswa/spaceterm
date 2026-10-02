@@ -79,6 +79,8 @@ export interface BaseNodeData {
   colorPresetId?: string
   /** A mark drawn beside the card. Absent means `'none'`. See {@link NODE_STAMPS}. */
   stamp?: NodeStamp
+  /** An icon generated from the node's title, drawn beside any manual stamp. See `auto-stamp.ts`. */
+  autoStamp?: AutoStamp
   archivedChildren: ArchivedNode[]
   alerts?: NodeAlert[]
   alertsReadTimestamp?: number  // epoch ms, set by client
@@ -348,6 +350,30 @@ export type NodeData =
  * surfaces offer the picker today; the field lives on every node so another
  * card kind can offer it without a protocol change.
  */
+/**
+ * A generated icon for a node, made by Sonnet from the node's title.
+ *
+ * `svg` is drawn only as a CSS mask, so it renders as one flat colour and none
+ * of its markup can run.
+ */
+export interface AutoStamp {
+  /** The title the current icon, or the one being generated, depicts. */
+  title: string
+  status: 'generating' | 'ready' | 'failed'
+  svg?: string
+  /** The model's one-sentence account of what it drew. */
+  description?: string
+  error?: string
+  /**
+   * Descriptions of every icon generated for this node, oldest first. A
+   * regeneration shows the model these, never the SVGs, and asks for
+   * something different.
+   */
+  previousDescriptions: string[]
+  /** Total spent on this node's icons, as Claude Code reports it. */
+  costUsd: number
+}
+
 export const NODE_STAMPS = ['none', 'star', 'bang'] as const
 export type NodeStamp = typeof NODE_STAMPS[number]
 
@@ -494,6 +520,8 @@ export interface ServerState {
    * Absent means no default: inheritance ends with nothing, exactly as before.
    */
   rootCwd?: string
+  /** Whether surfaces get auto-stamp icons drawn for them. Absent means on. See `auto-stamp.ts`. */
+  autoStampsEnabled?: boolean
 }
 
 /** What kind of background work a launch represents. Mirrors `LaunchKind`. */

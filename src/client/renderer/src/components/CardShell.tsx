@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
-import type { ColorPreset } from '../lib/color-presets'
+import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import type { ArchivedNode, TerminalSessionEntry } from '../../../../shared/state'
 import { AddNodeBody } from './AddNodeBody'
 import type { AddNodeType } from './AddNodeBody'
 import { NodeActionBar } from './NodeActionBar'
 import { StampMark } from './StampGlyph'
+import { sendRegenerateAutoStamp } from '../lib/server-sync'
 import { RootCwdBody } from './RootCwdBody'
 import { RootCwdGlyph } from './icons/RootCwdGlyph'
 import type { NodeActionBarProps } from './NodeActionBar'
@@ -98,6 +99,8 @@ export function CardShell({
   const chromeScale = nodeId === ROOT_NODE_ID ? ROOT_CHROME_SCALE : cardChromeScale(nodeType)
 
   const stampValue = useNodeStore(s => s.nodes[nodeId]?.stamp)
+  const autoStamp = useNodeStore(s => s.nodes[nodeId]?.autoStamp)
+  const regenerateAutoStamp = useCallback(() => { void sendRegenerateAutoStamp(nodeId) }, [nodeId])
 
   // Alert badge (visible when unfocused)
   const alerts = useNodeStore(s => s.nodes[nodeId]?.alerts ?? EMPTY_ALERTS)
@@ -272,7 +275,13 @@ export function CardShell({
       onMouseLeave={onMouseLeave}
     >
       {behindContent}
-      <StampMark stamp={stampValue} />
+      <StampMark
+        stamp={stampValue}
+        autoStamp={autoStamp}
+        // The label's colour, so the icon reads as part of the node's name.
+        autoStampColor={(preset ?? DEFAULT_PRESET).titleBarBg}
+        onRegenerateAutoStamp={regenerateAutoStamp}
+      />
       {hasAlerts && !focused && (
         <div className={`card-shell__alert-badge${hasUnread ? ' card-shell__alert-badge--unread' : ''}`}>
           <svg width="60" height="60" viewBox="0 0 16 16" fill="none" strokeLinecap="round" strokeLinejoin="round">

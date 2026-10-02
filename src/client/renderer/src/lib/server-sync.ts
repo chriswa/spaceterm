@@ -2,6 +2,7 @@ import { useNodeStore } from '../stores/nodeStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { usePeerStore } from '../stores/peerStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
+import { useAutoStampsEnabledStore } from '../stores/autoStampsEnabledStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSummaryChatStore } from '../stores/summaryChatStore'
@@ -177,6 +178,12 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
+    window.api.node.onAutoStampsEnabled((enabled) => {
+      useAutoStampsEnabledStore.getState().set(enabled)
+    })
+  )
+
+  cleanupFns.push(
     window.api.node.onRestartRequired((required, reason) => {
       useRestartRequiredStore.getState().set(required, reason)
     })
@@ -192,6 +199,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     syncUndoBuffer(serverState.undoBuffer ?? [], serverState.undoCursor)
     useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
     useRootCwdStore.getState().set(serverState.rootCwd)
+    useAutoStampsEnabledStore.getState().set(serverState.autoStampsEnabled !== false)
 
     // Authoritative on reload: the PUSH above only fires when the flag changes
     // while the socket stays open, which a renderer refresh does not repeat.
@@ -233,6 +241,10 @@ export async function sendSetStamp(nodeId: NodeId, stamp: NodeStamp): Promise<vo
   await window.api.node.setStamp(nodeId, stamp)
 }
 
+export async function sendRegenerateAutoStamp(nodeId: NodeId): Promise<void> {
+  await window.api.node.regenerateAutoStamp(nodeId)
+}
+
 export async function sendBringToFront(nodeId: NodeId): Promise<void> {
   await window.api.node.bringToFront(nodeId)
 }
@@ -270,6 +282,10 @@ export async function sendDirectoryCwd(nodeId: NodeId, cwd: string): Promise<voi
 }
 
 /** Set the root node's working directory; an empty string clears it. */
+export async function sendAutoStampsEnabled(enabled: boolean): Promise<void> {
+  await window.api.node.setAutoStampsEnabled(enabled)
+}
+
 export async function sendRootCwd(cwd: string): Promise<void> {
   await window.api.node.setRootCwd(cwd)
 }

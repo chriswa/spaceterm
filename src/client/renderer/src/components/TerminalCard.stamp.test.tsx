@@ -5,7 +5,7 @@ import { TerminalCard } from './TerminalCard'
 import { installFakeBridge } from '../testing/fake-bridge'
 import { useNodeStore } from '../stores/nodeStore'
 import { asNodeId, asPtySessionId } from '../../../../shared/ids'
-import type { NodeData, NodeStamp } from '../../../../shared/state'
+import type { AutoStamp, NodeData, NodeStamp } from '../../../../shared/state'
 import type { Camera } from '../lib/camera'
 
 /**
@@ -95,5 +95,48 @@ describe('a surface stamp', () => {
   it('is not offered on a plain terminal', () => {
     const { container } = render(<TerminalCard {...props({ agentType: undefined, claudeState: undefined })} />)
     expect(container.querySelector('.node-titlebar__stamp-btn')).toBeNull()
+  })
+})
+
+describe('an auto-stamp', () => {
+  const SVG = '<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40"/></svg>'
+
+  function setAutoStamp(stamp: NodeStamp | undefined, autoStamp: AutoStamp): void {
+    act(() => {
+      useNodeStore.setState({ nodes: { [nid('term-1')]: { id: nid('term-1'), type: 'terminal', stamp, autoStamp } as unknown as NodeData } })
+    })
+  }
+
+  it('is drawn as a mask of its SVG, beside the card and right of a manual stamp', () => {
+    const { container } = render(<TerminalCard {...props()} />)
+    setAutoStamp('star', { title: 'Fix the parser', status: 'ready', svg: SVG, description: 'A wrench.', previousDescriptions: ['A wrench.'], costUsd: 0.01 })
+
+    const marks = [...container.querySelector('.node-stamps')!.children]
+    expect(marks.map((m) => m.className)).toEqual(['node-stamp node-stamp--star', 'node-stamp-auto node-stamp-auto--ready'])
+    const auto = marks[1] as HTMLElement
+    expect(auto.style.maskImage).toContain(encodeURIComponent(SVG))
+    expect(auto.innerHTML).toBe('')
+    expect(auto.title).toBe('$0.010 spent')
+    // Drawn in the label's colour, not the manual stamps' white.
+    expect(auto.style.getPropertyValue('--node-stamp-auto-color')).not.toBe('')
+  })
+
+  it('asks for a different icon when clicked', () => {
+    const bridge = installFakeBridge(globalThis as never)
+    const { container } = render(<TerminalCard {...props()} />)
+    setAutoStamp(undefined, { title: 'Fix the parser', status: 'ready', svg: SVG, description: 'A wrench.', previousDescriptions: [], costUsd: 0 })
+
+    fireEvent.click(container.querySelector('.node-stamp-auto')!)
+    expect(bridge.lastCall('node.regenerateAutoStamp')).toEqual([nid('term-1')])
+  })
+
+  it('does not ask again while an icon is being drawn', () => {
+    const bridge = installFakeBridge(globalThis as never)
+    const { container } = render(<TerminalCard {...props()} />)
+    setAutoStamp(undefined, { title: 'Fix the parser', status: 'generating', previousDescriptions: [], costUsd: 0 })
+
+    expect(container.querySelector('.node-stamp-auto--empty')).not.toBeNull()
+    fireEvent.click(container.querySelector('.node-stamp-auto')!)
+    expect(bridge.callsTo('node.regenerateAutoStamp')).toHaveLength(0)
   })
 })

@@ -168,6 +168,19 @@ export function CaretIcon() {
   )
 }
 
+export function AutoStampIcon() {
+  // A rubber stamp with a spark beside it: a stamp that makes itself.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <circle cx="6" cy="3.5" r="2" />
+      <path d="M5 5.5 L5 8.5 M7 5.5 L7 8.5" />
+      <path d="M1.5 8.5 H10.5 V11.5 H1.5 Z" fill="currentColor" fillOpacity="0.2" />
+      <path d="M1.5 14 H10.5" />
+      <path d="M13 3 V7 M11 5 H15" strokeWidth="1.2" />
+    </svg>
+  )
+}
+
 export function DustpanIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
