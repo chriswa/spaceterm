@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNodeStore } from '@/stores/nodeStore'
 import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
 import { Dictation } from './dictation'
 import { insertDictation } from './pcm'
+import { nextRecall, promptStore } from './prompt-store'
 
 /**
  * Write a prompt away from the TUI — dictate, edit, then ship it to a surface.
@@ -11,39 +12,34 @@ import { insertDictation } from './pcm'
  * Ship goes through the same server operation as a markdown card's button
  * (src/server/ship-it.ts), so a prompt lands the same way from either.
  *
- * Drafts live in this browser only, one per surface. iOS evicts a backgrounded
- * page freely, and a dictated paragraph lost to a trip to another app is the
- * failure worth designing against.
+ * Drafts live in this browser only, one per surface (see prompt-store.ts).
+ * iOS evicts a backgrounded page freely, and a dictated paragraph lost to a
+ * trip to another app is the failure worth designing against. A shipped
+ * prompt leaves the draft at once, into a history the recall button walks back
+ * through.
  */
 
 /** A button press that must not take focus from the text (and so dismiss the keyboard). */
 const keepFocus = (e: { preventDefault(): void }) => e.preventDefault()
 
-const draftKey = (nodeId: NodeId) => `mobile.draft.${nodeId}`
-
-function loadDraft(nodeId: NodeId): string {
-  try { return localStorage.getItem(draftKey(nodeId)) ?? '' } catch { return '' }
-}
-
-function saveDraft(nodeId: NodeId, text: string): void {
-  try {
-    if (text) localStorage.setItem(draftKey(nodeId), text)
-    else localStorage.removeItem(draftKey(nodeId))
-  } catch { /* private mode: the draft lives as long as the page */ }
-}
-
 type MicState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'transcribing' }
 
 export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => void }) {
   const node = useNodeStore((s) => s.nodes[nodeId])
-  const [text, setText] = useState(() => loadDraft(nodeId))
+  const store = useMemo(() => promptStore(nodeId), [nodeId])
+  const [text, setTextState] = useState(() => store.draft())
+  const [history, setHistory] = useState(() => store.history())
   const [mic, setMic] = useState<MicState>({ kind: 'idle' })
   const [error, setError] = useState<string | null>(null)
   const [shipping, setShipping] = useState(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const cursorRef = useRef(text.length)
 
-  useEffect(() => saveDraft(nodeId, text), [nodeId, text])
+  /** Change the text and save it in the same breath; see prompt-store.ts for why not later. */
+  const setText = (next: string) => {
+    store.setDraft(next)
+    setTextState(next)
+  }
 
   // Arrive ready to type, cursor at the end of the draft. The tap that opened
   // this already raised the keyboard (see MobileApp's keeper); this moves it here.
@@ -84,11 +80,10 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
     setMic({ kind: 'transcribing' })
     try {
       const transcript = await mic.dictation.finish()
-      setText((current) => {
-        const next = insertDictation(current, Math.min(cursorRef.current, current.length), transcript)
-        cursorRef.current = next.cursor
-        return next.text
-      })
+      const current = areaRef.current?.value ?? text
+      const next = insertDictation(current, Math.min(cursorRef.current, current.length), transcript)
+      cursorRef.current = next.cursor
+      setText(next.text)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -102,7 +97,9 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
     setError(null)
     try {
       await window.api.node.shipIt(nodeId, text)
-      setText('')
+      store.shipped(text)
+      setTextState('')
+      setHistory(store.history())
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -112,6 +109,7 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
   }
 
   const live = node?.type === 'terminal' && node.alive
+  const recall = nextRecall(text, history)
   const micLabel = mic.kind === 'listening' ? 'Stop' : mic.kind === 'starting' ? '…' : mic.kind === 'transcribing' ? 'Transcribing…' : 'Dictate'
 
   return (
@@ -132,6 +130,19 @@ export function Composer({ nodeId, onClose }: { nodeId: NodeId; onClose: () => v
           {micLabel}
         </button>
         <button className="mobile-btn" onMouseDown={keepFocus} onClick={() => setText('')} disabled={!text}>Clear</button>
+        <button
+          className="mobile-btn mobile-btn--icon"
+          onMouseDown={keepFocus}
+          onClick={() => { if (recall !== null) setText(recall) }}
+          disabled={recall === null}
+          aria-label="Bring back a prompt already sent"
+          title="Bring back a prompt already sent"
+        >
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 4 2.5 7.5 6 11" />
+            <path d="M2.5 7.5h8a4.5 4.5 0 0 1 0 9H8" />
+          </svg>
+        </button>
         <button
           className="mobile-btn mobile-btn--accent mobile-btn--ship"
           onClick={ship}
