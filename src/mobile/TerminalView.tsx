@@ -21,18 +21,13 @@ import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
  * keyboard and the extra keys. See terminal-gesture.ts.
  */
 
-/** Text size as a fraction of the desktop's. ~55 columns on a 390-pt-wide phone. */
-const DEFAULT_SCALE = 0.85
+/**
+ * Text size as a fraction of the desktop's. Hard-coded while we find the right
+ * number: 0.94 is ~50 columns on a 393-pt-wide phone (0.85 was ~55, too small).
+ */
+const SCALE = 0.94
 /** Wait for the keyboard's animation to finish resizing before re-borrowing. */
 const BORROW_SETTLE_MS = 150
-
-function fontScale(): number {
-  try {
-    const v = Number(localStorage.getItem('mobile.terminalScale'))
-    if (v >= 0.5 && v <= 1.5) return v
-  } catch { /* private mode */ }
-  return DEFAULT_SCALE
-}
 
 const noop = () => undefined
 
@@ -45,7 +40,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
   const node = useNodeStore((s) => s.nodes[nodeId])
   const terminal = node?.type === 'terminal' ? node : null
   const sessionId = terminal?.sessionId
-  const [scale] = useState(fontScale)
+  const scale = SCALE
   const cameraRef = useRef<Camera>({ x: 0, y: 0, z: scale })
   const areaRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)

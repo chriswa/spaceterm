@@ -2,6 +2,7 @@
  * Print the link that pairs a phone with this Mac's Spaceterm.
  *
  *   npm run mobile:link
+ *   npm run mobile:link -- --url    # just the URL, for scripts (src/mobile/ios/install.sh)
  *
  * The token rides in the URL fragment, which a browser never sends anywhere;
  * the app stores it on first load. Treat the link like a password — it opens a
@@ -26,11 +27,21 @@ function tailscale(args: string[]): string | null {
   return null
 }
 
+const urlOnly = process.argv.includes('--url')
 const port = Number(process.env.SPACETERM_WEB_PORT ?? DEFAULT_WEB_PORT)
 const token = loadOrCreateWebToken(SOCKET_DIR)
 
 const status = tailscale(['status', '--json'])
 const dnsName = status ? (JSON.parse(status) as { Self?: { DNSName?: string } }).Self?.DNSName?.replace(/\.$/, '') : undefined
+
+if (!dnsName && urlOnly) {
+  console.error('Tailscale is not installed or not logged in on this Mac; run `npm run mobile:link` for setup steps.')
+  process.exit(1)
+}
+if (urlOnly) {
+  console.log(`https://${dnsName}/#token=${token}`)
+  process.exit(0)
+}
 
 if (!dnsName) {
   console.log(`Tailscale is not installed or not logged in on this Mac.

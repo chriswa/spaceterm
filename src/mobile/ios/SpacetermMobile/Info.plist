@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The page to load: https://<this Mac's tailnet name>/#token=<pairing token>.
+	     Filled in at build time by install.sh from `npm run mobile:link -- --url`. -->
+	<key>SpacetermURL</key>
+	<string>$(SPACETERM_URL)</string>
+	<!-- Plain PNGs rather than an asset catalog: compiling a catalog needs an
+	     iOS simulator runtime installed, an 8 GB download for one icon. -->
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+			</array>
+		</dict>
+	</dict>
+</dict>
+</plist>

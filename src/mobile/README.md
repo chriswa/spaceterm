@@ -60,10 +60,30 @@ The gateway binds loopback only and requires the token from
 to your tailnet with HTTPS, which Safari needs before it will open the
 microphone. `SPACETERM_WEB_PORT=0` turns the gateway off.
 
+## The iPhone app (`ios/`)
+
+A native wrapper: one full-screen `WKWebView` on the gateway's tailnet URL,
+which exists for what a browser tab cannot do — no browser chrome, a
+microphone permission that sticks, and no form bar (AutoFill icons, ⌃ ⌄ Done)
+above the keyboard (`FormAccessoryBar.swift`). It also reloads the page if iOS
+kills its process. Everything else is the web app, so most changes need no
+rebuild of this.
+
+```
+npm run mobile:ios        # build, sign, install on the paired iPhone, launch
+```
+
+Once only: accept Apple's latest Program License Agreement at
+developer.apple.com (signing fails until you do); pair the phone in Xcode →
+Devices and Simulators by cable and tick "Connect via network"; on the phone,
+turn on Developer Mode. After that it installs over Wi-Fi. It builds against
+the SDK rather than a device destination, so the multi-gigabyte iOS platform
+download is not needed.
+
 ## Deliberately not done (yet)
 
-- Text size is a constant (`mobile.terminalScale` in localStorage, default
-  0.85 — about 55 columns on a 390-pt phone); there is no control for it yet.
+- Text size is a hard-coded constant (`SCALE` in TerminalView.tsx, 0.94 —
+  about 50 columns on a 393-pt phone); there is no control for it yet.
 - No TTS on the phone and no push notifications.
 - A reconnect reloads the page (as the desktop does); drafts and the open
   surface survive it.
