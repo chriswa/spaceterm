@@ -70,5 +70,11 @@ codesign --verify "$app" 2>/dev/null || { echo "Build or signing failed; see the
 
 echo "Installing…"
 xcrun devicectl device install app --device "$device_id" "$app" >/dev/null
-xcrun devicectl device process launch --device "$device_id" --terminate-existing "$bundle_id" >/dev/null
-echo "Spaceterm is running on ${device_name}."
+if launch_output="$(xcrun devicectl device process launch --device "$device_id" --terminate-existing "$bundle_id" 2>&1)"; then
+  echo "Spaceterm is running on ${device_name}."
+elif echo "$launch_output" | grep -q "Locked"; then
+  echo "Installed on ${device_name}. It is locked, so the app could not be opened — it is there next time you unlock."
+else
+  echo "$launch_output" | tail -5
+  exit 1
+fi
