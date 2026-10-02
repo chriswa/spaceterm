@@ -1,7 +1,7 @@
 import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
-  SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi
+  SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
@@ -380,6 +380,13 @@ export class FakeBridge implements Api {
     toggle: (text) => this.reply('tts.toggle', this.responses.speakOutcome, text),
     stop: () => this.record('tts.stop'),
     onActiveChanged: (cb) => subscribe(this.speechActive, cb)
+  }
+
+  readonly dictation: DictationApi = {
+    start: (sampleRate) => this.reply('dictation.start', 'fake-dictation', sampleRate),
+    audio: (id, pcm) => this.record('dictation.audio', id, pcm),
+    finish: (id) => this.reply('dictation.finish', '', id),
+    cancel: (id) => this.record('dictation.cancel', id)
   }
 
   readonly perf: PerfApi = {

@@ -1,0 +1,232 @@
+/*
+ * The phone's chrome, on top of the desktop's own stylesheet. Nothing here
+ * restyles a desktop component; it only lays out the views that exist on the
+ * phone alone, and tells the browser the canvas handles its own touches.
+ */
+
+:root {
+  --m-bg: #11111b;
+  --m-surface: #181825;
+  --m-raised: #232336;
+  --m-border: #313244;
+  --m-text: #cdd6f4;
+  --m-dim: #a6adc8;
+  --m-accent: #cba6f7;
+  --m-danger: #f38ba8;
+  --m-safe-top: env(safe-area-inset-top, 0px);
+  --m-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html, body {
+  background: var(--m-bg);
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* The canvas pans and pinches itself (useTouchCamera); the page must not. */
+.canvas-viewport {
+  touch-action: none;
+}
+
+.mobile-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--m-border);
+  border-radius: 10px;
+  background: var(--m-raised);
+  color: var(--m-text);
+  font: 600 15px/1 -apple-system, system-ui, sans-serif;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.mobile-btn:disabled { opacity: 0.4; }
+.mobile-btn--accent { background: var(--m-accent); border-color: var(--m-accent); color: #11111b; }
+.mobile-btn--recording { background: var(--m-danger); border-color: var(--m-danger); color: #11111b; }
+
+.mobile-fab {
+  position: fixed;
+  right: 16px;
+  /* Clear of the desktop toolbar along the bottom edge. */
+  bottom: calc(88px + var(--m-safe-bottom));
+  z-index: 2147483000;
+  width: 56px;
+  height: 56px;
+  border-radius: 28px;
+  border: 1px solid var(--m-border);
+  background: var(--m-surface);
+  color: var(--m-text);
+  font-size: 24px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* ─── terminal view ─────────────────────────────────────────────────────── */
+
+.mobile-term,
+.mobile-composer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483100;
+  display: flex;
+  flex-direction: column;
+  background: var(--m-bg);
+  color: var(--m-text);
+  padding-top: var(--m-safe-top);
+}
+.mobile-composer { z-index: 2147483200; }
+
+.mobile-term__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--m-border);
+  background: var(--m-surface);
+  flex: none;
+}
+.mobile-term__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 600 15px/1.2 -apple-system, system-ui, sans-serif;
+}
+
+.mobile-term__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.mobile-term__card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.mobile-keys {
+  display: flex;
+  gap: 6px;
+  padding: 8px 8px calc(8px + var(--m-safe-bottom));
+  overflow-x: auto;
+  border-top: 1px solid var(--m-border);
+  background: var(--m-surface);
+  flex: none;
+}
+.mobile-keys__key {
+  flex: none;
+  min-width: 44px;
+  height: 40px;
+  border: 1px solid var(--m-border);
+  border-radius: 8px;
+  background: var(--m-raised);
+  color: var(--m-text);
+  font: 600 15px/1 ui-monospace, Menlo, monospace;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+}
+.mobile-keys__key:active { background: var(--m-border); }
+.mobile-keys__key--wide { min-width: 56px; }
+
+/* ─── composer ──────────────────────────────────────────────────────────── */
+
+.mobile-composer__text {
+  flex: 1;
+  min-height: 0;
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid var(--m-border);
+  border-radius: 12px;
+  background: var(--m-surface);
+  color: var(--m-text);
+  /* 16px or larger, or iOS zooms the page on focus. */
+  font: 17px/1.45 -apple-system, system-ui, sans-serif;
+  resize: none;
+  outline: none;
+}
+.mobile-composer__error {
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(243, 139, 168, 0.15);
+  color: var(--m-danger);
+  font: 14px/1.35 -apple-system, system-ui, sans-serif;
+}
+.mobile-composer__actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px calc(12px + var(--m-safe-bottom));
+}
+.mobile-btn--mic { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.mobile-btn--ship { flex: 1; }
+.mobile-recording-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+  background: #11111b;
+  animation: mobile-pulse 1s ease-in-out infinite;
+}
+@keyframes mobile-pulse { 50% { opacity: 0.3; } }
+
+/* ─── surface list ──────────────────────────────────────────────────────── */
+
+.mobile-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483150;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+}
+.mobile-sheet__panel {
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px 16px 0 0;
+  background: var(--m-bg);
+  color: var(--m-text);
+  padding-bottom: var(--m-safe-bottom);
+  overflow: hidden;
+}
+.mobile-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+.mobile-list__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: none;
+  border-bottom: 1px solid var(--m-border);
+  background: transparent;
+  color: var(--m-text);
+  text-align: left;
+  font: 16px/1.3 -apple-system, system-ui, sans-serif;
+}
+.mobile-list__dot { flex: none; width: 14px; height: 14px; border-radius: 7px; }
+.mobile-list__dot--unviewed { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35); }
+.mobile-list__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-list__kind { color: var(--m-dim); font-size: 13px; }
+.mobile-list__empty { padding: 24px 16px; color: var(--m-dim); }
+
+/* ─── pairing ───────────────────────────────────────────────────────────── */
+
+.mobile-pairing {
+  padding: calc(48px + var(--m-safe-top)) 24px;
+  color: var(--m-text);
+  font: 16px/1.5 -apple-system, system-ui, sans-serif;
+}
+.mobile-pairing pre {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--m-surface);
+}

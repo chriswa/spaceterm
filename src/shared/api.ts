@@ -242,6 +242,22 @@ export interface TtsApi {
   onActiveChanged(callback: (active: boolean) => void): () => void
 }
 
+/**
+ * Dictation for a client that captures audio but cannot transcribe it — the
+ * phone. The server relays PCM through Voice Operator; see
+ * `src/server/remote-dictation.ts`. Unused on the desktop, where Voice
+ * Operator listens to the microphone itself.
+ */
+export interface DictationApi {
+  /** Open a session for s16le mono PCM at `sampleRate`. Rejects with a readable reason. */
+  start(sampleRate: number): Promise<string>
+  /** One chunk, base64. */
+  audio(id: string, pcmBase64: string): void
+  /** No more audio; resolves to the transcript exactly as Wispr returned it. */
+  finish(id: string): Promise<string>
+  cancel(id: string): void
+}
+
 export interface PerfApi {
   startTrace(): Promise<void>
   stopTrace(): Promise<string>
@@ -324,6 +340,7 @@ export interface Api {
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
   tts: TtsApi
+  dictation: DictationApi
   perf: PerfApi
   window: WindowApi
   system: SystemApi

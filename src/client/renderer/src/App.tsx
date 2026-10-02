@@ -46,6 +46,8 @@ import { useNodeStore, nodePixelSize } from './stores/nodeStore'
 import { useDimStaleStore } from './stores/dimStaleStore'
 import { useSavedViewportStore } from './stores/savedViewportStore'
 import { useRootCwdStore } from './stores/rootCwdStore'
+import { useSurfacePresenterStore } from './stores/surfacePresenterStore'
+import { useTouchCamera } from './hooks/useTouchCamera'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
@@ -67,14 +69,12 @@ import { undoNeedsConfirmation, undoConfirmationVerb } from '../../../shared/und
 import type { ClaudeSessionEntry, CreateOptions } from '../../../shared/protocol'
 import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
-import { modelHat } from './lib/model-hat'
-import { crabEffortSteps } from './lib/crab-effort'
-import { deriveToolbarIndicator } from './lib/crab-nav'
+import { deriveCrabs } from './lib/crab-entries'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 import { pressSummaryChatChord, REAL_CHORD_CUES } from './lib/summary-chat-chord'
 import { summaryChatChordFor, shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
 import { tieredZIndex } from '../../../shared/card-types'
-import { isCacheTimerMuted, type NodeData } from '../../../shared/state'
+import type { NodeData } from '../../../shared/state'
 import type { AgentType } from '../../../shared/agent-type'
 
 /**
@@ -176,7 +176,7 @@ export function App() {
   const shiftClickPendingRef = useRef(false)
   const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userPan, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
   const inertiaBlock = useInertiaBlock()
 
   // Send camera bounding box to server whenever camera settles
@@ -340,19 +340,7 @@ export function App() {
   }, [nodes, nodeTint])
 
   // Derive crab indicators for toolbar
-  const crabs = useMemo(() => {
-    const entries: CrabEntry[] = []
-
-    for (const node of Object.values(nodes)) {
-      if (node.type !== 'terminal') continue
-      const appearance = deriveToolbarIndicator(node.claudeState, node.claudeStatusUnread, node.claudeStatusAsleep ?? false, node.claudeSessionHistory.length > 0, node.agentType)
-      const createdAt = node.terminalSessions[0]?.startedAt ?? ''
-      entries.push({ nodeId: node.id, claudeSessionIds: node.claudeSessionHistory.map(e => e.claudeSessionId), kind: appearance.kind, color: appearance.color, hat: modelHat(appearance.kind, node.claudeModel), effortSteps: crabEffortSteps(appearance.kind, node.claudeEffort), unviewed: appearance.unviewed, asleep: appearance.asleep, createdAt, sortOrder: node.sortOrder, title: nodeDisplayTitle(node), claudeStateDecidedAt: node.claudeStateDecidedAt, cacheWarmUntil: isCacheTimerMuted(node) ? undefined : node.cacheWarmUntil, cacheWarmEstimated: node.cacheWarmEstimated })
-    }
-
-    entries.sort((a, b) => a.sortOrder - b.sortOrder)
-    return entries
-  }, [nodes])
+  const crabs = useMemo(() => deriveCrabs(nodes), [nodes])
   const crabsRef = useRef<CrabEntry[]>([])
   crabsRef.current = crabs
 
@@ -1441,6 +1429,33 @@ export function App() {
     setScrollMode(false)
   }, [])
 
+  // When the host draws the focused terminal itself (the mobile app), tell it
+  // which one that is, and give up focus when it says the view has closed.
+  // See surfacePresenterStore.
+  const presentTerminalsExternally = useSurfacePresenterStore((s) => s.external)
+  useEffect(() => {
+    const node = focusedId ? useNodeStore.getState().nodes[focusedId] : undefined
+    useSurfacePresenterStore.getState().publishFocusedTerminal(node?.type === 'terminal' ? node.id : null)
+  }, [focusedId])
+  // Each request is acted on exactly once. Both handlers change focus, which
+  // gives them new identities, so an effect keyed on them alone would re-run
+  // and act on the same request again — forever.
+  const unfocusRequests = useSurfacePresenterStore((s) => s.unfocusRequests)
+  const handledUnfocusRef = useRef(0)
+  useEffect(() => {
+    if (unfocusRequests === handledUnfocusRef.current) return
+    handledUnfocusRef.current = unfocusRequests
+    handleUnfocus()
+    if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
+  }, [unfocusRequests, handleUnfocus, flyToUnfocusZoom])
+  const focusRequest = useSurfacePresenterStore((s) => s.focusRequest)
+  const handledFocusRef = useRef(0)
+  useEffect(() => {
+    if (!focusRequest || focusRequest.seq === handledFocusRef.current) return
+    handledFocusRef.current = focusRequest.seq
+    void navigateToNode(focusRequest.nodeId)
+  }, [focusRequest, navigateToNode])
+
   const handleHoverFocus = useCallback((nodeId: NodeId) => {
     if (!useCameraLockStore.getState().locked) return
     const node = useNodeStore.getState().nodes[nodeId]
@@ -2482,6 +2497,22 @@ export function App() {
     handlePanStart(e)
   }, [handlePanStart, flyToUnfocusZoom, handleUnfocus])
 
+  // A finger drag or pinch is a background pan as far as overlays and focus
+  // are concerned.
+  useTouchCamera('.canvas-viewport', {
+    pan: userPan,
+    zoom: userZoom,
+    getZoom: () => cameraRef.current.z,
+    onGestureStart: () => {
+      setSearchVisible(false)
+      setAgentSearchVisible(false)
+      setHelpVisible(false)
+      setQuickActions(null)
+      setEdgeSplit(null)
+      if (focusRef.current && !pinnedFocusRef.current) handleUnfocus()
+    }
+  })
+
   // Right-button drag on the canvas background → zoom out. Logarithmic, like
   // cmd+scroll: radial distance from the drag-start point maps to a zoom
   // *ratio*, so equal drag distances produce equal zoom multiples regardless
@@ -2664,7 +2695,7 @@ export function App() {
             resolvedPreset={resolvedPresets[t.id]}
             shellTitleHistory={t.shellTitleHistory}
             cwd={t.cwd}
-            focused={focusedId === t.id}
+            focused={focusedId === t.id && !presentTerminalsExternally}
             selected={selection === t.id}
             anyNodeFocused={focusedId !== null}
             claudeStatusUnread={t.claudeStatusUnread}

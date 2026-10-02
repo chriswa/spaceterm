@@ -1,0 +1,109 @@
+import { useEffect, useRef } from 'react'
+
+/**
+ * Touch for the canvas camera: one finger pans, two pinch-zoom about their
+ * midpoint (and pan with it).
+ *
+ * Mouse and trackpad arrive as mouse and wheel events, which iOS does not
+ * synthesise for a drag — it scrolls the page instead — so without this a
+ * phone cannot move the canvas at all. Nothing here runs on a desktop, which
+ * never produces touch events.
+ *
+ * A tap is left alone: below the slop distance nothing is prevented, so the
+ * browser still turns it into the click that focuses a card.
+ */
+
+/** Movement below this many pixels is still a tap. */
+const TAP_SLOP_PX = 8
+
+export interface TouchCameraControls {
+  pan(dx: number, dy: number): void
+  zoom(anchor: { x: number; y: number }, z: number): void
+  getZoom(): number
+  /** A pan or pinch has begun — the canvas equivalent of a background drag. */
+  onGestureStart(): void
+}
+
+type Point = { x: number; y: number }
+
+const midpoint = (a: Touch, b: Touch): Point => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 })
+const distance = (a: Touch, b: Touch): number => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+
+export function useTouchCamera(selector: string, controls: TouchCameraControls): void {
+  const controlsRef = useRef(controls)
+  controlsRef.current = controls
+
+  useEffect(() => {
+    const el = document.querySelector<HTMLElement>(selector)
+    if (!el) return
+
+    let origin: Point | null = null
+    let last: Point | null = null
+    let panning = false
+    let pinch: { startDistance: number; startZoom: number; last: Point } | null = null
+
+    const begin = () => {
+      if (!panning && !pinch) controlsRef.current.onGestureStart()
+    }
+
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        origin = last = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        panning = false
+        pinch = null
+      } else if (e.touches.length === 2) {
+        begin()
+        const [a, b] = [e.touches[0], e.touches[1]]
+        pinch = { startDistance: Math.max(1, distance(a, b)), startZoom: controlsRef.current.getZoom(), last: midpoint(a, b) }
+        panning = false
+      }
+    }
+
+    const onMove = (e: TouchEvent) => {
+      if (pinch && e.touches.length >= 2) {
+        e.preventDefault()
+        const [a, b] = [e.touches[0], e.touches[1]]
+        const mid = midpoint(a, b)
+        controlsRef.current.pan(pinch.last.x - mid.x, pinch.last.y - mid.y)
+        controlsRef.current.zoom(mid, pinch.startZoom * (distance(a, b) / pinch.startDistance))
+        pinch.last = mid
+        return
+      }
+      if (e.touches.length !== 1 || !origin || !last) return
+      const t = e.touches[0]
+      if (!panning) {
+        if (Math.hypot(t.clientX - origin.x, t.clientY - origin.y) < TAP_SLOP_PX) return
+        begin()
+        panning = true
+      }
+      e.preventDefault()
+      controlsRef.current.pan(last.x - t.clientX, last.y - t.clientY)
+      last = { x: t.clientX, y: t.clientY }
+    }
+
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        origin = last = null
+        panning = false
+        pinch = null
+      } else if (e.touches.length === 1) {
+        // Lifting one finger of a pinch continues as a pan from where it is.
+        pinch = null
+        panning = true
+        last = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        origin = last
+      }
+    }
+
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd, { passive: true })
+    el.addEventListener('touchcancel', onEnd, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [selector])
+}

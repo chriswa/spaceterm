@@ -36,6 +36,9 @@ import { agentSurfaceFootprint, computePlacement } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
+import { RemoteDictation } from './remote-dictation'
+import type { ClientLink } from './client-link'
+import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
 import { readClaudeCacheTouch } from './claude-cache-warmth'
@@ -198,7 +201,9 @@ type TerminalSubscription = 'live' | 'snapshot'
 
 interface ClientConnection {
   id: string
-  socket: net.Socket
+  link: ClientLink
+  /** What the client called itself in `client-hello`, once it has. */
+  name?: string
   subscriptions: Map<PtySessionId, TerminalSubscription>
   /**
    * Sessions mid-attach: live output is queued here instead of being sent,
@@ -272,6 +277,9 @@ const directSpeech = new DirectSpeech({
   vo: new VoiceOperator(),
   onActiveChanged: (active) => broadcastToAll({ type: 'speech-active', active }),
 })
+
+/** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
+const remoteDictation = new RemoteDictation(new VoiceOperator())
 
 /**
  * Point the right transcript watcher at a surface's agent session.
@@ -443,9 +451,9 @@ const RESPAWN_DEPS: TerminalRespawnDeps = {
 }
 
 
-function send(socket: net.Socket, msg: ServerMessage): void {
+function send(link: ClientLink, msg: ServerMessage): void {
   try {
-    socket.write(JSON.stringify(msg) + '\n')
+    link.write(JSON.stringify(msg) + '\n')
   } catch {
     // Client disconnected
   }
@@ -460,14 +468,17 @@ function send(socket: net.Socket, msg: ServerMessage): void {
  * resolution and the external claude-session one.
  */
 function raiseNodeOnClient(focusNodeId: NodeId | null, tag: string): void {
-  const target = clients.values().next().value
+  // A deep link is clicked on this Mac, so it belongs to the desktop client
+  // even when a phone connected first.
+  const all = [...clients]
+  const target = all.find((c) => c.name === 'spaceterm-electron') ?? all[0]
   if (!target) {
     serverLog(`[${tag}] No connected clients to raise`)
     return
   }
   const what = focusNodeId ? `node=${focusNodeId.slice(0, 8)}` : 'no match (zoom out)'
   serverLog(`[${tag}] ${what} -> client=${target.id.slice(0, 8)}`)
-  send(target.socket, { type: 'focus-surface', nodeId: focusNodeId })
+  send(target.link, { type: 'focus-surface', nodeId: focusNodeId })
 }
 
 /**
@@ -621,21 +632,82 @@ function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void 
       // serialized state has been captured and sent (see the 'attach' handler).
       const buffer = client.attachBuffers.get(sessionId)
       if (buffer) buffer.push(msg)
-      else send(client.socket, msg)
+      else send(client.link, msg)
     }
   })
 }
 
+/**
+ * Admit one client connection, whatever carried it, and greet it.
+ *
+ * The Unix socket and the WebSocket gateway both come through here, so a phone
+ * and the desktop app are the same kind of client from this point on: the
+ * same greeting, the same handler, the same peer bookkeeping.
+ */
+function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; close(): void } {
+  const client: ClientConnection = {
+    id: randomUUID(),
+    link,
+    subscriptions: new Map(),
+    attachBuffers: new Map(),
+    parser: new LineParser((msg) => {
+      handleMessage(client, msg as ClientMessage)
+    }),
+    cameraBounds: null
+  }
+
+  clients.add(client)
+  console.log(`Client connected id=${client.id.slice(0, 8)} (${clients.size} total)`)
+
+  // Send existing peers' camera bounds to the new client
+  clients.forEach((existing) => {
+    if (existing !== client && existing.cameraBounds) {
+      send(link, { type: 'peer-camera-bounds', clientId: existing.id, bounds: existing.cameraBounds })
+    }
+  })
+  // Notify other clients about the new peer
+  broadcastToOthers(client, { type: 'peer-connected', clientId: client.id })
+
+  // Send the shared saved viewport slots to the new client
+  send(link, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
+
+  // Same for the root node's working directory, which the client needs before
+  // it can tell you where a top-level card is about to be created.
+  send(link, { type: 'root-cwd', cwd: stateManager.getRootCwd() })
+
+  // Availability is pushed on change, which a client that connected after the
+  // last change would never have heard. Replay what is known.
+  for (const { nodeId, available } of agentMetaAvailability.snapshot()) {
+    send(link, { type: 'agent-meta-availability', nodeId, available })
+  }
+
+  const summaryTargetNodeId = summaryChat.getTargetNodeId()
+  if (summaryTargetNodeId) {
+    send(link, { type: 'summary-chat-status', nodeId: summaryTargetNodeId, state: 'target' })
+  }
+
+  return {
+    feed: (data) => client.parser.feed(data),
+    // Idempotent: a socket error is followed by a close, and both end here.
+    close() {
+      if (!clients.delete(client)) return
+      remoteDictation.cancelAllFor(client.id)
+      console.log(`Client disconnected id=${client.id.slice(0, 8)} (${clients.size} total)`)
+      broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
+    }
+  }
+}
+
 function broadcastToAll(msg: ServerMessage): void {
   clients.forEach((client) => {
-    send(client.socket, msg)
+    send(client.link, msg)
   })
 }
 
-function broadcastToOthers(excludeSocket: net.Socket, msg: ServerMessage): void {
+function broadcastToOthers(exclude: ClientConnection, msg: ServerMessage): void {
   clients.forEach((client) => {
-    if (client.socket !== excludeSocket) {
-      send(client.socket, msg)
+    if (client !== exclude) {
+      send(client.link, msg)
     }
   })
 }
@@ -1155,7 +1227,7 @@ function runInDirectory(
   opts: { timeout: number; env?: Record<string, string> },
 ): void {
   const reply = (ok: boolean, error?: string) =>
-    send(client.socket, { type: 'directory-command-result', seq, ok, error })
+    send(client.link, { type: 'directory-command-result', seq, ok, error })
   const dirNode = stateManager.getNode(nodeId)
   if (!dirNode || dirNode.type !== 'directory') {
     reply(false, 'not a directory node')
@@ -1181,12 +1253,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'client-hello': {
       const { compatible, error } = checkProtocolVersion(msg.protocolVersion, CLIENT_PROTOCOL_RANGE)
       const who = msg.client ?? 'unknown client'
+      client.name = msg.client
       serverLog(
         compatible
           ? `[client] ${who} connected on protocol v${msg.protocolVersion}`
           : `[client] ${who} rejected: ${error}`
       )
-      send(client.socket, {
+      send(client.link, {
         type: 'client-hello-result',
         seq: msg.seq,
         compatible,
@@ -1199,16 +1272,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'server-restart': {
       if (serverRestartScheduled) {
-        send(client.socket, { type: 'server-error', seq: msg.seq, message: 'Server restart is already in progress' })
+        send(client.link, { type: 'server-error', seq: msg.seq, message: 'Server restart is already in progress' })
         break
       }
       if (!shutdownServer) {
-        send(client.socket, { type: 'server-error', seq: msg.seq, message: 'Server restart is unavailable during startup' })
+        send(client.link, { type: 'server-error', seq: msg.seq, message: 'Server restart is unavailable during startup' })
         break
       }
       serverRestartScheduled = true
       serverLog('[restart] Restart requested by client')
-      send(client.socket, { type: 'server-restarted', seq: msg.seq })
+      send(client.link, { type: 'server-restarted', seq: msg.seq })
       // Give the acknowledgement a chance to leave the Unix socket before the
       // graceful shutdown closes all client connections.
       setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
@@ -1217,7 +1290,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'restart-flag-query': {
       const flag = readRestartFlag()
-      send(client.socket, {
+      send(client.link, {
         type: 'restart-flag-result',
         seq: msg.seq,
         required: flag !== null,
@@ -1239,7 +1312,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }, msg.mode).then((result) => {
         // Back to the client that pressed the key, not to every peer: the
         // chirp, the shake and the toast belong to one person.
-        send(client.socket, {
+        send(client.link, {
           type: 'summary-chat-toggle-result',
           seq: msg.seq,
           outcome: result.outcome,
@@ -1252,7 +1325,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       void directSpeech.toggle(msg.text).then((outcome) => {
         // To the client that pressed the key: the toast it may raise belongs to
         // one person, the way the summary chord's does.
-        send(client.socket, { type: 'speak-toggle-result', seq: msg.seq, outcome })
+        send(client.link, { type: 'speak-toggle-result', seq: msg.seq, outcome })
       })
       break
     }
@@ -1264,13 +1337,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'create': {
       const { sessionId, cols, rows } = sessionManager.create(msg.options)
-      send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
+      send(client.link, { type: 'created', seq: msg.seq, sessionId, cols, rows })
       break
     }
 
     case 'list': {
       const sessions = sessionManager.list()
-      send(client.socket, { type: 'listed', seq: msg.seq, sessions })
+      send(client.link, { type: 'listed', seq: msg.seq, sessions })
       break
     }
 
@@ -1296,7 +1369,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // The client may have disconnected during the (sub-frame) drain.
         if (!clients.has(client)) return
 
-        send(client.socket, {
+        send(client.link, {
           type: 'attached',
           seq: msg.seq,
           sessionId,
@@ -1310,7 +1383,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // buffer owns the session now), and either way this output is stale.
         if (client.attachBuffers.get(sessionId) !== liveBuffer) return
         client.attachBuffers.delete(sessionId)
-        for (const queued of liveBuffer) send(client.socket, queued)
+        for (const queued of liveBuffer) send(client.link, queued)
       })
       break
     }
@@ -1318,14 +1391,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'detach': {
       client.subscriptions.delete(msg.sessionId)
       client.attachBuffers.delete(msg.sessionId)
-      send(client.socket, { type: 'detached', seq: msg.seq, sessionId: msg.sessionId })
+      send(client.link, { type: 'detached', seq: msg.seq, sessionId: msg.sessionId })
       break
     }
 
     case 'destroy': {
       sessionManager.destroy(msg.sessionId)
       unsubscribeAll(msg.sessionId)
-      send(client.socket, { type: 'destroyed', seq: msg.seq })
+      send(client.link, { type: 'destroyed', seq: msg.seq })
       break
     }
 
@@ -1337,26 +1410,57 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'dictation-start': {
+      const seq = msg.seq
+      void remoteDictation.start(client.id, msg.sampleRate).then((outcome) => {
+        send(client.link, outcome.ok
+          ? { type: 'dictation-started', seq, id: outcome.value }
+          : { type: 'server-error', seq, message: outcome.error })
+      })
+      break
+    }
+
+    case 'dictation-audio': {
+      remoteDictation.audio(client.id, msg.id, Buffer.from(msg.pcm, 'base64'))
+      break
+    }
+
+    case 'dictation-finish': {
+      const seq = msg.seq
+      void remoteDictation.finish(client.id, msg.id).then((outcome) => {
+        serverLog(`[dictation] client=${client.id.slice(0, 8)} ${outcome.ok ? `${outcome.value.length} chars` : `failed: ${outcome.error}`}`)
+        send(client.link, outcome.ok
+          ? { type: 'dictation-result', seq, text: outcome.value }
+          : { type: 'server-error', seq, message: outcome.error })
+      })
+      break
+    }
+
+    case 'dictation-cancel': {
+      remoteDictation.cancel(client.id, msg.id)
+      break
+    }
+
     case 'ship-it': {
       const target = stateManager.getNode(msg.nodeId)
       if (!target || target.type !== 'terminal' || !target.alive) {
-        send(client.socket, { type: 'server-error', seq: msg.seq, message: 'Ship it needs a live terminal surface' })
+        send(client.link, { type: 'server-error', seq: msg.seq, message: 'Ship it needs a live terminal surface' })
         break
       }
       shipToSession(target.sessionId, msg.text, true)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     // --- Node state mutation messages ---
 
     case 'node-sync-request': {
-      send(client.socket, { type: 'sync-state', seq: msg.seq, state: stateManager.getState() })
+      send(client.link, { type: 'sync-state', seq: msg.seq, state: stateManager.getState() })
       // Send file content for all watched file-backed markdowns
       for (const nodeId of fileContentManager.getWatchedNodeIds()) {
         const fileContent = fileContentManager.getContent(nodeId)
         if (fileContent !== null) {
-          send(client.socket, { type: 'file-content', nodeId, content: fileContent })
+          send(client.link, { type: 'file-content', nodeId, content: fileContent })
         }
       }
       break
@@ -1364,25 +1468,25 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'node-move': {
       stateManager.moveNode(msg.nodeId, msg.x, msg.y)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'node-batch-move': {
       stateManager.batchMoveNodes(msg.moves)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'node-rename': {
       stateManager.renameNode(msg.nodeId, msg.name)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'node-set-color': {
       stateManager.setNodeColor(msg.nodeId, msg.colorPresetId)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1390,7 +1494,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // The one field here the wire could fill with anything: every renderer
       // path draws from NODE_STAMPS, so an unknown value is refused, not stored.
       if (isNodeStamp(msg.stamp)) stateManager.setNodeStamp(msg.nodeId, msg.stamp)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1406,7 +1510,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         releaseNodeResources(node)
       }
       stateManager.archiveSubtree(msg.nodeId)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1414,31 +1518,31 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       restoreArchiveEntry(msg.parentNodeId, msg.path)
       // No `created` reply even for a single terminal: a group can restore any
       // number of them, and the cards attach to their own ptys as they mount.
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'node-archive-delete': {
       stateManager.deleteArchivedNode(msg.parentNodeId, msg.path)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'undo-buffer-push': {
       stateManager.pushUndoEntry(msg.entry)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'undo-buffer-set-cursor': {
       stateManager.setUndoCursor(msg.cursor)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'node-bring-to-front': {
       stateManager.bringToFront(msg.nodeId)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1457,7 +1561,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       } else {
         stateManager.reparentNode(msg.nodeId, msg.newParentId)
       }
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1466,7 +1570,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const swapChild = stateManager.getNode(msg.childId)
 
       if (!swapParent || !swapChild || swapChild.parentId !== msg.nodeId || msg.nodeId === 'root') {
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        send(client.link, { type: 'mutation-ack', seq: msg.seq })
         break
       }
 
@@ -1501,7 +1605,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
       }
 
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1523,11 +1627,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const { sessionId, cols, rows } = spawnTerminalNode(msg.parentId, options, {
           x: msg.x, y: msg.y, initialTitleHistory: msg.initialTitleHistory, name: msg.initialName, agentType,
         })
-        send(client.socket, { type: 'created', seq: msg.seq, sessionId, cols, rows })
+        send(client.link, { type: 'created', seq: msg.seq, sessionId, cols, rows })
         if (msg.initialInput) promptedCommands.run(sessionId, msg.initialInput)
       } catch (err: any) {
         console.error(`terminal-create failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `terminal-create failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `terminal-create failed: ${err.message}` })
       }
       break
     }
@@ -1539,7 +1643,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // would have succeeded — so the fallback was reachable only when there is
       // nothing to resize. Skipping is what it was already effectively doing.
       if (!tNode || tNode.type !== 'terminal') {
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        send(client.link, { type: 'mutation-ack', seq: msg.seq })
         break
       }
       // The only door into terminal sizing, so the only place limits need
@@ -1552,7 +1656,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       sessionManager.resize(ptyId, cols, rows)
       snapshotManager.resize(ptyId, cols, rows)
       stateManager.updateTerminalSize(ptyId, cols, rows)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1560,7 +1664,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       try {
         const rNode = stateManager.getNode(msg.nodeId)
         if (!rNode || rNode.type !== 'terminal' || rNode.alive) {
-          send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+          send(client.link, { type: 'mutation-ack', seq: msg.seq })
           break
         }
         const rExtraArgs = parseExtraCliArgs(rNode.extraCliArgs)
@@ -1588,11 +1692,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const { sessionId: newPtyId, cols: rCols, rows: rRows } = respawnTerminal(
           msg.nodeId, (size) => sessionManager.create({ ...rOptions, ...size }), RESPAWN_DEPS)
         stateManager.setAlert(msg.nodeId, 'launch-failed', null)
-        send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
+        send(client.link, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: rCols, rows: rRows })
       } catch (err: any) {
         console.error(`terminal-reincarnate failed: ${err.message}`)
         stateManager.setAlert(msg.nodeId, 'launch-failed', `Could not revive this surface: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `terminal-reincarnate failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `terminal-reincarnate failed: ${err.message}` })
       }
       break
     }
@@ -1611,10 +1715,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         }
         const dirNode = stateManager.createDirectory(msg.parentId, posX, posY, msg.cwd)
         gitStatusPoller.pollNode(dirNode.id)
-        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: dirNode.id })
+        send(client.link, { type: 'node-add-ack', seq: msg.seq, nodeId: dirNode.id })
       } catch (err: any) {
         console.error(`directory-add failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `directory-add failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `directory-add failed: ${err.message}` })
       }
       break
     }
@@ -1628,10 +1732,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // The branch and the button both described the old directory.
         agentMetaManager.onHostChanged(msg.nodeId)
         agentMetaAvailability.invalidate(msg.nodeId)
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        send(client.link, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
         console.error(`directory-cwd failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `directory-cwd failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `directory-cwd failed: ${err.message}` })
       }
       break
     }
@@ -1639,7 +1743,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'directory-git-fetch': {
       const dirNode = stateManager.getNode(msg.nodeId)
       if (!dirNode || dirNode.type !== 'directory') {
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        send(client.link, { type: 'mutation-ack', seq: msg.seq })
         break
       }
       const fetchCwd = resolveFilePath(dirNode.cwd)
@@ -1649,7 +1753,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           gitStatusPoller.pollNode(msg.nodeId)
         })
       })
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1659,12 +1763,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // the terminal when the command succeeds.
       const dirNode = stateManager.getNode(msg.nodeId)
       if (!dirNode || dirNode.type !== 'directory') {
-        send(client.socket, { type: 'directory-command-result', seq: msg.seq, ok: false, error: 'not a directory node' })
+        send(client.link, { type: 'directory-command-result', seq: msg.seq, ok: false, error: 'not a directory node' })
         break
       }
       const label = `git ${msg.command}`
       const reply = (ok: boolean, error?: string) =>
-        send(client.socket, { type: 'directory-command-result', seq: msg.seq, ok, error })
+        send(client.link, { type: 'directory-command-result', seq: msg.seq, ok, error })
       try {
         const { sessionId } = spawnTerminalNode(msg.nodeId, { cwd: resolveFilePath(dirNode.cwd) }, { name: label })
         promptedCommands.run(sessionId, `${label} && exit`, (outcome) => {
@@ -1694,12 +1798,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const dirPath = resolveFilePath(msg.path)
         const stat = fs.statSync(dirPath)
         if (stat.isDirectory()) {
-          send(client.socket, { type: 'validate-directory-result', seq: msg.seq, valid: true })
+          send(client.link, { type: 'validate-directory-result', seq: msg.seq, valid: true })
         } else {
-          send(client.socket, { type: 'validate-directory-result', seq: msg.seq, valid: false, error: 'Path is a file, not a directory' })
+          send(client.link, { type: 'validate-directory-result', seq: msg.seq, valid: false, error: 'Path is a file, not a directory' })
         }
       } catch {
-        send(client.socket, { type: 'validate-directory-result', seq: msg.seq, valid: false, error: 'Path does not exist' })
+        send(client.link, { type: 'validate-directory-result', seq: msg.seq, valid: false, error: 'Path does not exist' })
       }
       break
     }
@@ -1717,10 +1821,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           posY = pos.y
         }
         const fileNode = stateManager.createFile(msg.parentId, posX, posY, msg.filePath)
-        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: fileNode.id })
+        send(client.link, { type: 'node-add-ack', seq: msg.seq, nodeId: fileNode.id })
       } catch (err: any) {
         console.error(`file-add failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `file-add failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `file-add failed: ${err.message}` })
       }
       break
     }
@@ -1737,10 +1841,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
             fileContentManager.updatePath(child.id, msg.nodeId, fpResolvedPath)
           }
         }
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        send(client.link, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
         console.error(`file-path failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `file-path failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `file-path failed: ${err.message}` })
       }
       break
     }
@@ -1750,12 +1854,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const filePath = resolveFilePath(msg.path, msg.cwd)
         const stat = fs.statSync(filePath)
         if (stat.isFile()) {
-          send(client.socket, { type: 'validate-file-result', seq: msg.seq, valid: true })
+          send(client.link, { type: 'validate-file-result', seq: msg.seq, valid: true })
         } else {
-          send(client.socket, { type: 'validate-file-result', seq: msg.seq, valid: false, error: 'Path is a directory, not a file' })
+          send(client.link, { type: 'validate-file-result', seq: msg.seq, valid: false, error: 'Path is a directory, not a file' })
         }
       } catch {
-        send(client.socket, { type: 'validate-file-result', seq: msg.seq, valid: false, error: 'Path does not exist' })
+        send(client.link, { type: 'validate-file-result', seq: msg.seq, valid: false, error: 'Path does not exist' })
       }
       break
     }
@@ -1779,13 +1883,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const mdResolvedPath = resolveFilePath(mdParent.filePath, mdCwd)
         fileContentManager.startWatching(mdNode.id, mdParent.id, mdResolvedPath)
       }
-      send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: mdNode.id })
+      send(client.link, { type: 'node-add-ack', seq: msg.seq, nodeId: mdNode.id })
       break
     }
 
     case 'markdown-resize': {
       stateManager.resizeMarkdown(msg.nodeId, msg.width, msg.height)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1800,17 +1904,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         transcriptPath: transcriptPathForTerminal(data),
       }))
       searchAgentSurfaces(msg.query, candidates, agentSearchDeps, msg.mode).then(
-        (outcome) => send(client.socket, { type: 'agent-search-result', seq, ok: true, ...outcome }),
+        (outcome) => send(client.link, { type: 'agent-search-result', seq, ok: true, ...outcome }),
         (err: Error) => {
           serverLog(`[agent-search] failed: ${err.message}`)
-          send(client.socket, { type: 'agent-search-result', seq, ok: false, error: err.message })
+          send(client.link, { type: 'agent-search-result', seq, ok: false, error: err.message })
         },
       )
       break
     }
 
     case 'agent-meta-availability-query': {
-      send(client.socket, {
+      send(client.link, {
         type: 'agent-meta-availability-result',
         seq: msg.seq,
         entries: agentMetaAvailability.snapshot()
@@ -1820,19 +1924,19 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'agent-meta-toggle': {
       const open = agentMetaManager.toggle(msg.nodeId)
-      send(client.socket, { type: 'agent-meta-toggle-result', seq: msg.seq, open })
+      send(client.link, { type: 'agent-meta-toggle-result', seq: msg.seq, open })
       break
     }
 
     case 'agent-meta-rescan': {
       agentMetaManager.rescan(msg.nodeId)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'meta-doc-resize': {
       stateManager.patchEphemeralNode(msg.nodeId, { width: msg.width, height: msg.height })
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1843,7 +1947,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // reading back as a filesystem change and triggering a rescan.
       agentMetaManager.noteSelfWrite(msg.nodeId)
       fileContentManager.writeContent(msg.nodeId, msg.content)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1856,13 +1960,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // A human edited this markdown — this handler is the human-only path (an
       // agent's emit_markdown creates a new node instead). Genuine interaction.
       stateManager.recordInteraction(msg.nodeId, Date.now())
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
     case 'markdown-set-max-width': {
       stateManager.setMarkdownMaxWidth(msg.nodeId, msg.maxWidth)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1874,7 +1978,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         client.attachBuffers.delete(msg.sessionId)
         // Send an immediate snapshot so the client has something to render
         const snap = snapshotManager.snapshotNow(msg.sessionId)
-        if (snap) send(client.socket, snap)
+        if (snap) send(client.link, snap)
       } else if (client.subscriptions.get(msg.sessionId) === 'snapshot') {
         // Stop snapshots. The live stream itself starts at `attach`, which the
         // client sends next; a live subscription that somehow arrived first is
@@ -1905,10 +2009,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           posY = pos.y
         }
         const titleNode = stateManager.createTitle(msg.parentId, posX, posY)
-        send(client.socket, { type: 'node-add-ack', seq: msg.seq, nodeId: titleNode.id })
+        send(client.link, { type: 'node-add-ack', seq: msg.seq, nodeId: titleNode.id })
       } catch (err: any) {
         console.error(`title-add failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `title-add failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `title-add failed: ${err.message}` })
       }
       break
     }
@@ -1918,17 +2022,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         stateManager.updateTitleText(msg.nodeId, msg.text)
         // Human-only path — the auto-title summarizer writes shellTitleHistory instead.
         stateManager.recordInteraction(msg.nodeId, Date.now())
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        send(client.link, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
         console.error(`title-text failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `title-text failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `title-text failed: ${err.message}` })
       }
       break
     }
 
     case 'cache-timer-mute': {
       stateManager.setCacheTimerMuted(msg.nodeId, msg.muted)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -1951,22 +2055,22 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       try {
         const forkNode = stateManager.getNode(msg.nodeId)
         if (!forkNode || forkNode.type !== 'terminal') {
-          send(client.socket, { type: 'server-error', message: `fork-session: node ${msg.nodeId} is not a terminal` })
+          send(client.link, { type: 'server-error', message: `fork-session: node ${msg.nodeId} is not a terminal` })
           break
         }
         const forkDriver = agentDriver(forkNode.agentType)
         if (forkDriver.capabilities.forkStrategy === 'none') {
-          send(client.socket, { type: 'server-error', message: `fork-session: ${forkDriver.label} does not support fork` })
+          send(client.link, { type: 'server-error', message: `fork-session: ${forkDriver.label} does not support fork` })
           break
         }
         const history = forkNode.claudeSessionHistory ?? []
         if (history.length === 0) {
-          send(client.socket, { type: 'server-error', message: `fork-session: no agent session history` })
+          send(client.link, { type: 'server-error', message: `fork-session: no agent session history` })
           break
         }
         const forkCwd = forkNode.cwd ?? sessionManager.getCwd(forkNode.sessionId)
         if (!forkCwd) {
-          send(client.socket, { type: 'server-error', message: `fork-session: cannot determine cwd` })
+          send(client.link, { type: 'server-error', message: `fork-session: cannot determine cwd` })
           break
         }
 
@@ -1977,7 +2081,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           // The CLI forks its own session; the new id arrives via SessionStart.
           const sourceSessionId = lastAgentSessionId(history)
           if (!sourceSessionId) {
-            send(client.socket, { type: 'server-error', message: `fork-session: no ${forkDriver.label} session id` })
+            send(client.link, { type: 'server-error', message: `fork-session: no ${forkDriver.label} session id` })
             break
           }
           const forkOptions = forkDriver.buildCreateOptions({
@@ -1996,7 +2100,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           if (forkNode.shellTitleHistory?.length) {
             sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
           }
-          send(client.socket, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
+          send(client.link, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
           console.log(`[fork-session] Forked Codex terminal ${msg.nodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (from ${sourceSessionId.slice(0, 8)})`)
           break
         }
@@ -2010,7 +2114,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           }
         }
         if (!sourceClaudeSessionId) {
-          send(client.socket, { type: 'server-error', message: `fork-session: no session transcript file found on disk` })
+          send(client.link, { type: 'server-error', message: `fork-session: no session transcript file found on disk` })
           break
         }
 
@@ -2029,18 +2133,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
         }
 
-        send(client.socket, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
+        send(client.link, { type: 'created', seq: msg.seq, sessionId: forkPtyId, cols: forkCols, rows: forkRows })
         console.log(`[fork-session] Forked terminal ${msg.nodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (claude session ${newClaudeSessionId.slice(0, 8)})`)
       } catch (err: any) {
         console.error(`fork-session failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `fork-session failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `fork-session failed: ${err.message}` })
       }
       break
     }
 
     case 'crab-reorder': {
       stateManager.reorderCrabs(msg.order)
-      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 
@@ -2054,7 +2158,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         const restartNode = stateManager.getNode(msg.nodeId)
         // Allow dead remnants too — Extra CLI restart is how users revive them.
         if (!restartNode || restartNode.type !== 'terminal') {
-          send(client.socket, {
+          send(client.link, {
             type: 'server-error',
             seq: msg.seq,
             message: `terminal-restart: node ${msg.nodeId} is not a terminal`,
@@ -2121,7 +2225,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           isRetry: false
         })
 
-        send(client.socket, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: restartCols, rows: restartRows })
+        send(client.link, { type: 'created', seq: msg.seq, sessionId: newPtyId, cols: restartCols, rows: restartRows })
         serverLog(`[terminal-restart] Restarted terminal ${msg.nodeId.slice(0, 8)} with new session ${newPtyId.slice(0, 8)} resume=${resumeId ? resumeId.slice(0, 8) : '(none)'} extraCliArgs=${msg.extraCliArgs || '(none)'}`)
       } catch (err: any) {
         serverLog(`[terminal-restart] failed: ${err.message}${err.stack ? `\n${err.stack}` : ''}`)
@@ -2129,7 +2233,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // the reason, or a terminal that failed to come back looks identical to
         // one the user deliberately left dead.
         stateManager.setAlert(msg.nodeId, 'launch-failed', `Restart failed: ${err.message}`)
-        send(client.socket, {
+        send(client.link, {
           type: 'server-error',
           seq: msg.seq,
           message: `terminal-restart failed: ${err.message}`,
@@ -2144,7 +2248,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       if (otherCount > 0) {
         serverLog(`[camera-bounds] client=${client.id.slice(0, 8)} broadcasting to ${otherCount} peers bounds=(${Math.round(msg.bounds.x)},${Math.round(msg.bounds.y)} ${Math.round(msg.bounds.width)}x${Math.round(msg.bounds.height)})`)
       }
-      broadcastToOthers(client.socket, { type: 'peer-camera-bounds', clientId: client.id, bounds: msg.bounds })
+      broadcastToOthers(client, { type: 'peer-camera-bounds', clientId: client.id, bounds: msg.bounds })
       break
     }
 
@@ -2159,10 +2263,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       try {
         stateManager.setRootCwd(msg.cwd)
         broadcastToAll({ type: 'root-cwd', cwd: stateManager.getRootCwd() })
-        send(client.socket, { type: 'mutation-ack', seq: msg.seq })
+        send(client.link, { type: 'mutation-ack', seq: msg.seq })
       } catch (err: any) {
         console.error(`set-root-cwd failed: ${err.message}`)
-        send(client.socket, { type: 'server-error', message: `set-root-cwd failed: ${err.message}` })
+        send(client.link, { type: 'server-error', message: `set-root-cwd failed: ${err.message}` })
       }
       break
     }
@@ -2216,7 +2320,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     // the other clients (a mod's renderer half in another window) and to the
     // script connections that named this modId when they subscribed.
     case 'mod': {
-      broadcastToOthers(client.socket, msg)
+      broadcastToOthers(client, msg)
       scriptApi.broadcastMod(msg.modId, msg.event, msg.payload)
       break
     }
@@ -2224,7 +2328,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     default: {
       const unknownType = unhandledVariant(msg)
       console.error(`Unknown message type: ${unknownType}`)
-      send(client.socket, { type: 'server-error', message: `Unknown message type: ${unknownType}` })
+      send(client.link, { type: 'server-error', message: `Unknown message type: ${unknownType}` })
       break
     }
   }
@@ -2345,7 +2449,7 @@ async function startServer(): Promise<void> {
   snapshotManager = new SnapshotManager((snapshot) => {
     clients.forEach((client) => {
       if (client.subscriptions.get(snapshot.sessionId) === 'snapshot') {
-        send(client.socket, snapshot)
+        send(client.link, snapshot)
       }
     })
   })
@@ -2796,68 +2900,31 @@ async function startServer(): Promise<void> {
   // --- Bidirectional socket (Electron client ↔ server) ---
   const server = net.createServer((socket) => {
     socket.setEncoding('utf8')
-
-    const client: ClientConnection = {
-      id: randomUUID(),
-      socket,
-      subscriptions: new Map(),
-      attachBuffers: new Map(),
-      parser: new LineParser((msg) => {
-        handleMessage(client, msg as ClientMessage)
-      }),
-      cameraBounds: null
-    }
-
-    clients.add(client)
-    console.log(`Client connected id=${client.id.slice(0, 8)} (${clients.size} total)`)
-
-    // Send existing peers' camera bounds to the new client
-    clients.forEach((existing) => {
-      if (existing !== client && existing.cameraBounds) {
-        send(socket, { type: 'peer-camera-bounds', clientId: existing.id, bounds: existing.cameraBounds })
-      }
-    })
-    // Notify other clients about the new peer
-    broadcastToOthers(socket, { type: 'peer-connected', clientId: client.id })
-
-    // Send the shared saved viewport slots to the new client
-    send(socket, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
-
-    // Same for the root node's working directory, which the client needs before
-    // it can tell you where a top-level card is about to be created.
-    send(socket, { type: 'root-cwd', cwd: stateManager.getRootCwd() })
-
-    // Availability is pushed on change, which a client that connected after the
-    // last change would never have heard. Replay what is known.
-    for (const { nodeId, available } of agentMetaAvailability.snapshot()) {
-      send(socket, { type: 'agent-meta-availability', nodeId, available })
-    }
-
-    const summaryTargetNodeId = summaryChat.getTargetNodeId()
-    if (summaryTargetNodeId) {
-      send(socket, { type: 'summary-chat-status', nodeId: summaryTargetNodeId, state: 'target' })
-    }
-
-    socket.on('data', (data) => {
-      client.parser.feed(data)
-    })
-
-    socket.on('close', () => {
-      clients.delete(client)
-      console.log(`Client disconnected id=${client.id.slice(0, 8)} (${clients.size} total)`)
-      broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
-    })
-
+    const connection = acceptClient({ write: (text) => socket.write(text) })
+    socket.on('data', (data) => connection.feed(data))
+    socket.on('close', () => connection.close())
     socket.on('error', (err) => {
       console.error('Client socket error:', err.message)
-      clients.delete(client)
-      broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
+      connection.close()
     })
   })
 
   server.listen(SOCKET_PATH, () => {
     console.log(`Bidirectional server listening on ${SOCKET_PATH}`)
   })
+
+  // --- Web gateway (mobile web app ↔ server), loopback only ---
+  // SPACETERM_WEB_PORT=0 turns it off.
+  const webPort = Number(process.env.SPACETERM_WEB_PORT ?? DEFAULT_WEB_PORT)
+  if (webPort > 0) {
+    startWebGateway({
+      port: webPort,
+      staticRoot: path.resolve(__dirname, '..', '..', 'out', 'mobile'),
+      token: loadOrCreateWebToken(SOCKET_DIR),
+      accept: acceptClient,
+      log: serverLog
+    })
+  }
 
   server.on('error', (err) => {
     console.error('Server error:', err)

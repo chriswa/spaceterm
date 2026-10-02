@@ -304,7 +304,9 @@ export class ServerClient {
       case 'speak-toggle-result':
       case 'agent-meta-toggle-result':
       case 'agent-meta-availability-result':
-      case 'agent-search-result': {
+      case 'agent-search-result':
+      case 'dictation-started':
+      case 'dictation-result': {
         const pending = this.pending.get(msg.seq)
         if (!pending) return
         this.pending.delete(msg.seq)
@@ -689,6 +691,32 @@ export class ServerClient {
    */
   sendMod(modId: string, event: string, payload: unknown): void {
     this.fireAndForget({ type: 'mod', modId, event, payload })
+  }
+
+  // ─── dictation ────────────────────────────────────────────────────────────
+  //
+  // For a client that captures audio but cannot transcribe it: the server
+  // relays the PCM through Voice Operator. See src/server/remote-dictation.ts.
+
+  async dictationStart(sampleRate: number): Promise<string> {
+    const resp = await this.request({ type: 'dictation-start', sampleRate })
+    if (resp.type === 'dictation-started') return resp.id
+    return unexpected(resp)
+  }
+
+  /** Base64 PCM, s16le mono. Dropped silently when disconnected; finish will fail. */
+  dictationAudio(id: string, pcmBase64: string): void {
+    this.fireAndForget({ type: 'dictation-audio', id, pcm: pcmBase64 })
+  }
+
+  async dictationFinish(id: string): Promise<string> {
+    const resp = await this.request({ type: 'dictation-finish', id })
+    if (resp.type === 'dictation-result') return resp.text
+    return unexpected(resp)
+  }
+
+  dictationCancel(id: string): void {
+    this.fireAndForget({ type: 'dictation-cancel', id })
   }
 
   // ─── speech ───────────────────────────────────────────────────────────────

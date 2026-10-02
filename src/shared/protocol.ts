@@ -332,6 +332,40 @@ export interface ShipItMessage {
   text: string
 }
 
+/**
+ * Dictation for a client that cannot transcribe itself (the phone): it
+ * streams PCM to the server, which relays it through Voice Operator. See
+ * `src/server/remote-dictation.ts`.
+ *
+ * `dictation-start` replies `dictation-started` with the session id, or a
+ * correlated `server-error` (Voice Operator not running, signed out, …).
+ */
+export interface DictationStartMessage {
+  type: 'dictation-start'
+  seq: number
+  /** Hz. PCM is signed 16-bit little-endian mono at this rate. */
+  sampleRate: number
+}
+
+/** One chunk of audio, base64. Fire-and-forget: failures surface at finish. */
+export interface DictationAudioMessage {
+  type: 'dictation-audio'
+  id: string
+  pcm: string
+}
+
+/** No more audio. Replies `dictation-result`, or a correlated `server-error`. */
+export interface DictationFinishMessage {
+  type: 'dictation-finish'
+  seq: number
+  id: string
+}
+
+export interface DictationCancelMessage {
+  type: 'dictation-cancel'
+  id: string
+}
+
 export interface TerminalResizeMessage {
   type: 'terminal-resize'
   seq: number
@@ -889,6 +923,10 @@ export type AgentSearchResult =
 
 export type ClientMessage =
   | ShipItMessage
+  | DictationStartMessage
+  | DictationAudioMessage
+  | DictationFinishMessage
+  | DictationCancelMessage
   | AgentSearchMessage
   | AgentMetaAvailabilityQueryMessage
   | AgentMetaToggleMessage
@@ -1459,7 +1497,22 @@ export type ScriptResponse =
   | ScriptForkClaudeResult
   | ScriptResolveHandoffResult
 
+export interface DictationStartedMessage {
+  type: 'dictation-started'
+  seq: number
+  id: string
+}
+
+export interface DictationResultMessage {
+  type: 'dictation-result'
+  seq: number
+  /** Exactly what Wispr returned, trailing space and all. */
+  text: string
+}
+
 export type ServerMessage =
+  | DictationStartedMessage
+  | DictationResultMessage
   | AgentMetaAvailabilityResult
   | AgentSearchResult
   | AgentMetaToggleResult

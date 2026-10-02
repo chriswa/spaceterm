@@ -123,6 +123,33 @@ export class VoiceOperator {
     return this.request(`/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}${since}`, init, timeoutMs)
   }
 
+  // ─── remote transcription ───────────────────────────────────────────────
+  //
+  // Voice Operator owns the Wispr session (its refresh tokens rotate, so only
+  // one process may hold them) and the streaming connection. These relay audio
+  // captured elsewhere — the phone — through it. See RemoteDictation.
+
+  /** Open a transcription; Voice Operator starts streaming to Wispr at once. */
+  startTranscription(sampleRate: number): Promise<SpeechResponse> {
+    return this.request('/v1/transcriptions', { method: 'POST', body: JSON.stringify({ sample_rate: sampleRate }) })
+  }
+
+  /** Raw PCM, signed 16-bit little-endian mono, at the session's rate. */
+  sendTranscriptionAudio(id: string, pcm: Uint8Array): Promise<SpeechResponse> {
+    return this.request(`/v1/transcriptions/${encodeURIComponent(id)}/audio`, {
+      method: 'POST', body: new Uint8Array(pcm), headers: { 'content-type': 'application/octet-stream' },
+    }, 10_000)
+  }
+
+  /** No more audio: wait for the final text. Slow paths take seconds, hence the timeout. */
+  finishTranscription(id: string): Promise<SpeechResponse> {
+    return this.request(`/v1/transcriptions/${encodeURIComponent(id)}/finish`, { method: 'POST' }, 30_000)
+  }
+
+  cancelTranscription(id: string): Promise<SpeechResponse> {
+    return this.request(`/v1/transcriptions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  }
+
   /** Every voice the service offers, unfiltered. */
   voices(): Promise<SpeechResponse> {
     return this.request('/v1/voices')

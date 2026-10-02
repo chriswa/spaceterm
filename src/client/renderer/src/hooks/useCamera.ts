@@ -597,5 +597,5 @@ export function useCamera(
     rafRef.current = requestAnimationFrame(shakeTick)
   }, [applyToDOM])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userPan, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState }
 }

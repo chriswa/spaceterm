@@ -25,14 +25,14 @@ export default defineConfig({
           name: 'node',
           environment: 'node',
           include: ['src/**/*.test.{ts,tsx}'],
-          exclude: ['**/node_modules/**', 'src/client/renderer/**', 'src/e2e/**'],
+          exclude: ['**/node_modules/**', 'src/client/renderer/**', 'src/mobile/**', 'src/e2e/**'],
         },
       },
       {
         test: {
           name: 'renderer',
           environment: 'jsdom',
-          include: ['src/client/renderer/**/*.test.{ts,tsx}'],
+          include: ['src/client/renderer/**/*.test.{ts,tsx}', 'src/mobile/**/*.test.{ts,tsx}'],
           exclude: ['**/node_modules/**'],
           // Stubs for the browser APIs jsdom lacks but the renderer imports —
           // AudioContext, ResizeObserver, matchMedia. Each is there because a

@@ -19,8 +19,10 @@
       "@/*": ["src/client/renderer/src/*"]
     }
   },
+  "exclude": ["src/mobile/vite.config.ts"],
   "include": [
     "src/client/renderer/src/**/*",
+    "src/mobile/**/*",
     "src/shared/**/*"
   ]
 }

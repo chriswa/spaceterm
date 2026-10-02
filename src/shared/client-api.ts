@@ -139,6 +139,12 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       stop: () => client.stopSpeak(),
       onActiveChanged: (cb) => on('speech-active', (m) => cb(m.active))
     },
+    dictation: {
+      start: (sampleRate) => client.dictationStart(sampleRate),
+      audio: (id, pcm) => client.dictationAudio(id, pcm),
+      finish: (id) => client.dictationFinish(id),
+      cancel: (id) => client.dictationCancel(id)
+    },
     perf: platform.perf,
     window: {
       ...platform.window,
