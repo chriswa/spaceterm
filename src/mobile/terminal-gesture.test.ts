@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { TerminalGesture, LONG_PRESS_MS, EXIT_DISTANCE_PX, FLICK_DISTANCE_PX } from './terminal-gesture'
+import { TerminalGesture, LONG_PRESS_MS, EXIT_DISTANCE_PX, FLICK_DISTANCE_PX, PINCH_EXIT_SCALE } from './terminal-gesture'
 
 describe('TerminalGesture', () => {
   it('a quick touch without movement is a tap', () => {
@@ -93,5 +93,41 @@ describe('TerminalGesture', () => {
     const g = new TerminalGesture()
     g.begin(200, 300, 0)
     expect(g.move(170, 303)).toEqual({ kind: 'swipe', dx: -30 })
+  })
+
+  it('pinching in past the threshold leaves', () => {
+    const g = new TerminalGesture()
+    g.begin(150, 300, 0)
+    g.pinch(200)
+    expect(g.pinchMove(170)).toEqual({ kind: 'pinch', scale: 0.85 })
+    g.pinchMove(200 * PINCH_EXIT_SCALE - 1)
+    expect(g.end(400)).toBe('exit')
+  })
+
+  it('a pinch that comes back out before release stays', () => {
+    const g = new TerminalGesture()
+    g.begin(150, 300, 0)
+    g.pinch(200)
+    g.pinchMove(120)
+    g.pinchMove(190)
+    expect(g.end(400)).toBe('none')
+  })
+
+  it('a second finger turns a scroll into a pinch, and the first finger stops scrolling', () => {
+    const g = new TerminalGesture()
+    g.begin(150, 300, 0)
+    expect(g.move(150, 270).kind).toBe('scroll')
+    g.pinch(180)
+    expect(g.move(150, 200).kind).toBe('none')
+    g.pinchMove(100)
+    expect(g.end(500)).toBe('exit')
+  })
+
+  it('pinching out (zooming in) does not leave', () => {
+    const g = new TerminalGesture()
+    g.begin(150, 300, 0)
+    g.pinch(100)
+    g.pinchMove(200)
+    expect(g.end(300)).toBe('none')
   })
 })

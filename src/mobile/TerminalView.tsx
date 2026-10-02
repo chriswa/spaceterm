@@ -31,6 +31,11 @@ const BORROW_SETTLE_MS = 150
 
 const noop = () => undefined
 
+/** Distance between the first two touches. */
+function span(touches: TouchList): number {
+  return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+}
+
 export function TerminalView({ nodeId, onClose, onCompose }: {
   nodeId: NodeId
   onClose: () => void
@@ -48,6 +53,8 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
   const [keyboard, setKeyboard] = useState(false)
   const [swipeDx, setSwipeDx] = useState(0)
   const [pressArmed, setPressArmed] = useState(false)
+  /** How far a pinch has closed, for the view to shrink with it; 1 when not pinching. */
+  const [pinchScale, setPinchScale] = useState(1)
 
   // Hand the surface back to the canvas card on the way out (this card held
   // the live subscription), and give the surface its own size back.
@@ -108,13 +115,25 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       // Owning the touch from its start is what stops WebKit beginning a
       // long-press text selection; every outcome is decided here, not by it.
       e.preventDefault()
+      clearTimeout(armTimer.current)
+      if (e.touches.length >= 2) {
+        // A second finger: the touch is a pinch from here on.
+        setPressArmed(false)
+        setSwipeDx(0)
+        g.pinch(span(e.touches))
+        return
+      }
       const t = e.touches[0]
       g.begin(t.clientX, t.clientY, e.timeStamp)
-      clearTimeout(armTimer.current)
       armTimer.current = setTimeout(() => { if (g.isStill()) setPressArmed(true) }, LONG_PRESS_MS)
     }
     const onMove = (e: TouchEvent) => {
       e.preventDefault()
+      if (e.touches.length >= 2) {
+        const pinch = g.pinchMove(span(e.touches))
+        if (pinch.kind === 'pinch') setPinchScale(Math.min(1, pinch.scale))
+        return
+      }
       const t = e.touches[0]
       const move = g.move(t.clientX, t.clientY)
       if (move.kind !== 'none') {
@@ -131,6 +150,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       clearTimeout(armTimer.current)
       setPressArmed(false)
       setSwipeDx(0)
+      setPinchScale(1)
       const outcome = g.end(e.timeStamp)
       if (outcome === 'tap') onCompose()
       else if (outcome === 'long-press') {
@@ -178,7 +198,11 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       <div
         ref={areaRef}
         className="mobile-term__area"
-        style={swipeDx ? { transform: `translateX(${swipeDx}px)`, opacity: Math.max(0.4, 1 - Math.abs(swipeDx) / 300) } : undefined}
+        style={
+          swipeDx ? { transform: `translateX(${swipeDx}px)`, opacity: Math.max(0.4, 1 - Math.abs(swipeDx) / 300) }
+            : pinchScale < 1 ? { transform: `scale(${pinchScale})`, opacity: Math.max(0.4, pinchScale) }
+            : undefined
+        }
       >
         <div ref={cardRef} className="mobile-term__card" style={{ transform: `scale(${scale})`, width: size.width, height: size.height }}>
           <TerminalCard

@@ -5,6 +5,8 @@
  *   TUI (or the shell's scrollback) decides what scrolling is, as it does for a
  *   trackpad on the desktop.
  * - **Flick left or right** past a threshold leaves for the canvas.
+ * - **Pinch in** (zoom out) leaves for the canvas too — a smaller threshold,
+ *   since nothing else uses two fingers here.
  * - **Tap** opens the composer.
  * - **Long press** opens the keyboard for typing straight into the terminal.
  *
@@ -36,14 +38,22 @@ export const EXIT_DISTANCE_PX = 140
 /** A shorter one leaves if it is quick — a flick. */
 export const FLICK_DISTANCE_PX = 90
 export const FLICK_SPEED_PX_PER_MS = 0.6
+/** Fingers brought this close, relative to where they started, leaves. */
+export const PINCH_EXIT_SCALE = 0.8
 
 export type GestureEnd = 'tap' | 'long-press' | 'exit' | 'none'
-export type GestureMove = { kind: 'scroll'; deltaY: number } | { kind: 'swipe'; dx: number } | { kind: 'none' }
+export type GestureMove =
+  | { kind: 'scroll'; deltaY: number }
+  | { kind: 'swipe'; dx: number }
+  | { kind: 'pinch'; scale: number }
+  | { kind: 'none' }
 
 export class TerminalGesture {
   private start: { x: number; y: number; t: number } | null = null
   private last = { x: 0, y: 0 }
-  private axis: 'none' | 'vertical' | 'horizontal' = 'none'
+  private axis: 'none' | 'vertical' | 'horizontal' | 'pinch' = 'none'
+  private pinchStart = 0
+  private pinchScale = 1
 
   begin(x: number, y: number, t: number): void {
     this.start = { x, y, t }
@@ -51,7 +61,25 @@ export class TerminalGesture {
     this.axis = 'none'
   }
 
+  /**
+   * A second finger came down. From here the touch is a pinch, whatever the
+   * first finger was doing; `distance` is the span between the two.
+   */
+  pinch(distance: number): void {
+    if (!this.start) this.start = { x: 0, y: 0, t: 0 }
+    this.axis = 'pinch'
+    this.pinchStart = Math.max(1, distance)
+    this.pinchScale = 1
+  }
+
+  pinchMove(distance: number): GestureMove {
+    if (this.axis !== 'pinch') return { kind: 'none' }
+    this.pinchScale = distance / this.pinchStart
+    return { kind: 'pinch', scale: this.pinchScale }
+  }
+
   move(x: number, y: number): GestureMove {
+    if (this.axis === 'pinch') return { kind: 'none' }
     if (!this.start) return { kind: 'none' }
     if (this.axis === 'none') {
       const dx = x - this.start.x
@@ -79,6 +107,7 @@ export class TerminalGesture {
     const start = this.start
     this.start = null
     if (!start) return 'none'
+    if (this.axis === 'pinch') return this.pinchScale <= PINCH_EXIT_SCALE ? 'exit' : 'none'
     if (this.axis === 'none') {
       // Movement short of a decided direction: within the tap slop it was a
       // tap or a press; past it, an aborted drag that means nothing.
