@@ -1,3 +1,4 @@
+import { cssUrl } from '../lib/css-url'
 import crownIcon from '../assets/hat-crown.svg'
 import capIcon from '../assets/hat-cap.svg'
 import dunceIcon from '../assets/hat-dunce.svg'
@@ -15,7 +16,7 @@ const HAT_ICONS: Record<ModelHat, string> = {
  * with `className`.
  */
 export function CrabHat({ hat, className }: { hat: ModelHat; className: string }) {
-  const url = `url(${HAT_ICONS[hat]})`
+  const url = cssUrl(HAT_ICONS[hat])
   return (
     <span
       className={`crab-hat ${className}`}

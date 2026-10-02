@@ -1,3 +1,4 @@
+import { cssUrl } from '../lib/css-url'
 import crabIcon from '../assets/crab.png'
 import codexAgentIcon from '../assets/codex-agent.png'
 import type { AgentType } from '../../../../shared/agent-type'
@@ -22,8 +23,8 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
       <span
         className="add-node-body__mask-icon"
         style={{
-          maskImage: `url(${crabIcon})`,
-          WebkitMaskImage: `url(${crabIcon})`,
+          maskImage: cssUrl(crabIcon),
+          WebkitMaskImage: cssUrl(crabIcon),
           width: 14,
           height: 9,
         }}
@@ -48,8 +49,8 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
       <span
         className="add-node-body__mask-icon"
         style={{
-          maskImage: `url(${codexAgentIcon})`,
-          WebkitMaskImage: `url(${codexAgentIcon})`,
+          maskImage: cssUrl(codexAgentIcon),
+          WebkitMaskImage: cssUrl(codexAgentIcon),
           maskSize: '110%',
           WebkitMaskSize: '110%',
           width: 14,

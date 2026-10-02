@@ -1,3 +1,4 @@
+import { cssUrl } from '../lib/css-url'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -1362,8 +1363,8 @@ export function TerminalCard({
               <span
                 className="terminal-card__crab-mark"
                 style={{
-                  maskImage: `url(${agentIconUrl})`,
-                  WebkitMaskImage: `url(${agentIconUrl})`,
+                  maskImage: cssUrl(agentIconUrl),
+                  WebkitMaskImage: cssUrl(agentIconUrl),
                   backgroundColor: CRAB_COLORS[crabAppearance.color],
                 }}
               />
@@ -1375,7 +1376,7 @@ export function TerminalCard({
             <div
               className="terminal-card__speaking-mark"
               aria-hidden="true"
-              style={{ maskImage: `url(${megaphoneIcon})`, WebkitMaskImage: `url(${megaphoneIcon})` }}
+              style={{ maskImage: cssUrl(megaphoneIcon), WebkitMaskImage: cssUrl(megaphoneIcon) }}
             />
           )}
         </>

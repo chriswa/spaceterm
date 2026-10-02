@@ -2898,6 +2898,7 @@ export function App() {
               <Toolbar
                 {...toolbarProps}
                 variant="sheet"
+                onClose={closeSheet}
                 onCrabClick={(nodeId, metaKey) => { closeSheet(); handleCrabClick(nodeId, metaKey) }}
               />
             </div>
