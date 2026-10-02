@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ROOT_DISC_RADIUS } from '../../../../../shared/node-size'
-import { PAVER_BG_FRAG, PAVER_LATTICE, PAVER_TONE, RAINBOW_PAVER_BG_FRAG } from './paver-background'
+import { CRIMSON_PAVER_BG_FRAG, PAVER_BG_FRAG, PAVER_LATTICE, PAVER_TONE, TEAL_PAVER_BG_FRAG } from './paver-background'
 
 /**
  * What the paver background has to keep being.
@@ -352,15 +352,17 @@ describe('the shader', () => {
   })
 })
 
-describe('the rainbow variant', () => {
-  it('is the grey floor with a hue applied, and nothing else changed', () => {
+describe('the tinted variants', () => {
+  it('are the grey floor with a tint applied, and nothing else changed', () => {
     // Everything up to the tint is shared, so a retune of the grey floor is a
-    // retune of this one too.
-    const extra = RAINBOW_PAVER_BG_FRAG.split('\n').filter(line => !PAVER_BG_FRAG.includes(line))
-    expect(extra.join('\n')).toContain('tone *= hueTint(')
-    expect(extra.join('\n')).toContain('ground *= hueTint(')
-    expect(PAVER_BG_FRAG).not.toContain('hueTint')
-    // Still a still background.
-    expect(RAINBOW_PAVER_BG_FRAG).not.toMatch(/\biTime\b/)
+    // retune of these too.
+    for (const frag of [TEAL_PAVER_BG_FRAG, CRIMSON_PAVER_BG_FRAG]) {
+      const extra = frag.split('\n').filter(line => !PAVER_BG_FRAG.includes(line)).join('\n')
+      expect(extra).toContain('tone *= TINT;')
+      expect(extra).toContain('ground *= TINT;')
+      expect(frag).not.toMatch(/\biTime\b/)
+    }
+    expect(PAVER_BG_FRAG).not.toContain('TINT')
+    expect(TEAL_PAVER_BG_FRAG).not.toBe(CRIMSON_PAVER_BG_FRAG)
   })
 })

@@ -23,7 +23,7 @@ function oklab2linearRGB(L: number, a: number, b: number): [number, number, numb
 }
 
 // --- OkLCh → linear RGB (ported from GLSL lines 62-64) ---
-function oklch2linearRGB(L: number, C: number, h: number): [number, number, number] {
+export function oklch2linearRGB(L: number, C: number, h: number): [number, number, number] {
   return oklab2linearRGB(L, C * Math.cos(h), C * Math.sin(h))
 }
 

@@ -81,6 +81,7 @@
  */
 
 import { ROOT_DISC_RADIUS } from '../../../../../shared/node-size'
+import { oklch2linearRGB } from '../angle-color'
 import { glslVec3, LINEAR_TO_SRGB_GLSL, rgbToLinear, type Rgb } from './srgb'
 
 /* ------------------------------------------------------------------ */
@@ -305,61 +306,43 @@ const modGlsl = (m: typeof MODULATION, contrast: number): string =>
 /* ------------------------------------------------------------------ */
 
 /**
- * The rainbow variant: each stone tinted by the angle of its centre about the
- * origin, so the hue goes once round the colour wheel per lap of the floor,
- * red at the top and turning clockwise through yellow, green and blue.
+ * The tinted variants: the same floor with every stone, and the ground it
+ * fades to, cast in one colour. Meant to tell two machines apart at a glance,
+ * so the colour has to be obvious while the floor stays the same dark
+ * furniture as the grey one.
  *
- * Meant to tell two machines apart at a glance, so it has to be obvious that
- * the stones differ while still being the same dark furniture as the grey
- * floor. The wheel is OKLCH's: every hue at the same perceived lightness and
- * chroma, so no part of the floor looks brighter or louder than another the
- * way yellow and blue do on an RGB wheel. The tint is a multiplier, OKLab's
- * `L = 1` at the given chroma, and OKLab's cube root makes the ratio of chroma
- * to lightness scale-free, so multiplying a stone of any tone by it gives the
- * same hue at the same relative chroma. Every stone's own tone, grain and
- * lighting carry over from the grey floor untouched. The mortar stays grey,
- * which is most of what keeps it reading as stone rather than as a colour
- * wheel.
+ * The tint is a multiplier, OKLCH at `L = 1` and the given chroma and hue,
+ * decoded to linear light. OKLab's cube root makes the ratio of chroma to
+ * lightness scale-free, so multiplying a stone of any tone by it gives the same
+ * hue at the same relative chroma without changing how light the stone looks.
+ * Every stone's own tone, grain and lighting carry over from the grey floor
+ * untouched. The mortar stays grey, which is most of what keeps it reading as
+ * stone rather than as a coloured sheet.
  */
 interface PaverHue {
   /** OKLab chroma of the tint, relative to the stone's own lightness. */
   chroma: number
-  /** The OKLCH hue placed at the top of the floor, in degrees. */
-  topHue: number
+  /** OKLCH hue, in degrees. */
+  hue: number
 }
 
-const RAINBOW: PaverHue = { chroma: 0.09, topHue: 29 }
+const TEAL: PaverHue = { chroma: 0.09, hue: 195 }
+const CRIMSON: PaverHue = { chroma: 0.11, hue: 10 }
 
-/** GLSL for the hue variant, or nothing for the grey floor. */
+const tintOf = (hue: PaverHue): Rgb => {
+  const [r, g, b] = oklch2linearRGB(1, hue.chroma, (hue.hue * Math.PI) / 180)
+  return [Math.max(r, 0), Math.max(g, 0), Math.max(b, 0)]
+}
+
+/** GLSL for a tinted variant, or nothing for the grey floor. */
 const hueGlsl = (hue: PaverHue | null) => ({
   decl: hue === null ? '' : `
-const float HUE_CHROMA = ${hue.chroma.toFixed(4)};
-const float HUE_TOP = ${((hue.topHue * Math.PI) / 180).toFixed(6)};
-
-/**
- * A channel multiplier for a direction on the floor, given in turns
- * anticlockwise from +x: OKLCH at L = 1, converted to linear sRGB.
- */
-vec3 hueTint(float turns) {
-  float h = HUE_TOP + TAU * (0.25 - turns);
-  vec2 ab = HUE_CHROMA * vec2(cos(h), sin(h));
-  vec3 lms = vec3(
-    1.0 + 0.3963377774 * ab.x + 0.2158037573 * ab.y,
-    1.0 - 0.1055613458 * ab.x - 0.0638541728 * ab.y,
-    1.0 - 0.0894841775 * ab.x - 1.2914855480 * ab.y);
-  lms = lms * lms * lms;
-  return max(mat3(
-     4.0767416621, -1.2684380046, -0.0041960863,
-    -3.3077115913,  2.6097574011, -0.7034186147,
-     0.2309699292, -0.3413193965,  1.7076147010) * lms, 0.0);
-}
+/** Linear-light multiplier for the stones and the ground. See PaverHue. */
+const vec3 TINT = ${glslVec3(tintOf(hue))};
 `,
-  // The stone's centre is at a = cell + 0.5, so its angle in turns is that,
-  // less the course's phase, over the count. The far ground takes the pixel's
-  // own angle, so the floor stays recognisable zoomed all the way out.
   apply: hue === null ? '' : `
-  tone *= hueTint((cell + 0.5 - phase) / count);
-  ground *= hueTint(theta / TAU);`,
+  tone *= TINT;
+  ground *= TINT;`,
 })
 
 /* ------------------------------------------------------------------ */
@@ -568,8 +551,9 @@ ${hueGlsl(hue).apply}
 
 export const PAVER_BG_FRAG = paverFrag(null)
 
-/** The same floor with every stone tinted by its angle. See `PaverHue`. */
-export const RAINBOW_PAVER_BG_FRAG = paverFrag(RAINBOW)
+/** The same floor cast in one colour. See `PaverHue`. */
+export const TEAL_PAVER_BG_FRAG = paverFrag(TEAL)
+export const CRIMSON_PAVER_BG_FRAG = paverFrag(CRIMSON)
 
 /**
  * The lattice's parameters, exported so the tests measure the shader's own

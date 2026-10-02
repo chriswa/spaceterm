@@ -8,7 +8,7 @@ import {
   NEBULA_EDGE_FRAG,
   STATIC_EDGE_FRAG,
 } from './shaders'
-import { PAVER_BG_FRAG, RAINBOW_PAVER_BG_FRAG } from './paver-background'
+import { CRIMSON_PAVER_BG_FRAG, PAVER_BG_FRAG, TEAL_PAVER_BG_FRAG } from './paver-background'
 import { DiscRootNode, OrbRootNode, ReticleRootNode, type RootNodeVisualProps } from './root-node'
 import { NODE_TINTS, type NodeTintFacet } from './node-tint'
 import { registerFacet } from './registry'
@@ -157,7 +157,8 @@ export const BACKGROUNDS = {
   medallion: { id: 'medallion', label: 'Medallion', frag: MEDALLION_BG_FRAG, animatedHz: 0 },
   // Radial stone brickwork. See `./paver-background`.
   pavers: { id: 'pavers', label: 'Pavers', frag: PAVER_BG_FRAG, animatedHz: 0 },
-  rainbowPavers: { id: 'rainbow-pavers', label: 'Rainbow pavers', frag: RAINBOW_PAVER_BG_FRAG, animatedHz: 0 },
+  tealPavers: { id: 'teal-pavers', label: 'Teal pavers', frag: TEAL_PAVER_BG_FRAG, animatedHz: 0 },
+  crimsonPavers: { id: 'crimson-pavers', label: 'Crimson pavers', frag: CRIMSON_PAVER_BG_FRAG, animatedHz: 0 },
 } as const satisfies Record<string, BackgroundFacet>
 
 export const EDGES = {
