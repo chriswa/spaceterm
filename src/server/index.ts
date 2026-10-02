@@ -35,6 +35,7 @@ import { SnapshotManager } from './snapshot-manager'
 import { agentSurfaceFootprint, computePlacement } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
+import { shipIt } from './ship-it'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
 import { readClaudeCacheTouch } from './claude-cache-warmth'
@@ -71,13 +72,6 @@ import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
  * UPDATE THIS when Claude Code changes its compaction threshold.
  */
 const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 0
-
-/**
- * How long to wait after a bracketed paste before sending the carriage return
- * that submits it. Claude's input box needs a beat to finish processing the
- * paste, or the return lands as a newline inside the prompt instead.
- */
-const SHIP_IT_SUBMIT_DELAY_MS = 1000
 
 /**
  * How long a script-requested fork may take to replay its transcript and fire
@@ -610,6 +604,16 @@ function unsubscribeAll(sessionId: PtySessionId): void {
   })
 }
 
+/**
+ * Paste text into a live surface and (usually) submit it. Every way of
+ * shipping — the client's `ship-it`, the scripts socket — goes through here.
+ */
+function shipToSession(sessionId: PtySessionId, text: string, submit: boolean): void {
+  shipIt({ write: (data) => sessionManager.write(sessionId, data), schedule: (fn, ms) => setTimeout(fn, ms) }, text, submit)
+  // Mark read; the resulting UserPromptSubmit hook drives the working state.
+  claudeStateMachine.handleClientInteract(sessionId)
+}
+
 function broadcastToAttached(sessionId: PtySessionId, msg: ServerMessage): void {
   clients.forEach((client) => {
     if (client.subscriptions.get(sessionId) === 'live') {
@@ -674,14 +678,7 @@ const scriptApi = new ScriptApi({
   emitMod: (modId, event, payload) => broadcastToAll({ type: 'mod', modId, event, payload }),
   capabilitiesFor: (modId) => modRegistry.capabilitiesFor(modId),
 
-  shipIt(sessionId, text, submit) {
-    sessionManager.write(sessionId, '\x1b[200~' + text + '\x1b[201~')
-    // Mark read; the resulting UserPromptSubmit hook drives the working state.
-    claudeStateMachine.handleClientInteract(sessionId)
-    // Claude's input box needs a beat to finish processing the paste before it
-    // will treat a carriage return as "submit" rather than "newline".
-    if (submit) setTimeout(() => sessionManager.write(sessionId, '\r'), SHIP_IT_SUBMIT_DELAY_MS)
-  },
+  shipIt: shipToSession,
 
   markUnread: (sessionId) => claudeStateMachine.handleClientMarkUnread(sessionId, true),
 
@@ -1337,6 +1334,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Interacting with the terminal only marks it read — state is derived from
       // hooks + transcript, not keystrokes.
       claudeStateMachine.handleClientInteract(msg.sessionId)
+      break
+    }
+
+    case 'ship-it': {
+      const target = stateManager.getNode(msg.nodeId)
+      if (!target || target.type !== 'terminal' || !target.alive) {
+        send(client.socket, { type: 'server-error', seq: msg.seq, message: 'Ship it needs a live terminal surface' })
+        break
+      }
+      shipToSession(target.sessionId, msg.text, true)
+      send(client.socket, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 

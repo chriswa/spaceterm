@@ -1,240 +1,60 @@
 import { contextBridge, ipcRenderer } from 'electron'
 // The bridge contract lives in src/shared/api.ts so the renderer type-checks
 // against the same declaration this file implements. Do not restate it here.
-import type { Api, NodeApi, PtyApi, SummaryChatMode, SummaryChatUiState } from '../../shared/api'
-import type { NodeId, PtySessionId } from '../../shared/ids'
+import type { ElectronHost, ServerPipeEventKind } from '../../shared/api'
 import type { SystemMetricsSample } from '../../shared/system-metrics'
 
-const ptyApi: PtyApi = {
-  create: (options?) => ipcRenderer.invoke('pty:create', options),
+/**
+ * Electron's half of `window.api`: the window, the machine, and a pipe to the
+ * server socket.
+ *
+ * Everything that talks to the server is assembled in the renderer from that
+ * pipe by shared code (`src/shared/client-api.ts`), the same code the mobile
+ * web app runs. This file used to relay each of ~100 calls by hand.
+ */
 
-  list: () => ipcRenderer.invoke('pty:list'),
-
-  attach: (sessionId) => ipcRenderer.invoke('pty:attach', sessionId),
-
-  write: (sessionId, data) => ipcRenderer.send('pty:write', sessionId, data),
-
-  destroy: (sessionId) => ipcRenderer.invoke('pty:destroy', sessionId),
-
-  onData: (sessionId, callback) => {
-    const channel = `pty:data:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-  onExit: (sessionId, callback) => {
-    const channel = `pty:exit:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, exitCode: number) => callback(exitCode)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-
-}
-
-const nodeApi: NodeApi = {
-  syncRequest: () => ipcRenderer.invoke('node:sync-request'),
-  move: (nodeId, x, y) => ipcRenderer.invoke('node:move', nodeId, x, y),
-  batchMove: (moves) => ipcRenderer.invoke('node:batch-move', moves),
-  rename: (nodeId, name) => ipcRenderer.invoke('node:rename', nodeId, name),
-  setColor: (nodeId, colorPresetId) => ipcRenderer.invoke('node:set-color', nodeId, colorPresetId),
-  setStamp: (nodeId, stamp) => ipcRenderer.invoke('node:set-stamp', nodeId, stamp),
-  archive: (nodeId) => ipcRenderer.invoke('node:archive', nodeId),
-  unarchive: (parentNodeId, path) => ipcRenderer.invoke('node:unarchive', parentNodeId, path),
-  archiveDelete: (parentNodeId, path) => ipcRenderer.invoke('node:archive-delete', parentNodeId, path),
-  undoPush: (entry) => ipcRenderer.invoke('node:undo-push', entry),
-  undoSetCursor: (cursor: number) => ipcRenderer.invoke('node:undo-set-cursor', cursor),
-  bringToFront: (nodeId) => ipcRenderer.invoke('node:bring-to-front', nodeId),
-  reparent: (nodeId, newParentId) => ipcRenderer.invoke('node:reparent', nodeId, newParentId),
-  swapParentChild: (nodeId, childId) => ipcRenderer.invoke('node:swap-parent-child', nodeId, childId),
-  terminalCreate: (parentId, options?, initialTitleHistory?, initialName?, x?, y?, initialInput?) => ipcRenderer.invoke('node:terminal-create', parentId, options, initialTitleHistory, initialName, x, y, initialInput),
-  terminalResize: (nodeId, cols, rows) => ipcRenderer.invoke('node:terminal-resize', nodeId, cols, rows),
-  terminalReincarnate: (nodeId, options?) => ipcRenderer.invoke('node:terminal-reincarnate', nodeId, options),
-  forkSession: (nodeId) => ipcRenderer.invoke('node:fork-session', nodeId),
-  terminalRestart: (nodeId: NodeId, extraCliArgs: string) => ipcRenderer.invoke('node:terminal-restart', nodeId, extraCliArgs),
-  crabReorder: (order: string[]) => ipcRenderer.invoke('node:crab-reorder', order),
-  directoryAdd: (parentId, cwd, x?, y?) => ipcRenderer.invoke('node:directory-add', parentId, cwd, x, y),
-  directoryCwd: (nodeId, cwd) => ipcRenderer.invoke('node:directory-cwd', nodeId, cwd),
-  setRootCwd: (cwd) => ipcRenderer.invoke('node:set-root-cwd', cwd),
-  directoryGitFetch: (nodeId) => ipcRenderer.invoke('node:directory-git-fetch', nodeId),
-  directoryGitRun: (nodeId, command) => ipcRenderer.invoke('node:directory-git-run', nodeId, command),
-  directoryOpenGitHubDesktop: (nodeId) => ipcRenderer.invoke('node:directory-open-github-desktop', nodeId),
-  validateDirectory: (path) => ipcRenderer.invoke('node:validate-directory', path),
-  fileAdd: (parentId, filePath, x?, y?) => ipcRenderer.invoke('node:file-add', parentId, filePath, x, y),
-  filePath: (nodeId, filePath) => ipcRenderer.invoke('node:file-path', nodeId, filePath),
-  validateFile: (path, cwd) => ipcRenderer.invoke('node:validate-file', path, cwd),
-  markdownAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:markdown-add', parentId, x, y),
-  markdownResize: (nodeId, width, height) => ipcRenderer.invoke('node:markdown-resize', nodeId, width, height),
-  markdownContent: (nodeId, content) => ipcRenderer.invoke('node:markdown-content', nodeId, content),
-  agentMetaToggle: (nodeId) => ipcRenderer.invoke('node:agent-meta-toggle', nodeId),
-  agentMetaAvailabilityStatus: () => ipcRenderer.invoke('node:agent-meta-availability-status'),
-  agentSearch: (query, mode) => ipcRenderer.invoke('node:agent-search', query, mode),
-  agentMetaRescan: (nodeId) => ipcRenderer.invoke('node:agent-meta-rescan', nodeId),
-  metaDocResize: (nodeId, width, height) => ipcRenderer.invoke('node:meta-doc-resize', nodeId, width, height),
-  metaDocContent: (nodeId, content) => ipcRenderer.invoke('node:meta-doc-content', nodeId, content),
-  markdownSetMaxWidth: (nodeId, maxWidth) => ipcRenderer.invoke('node:markdown-set-max-width', nodeId, maxWidth),
-  titleAdd: (parentId, x?, y?) => ipcRenderer.invoke('node:title-add', parentId, x, y),
-  titleText: (nodeId, text) => ipcRenderer.invoke('node:title-text', nodeId, text),
-  cacheTimerMute: (nodeId, muted) => ipcRenderer.invoke('node:cache-timer-mute', nodeId, muted),
-
-  recordInteraction: (nodeId: NodeId) => ipcRenderer.send('node:record-interaction', nodeId),
-  setTerminalMode: (sessionId, mode) => ipcRenderer.send('node:set-terminal-mode', sessionId, mode),
-  setClaudeStatusUnread: (sessionId: PtySessionId, unread: boolean) => ipcRenderer.send('node:set-claude-status-unread', sessionId, unread),
-  setClaudeStatusAsleep: (sessionId: PtySessionId, asleep: boolean) => ipcRenderer.send('node:set-claude-status-asleep', sessionId, asleep),
-  setClaudeStatusBackground: (sessionId: PtySessionId, background: boolean) => ipcRenderer.send('node:set-claude-status-background', sessionId, background),
-  setAlertsReadTimestamp: (nodeId: NodeId, timestamp: number) => ipcRenderer.send('node:set-alerts-read-timestamp', nodeId, timestamp),
-  sendCameraBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:camera-bounds', bounds),
-  saveViewport: (slot: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('node:save-viewport', slot, bounds),
-  onSnapshot: (sessionId, callback) => {
-    const channel = `snapshot:${sessionId}`
-    const listener = (_event: Electron.IpcRendererEvent, snapshot: any) => callback(snapshot)
-    ipcRenderer.on(channel, listener)
-    return () => ipcRenderer.removeListener(channel, listener)
-  },
-  onUpdated: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, fields: any) => callback(nodeId, fields)
-    ipcRenderer.on('node:updated', listener)
-    return () => ipcRenderer.removeListener('node:updated', listener)
-  },
-  onAdded: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, node: any) => callback(node)
-    ipcRenderer.on('node:added', listener)
-    return () => ipcRenderer.removeListener('node:added', listener)
-  },
-  onRemoved: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId) => callback(nodeId)
-    ipcRenderer.on('node:removed', listener)
-    return () => ipcRenderer.removeListener('node:removed', listener)
-  },
-  onFileContent: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, content: string) => callback(nodeId, content)
-    ipcRenderer.on('node:file-content', listener)
-    return () => ipcRenderer.removeListener('node:file-content', listener)
-  },
-  onServerError: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, message: string) => callback(message)
-    ipcRenderer.on('server:error', listener)
-    return () => ipcRenderer.removeListener('server:error', listener)
-  },
-  onPlaySound: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, sound: string) => callback(sound)
-    ipcRenderer.on('play-sound', listener)
-    return () => ipcRenderer.removeListener('play-sound', listener)
-  },
-  onSpeakingChanged: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, speaking: boolean, voice: string | undefined) => callback(nodeId, speaking, voice)
-    ipcRenderer.on('speaking-changed', listener)
-    return () => ipcRenderer.removeListener('speaking-changed', listener)
-  },
-  onSummaryChatStatus: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, state: SummaryChatUiState, message?: string) => callback(nodeId, state, message)
-    ipcRenderer.on('summary-chat-status', listener)
-    return () => ipcRenderer.removeListener('summary-chat-status', listener)
-  },
-  onPeerConnected: (callback: (clientId: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, clientId: string) => callback(clientId)
-    ipcRenderer.on('peer:connected', listener)
-    return () => ipcRenderer.removeListener('peer:connected', listener)
-  },
-  onPeerDisconnected: (callback: (clientId: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, clientId: string) => callback(clientId)
-    ipcRenderer.on('peer:disconnected', listener)
-    return () => ipcRenderer.removeListener('peer:disconnected', listener)
-  },
-  onPeerCameraBounds: (callback: (clientId: string, bounds: { x: number; y: number; width: number; height: number }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, clientId: string, bounds: { x: number; y: number; width: number; height: number }) => callback(clientId, bounds)
-    ipcRenderer.on('peer:camera-bounds', listener)
-    return () => ipcRenderer.removeListener('peer:camera-bounds', listener)
-  },
-  onSavedViewports: (callback: (viewports: Record<string, { x: number; y: number; width: number; height: number }>) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, viewports: Record<string, { x: number; y: number; width: number; height: number }>) => callback(viewports)
-    ipcRenderer.on('viewports:saved', listener)
-    return () => ipcRenderer.removeListener('viewports:saved', listener)
-  },
-  onRootCwd: (callback: (cwd: string | undefined) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, cwd: string | undefined) => callback(cwd)
-    ipcRenderer.on('node:root-cwd', listener)
-    return () => ipcRenderer.removeListener('node:root-cwd', listener)
-  },
-  onRestartRequired: (callback: (required: boolean, reason: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, required: boolean, reason: string) => callback(required, reason)
-    ipcRenderer.on('restart:required', listener)
-    return () => ipcRenderer.removeListener('restart:required', listener)
-  },
-  onAgentMetaAvailability: (callback: (nodeId: NodeId, available: boolean) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId, available: boolean) => callback(nodeId, available)
-    ipcRenderer.on('agent-meta:availability', listener)
-    return () => ipcRenderer.removeListener('agent-meta:availability', listener)
-  },
-  restartFlagStatus: () => ipcRenderer.invoke('app:restart-flag')
+/** Subscribe to one main→renderer channel; returns the unsubscribe. */
+function listen<A extends unknown[]>(channel: string, callback: (...args: A) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, ...args: unknown[]) => callback(...(args as A))
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
 }
 
 // Annotated rather than passed inline so the object literal is checked against
 // the contract: a missing member and an unknown member are both compile errors.
-const api: Api = {
-  pty: ptyApi,
-  node: nodeApi,
-  log: (message: string) => ipcRenderer.send('log', message),
-  toggleSummaryChat: (nodeId: NodeId | undefined, mode: SummaryChatMode) =>
-    ipcRenderer.invoke('summary-chat:toggle', nodeId, mode),
-  restartSpaceterm: (): Promise<void> => ipcRenderer.invoke('app:restart-spaceterm'),
-  writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
-  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
-  window: {
-    fitToWorkArea: (): Promise<void> => ipcRenderer.invoke('window:fit-to-work-area'),
-    onVisibilityChanged: (callback: (visible: boolean) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible)
-      ipcRenderer.on('window:visibility-changed', listener)
-      return () => ipcRenderer.removeListener('window:visibility-changed', listener)
+const host: ElectronHost = {
+  platform: {
+    log: (message: string) => ipcRenderer.send('log', message),
+    writeDebugLog: (content: string): Promise<string> => ipcRenderer.invoke('debug:write-log', content),
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+    restartClient: () => ipcRenderer.send('app:restart-client'),
+    raiseWindow: () => ipcRenderer.send('window:raise'),
+    onFocusRequest: (callback: (id: string) => void) => listen('window:focus-request', callback),
+    perf: {
+      startTrace: () => ipcRenderer.invoke('perf:trace-start'),
+      stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
     },
-    onFocusChanged: (callback: (focused: boolean) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, focused: boolean) => callback(focused)
-      ipcRenderer.on('window:focus-changed', listener)
-      return () => ipcRenderer.removeListener('window:focus-changed', listener)
+    window: {
+      fitToWorkArea: (): Promise<void> => ipcRenderer.invoke('window:fit-to-work-area'),
+      onVisibilityChanged: (callback: (visible: boolean) => void) => listen('window:visibility-changed', callback),
+      onFocusChanged: (callback: (focused: boolean) => void) => listen('window:focus-changed', callback)
     },
-    onFocusNode: (callback: (nodeId: NodeId | null) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, nodeId: NodeId | null) => callback(nodeId)
-      ipcRenderer.on('window:focus-node', listener)
-      return () => ipcRenderer.removeListener('window:focus-node', listener)
+    system: {
+      setMetricsEnabled: (enabled: boolean) => ipcRenderer.send('system:set-metrics-enabled', enabled),
+      onMetrics: (callback: (sample: SystemMetricsSample) => void) => listen('system:metrics', callback),
+      getLaunchPrefs: () => ipcRenderer.invoke('system:get-launch-prefs'),
+      setLaunchPrefs: (patch) => ipcRenderer.invoke('system:set-launch-prefs', patch),
+      getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs'),
+      getAgentMemory: () => ipcRenderer.invoke('system:agent-memory')
     }
   },
-  tts: {
-    toggle: (text: string) => ipcRenderer.invoke('tts:toggle', text),
-    stop: () => ipcRenderer.send('tts:stop'),
-    onActiveChanged: (callback: (active: boolean) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, active: boolean) => callback(active)
-      ipcRenderer.on('speech-active', listener)
-      return () => ipcRenderer.removeListener('speech-active', listener)
-    }
-  },
-  perf: {
-    startTrace: () => ipcRenderer.invoke('perf:trace-start'),
-    stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')
-  },
-  system: {
-    setMetricsEnabled: (enabled: boolean) => ipcRenderer.send('system:set-metrics-enabled', enabled),
-    onMetrics: (callback: (sample: SystemMetricsSample) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, sample: SystemMetricsSample) => callback(sample)
-      ipcRenderer.on('system:metrics', listener)
-      return () => ipcRenderer.removeListener('system:metrics', listener)
-    },
-    getLaunchPrefs: () => ipcRenderer.invoke('system:get-launch-prefs'),
-    setLaunchPrefs: (patch) => ipcRenderer.invoke('system:set-launch-prefs', patch),
-    getActiveLaunchPrefs: () => ipcRenderer.invoke('system:active-launch-prefs'),
-    getAgentMemory: () => ipcRenderer.invoke('system:agent-memory')
-  },
-  mods: {
-    send: (modId: string, event: string, payload: unknown) =>
-      ipcRenderer.send('mod:send', modId, event, payload),
-    onMessage: (modId: string, callback: (event: string, payload: unknown) => void): (() => void) => {
-      const listener = (_e: Electron.IpcRendererEvent, id: string, event: string, payload: unknown) => {
-        // Filtered here so a mod never sees another's traffic by accident.
-        if (id === modId) callback(event, payload)
-      }
-      ipcRenderer.on('mod:message', listener)
-      return () => ipcRenderer.removeListener('mod:message', listener)
-    }
-  },
+  pipe: {
+    open: (attempt: string) => ipcRenderer.send('server-pipe:open', attempt),
+    send: (text: string) => ipcRenderer.send('server-pipe:send', text),
+    close: () => ipcRenderer.send('server-pipe:close'),
+    onEvent: (callback: (attempt: string, kind: ServerPipeEventKind, chunk?: string) => void) =>
+      listen('server-pipe:event', callback)
+  }
 }
 
-contextBridge.exposeInMainWorld('api', api)
+contextBridge.exposeInMainWorld('electronHost', host)

@@ -3,18 +3,14 @@ import * as path from 'path'
 import { pathToFileURL } from 'url'
 import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { SOCKET_DIR, type SummaryChatMode } from '../../shared/protocol'
-import { ServerClient } from './server-client'
+import { SOCKET_DIR } from '../../shared/protocol'
+import { ServerPipe } from './server-pipe'
 import * as logger from './logger'
 import { loadWindowState, saveWindowState, findTargetDisplay } from './window-state'
 import { startSystemMetrics, stopSystemMetrics } from './system-metrics'
 import { readAgentMemoryBytes } from './agent-memory'
 import { loadLaunchPrefs, saveLaunchPrefs } from './launch-prefs'
 import type { LaunchPrefs } from '../../shared/launch-prefs'
-import type { NodeId, PtySessionId } from '../../shared/ids'
-import type { NodeStamp } from '../../shared/state'
-import type { AgentSearchMode, ServerMessage } from '../../shared/protocol'
-import type { AgentSearchResponse, CommandOutcome } from '../../shared/api'
 import { parseFocusUrl, FOCUS_URL_SCHEME } from './focus-url'
 
 /**
@@ -49,61 +45,47 @@ const launchPrefs = loadLaunchPrefs()
 const headless = process.env['SPACETERM_HEADLESS'] === '1'
 
 let mainWindow: BrowserWindow | null = null
-let client: ServerClient | null = null
+/** The renderer's connection to the server. Opened and driven by the renderer. */
+const serverPipe = new ServerPipe(() => mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null)
 // Matched by client:dev's supervisor. A normal quit remains exit code 0 so
 // Ctrl+C returns control to the terminal instead of relaunching Electron.
 const CLIENT_RESTART_EXIT_CODE = 75
 
-// Id from a `spaceterm-surface://` link that arrived before the server
-// connection was ready (cold launch). Flushed once the client connects. Opaque:
-// the server decides whether it names a surface or an agent session.
-let pendingFocusId: string | null = null
-// What to show once the renderer has finished loading (cold launch): a node id,
-// or `null` for "the request matched nothing — zoom out". Undefined means
-// nothing is pending, which `null` can no longer stand for.
-let pendingFocus: { nodeId: NodeId | null } | undefined
-
-function commandResult(resp: ServerMessage): CommandOutcome {
-  if (resp.type === 'directory-command-result') return { ok: resp.ok, error: resp.error }
-  throw new Error(`Unexpected response: ${resp.type}`)
-}
+// Ids from `spaceterm-surface://` links that arrived before the renderer could
+// take them (cold launch). Opaque: the server decides whether each names a
+// surface or an agent session. The renderer holds its own queue until it has a
+// server connection, so this one only covers the page not existing yet.
+let pendingFocusIds: string[] = []
 
 function requestFocus(id: string): void {
-  if (client?.isConnected()) {
-    client.requestFocusById(id)
+  const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null
+  if (wc && !wc.isLoadingMainFrame()) {
+    wc.send('window:focus-request', id)
   } else {
-    pendingFocusId = id
+    pendingFocusIds.push(id)
   }
 }
 
-// Bring this window to the foreground and tell the renderer what to show: the
-// node, or — for `null` — the whole canvas, because the request matched nothing.
-// The server has already decided this client should be the one to raise.
-function raiseAndFocusNode(nodeId: NodeId | null): void {
+function flushPendingFocus(): void {
+  const ids = pendingFocusIds
+  pendingFocusIds = []
+  ids.forEach(requestFocus)
+}
+
+// Bring this window to the foreground. The server has already decided this
+// client should be the one to answer a focus request; the renderer handles
+// what to show, and calls this for the raise.
+function raiseWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   // Raising is the whole point of a deep link, and also the most disruptive
   // thing this process does — `steal: true` pulls the machine away from
-  // whatever the user was doing. Skipped when headless; the renderer is still
-  // told what to focus below, so the behaviour under test is unchanged.
-  if (!headless) {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-    if (process.platform === 'darwin') app.focus({ steal: true })
-  }
-
-  const wc = mainWindow.webContents
-  if (wc.isLoadingMainFrame()) {
-    pendingFocus = { nodeId }
-    wc.once('did-finish-load', () => {
-      if (pendingFocus && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('window:focus-node', pendingFocus.nodeId)
-        pendingFocus = undefined
-      }
-    })
-  } else {
-    wc.send('window:focus-node', nodeId)
-  }
+  // whatever the user was doing. Skipped when headless; the renderer still
+  // navigates, so the behaviour under test is unchanged.
+  if (headless) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+  if (process.platform === 'darwin') app.focus({ steal: true })
 }
 
 // Register the OS-level URL scheme. Registered at module load (before app ready)
@@ -271,21 +253,13 @@ function setupVisibilityTracking(): void {
 }
 
 function setupIPC(): void {
-  ipcMain.handle('pty:create', async (_event, options?: Record<string, unknown>) => {
-    // No attach here, nor after any other create below: the raw stream is
-    // only for a focused card, and TerminalCard attaches when it takes focus.
-    return client!.create(options as any)
-  })
+  // --- The renderer's server connection (see server-pipe.ts) ---
 
-  ipcMain.handle('pty:list', async () => {
-    return client!.list()
-  })
+  ipcMain.on('server-pipe:open', (_event, attempt: string) => serverPipe.open(attempt))
+  ipcMain.on('server-pipe:send', (_event, text: string) => serverPipe.send(text))
+  ipcMain.on('server-pipe:close', () => serverPipe.close())
 
-  ipcMain.handle('pty:attach', (_event, sessionId: PtySessionId) => client!.attach(sessionId))
-
-  ipcMain.on('pty:write', (_event, sessionId: PtySessionId, data: string) => {
-    client!.write(sessionId, data)
-  })
+  ipcMain.on('window:raise', () => raiseWindow())
 
   ipcMain.on('log', (_event, message: string) => {
     logger.log(message)
@@ -309,283 +283,13 @@ function setupIPC(): void {
     return filepath
   })
 
-  ipcMain.handle('pty:destroy', async (_event, sessionId: PtySessionId) => {
-    await client!.destroy(sessionId)
-  })
-
-  ipcMain.handle('server:status', () => {
-    return client!.isConnected()
-  })
-
-  ipcMain.handle('app:restart-spaceterm', async () => {
-    logger.log('[restart] Restart Spaceterm requested')
-    await client!.restartServer()
-    // app.relaunch() detaches a bare Electron process from electron-vite. Exit
-    // with the supervisor's explicit restart code instead, so client:dev starts
-    // a complete new Electron/Vite process in the same terminal tab.
-    logger.log('[restart] Server accepted restart; exiting for supervised client restart')
+  // The renderer has already had the server accept the restart.
+  // app.relaunch() detaches a bare Electron process from electron-vite. Exit
+  // with the supervisor's explicit restart code instead, so client:dev starts
+  // a complete new Electron/Vite process in the same terminal tab.
+  ipcMain.on('app:restart-client', () => {
+    logger.log('[restart] Exiting for supervised client restart')
     setTimeout(() => app.exit(CLIENT_RESTART_EXIT_CODE), 50)
-  })
-
-  ipcMain.handle('app:restart-flag', async () => {
-    return client!.restartFlagQuery()
-  })
-
-  ipcMain.handle('tts:toggle', async (_event, text: string) => client!.toggleSpeak(text))
-  ipcMain.on('tts:stop', () => client!.stopSpeak())
-
-  ipcMain.handle('summary-chat:toggle', async (_event, nodeId: NodeId | undefined, mode: SummaryChatMode) => {
-    logger.log(`[summary-chat] ${mode} chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}`)
-    const result = await client!.toggleSummaryChat(nodeId, mode)
-    logger.log(`[summary-chat] chord ${result.outcome}${result.message ? `: ${result.message}` : ''}`)
-    return result
-  })
-
-  // --- Node state mutations ---
-
-  ipcMain.handle('node:sync-request', async () => {
-    const resp = await client!.nodeSyncRequest()
-    if (resp.type === 'sync-state') return resp.state
-    throw new Error('Unexpected response')
-  })
-
-  ipcMain.handle('node:move', async (_event, nodeId: NodeId, x: number, y: number) => {
-    await client!.nodeMove(nodeId, x, y)
-  })
-
-  ipcMain.handle('node:batch-move', async (_event, moves: Array<{ nodeId: NodeId; x: number; y: number }>) => {
-    await client!.nodeBatchMove(moves)
-  })
-
-  ipcMain.handle('node:rename', async (_event, nodeId: NodeId, name: string) => {
-    await client!.nodeRename(nodeId, name)
-  })
-
-  ipcMain.handle('node:set-color', async (_event, nodeId: NodeId, colorPresetId: string) => {
-    await client!.nodeSetColor(nodeId, colorPresetId)
-  })
-
-  ipcMain.handle('node:set-stamp', async (_event, nodeId: NodeId, stamp: NodeStamp) => {
-    await client!.nodeSetStamp(nodeId, stamp)
-  })
-
-  ipcMain.handle('node:archive', async (_event, nodeId: NodeId) => {
-    await client!.nodeArchive(nodeId)
-  })
-
-  ipcMain.handle('node:unarchive', async (_event, parentNodeId: NodeId, path: NodeId[]) => {
-    await client!.nodeUnarchive(parentNodeId, path)
-  })
-
-  ipcMain.handle('node:archive-delete', async (_event, parentNodeId: NodeId, path: NodeId[]) => {
-    await client!.nodeArchiveDelete(parentNodeId, path)
-  })
-
-  ipcMain.handle('node:undo-push', async (_event, entry: import('../../shared/undo-types').UndoEntry) => {
-    await client!.undoPush(entry)
-  })
-
-  ipcMain.handle('node:undo-set-cursor', async (_event, cursor: number) => {
-    await client!.undoSetCursor(cursor)
-  })
-
-  ipcMain.handle('node:bring-to-front', async (_event, nodeId: NodeId) => {
-    await client!.nodeBringToFront(nodeId)
-  })
-
-  ipcMain.handle('node:reparent', async (_event, nodeId: NodeId, newParentId: NodeId) => {
-    await client!.nodeReparent(nodeId, newParentId)
-  })
-
-  ipcMain.handle('node:swap-parent-child', async (_event, nodeId: NodeId, childId: NodeId) => {
-    await client!.nodeSwapParentChild(nodeId, childId)
-  })
-
-  ipcMain.handle('node:terminal-create', async (_event, parentId: NodeId, options?: Record<string, unknown>, initialTitleHistory?: string[], initialName?: string, x?: number, y?: number, initialInput?: string) => {
-    const resp = await client!.terminalCreate(parentId, options as any, initialTitleHistory, initialName, x, y, initialInput)
-    if (resp.type === 'created') {
-      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
-    }
-    throw new Error('Unexpected response')
-  })
-
-  ipcMain.handle('node:terminal-resize', async (_event, nodeId: NodeId, cols: number, rows: number) => {
-    await client!.terminalResize(nodeId, cols, rows)
-  })
-
-  ipcMain.handle('node:terminal-reincarnate', async (_event, nodeId: NodeId, options?: Record<string, unknown>) => {
-    const resp = await client!.terminalReincarnate(nodeId, options as any)
-    if (resp.type === 'created') {
-      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
-    }
-    throw new Error('Unexpected response')
-  })
-
-  ipcMain.handle('node:directory-add', async (_event, parentId: NodeId, cwd: string, x?: number, y?: number) => {
-    const resp = await client!.directoryAdd(parentId, cwd, x, y)
-    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
-    return {}
-  })
-
-  ipcMain.handle('node:directory-cwd', async (_event, nodeId: NodeId, cwd: string) => {
-    await client!.directoryCwd(nodeId, cwd)
-  })
-
-  ipcMain.handle('node:set-root-cwd', async (_event, cwd: string) => {
-    await client!.setRootCwd(cwd)
-  })
-
-  ipcMain.handle('node:directory-git-fetch', async (_event, nodeId: NodeId) => {
-    await client!.directoryGitFetch(nodeId)
-  })
-
-  ipcMain.handle('node:directory-git-run', async (_event, nodeId: NodeId, command: 'pull' | 'push') =>
-    commandResult(await client!.directoryGitRun(nodeId, command)))
-
-  ipcMain.handle('node:directory-open-github-desktop', async (_event, nodeId: NodeId) =>
-    commandResult(await client!.directoryOpenGitHubDesktop(nodeId)))
-
-  ipcMain.handle('node:validate-directory', async (_event, path: string) => {
-    const resp = await client!.validateDirectory(path)
-    if (resp.type === 'validate-directory-result') return { valid: resp.valid, error: resp.error }
-    throw new Error('Unexpected response')
-  })
-
-  ipcMain.handle('node:file-add', async (_event, parentId: NodeId, filePath: string, x?: number, y?: number) => {
-    const resp = await client!.fileAdd(parentId, filePath, x, y)
-    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
-    return {}
-  })
-
-  ipcMain.handle('node:file-path', async (_event, nodeId: NodeId, filePath: string) => {
-    await client!.filePath(nodeId, filePath)
-  })
-
-  ipcMain.handle('node:validate-file', async (_event, path: string, cwd?: string) => {
-    const resp = await client!.validateFile(path, cwd)
-    if (resp.type === 'validate-file-result') return { valid: resp.valid, error: resp.error }
-    throw new Error('Unexpected response')
-  })
-
-  ipcMain.handle('node:markdown-add', async (_event, parentId: NodeId, x?: number, y?: number) => {
-    const resp = await client!.markdownAdd(parentId, x, y)
-    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
-    return {}
-  })
-
-  ipcMain.handle('node:markdown-resize', async (_event, nodeId: NodeId, width: number, height: number) => {
-    await client!.markdownResize(nodeId, width, height)
-  })
-
-  ipcMain.handle('node:markdown-content', async (_event, nodeId: NodeId, content: string) => {
-    await client!.markdownContent(nodeId, content)
-  })
-
-  ipcMain.handle('node:markdown-set-max-width', async (_event, nodeId: NodeId, maxWidth: number) => {
-    await client!.markdownSetMaxWidth(nodeId, maxWidth)
-  })
-
-  ipcMain.handle('node:agent-search', async (_event, query: string, mode: AgentSearchMode): Promise<AgentSearchResponse> => {
-    const resp = await client!.agentSearch(query, mode)
-    if (resp.type !== 'agent-search-result') throw new Error(`Unexpected response: ${resp.type}`)
-    const { type: _type, seq: _seq, ...result } = resp
-    return result
-  })
-
-  ipcMain.handle('node:agent-meta-availability-status', async () => {
-    const resp = await client!.agentMetaAvailabilityStatus()
-    return resp.type === 'agent-meta-availability-result' ? resp.entries : []
-  })
-
-  ipcMain.handle('node:agent-meta-toggle', async (_event, nodeId: NodeId) => {
-    const resp = await client!.agentMetaToggle(nodeId)
-    return resp.type === 'agent-meta-toggle-result' ? resp.open : false
-  })
-
-  ipcMain.handle('node:agent-meta-rescan', async (_event, nodeId: NodeId) => {
-    await client!.agentMetaRescan(nodeId)
-  })
-
-  ipcMain.handle('node:meta-doc-resize', async (_event, nodeId: NodeId, width: number, height: number) => {
-    await client!.metaDocResize(nodeId, width, height)
-  })
-
-  ipcMain.handle('node:meta-doc-content', async (_event, nodeId: NodeId, content: string) => {
-    await client!.metaDocContent(nodeId, content)
-  })
-
-  ipcMain.handle('node:title-add', async (_event, parentId: NodeId, x?: number, y?: number) => {
-    const resp = await client!.titleAdd(parentId, x, y)
-    if (resp.type === 'node-add-ack') return { nodeId: resp.nodeId }
-    return {}
-  })
-
-  ipcMain.handle('node:title-text', async (_event, nodeId: NodeId, text: string) => {
-    await client!.titleText(nodeId, text)
-  })
-
-  ipcMain.handle('node:cache-timer-mute', async (_event, nodeId: NodeId, muted: boolean) => {
-    await client!.cacheTimerMute(nodeId, muted)
-  })
-
-  ipcMain.handle('node:fork-session', async (_event, nodeId: NodeId) => {
-    const resp = await client!.forkSession(nodeId)
-    if (resp.type === 'created') {
-      return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
-    }
-    throw new Error('Unexpected response')
-  })
-
-  ipcMain.handle('node:terminal-restart', async (_event, nodeId: NodeId, extraCliArgs: string) => {
-    logger.log(`[terminal-restart] Restart requested for node=${nodeId.slice(0, 8)} extraCliArgs=${JSON.stringify(extraCliArgs)}`)
-    try {
-      const resp = await client!.terminalRestart(nodeId, extraCliArgs)
-      if (resp.type === 'created') {
-        logger.log(`[terminal-restart] Success node=${nodeId.slice(0, 8)} → session=${resp.sessionId.slice(0, 8)}`)
-        return { sessionId: resp.sessionId, cols: resp.cols, rows: resp.rows }
-      }
-      throw new Error('Unexpected response')
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      logger.log(`[terminal-restart] Failed node=${nodeId.slice(0, 8)}: ${msg}`)
-      throw err
-    }
-  })
-
-  ipcMain.handle('node:crab-reorder', async (_event, order: string[]) => {
-    await client!.crabReorder(order)
-  })
-
-  ipcMain.on('node:record-interaction', (_event, nodeId: NodeId) => {
-    client!.recordInteraction(nodeId)
-  })
-
-  ipcMain.on('node:set-terminal-mode', (_event, sessionId: PtySessionId, mode: 'live' | 'snapshot') => {
-    client!.setTerminalMode(sessionId, mode)
-  })
-
-  ipcMain.on('node:set-claude-status-unread', (_event, sessionId: PtySessionId, unread: boolean) => {
-    client!.setClaudeStatusUnread(sessionId, unread)
-  })
-
-  ipcMain.on('node:set-claude-status-asleep', (_event, sessionId: PtySessionId, asleep: boolean) => {
-    client!.setClaudeStatusAsleep(sessionId, asleep)
-  })
-
-  ipcMain.on('node:set-claude-status-background', (_event, sessionId: PtySessionId, background: boolean) => {
-    client!.setClaudeStatusBackground(sessionId, background)
-  })
-
-  ipcMain.on('node:set-alerts-read-timestamp', (_event, nodeId: NodeId, timestamp: number) => {
-    client!.setAlertsReadTimestamp(nodeId, timestamp)
-  })
-
-  ipcMain.on('node:camera-bounds', (_event, bounds: { x: number; y: number; width: number; height: number }) => {
-    client!.sendCameraBounds(bounds)
-  })
-
-  ipcMain.on('node:save-viewport', (_event, slot: string, bounds: { x: number; y: number; width: number; height: number }) => {
-    client!.saveViewport(slot, bounds)
   })
 
   // --- Window mode ---
@@ -616,12 +320,6 @@ function setupIPC(): void {
     clipboard.writeText(dest)
     logger.log(`Content trace saved: ${dest}`)
     return dest
-  })
-
-  // --- Mod envelopes (renderer → server) ---
-
-  ipcMain.on('mod:send', (_event, modId: string, event: string, payload: unknown) => {
-    client?.sendMod(modId, event, payload)
   })
 
   // --- Launch preferences ---
@@ -665,169 +363,6 @@ function setupIPC(): void {
 
 }
 
-/**
- * The renderer is showing state it built without a live server, so the next
- * successful connect must rebuild it.
- *
- * Set on a disconnect (the reconnect missed broadcasts and invalidated every
- * terminal attachment) and on a startup that opened the window before the
- * server was up. Module-scoped rather than local to `wireClientEvents` because
- * startup arms it too.
- */
-let needsRendererResync = false
-
-function markRendererResyncNeeded(): void {
-  needsRendererResync = true
-}
-
-function wireClientEvents(): void {
-  client!.on('focus-surface', (nodeId: NodeId | null) => {
-    raiseAndFocusNode(nodeId)
-  })
-
-  client!.on('data', (sessionId: PtySessionId, data: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:data:${sessionId}`, data)
-    }
-  })
-
-  client!.on('exit', (sessionId: PtySessionId, exitCode: number) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`pty:exit:${sessionId}`, exitCode)
-    }
-  })
-
-  // Mod envelopes, relayed straight through. This process reads `modId` only
-  // to put it back on the wire — see ModMessage in shared/protocol.
-  client!.on('mod', (modId: string, event: string, payload: unknown) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('mod:message', modId, event, payload)
-    }
-  })
-
-  client!.on('file-content', (nodeId: NodeId, content: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('node:file-content', nodeId, content)
-    }
-  })
-
-  client!.on('node-updated', (nodeId: NodeId, fields: Record<string, unknown>) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('node:updated', nodeId, fields)
-    }
-  })
-
-  client!.on('node-added', (node: Record<string, unknown>) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('node:added', node)
-    }
-  })
-
-  client!.on('node-removed', (nodeId: NodeId) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('node:removed', nodeId)
-    }
-  })
-
-  client!.on('snapshot', (sessionId: PtySessionId, snapshot: Record<string, unknown>) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(`snapshot:${sessionId}`, snapshot)
-    }
-  })
-
-  client!.on('server-error', (message: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('server:error', message)
-    }
-  })
-
-  client!.on('play-sound', (sound: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('play-sound', sound)
-    }
-  })
-
-  client!.on('speech-active', (active: boolean) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('speech-active', active)
-    }
-  })
-
-  client!.on('speaking-changed', (nodeId: NodeId, speaking: boolean, voice: string | undefined) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('speaking-changed', nodeId, speaking, voice)
-    }
-  })
-
-  client!.on('summary-chat-status', (nodeId: NodeId, state: string, message: string | undefined) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('summary-chat-status', nodeId, state, message)
-    }
-  })
-
-  client!.on('peer-connected', (clientId: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('peer:connected', clientId)
-    }
-  })
-
-  client!.on('peer-disconnected', (clientId: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('peer:disconnected', clientId)
-    }
-  })
-
-  client!.on('peer-camera-bounds', (clientId: string, bounds: { x: number; y: number; width: number; height: number }) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('peer:camera-bounds', clientId, bounds)
-    }
-  })
-
-  client!.on('saved-viewports', (viewports: Record<string, { x: number; y: number; width: number; height: number }>) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('viewports:saved', viewports)
-    }
-  })
-
-  client!.on('root-cwd', (cwd: string | undefined) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('node:root-cwd', cwd)
-    }
-  })
-
-  client!.on('restart-required', (required: boolean, reason: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('restart:required', required, reason)
-    }
-  })
-
-  client!.on('agent-meta-availability', (nodeId: NodeId, available: boolean) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('agent-meta:availability', nodeId, available)
-    }
-  })
-
-  client!.on('connect', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (needsRendererResync) {
-        needsRendererResync = false
-        logger.log('Server reconnected; reloading renderer for authoritative resync')
-        mainWindow.webContents.reload()
-        return
-      }
-      mainWindow.webContents.send('server:status', true)
-    }
-  })
-
-  client!.on('disconnect', () => {
-    needsRendererResync = true
-    logger.log('Lost connection to the spaceterm server; reconnecting')
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('server:status', false)
-    }
-  })
-}
-
 app.setName('Spaceterm')
 
 // Strategy 6: Chromium GPU flags to increase tile memory headroom
@@ -867,30 +402,6 @@ app.commandLine.appendSwitch(
   process.env.SPACETERM_DEBUG_PORT ?? '9222'
 )
 
-/**
- * How long startup waits for the server before opening the window anyway.
- *
- * Long enough that the ordinary case — server already up, or coming up
- * alongside us — never sees a resync reload, short enough that a broken server
- * does not look like a hung app.
- */
-const STARTUP_CONNECT_GRACE_MS = 8_000
-
-/**
- * Resolve true once connected, or false once `graceMs` has passed.
- *
- * `ServerClient.connect()` never rejects — it retries with backoff forever —
- * so a race against a timer is the only way to ask "is it up *yet*". The
- * connection attempt continues either way; this only decides whether to keep
- * waiting before showing a window.
- */
-function connectWithinGrace(serverClient: ServerClient, graceMs: number): Promise<boolean> {
-  return Promise.race([
-    serverClient.connect().then(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), graceMs))
-  ])
-}
-
 app.whenReady().then(async () => {
   logger.init()
   logger.log('Electron app starting')
@@ -923,36 +434,10 @@ app.whenReady().then(async () => {
     return net.fetch(pathToFileURL(filePath).href)
   })
 
-  client = new ServerClient()
   setupIPC()
-  wireClientEvents()
 
-  // Wait for the server, but not forever.
-  //
-  // This used to be a bare `await client.connect()`, and `connect()` retries
-  // indefinitely rather than rejecting — so a server that could not start meant
-  // no window at all, permanently, with no error. A first-run user saw a dock
-  // icon and nothing else. Showing an empty canvas is worse than a working one
-  // and far better than showing nothing.
-  const connected = await connectWithinGrace(client, STARTUP_CONNECT_GRACE_MS)
-  if (connected) {
-    logger.log('Server connection established')
-  } else {
-    // The window is about to be created against no server, so the renderer's
-    // initial sync will come back empty. Arm the resync that the reconnect
-    // path already implements, so the first successful connect rebuilds it.
-    markRendererResyncNeeded()
-    logger.log(
-      `Server not up after ${STARTUP_CONNECT_GRACE_MS}ms; opening the window anyway and retrying in the background`
-    )
-  }
-
-  // Flush a deep-link focus request that arrived before the server connection.
-  if (connected && pendingFocusId) {
-    client.requestFocusById(pendingFocusId)
-    pendingFocusId = null
-  }
-
+  // No wait for the server here. The renderer owns the connection, and waits
+  // (briefly) for it before showing the canvas — see installApi.
   createWindow()
 
   // Bypass the Cmd+W (Close Window) menu accelerator so it reaches the renderer.
@@ -969,12 +454,15 @@ app.whenReady().then(async () => {
 
   setupVisibilityTracking()
 
+  // Deep links that arrived during a cold launch, once there is a page to take them.
+  mainWindow!.webContents.on('did-finish-load', flushPendingFocus)
+
   logger.log('Window created')
 })
 
 app.on('window-all-closed', () => {
   // Don't destroy sessions — they persist on the server
-  client?.disconnect()
+  serverPipe.close()
   app.quit()
 })
 

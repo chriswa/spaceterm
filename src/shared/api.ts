@@ -104,6 +104,11 @@ export interface NodeApi {
   terminalReincarnate(nodeId: NodeId, options?: CreateOptions): Promise<SessionInfo>
   terminalRestart(nodeId: NodeId, extraCliArgs: string): Promise<SessionInfo>
   forkSession(nodeId: NodeId): Promise<SessionInfo>
+  /**
+   * Paste `text` into a live terminal surface and submit it. The server owns
+   * the paste framing and the submit delay — see `src/server/ship-it.ts`.
+   */
+  shipIt(nodeId: NodeId, text: string): Promise<void>
   setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot'): void
   crabReorder(order: string[]): Promise<void>
 
@@ -323,4 +328,53 @@ export interface Api {
   window: WindowApi
   system: SystemApi
   mods: ModsApi
+}
+
+/**
+ * What the host a client runs in provides, as opposed to what the server does.
+ *
+ * `window.api` is assembled in the renderer from a `ServerClient` and one of
+ * these (see `./client-api`). Electron's preload supplies the real window,
+ * perf and system hooks; the mobile web app supplies what a browser can and
+ * no-ops the rest. Everything that talks to the server is shared code, so it
+ * behaves identically on both.
+ */
+export interface PlatformApi {
+  log(message: string): void
+  writeDebugLog(content: string): Promise<string>
+  openExternal(url: string): Promise<void>
+  /**
+   * The server has accepted a restart; bring this client back up against the
+   * new one. Electron exits for its supervisor to relaunch; a browser reloads.
+   */
+  restartClient(): void
+  /** Bring this client to the front for a focus request the server routed here. */
+  raiseWindow(): void
+  /**
+   * Ids from outside the app asking to be focused — Electron's
+   * `spaceterm-surface://` deep links. The server resolves them.
+   */
+  onFocusRequest(callback: (id: string) => void): () => void
+  perf: PerfApi
+  window: Omit<WindowApi, 'onFocusNode'>
+  system: SystemApi
+}
+
+export type ServerPipeEventKind = 'open' | 'data' | 'close'
+
+/**
+ * The renderer's end of Electron main's byte pipe to the server socket — see
+ * `src/client/main/server-pipe.ts`. Text in both directions, unread by main.
+ */
+export interface ServerPipeBridge {
+  open(attempt: string): void
+  send(text: string): void
+  close(): void
+  onEvent(callback: (attempt: string, kind: ServerPipeEventKind, chunk?: string) => void): () => void
+}
+
+/** What Electron's preload exposes as `window.electronHost`. */
+export interface ElectronHost {
+  platform: PlatformApi
+  pipe: ServerPipeBridge
 }

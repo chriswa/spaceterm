@@ -308,6 +308,7 @@ export class FakeBridge implements Api {
     terminalRestart: (nodeId, extraCliArgs) =>
       this.reply('node.terminalRestart', this.responses.sessionInfo, nodeId, extraCliArgs),
     forkSession: (nodeId) => this.reply('node.forkSession', this.responses.sessionInfo, nodeId),
+    shipIt: (nodeId, text) => this.reply('node.shipIt', undefined, nodeId, text),
     setTerminalMode: (sessionId, mode) => this.record('node.setTerminalMode', sessionId, mode),
     crabReorder: (order) => this.reply('node.crabReorder', undefined, order),
 

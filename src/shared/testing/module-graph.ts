@@ -41,7 +41,9 @@ export function sourceFiles(dir: string, out: string[] = []): string[] {
  *
  * Three kinds are deliberately excluded, because none reaches the runtime graph:
  *  - `import type` / `export type`, which TypeScript erases entirely.
- *  - dynamic `import()`, which resolves after both modules have evaluated.
+ *  - dynamic `import()`, which resolves after both modules have evaluated —
+ *    unless `includeDynamic` is set. A cycle question can ignore it; a "what
+ *    ends up in the bundle" question cannot, since a bundler follows it.
  *  - re-exports of types only.
  *
  * The clause pattern is `[^'"]*?` — newlines allowed, quotes not. A first
@@ -50,12 +52,13 @@ export function sourceFiles(dir: string, out: string[] = []): string[] {
  * clause never contains one before its `from`, so a match cannot run past the
  * end of one statement into the next.
  */
-export function valueSpecifiers(source: string): string[] {
+export function valueSpecifiers(source: string, includeDynamic = false): string[] {
   const specifiers: string[] = []
   const staticRe = /^[ \t]*(?:import|export)\s+(?!type\s)[^'"]*?from\s*['"]([^'"]+)['"]/gm
   // Bare `import 'x'` for side effects — the strongest kind of value edge.
   const bareRe = /^[ \t]*import\s*['"]([^'"]+)['"]/gm
-  for (const re of [staticRe, bareRe]) {
+  const dynamicRe = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g
+  for (const re of includeDynamic ? [staticRe, bareRe, dynamicRe] : [staticRe, bareRe]) {
     let m: RegExpExecArray | null
     while ((m = re.exec(source)) !== null) specifiers.push(m[1])
   }
@@ -88,11 +91,11 @@ export interface ModuleImports {
   bare: string[]
 }
 
-export function importsOf(file: string): ModuleImports {
+export function importsOf(file: string, includeDynamic = false): ModuleImports {
   const source = fs.readFileSync(file, 'utf-8')
   const local: string[] = []
   const bare: string[] = []
-  for (const spec of valueSpecifiers(source)) {
+  for (const spec of valueSpecifiers(source, includeDynamic)) {
     if (!spec.startsWith('.')) {
       bare.push(spec)
       continue
@@ -109,7 +112,8 @@ export function importsOf(file: string): ModuleImports {
  * This is the set a bundler would actually include, which is what makes it the
  * right set to ask environment questions about — "does anything the renderer
  * loads need `fs`" is a question about reachability, not about which directory
- * a file happens to live in.
+ * a file happens to live in. Dynamic imports are followed too, for the same
+ * reason: the bundler includes what they load.
  */
 export function reachableFrom(entries: string[]): Map<string, ModuleImports> {
   const seen = new Map<string, ModuleImports>()
@@ -117,7 +121,7 @@ export function reachableFrom(entries: string[]): Map<string, ModuleImports> {
   while (queue.length > 0) {
     const file = queue.shift()!
     if (seen.has(file)) continue
-    const imports = importsOf(file)
+    const imports = importsOf(file, true)
     seen.set(file, imports)
     queue.push(...imports.local)
   }

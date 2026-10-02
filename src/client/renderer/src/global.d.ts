@@ -5,10 +5,12 @@
 //
 // Keep this file a thin re-declaration. Anything added here rather than in
 // shared/api.ts is invisible to preload and will drift again.
-import type { Api } from '../../../shared/api'
+import type { Api, ElectronHost } from '../../../shared/api'
 
 declare global {
   interface Window {
     api: Api
+    /** Electron only — see preload. The mobile web app has no such object. */
+    electronHost: ElectronHost
   }
 }

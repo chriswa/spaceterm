@@ -1403,14 +1403,12 @@ export function App() {
       shakeCamera()
       return
     }
-    // Bracketed paste into parent terminal, then submit.
-    // Convert \n to \r to match xterm's prepareTextForTerminal behavior —
-    // Ink/Claude Code expects \r for line breaks inside bracketed paste.
-    const content = node.content.replace(/\r?\n/g, '\r')
-    const sessionId = parent.sessionId
-    window.api.pty.write(sessionId, '\x1b[200~' + content + '\x1b[201~')
-    setTimeout(() => window.api.pty.write(sessionId, '\r'), 200)
-    handleRemoveNode(nodeId)
+    // The server pastes and submits (src/server/ship-it.ts); the card goes
+    // once the text has landed.
+    window.api.node.shipIt(parent.id, node.content).then(
+      () => handleRemoveNode(nodeId),
+      () => shakeCamera()
+    )
   }, [shakeCamera, handleRemoveNode])
 
   const fitAllNodes = useCallback(() => {

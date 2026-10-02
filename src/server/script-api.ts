@@ -270,9 +270,7 @@ export class ScriptApi {
           reply({ type: 'script-ship-it-result', seq: msg.seq, ok: false, error: terminal })
           return
         }
-        // A script sends "\n" for newlines; a terminal wants "\r", and a bare
-        // "\n" inside a bracketed paste submits the prompt early.
-        this.host.shipIt(terminal.sessionId, msg.data.replace(/\r?\n/g, '\r'), msg.submit !== false)
+        this.host.shipIt(terminal.sessionId, msg.data, msg.submit !== false)
         reply({ type: 'script-ship-it-result', seq: msg.seq, ok: true })
         return
       }

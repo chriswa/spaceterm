@@ -46,9 +46,8 @@ describe('the envelope shape', () => {
  * routing key — and must not touch `payload` beyond passing it along.
  */
 const ROUTING_FILES = [
-  'src/client/main/index.ts',
-  'src/client/main/server-client.ts',
-  'src/client/preload/index.ts',
+  'src/shared/server-client.ts',
+  'src/shared/client-api.ts',
   'src/server/index.ts',
   'src/server/script-api.ts',
 ]

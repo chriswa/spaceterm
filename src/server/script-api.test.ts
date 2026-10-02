@@ -242,12 +242,10 @@ describe('script-ship-it', () => {
     expect(h.host.shipped[0].submit).toBe(false)
   })
 
-  it('translates newlines to carriage returns', () => {
-    // A bare \n inside a bracketed paste submits the prompt early, truncating
-    // a multi-line message at its first line.
+  it('hands the text over untouched — newline handling is ship-it.ts\'s', () => {
     const h = harness((host) => host.add(terminal({ id: 'a' })))
-    h.send({ type: 'script-ship-it', seq: 1, nodeId: nid('a'), data: 'one\ntwo\r\nthree' })
-    expect(h.host.shipped[0].text).toBe('one\rtwo\rthree')
+    h.send({ type: 'script-ship-it', seq: 1, nodeId: nid('a'), data: 'one\ntwo' })
+    expect(h.host.shipped[0].text).toBe('one\ntwo')
   })
 
   it('addresses the terminal by its session id, not its node id', () => {
