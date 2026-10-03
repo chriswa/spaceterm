@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { App } from '@/App'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { useNodeStore } from '@/stores/nodeStore'
@@ -45,7 +45,19 @@ function rememberOpen(nodeId: NodeId | null): void {
   } catch { /* private mode */ }
 }
 
-export function MobileApp() {
+/**
+ * Keys for this component's children, which are all siblings in one fragment.
+ * Several are keyed by a surface — the terminal view, its composer, the talk
+ * button — so a bare node id as the key collides whenever two of them are the
+ * same surface. React then loses track of which child is which: opening the
+ * composer mounted a second terminal view and orphaned the first, whose
+ * picture and touch handlers stayed on screen after the terminal was closed —
+ * a frozen screen that only refocusing another surface cleared.
+ */
+const childKey = (kind: 'terminal' | 'composer' | 'talk', id: string) => `${kind}:${id}`
+
+/** `Canvas` is the desktop's App unless a test stands in for it. */
+export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
   /** The surface Summary Chat is talking about, while a conversation is open. */
@@ -110,7 +122,7 @@ export function MobileApp() {
 
   return (
     <>
-      <App />
+      <Canvas />
       {!focusedTerminal && <UsageReadout />}
       {!focusedTerminal && <UpdateBadge />}
       {!focusedTerminal && (
@@ -129,7 +141,7 @@ export function MobileApp() {
       )}
       {focusedTerminal && (
         <TerminalView
-          key={focusedTerminal}
+          key={childKey('terminal', focusedTerminal)}
           nodeId={focusedTerminal}
           onClose={(via) => closeTerminal(`the terminal (${via ?? 'pinch or tap'})`, via === 'swipe' ? SWIPE_EXIT_ZOOM_OUT : undefined)}
           onCompose={() => {
@@ -151,7 +163,7 @@ export function MobileApp() {
       {composerFor && (
         <Composer
           // Keyed, so opening another surface's composer starts fresh on its draft.
-          key={composerFor}
+          key={childKey('composer', composerFor)}
           nodeId={composerFor}
           onClose={() => {
             window.api.log('[mobile-view] composer closed')
@@ -164,7 +176,7 @@ export function MobileApp() {
       {dictating && !composerFor && <DictationIndicator />}
       {/* Over the canvas and the terminal view alike; the composer has its own microphone. */}
       {(summaryTarget || controlTarget) && !composerFor && (
-        <SummarizerButton key={controlTarget ? 'control' : summaryTarget} nodeId={controlTarget ? null : summaryTarget} />
+        <SummarizerButton key={childKey('talk', controlTarget ? 'control' : summaryTarget ?? '')} nodeId={controlTarget ? null : summaryTarget} />
       )}
       {(summaryTarget || controlTarget) && !composerFor && <HoldMicButton />}
       {/* Always on the canvas; over a terminal only while voice is in play, so
