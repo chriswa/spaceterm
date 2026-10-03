@@ -23,6 +23,14 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         // Lets the page tell it is running inside the app, should it need to.
         config.applicationNameForUserAgent = "SpacetermApp/1"
 
+        // The screen's corner radius, which a page cannot read: the canvas's
+        // corner buttons sit as low and as far out as the curve allows.
+        if let radius = Self.displayCornerRadius {
+            config.userContentController.addUserScript(WKUserScript(
+                source: "document.documentElement.style.setProperty('--m-corner-radius', '\(radius)px')",
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+
         webView = WKWebView(frame: .zero, configuration: config)
         webView.uiDelegate = self
         webView.navigationDelegate = self
@@ -40,6 +48,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         webView.isInspectable = true
         webView.removeFormAccessoryBar()
         view = webView
+    }
+
+    /// UIKit knows it but does not publish it; a personal app may ask anyway.
+    /// Nil when the key is missing, and the page falls back to its default.
+    private static var displayCornerRadius: Double? {
+        (UIScreen.main.value(forKey: "_displayCornerRadius") as? NSNumber)?.doubleValue
     }
 
     override func viewDidLoad() {

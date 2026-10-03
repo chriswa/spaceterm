@@ -17,6 +17,15 @@
   --m-safe-bottom: env(safe-area-inset-bottom, 0px);
   --m-safe-left: env(safe-area-inset-left, 0px);
   --m-safe-right: env(safe-area-inset-right, 0px);
+  /*
+   * The screen's rounded corner. The iOS app sets the real one (see
+   * WebViewController.displayCornerRadius); 62px is a 402-pt-wide iPhone's.
+   * With an element a gap G off the bottom, it clears the curve by the same G
+   * when its side inset is this radius less the element's own corner radius —
+   * as low as it can go first, then only as far in as the curve makes it.
+   */
+  --m-corner-radius: 62px;
+  --m-corner-gap: 4px;
 }
 
 html, body {
@@ -57,27 +66,33 @@ textarea, input, [contenteditable="true"], .cm-content {
 .mobile-btn--accent { background: var(--m-accent); border-color: var(--m-accent); color: #11111b; }
 .mobile-btn--recording { background: var(--m-danger); border-color: var(--m-danger); color: #11111b; }
 
-/* Tucked into the corner, out of the canvas's way. */
+/* In the bottom-right corner, as low and as far out as the screen's curve
+   allows (see --m-corner-radius): a white rocket on black. */
 .mobile-fab {
   position: fixed;
-  right: calc(10px + var(--m-safe-right));
-  bottom: calc(6px + var(--m-safe-bottom));
+  right: calc(var(--m-corner-radius) - 22px);
+  bottom: var(--m-corner-gap);
   z-index: 2147483000;
-  width: 40px;
-  height: 40px;
-  border-radius: 20px;
-  border: 1px solid var(--m-border);
-  background: rgba(24, 24, 37, 0.75);
-  color: var(--m-dim);
-  font-size: 18px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 22px;
+  border: none;
+  background: #000;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   -webkit-tap-highlight-color: transparent;
 }
 
 /* AI usage, bottom left — the menu-bar tray's bars (see UsageReadout.tsx). */
 .m-usage {
   position: fixed;
-  left: calc(10px + var(--m-safe-left));
-  bottom: calc(10px + var(--m-safe-bottom));
+  /* Its 6px corner against the screen's curve; see --m-corner-radius. */
+  left: calc(var(--m-corner-radius) - 6px);
+  bottom: var(--m-corner-gap);
   z-index: 2147483000;
   display: flex;
   align-items: flex-end;
