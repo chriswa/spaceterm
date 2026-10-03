@@ -832,9 +832,10 @@ html, body, #root {
   padding: 0 4px;
 }
 
-/* Peer camera viewport rectangles */
+/* Peer camera viewport rectangles: a dark outline under everything else, so
+   it only shows against the canvas background and never over a card. */
 .peer-camera-rect {
-  border: calc(1px / var(--camera-zoom, 1)) solid rgba(255, 255, 255, 0.5);
+  border: calc(2px / var(--camera-zoom, 1)) solid rgba(0, 0, 0, 0.6);
   pointer-events: none;
   z-index: -1;
 }

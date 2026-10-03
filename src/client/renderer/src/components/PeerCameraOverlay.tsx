@@ -1,10 +1,10 @@
 import { usePeerStore } from '../stores/peerStore'
 
 /**
- * Renders other clients' camera viewports as white rectangles on the canvas.
- * Lives inside canvas-surface (world space), so coordinates are in canvas pixels.
- * Border width is zoom-compensated via the --camera-zoom CSS custom property
- * that the camera system sets on the canvas-surface element.
+ * Renders other clients' camera viewports as dark outlines behind everything
+ * else on the canvas. Lives inside canvas-surface (world space), so coordinates
+ * are in canvas pixels. Border width is zoom-compensated via the --camera-zoom
+ * CSS custom property that the camera system sets on the canvas-surface element.
  */
 export function PeerCameraOverlay() {
   const peers = usePeerStore((s) => s.peers)
