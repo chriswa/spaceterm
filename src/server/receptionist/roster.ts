@@ -35,28 +35,14 @@ export interface RosterAgent {
   startedAt?: number
 }
 
-/**
- * The short id the model uses for an agent. Derived from the node id rather
- * than handed out, so it is the same in every turn and survives a restart of
- * the server — the history refers to agents by it.
- */
-export function handleFor(nodeId: NodeId): string {
-  return `a${nodeId.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toLowerCase()}`
-}
-
-/** The short id the model uses for a directory node. See `handleFor`. */
-export function directoryHandleFor(nodeId: NodeId): string {
-  return `d${nodeId.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toLowerCase()}`
-}
-
 /** A directory node on the canvas: somewhere a new agent can be started. */
 export interface RosterDirectory {
   nodeId: NodeId
   cwd: string
 }
 
-export function renderDirectories(directories: readonly RosterDirectory[]): string {
-  return directories.map(directory => `[${directoryHandleFor(directory.nodeId)}] ${directory.cwd}`).join('\n')
+export function renderDirectories(directories: readonly RosterDirectory[], handleOf: (nodeId: NodeId) => string): string {
+  return directories.map(directory => `[${handleOf(directory.nodeId)}] ${directory.cwd}`).join('\n')
 }
 
 /** Per-agent characters of the last agent message shown in the roster. */
@@ -87,12 +73,13 @@ export function renderRoster(
   agents: readonly RosterAgent[],
   nameOf: (nodeId: NodeId) => string | undefined,
   readTranscript: (path: string) => TranscriptMessage[],
+  handleOf: (nodeId: NodeId) => string,
   now = Date.now(),
 ): string {
   if (!agents.length) return 'No agents are running.'
   return [...agents].sort(byRelevance).map(agent => {
     const name = nameOf(agent.nodeId)
-    const lines = [`[${handleFor(agent.nodeId)}]${name ? ` ${name}` : ' (no name yet)'}: ${agent.title}`]
+    const lines = [`[${handleOf(agent.nodeId)}]${name ? ` ${name}` : ' (no name yet)'}: ${agent.title}`]
     if (agent.unread) lines.push('  UNREAD: it has news the user has not looked at')
     if (agent.cwd) lines.push(`  directory: ${path.basename(agent.cwd)}`)
     lines.push(`  state: ${STATE_WORDS[agent.state]}${agent.stateSince ? `, for ${ago(now - agent.stateSince)}` : ''}`)

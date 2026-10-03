@@ -1,31 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
 import type { TranscriptMessage } from '../summary-chat'
-import { ago, handleFor, readAgent, renderRoster, type RosterAgent } from './roster'
+import { ago, readAgent, renderRoster, type RosterAgent } from './roster'
 
 const transcript: TranscriptMessage[] = [
   { role: 'user', text: 'Make the water simulation conserve volume.' },
   { role: 'assistant', text: 'The pressure solver now conserves volume; bananas float.' },
 ]
 
+/** A stand-in handle: what renderRoster prints is the caller's concern. */
+const H = (nodeId: string): string => `h-${nodeId.slice(0, 4)}`
+
 const agent = (id: string, extra: Partial<RosterAgent> = {}): RosterAgent => ({
   nodeId: asNodeId(id), title: 'water sim', cwd: '/Users/me/projects/fluids', state: 'stopped',
   transcriptPath: `/t/${id}.jsonl`, ...extra,
 })
 
-describe('handleFor', () => {
-  it('is stable and short', () => {
-    const id = asNodeId('3f9a2c71-0000-4000-8000-000000000000')
-    expect(handleFor(id)).toBe(handleFor(id))
-    expect(handleFor(id)).toMatch(/^a[0-9a-z]{6}$/)
-  })
-})
-
 describe('renderRoster', () => {
   it('shows name, directory, state and the last exchange', () => {
     const a = agent('11111111-0000-4000-8000-000000000000')
-    const text = renderRoster([a], () => 'Kevin', () => transcript)
-    expect(text).toContain(`[${handleFor(a.nodeId)}] Kevin: water sim`)
+    const text = renderRoster([a], () => 'Kevin', () => transcript, H)
+    expect(text).toContain(`[${H(a.nodeId)}] Kevin: water sim`)
     expect(text).toContain('directory: fluids')
     expect(text).toContain('state: stopped')
     expect(text).toContain('last asked: Make the water simulation')
@@ -33,12 +28,12 @@ describe('renderRoster', () => {
   })
 
   it('marks an agent with no name yet', () => {
-    const text = renderRoster([agent('22222222-0000-4000-8000-000000000000')], () => undefined, () => [])
+    const text = renderRoster([agent('22222222-0000-4000-8000-000000000000')], () => undefined, () => [], H)
     expect(text).toContain('(no name yet)')
   })
 
   it('says so when nothing is running', () => {
-    expect(renderRoster([], () => undefined, () => [])).toMatch(/No agents/)
+    expect(renderRoster([], () => undefined, () => [], H)).toMatch(/No agents/)
   })
 })
 
@@ -50,7 +45,7 @@ describe('renderRoster: what is worth checking', () => {
     const quiet = agent('aaaaaaaa-0000-4000-8000-000000000000', { title: 'quiet', lastActivityAt: NOW - 120 * min })
     const busy = agent('bbbbbbbb-0000-4000-8000-000000000000', { title: 'busy', lastActivityAt: NOW - 1 * min })
     const news = agent('cccccccc-0000-4000-8000-000000000000', { title: 'news', unread: true, lastActivityAt: NOW - 300 * min })
-    const text = renderRoster([quiet, busy, news], () => undefined, () => [], NOW)
+    const text = renderRoster([quiet, busy, news], () => undefined, () => [], H, NOW)
     const order = ['news', 'busy', 'quiet'].map(title => text.indexOf(`: ${title}`))
     expect(order).toEqual([...order].sort((a, b) => a - b))
     expect(text).toContain('UNREAD')
@@ -61,7 +56,7 @@ describe('renderRoster: what is worth checking', () => {
       stateSince: NOW - 12 * min, lastActivityAt: NOW - 3 * min,
       cacheWarmUntil: NOW + 41 * min, cacheWarmTokens: 120_000, startedAt: NOW - 125 * min,
     })
-    const text = renderRoster([a], () => 'Kevin', () => [], NOW)
+    const text = renderRoster([a], () => 'Kevin', () => [], H, NOW)
     expect(text).toContain('state: stopped, waiting for the user, for 12 minutes')
     expect(text).toContain('last active: 3 minutes ago')
     expect(text).toContain('cache: warm for 41 minutes more (120k tokens)')
@@ -71,7 +66,7 @@ describe('renderRoster: what is worth checking', () => {
 
   it('says when a cache has gone cold', () => {
     const a = agent('eeeeeeee-0000-4000-8000-000000000000', { cacheWarmUntil: NOW - 5 * min })
-    expect(renderRoster([a], () => undefined, () => [], NOW)).toContain('cache: cold for 5 minutes')
+    expect(renderRoster([a], () => undefined, () => [], H, NOW)).toContain('cache: cold for 5 minutes')
   })
 })
 
@@ -82,7 +77,7 @@ describe('renderRoster: last asked', () => {
       { role: 'user', text: 'Make geodes whole.' },
       { role: 'user', text: '<task-notification> <task-id>b7a7</task-id> deploy finished' },
       { role: 'assistant', text: 'The geode fix is live.' },
-    ])
+    ], H)
     expect(text).toContain('last asked: Make geodes whole.')
   })
 })

@@ -7,15 +7,16 @@ import type { SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
+import { DIRECTORY_PREFIX, Handles } from './handles'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import {
   FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderTurnBody, type ReceptionistEvent,
 } from './prompt'
 import {
-  isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
+  CONTROL, isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
 } from './reply'
 import {
-  directoryHandleFor, handleFor, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+  readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
 
 /**
@@ -242,7 +243,7 @@ export class Receptionist {
     if (!agent) return
     const lastSaid = agent.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
     this.events.push({
-      kind: 'agent-stopped', handle: handleFor(nodeId), state: STATE_WORDS[state],
+      kind: 'agent-stopped', handle: this.handles([agent]).of(nodeId) ?? nodeId, state: STATE_WORDS[state],
       lastSaid: lastSaid.slice(-LAST_SAID_EVENT_CHARS),
     })
     this.maybeSpeakUp()
@@ -318,6 +319,16 @@ export class Receptionist {
         continue
       }
       const agents = this.deps.agents()
+      const handles = this.handles(agents)
+      // A handle the model miscopied would send to nobody, or to the wrong
+      // agent, or be spoken as "an agent". Check every one before anything
+      // runs or is said, and have the model correct it.
+      const problems = this.checkHandles(reply, handles, agents)
+      if (problems.length && step < MAX_STEPS) {
+        this.deps.log({ event: 'bad-handles', step, problems })
+        message = `NOTHING WAS DONE AND NOTHING YOU SAID WAS SPOKEN. ${problems.join(' ')} Reply again with the right handles.`
+        continue
+      }
       // Words that came with a blocking tool are spoken now, while it runs:
       // the listener hears "let me check" instead of silence.
       if (reply.tools.some(isBlocking) && step < MAX_STEPS && reply.say.length) {
@@ -325,10 +336,16 @@ export class Receptionist {
         await this.channel.deliverInterim(attempt, spoken.map(({ text, voice }) => ({ text, voice })))
         if (!attempt.isCurrent) return undefined
       }
-      const results = await this.runTools(reply.tools, agents)
+      const { results, done } = await this.runTools(reply.tools, agents, handles)
       if (!attempt.isCurrent) return undefined
-      if (!reply.tools.some(isBlocking) || step === MAX_STEPS) return reply
-      message = `TOOL RESULTS:\n${results.join('\n\n')}`
+      if (!reply.tools.some(isBlocking) || step === MAX_STEPS) {
+        // What the actions reached, told with the next message rather than
+        // costing a round trip now: enough to notice a wrong agent and
+        // retract, since the action itself has already happened.
+        if (done.length) this.notes.push(`Your last actions: ${done.join('; ')}.`)
+        return reply
+      }
+      message = `TOOL RESULTS:\n${[...results, ...done.map(line => `done: ${line}`)].join('\n\n')}`
     }
     throw new Error(`no usable reply in ${MAX_STEPS} steps`)
   }
@@ -384,12 +401,20 @@ export class Receptionist {
   }
 
   /** Run a reply's tools. Returns the results of the blocking ones, for the model. */
-  private async runTools(calls: readonly ToolCall[], agents: readonly RosterAgent[]): Promise<string[]> {
+  /**
+   * Run a reply's tools, all of whose handles `checkHandles` has passed.
+   * Returns what the blocking ones found, for the model now, and a line per
+   * action saying which agent it reached, so a wrong pick can be noticed.
+   */
+  private async runTools(
+    calls: readonly ToolCall[], agents: readonly RosterAgent[], handles: Handles,
+  ): Promise<{ results: string[]; done: string[] }> {
     const results: string[] = []
+    const done: string[] = []
     const interrupted = new Set<NodeId>()
     for (const call of calls) {
       if (call.tool === 'spawn') {
-        results.push(this.spawn(call))
+        done.push(this.spawn(call, agents))
         continue
       }
       if (call.tool === 'recall') {
@@ -397,18 +422,25 @@ export class Receptionist {
         continue
       }
       if (call.tool === 'list_agents') {
-        results.push(call.namedOnly ? this.listNamedAgents(agents) : this.listAgents(agents))
+        results.push(call.namedOnly ? this.listNamedAgents(agents, handles) : this.listAgents(agents, handles))
         continue
       }
       if (call.tool === 'find_agent') {
-        results.push(await this.findAgent(call.query, agents))
+        results.push(await this.findAgent(call.query, agents, handles))
         continue
       }
-      const agent = agents.find(candidate => handleFor(candidate.nodeId) === call.agent)
+      const nodeId = handles.find(call.agent)
+      const agent = agents.find(candidate => candidate.nodeId === nodeId)
+      // checkHandles already refused unknown handles; this only guards an agent
+      // that vanished between the check and now.
       if (!agent) {
-        results.push(`${call.tool} ${call.agent}: no live agent has that handle.`)
+        results.push(`${call.tool} {${call.agent}}: that agent is gone.`)
         continue
       }
+      // An agent acted on is about to be spoken of, so it is named now: the
+      // confirmation should carry the name the user will hear.
+      if (call.tool !== 'read') this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
+      const who = this.describe(agent, handles)
       switch (call.tool) {
         case 'read': {
           // A search covers the whole session; a plain read is the recent part.
@@ -419,35 +451,42 @@ export class Receptionist {
         }
         case 'monitor':
           this.monitors.add(agent.nodeId)
+          done.push(`monitor is watching ${who}`)
           break
         case 'ask_agent':
-          void this.askAgent(agent, call.question)
+          void this.askAgent(agent, call.question, handles)
+          done.push(`ask_agent asked ${who}; the answer will come as an event`)
           break
         case 'interrupt':
           interrupted.add(agent.nodeId)
           this.deps.interrupt(agent.nodeId)
+          done.push(`interrupt pressed Escape for ${who}`)
           break
         case 'send':
           void this.send(agent.nodeId, call.message, interrupted.has(agent.nodeId))
+          done.push(`send delivered to ${who}, which is now watched for its reply`)
           break
       }
       this.deps.log({ event: 'tool', ...call, nodeId: agent.nodeId })
     }
-    return results
+    return { results, done }
   }
 
   /** Start a new agent, and watch for its first answer as for a send. */
-  private spawn(call: Extract<ToolCall, { tool: 'spawn' }>): string {
-    const directory = this.deps.directories().find(candidate => directoryHandleFor(candidate.nodeId) === call.directory)
-    if (!directory) return `spawn ${call.directory}: no directory has that handle.`
+  private spawn(call: Extract<ToolCall, { tool: 'spawn' }>, agents: readonly RosterAgent[]): string {
+    const directories = this.deps.directories()
+    const directoryId = this.directoryHandles(directories).find(call.directory)
+    const directory = directories.find(candidate => candidate.nodeId === directoryId)
+    if (!directory) return `spawn {${call.directory}}: that directory is gone.`
     try {
       const nodeId = this.deps.spawn(directory.nodeId, call.title, call.prompt)
       this.monitors.add(nodeId)
       this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt })
       this.deps.record.append([{ role: 'assistant', content: `STARTED AN AGENT in ${directory.cwd}: ${call.prompt}` }])
-      return `spawn: started {${handleFor(nodeId)}} in ${directory.cwd}.`
+      const handle = this.handles([...agents.map(agent => agent.nodeId), nodeId].map(id => ({ nodeId: id }))).of(nodeId)
+      return `spawn started [${handle}] "${call.title}" in ${directory.cwd}, which is now watched for its first reply`
     } catch (err) {
-      return `spawn ${call.directory} failed: ${err instanceof Error ? err.message : String(err)}`
+      return `spawn in ${directory.cwd} failed: ${err instanceof Error ? err.message : String(err)}`
     }
   }
 
@@ -470,8 +509,8 @@ export class Receptionist {
    * Ask an agent a side question, in the background: the answer comes back
    * as an event, with a toast saying what it used.
    */
-  private async askAgent(agent: RosterAgent, question: string): Promise<void> {
-    const handle = handleFor(agent.nodeId)
+  private async askAgent(agent: RosterAgent, question: string, handles: Handles): Promise<void> {
+    const handle = handles.of(agent.nodeId) ?? agent.nodeId
     // Named now if it has no name yet: its answer will be quoted in its voice,
     // and the toast should already call it what the listener will hear.
     const named = this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
@@ -489,10 +528,64 @@ export class Receptionist {
     this.maybeSpeakUp()
   }
 
+  /** Handles for these agents, distinct among them. See `handles.ts`. */
+  private handles(agents: ReadonlyArray<{ nodeId: NodeId }>): Handles {
+    return new Handles(agents.map(agent => agent.nodeId))
+  }
+
+  private directoryHandles(directories: readonly RosterDirectory[]): Handles {
+    return new Handles(directories.map(directory => directory.nodeId), DIRECTORY_PREFIX)
+  }
+
+  /** An agent as a confirmation names it: handle, name, and title, so a wrong pick shows. */
+  private describe(agent: RosterAgent, handles: Handles): string {
+    const name = this.deps.names.get(agent.nodeId)?.name
+    return `[${handles.of(agent.nodeId)}]${name ? ` ${name}` : ''} ("${agent.title}")`
+  }
+
+  /**
+   * Every handle a reply uses — in tool calls, in placeholders, and as who a
+   * spoken part comes from — that is not a live agent's (or, for spawn, a
+   * directory's). One sentence per problem, with the nearest real handles.
+   */
+  private checkHandles(reply: Reply, handles: Handles, agents: readonly RosterAgent[]): string[] {
+    const problems: string[] = []
+    const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
+    const suggest = (handle: string): string => {
+      const near = handles.nearest(handle).flatMap(candidate => {
+        const agent = byId.get(handles.find(candidate)!)
+        return agent ? [this.describe(agent, handles)] : []
+      })
+      return near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_agents or find_agent to look it up.'
+    }
+    const unknownAgent = (handle: string, where: string): void => {
+      if (!handles.find(handle)) problems.push(`"${handle}" (${where}) is not a live agent's handle.${suggest(handle)}`)
+    }
+    for (const call of reply.tools) {
+      if (call.tool === 'spawn') {
+        const directories = this.directoryHandles(this.deps.directories())
+        if (!directories.find(call.directory)) {
+          const near = directories.nearest(call.directory)
+          problems.push(`"${call.directory}" (in spawn) is not a directory's handle.${near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_agents to see the directories.'}`)
+        }
+      } else if ('agent' in call) {
+        unknownAgent(call.agent, `in ${call.tool}`)
+      }
+    }
+    for (const part of reply.say) {
+      if (part.from !== CONTROL) unknownAgent(part.from, 'as who a spoken part is from')
+      for (const [, handle] of part.text.matchAll(/\{([A-Za-z0-9_-]+)\}/g)) unknownAgent(handle, 'in what you said')
+    }
+    return [...new Set(problems)]
+  }
+
   /** The list_agents tool: every live agent, and the directories. */
-  private listAgents(agents: readonly RosterAgent[]): string {
-    const sections = [`AGENTS:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript)}`]
-    const directories = renderDirectories(this.deps.directories())
+  private listAgents(agents: readonly RosterAgent[], handles: Handles): string {
+    const handleOf = (nodeId: NodeId) => handles.of(nodeId) ?? nodeId
+    const sections = [`AGENTS:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript, handleOf)}`]
+    const directoryList = this.deps.directories()
+    const directoryHandles = this.directoryHandles(directoryList)
+    const directories = renderDirectories(directoryList, nodeId => directoryHandles.of(nodeId) ?? nodeId)
     if (directories) sections.push(`DIRECTORIES:\n${directories}`)
     return `list_agents:\n${sections.join('\n\n')}`
   }
@@ -503,16 +596,16 @@ export class Receptionist {
    * for when the user names an agent and the only question is which handle
    * that is.
    */
-  private listNamedAgents(agents: readonly RosterAgent[]): string {
+  private listNamedAgents(agents: readonly RosterAgent[], handles: Handles): string {
     const lines = agents.flatMap(agent => {
       const name = this.deps.names.get(agent.nodeId)?.name
-      return name ? [`[${handleFor(agent.nodeId)}] ${name}: ${agent.title}`] : []
+      return name ? [`[${handles.of(agent.nodeId)}] ${name}: ${agent.title}`] : []
     })
     return `list_agents (named only):\n${lines.length ? lines.join('\n') : 'No agent has a name yet.'}`
   }
 
   /** The find_agent tool: Jev's ranking, best first, with confidences. */
-  private async findAgent(query: string, agents: readonly RosterAgent[]): Promise<string> {
+  private async findAgent(query: string, agents: readonly RosterAgent[], handles: Handles): Promise<string> {
     if (!agents.length) return 'find_agent: no agents are running.'
     try {
       const ranking = await this.deps.findAgents(query, agents)
@@ -521,7 +614,7 @@ export class Receptionist {
         const agent = byId.get(hit.nodeId)
         if (!agent) return []
         const name = this.deps.names.get(agent.nodeId)?.name
-        return [`${Math.round(hit.probability * 100)}% [${handleFor(agent.nodeId)}]${name ? ` ${name}` : ''}: ${agent.title} (${STATE_WORDS[agent.state]})`]
+        return [`${Math.round(hit.probability * 100)}% [${handles.of(agent.nodeId)}]${name ? ` ${name}` : ''}: ${agent.title} (${STATE_WORDS[agent.state]})`]
       })
       return `find_agent "${query}":\n${lines.join('\n')}\n${Math.round(ranking.noneProbability * 100)}% none of these`
     } catch (err) {
@@ -536,7 +629,8 @@ export class Receptionist {
   private render(say: readonly SayPart[], agents: readonly RosterAgent[]): {
     spoken: RenderedPart[]; mentioned: NodeId[]; byHandle: Map<string, RosterAgent>
   } {
-    const byHandle = new Map(agents.map(agent => [handleFor(agent.nodeId), agent]))
+    const handles = this.handles(agents)
+    const byHandle = new Map(agents.map(agent => [handles.of(agent.nodeId)!, agent]))
     const mentioned: NodeId[] = []
     const resolve = (handle: string): { name: string; voice: string } | undefined => {
       const agent = byHandle.get(handle)

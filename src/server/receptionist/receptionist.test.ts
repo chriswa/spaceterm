@@ -10,13 +10,16 @@ import { RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
   PROMPT_HASH, Receptionist, sideQuestionPrompt, type AgentRanking, type SavedSession, type SessionTurn,
 } from './receptionist'
-import { directoryHandleFor, handleFor, type RosterAgent } from './roster'
+import type { RosterAgent } from './roster'
+import { DIRECTORY_PREFIX, Handles } from './handles'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
 const DIR_ID = asNodeId('33333333-0000-4000-8000-000000000000')
-const KEVIN = handleFor(KEVIN_ID)
-const SALLY = handleFor(SALLY_ID)
+const HANDLES = new Handles([KEVIN_ID, SALLY_ID])
+const KEVIN = HANDLES.of(KEVIN_ID)!
+const SALLY = HANDLES.of(SALLY_ID)!
+const DIR = new Handles([DIR_ID], DIRECTORY_PREFIX).of(DIR_ID)!
 
 const TRANSCRIPTS: Record<string, TranscriptMessage[]> = {
   '/t/kevin.jsonl': [
@@ -237,7 +240,7 @@ describe('Receptionist', () => {
         (turn) => {
           expect(turn.prompt).toContain(`[${KEVIN}] (no name yet): water sim`)
           expect(turn.prompt).toContain('state: working')
-          expect(turn.prompt).toContain(`[${directoryHandleFor(DIR_ID)}] /Users/me/spaceterm`)
+          expect(turn.prompt).toContain(`[${DIR}] /Users/me/spaceterm`)
           return reply([{ from: 'control', text: 'Two agents.' }])
         },
       ],
@@ -482,7 +485,7 @@ describe('Receptionist', () => {
       replies: [
         reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'Done yet?' }]),
         (turn) => {
-          expect(turn.prompt).toMatch(/Asking \{a\w+\} "Done yet\?" failed: that agent cannot take side questions/)
+          expect(turn.prompt).toContain(`Asking {${KEVIN}} "Done yet?" failed: that agent cannot take side questions`)
           return reply([{ from: 'control', text: `{${KEVIN}} needs a restart before I can ask it things.` }])
         },
       ],
@@ -535,7 +538,7 @@ describe('Receptionist', () => {
     const h = harness({
       replies: [
         reply([{ from: 'control', text: 'Starting one.' }], [
-          { tool: 'spawn', directory: directoryHandleFor(DIR_ID), title: 'shorter answers', prompt: 'Make Control answer in one sentence.' },
+          { tool: 'spawn', directory: DIR, title: 'shorter answers', prompt: 'Make Control answer in one sentence.' },
         ]),
         (turn) => {
           expect(turn.prompt).toContain('EVENTS')
@@ -569,5 +572,56 @@ describe('Receptionist', () => {
     await h.receptionist.hear('what did I say about bananas?')
     await flush()
     expect(said(h).some(text => text.includes('Let me look back'))).toBe(true)
+  })
+
+  it('refuses a miscopied handle before anything runs or is spoken, and suggests the real one', async () => {
+    const typo = KEVIN.slice(0, -1) + (KEVIN.endsWith('x') ? 'y' : 'x')
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `Sent to {${typo}}.` }], [{ tool: 'send', agent: typo, message: 'Commit, please.' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/^NOTHING WAS DONE AND NOTHING YOU SAID WAS SPOKEN\./)
+          expect(turn.prompt).toContain(`"${typo}" (in send) is not a live agent's handle. Did you mean [${KEVIN}]`)
+          return reply([{ from: 'control', text: `Sent to {${KEVIN}}.` }], [{ tool: 'send', agent: KEVIN, message: 'Commit, please.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell Kevin to commit')
+    await flush()
+    expect(h.wire).toEqual([`send ${KEVIN_ID} Commit, please.`])
+    expect(h.spoken.map(entry => entry.content)).toEqual([[{ text: 'Sent to Kevin.', voice: RECEPTIONIST_VOICE }]])
+  })
+
+  it('catches a miscopied handle in what it would say, too', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: '{not-a-handle} finished.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('"not-a-handle" (in what you said) is not a live agent\'s handle.')
+          return reply([{ from: 'control', text: `{${KEVIN}} finished.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('who finished?')
+    await flush()
+    expect(h.spoken.map(entry => entry.content)).toEqual([[{ text: 'Kevin finished.', voice: RECEPTIONIST_VOICE }]])
+  })
+
+  it('tells the model which agent each action reached, with the next message', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `Sent to {${KEVIN}}.` }], [{ tool: 'send', agent: KEVIN, message: 'Commit, please.' }, { tool: 'monitor', agent: SALLY }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`NOTE: Your last actions: send delivered to [${KEVIN}] Kevin ("water sim")`)
+          expect(turn.prompt).toContain(`monitor is watching [${SALLY}] Sally ("login page")`)
+          return reply([{ from: 'control', text: 'Done.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell Kevin to commit and watch the login one')
+    await flush()
+    await h.receptionist.hear('ok')
+    await flush()
+    expect(h.turns).toHaveLength(2)
   })
 })
