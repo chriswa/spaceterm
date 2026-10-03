@@ -8,11 +8,10 @@ import type { NodeId } from '../shared/ids'
 import type { ClaudeState } from '../shared/state'
 import type { PendingTurn } from './pending-turn'
 import { speakableToolText } from './speakable-tool-text'
-import {
-  VoiceOperator, speechStatus, DISCOVERY_PATH, type SpeechBackend, type SpeechResponse, type SpeechStatus,
-} from './voice-operator'
+import { VoiceOperator, DISCOVERY_PATH, type SpeechBackend } from './voice-operator'
+import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from './speech-channel'
 import type {
-  SummaryChatMode, SummaryChatPhase, SummaryChatToggleOutcome, SummaryChatUiState,
+  SummaryChatMode, SummaryChatToggleOutcome, SummaryChatUiState,
 } from '../shared/protocol'
 
 const MAX_MESSAGES = 24
@@ -59,38 +58,7 @@ const isBlockedVoice = (id: string): boolean => {
   const language = /^([a-z])[fm]_/.exec(id)?.[1]
   return language !== undefined && BLOCKED_VOICE_LANGUAGES.has(language)
 }
-const SPEECH_LONG_POLL_TIMEOUT_MS = 5 * 60_000
-/** How long Voice Operator holds a long poll open, in seconds. */
-const SPEECH_LONG_POLL_SECONDS = 30
 const VOICE_REFRESH_MS = 5_000
-/**
- * Time between speech-status polls.
- *
- * Two jobs. While the monitor is tracking playback it is the *cadence*, and so
- * the worst-case lag on synthesizing → speaking → idle: 250ms is under the
- * threshold where an indicator reads as late. While the monitor is
- * long-polling it is a *floor* — a Voice Operator that answers `?wait=`
- * immediately (an older build, or one that has lost its job queue) would
- * otherwise spin this loop as fast as the event loop allows.
- */
-const SPEECH_POLL_INTERVAL_MS = 250
-/**
- * How long a job may sit accepted-but-silent before the monitor says so.
- *
- * Voice Operator answering `queued` forever is a real failure with no natural
- * end: the surface sits in `synthesizing`, the menu bar keeps its cyan, and
- * nothing times out. It is also a *silent* failure on this side now — the
- * waiting cue belongs to Voice Operator from the handoff on — so the log line
- * is the only place it surfaces at all.
- *
- * Necessarily longer than one long-poll cycle. The monitor learns nothing until
- * a poll returns, and a poll parks for `SPEECH_LONG_POLL_SECONDS` when nothing
- * changes — so a threshold below that can never be reached, and the first
- * observation would report the transition instead. This has to mean "still
- * queued after a full cycle went by with no change", which is the shape of the
- * failure worth a line of its own.
- */
-const SPEECH_STALL_REPORT_MS = (SPEECH_LONG_POLL_SECONDS + 15) * 1_000
 /**
  * Everything both modes' system prompts say, which is everything except the
  * opening task.
@@ -173,40 +141,6 @@ export type ToggleResult =
   | { outcome: 'rejected'; message: string }
 
 /**
- * One run of `ask` — a Haiku request, the speech job it produces, and the
- * monitor that watches that job play out.
- *
- * Every `await` in that chain resumes into a world which may have moved on: the
- * listener may have cancelled, or started a newer answer on the same surface.
- * The point of this object is that all of those resumption points ask the *same
- * question of the same thing*. They used to each invent their own staleness
- * test, and only some of them had one at all — which is how a cancel arriving
- * between Haiku answering and the speech POST returning produced a job nobody
- * owned, still talking at a listener who had asked for silence.
- */
-class Attempt {
-  private readonly controller = new AbortController()
-
-  constructor(private readonly conversation: Conversation) {}
-
-  /** Cancels the in-flight HTTP request this attempt is waiting on, if any. */
-  get signal(): AbortSignal { return this.controller.signal }
-
-  /**
-   * Whether this attempt still owns its conversation. False once it has been
-   * cancelled, superseded, or has settled — so a resumption point that reads
-   * false must touch nothing, because someone else already has.
-   */
-  get isCurrent(): boolean { return this.conversation.attempt === this }
-
-  /** Give up ownership. Aborting is what unblocks a parked long poll. */
-  abandon(): void {
-    if (this.isCurrent) this.conversation.attempt = undefined
-    this.controller.abort()
-  }
-}
-
-/**
  * Everything about a surface that a summary is built from, gathered by the
  * caller because only the server has it all.
  *
@@ -279,26 +213,16 @@ interface Conversation {
   caution?: string
   voice?: string
   /**
-   * Where every answer in this conversation is spoken, fixed when it starts:
-   * the device that asked hears the follow-ups too.
-   */
-  speech: SpeechBackend
-  speechId?: string
-  /** The run currently allowed to act on this conversation. See `Attempt`. */
-  attempt?: Attempt
-  /**
-   * The single answer to "what is this surface doing". Every listener — the
-   * bubble, the waiting cue, the card's speaking glow — is derived from this
-   * one value, so none of them can disagree about whether a surface is still
+   * This conversation's playback: its phase, its speech job, and the run that
+   * owns it. The phase is the single answer to "what is this surface doing" —
+   * the bubble, the waiting cue and the card's speaking glow are all derived
+   * from it, so none of them can disagree about whether a surface is still
    * waiting while it is already talking.
+   *
+   * Its backend is fixed when the conversation starts: the device that asked
+   * hears the follow-ups too.
    */
-  phase: SummaryChatPhase
-  /**
-   * Where the listener cut off the last spoken answer, recorded by
-   * monitorSpeech at the moment it observed the interruption. Consumed by the
-   * next follow-up.
-   */
-  interruptedAtCharacter?: number
+  channel: SpeechChannel
   /**
    * Monotonic use counter, not a timestamp. "Most recently used" is a sequence
    * question, and two conversations started in the same millisecond used to tie
@@ -468,12 +392,12 @@ export class SummaryChat {
    * a toggle.
    */
   async cancelAll(): Promise<boolean> {
-    const busy = Array.from(this.conversations.values()).filter(isBusy)
+    const busy = Array.from(this.conversations.values()).filter(conversation => conversation.channel.isProducing())
     if (!busy.length) return false
     // Concurrently, not in sequence: cancelling a speaking job promotes the
     // next one in Voice Operator's queue, so a serial walk gives a queued job a
     // window to start talking before its own DELETE arrives.
-    await Promise.all(busy.map(conversation => this.cancel(conversation)))
+    await Promise.all(busy.map(conversation => conversation.channel.cancel()))
     return true
   }
 
@@ -554,9 +478,9 @@ export class SummaryChat {
     // even when it was idle enough not to count as busy — Voice Operator parked
     // on `waiting_for_user`, say. Nothing should outlive the answer it belongs to.
     const previous = this.conversations.get(nodeId)
-    if (previous) await this.cancel(previous)
+    if (previous) await previous.channel.cancel()
     const sections = transcriptSections(messages)
-    const conversation: Conversation = {
+    const conversation = this.createConversation({
       auditId: randomUUID(),
       nodeId,
       sourceAgentSessionId,
@@ -564,10 +488,8 @@ export class SummaryChat {
       haikuHistory: [],
       caution,
       voice: this.voiceFor(nodeId),
-      speech: prepared.speech ?? this.vo,
-      phase: 'ready',
       lastUsedSeq: ++this.useCounter,
-    }
+    }, prepared.speech ?? this.vo)
     this.conversations.set(nodeId, conversation)
     this.onStatusChanged(nodeId, 'target')
     if (prepared.mode === 'verbatim') {
@@ -592,16 +514,16 @@ export class SummaryChat {
    * is nothing for spaceterm's waiting cue to announce. The surface is waiting
    * on Voice Operator from the first instant, which is what `synthesizing`
    * already means — and setting it *before* the POST is what keeps the press a
-   * toggle across that window, since `isBusy` is what the cancel gesture reads.
+   * toggle across that window, since `isProducing` is what the cancel gesture
+   * reads.
    */
   private async speakFinalMessage(conversation: Conversation, text: string): Promise<void> {
-    const attempt = this.beginAttempt(conversation)
-    this.setPhase(conversation, 'synthesizing')
+    const attempt = this.beginAttempt(conversation, 'synthesizing')
     let monitoring = false
     try {
       monitoring = await this.deliver(conversation, attempt, text)
     } finally {
-      if (!monitoring && attempt.isCurrent) this.settle(conversation, attempt)
+      if (!monitoring) conversation.channel.settle(attempt)
     }
   }
 
@@ -612,7 +534,7 @@ export class SummaryChat {
   async end(): Promise<void> {
     const all = Array.from(this.conversations.values())
     this.conversations.clear()
-    await Promise.all(all.map(conversation => this.cancel(conversation)))
+    await Promise.all(all.map(conversation => conversation.channel.cancel()))
     for (const conversation of all) this.onStatusChanged(conversation.nodeId, 'ended')
   }
 
@@ -623,7 +545,7 @@ export class SummaryChat {
       serverLog('[summary-chat] voice command ignored: no active summary conversation')
       return
     }
-    const heard = await this.heardPrefix(conversation)
+    const heard = await conversation.channel.heardPrefix()
     const deferred = conversation.deferred
     if (deferred) {
       // The first question after a verbatim read is where this conversation
@@ -667,95 +589,58 @@ export class SummaryChat {
   }
 
   /**
-   * The one place a surface's phase changes.
+   * Build a conversation around its speech channel.
    *
-   * Both public signals are emitted from here, in a fixed order, so a listener
-   * that watches only one of them still sees a coherent lifecycle. In
-   * particular every phase that is not `thinking` cancels `thinking` at the
-   * same instant, which is what lets the renderer's waiting cue be a pure
-   * function of the phase.
+   * The channel's callbacks need the conversation (for its node and voice), and
+   * the conversation holds the channel, so one is finished after the other.
+   */
+  private createConversation(fields: Omit<Conversation, 'channel'>, speech: SpeechBackend): Conversation {
+    const conversation = fields as Conversation
+    conversation.channel = new SpeechChannel({
+      speech,
+      label: `[summary-chat] ${fields.nodeId.slice(0, 8)}`,
+      onPhase: (phase, previous) => this.phaseChanged(conversation, phase, previous),
+      onFailure: (failure) => this.onStatusChanged(conversation.nodeId, 'error', speechFailureMessage(failure, 'the summary')),
+      deps: {
+        sleep: (ms) => this.deps.sleep(ms),
+        voiceOperatorDiscovered: () => Boolean(this.deps.readDiscovery()),
+      },
+    })
+    return conversation
+  }
+
+  /**
+   * Turn one phase change into both public signals, in a fixed order, so a
+   * listener that watches only one of them still sees a coherent lifecycle.
    *
    * The speaking indicator stays tied to `speaking` alone. `synthesizing` is a
    * wait, not sound, and lighting the indicator on it would claim a surface was
    * talking through the seconds before it makes any noise.
    */
-  private setPhase(conversation: Conversation, phase: SummaryChatPhase): void {
-    if (conversation.phase === phase) return
-    const wasSpeaking = conversation.phase === 'speaking'
-    conversation.phase = phase
+  private phaseChanged(conversation: Conversation, phase: SpeechPhase, previous: SpeechPhase): void {
     if (phase === 'speaking') this.onSpeakingChanged(conversation.nodeId, true, conversation.voice)
-    else if (wasSpeaking) this.onSpeakingChanged(conversation.nodeId, false)
+    else if (previous === 'speaking') this.onSpeakingChanged(conversation.nodeId, false)
     this.onStatusChanged(conversation.nodeId, phase)
   }
 
-  /**
-   * Take ownership of a conversation for a new run.
-   *
-   * Supersedes any run already under way *before* the caller announces a new
-   * phase, so there is never a moment where two attempts both believe they own
-   * the conversation. Shared by every entry point that produces sound, which is
-   * what keeps that ordering from being something each one has to remember.
-   */
-  private beginAttempt(conversation: Conversation): Attempt {
+  /** Start a run on a conversation, which also makes it the follow-up target. */
+  private beginAttempt(conversation: Conversation, phase: 'thinking' | 'synthesizing'): Attempt {
     conversation.lastUsedSeq = ++this.useCounter
-    conversation.attempt?.abandon()
-    const attempt = new Attempt(conversation)
-    conversation.attempt = attempt
-    return attempt
+    return conversation.channel.begin(phase)
   }
 
-  /**
-   * Hand one answer to Voice Operator and start following it.
-   *
-   * Returns whether a monitor now owns the conversation's phase; a caller that
-   * gets `false` is responsible for settling the surface itself. Shared by the
-   * two things that can produce audible text — a Haiku answer and a verbatim
-   * read — because everything from the POST onwards is identical for both, down
-   * to the window where a cancel that lands mid-POST has to drop the job.
-   */
-  private async deliver(conversation: Conversation, attempt: Attempt, text: string): Promise<boolean> {
+  /** Speak one answer in this conversation's voice. See `SpeechChannel.deliver`. */
+  private deliver(conversation: Conversation, attempt: Attempt, text: string): Promise<boolean> {
     // The Voice Operator may have appeared after this chat started. Lock a
     // deterministic voice as soon as its voice list becomes available.
     conversation.voice ??= this.voiceFor(conversation.nodeId)
-    const speech = await this.speak(conversation.speech, text, conversation.voice)
-    if (!attempt.isCurrent) {
-      // Cancelled while the POST was in flight. The job now exists and no
-      // monitor will ever adopt it, so it has to be dropped right here — this
-      // is the window that used to speak a whole answer at a listener who had
-      // already asked for silence.
-      if (speech.job) void conversation.speech.drop(speech.job.id)
-      return false
-    }
-    if (speech.error) {
-      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} speech refused: ${speech.error}`)
-      this.onStatusChanged(conversation.nodeId, 'error', speechErrorMessage(speech.error))
-      return false
-    }
-    if (!speech.job) {
-      serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} produced ${text.length} chars; Voice Operator is not running, so nothing was spoken`)
-      return false
-    }
-    conversation.speechId = speech.job.id
-    // Hand the wait over here, at the moment Voice Operator takes the job.
-    // It is not `speaking` — nothing has made a sound yet, and it may not
-    // for many seconds — but it is no longer ours to announce: Voice
-    // Operator's own waiting echo starts now, and a surface left in
-    // `thinking` would play a second one underneath it.
-    this.setPhase(conversation, 'synthesizing')
-    // "Queued", not "spoke". This point in the flow only knows that Voice
-    // Operator took the job — the old wording claimed the summary had been
-    // read out, and it logged that just as loudly on the presses where not
-    // one word was ever synthesized.
-    serverLog(`[summary-chat] ${conversation.nodeId.slice(0, 8)} queued ${text.length} chars as speech ${speech.job.id}`)
-    void this.monitorSpeech(conversation, attempt, speech.job)
-    return true
+    return conversation.channel.deliver(attempt, text, conversation.voice)
   }
 
   private async ask(
     conversation: Conversation, prompt: string, kind: AskKind,
   ): Promise<void> {
-    const attempt = this.beginAttempt(conversation)
-    this.setPhase(conversation, 'thinking')
+    const attempt = this.beginAttempt(conversation, 'thinking')
     let monitoring = false
     try {
       // Initial only. On a follow-up the listener has already been warned, and
@@ -792,22 +677,8 @@ export class SummaryChat {
     } finally {
       // Only the owner settles. A superseded or cancelled attempt leaves the
       // phase to whoever took the conversation from it.
-      if (!monitoring && attempt.isCurrent) this.settle(conversation, attempt)
+      if (!monitoring) conversation.channel.settle(attempt)
     }
-  }
-
-  /**
-   * End an attempt, returning its surface to idle.
-   *
-   * Silently does nothing for an attempt that no longer owns the conversation,
-   * so every path out of `ask` and `monitorSpeech` can simply call it rather
-   * than first working out whether it is still entitled to.
-   */
-  private settle(conversation: Conversation, attempt: Attempt): void {
-    if (!attempt.isCurrent) return
-    conversation.speechId = undefined
-    conversation.attempt = undefined
-    this.setPhase(conversation, 'ready')
   }
 
   /**
@@ -866,129 +737,6 @@ export class SummaryChat {
     }
   }
 
-  /**
-   * How much of the previous answer the listener actually heard, if they cut it
-   * off. Consumed once, so a later follow-up does not repeat stale context.
-   */
-  private async heardPrefix(conversation: Conversation): Promise<number | undefined> {
-    const recorded = conversation.interruptedAtCharacter
-    conversation.interruptedAtCharacter = undefined
-    if (recorded !== undefined) return recorded
-    // Still-live job: the follow-up beat the monitor to the terminal status.
-    if (!conversation.speechId) return undefined
-    const status = speechStatus(await conversation.speech.status(conversation.speechId))
-    if (status?.state !== 'interrupted_by_user') return undefined
-    return status.character_offset ?? 0
-  }
-
-  /**
-   * Stop a conversation producing, and settle its surface.
-   *
-   * The phase is settled here rather than left to `monitorSpeech`: the monitor
-   * returns silently once it no longer owns the conversation, so a cancelled
-   * job used to strand the surface in `thinking` forever — which is how a
-   * waiting cue could outlive the thing it was waiting for.
-   */
-  private async cancel(conversation: Conversation): Promise<void> {
-    const speechId = conversation.speechId
-    const attempt = conversation.attempt
-    conversation.speechId = undefined
-    conversation.attempt = undefined
-    // Abandoning aborts the request the attempt is parked on, which is what
-    // frees a monitor sitting in a thirty-second long poll.
-    attempt?.abandon()
-    this.setPhase(conversation, 'ready')
-    if (!speechId) return
-    const status = speechStatus(await conversation.speech.drop(speechId))
-    // Being cut off is exactly the situation the interruption offset exists to
-    // describe, so record it for the next follow-up. A reported zero is a real
-    // answer — the listener heard no complete sentence — and has to be told
-    // apart from an absent field, or the whole unheard answer stays in the
-    // history as though it had been delivered.
-    if (typeof status?.character_offset === 'number') {
-      conversation.interruptedAtCharacter = status.character_offset
-    }
-  }
-
-  /**
-   * Follow one speech job until it stops, keeping the surface's phase in step.
-   *
-   * Two polling strategies, chosen by whether Voice Operator offers a change
-   * cursor. With one, this parks in a long poll that the service wakes on *any*
-   * observable change — including the cancellation we issue ourselves, so a
-   * cancel and its monitor never have to race. Without one (an older service),
-   * it falls back to the short-poll cadence that cursor replaced; see
-   * `pollWaitSeconds` for why that cadence had to exist at all.
-   */
-  private async monitorSpeech(conversation: Conversation, attempt: Attempt, job: SpeechStatus): Promise<void> {
-    const speechId = job.id
-    const label = conversation.nodeId.slice(0, 8)
-    const startedAt = Date.now()
-    let cursor = job.version
-    let reportedPlayback: string | undefined
-    let stallReported = false
-    while (attempt.isCurrent) {
-      // A cursor poll is paced by the service; a legacy poll is paced by us.
-      const wait = cursor === undefined ? pollWaitSeconds(conversation.phase) : SPEECH_LONG_POLL_SECONDS
-      // The default request timeout is intentionally short for one-shot
-      // operations. A speech monitor, however, must tolerate a stalled local
-      // service without falsely declaring the job finished.
-      const status = speechStatus(await conversation.speech.status(
-        speechId,
-        { wait, ...(cursor === undefined ? {} : { since: cursor }) },
-        { signal: attempt.signal },
-        wait === 0 ? 3_000 : SPEECH_LONG_POLL_TIMEOUT_MS,
-      ))
-      if (!attempt.isCurrent) return
-      if (!status) {
-        // Voice Operator stopped answering about a job it had already accepted.
-        // Settling is right — the surface must not hang on it — but it is not
-        // the same as an answer that finished, and it left no trace at all.
-        serverLog(`[summary-chat] ${label} lost track of speech ${speechId} after ${sinceSeconds(startedAt)}`)
-        this.settle(conversation, attempt)
-        return
-      }
-      if (status.state === 'in_progress') {
-        const playback = status.playback_state ?? 'unknown'
-        if (playback !== reportedPlayback) {
-          serverLog(`[summary-chat] ${label} speech ${speechId} ${playback} at ${sinceSeconds(startedAt)}`)
-          reportedPlayback = playback
-        } else if (!stallReported && playback === 'queued'
-                   && Date.now() - startedAt >= SPEECH_STALL_REPORT_MS) {
-          serverLog(`[summary-chat] ${label} speech ${speechId} still queued after ${sinceSeconds(startedAt)} — accepted but silent`)
-          stallReported = true
-        }
-        // `in_progress` is the lifecycle of the whole Voice Operator job, and
-        // covers everything from "accepted, still queued" to "talking". Its
-        // playback state is what distinguishes those (see playbackPhase), so
-        // the surface's phase is driven from there rather than from the job.
-        this.setPhase(conversation, playbackPhase(status.playback_state, conversation.phase))
-        // A poll that did not advance the cursor told us nothing, so fall back
-        // to the floor rather than trust the service to pace us. Without this a
-        // service that ignores `since` — while still reporting a version —
-        // would spin this loop as fast as the event loop allows.
-        const advanced = cursor !== undefined && status.version !== undefined && status.version > cursor
-        cursor = status.version
-        if (!advanced) await this.deps.sleep(SPEECH_POLL_INTERVAL_MS)
-        continue
-      }
-      serverLog(`[summary-chat] ${label} speech ${speechId} ended as ${status.state} after ${sinceSeconds(startedAt)}`)
-      // Capture the cut-off point now, while the job is fresh in hand.
-      if (status.state === 'interrupted_by_user') {
-        conversation.interruptedAtCharacter = status.character_offset ?? 0
-      }
-      // A job that died in synthesis made no sound and offered no reason, yet
-      // used to settle down exactly the same path as a summary read out in
-      // full. To a listener those two are the same event — silence — so the
-      // one that is a fault has to say so.
-      if (status.state === 'synthesis_failed') {
-        this.onStatusChanged(conversation.nodeId, 'error', 'Voice Operator could not turn the summary into speech.')
-      }
-      this.settle(conversation, attempt)
-      return
-    }
-  }
-
   private async refreshVoices(): Promise<void> {
     const response = await this.vo.voices()
     const body = response?.status === 200 ? response.body as { voices?: Array<{ id?: string }> } : undefined
@@ -1006,121 +754,6 @@ export class SummaryChat {
     return this.voices[hash % this.voices.length]
   }
 
-  /**
-   * Queue an answer for speaking.
-   *
-   * Refusals come back named rather than as a silent absence: Voice Operator
-   * declines a job when the user has muted speech, and a listener who pressed
-   * the chord and then heard nothing deserves to be told which of "muted" and
-   * "broken" they are looking at.
-   */
-  private async speak(
-    backend: SpeechBackend, text: string, voice: string | undefined,
-  ): Promise<{ job?: SpeechStatus; error?: string }> {
-    const response = await backend.speak(text, voice)
-    const job = speechStatus(response)
-    if (job?.id) return { job }
-    // An absent response covers two different situations, and reporting both as
-    // silence is what let a press that never reached Voice Operator log itself
-    // as spoken. No discovery file means Voice Operator is simply not running,
-    // which is a supported way to use Summary Chat — the surface still gets its
-    // text summary and stays quiet about the audio it was never going to make.
-    // Discovery present and the request still failing is the other thing
-    // entirely: the service is there and did not answer.
-    if (response === undefined) {
-      return this.deps.readDiscovery() ? { error: 'unreachable' } : {}
-    }
-    const error = (response.body as { error?: unknown } | undefined)?.error
-    return { error: typeof error === 'string' ? error : 'rejected' }
-  }
-
-}
-
-/**
- * Whether a surface is producing an answer, and so has something to interrupt.
- *
- * Read off the phase rather than tracked separately, because the phase is
- * already the one value every other consumer derives from — see
- * `Conversation.phase`. A second notion of "busy" alongside it is a second
- * thing to keep in step, and the cancel gesture would be exactly where the two
- * drifting apart is felt.
- *
- * Stated as "not idle" rather than by listing the busy phases, so that adding
- * a phase cannot quietly remove a state from the cancel gesture. Adding
- * `synthesizing` to a list of busy phases would have been an easy omission to
- * make and a hard one to notice: it is the *longest* phase on a slow
- * synthesizer, which makes it the one a listener is most likely to be in when
- * they press the chord to shut it up.
- */
-function isBusy(conversation: Conversation): boolean {
-  return conversation.phase !== 'ready'
-}
-
-/** Elapsed time since `startedAt`, for a log line. */
-function sinceSeconds(startedAt: number): string {
-  return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
-}
-
-/** What a named refusal from Voice Operator means to the listener. */
-function speechErrorMessage(error: string | undefined): string {
-  if (error === 'speech_muted') return 'Voice Operator has speech muted, so there is nothing to hear.'
-  if (error === 'unreachable') return 'Voice Operator is not answering, so the summary could not be spoken.'
-  return 'Voice Operator would not speak the summary.'
-}
-
-/**
- * How long to ask Voice Operator to hold the next status poll open, on a
- * service too old to offer a change cursor.
- *
- * Measured, not assumed: a bare `?wait=N` wakes **only** at a terminal state.
- * It does not wake when playback moves from `queued` to `speaking`, which is
- * why the indicator used to sit on "thinking" for the whole spoken answer and
- * then jump straight to idle — the app asked a question that could only be
- * answered after the answer no longer mattered.
- *
- * So: while the surface is showing something that tracks the audio, poll
- * immediately and let SPEECH_POLL_INTERVAL_MS set the cadence. Once Voice
- * Operator is merely listening (`waiting_for_user`, mapped to `ready`) there
- * is nothing to track, and a job can sit there indefinitely — hand the waiting
- * back to the service rather than spinning on it.
- *
- * A service that reports `version` needs none of this: `?since=` wakes on every
- * change, so `monitorSpeech` long-polls throughout and this is not consulted.
- */
-function pollWaitSeconds(phase: SummaryChatPhase): number {
-  return phase === 'ready' ? SPEECH_LONG_POLL_SECONDS : 0
-}
-
-/**
- * What an `in_progress` speech job's playback state means for the surface.
- *
- * `waiting_for_user` deliberately maps to `ready`, not `thinking`: the job is
- * still open, but Voice Operator is listening rather than producing audio, and
- * a job can sit there indefinitely. Treating it as "still waiting" is what let
- * the waiting cue run forever after an answer had already been spoken.
- *
- * `queued` is read *relative to the phase we are already in*, which is the one
- * piece of hysteresis here. Voice Operator's queue is sentence-at-a-time: it
- * drops back to `queued` at every sentence handoff within a single job and
- * only returns to `speaking` once the next sentence's audio actually starts.
- * Now that this monitor polls fast enough to see those handoffs, a literal
- * reading would flicker the indicator in the gaps between an answer's own
- * sentences. An answer that has begun is speaking until it stops or ends,
- * however its synthesis is paced.
- *
- * Before the first sound, though, `queued` is exactly what it says — Voice
- * Operator is synthesizing — and the surface reports `synthesizing`. Note what
- * it never returns: `thinking`. Once a speech job exists, Haiku is done, and
- * `thinking` is the one phase that makes spaceterm audible.
- */
-function playbackPhase(
-  playbackState: SpeechStatus['playback_state'],
-  current: SummaryChatPhase,
-): SummaryChatPhase {
-  // Older services did not send playback_state; assume audible for compatibility.
-  if (playbackState === undefined || playbackState === 'speaking') return 'speaking'
-  if (playbackState === 'waiting_for_user') return 'ready'
-  return current === 'speaking' ? 'speaking' : 'synthesizing'
 }
 
 /** What one Haiku request is for. Gates the caution, and named in the audit. */

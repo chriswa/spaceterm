@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { RemoteSpeech, splitSentences } from './remote-speech'
-import { parseWav, speechStatus, type SpeechBackend } from './voice-operator'
+import { RemoteSpeech, splitSentences, splitSpeech } from './remote-speech'
+import { joinSpeechParts, parseWav, speechStatus, type SpeechBackend } from './voice-operator'
 import type { ServerMessage } from '../shared/protocol'
 
 const PHONE = 'phone-client'
@@ -9,8 +9,10 @@ function harness(opts: { connected?: boolean; synthesize?: (text: string) => Uin
   const sent: ServerMessage[] = []
   let connected = opts.connected ?? true
   let ids = 0
+  const synthesized: Array<[string, string | undefined]> = []
   const speech = new RemoteSpeech({
-    synthesize: async (text) => {
+    synthesize: async (text, voice) => {
+      synthesized.push([text, voice])
       const pcm = opts.synthesize ? opts.synthesize(text) : new Uint8Array(4)
       return pcm && { pcm, sampleRate: 24000 }
     },
@@ -28,7 +30,7 @@ function harness(opts: { connected?: boolean; synthesize?: (text: string) => Uin
     drop: vi.fn(async () => ({ status: 410, body: { id: 'sp_mac', state: 'cancelled_by_client' } })),
   }
   const backend = speech.forClient(PHONE, fallback)
-  return { speech, backend, fallback, sent, disconnect: () => { connected = false } }
+  return { speech, backend, fallback, sent, synthesized, disconnect: () => { connected = false } }
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -43,6 +45,24 @@ describe('splitSentences', () => {
 
   it('keeps an unterminated tail', () => {
     expect(splitSentences('One. Two').map((s) => s.text)).toEqual(['One.', 'Two'])
+  })
+})
+
+describe('splitSpeech', () => {
+  it('segments each part on its own and indexes the single-space join', () => {
+    // An unterminated part must not run on into the next one.
+    const parts = [{ text: 'First part', voice: 'a' }, { text: '  Ünïcødé — 🙂 ok. Last!' }, { text: 'Tail' }]
+    const joined = joinSpeechParts(parts)
+    const sentences = splitSpeech(parts, 'fallback')
+    expect(sentences.map((s) => [s.text, s.voice])).toEqual([
+      ['First part', 'a'], ['Ünïcødé — 🙂 ok.', 'fallback'], ['Last!', 'fallback'], ['Tail', 'fallback'],
+    ])
+    for (const s of sentences) expect(joined.slice(s.start, s.end)).toBe(s.text)
+  })
+
+  it('treats plain text as one part in the given voice', () => {
+    expect(splitSpeech(TEXT, 'v')).toEqual(splitSentences(TEXT).map((s) => ({ ...s, voice: 'v' })))
+    expect(splitSpeech(TEXT)[0]).not.toHaveProperty('voice')
   })
 })
 
@@ -106,6 +126,23 @@ describe('RemoteSpeech', () => {
     expect(speechStatus(await h.backend.speak(TEXT))?.id).toBe('sp_mac')
     await h.backend.drop('sp_mac')
     expect(h.fallback.drop).toHaveBeenCalledWith('sp_mac')
+  })
+
+  it('speaks parts sentence by sentence, each in its own voice, with offsets into the joined text', async () => {
+    const h = harness()
+    const parts = [{ text: 'Hello caller. How can I help?', voice: 'af_bella' }, { text: 'Connecting you now.' }]
+    await h.backend.speak(parts, 'am_adam')
+    await settle()
+    expect(h.synthesized).toEqual([
+      ['Hello caller.', 'af_bella'], ['How can I help?', 'af_bella'], ['Connecting you now.', 'am_adam'],
+    ])
+    // Finishing the first part is an offset that lands at its end in the joined text.
+    h.speech.progress(PHONE, 'rs_1', 1, 'finished')
+    const joined = joinSpeechParts(parts)
+    const offset = speechStatus(await h.backend.status('rs_1'))!.character_offset!
+    expect(joined.slice(0, offset)).toBe('Hello caller. How can I help?')
+    h.speech.progress(PHONE, 'rs_1', 2, 'finished')
+    expect(speechStatus(await h.backend.status('rs_1'))).toMatchObject({ state: 'completed', character_offset: joined.length })
   })
 
   it('ignores another client reporting on a job it does not own', async () => {

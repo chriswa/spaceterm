@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { ServerMessage, SpeechProgressEvent } from '../shared/protocol'
-import type { SpeechBackend, SpeechResponse, SpeechStatus } from './voice-operator'
+import { speechPartStarts, type SpeechBackend, type SpeechContent, type SpeechResponse, type SpeechStatus } from './voice-operator'
 import { serverLog } from './server-log'
 
 /**
@@ -25,7 +25,8 @@ export interface RemoteSpeechDeps {
   newId?(): string
 }
 
-interface Sentence { text: string; start: number; end: number }
+/** A sentence to speak. `start`/`end` index the job's whole text — see `joinSpeechParts`. */
+interface Sentence { text: string; start: number; end: number; voice?: string }
 
 interface Job {
   id: string
@@ -61,6 +62,31 @@ export function splitSentences(text: string): Sentence[] {
   return out
 }
 
+/**
+ * Split speech content into sentences, each carrying its own voice.
+ *
+ * Segmentation is per part — a sentence never spans a voice change — but every
+ * offset is into `joinSpeechParts(content)`, so an interruption offset from the
+ * phone means the same thing as one from Voice Operator. Unvoiced parts, and
+ * plain text, take `voice`.
+ */
+export function splitSpeech(content: SpeechContent, voice?: string): Sentence[] {
+  const parts = typeof content === 'string' ? [{ text: content }] : content
+  const starts = speechPartStarts(parts)
+  const out: Sentence[] = []
+  for (const [index, part] of parts.entries()) {
+    const base = starts[index]
+    const partVoice = part.voice ?? voice
+    for (const sentence of splitSentences(part.text)) {
+      out.push({
+        text: sentence.text, start: base + sentence.start, end: base + sentence.end,
+        ...(partVoice ? { voice: partVoice } : {}),
+      })
+    }
+  }
+  return out
+}
+
 const randomJobId = () => `rs_${randomUUID()}`
 
 export class RemoteSpeech {
@@ -75,7 +101,7 @@ export class RemoteSpeech {
    */
   forClient(clientId: string, fallback: SpeechBackend): SpeechBackend {
     return {
-      speak: (text, voice) => this.deps.isConnected(clientId) ? this.speak(clientId, text, voice) : fallback.speak(text, voice),
+      speak: (content, voice) => this.deps.isConnected(clientId) ? this.speak(clientId, content, voice) : fallback.speak(content, voice),
       status: (id, opts, init, timeoutMs) => this.jobs.has(id) ? this.status(id, opts, init?.signal ?? undefined) : fallback.status(id, opts, init, timeoutMs),
       drop: (id) => this.jobs.has(id) ? this.drop(id) : fallback.drop(id),
     }
@@ -107,8 +133,8 @@ export class RemoteSpeech {
     }
   }
 
-  private async speak(clientId: string, text: string, voice: string | undefined): Promise<SpeechResponse> {
-    const sentences = splitSentences(text)
+  private async speak(clientId: string, content: SpeechContent, voice: string | undefined): Promise<SpeechResponse> {
+    const sentences = splitSpeech(content, voice)
     if (!sentences.length) return { status: 400, body: { error: 'text_required' } }
     const job: Job = {
       id: this.deps.newId?.() ?? randomJobId(),
@@ -123,14 +149,14 @@ export class RemoteSpeech {
     }
     this.jobs.set(job.id, job)
     this.prune()
-    void this.pump(job, voice)
+    void this.pump(job)
     return { status: 202, body: this.snapshot(job) }
   }
 
   /** Synthesize each sentence in turn and send it on; the client queues them. */
-  private async pump(job: Job, voice: string | undefined): Promise<void> {
+  private async pump(job: Job): Promise<void> {
     for (const [index, sentence] of job.sentences.entries()) {
-      const audio = await this.deps.synthesize(sentence.text, voice, job.abort.signal)
+      const audio = await this.deps.synthesize(sentence.text, sentence.voice, job.abort.signal)
       if (job.state !== 'in_progress') return
       if (!audio) {
         serverLog(`[remote-speech] ${job.id} sentence ${index + 1}/${job.sentences.length} could not be synthesized`)

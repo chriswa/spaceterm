@@ -60,6 +60,55 @@ export const REAL_VOICE_OPERATOR_DEPS: VoiceOperatorDeps = {
   },
 }
 
+/** One stretch of speech in one voice. Unvoiced parts take the request's voice. */
+export type SpeechPart = { text: string; voice?: string }
+
+/**
+ * What a speech job says: plain text in one voice, or parts that may each be
+ * in a different voice.
+ */
+export type SpeechContent = string | readonly SpeechPart[]
+
+const SPEECH_PART_SEPARATOR = ' '
+
+/**
+ * The text a speech job is made of — parts joined with a single space.
+ *
+ * The one statement of the convention Voice Operator's `character_offset` is
+ * measured against (UTF-16 code units into this string), on both backends. A
+ * caller that redacts an interrupted answer has to cut the same string the
+ * offset was counted in, so nothing else should rebuild it.
+ */
+export function joinSpeechParts(content: SpeechContent): string {
+  return typeof content === 'string' ? content : content.map(part => part.text).join(SPEECH_PART_SEPARATOR)
+}
+
+/** Where each part begins in `joinSpeechParts(parts)`. */
+export function speechPartStarts(parts: readonly SpeechPart[]): number[] {
+  const starts: number[] = []
+  let at = 0
+  for (const part of parts) {
+    starts.push(at)
+    at += part.text.length + SPEECH_PART_SEPARATOR.length
+  }
+  return starts
+}
+
+/**
+ * The `POST /v1/speech` body. A string produces the single-voice body
+ * unchanged, so services that predate parts keep working for everything that
+ * does not use them.
+ */
+export function speechRequestBody(content: SpeechContent, voice?: string): Record<string, unknown> {
+  if (typeof content === 'string') return { text: content, ...(voice ? { voice } : {}) }
+  return {
+    parts: content.map(part => {
+      const partVoice = part.voice ?? voice
+      return { text: part.text, ...(partVoice ? { voice: partVoice } : {}) }
+    }),
+  }
+}
+
 /** The speech job in a reply, if the reply carries one at all. */
 export function speechStatus(response: SpeechResponse): SpeechStatus | undefined {
   const body = response?.body as SpeechStatus | undefined
@@ -109,10 +158,13 @@ export class VoiceOperator {
     }
   }
 
-  /** Queue text to be spoken. */
-  speak(text: string, voice?: string, init?: RequestInit): Promise<SpeechResponse> {
+  /**
+   * Queue speech. A string is one voice, exactly as it always was; parts each
+   * name their own voice, falling back to `voice`. See `SpeechContent`.
+   */
+  speak(content: SpeechContent, voice?: string, init?: RequestInit): Promise<SpeechResponse> {
     return this.request('/v1/speech', {
-      ...init, method: 'POST', body: JSON.stringify({ text, ...(voice ? { voice } : {}) }),
+      ...init, method: 'POST', body: JSON.stringify(speechRequestBody(content, voice)),
     })
   }
 
