@@ -186,7 +186,8 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onStatus: (cb) => onReceptionistStatus(({ phase, target, message }) => cb({ phase, target, message })),
       onTalkToMe: (cb) => onReceptionistTalkToMe((m) => cb(m.enabled)),
       onAgentNames: (cb) => onAgentNames((m) => cb(m.names)),
-      onCameraFollow: (cb) => on('camera-follow', (m) => cb(m.nodeId))
+      onCameraFollow: (cb) => on('camera-follow', (m) => cb(m.nodeId)),
+      onNotice: (cb) => on('receptionist-notice', (m) => cb(m.text))
     },
     perf: platform.perf,
     window: {

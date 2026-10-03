@@ -1509,6 +1509,16 @@ export interface CameraFollowMessage {
 }
 
 /**
+ * Something the receptionist did that costs money, worth a toast on every
+ * client — a fork of an agent, or a follow-up to one — with what it cost.
+ * Not replayed to late clients: it is news, not state.
+ */
+export interface ReceptionistNoticeMessage {
+  type: 'receptionist-notice'
+  text: string
+}
+
+/**
  * Every agent surface's receptionist name, whole, keyed by node id. Sent on
  * connect and broadcast whenever a name is assigned or released.
  */
@@ -1796,6 +1806,7 @@ export type ServerMessage =
   | ReceptionistStatusMessage
   | ReceptionistTalkToMeMessage
   | CameraFollowMessage
+  | ReceptionistNoticeMessage
   | AgentNamesMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage

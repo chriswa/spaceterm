@@ -69,7 +69,7 @@ export type ServerEventType =
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
-  | 'receptionist-status' | 'receptionist-talk-to-me' | 'camera-follow' | 'agent-names'
+  | 'receptionist-status' | 'receptionist-talk-to-me' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -283,6 +283,7 @@ export class ServerClient {
       case 'receptionist-talk-to-me':
       case 'camera-follow':
       case 'agent-names':
+      case 'receptionist-notice':
         this.emit(msg)
         return
 

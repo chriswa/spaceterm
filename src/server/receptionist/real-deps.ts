@@ -35,6 +35,34 @@ export async function askReceptionistModel(request: ModelRequest, signal: AbortS
   }
 }
 
+/** Control's conversation, so a server restart does not wipe what was said. */
+export const RECEPTIONIST_HISTORY = path.join(RECEPTIONIST_DIR, 'history.json')
+
+export const REAL_RECEPTIONIST_HISTORY = {
+  load(): Array<{ role: 'user' | 'assistant'; content: string }> | undefined {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(RECEPTIONIST_HISTORY, 'utf8')) as { messages?: unknown }
+      if (!Array.isArray(parsed.messages)) return undefined
+      return parsed.messages.filter((message): message is { role: 'user' | 'assistant'; content: string } =>
+        typeof message === 'object' && message !== null
+        && (message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string')
+    } catch {
+      return undefined
+    }
+  },
+  save(messages: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>): void {
+    try {
+      fs.mkdirSync(RECEPTIONIST_DIR, { recursive: true })
+      // Atomic, so a crash mid-write leaves the last good conversation rather than a torn one.
+      const tmp = `${RECEPTIONIST_HISTORY}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify({ version: 1, messages }))
+      fs.renameSync(tmp, RECEPTIONIST_HISTORY)
+    } catch (err) {
+      serverLog(`[receptionist] failed to save history: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  },
+}
+
 export function appendReceptionistLog(entry: Record<string, unknown>): void {
   try {
     fs.mkdirSync(RECEPTIONIST_DIR, { recursive: true })

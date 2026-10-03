@@ -34,19 +34,30 @@ import {
 
 type HistoryMessage = ModelRequest['messages'][number]
 
+/** What a fork said, and what saying it cost when Claude reports that. */
+export interface ForkAnswer { forkId: string; answer: string; costUsd?: number }
+
 /** Disposable copies of a live surface's Claude session. See `SessionForks`. */
 export interface ForkClient {
   /** Fork the surface's current session `sessionId` and ask the copy `prompt`. */
-  fork(req: { nodeId: NodeId; sessionId: string; prompt: string }): Promise<{ forkId: string; answer: string }>
+  fork(req: { nodeId: NodeId; sessionId: string; prompt: string }): Promise<ForkAnswer>
   /** Ask an existing fork again. */
-  ask(req: { forkId: string; prompt: string }): Promise<{ forkId: string; answer: string }>
+  ask(req: { forkId: string; prompt: string }): Promise<ForkAnswer>
 }
 
 export interface ReceptionistDeps {
   askModel(request: ModelRequest, signal: AbortSignal): Promise<ModelAnswer>
   /** Every live Claude Code surface, freshly read. */
   agents(): RosterAgent[]
+  /** The transcript's recent window, as Summary Chat reads it. */
   readTranscript(path: string): TranscriptMessage[]
+  /** The whole transcript, for searches. */
+  readWholeTranscript(path: string): TranscriptMessage[]
+  /** The conversation, kept across server restarts. Best-effort both ways. */
+  history: {
+    load(): Array<{ role: 'user' | 'assistant'; content: string }> | undefined
+    save(messages: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>): void
+  }
   names: {
     get(nodeId: NodeId): NamedVoice | undefined
     assign(nodeId: NodeId): NamedVoice | undefined
@@ -55,6 +66,11 @@ export interface ReceptionistDeps {
   forks: ForkClient
   /** Move the camera to a surface, on every client. */
   focus(nodeId: NodeId): void
+  /**
+   * A toast on every client. Forks are the receptionist's one expensive
+   * action — a read is nearly free — so each one is announced with its cost.
+   */
+  notify(text: string): void
   /** Type `text` into an agent's prompt and submit it — Ship it. */
   send(nodeId: NodeId, text: string): void
   /** Press Escape in an agent's terminal. */
@@ -125,6 +141,7 @@ export class Receptionist {
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
+    this.history = bounded(deps.history.load() ?? [])
     this.channel = new SpeechChannel({
       speech: opts.speech,
       label: 'receptionist',
@@ -283,7 +300,9 @@ export class Receptionist {
       }
       switch (call.tool) {
         case 'read': {
-          const messages = agent.transcriptPath ? this.deps.readTranscript(agent.transcriptPath) : []
+          // A search covers the whole session; a plain read is the recent part.
+          const read = call.search ? this.deps.readWholeTranscript : this.deps.readTranscript
+          const messages = agent.transcriptPath ? read(agent.transcriptPath) : []
           results.push(`read {${call.agent}}${call.search ? ` for "${call.search}"` : ''}:\n${readAgent(messages, call.search)}`)
           break
         }
@@ -334,9 +353,14 @@ export class Receptionist {
   private async askFork(agent: RosterAgent, question: string, forkId: string | undefined): Promise<void> {
     const handle = handleFor(agent.nodeId)
     const existing = forkId ? this.forks.get(forkId) : undefined
+    // Named now if it has no name yet: its answer will be quoted in its voice,
+    // and the toast should already call it what the listener will hear.
+    const named = this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
+    const name = (): string => named?.name ?? agent.title
+    const following = Boolean(existing && existing.nodeId === agent.nodeId)
     try {
-      let result: { forkId: string; answer: string }
-      if (existing && existing.nodeId === agent.nodeId) {
+      let result: ForkAnswer
+      if (existing && following) {
         result = await this.deps.forks.ask({ forkId: existing.forkId, prompt: question })
       } else {
         if (!agent.claudeSessionId) throw new Error('that agent has no Claude Code session to copy')
@@ -348,10 +372,13 @@ export class Receptionist {
           forkId: result.forkId, nodeId: agent.nodeId, lastSaidAtFork, sessionAtFork: agent.claudeSessionId,
         })
       }
+      const cost = result.costUsd === undefined ? 'cost unknown' : `$${result.costUsd.toFixed(2)}`
+      this.deps.notify(following ? `Control asked ${name()}'s copy a follow-up: ${cost}` : `Control forked ${name()}: ${cost}`)
       this.events.push({ kind: 'fork-answer', handle, forkId: result.forkId, question, answer: result.answer })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       serverLog(`[receptionist] fork of ${handle} failed: ${message}`)
+      this.deps.notify(`Control's fork of ${name()} failed: ${message.slice(0, 120)}`)
       this.events.push({ kind: 'fork-failed', handle, question, error: message })
     }
     this.maybeSpeakUp()
@@ -396,6 +423,7 @@ export class Receptionist {
       ...this.history, { role: 'user', content: body }, { role: 'assistant', content: storedReply(froms, spoken) },
     ])
     this.lastAnswer = { historyIndex: this.history.length - 1, froms, spoken }
+    this.deps.history.save(this.history)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     // The camera follows the conversation: the agent quoted first, else the
     // agent mentioned first.
@@ -414,6 +442,7 @@ export class Receptionist {
     if (heard === undefined || !last || this.history[last.historyIndex]?.role !== 'assistant') return
     const kept = redactSpoken(last.spoken, heard)
     this.history[last.historyIndex] = { role: 'assistant', content: storedReply(last.froms, kept) }
+    this.deps.history.save(this.history)
   }
 }
 

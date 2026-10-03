@@ -173,6 +173,7 @@ export class FakeBridge implements Api {
   private readonly receptionistTalkToMe = new Set<(enabled: boolean) => void>()
   private readonly agentNames = new Set<(names: Record<string, string>) => void>()
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
+  private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -277,6 +278,7 @@ export class FakeBridge implements Api {
       for (const fn of this.agentNames) fn(names)
     },
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
+    receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
@@ -442,7 +444,8 @@ export class FakeBridge implements Api {
     onStatus: (cb) => subscribe(this.receptionistStatus, cb),
     onTalkToMe: (cb) => subscribe(this.receptionistTalkToMe, cb),
     onAgentNames: (cb) => subscribe(this.agentNames, cb),
-    onCameraFollow: (cb) => subscribe(this.cameraFollow, cb)
+    onCameraFollow: (cb) => subscribe(this.cameraFollow, cb),
+    onNotice: (cb) => subscribe(this.receptionistNotice, cb)
   }
 
   readonly perf: PerfApi = {

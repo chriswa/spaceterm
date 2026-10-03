@@ -319,6 +319,8 @@ export interface ReceptionistApi {
   onAgentNames(callback: (names: Record<string, string>) => void): () => void
   /** Move the camera to a surface the conversation is about — no raise, no focus. */
   onCameraFollow(callback: (nodeId: NodeId) => void): () => void
+  /** Something the receptionist spent money on, for a toast. Not replayed. */
+  onNotice(callback: (text: string) => void): () => void
 }
 
 export interface PerfApi {

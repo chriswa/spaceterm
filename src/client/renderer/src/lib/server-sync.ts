@@ -15,6 +15,7 @@ import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
 import { playSpeechCue } from './speech-cues'
 import { setSummaryChatWaiting } from './summary-chat-wait-cue'
+import { ROOT_NODE_ID } from '../../../../shared/ids'
 import { showToast } from './toast'
 import { pokeFrames } from './frame-policy'
 import type { CreateOptions, SoundName } from '../../../../shared/protocol'
@@ -198,6 +199,9 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
       // Every change is broadcast whole, so toast only an error that is new.
       const before = useReceptionistStore.getState().error
       useReceptionistStore.getState().setStatus(status)
+      // The same echo Summary Chat plays while Haiku thinks, keyed by the root
+      // node — Control's home — so the two can never cancel each other's wait.
+      setSummaryChatWaiting(ROOT_NODE_ID, status.phase === 'thinking')
       if (status.message && status.message !== before) showToast(`Control: ${status.message}`)
     })
   )
@@ -207,6 +211,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
       useReceptionistStore.getState().setTalkToMe(enabled)
     })
   )
+
+  cleanupFns.push(window.api.receptionist.onNotice((text) => showToast(text)))
 
   cleanupFns.push(
     window.api.receptionist.onAgentNames((names) => {

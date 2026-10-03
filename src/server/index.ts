@@ -68,10 +68,10 @@ import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
-import { SummaryChat, readTranscript } from './summary-chat'
+import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat'
 import { Receptionist } from './receptionist/receptionist'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
-import { appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import { REAL_RECEPTIONIST_HISTORY, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
 import { SessionForks, type ForkLaunch } from './receptionist/session-fork'
 import { scrubInheritedAgentEnv } from './spawn-env'
 import type { RosterAgent } from './receptionist/roster'
@@ -3029,6 +3029,8 @@ async function startServer(): Promise<void> {
     askModel: askReceptionistModel,
     agents: receptionistAgents,
     readTranscript,
+    readWholeTranscript,
+    history: REAL_RECEPTIONIST_HISTORY,
     names: {
       get: (nodeId) => agentNames.get(nodeId),
       assign: (nodeId) => {
@@ -3040,6 +3042,7 @@ async function startServer(): Promise<void> {
     },
     forks: new SessionForks(forkLaunchFor),
     focus: (nodeId) => broadcastToAll({ type: 'camera-follow', nodeId }),
+    notify: (text) => broadcastToAll({ type: 'receptionist-notice', text }),
     send: (nodeId, text) => {
       const node = stateManager.getNode(nodeId)
       if (node?.type === 'terminal' && node.alive) shipToSession(node.sessionId, text, true)

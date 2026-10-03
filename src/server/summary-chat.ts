@@ -937,6 +937,20 @@ export function readTranscript(filePath: string): TranscriptMessage[] {
  * fixture text rather than files on disk.
  */
 export function parseTranscript(raw: string): TranscriptMessage[] {
+  return selectSpeakable(parseWholeTranscript(raw))
+}
+
+/**
+ * Every message in a transcript, in the same shape `readTranscript` gives but
+ * without its window — for searching the early hours of a long session.
+ */
+export function readWholeTranscript(filePath: string): TranscriptMessage[] {
+  let raw: string
+  try { raw = fs.readFileSync(filePath, 'utf8') } catch { return [] }
+  return parseWholeTranscript(raw)
+}
+
+export function parseWholeTranscript(raw: string): TranscriptMessage[] {
   const extracted: Extracted[] = []
   for (const line of raw.split('\n')) {
     if (!line) continue
@@ -944,7 +958,7 @@ export function parseTranscript(raw: string): TranscriptMessage[] {
       extracted.push(...extractEntry(JSON.parse(line) as Record<string, any>))
     } catch { /* Ignore a partial JSONL write. */ }
   }
-  return selectSpeakable(coalesceToolRuns(extracted))
+  return coalesceToolRuns(extracted)
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { asNodeId, type NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import type { ModelRequest, TranscriptMessage } from '../summary-chat'
@@ -25,6 +25,19 @@ const TRANSCRIPTS: Record<string, TranscriptMessage[]> = {
   ],
 }
 
+/** Hours-old messages that only a whole-transcript read reaches. */
+const EARLY: Record<string, TranscriptMessage[]> = {
+  '/t/kevin.jsonl': [{ role: 'assistant', text: 'Early on: the boundary handling uses ghost cells.' }],
+}
+
+/**
+ * Failures inside a scripted reply. The receptionist catches whatever its
+ * model call throws — that is a failed turn to it, not a test failure — so an
+ * `expect` inside a script would fail silently without this.
+ */
+const scriptFailures: unknown[] = []
+afterEach(() => { expect(scriptFailures.splice(0)).toEqual([]) })
+
 type Script = string | ((request: ModelRequest) => string | Promise<string>)
 
 /** Everything a receptionist touches, faked, with the calls it made recorded. */
@@ -33,7 +46,9 @@ function harness(opts: {
   /** Status the speech job ends in. Defaults to completing. */
   speechEnds?: Partial<SpeechStatus>
   forks?: Partial<ForkClient>
-} ) {
+  /** A conversation saved by an earlier server. */
+  savedHistory?: ModelRequest['messages']
+}) {
   const states = new Map<NodeId, ClaudeState>([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']])
   const agents = (): RosterAgent[] => [
     { nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session' },
@@ -50,6 +65,8 @@ function harness(opts: {
   const focused: NodeId[] = []
   const forkCalls: Array<Record<string, unknown>> = []
   const wire: string[] = []
+  const notices: string[] = []
+  const saved: ModelRequest['messages'] = []
   let job = 0
   const speech: SpeechBackend = {
     speak: async (content, voice) => {
@@ -64,10 +81,18 @@ function harness(opts: {
       requests.push(request)
       const next = replies.shift()
       if (next === undefined) throw new Error('no scripted reply left')
-      return { text: typeof next === 'function' ? await next(request) : next }
+      if (typeof next !== 'function') return { text: next }
+      try {
+        return { text: await next(request) }
+      } catch (err) {
+        scriptFailures.push(err)
+        throw err
+      }
     },
     agents,
-    readTranscript: (path) => TRANSCRIPTS[path] ?? [],
+    readTranscript: (path) => (TRANSCRIPTS[path] ?? []).slice(-2),
+    readWholeTranscript: (path) => [...(EARLY[path] ?? []), ...(TRANSCRIPTS[path] ?? [])],
+    history: { load: () => opts.savedHistory, save: (messages) => { saved.splice(0, saved.length, ...messages) } },
     names: {
       get: (nodeId) => assigned.get(nodeId),
       assign: (nodeId) => {
@@ -78,11 +103,12 @@ function harness(opts: {
       touch: () => {},
     },
     forks: {
-      fork: async (req) => { forkCalls.push({ kind: 'fork', ...req }); return { forkId: 'fork-1', answer: 'It was 42 litres exactly.' } },
+      fork: async (req) => { forkCalls.push({ kind: 'fork', ...req }); return { forkId: 'fork-1', answer: 'It was 42 litres exactly.', costUsd: 0.0851 } },
       ask: async (req) => { forkCalls.push({ kind: 'ask', ...req }); return { forkId: req.forkId, answer: 'The small tank held 7.' } },
       ...opts.forks,
     },
     focus: (nodeId) => focused.push(nodeId),
+    notify: (text) => notices.push(text),
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
     interrupt: (nodeId) => wire.push(`escape ${nodeId}`),
     directories: () => [{ nodeId: DIR_ID, cwd: '/Users/me/spaceterm' }],
@@ -92,7 +118,7 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { speech, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, requests, spoken, focused, forkCalls, assigned, wire,
+    receptionist, requests, spoken, focused, forkCalls, assigned, wire, saved, notices,
     setState(nodeId: NodeId, state: ClaudeState) {
       states.set(nodeId, state)
       receptionist.agentStateChanged(nodeId, state)
@@ -252,6 +278,7 @@ describe('Receptionist', () => {
     await h.receptionist.hear('and the small tank?')
     await flush()
     expect(h.forkCalls[1]).toEqual({ kind: 'ask', forkId: 'fork-1', prompt: 'And the small tank?' })
+    expect(h.notices).toEqual([`Control forked Kevin: $0.09`, `Control asked Kevin's copy a follow-up: cost unknown`])
     expect(h.spoken).toHaveLength(3)
   })
 
@@ -360,5 +387,37 @@ describe('Receptionist', () => {
     h.setState(SALLY_ID, 'stopped')
     await flush()
     expect(h.requests).toHaveLength(2)
+  })
+
+  it('searches the whole transcript, while a plain read stays recent', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'read', agent: KEVIN, search: 'ghost cells' }]),
+        (request) => {
+          expect(h.latest(request)).toContain('the boundary handling uses ghost cells')
+          return reply([{ from: KEVIN, text: 'The boundary handling uses ghost cells.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what did Kevin say about ghost cells?')
+    await flush()
+    expect(h.spoken).toHaveLength(1)
+  })
+
+  it('remembers the conversation across a restart', async () => {
+    const first = harness({ replies: [reply([{ from: 'control', text: 'Kevin is on the water sim.' }])] })
+    await first.receptionist.hear('what is Kevin doing?')
+    await flush()
+    const second = harness({
+      savedHistory: [...first.saved],
+      replies: [(request) => {
+        expect(request.messages[0].content).toBe('THE USER SAYS: what is Kevin doing?')
+        expect(request.messages[1].content).toContain('water sim')
+        return reply([{ from: 'control', text: 'Still on it.' }])
+      }],
+    })
+    await second.receptionist.hear('and now?')
+    await flush()
+    expect(second.requests).toHaveLength(1)
   })
 })

@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import type { NodeId } from '../../shared/ids'
-import type { ForkClient } from './receptionist'
+import type { ForkAnswer, ForkClient } from './receptionist'
 
 /**
  * Forks of a live Claude surface, launched exactly as the surface was.
@@ -79,7 +79,7 @@ export class SessionForks implements ForkClient {
     private readonly deps: SessionForkDeps = REAL_SESSION_FORK_DEPS,
   ) {}
 
-  async fork({ nodeId, sessionId, prompt }: { nodeId: NodeId; sessionId: string; prompt: string }): Promise<{ forkId: string; answer: string }> {
+  async fork({ nodeId, sessionId, prompt }: { nodeId: NodeId; sessionId: string; prompt: string }): Promise<ForkAnswer> {
     const launch = this.launchFor(nodeId)
     if (!launch) throw new Error('that agent is not a live Claude surface')
     const result = await this.deps.run(launch, ['-p', '--resume', sessionId, '--fork-session', '--output-format', 'json'], prompt)
@@ -87,14 +87,14 @@ export class SessionForks implements ForkClient {
     // Captured, not looked up again: a follow-up must resume the copy the way
     // it was made, even if the surface's arguments have changed since.
     this.launches.set(result.sessionId, launch)
-    return { forkId: result.sessionId, answer: result.result }
+    return { forkId: result.sessionId, answer: result.result, costUsd: result.costUsd }
   }
 
-  async ask({ forkId, prompt }: { forkId: string; prompt: string }): Promise<{ forkId: string; answer: string }> {
+  async ask({ forkId, prompt }: { forkId: string; prompt: string }): Promise<ForkAnswer> {
     const launch = this.launches.get(forkId)
     if (!launch) throw new Error(`fork ${forkId} is not one this server made`)
     const result = await this.deps.run(launch, ['-p', '--resume', forkId, '--output-format', 'json'], prompt)
     if (result.isError) throw new Error(result.result || 'the fork reported an error')
-    return { forkId, answer: result.result }
+    return { forkId, answer: result.result, costUsd: result.costUsd }
   }
 }
