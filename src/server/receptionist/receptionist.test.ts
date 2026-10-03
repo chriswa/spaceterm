@@ -533,6 +533,8 @@ describe('Receptionist', () => {
     await h.receptionist.hear('ask Kevin exactly how many litres')
     await flush()
     expect(h.sideQuestions).toEqual([{ nodeId: KEVIN_ID, prompt: sideQuestionPrompt('Exactly how many litres?') }])
+    // The agent is told its answer is heard, word for word, so it writes something quotable.
+    expect(h.sideQuestions[0].prompt).toMatch(/text-to-speech[^]*concise and conversational[^]*summarized by the receptionist[^]*Question: Exactly how many litres\?$/)
     expect(h.notices).toEqual(['Control asked Kevin: 38.3k cached, 0k new'])
     expect(h.spoken).toHaveLength(2)
   })

@@ -214,11 +214,17 @@ const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say tha
 
 /**
  * The question an agent is actually given. Unframed, an agent answering a bare
- * question out of nowhere is suspicious and long-winded.
+ * question out of nowhere is suspicious and long-winded — and writes for a
+ * screen, which the receptionist then retells in its own words rather than
+ * quoting, when the point is to hear the agent.
  */
 export function sideQuestionPrompt(question: string): string {
-  return "A quick side question from the user's receptionist. Answer briefly, in a sentence or two, from what you already know; " +
-    `you cannot use tools for this.\n\nQuestion: ${question}`
+  return "A quick side question from the user's receptionist, answered from what you already know; you cannot use tools for this. " +
+    'Your answer is read aloud to the user by text-to-speech, word for word and in your voice, as part of a spoken conversation. ' +
+    'So keep it concise and conversational: only what matters to the user, in a few plain spoken sentences, in the first person, ' +
+    'with no markdown, lists, code, file names or paths. An answer that is longer than that, or not fit to be heard, ' +
+    'gets summarized by the receptionist in its own words instead of yours.' +
+    `\n\nQuestion: ${question}`
 }
 
 export class Receptionist {
