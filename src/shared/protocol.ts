@@ -1180,6 +1180,15 @@ export interface SpeechStopMessage {
   id: string
 }
 
+/**
+ * Unsolicited broadcast: the server now serves a new build of the mobile web
+ * app. A phone checks whether that leaves its page behind
+ * (src/mobile/update-check.ts) rather than waiting for its next look.
+ */
+export interface MobileBuildChangedMessage {
+  type: 'mobile-build-changed'
+}
+
 /** Unsolicited broadcast: a new AI usage reading (PUSH). */
 export interface UsageReportMessage {
   type: 'usage-report'
@@ -1733,3 +1742,4 @@ export type ServerMessage =
   | SpeechAudioMessage
   | SpeechStopMessage
   | MobileAppInstallResultMessage
+  | MobileBuildChangedMessage

@@ -6,10 +6,12 @@ import { spawn } from 'child_process'
  * Keep the mobile web app's build (`out/mobile`) current without anyone
  * remembering to run `npm run mobile:build`.
  *
- * On server startup: if any source the bundle is built from is newer than the
- * build, rebuild — in a child process, so startup never waits on it. The build
- * goes to a staging directory and is swapped in when complete, so the gateway
- * never serves a half-written one; until then it serves the previous build.
+ * At server startup, and whenever a source the bundle is built from changes
+ * (`MobileBuildKeeper`): if any source is newer than the build, rebuild — in a
+ * child process, so nothing waits on it. The build goes to a staging directory
+ * and is swapped in when complete, so the gateway never serves a half-written
+ * one; until then it serves the previous build. A phone then sees its page is
+ * behind (src/mobile/update-check.ts) and offers a reload.
  */
 
 /** What the mobile bundle is built from, relative to the repo root. */
@@ -31,6 +33,18 @@ export function needsRebuild(newestSource: number, builtAt: number | null): bool
   return builtAt === null || newestSource > builtAt
 }
 
+/**
+ * Never a source: dependencies, and build output — Xcode builds the iPhone
+ * app into `src/mobile/ios/build`, and every install would otherwise look
+ * like an edit.
+ */
+const IGNORED_NAMES = new Set(['node_modules', 'build'])
+
+/** Whether a changed path, relative to a watched source, could change the bundle. */
+export function isSourcePath(relative: string): boolean {
+  return !relative.split(/[\\/]/).some((part) => IGNORED_NAMES.has(part) || part.startsWith('.'))
+}
+
 function newestMtime(entry: string): number {
   let stat: fs.Stats
   try {
@@ -41,7 +55,7 @@ function newestMtime(entry: string): number {
   if (!stat.isDirectory()) return /\.test\.tsx?$/.test(entry) ? 0 : stat.mtimeMs
   let newest = 0
   for (const name of fs.readdirSync(entry)) {
-    if (name === 'node_modules' || name.startsWith('.')) continue
+    if (IGNORED_NAMES.has(name) || name.startsWith('.')) continue
     newest = Math.max(newest, newestMtime(path.join(entry, name)))
   }
   return newest
@@ -104,4 +118,74 @@ export async function refreshMobileBuild(outDir: string, deps: MobileBuildDeps):
   }
   deps.log(`[mobile-build] Rebuilt in ${((Date.now() - started) / 1000).toFixed(1)}s`)
   return 'rebuilt'
+}
+
+/** Edits come in bursts — a save, an agent's run of edits: build once they stop. */
+export const QUIET_MS = 2_000
+
+export interface MobileBuildKeeperDeps {
+  refresh(): Promise<'current' | 'rebuilt' | 'failed'>
+  schedule(fn: () => void, ms: number): () => void
+}
+
+/**
+ * Rebuilds as sources change: once they have been quiet for `QUIET_MS`, never
+ * two builds at once, and once more if they changed while it ran.
+ */
+export class MobileBuildKeeper {
+  private cancelWait: (() => void) | null = null
+  private building = false
+  private changedWhileBuilding = false
+
+  constructor(
+    private readonly deps: MobileBuildKeeperDeps,
+    /** A new build is being served. */
+    private readonly onRebuilt: () => void
+  ) {}
+
+  /** Bring the build up to date now — at startup. */
+  refreshNow(): Promise<void> {
+    return this.run()
+  }
+
+  /** A source changed. */
+  changed(): void {
+    if (this.building) {
+      this.changedWhileBuilding = true
+      return
+    }
+    this.cancelWait?.()
+    this.cancelWait = this.deps.schedule(() => {
+      this.cancelWait = null
+      void this.run()
+    }, QUIET_MS)
+  }
+
+  private async run(): Promise<void> {
+    this.building = true
+    this.changedWhileBuilding = false
+    try {
+      if ((await this.deps.refresh()) === 'rebuilt') this.onRebuilt()
+    } finally {
+      this.building = false
+      if (this.changedWhileBuilding) this.changed()
+    }
+  }
+}
+
+/** Watch every source of the bundle; returns a function that stops watching. */
+export function watchMobileSources(repoRoot: string, onChange: () => void, log: (m: string) => void): () => void {
+  const watchers: fs.FSWatcher[] = []
+  for (const source of SOURCES) {
+    const full = path.join(repoRoot, source)
+    try {
+      const recursive = fs.statSync(full).isDirectory()
+      watchers.push(fs.watch(full, { recursive }, (_event, name) => {
+        if (!name || isSourcePath(name.toString())) onChange()
+      }))
+    } catch (err) {
+      log(`[mobile-build] Cannot watch ${source}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return () => { for (const w of watchers) w.close() }
 }

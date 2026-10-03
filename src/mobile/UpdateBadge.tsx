@@ -33,7 +33,7 @@ export function UpdateBadge() {
     }
   }
 
-  const label = installing ? 'Installing…' : stale.native ? 'App update' : 'Update'
+  const label = installing ? 'Installing…' : stale.native ? 'App update' : 'Reload'
   return (
     <>
       <button

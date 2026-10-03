@@ -392,6 +392,7 @@ export class FakeBridge implements Api {
     onAgentMetaAvailability: (cb) => subscribe(this.agentMetaAvailability, cb),
     restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag),
     onUsageReport: (cb) => subscribe(this.usageReport, cb),
+    onMobileBuildChanged: () => () => undefined,
     usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport)
   }
 

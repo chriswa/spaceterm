@@ -43,8 +43,10 @@ Touches never reach xterm (`terminal-gesture.ts`):
 
 On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
-A badge in the top-left corner says when the phone runs older code than the
-Mac has: tap it to reload a newer page, or to have the Mac build and install the
+The server rebuilds the bundle a couple of seconds after its sources stop
+changing (`MobileBuildKeeper` in `src/server/mobile-build.ts`) and tells the
+phone. A badge in the top-left corner then says the phone runs older code than
+the Mac has: tap **Reload** for a newer page, or to have the Mac build and install the
 newer native app (`src/server/mobile-install.ts`, the same `install.sh`). The build writes `build.json` (its id and the native
 fingerprint from `ios/native-version.mjs`), which `install.sh` also stamps into
 the app — see `update-check.ts`.

@@ -129,7 +129,8 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       agentSearch: (query, mode) => client.agentSearch(query, mode),
       restartFlagStatus: () => client.restartFlagQuery(),
       onUsageReport: (cb) => on('usage-report', (m) => cb(m.snapshot)),
-      usageReportStatus: () => client.usageReportQuery()
+      usageReportStatus: () => client.usageReportQuery(),
+      onMobileBuildChanged: (cb) => on('mobile-build-changed', () => cb())
     },
     log: (message) => platform.log(message),
     toggleSummaryChat: (nodeId, mode) => client.toggleSummaryChat(nodeId, mode, platform.playsSpeech ?? false),

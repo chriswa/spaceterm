@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 
 /**
  * Whether this phone is running older code than the Mac has: the page (a
- * build made since it loaded — a reload fixes it) or the native app around it
+ * build made since it loaded — the server rebuilds as its sources change, and
+ * says so — a reload fixes it) or the native app around it
  * (a change made but never installed — only `npm run mobile:ios` fixes that).
  *
  * The server serves `build.json` beside the page, written by the build
@@ -66,6 +67,8 @@ export function useStaleness(): Staleness {
       setStale((current) => current.web === next.web && current.native === next.native ? current : next)
     }
     const onVisible = () => { if (document.visibilityState === 'visible') void check() }
+    // The server says the moment it serves a new build.
+    const offBuilt = window.api?.node.onMobileBuildChanged(() => void check())
     void check()
     const timer = setInterval(() => void check(), CHECK_EVERY_MS)
     document.addEventListener('visibilitychange', onVisible)
@@ -73,6 +76,7 @@ export function useStaleness(): Staleness {
       live = false
       clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
+      offBuilt?.()
     }
   }, [])
   return stale

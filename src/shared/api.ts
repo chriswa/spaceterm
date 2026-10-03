@@ -219,6 +219,8 @@ export interface NodeApi {
   restartFlagStatus(): Promise<{ required: boolean; reason: string }>
   /** Each new AI usage reading from AI Spend Tracker (PUSH). */
   onUsageReport(callback: (snapshot: UsageSnapshot) => void): () => void
+  /** The server is serving a new mobile web build (PUSH). */
+  onMobileBuildChanged(callback: () => void): () => void
   /** The latest AI usage reading (PULL), or null until there is one. */
   usageReportStatus(): Promise<UsageSnapshot | null>
 }

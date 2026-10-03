@@ -43,7 +43,7 @@ import { MobileAppInstaller, realMobileInstallDeps } from './mobile-install'
 import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
-import { refreshMobileBuild, realMobileBuildDeps } from './mobile-build'
+import { refreshMobileBuild, realMobileBuildDeps, MobileBuildKeeper, watchMobileSources } from './mobile-build'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
 import { readClaudeCacheTouch } from './claude-cache-warmth'
@@ -263,6 +263,7 @@ function ancestorCwd(nodes: Record<string, NodeData>, nodeId: NodeId): string | 
 let snapshotManager: SnapshotManager
 let sessionFileWatcher: SessionFileWatcher
 let restartFlagWatcher: (() => void) | null = null
+let stopWatchingMobileSources: (() => void) | null = null
 /** AI usage from AI Spend Tracker, for the phone's corner readout. */
 const usageTracker = new UsageTracker((snapshot) => broadcastToAll({ type: 'usage-report', snapshot }))
 let codexSessionFileWatcher: CodexSessionFileWatcher
@@ -3078,8 +3079,17 @@ async function startServer(): Promise<void> {
   if (webPort > 0) {
     const repoRoot = path.resolve(__dirname, '..', '..')
     const mobileOut = path.join(repoRoot, 'out', 'mobile')
-    // Not awaited: startup never waits on a bundle build.
-    void refreshMobileBuild(mobileOut, realMobileBuildDeps(repoRoot, mobileOut, serverLog))
+    // Rebuilt at startup and whenever its sources change; phones are told, so
+    // their page offers a reload. Not awaited: nothing waits on a bundle build.
+    const mobileBuild = new MobileBuildKeeper({
+      refresh: () => refreshMobileBuild(mobileOut, realMobileBuildDeps(repoRoot, mobileOut, serverLog)),
+      schedule: (fn, ms) => {
+        const timer = setTimeout(fn, ms)
+        return () => clearTimeout(timer)
+      },
+    }, () => broadcastToAll({ type: 'mobile-build-changed' }))
+    void mobileBuild.refreshNow()
+    stopWatchingMobileSources = watchMobileSources(repoRoot, () => mobileBuild.changed(), serverLog)
     startWebGateway({
       port: webPort,
       staticRoot: mobileOut,
@@ -3169,6 +3179,7 @@ async function startServer(): Promise<void> {
     fileContentManager.dispose()
     sessionFileWatcher.dispose()
     if (restartFlagWatcher) restartFlagWatcher()
+    stopWatchingMobileSources?.()
     usageTracker.stop()
     codexSessionFileWatcher.dispose()
     cursorSessionFileWatcher.dispose()

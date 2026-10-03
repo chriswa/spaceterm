@@ -67,7 +67,7 @@ export type ServerEventType =
   | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active' | 'speaking-changed'
   | 'summary-chat-status' | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
-  | 'speech-audio' | 'speech-stop'
+  | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -276,6 +276,7 @@ export class ServerClient {
       case 'usage-report':
       case 'speech-audio':
       case 'speech-stop':
+      case 'mobile-build-changed':
       case 'agent-meta-availability':
         this.emit(msg)
         return
