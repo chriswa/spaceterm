@@ -6,7 +6,8 @@ extension WKWebView {
     /// Take the form bar off the keyboard — the strip of AutoFill buttons
     /// (passwords, cards, addresses) and ⌃ ⌄ Done that WebKit puts above it for
     /// every text field. None of it applies to a terminal or a prompt, and the
-    /// page has its own key row and its own way to dismiss the keyboard.
+    /// page has its own key row and its own way to dismiss the keyboard (a tap
+    /// outside the text, or the keyboard's own dismiss key).
     ///
     /// WebKit has no setting for this. The bar is the `inputAccessoryView` of
     /// its private content view, so that one view is given a subclass, made at
