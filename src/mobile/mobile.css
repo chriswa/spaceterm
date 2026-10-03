@@ -139,7 +139,8 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-summarizer {
   position: fixed;
   left: 50%;
-  bottom: calc(10px + var(--m-safe-bottom));
+  /* On the same baseline as the corner buttons either side. */
+  bottom: var(--m-corner-gap);
   transform: translateX(-50%);
   z-index: 2147483300;
   width: 56px;
@@ -170,7 +171,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-summarizer__error {
   position: fixed;
   left: 50%;
-  bottom: calc(76px + var(--m-safe-bottom));
+  bottom: calc(66px + var(--m-corner-gap));
   transform: translateX(-50%);
   z-index: 2147483300;
   max-width: calc(100% - 32px);
