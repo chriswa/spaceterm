@@ -207,4 +207,18 @@ describe('AutoStamper', () => {
     h.stamper.resume()
     expect(h.prompts).toHaveLength(1)
   })
+
+  it('retries a failed icon on a sweep, but not when the title merely repeats', async () => {
+    const h = harness()
+    h.stamper.regenerate(NODE)
+    await h.answer(new Error('spawn claude-print-daemon ENOENT'))
+    expect(h.node.autoStamp?.status).toBe('failed')
+
+    h.setTitle('Fix the parser')
+    h.settle()
+    expect(h.prompts).toHaveLength(1)
+
+    h.stamper.resume()
+    expect(h.prompts).toHaveLength(2)
+  })
 })

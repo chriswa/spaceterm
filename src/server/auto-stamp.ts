@@ -128,13 +128,19 @@ export class AutoStamper {
   }
 
   /**
-   * Draw every icon that is missing, stale, or was left half-drawn by a
-   * previous server. Called at startup and when generation is turned on.
+   * Draw every icon that is missing, stale, failed, or was left half-drawn by
+   * a previous server. Called at startup and when generation is turned on.
+   *
+   * Failures are retried here and nowhere else: whatever broke them (a missing
+   * binary, a signed-out Claude Code) is fixed by the operator, who then
+   * restarts or toggles generation. Retrying on title changes would instead
+   * spend a claude process on every agent turn while the cause persists.
    */
   resume(): void {
     for (const node of this.deps.getNodes()) {
       if (!this.eligible(node)) continue
-      if (node.autoStamp?.status === 'generating' && !this.running.has(node.id)) this.generate(node.id, false)
+      const status = node.autoStamp?.status
+      if ((status === 'generating' || status === 'failed') && !this.running.has(node.id)) this.generate(node.id, false)
       else this.titleMaybeChanged(node.id)
     }
   }

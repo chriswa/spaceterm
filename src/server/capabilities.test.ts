@@ -62,11 +62,12 @@ describe('probeCapabilities', () => {
       expect(c.detail).toBe('/home/me/go/bin/claude-print-daemon')
     })
 
-    it('names Summary Chat as what degrades, and says how to install it', () => {
+    it('names Summary Chat and auto-stamps as what degrades, and says how to install it', () => {
       const c = byId(probeCapabilities(deps({ which: () => undefined })), 'claude-print-daemon')
       expect(c.available).toBe(false)
       expect(c.affects).toMatch(/Summary Chat/)
-      expect(c.detail).toMatch(/go install/)
+      expect(c.affects).toMatch(/auto-stamp/)
+      expect(c.detail).toMatch(/PATH/)
     })
   })
 

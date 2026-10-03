@@ -1,7 +1,7 @@
 import { spawn } from 'child_process'
 
 /**
- * Client for claude-print-daemon (~/claude-print-daemon), which keeps
+ * Client for claude-print-daemon (~/research/claude-print-daemon), which keeps
  * `claude -p` processes started and waiting so a reply costs roughly the API's
  * own latency rather than Claude Code's startup.
  *

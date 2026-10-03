@@ -83,9 +83,10 @@ function AutoStampMark({ autoStamp, color, onRegenerate }: {
   const { svg, status } = autoStamp
   // Quoted: WebKit drops an unquoted data URL in a mask (see the hat masks).
   const mask = svg ? `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}")` : undefined
-  // Every icon drawn for this node, regenerations included. The reason for a
-  // failure is in the server log, under [auto-stamp].
+  // Every icon drawn for this node, regenerations included. A failure leads
+  // with its reason, since an empty ring otherwise looks like one in progress.
   const spent = `$${autoStamp.costUsd.toFixed(3)} spent`
+  const tooltip = status === 'failed' ? `Failed: ${autoStamp.error ?? 'unknown error'}. Click to retry. ${spent}` : spent
   return (
     <button
       type="button"
@@ -94,8 +95,8 @@ function AutoStampMark({ autoStamp, color, onRegenerate }: {
         ...(mask ? { maskImage: mask, WebkitMaskImage: mask } : {}),
         ...(color ? { '--node-stamp-auto-color': color } : {}),
       } as CSSProperties}
-      title={spent}
-      aria-label={`Auto stamp: ${autoStamp.description ?? autoStamp.title}. ${spent}`}
+      title={tooltip}
+      aria-label={`Auto stamp: ${autoStamp.description ?? autoStamp.title}. ${tooltip}`}
       // Kept off the canvas, which would otherwise start a drag or a focus.
       onMouseDown={(e: MouseEvent) => e.stopPropagation()}
       onClick={(e: MouseEvent) => {

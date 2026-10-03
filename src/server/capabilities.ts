@@ -75,15 +75,16 @@ const VOICE_OPERATOR_DISCOVERY = path.join(
 export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): Capability[] {
   const capabilities: Capability[] = []
 
-  // Summary Chat reaches Haiku through claude-print-daemon, which runs the
-  // signed-in Claude Code. The binary is enough: it starts the daemon itself.
+  // Summary Chat and auto-stamps reach Claude through claude-print-daemon,
+  // which runs the signed-in Claude Code. The binary is enough: it starts the
+  // daemon itself.
   const claudePrint = deps.which(CLAUDE_PRINT_BIN)
   capabilities.push({
     id: 'claude-print-daemon',
     name: 'claude-print-daemon',
     available: claudePrint !== undefined,
-    detail: claudePrint ?? `${CLAUDE_PRINT_BIN} not found on PATH (build it from ~/claude-print-daemon with go install)`,
-    affects: claudePrint ? '' : 'Summary Chat cannot reach Haiku and reports an error when invoked'
+    detail: claudePrint ?? `${CLAUDE_PRINT_BIN} not found on PATH (build it with go build and put it on PATH, or set CLAUDE_PRINT_DAEMON_BIN)`,
+    affects: claudePrint ? '' : 'Summary Chat cannot reach Haiku and reports an error when invoked; auto-stamp icons all fail'
   })
 
   const voice = deps.exists(VOICE_OPERATOR_DISCOVERY)
