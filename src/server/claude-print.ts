@@ -1,4 +1,8 @@
 import { spawn } from 'child_process'
+import { createHash } from 'crypto'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 
 /**
  * Client for claude-print-daemon (~/research/claude-print-daemon), which keeps
@@ -19,6 +23,20 @@ export interface ClaudePrintRequest {
   sessionId?: string
   /** Disable extended thinking. The daemon's warm Haiku spare has it off. */
   noThinking?: boolean
+  /** The system prompt of a new session. Ignored when continuing one. */
+  systemPrompt?: string
+  /**
+   * Keep the session's process live this long after the turn (at most an hour)
+   * instead of the daemon's default, and exempt it from eviction when the
+   * daemon holds too many. For a conversation that should stay fast all day.
+   */
+  keepAlive?: { minutes: number; priority: boolean }
+  /**
+   * Compact the session just before its prompt cache expires (55 minutes after
+   * this turn, unless another turn comes first), and whenever its context
+   * grows past `aboveTokens`.
+   */
+  autoCompact?: { aboveTokens: number }
   /** Names the caller in the daemon's usage log, which is where cost is tracked. */
   tag: string
   /** Kills the CLI. The daemon still finishes the turn it started. */
@@ -34,6 +52,8 @@ export interface ClaudePrintResponse {
   is_error: boolean
   total_cost_usd: number
   wall_ms: number
+  /** The session's context after the turn. */
+  context_tokens?: number
 }
 
 export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResponse> {
@@ -41,6 +61,12 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
   if (req.model) args.push('-m', req.model)
   if (req.sessionId) args.push('-s', req.sessionId)
   if (req.noThinking) args.push('--no-thinking')
+  if (req.systemPrompt !== undefined && !req.sessionId) args.push('--system-file', systemPromptFile(req.systemPrompt))
+  if (req.keepAlive) {
+    args.push('--keep-alive', `${req.keepAlive.minutes}m`)
+    if (req.keepAlive.priority) args.push('--priority')
+  }
+  if (req.autoCompact) args.push('--auto-compact', '--compact-above', String(req.autoCompact.aboveTokens))
   return new Promise((resolve, reject) => {
     const child = spawn(CLAUDE_PRINT_BIN, args, { stdio: ['pipe', 'pipe', 'pipe'], signal: req.signal })
     let stdout = ''
@@ -66,4 +92,14 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
     // The prompt goes over stdin so its size and quoting never meet a command line.
     child.stdin.end(req.prompt)
   })
+}
+
+/**
+ * A system prompt as a file, for the daemon's `--system-file`. Named by its
+ * content, so the same prompt is one file however many sessions start on it.
+ */
+function systemPromptFile(prompt: string): string {
+  const file = path.join(os.tmpdir(), `claude-print-system-${createHash('sha256').update(prompt).digest('hex').slice(0, 16)}.txt`)
+  if (!fs.existsSync(file)) fs.writeFileSync(file, prompt)
+  return file
 }

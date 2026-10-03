@@ -3,8 +3,7 @@ import * as path from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
 import { askClaudePrint } from '../claude-print'
 import { serverLog } from '../server-log'
-import { renderModelRequest, type ModelAnswer, type ModelRequest } from '../summary-chat'
-import type { SavedConversation } from './receptionist'
+import type { SavedSession, SessionAnswer, SessionTurn } from './receptionist'
 
 /**
  * The receptionist's real collaborators that are not the server's own state:
@@ -13,77 +12,78 @@ import type { SavedConversation } from './receptionist'
  */
 
 const RECEPTIONIST_DIR = path.join(SOCKET_DIR, 'receptionist')
-/**
- * Every turn, model step, and tool call, appended. Nothing reads it yet; it is
- * where "what did I send Kevin last night" will be answered from.
- */
+/** Every turn, model step, and tool call, appended, for diagnosis. */
 export const RECEPTIONIST_LOG = path.join(RECEPTIONIST_DIR, 'log.jsonl')
 
-export async function askReceptionistModel(request: ModelRequest, signal: AbortSignal): Promise<ModelAnswer> {
+/** Which model Control runs on, and how. One place, so a benchmark changes one line. */
+export const RECEPTIONIST_MODEL = { model: 'haiku', noThinking: true }
+
+/**
+ * Past this many tokens of context the daemon compacts Control's session.
+ * Haiku reads a cached prefix fast, but every turn still pays for all of it.
+ */
+export const RECEPTIONIST_COMPACT_ABOVE_TOKENS = 40_000
+
+export async function askReceptionistModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer> {
   const response = await askClaudePrint({
-    prompt: renderModelRequest(request),
-    model: 'haiku',
-    noThinking: true,
+    prompt: turn.prompt,
+    ...(turn.sessionId ? { sessionId: turn.sessionId } : { systemPrompt: turn.systemPrompt }),
+    ...RECEPTIONIST_MODEL,
+    // Warm all day, compacted before the cache goes cold: see the daemon's README.
+    keepAlive: { minutes: 60, priority: true },
+    autoCompact: { aboveTokens: RECEPTIONIST_COMPACT_ABOVE_TOKENS },
     tag: 'receptionist',
     signal,
   })
   return {
     text: response.result,
-    claudeSessionId: response.session_id,
+    sessionId: response.session_id,
+    contextTokens: response.context_tokens,
     source: response.source,
     wallMs: response.wall_ms,
     costUsd: response.total_cost_usd,
   }
 }
 
-/**
- * Control's working memory — the recent window and the summary of what aged
- * out of it — so a server restart does not wipe what was said.
- */
-export const RECEPTIONIST_HISTORY = path.join(RECEPTIONIST_DIR, 'history.json')
+/** Which Claude Code session Control is in, so a server restart picks up the same conversation. */
+export const RECEPTIONIST_SESSION = path.join(RECEPTIONIST_DIR, 'session.json')
 /**
  * Every message of Control's conversation, appended and never trimmed. The
- * working memory is bounded and compacted; this is the full record `recall`
- * searches.
+ * session itself is compacted; this is the full record `recall` searches.
  */
 export const RECEPTIONIST_CONVERSATION = path.join(RECEPTIONIST_DIR, 'conversation.jsonl')
 
 const RECALL_HITS = 8
 const RECALL_CONTEXT_CHARS = 400
 
-type HistoryMessage = SavedConversation['messages'][number]
+type RecordMessage = { role: 'user' | 'assistant'; content: string }
 
-function isMessage(value: unknown): value is HistoryMessage {
-  if (typeof value !== 'object' || value === null) return false
-  const message = value as Record<string, unknown>
-  return (message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string'
-}
-
-export const REAL_RECEPTIONIST_HISTORY = {
-  load(): SavedConversation | undefined {
+export const REAL_RECEPTIONIST_SESSION = {
+  load(): SavedSession | undefined {
     try {
-      const parsed = JSON.parse(fs.readFileSync(RECEPTIONIST_HISTORY, 'utf8')) as { messages?: unknown; summary?: unknown }
-      if (!Array.isArray(parsed.messages)) return undefined
-      return {
-        messages: parsed.messages.filter(isMessage),
-        summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-      }
+      const parsed = JSON.parse(fs.readFileSync(RECEPTIONIST_SESSION, 'utf8')) as Partial<SavedSession>
+      return typeof parsed.sessionId === 'string' && typeof parsed.promptHash === 'string'
+        ? { sessionId: parsed.sessionId, promptHash: parsed.promptHash }
+        : undefined
     } catch {
       return undefined
     }
   },
-  save(state: SavedConversation): void {
+  save(session: SavedSession | undefined): void {
     try {
+      if (!session) { fs.rmSync(RECEPTIONIST_SESSION, { force: true }); return }
       fs.mkdirSync(RECEPTIONIST_DIR, { recursive: true })
-      // Atomic, so a crash mid-write leaves the last good state rather than a torn one.
-      const tmp = `${RECEPTIONIST_HISTORY}.tmp`
-      fs.writeFileSync(tmp, JSON.stringify({ version: 2, ...state }))
-      fs.renameSync(tmp, RECEPTIONIST_HISTORY)
+      const tmp = `${RECEPTIONIST_SESSION}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify(session))
+      fs.renameSync(tmp, RECEPTIONIST_SESSION)
     } catch (err) {
-      serverLog(`[receptionist] failed to save history: ${err instanceof Error ? err.message : String(err)}`)
+      serverLog(`[receptionist] failed to save session: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
-  append(messages: readonly HistoryMessage[]): void {
+}
+
+export const REAL_RECEPTIONIST_RECORD = {
+  append(messages: readonly RecordMessage[]): void {
     try {
       fs.mkdirSync(RECEPTIONIST_DIR, { recursive: true })
       const timestamp = new Date().toISOString()

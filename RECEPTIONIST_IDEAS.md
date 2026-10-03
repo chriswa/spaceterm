@@ -13,12 +13,22 @@ that transcript for the reasoning behind any item here.
 
 ## How it works today (for orientation)
 
-- **Brain**: Haiku through claude-print-daemon, no thinking. Each turn the
-  model sees the roster of live Claude surfaces and the directory nodes, and
-  answers with one JSON object: parts to speak, and tool calls (`read`,
-  `recall`, `ask_fork`, `monitor`, `send`, `interrupt`, `spawn`). See
-  `prompt.ts`. Words that come with a `read`/`recall` ("let me check") are
-  spoken straight away, ahead of the answer.
+- **Brain**: Haiku (no thinking) in one long-lived `claude -p` session
+  through claude-print-daemon, with the instructions as its system prompt
+  (a changed prompt starts a new session). Each turn sends only what is new:
+  events, the user's words, and NOTEs (how much of an interrupted reply was
+  heard, or that a reply was talked over). The model answers with one JSON
+  object: parts to speak and tool calls (`list_agents`, `find_agent`, `read`,
+  `recall`, `ask_fork`, `monitor`, `send`, `interrupt`, `spawn`). Words that
+  come with a blocking tool ("let me check") are spoken straight away.
+  Messages to the session are queued, never overlapping.
+- **Caching**: the daemon keeps the session's process live for an hour
+  (`--keep-alive 60m --priority`), compacts it 55 minutes after the last
+  turn so the compaction runs on a warm cache (`--auto-compact`), and above
+  40k tokens of context (`--compact-above`). Verified: each turn reads the
+  whole conversation so far from the 1-hour cache and writes only its own
+  tail. Below Haiku's minimum cacheable size (about 4k tokens) nothing is
+  cached, which costs little at that size.
 - **Speech**: one Voice Operator job per reply, multi-voice (`parts`), through
   the `SpeechChannel` shared with Summary Chat. Interruptions cut the stored
   history down to what was heard.
@@ -36,13 +46,13 @@ that transcript for the reasoning behind any item here.
 - **Sending**: Ship it into the agent's PTY; Escape to interrupt. Every send
   and spawn is logged to `~/.spaceterm/receptionist/log.jsonl` and
   auto-monitored.
-- **Memory**: three layers under `~/.spaceterm/receptionist/`.
-  `conversation.jsonl` is the full record of every message, sends and spawns
-  included, never trimmed; `recall` searches it. `history.json` is the
-  working memory: a bounded window (24 messages / 40k chars) plus a running
-  summary that Haiku folds aged-out messages into, off the turn path.
-  Names live in `names.json`. Talk-to-me is a ServerState setting; the voice
-  target defaults to Control on every server start.
+- **Memory**: the session holds the conversation. `conversation.jsonl`
+  under `~/.spaceterm/receptionist/` is the full record of every message,
+  sends and spawns included, never trimmed, for `recall`, since compaction
+  forgets detail. `session.json` holds the session id; `names.json` the
+  names. (`history.json` is left over from the earlier design and unused.)
+  Talk-to-me is a ServerState setting; the voice target defaults to Control
+  on every server start.
 - **Misheard names**: no deterministic layer. The prompt says input is
   dictated, gives examples ("heaven" for Evan), and asks Control to confirm
   when unsure. The registry still never assigns two sound-alike names at once
@@ -54,9 +64,14 @@ that transcript for the reasoning behind any item here.
   show up in `claude --resume` lists. Nothing ever deletes them. Forks are
   also tracked only in memory, so a follow-up to a fork made before a server
   restart re-forks instead.
-- **Jev for disambiguation.** Haiku alone picks which agent you mean.
-  `agent-search.ts` already has a two-pass Jev chooser with a "none of these"
-  probability; it could back Haiku up on close calls.
+- **Jev is not installed on this Mac.** `find_agent` asks Jev (the same
+  chooser as the agent search box) and falls back to `list_agents` when it
+  fails, which costs a wasted model step. Needs the `jev` CLI on PATH and
+  `TYPESAFE_API_KEY` in the login environment.
+- **Compaction only half-reuses the cache.** The daemon's `/compact` call
+  reads the cache only up to the end of the session's first user message
+  and pays for the rest uncached. Rare, and cheap on Haiku, but worth a look
+  before moving to Sonnet.
 - **The worked example in the prompt** quotes an agent straight from the
   roster preview without a `read`, which slightly contradicts the
   "read before quoting" rule.
@@ -71,10 +86,12 @@ that transcript for the reasoning behind any item here.
   between raise-hand and talk-to-me.
 - **Permission prompts by voice** (`waiting_permission`). Explicitly out of
   MVP. Also `waiting_question` / AskUserQuestion answers.
-- **Smarter memory.** Compaction and `recall` exist; `recall` is a plain
-  substring search, newest first. Ideas: search by time ("last night"), read
-  a stretch of the record around a hit, and, if Control moves to Sonnet,
-  compact a big session just before its prompt cache's TTL expires.
+- **Smarter recall.** `recall` is a plain substring search, newest first.
+  Ideas: search by time ("last night"), and read a stretch of the record
+  around a hit.
+- **Benchmark Haiku against Sonnet**, with and without thinking and at a few
+  Sonnet effort levels, now that turns read the cache. The model is one line
+  (`RECEPTIONIST_MODEL` in `real-deps.ts`).
 - **Fork lineage.** Record where in a transcript a session was forked and from
   which session, so Control knows "this agent was forked from Kevin", across
   chains of forks.

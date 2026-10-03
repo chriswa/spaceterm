@@ -1,15 +1,14 @@
+import { createHash } from 'crypto'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
-import {
-  finalAgentMessage, type ModelAnswer, type ModelRequest, type TranscriptMessage,
-} from '../summary-chat'
+import { finalAgentMessage, type TranscriptMessage } from '../summary-chat'
 import type { SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import {
-  COMPACTION_PROMPT, FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderContext, renderTurnBody, type ForkSummary, type ReceptionistEvent,
+  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderForks, renderTurnBody, type ForkSummary, type ReceptionistEvent,
 } from './prompt'
 import {
   isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
@@ -27,18 +26,49 @@ import {
  * passes the user's messages on to agents as though the user had typed them,
  * and watches agents the user is waiting to hear from.
  *
- * Like Summary Chat, the history is held here and resent whole each turn,
- * because an interrupted answer has to be cut down to what the listener heard
- * before the model sees it again.
+ * The conversation lives in one long-lived Claude Code session, through
+ * claude-print-daemon, and each turn sends only what is new. That is what lets
+ * the prompt cache read the whole conversation back every turn — a history
+ * resent as one block of text can never be read back, because the cache only
+ * matches a prefix ending at a block boundary. The daemon keeps the session
+ * warm for an hour and compacts it just before its cache would go cold.
+ *
+ * The price is that the past cannot be edited. An interrupted answer used to
+ * be cut down to what was heard; now the next message says what was heard.
  */
 
-type HistoryMessage = ModelRequest['messages'][number]
-
-/** Control's working memory: the recent window, and a summary of everything before it. */
-export interface SavedConversation {
-  messages: HistoryMessage[]
-  summary: string
+/** One message to Control's session: the session to continue, or none to start one. */
+export interface SessionTurn {
+  prompt: string
+  sessionId?: string
+  /** The system prompt, for a new session only. */
+  systemPrompt?: string
 }
+
+export interface SessionAnswer {
+  text: string
+  sessionId: string
+  /** The session's context after this turn, which is what compaction keeps down. */
+  contextTokens?: number
+  source?: string
+  wallMs?: number
+  costUsd?: number
+}
+
+/** Which session Control is in, and which instructions it was started with. */
+export interface SavedSession {
+  sessionId: string
+  /** A new prompt means a new session: an old one keeps the instructions it began with. */
+  promptHash: string
+}
+
+/** Jev's ranking of the agents against a description. */
+export interface AgentRanking {
+  hits: Array<{ nodeId: NodeId; probability: number }>
+  noneProbability: number
+}
+
+type RecordMessage = { role: 'user' | 'assistant'; content: string }
 
 /** What a fork said, and what saying it cost when Claude reports that. */
 export interface ForkAnswer { forkId: string; answer: string; costUsd?: number }
@@ -52,23 +82,28 @@ export interface ForkClient {
 }
 
 export interface ReceptionistDeps {
-  askModel(request: ModelRequest, signal: AbortSignal): Promise<ModelAnswer>
+  /** One message to Control's Claude Code session. Rejects on failure or abort. */
+  askModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer>
+  /** Rank the live agents against a description, with Jev. */
+  findAgents(query: string, agents: readonly RosterAgent[]): Promise<AgentRanking>
   /** Every live Claude Code surface, freshly read. */
   agents(): RosterAgent[]
   /** The transcript's recent window, as Summary Chat reads it. */
   readTranscript(path: string): TranscriptMessage[]
   /** The whole transcript, for searches. */
   readWholeTranscript(path: string): TranscriptMessage[]
+  /** Control's session, across server restarts. Best-effort. */
+  session: {
+    load(): SavedSession | undefined
+    save(session: SavedSession | undefined): void
+  }
   /**
-   * The conversation, across server restarts. `save` keeps the working state —
-   * the bounded window and the summary of what aged out of it — and `append`
-   * adds to the full record, which is never trimmed and which `search` reads.
-   * Best-effort throughout.
+   * The full record of the conversation, never trimmed, which `recall`
+   * searches: compaction keeps the session small by forgetting detail, and
+   * this is where the detail still is. Best-effort.
    */
-  history: {
-    load(): SavedConversation | undefined
-    save(state: SavedConversation): void
-    append(messages: readonly HistoryMessage[]): void
+  record: {
+    append(messages: readonly RecordMessage[]): void
     search(query: string): string
   }
   names: {
@@ -106,14 +141,16 @@ export interface ReceptionistOptions {
   onError(message: string): void
 }
 
-const MAX_HISTORY_MESSAGES = 24
-const MAX_HISTORY_CHARS = 40_000
-/** Model calls in one turn, counting retries and each round of `read`. */
-const MAX_STEPS = 4
-const MODEL_TIMEOUT_MS = 30_000
+/** Model calls in one turn, counting retries and each round of blocking tools. */
+const MAX_STEPS = 5
+/** Generous: a turn may wait behind a compaction the daemon is running. */
+const MODEL_TIMEOUT_MS = 90_000
 const LAST_SAID_EVENT_CHARS = 1_500
-/** Room the running summary gets in every request; see `compact`. */
-const MAX_SUMMARY_CHARS = 2_000
+/** Agents `find_agent` reports, best first. */
+const FIND_AGENT_RESULTS = 10
+
+/** Identifies a version of the instructions; a session started on another one is replaced. */
+export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMPT).digest('hex').slice(0, 16)
 /**
  * How long a send waits after an interrupt in the same reply, so Claude Code
  * has left the turn it was in before the next prompt is typed.
@@ -136,33 +173,28 @@ interface ForkRecord {
   sessionAtFork?: string
 }
 
-/** The answer the listener last heard, kept so an interruption can cut it down in the history. */
-interface LastAnswer {
-  historyIndex: number
-  froms: string[]
-  spoken: RenderedPart[]
-}
-
 export class Receptionist {
-  private history: HistoryMessage[] = []
-  /** What aged out of `history`, folded into prose by the model. See `compact`. */
-  private summary = ''
-  /** Compactions run one at a time, off the turn path. */
-  private compaction: Promise<void> = Promise.resolve()
+  private session: SavedSession | undefined
+  /** Model calls go one at a time: a session takes one message after another. */
+  private queue: Promise<unknown> = Promise.resolve()
+  /** Told to the model with the next message: what became of its last reply. */
+  private notes: string[] = []
+  /** The last reply spoken, so an interruption can say how much of it was heard. */
+  private lastSpoken?: RenderedPart[]
   private events: ReceptionistEvent[] = []
   private readonly monitors = new Set<NodeId>()
   private readonly forks = new Map<string, ForkRecord>()
   private readonly channel: SpeechChannel
-  private lastAnswer?: LastAnswer
   private talkToMe = true
 
   private readonly onError: (message: string) => void
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
-    const saved = deps.history.load()
-    this.history = bounded(saved?.messages ?? [])
-    this.summary = saved?.summary ?? ''
+    const saved = deps.session.load()
+    // Instructions are fixed when a session starts, so a session begun on an
+    // older prompt would quietly keep following it.
+    this.session = saved?.promptHash === PROMPT_HASH ? saved : undefined
     this.channel = new SpeechChannel({
       speech: opts.speech,
       label: 'receptionist',
@@ -227,9 +259,10 @@ export class Receptionist {
    */
   private async runTurn(heard: string | undefined): Promise<void> {
     const attempt = this.channel.begin('thinking')
-    if (heard !== undefined) await this.redactInterrupted()
+    if (heard !== undefined) await this.noteInterruption()
     const events = this.events.splice(0)
     const body = renderTurnBody(events, heard)
+    if (heard !== undefined) this.deps.record.append([{ role: 'user', content: body }])
     let monitoring = false
     try {
       const reply = await this.converse(attempt, body)
@@ -241,6 +274,7 @@ export class Receptionist {
       monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply))
     } catch (err) {
       if (!attempt.isCurrent) { this.requeue(events); return }
+      if (err instanceof LostSession) this.forgetSession()
       const message = err instanceof Error ? err.message : String(err)
       serverLog(`[receptionist] turn failed: ${message}`)
       this.deps.log({ event: 'turn-failed', heard: heard ?? null, error: message })
@@ -268,53 +302,89 @@ export class Receptionist {
    * final reply, or undefined if the attempt lost ownership.
    */
   private async converse(attempt: Attempt, body: string): Promise<Reply | undefined> {
-    const turn: HistoryMessage[] = [{ role: 'user', content: body }]
+    let message = body
     for (let step = 1; step <= MAX_STEPS; step++) {
-      const agents = this.deps.agents()
-      const context = renderContext(
-        renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript),
-        this.forkSummaries(agents),
-        renderDirectories(this.deps.directories()),
-        this.summary,
-      )
-      const [first, ...rest] = turn
-      const messages = bounded([...this.history, { role: 'user', content: `${context}\n\n${first.content}` }, ...rest])
-      const last = messages[messages.length - 1]
-      messages[messages.length - 1] = { ...last, content: `${last.content}\n\n${FORMAT_REMINDER}` }
-      const answer = await this.deps.askModel(
-        { instructions: RECEPTIONIST_SYSTEM_PROMPT, messages },
-        AbortSignal.any([attempt.signal, AbortSignal.timeout(MODEL_TIMEOUT_MS)]),
-      )
+      const answer = await this.ask(attempt, `${message}\n\n${FORMAT_REMINDER}`)
       if (!attempt.isCurrent) return undefined
       this.deps.log({
-        event: 'model-step', step, raw: answer.text, claudeSessionId: answer.claudeSessionId ?? null,
-        wallMs: answer.wallMs ?? null, costUsd: answer.costUsd ?? null,
+        event: 'model-step', step, raw: answer.text, sessionId: answer.sessionId, source: answer.source ?? null,
+        contextTokens: answer.contextTokens ?? null, wallMs: answer.wallMs ?? null, costUsd: answer.costUsd ?? null,
       })
       let reply: Reply
       try {
         reply = parseReply(answer.text)
       } catch (err) {
-        turn.push({ role: 'assistant', content: answer.text })
-        turn.push({ role: 'user', content: `That reply was not usable: ${err instanceof Error ? err.message : String(err)}. Reply with the JSON object only.` })
+        message = `That reply was not usable: ${err instanceof Error ? err.message : String(err)}. Reply with the JSON object only.`
         continue
       }
-      const results = this.runTools(reply.tools, agents)
-      if (!reply.tools.some(isBlocking) || step === MAX_STEPS) return reply
-      // Words that came with a read are spoken now, while it runs: the
-      // listener hears "let me check" instead of silence.
-      if (reply.say.length) {
+      const agents = this.deps.agents()
+      // Words that came with a blocking tool are spoken now, while it runs:
+      // the listener hears "let me check" instead of silence.
+      if (reply.tools.some(isBlocking) && step < MAX_STEPS && reply.say.length) {
         const { spoken } = this.render(reply.say, agents)
         await this.channel.deliverInterim(attempt, spoken.map(({ text, voice }) => ({ text, voice })))
         if (!attempt.isCurrent) return undefined
       }
-      turn.push({ role: 'assistant', content: answer.text })
-      turn.push({ role: 'user', content: `TOOL RESULTS:\n${results.join('\n\n')}` })
+      const results = await this.runTools(reply.tools, agents)
+      if (!attempt.isCurrent) return undefined
+      if (!reply.tools.some(isBlocking) || step === MAX_STEPS) return reply
+      message = `TOOL RESULTS:\n${results.join('\n\n')}`
     }
     throw new Error(`no usable reply in ${MAX_STEPS} steps`)
   }
 
+  /**
+   * One message to the session, starting one if there is none. Messages are
+   * queued: a turn that supersedes another waits for the session to finish
+   * answering the old one, since the daemon finishes a turn it started even
+   * after its caller has gone.
+   */
+  private ask(attempt: Attempt, prompt: string): Promise<SessionAnswer> {
+    const run = async (): Promise<SessionAnswer> => {
+      // Superseded while queued: never sent, so there is nothing to answer.
+      if (!attempt.isCurrent) throw new Error('superseded before it was sent')
+      const signal = AbortSignal.any([attempt.signal, AbortSignal.timeout(MODEL_TIMEOUT_MS)])
+      const sessionId = this.session?.sessionId
+      // Notes go on whatever message leaves next, read only now: the message
+      // ahead of this one in the queue may have just produced one.
+      const notes = this.notes.splice(0)
+      const message = notes.length ? `NOTE: ${notes.join(' ')}\n\n${prompt}` : prompt
+      try {
+        const answer = await this.deps.askModel(
+          sessionId ? { prompt: message, sessionId } : { prompt: message, systemPrompt: RECEPTIONIST_SYSTEM_PROMPT }, signal,
+        )
+        if (answer.sessionId !== sessionId) {
+          this.session = { sessionId: answer.sessionId, promptHash: PROMPT_HASH }
+          this.deps.session.save(this.session)
+        }
+        // The session answered, but the turn that asked is gone: nobody will
+        // hear this reply, and the model has to be told or it builds on it.
+        // Noted here, before the next queued message is sent, not by the
+        // turn — which only finds out after that message has already left.
+        if (!attempt.isCurrent) {
+          this.notes.push('Your previous reply was never spoken: the user spoke over it, so they heard none of it.')
+        }
+        return answer
+      } catch (err) {
+        if (sessionId && !signal.aborted) throw new LostSession(err)
+        throw err
+      }
+    }
+    const next = this.queue.then(run, run)
+    this.queue = next.catch(() => undefined)
+    return next
+  }
+
+  /** A session that will not answer is abandoned; the next turn starts a fresh one. */
+  private forgetSession(): void {
+    serverLog(`[receptionist] abandoning session ${this.session?.sessionId ?? '?'}`)
+    this.deps.log({ event: 'session-abandoned', sessionId: this.session?.sessionId ?? null })
+    this.session = undefined
+    this.deps.session.save(undefined)
+  }
+
   /** Run a reply's tools. Returns the results of the blocking ones, for the model. */
-  private runTools(calls: readonly ToolCall[], agents: readonly RosterAgent[]): string[] {
+  private async runTools(calls: readonly ToolCall[], agents: readonly RosterAgent[]): Promise<string[]> {
     const results: string[] = []
     const interrupted = new Set<NodeId>()
     for (const call of calls) {
@@ -323,7 +393,15 @@ export class Receptionist {
         continue
       }
       if (call.tool === 'recall') {
-        results.push(`recall "${call.search}":\n${this.deps.history.search(call.search)}`)
+        results.push(`recall "${call.search}":\n${this.deps.record.search(call.search)}`)
+        continue
+      }
+      if (call.tool === 'list_agents') {
+        results.push(this.listAgents(agents))
+        continue
+      }
+      if (call.tool === 'find_agent') {
+        results.push(await this.findAgent(call.query, agents))
         continue
       }
       const agent = agents.find(candidate => handleFor(candidate.nodeId) === call.agent)
@@ -366,7 +444,7 @@ export class Receptionist {
       const nodeId = this.deps.spawn(directory.nodeId, call.title, call.prompt)
       this.monitors.add(nodeId)
       this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt })
-      this.deps.history.append([{ role: 'assistant', content: `STARTED AN AGENT in ${directory.cwd}: ${call.prompt}` }])
+      this.deps.record.append([{ role: 'assistant', content: `STARTED AN AGENT in ${directory.cwd}: ${call.prompt}` }])
       return `spawn: started {${handleFor(nodeId)}} in ${directory.cwd}.`
     } catch (err) {
       return `spawn ${call.directory} failed: ${err instanceof Error ? err.message : String(err)}`
@@ -385,7 +463,7 @@ export class Receptionist {
     const name = (this.deps.names.get(nodeId) ?? this.deps.names.assign(nodeId))?.name ?? 'an agent'
     this.deps.log({ event: 'sent', nodeId, name, message })
     // Into the full record, so `recall` can answer "what did I tell Kevin?".
-    this.deps.history.append([{ role: 'assistant', content: `SENT TO ${name}: ${message}` }])
+    this.deps.record.append([{ role: 'assistant', content: `SENT TO ${name}: ${message}` }])
   }
 
   private async askFork(agent: RosterAgent, question: string, forkId: string | undefined): Promise<void> {
@@ -422,6 +500,34 @@ export class Receptionist {
     this.maybeSpeakUp()
   }
 
+  /** The list_agents tool: every live agent, the directories, and the forks. */
+  private listAgents(agents: readonly RosterAgent[]): string {
+    const sections = [`AGENTS:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript)}`]
+    const directories = renderDirectories(this.deps.directories())
+    if (directories) sections.push(`DIRECTORIES:\n${directories}`)
+    const forks = this.forkSummaries(agents)
+    if (forks.length) sections.push(`FORKS:\n${renderForks(forks)}`)
+    return `list_agents:\n${sections.join('\n\n')}`
+  }
+
+  /** The find_agent tool: Jev's ranking, best first, with confidences. */
+  private async findAgent(query: string, agents: readonly RosterAgent[]): Promise<string> {
+    if (!agents.length) return 'find_agent: no agents are running.'
+    try {
+      const ranking = await this.deps.findAgents(query, agents)
+      const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
+      const lines = ranking.hits.slice(0, FIND_AGENT_RESULTS).flatMap(hit => {
+        const agent = byId.get(hit.nodeId)
+        if (!agent) return []
+        const name = this.deps.names.get(agent.nodeId)?.name
+        return [`${Math.round(hit.probability * 100)}% [${handleFor(agent.nodeId)}]${name ? ` ${name}` : ''}: ${agent.title} (${STATE_WORDS[agent.state]})`]
+      })
+      return `find_agent "${query}":\n${lines.join('\n')}\n${Math.round(ranking.noneProbability * 100)}% none of these`
+    } catch (err) {
+      return `find_agent failed: ${err instanceof Error ? err.message : String(err)}. Use list_agents instead.`
+    }
+  }
+
   private forkSummaries(agents: readonly RosterAgent[]): ForkSummary[] {
     const summaries: ForkSummary[] = []
     for (const record of this.forks.values()) {
@@ -439,7 +545,6 @@ export class Receptionist {
     return agent.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
   }
 
-  /** Say a reply. Returns whether a speech monitor now owns the phase. */
   /**
    * A reply's parts as speech, naming each agent the first time it is spoken
    * of. Returns which agents came up, first mention first.
@@ -465,10 +570,8 @@ export class Receptionist {
   private async speak(attempt: Attempt, body: string, reply: Reply): Promise<boolean> {
     const { spoken, mentioned, byHandle } = this.render(reply.say, this.deps.agents())
     const froms = reply.say.map(part => part.from)
-    // Committed together, and only now: a turn superseded before this point
-    // leaves the history exactly as it found it.
-    this.commit([{ role: 'user', content: body }, { role: 'assistant', content: storedReply(froms, spoken) }])
-    this.lastAnswer = { historyIndex: this.history.length - 1, froms, spoken }
+    this.lastSpoken = spoken
+    this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     // The camera follows the conversation: the agent quoted first, else the
     // agent mentioned first.
@@ -479,53 +582,19 @@ export class Receptionist {
     return this.channel.deliver(attempt, spoken.map(({ text, voice }) => ({ text, voice })))
   }
 
-  /** Cut the last answer in the history down to what the listener heard, if they interrupted it. */
-  private async redactInterrupted(): Promise<void> {
+  /**
+   * If the listener cut the last reply off, tell the model how much of it they
+   * heard: the session keeps the whole reply, and the next answer must not
+   * build on words nobody heard.
+   */
+  private async noteInterruption(): Promise<void> {
     const heard = await this.channel.heardPrefix()
-    const last = this.lastAnswer
-    this.lastAnswer = undefined
-    if (heard === undefined || !last || this.history[last.historyIndex]?.role !== 'assistant') return
-    const kept = redactSpoken(last.spoken, heard)
-    this.history[last.historyIndex] = { role: 'assistant', content: storedReply(last.froms, kept) }
-    this.save()
-  }
-
-  /**
-   * Add a turn to the history: to the full record, and to the working window.
-   * Whatever the window no longer holds is folded into the summary.
-   */
-  private commit(messages: HistoryMessage[]): void {
-    this.deps.history.append(messages)
-    const all = [...this.history, ...messages]
-    this.history = bounded(all)
-    // `bounded` only ever drops from the front.
-    const aged = all.slice(0, all.length - this.history.length)
-    this.save()
-    if (aged.length) this.compaction = this.compaction.then(() => this.compact(aged))
-  }
-
-  /**
-   * Fold messages that aged out of the window into the summary. Off the turn
-   * path, one at a time. A failure keeps the old summary: nothing is lost,
-   * since the full record still has every word.
-   */
-  private async compact(aged: readonly HistoryMessage[]): Promise<void> {
-    const older = aged.map(message => `${message.role === 'user' ? 'USER' : 'CONTROL'}: ${message.content}`).join('\n\n')
-    try {
-      const answer = await this.deps.askModel({
-        instructions: COMPACTION_PROMPT,
-        messages: [{ role: 'user', content: `SUMMARY SO FAR:\n${this.summary || '(none yet)'}\n\nOLDER MESSAGES:\n${older}` }],
-      }, AbortSignal.timeout(MODEL_TIMEOUT_MS))
-      this.summary = answer.text.trim().slice(0, MAX_SUMMARY_CHARS)
-      this.save()
-      this.deps.log({ event: 'compacted', messages: aged.length, summaryCharacters: this.summary.length })
-    } catch (err) {
-      serverLog(`[receptionist] compaction failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
-  private save(): void {
-    this.deps.history.save({ messages: this.history, summary: this.summary })
+    const spoken = this.lastSpoken
+    this.lastSpoken = undefined
+    if (heard === undefined || !spoken) return
+    const kept = redactSpoken(spoken, heard)
+    const audible = kept.map(part => part.text).join(' ')
+    this.notes.push(`The user cut your last reply off. They heard only: "${audible}". They did not hear the rest.`)
   }
 }
 
@@ -552,14 +621,9 @@ function storedReply(froms: readonly string[], spoken: readonly RenderedPart[]):
   return JSON.stringify({ say })
 }
 
-function bounded(messages: HistoryMessage[]): HistoryMessage[] {
-  let kept = messages.slice(-MAX_HISTORY_MESSAGES)
-  while (kept.length > 1 && kept.reduce((sum, message) => sum + message.content.length, 0) > MAX_HISTORY_CHARS) {
-    kept = kept.slice(1)
+/** A session that failed to answer, as against a turn that was cancelled. */
+class LostSession extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause))
   }
-  // A history must open with the user's side, or the model reads its own
-  // answer as the question.
-  while (kept.length && kept[0].role !== 'user') kept = kept.slice(1)
-  return kept
 }
-
