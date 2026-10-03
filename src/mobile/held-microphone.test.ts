@@ -8,6 +8,7 @@ function fakeBrowser(label: string) {
   const opened: Array<{ closed: boolean; label: string }> = []
   const nodes: Array<{ port: { onmessage: ((e: { data: Float32Array }) => void) | null } }> = []
   let currentLabel = label
+  const deviceListeners: Array<() => void> = []
   class FakeContext {
     state = 'running'
     sampleRate = 48_000
@@ -28,7 +29,7 @@ function fakeBrowser(label: string) {
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     value: {
-      addEventListener: () => undefined,
+      addEventListener: (type: string, fn: () => void) => { if (type === 'devicechange') deviceListeners.push(fn) },
       getUserMedia: async () => {
         const track = { label: currentLabel, readyState: 'live', stop() { this.readyState = 'ended' } }
         return { getAudioTracks: () => [track], getTracks: () => [track] }
@@ -42,6 +43,7 @@ function fakeBrowser(label: string) {
     /** Audio from the most recently opened microphone. */
     speak: (samples: number[]) => nodes.at(-1)!.port.onmessage?.({ data: Float32Array.from(samples) }),
     useMicrophone: (next: string) => { currentLabel = next },
+    deviceChanged: () => deviceListeners.forEach((fn) => fn()),
   }
 }
 
@@ -126,5 +128,45 @@ describe('held microphone', () => {
     capture.release()
     expect(browser.opened).toHaveLength(1)
     expect(browser.opened[0].closed).toBe(true)
+  })
+})
+
+describe('bringing the hold back', () => {
+  const pointer = (type: string, id: number, x = 10, y = 10) =>
+    document.dispatchEvent(Object.assign(new Event(type), { pointerId: id, clientX: x, clientY: y }))
+  const tap = () => { pointer('pointerdown', 1); pointer('pointerup', 1) }
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  let uninstall: (() => void) | undefined
+  afterEach(() => { uninstall?.(); uninstall = undefined })
+
+  it('reopens on a tap, never during a pinch or a pan', async () => {
+    const browser = fakeBrowser('AirPods Pro')
+    localStorage.setItem('mobile.holdMicrophone', '1')
+    const held = await load()
+    uninstall = held.installHeldMicrophone()
+    pointer('pointerdown', 1); pointer('pointerdown', 2); pointer('pointerup', 1); pointer('pointerup', 2)
+    pointer('pointerdown', 3); pointer('pointerup', 3, 200, 10)
+    await settle()
+    expect(browser.opened).toHaveLength(0)
+    tap()
+    await settle()
+    expect(browser.opened).toHaveLength(1)
+    expect(browser.opened[0].closed).toBe(false)
+  })
+
+  it('tries the phone\'s own microphone once, then waits for a device to change', async () => {
+    const browser = fakeBrowser('iPhone Microphone')
+    localStorage.setItem('mobile.holdMicrophone', '1')
+    const held = await load()
+    uninstall = held.installHeldMicrophone()
+    tap(); await settle()
+    tap(); await settle()
+    tap(); await settle()
+    expect(browser.opened).toHaveLength(1)
+    browser.useMicrophone('AirPods Pro')
+    browser.deviceChanged()
+    tap(); await settle()
+    expect(browser.opened).toHaveLength(2)
+    expect(browser.opened[1].closed).toBe(false)
   })
 })

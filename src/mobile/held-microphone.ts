@@ -193,19 +193,66 @@ export function acquire(): Promise<Capture> {
   return opening
 }
 
+/** Movement that still counts as a tap. */
+const TAP_SLOP_PX = 10
+
 /**
  * Bring the hold back after a relaunch or a background trip: iOS opens a
- * microphone only inside a gesture, so the next touch anywhere does it. A
+ * microphone only inside a gesture, so the next tap anywhere does it. A
  * headset coming or going is rechecked too.
  */
-export function installHeldMicrophone(): void {
+export function installHeldMicrophone(): () => void {
+  /**
+   * Set when an attempt found no headset to hold (or no microphone at all):
+   * nothing changes that until a device comes or goes. Without it every touch
+   * opened the phone's microphone, an audio context and a worklet, and shut
+   * them again — a burst of them per pinch.
+   */
+  let waitForDevice = false
   const reopen = () => {
-    if (!wanted || held?.capture.healthy() || opening) return
-    void acquire().then((capture) => capture.release(), (err) => log(`could not reopen: ${err instanceof Error ? err.message : String(err)}`))
+    if (!wanted || waitForDevice || held?.capture.healthy() || opening) return
+    void acquire().then((capture) => {
+      if (held?.capture !== capture) waitForDevice = true
+      capture.release()
+    }, (err) => {
+      waitForDevice = true
+      log(`could not reopen: ${err instanceof Error ? err.message : String(err)}`)
+    })
   }
-  document.addEventListener('pointerdown', reopen, { capture: true, passive: true })
-  navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+  // A tap, not any touch: a pan or a pinch is no moment to be opening a
+  // microphone. The tap's release still counts as the gesture iOS requires.
+  const down = new Map<number, { x: number; y: number }>()
+  /** The touch under way has had two fingers down at once: a pinch, whichever finger lifts last. */
+  let manyFingers = false
+  const onDown = (e: PointerEvent) => {
+    down.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (down.size > 1) manyFingers = true
+  }
+  const onUp = (e: PointerEvent) => {
+    const start = down.get(e.pointerId)
+    down.delete(e.pointerId)
+    const tapped = start && !manyFingers && Math.hypot(e.clientX - start.x, e.clientY - start.y) < TAP_SLOP_PX
+    if (down.size === 0) manyFingers = false
+    if (tapped) reopen()
+  }
+  const onCancel = (e: PointerEvent) => {
+    down.delete(e.pointerId)
+    if (down.size === 0) manyFingers = false
+  }
+  const onDeviceChange = () => {
+    waitForDevice = false
     const label = held?.capture.stream.getAudioTracks()[0]?.label
     if (held && (!held.capture.healthy() || !isHeadset(label ?? ''))) closeHeld('the headset went away')
-  })
+  }
+  const options = { capture: true, passive: true }
+  document.addEventListener('pointerdown', onDown, options)
+  document.addEventListener('pointerup', onUp, options)
+  document.addEventListener('pointercancel', onCancel, options)
+  navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange)
+  return () => {
+    document.removeEventListener('pointerdown', onDown, options)
+    document.removeEventListener('pointerup', onUp, options)
+    document.removeEventListener('pointercancel', onCancel, options)
+    navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange)
+  }
 }
