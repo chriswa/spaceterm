@@ -431,7 +431,18 @@ function receptionistAgents(): RosterAgent[] {
       state: node.claudeState,
       transcriptPath: transcriptPathForTerminal(node),
       claudeSessionId: node.claudeSessionHistory.at(-1)?.claudeSessionId,
+      unread: node.claudeStatusUnread,
+      stateSince: node.claudeStateDecidedAt,
+      lastActivityAt: node.lastAgentActivityAt,
+      cacheWarmUntil: node.cacheWarmUntil,
+      cacheWarmTokens: node.cacheWarmTokens,
+      startedAt: parseTimestamp(node.claudeSessionHistory[0]?.timestamp),
     }))
+}
+
+function parseTimestamp(iso: string | undefined): number | undefined {
+  const ms = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(ms) ? ms : undefined
 }
 
 /**

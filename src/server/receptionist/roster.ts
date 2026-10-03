@@ -21,6 +21,18 @@ export interface RosterAgent {
   transcriptPath?: string
   /** The surface's current Claude Code session, which a fork branches from. */
   claudeSessionId?: string
+  /** The agent finished or changed state since the user last looked at it. */
+  unread?: boolean
+  /** epoch ms — when the agent entered its current state: for a stopped one, when it finished. */
+  stateSince?: number
+  /** epoch ms — the last time the agent itself did anything. Keystrokes do not count. */
+  lastActivityAt?: number
+  /** epoch ms — when the agent's prompt cache goes cold; continuing it before then is cheap. */
+  cacheWarmUntil?: number
+  /** How much context that cache holds: what going cold would cost to rebuild. */
+  cacheWarmTokens?: number
+  /** epoch ms — when the surface's first Claude session started. */
+  startedAt?: number
 }
 
 /**
@@ -75,13 +87,18 @@ export function renderRoster(
   agents: readonly RosterAgent[],
   nameOf: (nodeId: NodeId) => string | undefined,
   readTranscript: (path: string) => TranscriptMessage[],
+  now = Date.now(),
 ): string {
   if (!agents.length) return 'No agents are running.'
-  return agents.map(agent => {
+  return [...agents].sort(byRelevance).map(agent => {
     const name = nameOf(agent.nodeId)
     const lines = [`[${handleFor(agent.nodeId)}]${name ? ` ${name}` : ' (no name yet)'}: ${agent.title}`]
+    if (agent.unread) lines.push('  UNREAD: it has news the user has not looked at')
     if (agent.cwd) lines.push(`  directory: ${path.basename(agent.cwd)}`)
-    lines.push(`  state: ${STATE_WORDS[agent.state]}`)
+    lines.push(`  state: ${STATE_WORDS[agent.state]}${agent.stateSince ? `, for ${ago(now - agent.stateSince)}` : ''}`)
+    if (agent.lastActivityAt) lines.push(`  last active: ${ago(now - agent.lastActivityAt)} ago`)
+    if (agent.cacheWarmUntil !== undefined) lines.push(`  cache: ${cacheWords(agent, now)}`)
+    if (agent.startedAt) lines.push(`  started: ${ago(now - agent.startedAt)} ago`)
     const messages = agent.transcriptPath ? readTranscript(agent.transcriptPath) : []
     const request = lastUserMessage(messages)
     if (request) lines.push(`  last asked: ${clip(request, ROSTER_LAST_REQUEST_CHARS)}`)
@@ -89,6 +106,37 @@ export function renderRoster(
     if (reply) lines.push(`  last said: ${clip(reply, ROSTER_LAST_MESSAGE_CHARS)}`)
     return lines.join('\n')
   }).join('\n')
+}
+
+/**
+ * Most worth checking first: news the user has not seen, then whatever moved
+ * most recently. The order is the answer to "what should I look at?", so the
+ * model reads the list top down instead of having to rank it.
+ */
+function byRelevance(a: RosterAgent, b: RosterAgent): number {
+  if (Boolean(a.unread) !== Boolean(b.unread)) return a.unread ? -1 : 1
+  return (b.lastActivityAt ?? b.stateSince ?? 0) - (a.lastActivityAt ?? a.stateSince ?? 0)
+}
+
+function cacheWords(agent: RosterAgent, now: number): string {
+  const until = agent.cacheWarmUntil ?? 0
+  const size = agent.cacheWarmTokens ? ` (${Math.round(agent.cacheWarmTokens / 1000)}k tokens)` : ''
+  return until > now ? `warm for ${ago(until - now)} more${size}` : `cold for ${ago(now - until)}${size}`
+}
+
+/** A duration as it would be said: "40 seconds", "12 minutes", "3 hours 5 minutes", "2 days". */
+export function ago(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds} seconds`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    const rest = minutes % 60
+    return `${hours} hour${hours === 1 ? '' : 's'}${rest ? ` ${rest} minute${rest === 1 ? '' : 's'}` : ''}`
+  }
+  const days = Math.round(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'}`
 }
 
 /**
@@ -129,9 +177,14 @@ function speakerLabel(message: TranscriptMessage): string {
   return message.role === 'user' ? 'USER' : 'AGENT'
 }
 
+/**
+ * What the user last asked, skipping what Claude Code injects as user turns —
+ * `<task-notification>` and its kin, which arrive tagged — since "last asked"
+ * is meant to say what the agent was set to do.
+ */
 function lastUserMessage(messages: readonly TranscriptMessage[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return messages[i].text
+    if (messages[i].role === 'user' && !messages[i].text.trimStart().startsWith('<')) return messages[i].text
   }
   return undefined
 }
