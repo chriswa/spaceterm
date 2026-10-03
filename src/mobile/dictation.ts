@@ -1,5 +1,6 @@
 import type { DictationApi } from '../shared/api'
 import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
+import { beginRecordingSession } from './audio-session'
 
 /**
  * One dictation: the microphone, streamed to the server as it is spoken.
@@ -101,7 +102,9 @@ export class Dictation {
     private readonly stream: MediaStream,
     private readonly context: AudioContext,
     private readonly node: AudioWorkletNode,
-    started: Promise<string>
+    started: Promise<string>,
+    /** Hands the audio session back to playback; see audio-session.ts. */
+    private readonly releaseSession: () => void
   ) {
     const resampler = new Downsampler(context.sampleRate)
     let arrived: () => void = () => undefined
@@ -146,12 +149,15 @@ export class Dictation {
     void context.resume()
     const started = api.start(TARGET_SAMPLE_RATE)
     started.catch(() => undefined)
+    // Earpiece-default play-and-record only while the microphone is open.
+    const releaseSession = beginRecordingSession()
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       })
     } catch (err) {
+      releaseSession()
       void context.close()
       void started.then((id) => api.cancel(id), () => undefined)
       log(`getUserMedia refused: ${err instanceof Error ? `${err.name} ${err.message}` : String(err)} (secure ${window.isSecureContext}, page ${document.visibilityState})`)
@@ -164,14 +170,20 @@ export class Dictation {
     const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }))
     try {
       await context.audioWorklet.addModule(url)
+      const source = context.createMediaStreamSource(stream)
+      const node = new AudioWorkletNode(context, 'spaceterm-tap')
+      source.connect(node)
+      log(`capture open: ${describeCapture(stream, context)}, page ${document.visibilityState}`)
+      return new Dictation(api, stream, context, node, started, releaseSession)
+    } catch (err) {
+      stream.getTracks().forEach((t) => t.stop())
+      releaseSession()
+      void context.close()
+      void started.then((id) => api.cancel(id), () => undefined)
+      throw err
     } finally {
       URL.revokeObjectURL(url)
     }
-    const source = context.createMediaStreamSource(stream)
-    const node = new AudioWorkletNode(context, 'spaceterm-tap')
-    source.connect(node)
-    log(`capture open: ${describeCapture(stream, context)}, page ${document.visibilityState}`)
-    return new Dictation(api, stream, context, node, started)
   }
 
   /** For the log when sound never came: what the capture looks like now. */
@@ -216,5 +228,6 @@ export class Dictation {
     this.node.disconnect()
     this.stream.getTracks().forEach((t) => t.stop())
     void this.context.close()
+    this.releaseSession()
   }
 }

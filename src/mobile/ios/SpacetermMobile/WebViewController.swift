@@ -1,4 +1,3 @@
-import AVFoundation
 import UIKit
 import WebKit
 
@@ -59,39 +58,6 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     override func viewDidLoad() {
         super.viewDidLoad()
         load()
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(audioRouteChanged),
-            name: AVAudioSession.routeChangeNotification, object: nil)
-    }
-
-    // MARK: - Audio route
-
-    /// While the microphone is live iOS is in play-and-record mode, whose
-    /// default output is the earpiece — so the page's dictation cues come out
-    /// quietly at the ear instead of from the speaker. Send them to the speaker
-    /// unless something else (headphones, a car) is already the output.
-    @objc private func audioRouteChanged() {
-        let session = AVAudioSession.sharedInstance()
-        let outputs = session.currentRoute.outputs.map(\.portType)
-        var note = "category=\(session.category.rawValue) outputs=\(outputs.map(\.rawValue).joined(separator: ","))"
-        if session.category == .playAndRecord, outputs.contains(.builtInReceiver) {
-            do {
-                try session.overrideOutputAudioPort(.speaker)
-                note += " → speaker"
-            } catch {
-                note += " → speaker override failed: \(error.localizedDescription)"
-            }
-        }
-        pageLog("[native-audio] \(note)")
-    }
-
-    /// Into the page's log, which forwards to the server's — the one log for both halves.
-    private func pageLog(_ message: String) {
-        guard let data = try? JSONSerialization.data(withJSONObject: [message]),
-              let json = String(data: data, encoding: .utf8) else { return }
-        DispatchQueue.main.async {
-            self.webView.evaluateJavaScript("window.api && window.api.log(\(json)[0])", completionHandler: nil)
-        }
     }
 
     private func load() {

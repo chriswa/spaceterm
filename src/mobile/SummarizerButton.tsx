@@ -5,6 +5,7 @@ import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
 import { Dictation, whenHearing } from './dictation'
 import { playCue, primeCues } from './cues'
+import { listensOnEarpiece, onEarpieceChange, setListenOnEarpiece } from './audio-session'
 
 /**
  * The phone's way to talk to Summary Chat: what Voice Operator's command mode
@@ -30,6 +31,8 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId }) {
   const [mic, setMic] = useState<Mic>({ kind: 'idle' })
   const [sheet, setSheet] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [earpiece, setEarpiece] = useState(listensOnEarpiece)
+  useEffect(() => onEarpieceChange(setEarpiece), [])
   const pressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const longPressed = useRef(false)
 
@@ -147,6 +150,9 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId }) {
         <div className="mobile-confirm m-summarizer-sheet" onClick={() => setSheet(false)}>
           <div className="mobile-confirm__panel" role="dialog" aria-label="Summary Chat" onClick={(e) => e.stopPropagation()}>
             <div className="m-summarizer__about">Summary Chat · {node ? nodeDisplayTitle(node) : 'surface gone'}</div>
+            <button className="mobile-btn" onClick={() => setListenOnEarpiece(!earpiece)}>
+              {earpiece ? 'Playing on the earpiece · switch to speaker' : 'Playing on the speaker · switch to earpiece'}
+            </button>
             <button className="mobile-btn mobile-btn--danger" onClick={abandon}>
               Abandon summarizer
             </button>
