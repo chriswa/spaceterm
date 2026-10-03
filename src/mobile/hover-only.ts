@@ -1,4 +1,4 @@
-import type { AtRule, Plugin, Rule } from 'postcss'
+import type { AtRule, Node, Plugin, Rule } from 'postcss'
 
 /**
  * Hover styles only where something can hover: every `:hover` rule wrapped in
@@ -17,7 +17,7 @@ import type { AtRule, Plugin, Rule } from 'postcss'
 const MEDIA = '(hover: hover)'
 
 const insideHoverMedia = (rule: Rule): boolean => {
-  for (let node = rule.parent; node; node = node.parent) {
+  for (let node: Node | undefined = rule.parent; node; node = node.parent as Node | undefined) {
     if (node.type === 'atrule' && (node as AtRule).name === 'media' && (node as AtRule).params === MEDIA) return true
   }
   return false
