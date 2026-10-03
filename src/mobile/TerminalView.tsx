@@ -5,6 +5,7 @@ import type { Camera } from '@/lib/camera'
 import { bareTerminalGridFor, bareTerminalPixelSize, CELL_HEIGHT } from '../shared/node-size'
 import type { NodeId } from '../shared/ids'
 import { handTouchToCanvas } from '@/hooks/useTouchCamera'
+import { NO_GLIDE, startGlide, VelocityTracker } from '@/lib/touch-momentum'
 import { KeyRow } from './KeyRow'
 import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
 
@@ -18,7 +19,8 @@ import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
  * its next start (see `terminalBorrowSize`).
  *
  * Every touch goes to the gesture layer, never to xterm: drag up/down to
- * scroll, swipe sideways or pinch in to leave, tap to compose, long-press to
+ * scroll — and a flicked scroll carries on after the finger lifts, as any iOS
+ * scroll view does (touch-momentum.ts) — swipe sideways or pinch in to leave, tap to compose, long-press to
  * type with the keyboard and the extra keys. See terminal-gesture.ts. Leaving
  * happens mid-gesture, and the canvas takes the rest of it as a pan or pinch.
  */
@@ -117,10 +119,21 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
     const el = areaRef.current
     if (!el) return
     const g = gestureRef.current
+    /** Velocity of a scrolling finger, for the glide when it lets go. */
+    const tracker = new VelocityTracker()
+    let scrolled: { x: number; y: number } | null = null
+    let glide = NO_GLIDE
+    /** A touch that stopped a glide stops it and nothing more — not a tap that opens the composer. */
+    let caughtGlide = false
+
     const onStart = (e: TouchEvent) => {
       // Owning the touch from its start is what stops WebKit beginning a
       // long-press text selection; every outcome is decided here, not by it.
       e.preventDefault()
+      caughtGlide = glide.active
+      glide.stop()
+      tracker.reset()
+      scrolled = null
       clearTimeout(armTimer.current)
       if (e.touches.length >= 2) {
         // A second finger: the touch is a pinch from here on.
@@ -157,7 +170,11 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
         clearTimeout(armTimer.current)
         setPressArmed(false)
       }
-      if (move.kind === 'scroll') scrollBy(move.deltaY, t.clientX, t.clientY)
+      if (move.kind === 'scroll') {
+        scrollBy(move.deltaY, t.clientX, t.clientY)
+        tracker.add(t.clientX, t.clientY, e.timeStamp)
+        scrolled = { x: t.clientX, y: t.clientY }
+      }
       else if (move.kind === 'swipe') setSwipeDx(move.dx)
     }
     const onEnd = (e: TouchEvent) => {
@@ -169,6 +186,13 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       setSwipeDx(0)
       setPinchScale(1)
       const outcome = g.end(e.timeStamp)
+      if (scrolled) {
+        // Finger up is a positive wheel delta, so the glide's travel is negated.
+        const at = scrolled
+        glide = startGlide(0, tracker.velocity(e.timeStamp).vy, (_dx, dy) => scrollBy(-dy, at.x, at.y))
+        return
+      }
+      if (caughtGlide) return
       if (outcome === 'tap') onCompose()
       else if (outcome === 'long-press') {
         // Inside the touch handler, or iOS will not raise the keyboard.
@@ -186,6 +210,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       el.removeEventListener('touchend', onEnd)
       el.removeEventListener('touchcancel', onEnd)
       clearTimeout(armTimer.current)
+      glide.stop()
     }
   }, [onClose, onCompose])
 

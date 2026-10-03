@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Momentum, VelocityTracker } from '../lib/touch-momentum'
+import { NO_GLIDE, startGlide, VelocityTracker } from '../lib/touch-momentum'
 
 /**
  * Touch for the canvas camera: one finger pans, two pinch-zoom about their
@@ -91,28 +91,12 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
     const cancelPress = () => clearTimeout(pressTimer)
 
     const tracker = new VelocityTracker()
-    let glideFrame = 0
-    const stopGlide = () => {
-      cancelAnimationFrame(glideFrame)
-      glideFrame = 0
-    }
+    let current = NO_GLIDE
+    const stopGlide = () => current.stop()
     /** Carry the pan on from the finger's release velocity until it decays away. */
     const glide = (vx: number, vy: number) => {
-      const momentum = new Momentum(vx, vy)
-      if (!momentum.moving) return
-      let last = performance.now()
-      const frame = (now: number) => {
-        const step = momentum.step(now - last)
-        last = now
-        if (!step) {
-          glideFrame = 0
-          return
-        }
-        // pan() takes the camera's motion, which is opposite to the finger's.
-        controlsRef.current.pan(-step.dx, -step.dy)
-        glideFrame = requestAnimationFrame(frame)
-      }
-      glideFrame = requestAnimationFrame(frame)
+      // pan() takes the camera's motion, which is opposite to the finger's.
+      current = startGlide(vx, vy, (dx, dy) => controlsRef.current.pan(-dx, -dy))
     }
 
     const begin = () => {

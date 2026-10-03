@@ -63,3 +63,42 @@ export class Momentum {
     return step
   }
 }
+
+/**
+ * Carry a motion on after the finger lifts, from its release velocity
+ * (px/ms, in the finger's direction), until it decays away: `onStep` gets
+ * each frame's travel. `stop` is what a new touch does, catching the glide
+ * as any iOS scroll view does; `active` says whether there is still one to
+ * catch — a touch that caught one has done all it should.
+ */
+export interface Glide {
+  readonly active: boolean
+  stop(): void
+}
+
+export const NO_GLIDE: Glide = { active: false, stop: () => undefined }
+
+export function startGlide(vx: number, vy: number, onStep: (dx: number, dy: number) => void): Glide {
+  const momentum = new Momentum(vx, vy)
+  if (!momentum.moving) return NO_GLIDE
+  let frameId = 0
+  let last = performance.now()
+  const frame = (now: number) => {
+    const step = momentum.step(now - last)
+    last = now
+    if (!step) {
+      frameId = 0
+      return
+    }
+    onStep(step.dx, step.dy)
+    frameId = requestAnimationFrame(frame)
+  }
+  frameId = requestAnimationFrame(frame)
+  return {
+    get active() { return frameId !== 0 },
+    stop() {
+      cancelAnimationFrame(frameId)
+      frameId = 0
+    }
+  }
+}

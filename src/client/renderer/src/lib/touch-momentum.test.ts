@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { Momentum, VelocityTracker, DECELERATION_RATE, MIN_SPEED } from './touch-momentum'
+import { describe, it, expect, vi } from 'vitest'
+import { Momentum, VelocityTracker, DECELERATION_RATE, MIN_SPEED, startGlide } from './touch-momentum'
 
 describe('VelocityTracker', () => {
   it('measures the speed of the last stretch of a drag', () => {
@@ -46,5 +46,41 @@ describe('Momentum', () => {
 
   it('does not glide at all from a near-standstill', () => {
     expect(new Momentum(0.01, 0).step(16)).toBeNull()
+  })
+})
+
+describe('startGlide', () => {
+  it('a release too slow to glide is no glide at all', () => {
+    expect(startGlide(0, 0.001, () => undefined).active).toBe(false)
+  })
+
+  it('is active while it moves, and not once it has died away — so a later tap is just a tap', () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+    try {
+      const steps: number[] = []
+      const glide = startGlide(0, -1, (_dx, dy) => steps.push(dy))
+      expect(glide.active).toBe(true)
+      vi.advanceTimersByTime(100)
+      expect(steps.length).toBeGreaterThan(0)
+      expect(steps.every((dy) => dy < 0)).toBe(true)
+      vi.advanceTimersByTime(10_000)
+      expect(glide.active).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops when caught', () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+    try {
+      let steps = 0
+      const glide = startGlide(1, 0, () => { steps++ })
+      glide.stop()
+      vi.advanceTimersByTime(500)
+      expect(steps).toBe(0)
+      expect(glide.active).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
