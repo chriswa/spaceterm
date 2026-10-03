@@ -2,7 +2,7 @@
 
 Control is the voice receptionist in `src/server/receptionist/`. You talk to it
 about every live Claude Code agent at once, and it quotes agents in their own
-named voices ("Kevin here."), reads transcripts, asks disposable forks, sends
+named voices ("Kevin here."), reads transcripts, asks agents side questions, sends
 messages, watches agents, and starts new ones.
 
 This file keeps what was decided *not* to build yet, so it isn't lost. The
@@ -19,7 +19,7 @@ that transcript for the reasoning behind any item here.
   events, the user's words, and NOTEs (how much of an interrupted reply was
   heard, or that a reply was talked over). The model answers with one JSON
   object: parts to speak and tool calls (`list_agents`, `find_agent`, `read`,
-  `recall`, `ask_fork`, `monitor`, `send`, `interrupt`, `spawn`). Words that
+  `recall`, `ask_agent`, `monitor`, `send`, `interrupt`, `spawn`). Words that
   come with a blocking tool ("let me check") are spoken straight away.
   Messages to the session are queued, never overlapping.
 - **Caching**: the daemon keeps the session's process live for an hour
@@ -36,13 +36,22 @@ that transcript for the reasoning behind any item here.
   ported out of Voice Operator (`name-voice-table.ts`, `name-registry.ts`).
   Sticky until the surface is archived; released at the next assignment.
   `af_heart` is reserved for Control.
-- **Forks**: `SessionForks` (`session-fork.ts`) runs
-  `claude -p --resume <session> --fork-session` with the surface's *own*
-  command line from the claude driver, plus a PreToolUse guard hook
-  (`fork-read-only-guard.sh`) that only allows Read/Grep/Glob. Using the
-  surface's own flags is what makes a fork read the agent's prompt cache:
-  roughly $0.09 for a 300k-token Opus session instead of $1.51. Every fork
-  and follow-up raises a toast with its cost.
+- **Side questions, never forks**: `ask_agent` is `/btw` from the outside.
+  Spaceterm's Claude Code plugin carries a hooks module
+  (`claude-code-plugin/hooks/side-questions.ts`) that long-polls the server
+  (`src/server/side-questions.ts`, over `~/.spaceterm/side-questions.sock`)
+  for questions to its own surface and answers each with `$.model.fork`: the
+  agent's own last request again, same model, system prompt, tools and
+  history, with the question after it, no tools, nothing written to the
+  transcript or the cache. Verified on an interactive Opus 5.5 agent with 38k
+  tokens of context: every question, idle or mid-turn, read the whole prefix
+  from cache, wrote nothing, and paid for about 40 uncached tokens, in about
+  2 seconds. Each raises a toast with the tokens it used. Only agents started
+  or resumed since the plugin carried the module can answer; the rest report
+  `not-listening`. Forking (`--fork-session`) was removed: it missed the cache
+  (see issues #77306 and #93490 in `~/research/CLAUDE_CODE_BTW_VS_CACHE.md`),
+  cost a process start per question, and needed a guard hook to stay
+  read-only.
 - **Sending**: Ship it into the agent's PTY; Escape to interrupt. Every send
   and spawn is logged to `~/.spaceterm/receptionist/log.jsonl` and
   auto-monitored.
@@ -60,10 +69,9 @@ that transcript for the reasoning behind any item here.
 
 ## MVP leftovers (small, not done)
 
-- **Fork cleanup.** Fork transcripts accumulate under `~/.claude/projects` and
-  show up in `claude --resume` lists. Nothing ever deletes them. Forks are
-  also tracked only in memory, so a follow-up to a fork made before a server
-  restart re-forks instead.
+- **Fork transcripts from the old design** are still under
+  `~/.claude/projects` and show up in `claude --resume` lists. Nothing
+  deletes them.
 - **Jev is not installed on this Mac.** `find_agent` asks Jev (the same
   chooser as the agent search box) and falls back to `list_agents` when it
   fails, which costs a wasted model step. Needs the `jev` CLI on PATH and
@@ -95,22 +103,21 @@ that transcript for the reasoning behind any item here.
 - **Fork lineage.** Record where in a transcript a session was forked and from
   which session, so Control knows "this agent was forked from Kevin", across
   chains of forks.
-- **Fork answers back to the agent.** Ask a copy, then hand the useful part to
-  the real agent as an instruction.
+- **Side-question answers back to the agent.** The agent forgets a side
+  question; when an answer matters, Control could send the useful part to the
+  real agent as an instruction.
+- **Side questions that need tools.** `$.model.fork` cannot use tools, so a
+  question the agent cannot answer from memory falls back to a send.
 - **Cost and cache awareness.** Let Control weigh an agent's context size,
-  cache warmth (already in Spaceterm's state) and model price before forking
-  or waking it.
+  cache warmth (already in Spaceterm's state) and model price before asking
+  or waking it. A side question reads the whole context at the cache-read
+  rate, so it scales with context size.
 - **Wider reach.** Archived agents, and Codex and Cursor surfaces. Plain
   terminals stay out.
 - **Half-written prompts.** A send pastes on top of whatever is already in
   the agent's input box.
 - **Replace Summary Chat.** Control is meant to replace it; for now they
   coexist and a Summary Chat press takes the voice target.
-- **Forks through the daemon: decided against.** Each fork question is one
-  cold `claude -p` process (about 3 s). The daemon is fast because it keeps
-  *empty* sessions warm, and a fork is never empty; its fixed profile (no
-  system prompt, no tools) is also what broke caching. The `--fork` option
-  added to it was reverted.
 
 ## Rough edges not yet looked at
 
@@ -122,13 +129,3 @@ that transcript for the reasoning behind any item here.
 - Status errors show only as a toast.
 - The phone may not play Control's waiting echo; the cue lives in the
   desktop renderer's server-sync.
-
-## Open question
-
-- **Why forks cost what they cost.** A fork re-sends the agent's whole
-  context. With a cache hit that context is billed at the cache-read rate
-  (a 300k-token Opus session came to about $0.09). A follow-up that makes
-  several model calls pays that read once per call. Before the fix, forks
-  missed the cache entirely and paid cache *writes* on everything, hence
-  $1.51. The toasts are there to keep an eye on it; whether 1-hour cache
-  writes, thinking tokens, or long tool loops dominate is still unmeasured.

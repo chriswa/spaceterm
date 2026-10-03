@@ -23,5 +23,8 @@
     "src/cli/**/*",
     "src/claude-code-plugin/**/*",
     "electron.vite.config.ts"
+  ],
+  "exclude": [
+    "src/claude-code-plugin/hooks/*.ts"
   ]
 }

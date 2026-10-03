@@ -72,8 +72,7 @@ import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat
 import { Receptionist } from './receptionist/receptionist'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
-import { SessionForks, type ForkLaunch } from './receptionist/session-fork'
-import { scrubInheritedAgentEnv } from './spawn-env'
+import { SideQuestions, serveSideQuestions } from './side-questions'
 import type { RosterAgent } from './receptionist/roster'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
@@ -287,6 +286,9 @@ let summaryChat: SummaryChat
 /** Undefined until startup builds it; Claude state changes arrive before then. */
 let receptionist: Receptionist | undefined
 let agentNames: NameRegistry
+/** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
+const sideQuestions = new SideQuestions()
+let sideQuestionServer: import('http').Server | undefined
 /**
  * Where the listener's voice goes: Voice Operator command-mode transcripts and
  * the phone's talk button. The last thing chosen wins — a Summary Chat press
@@ -443,35 +445,6 @@ function receptionistAgents(): RosterAgent[] {
 function parseTimestamp(iso: string | undefined): number | undefined {
   const ms = iso ? Date.parse(iso) : NaN
   return Number.isFinite(ms) ? ms : undefined
-}
-
-/**
- * How a receptionist fork of a surface is launched: the surface's own command
- * line from its driver, plus the read-only guard hook. See `SessionForks` for
- * why it must be the surface's own and not a profile of the fork's.
- *
- * The environment is the one a surface gets (see SessionManager) minus the
- * surface's identity, so the copy's hooks cannot report state for the surface
- * it was copied from.
- */
-function forkLaunchFor(nodeId: NodeId): ForkLaunch | undefined {
-  const node = stateManager.getNode(nodeId)
-  if (node?.type !== 'terminal' || !node.alive || (node.agentType ?? 'claude') !== 'claude' || !node.cwd) return undefined
-  const options = agentDrivers.claude.buildCreateOptions({
-    cwd: node.cwd,
-    extraArgs: parseExtraCliArgs(node.extraCliArgs),
-    extraSettings: {
-      hooks: {
-        PreToolUse: [{
-          matcher: '*',
-          hooks: [{ type: 'command', command: path.join(REAL_AGENT_PROVISIONING.claudePluginDir(), 'scripts/fork-read-only-guard.sh') }],
-        }],
-      },
-    },
-  })
-  const env = scrubInheritedAgentEnv(loginEnv.current() ?? process.env)
-  if (process.env.SPACETERM_HOME) env.SPACETERM_HOME = process.env.SPACETERM_HOME
-  return { cwd: expandTilde(options.cwd) ?? node.cwd, command: options.command ?? 'claude', args: options.args ?? [], env }
 }
 
 function agentNameMap(): Record<string, string> {
@@ -3031,6 +3004,7 @@ async function startServer(): Promise<void> {
     },
   )
 
+  sideQuestionServer = serveSideQuestions(sideQuestions, path.join(SOCKET_DIR, 'side-questions.sock'))
   agentNames = new NameRegistry({
     // `getNode` only finds live nodes, so an archived surface's name is released.
     isLive: (nodeId) => stateManager.getNode(nodeId) !== undefined,
@@ -3057,7 +3031,12 @@ async function startServer(): Promise<void> {
       },
       touch: (nodeId) => agentNames.touch(nodeId),
     },
-    forks: new SessionForks(forkLaunchFor),
+    askAgent: async (nodeId, prompt) => {
+      // The plugin identifies itself by the surface's current PTY session id.
+      const node = stateManager.getNode(nodeId)
+      if (node?.type !== 'terminal' || !node.alive) return { ok: false, reason: 'not-listening' }
+      return sideQuestions.ask(node.sessionId, prompt)
+    },
     focus: (nodeId) => broadcastToAll({ type: 'camera-follow', nodeId }),
     notify: (text) => broadcastToAll({ type: 'receptionist-notice', text }),
     send: (nodeId, text) => {
@@ -3392,6 +3371,7 @@ async function startServer(): Promise<void> {
     // of an app that no longer exists. Bounded by the request timeout.
     await summaryChat.dispose()
     await receptionist?.cancel()
+    sideQuestionServer?.close()
     snapshotManager.dispose()
     stateManager.persistImmediate()
     sessionManager.destroyAll() // Cleans local state only — daemon PTYs persist

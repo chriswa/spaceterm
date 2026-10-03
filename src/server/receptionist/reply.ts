@@ -16,7 +16,7 @@ export type SayPart = { from: string; text: string }
 
 export type ToolCall =
   | { tool: 'read'; agent: string; search?: string }
-  | { tool: 'ask_fork'; agent: string; question: string; fork?: string }
+  | { tool: 'ask_agent'; agent: string; question: string }
   | { tool: 'monitor'; agent: string }
   | { tool: 'send'; agent: string; message: string }
   | { tool: 'interrupt'; agent: string }
@@ -89,11 +89,9 @@ function parseToolCall(value: unknown): ToolCall {
       return typeof value.search === 'string' && value.search.trim()
         ? { tool: 'read', agent, search: value.search.trim() }
         : { tool: 'read', agent }
-    case 'ask_fork': {
-      if (typeof value.question !== 'string' || !value.question.trim()) throw new Error('"ask_fork" needs a "question"')
-      const fork = typeof value.fork === 'string' && value.fork.trim() ? value.fork.trim() : undefined
-      return { tool: 'ask_fork', agent, question: value.question.trim(), ...(fork ? { fork } : {}) }
-    }
+    case 'ask_agent':
+      if (typeof value.question !== 'string' || !value.question.trim()) throw new Error('"ask_agent" needs a "question"')
+      return { tool: 'ask_agent', agent, question: value.question.trim() }
     case 'monitor':
       return { tool: 'monitor', agent }
     case 'send':

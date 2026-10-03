@@ -22,14 +22,14 @@ describe('parseReply', () => {
   it('rejects what it cannot use, with a reason', () => {
     expect(() => parseReply('no json here')).toThrow(/JSON object/)
     expect(() => parseReply('{"tools":[{"tool":"launch","agent":"a1"}]}')).toThrow(/unknown tool/)
-    expect(() => parseReply('{"tools":[{"tool":"ask_fork","agent":"a1"}]}')).toThrow(/question/)
+    expect(() => parseReply('{"tools":[{"tool":"ask_agent","agent":"a1"}]}')).toThrow(/question/)
     expect(() => parseReply('{"tools":[{"tool":"read"}]}')).toThrow(/agent/)
   })
 
   it('only read blocks the turn', () => {
     expect(isBlocking({ tool: 'read', agent: 'a1' })).toBe(true)
     expect(isBlocking({ tool: 'monitor', agent: 'a1' })).toBe(false)
-    expect(isBlocking({ tool: 'ask_fork', agent: 'a1', question: 'q' })).toBe(false)
+    expect(isBlocking({ tool: 'ask_agent', agent: 'a1', question: 'q' })).toBe(false)
   })
 })
 

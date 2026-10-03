@@ -3,11 +3,12 @@ import { asNodeId, type NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import type { TranscriptMessage } from '../summary-chat'
 import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operator'
+import type { SideQuestionResult } from '../side-questions'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  forkPrompt, PROMPT_HASH, Receptionist, type AgentRanking, type ForkClient, type SavedSession, type SessionTurn,
+  PROMPT_HASH, Receptionist, sideQuestionPrompt, type AgentRanking, type SavedSession, type SessionTurn,
 } from './receptionist'
 import { directoryHandleFor, handleFor, type RosterAgent } from './roster'
 
@@ -48,7 +49,8 @@ function harness(opts: {
   replies: Script[]
   /** Status the speech job ends in. Defaults to completing. */
   speechEnds?: Partial<SpeechStatus>
-  forks?: Partial<ForkClient>
+  /** How the agents answer side questions; by default every one answers. */
+  askAgent?: (nodeId: NodeId, prompt: string) => Promise<SideQuestionResult>
   /** The session saved by an earlier server. */
   saved?: SavedSession
   findAgents?: (query: string) => Promise<AgentRanking>
@@ -73,7 +75,7 @@ function harness(opts: {
   ]
   const spoken: Array<{ content: SpeechContent; voice?: string }> = []
   const focused: NodeId[] = []
-  const forkCalls: Array<Record<string, unknown>> = []
+  const sideQuestions: Array<{ nodeId: NodeId; prompt: string }> = []
   const wire: string[] = []
   const notices: string[] = []
   let session: SavedSession | undefined = opts.saved
@@ -132,10 +134,10 @@ function harness(opts: {
       },
       touch: () => {},
     },
-    forks: {
-      fork: async (req) => { forkCalls.push({ kind: 'fork', ...req }); return { forkId: 'fork-1', answer: 'It was 42 litres exactly.', costUsd: 0.0851 } },
-      ask: async (req) => { forkCalls.push({ kind: 'ask', ...req }); return { forkId: req.forkId, answer: 'The small tank held 7.' } },
-      ...opts.forks,
+    askAgent: async (nodeId, prompt) => {
+      sideQuestions.push({ nodeId, prompt })
+      if (opts.askAgent) return opts.askAgent(nodeId, prompt)
+      return { ok: true, text: 'It was 42 litres exactly.', usage: { cache_read_input_tokens: 38_291, input_tokens: 40 } }
     },
     focus: (nodeId) => focused.push(nodeId),
     notify: (text) => notices.push(text),
@@ -148,7 +150,7 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { speech, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, turns, spoken, focused, forkCalls, assigned, wire, notices, record,
+    receptionist, turns, spoken, focused, sideQuestions, assigned, wire, notices, record,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -228,7 +230,7 @@ describe('Receptionist', () => {
     expect(h.session?.sessionId).toBe('session-1')
   })
 
-  it('lists the agents, directories and forks when asked', async () => {
+  it('lists the agents and directories when asked', async () => {
     const h = harness({
       replies: [
         reply([], [{ tool: 'list_agents' }]),
@@ -457,26 +459,37 @@ describe('Receptionist', () => {
     expect(h.turns).toHaveLength(2)
   })
 
-  it('forks an agent to ask it a question, follows up on the same copy, and prices both', async () => {
+  it('asks the agent itself a side question, and toasts what it used', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: `I'll ask a copy of {${KEVIN}}.` }], [{ tool: 'ask_fork', agent: KEVIN, question: 'Exactly how many litres?' }]),
+        reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'Exactly how many litres?' }]),
         (turn) => {
-          expect(turn.prompt).toContain('42 litres exactly')
+          expect(turn.prompt).toContain(`{${KEVIN}} was asked "Exactly how many litres?" and answered: It was 42 litres exactly.`)
           return reply([{ from: KEVIN, text: 'It was 42 litres exactly.' }])
         },
-        reply([], [{ tool: 'ask_fork', agent: KEVIN, question: 'And the small tank?', fork: 'fork-1' }]),
-        reply([{ from: KEVIN, text: 'The small tank held 7.' }]),
       ],
     })
     await h.receptionist.hear('ask Kevin exactly how many litres')
     await flush()
-    expect(h.forkCalls[0]).toEqual({ kind: 'fork', nodeId: KEVIN_ID, sessionId: 'kevin-session', prompt: forkPrompt('Exactly how many litres?') })
-    await h.receptionist.hear('and the small tank?')
+    expect(h.sideQuestions).toEqual([{ nodeId: KEVIN_ID, prompt: sideQuestionPrompt('Exactly how many litres?') }])
+    expect(h.notices).toEqual(['Control asked Kevin: 38.3k cached, 0k new'])
+    expect(h.spoken).toHaveLength(2)
+  })
+
+  it('tells the model why an agent could not answer, so it can send instead', async () => {
+    const h = harness({
+      askAgent: async () => ({ ok: false, reason: 'not-listening' }),
+      replies: [
+        reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'Done yet?' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/Asking \{a\w+\} "Done yet\?" failed: that agent cannot take side questions/)
+          return reply([{ from: 'control', text: `{${KEVIN}} needs a restart before I can ask it things.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('ask Kevin if he is done')
     await flush()
-    expect(h.forkCalls[1]).toEqual({ kind: 'ask', forkId: 'fork-1', prompt: 'And the small tank?' })
-    expect(h.notices).toEqual(['Control forked Kevin: $0.09', "Control asked Kevin's copy a follow-up: cost unknown"])
-    expect(h.spoken).toHaveLength(3)
+    expect(h.notices).toEqual(["Control's question to Kevin failed: not-listening"])
   })
 
   it('sends a message to the real agent, records it, and then watches for its answer', async () => {

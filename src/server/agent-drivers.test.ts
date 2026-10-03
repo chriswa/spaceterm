@@ -89,14 +89,6 @@ describe('claude driver', () => {
     })
   })
 
-  it('merges extra settings into the same --settings, leaving every other argument as a surface has it', () => {
-    const plain = drivers().claude.buildCreateOptions({ cwd: '/w', extraArgs: ['--model', 'opus'] })
-    const guarded = drivers().claude.buildCreateOptions({ cwd: '/w', extraArgs: ['--model', 'opus'], extraSettings: { hooks: { PreToolUse: [] } } })
-    const at_ = at(guarded.args!, '--settings') + 1
-    expect(JSON.parse(guarded.args![at_])).toMatchObject({ statusLine: { type: 'command' }, hooks: { PreToolUse: [] } })
-    expect(guarded.args!.filter((_, i) => i !== at_)).toEqual(plain.args!.filter((_, i) => i !== at_))
-  })
-
   it('withholds EndConversation, which self-terminates nothing on a surface', () => {
     const options = drivers().claude.buildCreateOptions({})
     expect(options.args![at(options.args!, '--disallowed-tools') + 1]).toBe('EndConversation')

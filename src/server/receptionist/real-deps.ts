@@ -7,8 +7,8 @@ import type { SavedSession, SessionAnswer, SessionTurn } from './receptionist'
 
 /**
  * The receptionist's real collaborators that are not the server's own state:
- * Haiku through claude-print-daemon, and its log. Forks are `SessionForks`,
- * which launch the surface's own command line rather than a daemon profile.
+ * the model through claude-print-daemon, and its log. Side questions to
+ * agents go through `side-questions.ts` instead.
  */
 
 const RECEPTIONIST_DIR = path.join(SOCKET_DIR, 'receptionist')

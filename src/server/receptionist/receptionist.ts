@@ -7,8 +7,9 @@ import type { SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
+import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import {
-  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderForks, renderTurnBody, type ForkSummary, type ReceptionistEvent,
+  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderTurnBody, type ReceptionistEvent,
 } from './prompt'
 import {
   isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
@@ -22,7 +23,7 @@ import {
  *
  * Summary Chat is a conversation *about one surface*; this is a conversation
  * about all of them, which is what lets "what's Kevin up to?" mean anything.
- * It reads transcripts, asks disposable forks what transcripts do not say,
+ * It reads transcripts, asks agents side questions their transcripts do not answer,
  * passes the user's messages on to agents as though the user had typed them,
  * and watches agents the user is waiting to hear from.
  *
@@ -70,16 +71,6 @@ export interface AgentRanking {
 
 type RecordMessage = { role: 'user' | 'assistant'; content: string }
 
-/** What a fork said, and what saying it cost when Claude reports that. */
-export interface ForkAnswer { forkId: string; answer: string; costUsd?: number }
-
-/** Disposable copies of a live surface's Claude session. See `SessionForks`. */
-export interface ForkClient {
-  /** Fork the surface's current session `sessionId` and ask the copy `prompt`. */
-  fork(req: { nodeId: NodeId; sessionId: string; prompt: string }): Promise<ForkAnswer>
-  /** Ask an existing fork again. */
-  ask(req: { forkId: string; prompt: string }): Promise<ForkAnswer>
-}
 
 export interface ReceptionistDeps {
   /** One message to Control's Claude Code session. Rejects on failure or abort. */
@@ -111,12 +102,17 @@ export interface ReceptionistDeps {
     assign(nodeId: NodeId): NamedVoice | undefined
     touch(nodeId: NodeId): void
   }
-  forks: ForkClient
+  /**
+   * Ask an agent a side question: answered inside the agent from its own
+   * cached context, without interrupting it or entering its transcript. See
+   * `side-questions.ts`. Always resolves.
+   */
+  askAgent(nodeId: NodeId, prompt: string): Promise<SideQuestionResult>
   /** Move the camera to a surface, on every client. */
   focus(nodeId: NodeId): void
   /**
-   * A toast on every client. Forks are the receptionist's one expensive
-   * action — a read is nearly free — so each one is announced with its cost.
+   * A toast on every client. Side questions are what the receptionist pays
+   * the agents' model for, so each one is announced with what it used.
    */
   notify(text: string): void
   /** Type `text` into an agent's prompt and submit it — Ship it. */
@@ -149,6 +145,17 @@ const LAST_SAID_EVENT_CHARS = 1_500
 /** Agents `find_agent` reports, best first. */
 const FIND_AGENT_RESULTS = 10
 
+/** What each failure means for what to do next, as the model is told it. */
+const SIDE_QUESTION_FAILURES: Record<Exclude<SideQuestionResult, { ok: true }>['reason'], string> = {
+  'not-listening': 'that agent cannot take side questions (it was started before they existed, and needs a restart); send it a message instead if it matters',
+  'nothing-to-fork': 'that agent has not finished its first reply yet, so there is nothing to ask',
+  timeout: 'no answer came in time',
+  'api-error': 'the model request failed',
+  'empty-reply': 'the agent gave no answer',
+  aborted: 'the question was cut off',
+  'invalid-reply': 'the answer came back garbled',
+}
+
 /** Identifies a version of the instructions; a session started on another one is replaced. */
 export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMPT).digest('hex').slice(0, 16)
 /**
@@ -158,19 +165,13 @@ export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMP
 const INTERRUPT_SETTLE_MS = 800
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
 
-/** The question a fork is actually given, so it answers instead of resuming the work. */
-export function forkPrompt(question: string): string {
-  return 'Halt and pivot. Another agent is continuing your work, so do not continue it, and do not start anything new. ' +
-    'You have been copied only to answer one question from the user, from what you already know. ' +
-    `Answer in a few plain sentences.\n\nQuestion: ${question}`
-}
-
-interface ForkRecord {
-  forkId: string
-  nodeId: NodeId
-  /** The agent's last message and session when the copy was made, to tell when it has moved on. */
-  lastSaidAtFork: string
-  sessionAtFork?: string
+/**
+ * The question an agent is actually given. Unframed, an agent answering a bare
+ * question out of nowhere is suspicious and long-winded.
+ */
+export function sideQuestionPrompt(question: string): string {
+  return "A quick side question from the user's receptionist. Answer briefly, in a sentence or two, from what you already know; " +
+    `you cannot use tools for this.\n\nQuestion: ${question}`
 }
 
 export class Receptionist {
@@ -183,7 +184,6 @@ export class Receptionist {
   private lastSpoken?: RenderedPart[]
   private events: ReceptionistEvent[] = []
   private readonly monitors = new Set<NodeId>()
-  private readonly forks = new Map<string, ForkRecord>()
   private readonly channel: SpeechChannel
   private talkToMe = true
 
@@ -420,8 +420,8 @@ export class Receptionist {
         case 'monitor':
           this.monitors.add(agent.nodeId)
           break
-        case 'ask_fork':
-          void this.askFork(agent, call.question, call.fork)
+        case 'ask_agent':
+          void this.askAgent(agent, call.question)
           break
         case 'interrupt':
           interrupted.add(agent.nodeId)
@@ -466,47 +466,34 @@ export class Receptionist {
     this.deps.record.append([{ role: 'assistant', content: `SENT TO ${name}: ${message}` }])
   }
 
-  private async askFork(agent: RosterAgent, question: string, forkId: string | undefined): Promise<void> {
+  /**
+   * Ask an agent a side question, in the background: the answer comes back
+   * as an event, with a toast saying what it used.
+   */
+  private async askAgent(agent: RosterAgent, question: string): Promise<void> {
     const handle = handleFor(agent.nodeId)
-    const existing = forkId ? this.forks.get(forkId) : undefined
     // Named now if it has no name yet: its answer will be quoted in its voice,
     // and the toast should already call it what the listener will hear.
     const named = this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
-    const name = (): string => named?.name ?? agent.title
-    const following = Boolean(existing && existing.nodeId === agent.nodeId)
-    try {
-      let result: ForkAnswer
-      if (existing && following) {
-        result = await this.deps.forks.ask({ forkId: existing.forkId, prompt: question })
-      } else {
-        if (!agent.claudeSessionId) throw new Error('that agent has no Claude Code session to copy')
-        const lastSaidAtFork = this.lastSaid(agent)
-        result = await this.deps.forks.fork({
-          nodeId: agent.nodeId, sessionId: agent.claudeSessionId, prompt: forkPrompt(question),
-        })
-        this.forks.set(result.forkId, {
-          forkId: result.forkId, nodeId: agent.nodeId, lastSaidAtFork, sessionAtFork: agent.claudeSessionId,
-        })
-      }
-      const cost = result.costUsd === undefined ? 'cost unknown' : `$${result.costUsd.toFixed(2)}`
-      this.deps.notify(following ? `Control asked ${name()}'s copy a follow-up: ${cost}` : `Control forked ${name()}: ${cost}`)
-      this.events.push({ kind: 'fork-answer', handle, forkId: result.forkId, question, answer: result.answer })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      serverLog(`[receptionist] fork of ${handle} failed: ${message}`)
-      this.deps.notify(`Control's fork of ${name()} failed: ${message.slice(0, 120)}`)
-      this.events.push({ kind: 'fork-failed', handle, question, error: message })
+    const name = named?.name ?? agent.title
+    const result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
+    this.deps.log({ event: 'side-question', nodeId: agent.nodeId, question, result })
+    if (result.ok) {
+      this.deps.notify(`Control asked ${name}: ${usageWords(result.usage)}`)
+      this.events.push({ kind: 'agent-answer', handle, question, answer: result.text })
+    } else {
+      serverLog(`[receptionist] side question to ${handle} failed: ${result.reason}${result.detail ? ` ${result.detail}` : ''}`)
+      this.deps.notify(`Control's question to ${name} failed: ${result.reason}`)
+      this.events.push({ kind: 'agent-answer-failed', handle, question, reason: SIDE_QUESTION_FAILURES[result.reason] })
     }
     this.maybeSpeakUp()
   }
 
-  /** The list_agents tool: every live agent, the directories, and the forks. */
+  /** The list_agents tool: every live agent, and the directories. */
   private listAgents(agents: readonly RosterAgent[]): string {
     const sections = [`AGENTS:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript)}`]
     const directories = renderDirectories(this.deps.directories())
     if (directories) sections.push(`DIRECTORIES:\n${directories}`)
-    const forks = this.forkSummaries(agents)
-    if (forks.length) sections.push(`FORKS:\n${renderForks(forks)}`)
     return `list_agents:\n${sections.join('\n\n')}`
   }
 
@@ -540,23 +527,6 @@ export class Receptionist {
     } catch (err) {
       return `find_agent failed: ${err instanceof Error ? err.message : String(err)}. Use list_agents instead.`
     }
-  }
-
-  private forkSummaries(agents: readonly RosterAgent[]): ForkSummary[] {
-    const summaries: ForkSummary[] = []
-    for (const record of this.forks.values()) {
-      const agent = agents.find(candidate => candidate.nodeId === record.nodeId)
-      if (!agent) { this.forks.delete(record.forkId); continue }
-      const movedOn = agent.state !== 'stopped'
-        || agent.claudeSessionId !== record.sessionAtFork
-        || this.lastSaid(agent) !== record.lastSaidAtFork
-      summaries.push({ forkId: record.forkId, handle: handleFor(agent.nodeId), agentMovedOn: movedOn })
-    }
-    return summaries
-  }
-
-  private lastSaid(agent: RosterAgent): string {
-    return agent.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
   }
 
   /**
@@ -622,6 +592,13 @@ function acknowledgeSends(reply: Reply): Reply {
   const recipients = [...new Set(reply.tools.flatMap(call => call.tool === 'send' ? [call.agent] : []))]
   if (!recipients.length) return reply
   return { ...reply, say: [{ from: 'control', text: `Sent to ${recipients.map(handle => `{${handle}}`).join(' and ')}.` }] }
+}
+
+/** What a side question cost, in tokens: the cached context it read, and what it paid for afresh. */
+function usageWords(usage: SideQuestionUsage | undefined): string {
+  if (!usage) return 'usage unknown'
+  const k = (n: number | undefined) => `${Math.round((n ?? 0) / 100) / 10}k`
+  return `${k(usage.cache_read_input_tokens)} cached, ${k((usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0))} new`
 }
 
 /** The states an agent stops in: anything that is not working. */
