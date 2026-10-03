@@ -33,6 +33,11 @@ const LONG_PRESS_MS = 500
 export interface TouchCameraControls {
   pan(dx: number, dy: number): void
   zoom(anchor: { x: number; y: number }, z: number): void
+  /**
+   * Zoom by a factor, keeping any camera flight going. A handed-over pinch
+   * uses it, so the canvas's own zoom-out on arrival is not cut short.
+   */
+  zoomBy?(anchor: { x: number; y: number }, factor: number): void
   getZoom(): number
   /** A pan or pinch has begun — the canvas equivalent of a background drag. */
   onGestureStart(): void
@@ -78,7 +83,7 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
     let origin: Point | null = null
     let last: Point | null = null
     let panning = false
-    let pinch: { startDistance: number; startZoom: number; last: Point } | null = null
+    let pinch: { startDistance: number; startZoom: number; last: Point; lastDistance: number; relative: boolean } | null = null
     let pressTimer: ReturnType<typeof setTimeout> | undefined
     let longPressed = false
     /** After a long press, whether the finger has moved on to drag a node. */
@@ -136,7 +141,7 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
       } else if (e.touches.length === 2) {
         begin()
         const [a, b] = [e.touches[0], e.touches[1]]
-        pinch = { startDistance: Math.max(1, distance(a, b)), startZoom: controlsRef.current.getZoom(), last: midpoint(a, b) }
+        pinch = { startDistance: Math.max(1, distance(a, b)), startZoom: controlsRef.current.getZoom(), last: midpoint(a, b), lastDistance: Math.max(1, distance(a, b)), relative: false }
         panning = false
       }
     }
@@ -146,9 +151,12 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
         e.preventDefault()
         const [a, b] = [e.touches[0], e.touches[1]]
         const mid = midpoint(a, b)
+        const span = Math.max(1, distance(a, b))
         controlsRef.current.pan(pinch.last.x - mid.x, pinch.last.y - mid.y)
-        controlsRef.current.zoom(mid, pinch.startZoom * (distance(a, b) / pinch.startDistance))
+        if (pinch.relative) controlsRef.current.zoomBy?.(mid, span / pinch.lastDistance)
+        else controlsRef.current.zoom(mid, pinch.startZoom * (span / pinch.startDistance))
         pinch.last = mid
+        pinch.lastDistance = span
         return
       }
       if (e.touches.length !== 1 || !origin || !last) return
@@ -218,7 +226,8 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
       begin()
       if (e.touches.length >= 2) {
         const [a, b] = [e.touches[0], e.touches[1]]
-        pinch = { startDistance: Math.max(1, distance(a, b)), startZoom: controlsRef.current.getZoom(), last: midpoint(a, b) }
+        const span = Math.max(1, distance(a, b))
+        pinch = { startDistance: span, startZoom: controlsRef.current.getZoom(), last: midpoint(a, b), lastDistance: span, relative: !!controlsRef.current.zoomBy }
       } else {
         // Already moving: no slop to cross, it pans from the first move.
         const t = e.touches[0]

@@ -158,9 +158,16 @@ export function useCamera(
     isSnapBackRef.current = false
   }, [applyToDOM])
 
-  const flyToUnfocusZoom = useCallback(() => {
+  /**
+   * The quick zoom out on leaving a focused card: to the unfocused zoom, about
+   * the middle of the screen. `atLeast` (a factor below 1) also guarantees a
+   * pull back from wherever the camera is — for a phone, whose focus zoom is
+   * already below the desktop's unfocused one.
+   */
+  const flyToUnfocusZoom = useCallback((atLeast?: number) => {
     const cam = cameraRef.current
-    if (cam.z <= UNFOCUS_SNAP_ZOOM) return
+    const z = Math.min(UNFOCUS_SNAP_ZOOM, atLeast === undefined ? Infinity : cam.z * atLeast)
+    if (cam.z <= z) return
 
     const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
     if (!viewport) return
@@ -169,9 +176,9 @@ export function useCamera(
       { x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 }, cam
     )
     flyTo({
-      x: viewport.clientWidth / 2 - centerCanvas.x * UNFOCUS_SNAP_ZOOM,
-      y: viewport.clientHeight / 2 - centerCanvas.y * UNFOCUS_SNAP_ZOOM,
-      z: UNFOCUS_SNAP_ZOOM
+      x: viewport.clientWidth / 2 - centerCanvas.x * z,
+      y: viewport.clientHeight / 2 - centerCanvas.y * z,
+      z
     }, UNFOCUS_SPEED)
   }, [flyTo])
 
@@ -192,6 +199,23 @@ export function useCamera(
       x: targetRef.current.x - sdx,
       y: targetRef.current.y - sdy
     }
+    applyToDOM(cameraRef.current)
+    scheduleSync()
+  }, [applyToDOM, scheduleSync])
+
+  /**
+   * Zoom by a factor about a screen point, carrying any flight in progress
+   * along with it — as `userPan` does for position — rather than cancelling it.
+   */
+  const userZoomBy = useCallback((anchor: { x: number; y: number }, factor: number) => {
+    if (useCameraLockStore.getState().locked) return
+    const scaled = (cam: Camera): Camera => {
+      const z = clampZoom(cam.z * factor)
+      const f = z / cam.z
+      return { x: anchor.x - (anchor.x - cam.x) * f, y: anchor.y - (anchor.y - cam.y) * f, z }
+    }
+    cameraRef.current = scaled(cameraRef.current)
+    targetRef.current = scaled(targetRef.current)
     applyToDOM(cameraRef.current)
     scheduleSync()
   }, [applyToDOM, scheduleSync])
@@ -597,5 +621,5 @@ export function useCamera(
     rafRef.current = requestAnimationFrame(shakeTick)
   }, [applyToDOM])
 
-  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userPan, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState }
+  return { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userPan, userZoom, userZoomBy, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState }
 }

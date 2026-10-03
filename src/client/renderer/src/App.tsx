@@ -36,7 +36,7 @@ import { useCoarseClock } from './hooks/useCoarseClock'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import type { Camera } from './lib/camera'
-import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
+import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, EXTERNAL_UNFOCUS_ZOOM_OUT, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from '../../../shared/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
@@ -178,7 +178,7 @@ export function App() {
   const shiftClickPendingRef = useRef(false)
   const pinnedFocusRef = useRef(false)
   const { speak, stop: ttsStop } = useTTS()
-  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userPan, userZoom, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
+  const { camera, cameraRef, surfaceRef, handleWheel, handlePanStart, userPan, userZoom, userZoomBy, resetCamera, flyTo, snapToTarget, flyToUnfocusZoom, rotationalFlyTo, hopFlyTo, shakeCamera, restoredFromStorageRef, captureDebugState } = useCamera(undefined, focusRef, onCameraEvent)
   const inertiaBlock = useInertiaBlock()
 
   // Send camera bounding box to server whenever camera settles
@@ -1450,7 +1450,9 @@ export function App() {
     if (unfocusRequests === handledUnfocusRef.current) return
     handledUnfocusRef.current = unfocusRequests
     handleUnfocus()
-    if (!useCameraLockStore.getState().locked) flyToUnfocusZoom()
+    // The host's view sits over a card fitted to a phone, already below the
+    // desktop's unfocused zoom, so pull back from there as well.
+    if (!useCameraLockStore.getState().locked) flyToUnfocusZoom(EXTERNAL_UNFOCUS_ZOOM_OUT)
   }, [unfocusRequests, handleUnfocus, flyToUnfocusZoom])
   const focusRequest = useSurfacePresenterStore((s) => s.focusRequest)
   const handledFocusRef = useRef(0)
@@ -2506,6 +2508,7 @@ export function App() {
   useTouchCamera('.canvas-viewport', {
     pan: userPan,
     zoom: userZoom,
+    zoomBy: userZoomBy,
     getZoom: () => cameraRef.current.z,
     onGestureStart: () => {
       setSearchVisible(false)

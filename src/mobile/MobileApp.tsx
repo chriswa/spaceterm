@@ -65,6 +65,9 @@ export function MobileApp() {
   }, [focusedTerminal])
 
   const closeTerminal = () => {
+    // Now, not from the effect after the re-render: the canvas's zoom-out on
+    // the way back starts first, and a covered canvas snaps where it would fly.
+    setCanvasCovered(false)
     rememberOpen(null)
     setComposerFor(null)
     useSurfacePresenterStore.getState().requestUnfocus()

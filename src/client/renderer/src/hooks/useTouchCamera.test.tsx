@@ -153,6 +153,17 @@ describe('useTouchCamera', () => {
       expect(controls.zoom).toHaveBeenLastCalledWith({ x: 150, y: 100 }, 0.5)
     })
 
+    it('pinches relative to the camera as it is, so a flight already under way carries on', () => {
+      const { controls } = setup()
+      const zoomBy = vi.fn()
+      Object.assign(controls, { zoomBy })
+      const { other } = handOver([[100, 100], [200, 100]])
+      touch(other, 'touchmove', [[125, 100], [175, 100]])
+      touch(other, 'touchmove', [[140, 100], [165, 100]])
+      expect(zoomBy.mock.calls.map(([, f]) => f)).toEqual([0.5, 0.5])
+      expect(controls.zoom).not.toHaveBeenCalled()
+    })
+
     it('is refused with no canvas to take it', () => {
       expect(handOver([[1, 1]]).adopted).toBe(false)
     })

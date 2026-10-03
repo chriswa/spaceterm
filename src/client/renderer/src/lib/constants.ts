@@ -59,6 +59,8 @@ export const ZOOM_SNAP_LOW = 0.015
 export const ZOOM_SNAP_HIGH = 1.25
 export const ZOOM_SNAP_HIGH_UNFOCUSED = 1.0
 export const UNFOCUS_SNAP_ZOOM = 0.5
+/** Leaving a host's full-screen terminal (the phone) pulls the camera back at least this far. */
+export const EXTERNAL_UNFOCUS_ZOOM_OUT = 0.6
 export const ZOOM_SENSITIVITY = 0.004
 // Wheel/pinch zoom, in log-zoom units per unit of wheel delta: one event
 // multiplies zoom by e^(-deltaY * WHEEL_ZOOM_SENSITIVITY). A trackpad pinch
