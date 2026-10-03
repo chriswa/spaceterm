@@ -40,6 +40,7 @@ import { useFacet } from '../hooks/useFacet'
 import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { cleanTerminalCopy } from '../../../../shared/cleanTerminalCopy'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
+import { useAgentName } from '../stores/agentNamesStore'
 import { type NodeId, type PtySessionId } from '../../../../shared/ids'
 import type { AgentType } from '../../../../shared/agent-type'
 
@@ -1301,6 +1302,7 @@ export function TerminalCard({
   const modelLabel = [claudeModel, effortLabel].filter(Boolean).join(' \u2014 ')
   const isAgentSurface = crabAppearance.kind === 'claude' || crabAppearance.kind === 'cursor' || crabAppearance.kind === 'codex'
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
+  const agentName = useAgentName(id)
   const resizingNodeId = useResizeStore(s => s.resizingNodeId)
 
   return (
@@ -1313,6 +1315,8 @@ export function TerminalCard({
       zIndex={zIndex}
       focused={focused}
       headVariant={chromeless ? 'hidden' : 'visible'}
+      // Not on the phone's full-screen view: it is the only thing on screen.
+      nameTag={chromeless ? undefined : agentName}
       titleContent={
         <TerminalTitleBarContent
           name={name}

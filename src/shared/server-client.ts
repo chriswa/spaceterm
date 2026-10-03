@@ -69,6 +69,7 @@ export type ServerEventType =
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
+  | 'receptionist-status' | 'receptionist-talk-to-me' | 'camera-follow' | 'agent-names'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -278,6 +279,10 @@ export class ServerClient {
       case 'speech-stop':
       case 'mobile-build-changed':
       case 'agent-meta-availability':
+      case 'receptionist-status':
+      case 'receptionist-talk-to-me':
+      case 'camera-follow':
+      case 'agent-names':
         this.emit(msg)
         return
 
@@ -808,5 +813,19 @@ export class ServerClient {
   endSummaryChat(): void {
     this.log('[summary-chat] abandoned from this client')
     this.fireAndForget({ type: 'summary-chat-end' })
+  }
+
+  /**
+   * Press Control: make the receptionist the voice target, or stop it if it is
+   * producing speech. The server decides which; the outcome comes back as a
+   * `receptionist-status` broadcast.
+   */
+  selectReceptionist(): void {
+    this.log('[receptionist] selected from this client')
+    this.fireAndForget({ type: 'receptionist-select' })
+  }
+
+  setReceptionistTalkToMe(enabled: boolean): void {
+    this.fireAndForget({ type: 'set-receptionist-talk-to-me', enabled })
   }
 }

@@ -18,6 +18,8 @@ export type ToolCall =
   | { tool: 'read'; agent: string; search?: string }
   | { tool: 'ask_fork'; agent: string; question: string; fork?: string }
   | { tool: 'monitor'; agent: string }
+  | { tool: 'send'; agent: string; message: string }
+  | { tool: 'interrupt'; agent: string }
 
 export interface Reply {
   say: SayPart[]
@@ -73,6 +75,11 @@ function parseToolCall(value: unknown): ToolCall {
     }
     case 'monitor':
       return { tool: 'monitor', agent }
+    case 'send':
+      if (typeof value.message !== 'string' || !value.message.trim()) throw new Error('"send" needs a "message"')
+      return { tool: 'send', agent, message: value.message.trim() }
+    case 'interrupt':
+      return { tool: 'interrupt', agent }
     default:
       throw new Error(`unknown tool "${value.tool}"`)
   }
@@ -96,6 +103,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** One part, ready for the speech backend: words and the voice to say them in. */
 export type SpokenPart = { text: string; voice?: string }
 
+/** A spoken part, and how much of its start is the "Kevin here." the model never wrote. */
+export type RenderedPart = SpokenPart & { introLength: number }
+
 /** What a handle resolves to when it is spoken: its name, assigned on first use, and its voice. */
 export type Speaker = { name: string; voice: string }
 
@@ -108,24 +118,25 @@ export type Speaker = { name: string; voice: string }
  * get no introduction.
  *
  * `resolve` assigns a name the first time a handle is spoken, which is the
- * whole of when names get assigned: nothing is named until it is mentioned.
- * Unknown handles are left as written rather than guessed at.
+ * whole of when names get assigned: nothing is named until it is mentioned. A
+ * placeholder that resolves to nothing is spoken as "an agent" rather than as
+ * its handle.
  */
 export function renderSpeech(
   say: readonly SayPart[],
   resolve: (handle: string) => Speaker | undefined,
   controlVoice: string,
-): SpokenPart[] {
+): RenderedPart[] {
   const named = (text: string): string =>
-    text.replace(/\{([A-Za-z0-9_-]+)\}/g, (whole, handle: string) => resolve(handle)?.name ?? whole)
+    text.replace(/\{([A-Za-z0-9_-]+)\}/g, (_whole, handle: string) => resolve(handle)?.name ?? 'an agent')
   return say.map(part => {
-    if (part.from === CONTROL) return { text: named(part.text), voice: controlVoice }
-    const speaker = resolve(part.from)
+    const speaker = part.from === CONTROL ? undefined : resolve(part.from)
     // A part attributed to a handle that is not an agent is still the
     // receptionist talking; giving it a voice it does not own would break
     // the one rule the voices exist for.
-    if (!speaker) return { text: named(part.text), voice: controlVoice }
-    return { text: `${speaker.name} here. ${named(part.text)}`, voice: speaker.voice }
+    if (!speaker) return { text: named(part.text), voice: controlVoice, introLength: 0 }
+    const intro = `${speaker.name} here. `
+    return { text: `${intro}${named(part.text)}`, voice: speaker.voice, introLength: intro.length }
   })
 }
 
@@ -138,8 +149,8 @@ export function renderSpeech(
  * answer: see `redactUnheard`, whose rules about the half-heard word apply
  * unchanged within a part.
  */
-export function redactSpoken(parts: readonly SpokenPart[], heard: number): SpokenPart[] {
-  const kept: SpokenPart[] = []
+export function redactSpoken<P extends SpokenPart>(parts: readonly P[], heard: number): P[] {
+  const kept: P[] = []
   let start = 0
   for (const part of parts) {
     const end = start + part.text.length

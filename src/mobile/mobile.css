@@ -228,6 +228,32 @@ textarea, input, [contenteditable="true"], .cm-content {
   0%, 100% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.6); }
   50% { box-shadow: 0 0 0 10px rgba(243, 139, 168, 0); }
 }
+/* Control's button (ControlButton.tsx): left of the talk button, mirroring
+   the dictation indicator on its right. Colour is state, in the same palette. */
+.m-control {
+  position: fixed;
+  left: calc(50% - 28px - 12px - 44px);
+  bottom: calc(var(--m-corner-gap) + 6px);
+  z-index: 2147483300;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: var(--m-raised);
+  color: var(--m-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+.m-control--target { background: var(--m-accent); color: #11111b; }
+.m-control--thinking { background: #f9e2af; color: #11111b; }
+.m-control--synthesizing,
+.m-control--speaking { background: #a6e3a1; color: #11111b; }
+.m-control--error { border-color: var(--m-danger); color: var(--m-danger); }
 .m-summarizer__error {
   position: fixed;
   left: 50%;

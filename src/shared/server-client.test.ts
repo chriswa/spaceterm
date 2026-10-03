@@ -173,6 +173,44 @@ describe('createApi', () => {
     expect(focused).toHaveBeenCalledWith('n1')
   })
 
+  it('replays the receptionist’s on-connect state to a listener that subscribes late', () => {
+    // The stores subscribe once the app has mounted, after the connect push.
+    const { t, client } = connected()
+    const api = createApi(client, platform)
+    t.receive(
+      { type: 'receptionist-status', phase: 'ready', target: true },
+      { type: 'receptionist-talk-to-me', enabled: false },
+      { type: 'agent-names', names: { n1: 'Kevin' } },
+      { type: 'camera-follow', nodeId: 'n1' }
+    )
+    const status = vi.fn()
+    const talk = vi.fn()
+    const names = vi.fn()
+    const follow = vi.fn()
+    api.receptionist.onStatus(status)
+    api.receptionist.onTalkToMe(talk)
+    api.receptionist.onAgentNames(names)
+    api.receptionist.onCameraFollow(follow)
+    expect(status).toHaveBeenCalledWith({ phase: 'ready', target: true, message: undefined })
+    expect(talk).toHaveBeenCalledWith(false)
+    expect(names).toHaveBeenCalledWith({ n1: 'Kevin' })
+    // A camera move is an instruction for then, not state: never replayed.
+    expect(follow).not.toHaveBeenCalled()
+
+    t.receive({ type: 'camera-follow', nodeId: 'n2' }, { type: 'agent-names', names: {} })
+    expect(follow).toHaveBeenCalledWith('n2')
+    expect(names).toHaveBeenLastCalledWith({})
+  })
+
+  it('sends Control’s presses fire-and-forget', () => {
+    const { t, client } = connected()
+    const api = createApi(client, platform)
+    api.receptionist.select()
+    api.receptionist.setTalkToMe(true)
+    expect(t.last('receptionist-select').msg).toEqual({ type: 'receptionist-select' })
+    expect(t.last('set-receptionist-talk-to-me').msg).toEqual({ type: 'set-receptionist-talk-to-me', enabled: true })
+  })
+
   it('filters mod traffic to the mod that asked', () => {
     const { t, client } = connected()
     const api = createApi(client, platform)

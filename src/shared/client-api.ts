@@ -42,6 +42,25 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
 
   const on = <T extends ServerEventType>(type: T, fn: (msg: ServerEvent<T>) => void) => client.on(type, fn)
 
+  /**
+   * A channel whose message is state, "sent on connect and broadcast on
+   * change": remember the latest and hand it to each new subscriber at once.
+   * `window.api` exists before the connection opens, but the stores subscribe
+   * only once the app has mounted — after the on-connect push has come and
+   * gone. A reconnect reloads the page, so the remembered value is never stale.
+   */
+  function latest<T extends ServerEventType>(type: T) {
+    let last: ServerEvent<T> | undefined
+    client.on(type, (msg) => { last = msg })
+    return (fn: (msg: ServerEvent<T>) => void): (() => void) => {
+      if (last) fn(last)
+      return client.on(type, fn)
+    }
+  }
+  const onReceptionistStatus = latest('receptionist-status')
+  const onReceptionistTalkToMe = latest('receptionist-talk-to-me')
+  const onAgentNames = latest('agent-names')
+
   return {
     pty: {
       create: (options) => client.create(options),
@@ -160,6 +179,14 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onAudio: (cb) => on('speech-audio', ({ id, index, count, sampleRate, pcm }) => cb({ id, index, count, sampleRate, pcm })),
       onStop: (cb) => on('speech-stop', (m) => cb(m.id)),
       progress: (id, index, event) => client.speechProgress(id, index, event)
+    },
+    receptionist: {
+      select: () => client.selectReceptionist(),
+      setTalkToMe: (enabled) => client.setReceptionistTalkToMe(enabled),
+      onStatus: (cb) => onReceptionistStatus(({ phase, target, message }) => cb({ phase, target, message })),
+      onTalkToMe: (cb) => onReceptionistTalkToMe((m) => cb(m.enabled)),
+      onAgentNames: (cb) => onAgentNames((m) => cb(m.names)),
+      onCameraFollow: (cb) => on('camera-follow', (m) => cb(m.nodeId))
     },
     perf: platform.perf,
     window: {

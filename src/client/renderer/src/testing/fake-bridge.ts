@@ -1,7 +1,8 @@
 import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
-  SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi
+  SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
+  ReceptionistApi, ReceptionistStatus
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
@@ -168,6 +169,10 @@ export class FakeBridge implements Api {
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusChanged = new Set<(focused: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId | null) => void>()
+  private readonly receptionistStatus = new Set<(status: ReceptionistStatus) => void>()
+  private readonly receptionistTalkToMe = new Set<(enabled: boolean) => void>()
+  private readonly agentNames = new Set<(names: Record<string, string>) => void>()
+  private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -205,7 +210,7 @@ export class FakeBridge implements Api {
   }
 
   /** Listener counts per channel — for asserting that unsubscribe actually unsubscribed. */
-  listenerCount(channel: 'updated' | 'added' | 'removed' | 'serverError' | 'focusNode'): number {
+  listenerCount(channel: 'updated' | 'added' | 'removed' | 'serverError' | 'focusNode' | 'cameraFollow'): number {
     return this[channel].size
   }
 
@@ -262,6 +267,16 @@ export class FakeBridge implements Api {
     },
     /** `null` stands for a deep link whose id matched nothing. */
     focusNode: (nodeId: NodeId | null): void => { for (const fn of this.focusNode) fn(nodeId) },
+    receptionistStatus: (status: ReceptionistStatus): void => {
+      for (const fn of this.receptionistStatus) fn(status)
+    },
+    receptionistTalkToMe: (enabled: boolean): void => {
+      for (const fn of this.receptionistTalkToMe) fn(enabled)
+    },
+    agentNames: (names: Record<string, string>): void => {
+      for (const fn of this.agentNames) fn(names)
+    },
+    cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
@@ -415,6 +430,19 @@ export class FakeBridge implements Api {
     onAudio: (cb) => subscribe(this.speechAudio, cb),
     onStop: (cb) => subscribe(this.speechStop, cb),
     progress: (id, index, event) => this.record('remoteSpeech.progress', id, index, event)
+  }
+
+  /**
+   * Unlike the real bridge, these channels do not replay the latest value to a
+   * late subscriber: a test emits after rendering, so it never needs to.
+   */
+  readonly receptionist: ReceptionistApi = {
+    select: () => this.record('receptionist.select'),
+    setTalkToMe: (enabled) => this.record('receptionist.setTalkToMe', enabled),
+    onStatus: (cb) => subscribe(this.receptionistStatus, cb),
+    onTalkToMe: (cb) => subscribe(this.receptionistTalkToMe, cb),
+    onAgentNames: (cb) => subscribe(this.agentNames, cb),
+    onCameraFollow: (cb) => subscribe(this.cameraFollow, cb)
   }
 
   readonly perf: PerfApi = {

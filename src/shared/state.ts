@@ -529,6 +529,8 @@ export interface ServerState {
   rootCwd?: string
   /** Whether surfaces get auto-stamp icons drawn for them. Absent means on. See `auto-stamp.ts`. */
   autoStampsEnabled?: boolean
+  /** Whether the receptionist may speak up unprompted. On unless turned off. */
+  receptionistTalkToMe?: boolean
 }
 
 /** What kind of background work a launch represents. Mirrors `LaunchKind`. */

@@ -14,9 +14,9 @@ import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVis
 import { useHoveredCardStore } from '../../stores/hoveredCardStore'
 import { usePowerMonitorStore } from '../../stores/powerMonitorStore'
 import { useSummaryChatStore } from '../../stores/summaryChatStore'
-import { useSummaryBubble, type SummaryBubbleState } from '../../mods/summary-chat/bubble-facet'
+import { useReceptionistStore } from '../../stores/receptionistStore'
+import { useSummaryBubble, BUBBLE_STATE } from '../../mods/summary-chat/bubble-facet'
 import { asNodeId, type NodeId } from '../../../../../shared/ids'
-import type { SummaryChatPhase } from '../../../../../shared/api'
 
 /**
  * The row of per-surface indicators at the right of the toolbar.
@@ -48,21 +48,6 @@ function indicatorIconUrl(kind: AgentIndicatorKind): string {
   return crabIcon
 }
 
-/**
- * The mod's mark names the phase in its own vocabulary; this is the mapping.
- *
- * `synthesizing` shares the `thinking` mark on purpose. The bubble answers
- * "is this surface working on something for me", and it still is — the work
- * has just moved to Voice Operator. What the two phases must *not* share is
- * the waiting cue, and that is decided by the phase itself rather than here.
- */
-const BUBBLE_STATE: Record<SummaryChatPhase, SummaryBubbleState> = {
-  thinking: 'thinking',
-  synthesizing: 'thinking',
-  speaking: 'talking',
-  ready: 'idle',
-}
-
 function indicatorKindClass(kind: AgentIndicatorKind): string {
   if (kind === 'cursor') return ' toolbar__crab--cursor'
   if (kind === 'codex') return ' toolbar__crab--codex'
@@ -87,7 +72,10 @@ export interface CrabGroupProps {
 
 export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent, now }: CrabGroupProps) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
-  const summaryTargetNodeId = useSummaryChatStore(s => s.targetNodeId)
+  // Voice goes to one place at a time: while Control holds it, no surface is
+  // Summary Chat's target, whatever that store last heard.
+  const receptionistIsTarget = useReceptionistStore(s => s.target)
+  const summaryTargetNodeId = useSummaryChatStore(s => receptionistIsTarget ? null : s.targetNodeId)
   const summaryPhase = useSummaryChatStore(s => s.phase)
   // Supplied by the summary-chat mod, not by the base theme system — the
   // active theme may swap it for a different mark entirely.

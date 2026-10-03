@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
+import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useNodeStore } from '@/stores/nodeStore'
 import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
@@ -18,6 +19,11 @@ import { listensOnEarpiece, onEarpieceChange, setListenOnEarpiece } from './audi
  * server then forgets the part that was never heard.
  *
  * A long press offers to abandon the conversation, which takes this away.
+ *
+ * While Control (the receptionist) holds the voice target, the same button
+ * talks to it instead: the server sends `summaryChatFollowUp` to whichever was
+ * selected last, so only the label, the phase shown and how an answer is cut
+ * off change here. `nodeId` is then the Summary Chat surface, if any.
  */
 
 const LONG_PRESS_MS = 450
@@ -25,9 +31,12 @@ const ERROR_SHOWN_MS = 4000
 
 type Mic = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'sending' }
 
-export function SummarizerButton({ nodeId }: { nodeId: NodeId }) {
-  const phase = useSummaryChatStore((s) => s.phase[nodeId])
-  const node = useNodeStore((s) => s.nodes[nodeId])
+export function SummarizerButton({ nodeId }: { nodeId: NodeId | null }) {
+  const toControl = useReceptionistStore((s) => s.target) || nodeId === null
+  const controlPhase = useReceptionistStore((s) => s.phase)
+  const summaryPhase = useSummaryChatStore((s) => (nodeId ? s.phase[nodeId] : undefined))
+  const phase = toControl ? (controlPhase === 'ready' ? undefined : controlPhase) : summaryPhase
+  const node = useNodeStore((s) => (nodeId ? s.nodes[nodeId] : undefined))
   const [mic, setMic] = useState<Mic>({ kind: 'idle' })
   const [sheet, setSheet] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -61,7 +70,11 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId }) {
     primeCues()
     setError(null)
     // A press over an answer is an interruption: stop it, then listen.
-    if (phase) void window.api.toggleSummaryChat(undefined, 'summary').catch(() => undefined)
+    if (phase) {
+      // Control's press is the same toggle: it stops it while it is answering.
+      if (toControl) window.api.receptionist.select()
+      else void window.api.toggleSummaryChat(undefined, 'summary').catch(() => undefined)
+    }
     setMic({ kind: 'starting' })
     try {
       // Begun here, inside the tap, or iOS will not let it record.
@@ -108,7 +121,7 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId }) {
 
   const state = mic.kind !== 'idle' ? mic.kind : phase ?? 'ready'
   const label = {
-    ready: 'Talk to Summary Chat',
+    ready: toControl ? 'Talk to Control' : 'Talk to Summary Chat',
     starting: 'Starting the microphone',
     listening: 'Listening — tap to send',
     sending: 'Transcribing',
@@ -149,13 +162,17 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId }) {
       {sheet && (
         <div className="mobile-confirm m-summarizer-sheet" onClick={() => setSheet(false)}>
           <div className="mobile-confirm__panel" role="dialog" aria-label="Summary Chat" onClick={(e) => e.stopPropagation()}>
-            <div className="m-summarizer__about">Summary Chat · {node ? nodeDisplayTitle(node) : 'surface gone'}</div>
+            <div className="m-summarizer__about">
+              {toControl ? 'Control' : `Summary Chat · ${node ? nodeDisplayTitle(node) : 'surface gone'}`}
+            </div>
             <button className="mobile-btn" onClick={() => setListenOnEarpiece(!earpiece)}>
               {earpiece ? 'Playing on the earpiece · switch to speaker' : 'Playing on the speaker · switch to earpiece'}
             </button>
-            <button className="mobile-btn mobile-btn--danger" onClick={abandon}>
-              Abandon summarizer
-            </button>
+            {!toControl && (
+              <button className="mobile-btn mobile-btn--danger" onClick={abandon}>
+                Abandon summarizer
+              </button>
+            )}
           </div>
         </div>
       )}

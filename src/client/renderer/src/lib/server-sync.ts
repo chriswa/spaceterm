@@ -7,6 +7,8 @@ import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSummaryChatStore } from '../stores/summaryChatStore'
 import { useRestartRequiredStore } from '../stores/restartRequiredStore'
+import { useReceptionistStore } from '../stores/receptionistStore'
+import { useAgentNamesStore } from '../stores/agentNamesStore'
 import type { NodeData, NodeStamp } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
@@ -189,6 +191,29 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     })
   )
 
+  // The bridge replays each of these on subscribe — they are not in
+  // `ServerState`, and their on-connect push came before this ran.
+  cleanupFns.push(
+    window.api.receptionist.onStatus((status) => {
+      // Every change is broadcast whole, so toast only an error that is new.
+      const before = useReceptionistStore.getState().error
+      useReceptionistStore.getState().setStatus(status)
+      if (status.message && status.message !== before) showToast(`Control: ${status.message}`)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.receptionist.onTalkToMe((enabled) => {
+      useReceptionistStore.getState().setTalkToMe(enabled)
+    })
+  )
+
+  cleanupFns.push(
+    window.api.receptionist.onAgentNames((names) => {
+      useAgentNamesStore.getState().setAll(names)
+    })
+  )
+
   // Request full state from server. This PULL is the source of truth on every
   // renderer (re)load — the onSavedViewports PUSH above only fires on a fresh
   // main-process socket connect, which does NOT repeat across a renderer refresh
@@ -200,6 +225,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
     useRootCwdStore.getState().set(serverState.rootCwd)
     useAutoStampsEnabledStore.getState().set(serverState.autoStampsEnabled !== false)
+    useReceptionistStore.getState().setTalkToMe(serverState.receptionistTalkToMe !== false)
 
     // Authoritative on reload: the PUSH above only fires when the flag changes
     // while the socket stays open, which a renderer refresh does not repeat.

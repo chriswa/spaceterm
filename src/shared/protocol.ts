@@ -797,6 +797,25 @@ export interface SummaryChatFollowUpMessage {
   text: string
 }
 
+/**
+ * Make the receptionist ("Control") the target of the listener's voice: Voice
+ * Operator command-mode transcripts and the phone's talk button go to it until
+ * a Summary Chat press takes them back. A press while the receptionist is
+ * producing speech stops it instead — the same toggle the summary chord is.
+ */
+export interface ReceptionistSelectMessage {
+  type: 'receptionist-select'
+}
+
+/**
+ * Whether the receptionist may speak up on its own when something it was
+ * watching for happens. Answered by `receptionist-talk-to-me`.
+ */
+export interface SetReceptionistTalkToMeMessage {
+  type: 'set-receptionist-talk-to-me'
+  enabled: boolean
+}
+
 /** Abandon every Summary Chat conversation: stop speaking and forget them. */
 export interface SummaryChatEndMessage {
   type: 'summary-chat-end'
@@ -1104,6 +1123,8 @@ export type ClientMessage =
   | SaveViewportMessage
   | SetRootCwdMessage
   | SetAutoStampsEnabledMessage
+  | ReceptionistSelectMessage
+  | SetReceptionistTalkToMeMessage
 
 // --- Server → Client messages ---
 
@@ -1459,6 +1480,43 @@ export interface RootCwdMessage {
   cwd?: string
 }
 
+/**
+ * The receptionist's lifecycle. Sent on connect and broadcast on every change.
+ * `target` says whether the listener's voice currently goes to it rather than
+ * to Summary Chat; `message` explains an error.
+ */
+export interface ReceptionistStatusMessage {
+  type: 'receptionist-status'
+  phase: SummaryChatPhase
+  target: boolean
+  message?: string
+}
+
+/** Whether the receptionist may speak unprompted. Sent on connect and broadcast on every change. */
+export interface ReceptionistTalkToMeMessage {
+  type: 'receptionist-talk-to-me'
+  enabled: boolean
+}
+
+/**
+ * Move the camera to a surface because the conversation is about it — the
+ * receptionist naming or quoting an agent. Unlike `focus-surface` it never
+ * raises a window or takes focus: it follows talk, it does not answer a request.
+ */
+export interface CameraFollowMessage {
+  type: 'camera-follow'
+  nodeId: NodeId
+}
+
+/**
+ * Every agent surface's receptionist name, whole, keyed by node id. Sent on
+ * connect and broadcast whenever a name is assigned or released.
+ */
+export interface AgentNamesMessage {
+  type: 'agent-names'
+  names: Record<string, string>
+}
+
 /** Whether auto-stamp generation is on. Sent on connect and broadcast on every change. */
 export interface AutoStampsEnabledMessage {
   type: 'auto-stamps-enabled'
@@ -1735,6 +1793,10 @@ export type ServerMessage =
   | SavedViewportsMessage
   | RootCwdMessage
   | AutoStampsEnabledMessage
+  | ReceptionistStatusMessage
+  | ReceptionistTalkToMeMessage
+  | CameraFollowMessage
+  | AgentNamesMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage
   | UsageReportResultMessage

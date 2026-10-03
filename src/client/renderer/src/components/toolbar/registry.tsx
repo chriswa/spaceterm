@@ -3,6 +3,7 @@ import type { NodeId } from '../../../../../shared/ids'
 import type { CrabEntry } from '../../lib/crab-nav'
 import { CrabGroup, type CrabNavEvent } from './CrabGroup'
 import { PowerMonitor } from './PowerMonitor'
+import { ControlButton, ControlTalkToMeToggle } from './ControlButtons'
 import {
   AgentMemoryMetric,
   CameraLockToggle,
@@ -153,6 +154,9 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   // Renders nothing unless switched on from the debug menu.
   { id: 'power-monitor', slot: 'status', kind: 'standalone', render: () => <PowerMonitor /> },
 
+  // The receptionist sits with the surfaces it talks about, left of the crabs.
+  { id: 'control', slot: 'surfaces', kind: 'standalone', render: () => <ControlButton /> },
+  { id: 'control-talk-to-me', slot: 'surfaces', kind: 'standalone', render: () => <ControlTalkToMeToggle /> },
   {
     id: 'crab-group',
     slot: 'surfaces',

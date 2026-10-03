@@ -29,6 +29,7 @@ import type {
   SnapshotMessage,
   SpeakOutcome,
   SummaryChatMode,
+  SummaryChatPhase,
   SummaryChatToggleOutcome,
   SummaryChatUiState, SpeechProgressEvent
 } from './protocol'
@@ -289,6 +290,37 @@ export interface RemoteSpeechApi {
   progress(id: string, index: number, event: SpeechProgressEvent): void
 }
 
+/** What `receptionist-status` says, minus the envelope. */
+export interface ReceptionistStatus {
+  phase: SummaryChatPhase
+  /** Whether the listener's voice goes to the receptionist rather than Summary Chat. */
+  target: boolean
+  /** Why it failed, when it did. */
+  message?: string
+}
+
+/**
+ * The receptionist, "Control": a server-side voice agent that talks about every
+ * live agent surface. See `src/server/receptionist/`.
+ *
+ * The `on*` channels whose server message is "sent on connect and broadcast on
+ * change" replay the latest value to a late subscriber, because the on-connect
+ * push lands before the renderer has subscribed. `onCameraFollow` does not:
+ * a camera move is an instruction for now, not state.
+ */
+export interface ReceptionistApi {
+  /** Press Control: become the voice target, or stop the receptionist speaking. */
+  select(): void
+  /** Whether Control may speak up unprompted, for every client. */
+  setTalkToMe(enabled: boolean): void
+  onStatus(callback: (status: ReceptionistStatus) => void): () => void
+  onTalkToMe(callback: (enabled: boolean) => void): () => void
+  /** Every agent surface's name, whole, keyed by node id. */
+  onAgentNames(callback: (names: Record<string, string>) => void): () => void
+  /** Move the camera to a surface the conversation is about — no raise, no focus. */
+  onCameraFollow(callback: (nodeId: NodeId) => void): () => void
+}
+
 export interface PerfApi {
   startTrace(): Promise<void>
   stopTrace(): Promise<string>
@@ -382,6 +414,7 @@ export interface Api {
   tts: TtsApi
   dictation: DictationApi
   remoteSpeech: RemoteSpeechApi
+  receptionist: ReceptionistApi
   perf: PerfApi
   window: WindowApi
   system: SystemApi

@@ -196,3 +196,26 @@ export function DustpanIcon() {
     </svg>
   )
 }
+
+export function HeadsetIcon() {
+  // Control, the receptionist: a switchboard operator's headset.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M2.5 9.5V8a5.5 5.5 0 0 1 11 0v1.5" />
+      <rect x="1.75" y="8.5" width="2.5" height="4" rx="1" fill="currentColor" fillOpacity="0.25" />
+      <rect x="11.75" y="8.5" width="2.5" height="4" rx="1" fill="currentColor" fillOpacity="0.25" />
+      <path d="M13 12.5c0 1.5-1.5 2-3.5 2" />
+    </svg>
+  )
+}
+
+export function SpeakUpIcon() {
+  // A speaker with sound coming out: may Control speak up unprompted.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" fillOpacity="0.2" />
+      <path d="M10.5 5.5a3.5 3.5 0 0 1 0 5" />
+      <path d="M12.5 3.5a6.3 6.3 0 0 1 0 9" />
+    </svg>
+  )
+}

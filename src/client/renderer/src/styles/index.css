@@ -4067,3 +4067,38 @@ html, body, #root {
   background: rgba(166, 108, 255, 0.25);
   border-radius: 3px;
 }
+
+/* Control, the receptionist. The Summary Chat bubble sits on its top-right
+   corner rather than centred above it as on a crab: a button is taller than
+   a crab slot, and centred it would leave the bar. */
+.toolbar__control {
+  position: relative;
+}
+
+.toolbar__control .toolbar__summary-bubble {
+  left: auto;
+  right: -6px;
+  top: -7px;
+  transform: none;
+}
+
+/* The receptionist's name for an agent surface, worn like a name tag just
+   above the card: the card's highlight colour behind dark text, the inverse of
+   its body. Inline colours come from the card's preset. Scaled with the rest
+   of the card's chrome, from its bottom-left corner so it stays put. */
+.card-shell__name-tag {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  padding: 3px 10px 4px;
+  border-radius: 6px;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  transform: scale(var(--card-chrome-scale, 1));
+  transform-origin: bottom left;
+}

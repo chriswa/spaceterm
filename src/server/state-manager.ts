@@ -479,6 +479,17 @@ export class StateManager {
     this.schedulePersist()
   }
 
+  /** Whether the receptionist may speak up unprompted. On unless turned off. */
+  getReceptionistTalkToMe(): boolean {
+    return this.state.receptionistTalkToMe !== false
+  }
+
+  setReceptionistTalkToMe(enabled: boolean): void {
+    if (enabled === this.getReceptionistTalkToMe()) return
+    this.state.receptionistTalkToMe = enabled
+    this.schedulePersist()
+  }
+
   /** Every live node, for sweeps that consider them all. */
   getNodes(): NodeData[] {
     return Object.values(this.state.nodes)

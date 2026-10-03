@@ -16,6 +16,8 @@ import { SummarizerButton } from './SummarizerButton'
 import { useDictationSession } from './dictation-session'
 import { DictationIndicator } from './DictationIndicator'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
+import { useReceptionistStore } from '@/stores/receptionistStore'
+import { ControlButton } from './ControlButton'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -47,6 +49,9 @@ export function MobileApp() {
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
   /** The surface Summary Chat is talking about, while a conversation is open. */
   const summaryTarget = useSummaryChatStore((s) => s.targetNodeId)
+  /** Control holds the voice target: the talk button speaks to it instead. */
+  const controlTarget = useReceptionistStore((s) => s.target)
+  const controlBusy = useReceptionistStore((s) => s.phase !== 'ready')
   useVisualViewportVars()
 
   /**
@@ -140,7 +145,12 @@ export function MobileApp() {
       )}
       {dictating && !composerFor && <DictationIndicator />}
       {/* Over the canvas and the terminal view alike; the composer has its own microphone. */}
-      {summaryTarget && !composerFor && <SummarizerButton key={summaryTarget} nodeId={summaryTarget} />}
+      {(summaryTarget || controlTarget) && !composerFor && (
+        <SummarizerButton key={controlTarget ? 'control' : summaryTarget} nodeId={controlTarget ? null : summaryTarget} />
+      )}
+      {/* Always on the canvas; over a terminal only while voice is in play, so
+          it does not sit on the terminal's last lines for nothing. */}
+      {!composerFor && (!focusedTerminal || summaryTarget || controlTarget || controlBusy) && <ControlButton />}
     </>
   )
 }

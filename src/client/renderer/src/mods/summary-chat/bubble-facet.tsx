@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react'
 import { registerFacet } from '../../lib/theme/registry'
 import { useModFacet } from '../../hooks/useFacet'
+import type { SummaryChatPhase } from '../../../../../shared/api'
 
 /**
  * The summary-chat speech bubble, as a mod-owned themeable facet.
@@ -35,6 +36,22 @@ export const SUMMARY_BUBBLE_FACET = 'summary-chat:bubble' as const
 
 /** What the indicator is currently saying about a surface. */
 export type SummaryBubbleState = 'idle' | 'thinking' | 'talking'
+
+/**
+ * The mark's word for a phase. Shared by Summary Chat's crabs and the
+ * receptionist's Control button, which report the same phases.
+ *
+ * `synthesizing` shares the `thinking` mark on purpose. The bubble answers
+ * "is this working on something for me", and it still is — the work has just
+ * moved to Voice Operator. What the two phases must *not* share is the waiting
+ * cue, and that is decided by the phase itself rather than here.
+ */
+export const BUBBLE_STATE: Record<SummaryChatPhase, SummaryBubbleState> = {
+  thinking: 'thinking',
+  synthesizing: 'thinking',
+  speaking: 'talking',
+  ready: 'idle',
+}
 
 export interface SummaryBubbleProps {
   state: SummaryBubbleState

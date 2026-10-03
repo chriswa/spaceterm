@@ -878,36 +878,17 @@ export function App() {
     }
   }, [bringToFront, flyTo, cameraRef, flashNode, inertiaBlock])
 
-  const navigateToNode = useCallback(async (nodeId: NodeId) => {
-    // Wait for node to appear in store if not yet present
-    if (!useNodeStore.getState().nodes[nodeId]) {
-      await new Promise<void>(resolve => {
-        const unsub = useNodeStore.subscribe(state => {
-          if (state.nodes[nodeId]) { unsub(); resolve() }
-        })
-      })
-    }
-
-    inertiaBlock.activate()
-    flashNode(nodeId)
-    setFocusedId(nodeId)
-    setSelection(nodeId)
-    lastFocusedRef.current = nodeId
-    pinnedFocusRef.current = false
-
-    const node = useNodeStore.getState().nodes[nodeId]
-    if (!node) return
-
-    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
-    if (!viewport) return
-
+  /**
+   * Bring a node into view the way `navigateToNode` does — a glide when it is
+   * near or already on screen, a hop when it is not, and only widening the
+   * view under camera lock. The camera only: focus, selection and z-order are
+   * the caller's business, which is what lets camera follow use it without
+   * taking anything from whoever is typing.
+   */
+  const flyCameraToNode = useCallback((node: NodeData, viewport: HTMLElement) => {
     const size = nodePixelSize(node)
     const targetBounds = { x: node.x - size.width / 2, y: node.y - size.height / 2, ...size }
     const targetCamera = cameraToFitBounds(targetBounds, viewport.clientWidth, viewport.clientHeight, 0, focusZoomCeiling(node.type))
-
-    setScrollMode(node.type === 'terminal' && node.alive)
-    sendBringToFront(nodeId)
-    bringToFront(nodeId)
 
     const vw = viewport.clientWidth
     const vh = viewport.clientHeight
@@ -943,7 +924,37 @@ export function App() {
         }
       }
     }
-  }, [flashNode, bringToFront, flyTo, hopFlyTo, cameraRef, inertiaBlock])
+  }, [flyTo, hopFlyTo, cameraRef])
+
+  const navigateToNode = useCallback(async (nodeId: NodeId) => {
+    // Wait for node to appear in store if not yet present
+    if (!useNodeStore.getState().nodes[nodeId]) {
+      await new Promise<void>(resolve => {
+        const unsub = useNodeStore.subscribe(state => {
+          if (state.nodes[nodeId]) { unsub(); resolve() }
+        })
+      })
+    }
+
+    inertiaBlock.activate()
+    flashNode(nodeId)
+    setFocusedId(nodeId)
+    setSelection(nodeId)
+    lastFocusedRef.current = nodeId
+    pinnedFocusRef.current = false
+
+    const node = useNodeStore.getState().nodes[nodeId]
+    if (!node) return
+
+    const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+    if (!viewport) return
+
+    setScrollMode(node.type === 'terminal' && node.alive)
+    sendBringToFront(nodeId)
+    bringToFront(nodeId)
+
+    flyCameraToNode(node, viewport)
+  }, [flashNode, bringToFront, flyCameraToNode, inertiaBlock])
 
   // Initialize server sync on mount — placed after getParentCwd/navigateToNode/cwdMapRef
   // so the fork-detection interceptor closure can reference them.
@@ -1433,6 +1444,21 @@ export function App() {
       else navigateToNode(nodeId)
     })
   }, [navigateToNode, fitAllNodes])
+
+  // Camera follow: the receptionist is talking about a surface, so bring it
+  // into view. Deliberately not `navigateToNode` — it follows talk rather than
+  // answering a request, so focus, selection, scroll mode and z-order all stay
+  // with whatever the operator was doing, and the window is never raised.
+  // A surface this client does not have is ignored rather than waited for.
+  useEffect(() => {
+    return window.api.receptionist.onCameraFollow((nodeId) => {
+      const node = useNodeStore.getState().nodes[nodeId]
+      const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
+      if (!node || !viewport) return
+      inertiaBlock.activate()
+      flyCameraToNode(node, viewport)
+    })
+  }, [flyCameraToNode, inertiaBlock])
 
   const handleUnfocus = useCallback(() => {
     focusRef.current = null

@@ -150,6 +150,8 @@ export const helpGroups: HelpGroup[] = [
     entries: [
       { keys: 'Click a crab icon',        name: 'Jump to Claude surface' },
       { keys: 'Drag crab icons',          name: 'Reorder Claude surfaces' },
+      { keys: 'Click the headset',        name: 'Talk to Control', notes: 'Your voice goes to the receptionist instead of Summary Chat; click again while it talks to stop it. A Summary Chat press takes your voice back' },
+      { keys: 'Click the speaker',        name: 'Let Control speak up', notes: 'Control may speak unprompted when something it is watching for happens' },
     ],
   },
 ]

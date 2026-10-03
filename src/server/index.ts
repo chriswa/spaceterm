@@ -26,7 +26,7 @@ import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirst
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { LoginShellEnv } from './login-env'
-import { agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
+import { agentSurfaceTitle, collectAgentSurfaces, isAgentSurface, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
 import { serverLog, sanitizeForLog } from './server-log'
 import { expandTilde } from './cwd'
 import { DaemonClient } from './daemon-client'
@@ -68,7 +68,11 @@ import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
-import { SummaryChat } from './summary-chat'
+import { SummaryChat, readTranscript } from './summary-chat'
+import { Receptionist } from './receptionist/receptionist'
+import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
+import { REAL_FORK_CLIENT, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import type { RosterAgent } from './receptionist/roster'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
 import { DirectSpeech } from './direct-speech'
@@ -278,6 +282,15 @@ let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let forkTitler: ForkTitler
 let summaryChat: SummaryChat
+/** Undefined until startup builds it; Claude state changes arrive before then. */
+let receptionist: Receptionist | undefined
+let agentNames: NameRegistry
+/**
+ * Where the listener's voice goes: Voice Operator command-mode transcripts and
+ * the phone's talk button. The last thing chosen wins — a Summary Chat press
+ * takes it, and so does selecting the receptionist.
+ */
+let voiceTarget: 'summary' | 'receptionist' = 'summary'
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
 /**
@@ -385,6 +398,46 @@ function trackPendingTurn(
       || hookType === 'SessionStart' || hookType === 'SessionEnd') {
     pendingTurnCache.clear(surfaceId)
   }
+}
+
+/** Live Claude Code surfaces: everything the receptionist knows about. */
+function receptionistAgents(): RosterAgent[] {
+  return stateManager.getNodes()
+    .filter(isAgentSurface)
+    .filter(node => node.alive && (node.agentType ?? 'claude') === 'claude')
+    .map(node => ({
+      nodeId: node.id,
+      title: agentSurfaceTitle(node),
+      cwd: node.cwd,
+      state: node.claudeState,
+      transcriptPath: transcriptPathForTerminal(node),
+      claudeSessionId: node.claudeSessionHistory.at(-1)?.claudeSessionId,
+      model: node.claudeModel,
+    }))
+}
+
+function agentNameMap(): Record<string, string> {
+  const names: Record<string, string> = {}
+  for (const name of agentNames.assignedNames()) {
+    const nodeId = agentNames.byName(name)
+    if (nodeId) names[nodeId] = name
+  }
+  return names
+}
+
+function receptionistStatus(message?: string): ServerMessage {
+  return {
+    type: 'receptionist-status',
+    phase: receptionist?.phase ?? 'ready',
+    target: voiceTarget === 'receptionist',
+    ...(message ? { message } : {}),
+  }
+}
+
+function setVoiceTarget(target: typeof voiceTarget): void {
+  if (voiceTarget === target) return
+  voiceTarget = target
+  broadcastToAll(receptionistStatus())
 }
 
 function transcriptPathForNode(nodeId: NodeId): string | undefined {
@@ -728,6 +781,9 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   // it can tell you where a top-level card is about to be created.
   send(link, { type: 'root-cwd', cwd: stateManager.getRootCwd() })
   send(link, { type: 'auto-stamps-enabled', enabled: stateManager.getAutoStampsEnabled() })
+  send(link, receptionistStatus())
+  send(link, { type: 'receptionist-talk-to-me', enabled: stateManager.getReceptionistTalkToMe() })
+  send(link, { type: 'agent-names', names: agentNameMap() })
 
   // Availability is pushed on change, which a client that connected after the
   // last change would never have heard. Replay what is known.
@@ -1014,7 +1070,10 @@ function handleIngestMessage(msg: IngestMessage): void {
 
     case 'voice-command': {
       const text = msg.text.trim()
-      if (text) void summaryChat.followUp(text)
+      if (!text) break
+      // Command mode is dictated on the Mac, so the receptionist answers there.
+      if (voiceTarget === 'receptionist' && receptionist) void receptionist.hear(text, speechVoiceOperator)
+      else void summaryChat.followUp(text)
       break
     }
 
@@ -1357,7 +1416,30 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'summary-chat-follow-up': {
       const text = msg.text.trim()
-      if (text) void summaryChat.followUp(text)
+      if (!text) break
+      // The receptionist answers on the device that spoke to it last.
+      if (voiceTarget === 'receptionist' && receptionist) {
+        void receptionist.hear(text, remoteSpeech.forClient(client.id, speechVoiceOperator))
+      } else {
+        void summaryChat.followUp(text)
+      }
+      break
+    }
+
+    case 'receptionist-select': {
+      // A press is "stop" whenever anything is audible, whoever is talking —
+      // the same rule as the summary chord — and "talk to Control" otherwise.
+      void (async () => {
+        const stopped = (await receptionist?.cancel()) || (await summaryChat.cancelAll())
+        if (!stopped) setVoiceTarget('receptionist')
+      })()
+      break
+    }
+
+    case 'set-receptionist-talk-to-me': {
+      stateManager.setReceptionistTalkToMe(msg.enabled === true)
+      receptionist?.setTalkToMe(stateManager.getReceptionistTalkToMe())
+      broadcastToAll({ type: 'receptionist-talk-to-me', enabled: stateManager.getReceptionistTalkToMe() })
       break
     }
 
@@ -1386,12 +1468,21 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // can still be a cancellation, and only SummaryChat knows whether it is.
       const node = msg.nodeId ? stateManager.getNode(msg.nodeId) : undefined
       const terminal = node?.type === 'terminal' ? node : undefined
-      void summaryChat.toggle(terminal?.id, {
-        transcriptPath: terminal && transcriptPathForNode(terminal.id),
-        sourceAgentSessionId: terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
-        claudeState: terminal?.claudeState,
-        pendingTurn: terminal && pendingTurnCache.get(terminal.sessionId),
-      }, msg.mode, msg.playHere ? remoteSpeech.forClient(client.id, speechVoiceOperator) : undefined).then((result) => {
+      void (async () => {
+        // The chord silences the receptionist too: a "stop" that only reached
+        // Summary Chat would leave the listener hunting for who is still talking.
+        if (await receptionist?.cancel()) {
+          send(client.link, { type: 'summary-chat-toggle-result', seq: msg.seq, outcome: 'cancelled' })
+          return
+        }
+        const result = await summaryChat.toggle(terminal?.id, {
+          transcriptPath: terminal && transcriptPathForNode(terminal.id),
+          sourceAgentSessionId: terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
+          claudeState: terminal?.claudeState,
+          pendingTurn: terminal && pendingTurnCache.get(terminal.sessionId),
+        }, msg.mode, msg.playHere ? remoteSpeech.forClient(client.id, speechVoiceOperator) : undefined)
+        // Starting a summary takes the listener's voice back from the receptionist.
+        if (result.outcome === 'started') setVoiceTarget('summary')
         // Back to the client that pressed the key, not to every peer: the
         // chirp, the shake and the toast belong to one person.
         send(client.link, {
@@ -1400,7 +1491,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           outcome: result.outcome,
           ...(result.outcome === 'rejected' ? { message: result.message } : {}),
         })
-      })
+      })()
       break
     }
     case 'speak-toggle': {
@@ -2771,7 +2862,14 @@ async function startServer(): Promise<void> {
   // Initialize ClaudeStateMachine — manages state indicator transitions, queue, stale sweep
   claudeStateMachine = new ClaudeStateMachine({
     getClaudeState: (id) => stateManager.getClaudeState(id),
-    setClaudeState: (id, state) => stateManager.updateClaudeState(id, state),
+    setClaudeState: (id, state) => {
+      const previous = stateManager.getClaudeState(id)
+      stateManager.updateClaudeState(id, state)
+      // Transitions only: the state machine re-asserts unchanged states, and a
+      // monitor waiting for "stopped" must not fire on a surface that already was.
+      const nodeId = stateManager.getNodeIdForSession(id)
+      if (nodeId && state !== previous) receptionist?.agentStateChanged(nodeId, state)
+    },
     hasPotentialError: (id) => potentialErrorDetector.hasPotentialError(id),
     getClaudeStatusUnread: (id) => stateManager.getClaudeStatusUnread(id),
     setClaudeStatusUnread: (id, unread) => stateManager.updateClaudeStatusUnread(id, unread),
@@ -2884,6 +2982,47 @@ async function startServer(): Promise<void> {
       broadcastToAll({ type: 'summary-chat-status', nodeId, state, message })
     },
   )
+
+  agentNames = new NameRegistry({
+    // `getNode` only finds live nodes, so an archived surface's name is released.
+    isLive: (nodeId) => stateManager.getNode(nodeId) !== undefined,
+    store: fileStore(NAMES_FILE),
+  })
+  receptionist = new Receptionist({
+    askModel: askReceptionistModel,
+    agents: receptionistAgents,
+    readTranscript,
+    names: {
+      get: (nodeId) => agentNames.get(nodeId),
+      assign: (nodeId) => {
+        const named = agentNames.assign(nodeId)
+        broadcastToAll({ type: 'agent-names', names: agentNameMap() })
+        return named
+      },
+      touch: (nodeId) => agentNames.touch(nodeId),
+    },
+    forks: REAL_FORK_CLIENT,
+    focus: (nodeId) => broadcastToAll({ type: 'camera-follow', nodeId }),
+    send: (nodeId, text) => {
+      const node = stateManager.getNode(nodeId)
+      if (node?.type === 'terminal' && node.alive) shipToSession(node.sessionId, text, true)
+    },
+    interrupt: (nodeId) => {
+      const node = stateManager.getNode(nodeId)
+      if (node?.type === 'terminal' && node.alive) sessionManager.write(node.sessionId, '\x1b')
+    },
+    log: appendReceptionistLog,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    voiceOperatorDiscovered: () => speechVoiceOperator.isRunning(),
+  }, {
+    speech: speechVoiceOperator,
+    onPhase: () => broadcastToAll(receptionistStatus()),
+    onError: (message) => {
+      serverLog(`[receptionist] ${message}`)
+      broadcastToAll(receptionistStatus(message))
+    },
+  })
+  receptionist.setTalkToMe(stateManager.getReceptionistTalkToMe())
 
   autoStamper = new AutoStamper({
     async ask(prompt, signal) {
@@ -3187,6 +3326,7 @@ async function startServer(): Promise<void> {
     // without waiting for the cancellation to land leaves it talking on behalf
     // of an app that no longer exists. Bounded by the request timeout.
     await summaryChat.dispose()
+    await receptionist?.cancel()
     snapshotManager.dispose()
     stateManager.persistImmediate()
     sessionManager.destroyAll() // Cleans local state only — daemon PTYs persist

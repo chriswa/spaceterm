@@ -65,6 +65,11 @@ interface CardShellProps {
   onMouseLeave?: (e: React.MouseEvent) => void
   behindContent?: ReactNode
   /**
+   * The receptionist's name for this surface ("Kevin"), worn as a tag just
+   * above the card in the card's own highlight colour. See `agentNamesStore`.
+   */
+  nameTag?: string
+  /**
    * A glow around the whole card.
    *
    * Drawn by the shell rather than by the card because `.terminal-card` has
@@ -88,7 +93,7 @@ export function CardShell({
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   onMouseDown, onStartReparent, onStartResize, onShipIt, onFork, onSummarize, isReparenting, isResizing,
   onAddNode, agentMeta, rootCwd, onExtraCliArgs, extraCliArgs,
-  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, glow, children
+  className, style, cardRef, onMouseEnter, onMouseLeave, behindContent, nameTag, glow, children
 }: CardShellProps) {
 
   // Chrome that must stay legible at the card type's focus zoom. Published as a
@@ -307,6 +312,14 @@ export function CardShell({
           <div className="card-shell__head" style={headStyle}>
             {titleContent}
             <NodeActionBar {...actionBarProps} />
+          </div>
+        )}
+        {nameTag && (
+          <div
+            className="card-shell__name-tag"
+            style={{ backgroundColor: (preset ?? DEFAULT_PRESET).titleBarBg, color: (preset ?? DEFAULT_PRESET).titleBarFg }}
+          >
+            {nameTag}
           </div>
         )}
         {headVariant === 'overlay' && <NodeActionBar {...actionBarProps} />}
