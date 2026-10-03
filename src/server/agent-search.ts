@@ -3,6 +3,7 @@ import type { ArchivedNode, NodeData, TerminalNodeData } from '../shared/state'
 import type { NodeId } from '../shared/ids'
 import type { AgentSearchHit, AgentSearchMode, AgentSearchPass } from '../shared/protocol'
 import { archivesOwnedBy, groupNodes } from '../shared/archive-tree'
+import { isAgentSurface } from '../shared/node-utils'
 import { readTranscript } from './summary-chat'
 
 /**
@@ -60,10 +61,6 @@ export interface AgentSearchDeps {
   runJev(request: JevRequest): Promise<JevChoiceResponse>
   /** The last {@link TRANSCRIPT_TAIL_CHARS} of human/agent text, or '' if unreadable. */
   transcriptTail(path: string): string
-}
-
-export function isAgentSurface(data: NodeData): data is TerminalNodeData {
-  return data.type === 'terminal' && (data.agentType !== undefined || data.claudeSessionHistory.length > 0)
 }
 
 /** Name first, then shell titles most recent first. */

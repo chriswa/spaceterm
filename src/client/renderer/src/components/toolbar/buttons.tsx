@@ -26,7 +26,9 @@ import {
   type ActiveHoursId,
 } from '../../lib/dim-stale'
 import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon } from './icons'
+import { useNodeStore } from '../../stores/nodeStore'
+import { restartableAgentSurfaces, rollingRestart } from '../../lib/rolling-restart'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon, RollingRestartIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -386,6 +388,67 @@ export function ThemePicker() {
               <span className="toolbar__menu-blurb">{t.blurb}</span>
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Restart every live agent surface, one at a time.
+ *
+ * Behind a menu rather than a bare button because it is indiscriminate: a
+ * surface mid-turn or running a long background task is killed along with the
+ * idle ones. The menu is the confirmation — opening it does nothing, and the
+ * item that acts says how many surfaces it will hit and what that costs.
+ */
+export function RollingRestartButton() {
+  const count = useNodeStore(s => restartableAgentSurfaces(s.nodes).length)
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const menu = useToolbarMenu()
+  const running = progress !== null
+
+  const start = async () => {
+    menu.close()
+    // Read at click time, not render time, so a surface spawned while the menu
+    // was open is included.
+    const surfaces = restartableAgentSurfaces(useNodeStore.getState().nodes)
+    if (surfaces.length === 0) return
+    setProgress({ done: 0, total: surfaces.length })
+    showToast(`Restarting ${surfaces.length} agent surface${surfaces.length === 1 ? '' : 's'}…`)
+    const { restarted, failed } = await rollingRestart(surfaces, (done, total) => setProgress({ done, total }))
+    setProgress(null)
+    showToast(failed === 0
+      ? `Restarted ${restarted} agent surface${restarted === 1 ? '' : 's'}`
+      : `Restarted ${restarted}, ${failed} failed — see their alerts`)
+  }
+
+  return (
+    <div className="toolbar__menu-group" ref={menu.ref}>
+      <button
+        className={'toolbar__btn' + (menu.open || running ? ' toolbar__btn--active' : '')}
+        onClick={menu.toggle}
+        disabled={running}
+        data-tooltip={running
+          ? `Rolling restart — ${progress.done}/${progress.total}`
+          : 'Rolling Restart — Restart every agent surface, one at a time'}
+        data-tooltip-no-flip
+      >
+        <RollingRestartIcon />
+      </button>
+      {menu.open && (
+        <div className="toolbar__menu toolbar__menu--describing">
+          <div className="toolbar__menu-heading">Rolling restart</div>
+          <button
+            className="toolbar__menu-item toolbar__menu-item--danger"
+            onClick={() => { void start() }}
+            disabled={count === 0}
+          >
+            <span className="toolbar__menu-label">
+              {count === 0 ? 'No live agent surfaces' : `Restart ${count} agent surface${count === 1 ? '' : 's'}`}
+            </span>
+            <span className="toolbar__menu-blurb">Kills turns and background tasks in flight; each resumes its session</span>
+          </button>
         </div>
       )}
     </div>

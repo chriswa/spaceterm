@@ -17,6 +17,7 @@ import {
   NotificationSoundToggle,
   AutoStampToggle,
   RestartButton,
+  RollingRestartButton,
   StepOutButton,
   ThemePicker,
   UnfocusedFramesToggle
@@ -129,6 +130,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
     kind: 'host',
     render: (h) => <RestartButton restarting={h.restartingSpaceterm} onRestart={h.onRestartSpaceterm} />
   },
+  { id: 'rolling-restart', slot: 'buttons', kind: 'standalone', render: () => <RollingRestartButton /> },
   { id: 'camera-lock', slot: 'buttons', kind: 'standalone', render: () => <CameraLockToggle /> },
   {
     id: 'debug',

@@ -634,6 +634,11 @@ html, body, #root {
   color: #888;
 }
 
+/* An item that destroys work, so it should not read as one more toggle. */
+.toolbar__menu-item--danger {
+  color: #ff8a80;
+}
+
 /* Trailing aside on a menu item — e.g. a setting that needs a restart. */
 .toolbar__menu-note {
   font-size: 11px;

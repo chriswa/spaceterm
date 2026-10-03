@@ -1,4 +1,13 @@
-import type { NodeData } from './state'
+import type { NodeData, TerminalNodeData } from './state'
+
+/**
+ * Whether a node is a surface an agent runs on, live or remnant. A terminal
+ * with no recorded `agentType` still counts once a Claude session has run in
+ * it — that is how surfaces from before the field are recognised.
+ */
+export function isAgentSurface(data: NodeData): data is TerminalNodeData {
+  return data.type === 'terminal' && (data.agentType !== undefined || data.claudeSessionHistory.length > 0)
+}
 
 /**
  * Whether a node should be silently deleted instead of archived.
