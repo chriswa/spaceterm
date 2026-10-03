@@ -797,7 +797,8 @@ export class Receptionist {
     if (heard === undefined || !spoken) return
     const kept = redactSpoken(spoken, heard)
     const audible = kept.map(part => part.text).join(' ')
-    this.notes.push(`The user cut your last reply off. They heard only: "${audible}". They did not hear the rest.`)
+    // Talked over, or lost with the phone's page: either way, only this much was heard.
+    this.notes.push(`Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest; if it still matters, say it again.`)
   }
 }
 

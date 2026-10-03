@@ -151,6 +151,14 @@ describe('SpeechChannel', () => {
     expect(await h.channel.heardPrefix()).toBeUndefined()
   })
 
+  it('records a job the client dropped by itself as cut off — the phone\'s page died mid-answer', async () => {
+    const vo = fakeBackend({ statuses: [{ state: 'cancelled_by_client', character_offset: 0, version: 2 }] })
+    const h = harness(vo.backend)
+    await h.channel.deliver(h.channel.begin('thinking'), 'Sending that to Tessa now.')
+    await flush()
+    expect(await h.channel.heardPrefix()).toBe(0)
+  })
+
   it('records a reported zero offset when cancelled, as distinct from no offset', async () => {
     const vo = fakeBackend({
       statuses: [{ state: 'in_progress', playback_state: 'queued', version: 1 }],

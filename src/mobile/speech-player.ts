@@ -1,5 +1,6 @@
 import type { RemoteSpeechApi } from '../shared/api'
 import { audioContext } from './cues'
+import { describeAudioSession } from './audio-session'
 
 /**
  * Plays speech sent to this phone (src/server/remote-speech.ts): Summary
@@ -8,7 +9,9 @@ import { audioContext } from './cues'
  *
  * Sentences are scheduled back to back on the audio clock as they arrive, so
  * a fast synthesizer plays without gaps and a slow one simply pauses between
- * sentences. Each sentence's start and end are reported, and the server turns
+ * sentences. Jobs queue the same way, one after another — "let me check" and
+ * the answer behind it used to be scheduled each from now, and played over
+ * each other. Each sentence's start and end are reported, and the server turns
  * them into how far the listener got — what an interruption needs.
  *
  * iOS lets a page start audio only from a tap, and an answer arrives seconds
@@ -35,6 +38,8 @@ function toBuffer(ctx: AudioContext, pcmBase64: string, sampleRate: number): Aud
 
 export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) => void): () => void {
   const jobs = new Map<string, Playing>()
+  /** Audio-clock time everything scheduled so far ends, across every job. */
+  const queueEnd = () => Math.max(0, ...[...jobs.values()].map((job) => job.endsAt))
 
   const wake = () => {
     const ctx = audioContext()
@@ -70,7 +75,7 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     const source = ctx.createBufferSource()
     source.buffer = buffer
     source.connect(ctx.destination)
-    const at = Math.max(ctx.currentTime + 0.05, playing.endsAt)
+    const at = Math.max(ctx.currentTime + 0.05, queueEnd())
     playing.endsAt = at + buffer.duration
     source.onended = () => {
       api.progress(id, index, 'finished')
@@ -79,7 +84,8 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     source.start(at)
     playing.sources.push(source)
     playing.timers.push(window.setTimeout(() => api.progress(id, index, 'started'), Math.max(0, (at - ctx.currentTime) * 1000)))
-    log(`[speech] ${id.slice(0, 11)} sentence ${index + 1}/${count}, ${buffer.duration.toFixed(1)}s (audio ${ctx.state})`)
+    // The session's mode is where it is heard: play-and-record with no microphone open plays at the earpiece.
+    log(`[speech] ${id.slice(0, 11)} sentence ${index + 1}/${count}, ${buffer.duration.toFixed(1)}s in ${(at - ctx.currentTime).toFixed(1)}s (audio ${ctx.state}; ${describeAudioSession()})`)
   })
 
   const offStop = api.onStop(stop)

@@ -265,7 +265,7 @@ export class SpeechChannel {
     // Operator took the job — the old wording claimed the answer had been
     // read out, and it logged that just as loudly on the presses where not
     // one word was ever synthesized.
-    serverLog(`${this.label} queued ${characters} chars as speech ${speech.job.id}`)
+    serverLog(`${this.label} queued ${characters} chars as speech ${speech.job.id}: ${quoteForLog(content)}`)
     void this.monitor(attempt, this.job, speech.job)
     return true
   }
@@ -290,6 +290,7 @@ export class SpeechChannel {
     }
     // A refusal is left for the answer to report: one toast, not two.
     if (!speech.job) return
+    serverLog(`${this.label} queued interim speech ${speech.job.id}: ${quoteForLog(content)}`)
     this.interimJobs.push({ id: speech.job.id, backend })
     this.setPhase('synthesizing')
   }
@@ -356,7 +357,7 @@ export class SpeechChannel {
     const job = this.job
     if (!job) return undefined
     const status = speechStatus(await job.backend.status(job.id))
-    if (status?.state !== 'interrupted_by_user') return undefined
+    if (!status || !wasCutOff(status.state)) return undefined
     return status.character_offset ?? 0
   }
 
@@ -434,8 +435,12 @@ export class SpeechChannel {
         continue
       }
       serverLog(`${this.label} speech ${job.id} ended as ${status.state} after ${sinceSeconds(startedAt)}`)
-      // Capture the cut-off point now, while the job is fresh in hand.
-      if (status.state === 'interrupted_by_user') {
+      // Capture the cut-off point now, while the job is fresh in hand. A job
+      // the client cancelled without being asked to — the phone's page was
+      // killed, or its connection dropped — was cut off just the same, and
+      // settling it as though it had been heard is how a reply went unheard
+      // without anyone knowing.
+      if (wasCutOff(status.state)) {
         this.interruptedAtCharacter = status.character_offset ?? 0
       }
       // A job that died in synthesis made no sound and offered no reason, yet
@@ -475,6 +480,21 @@ export class SpeechChannel {
     const error = (response.body as { error?: unknown } | undefined)?.error
     return { error: typeof error === 'string' ? error : 'rejected' }
   }
+}
+
+/**
+ * A job that stopped before the listener heard all of it: talked over, or
+ * cancelled by a client that went away. The channel's own cancel never gets
+ * here — its monitor has already let go of the job.
+ */
+function wasCutOff(state: SpeechStatus['state']): boolean {
+  return state === 'interrupted_by_user' || state === 'cancelled_by_client'
+}
+
+/** What was sent to be spoken, for comparing against what was heard; long answers trimmed. */
+function quoteForLog(content: SpeechContent): string {
+  const text = joinSpeechParts(content)
+  return JSON.stringify(text.length <= 300 ? text : `${text.slice(0, 299)}…`)
 }
 
 /** Elapsed time since `startedAt`, for a log line. */

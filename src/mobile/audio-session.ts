@@ -72,6 +72,11 @@ export function onEarpieceChange(fn: (earpiece: boolean) => void): () => void {
   return () => { listeners.delete(fn) }
 }
 
+/** The session's mode and how many recordings hold it, for a log line. */
+export function describeAudioSession(): string {
+  return `${session()?.type ?? 'no session API'}, ${recording} recording`
+}
+
 /**
  * The microphone is about to open. Call before `getUserMedia`, and call the
  * function it returns once when the microphone has closed, however it closed.

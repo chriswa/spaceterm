@@ -177,3 +177,23 @@ describe('parseWav', () => {
     expect(parseWav(new Uint8Array(50))).toBeUndefined()
   })
 })
+
+describe('RemoteSpeech, two jobs at once', () => {
+  it('sends the second job only after every sentence of the first', async () => {
+    const h = harness()
+    await Promise.all([h.backend.speak('Let me check. One moment.'), h.backend.speak('Kevin finished. The tests pass.')])
+    await settle()
+    await settle()
+    expect(h.sent.map((m) => m.type === 'speech-audio' && `${m.id}:${m.index}`)).toEqual(['rs_1:0', 'rs_1:1', 'rs_2:0', 'rs_2:1'])
+  })
+
+  it('never synthesizes a job dropped while it waited its turn', async () => {
+    const h = harness()
+    await h.backend.speak('Let me check.')
+    const second = speechStatus(await h.backend.speak('Never heard.'))!
+    await h.backend.drop(second.id!)
+    await settle()
+    await settle()
+    expect(h.synthesized.map(([text]) => text)).toEqual(['Let me check.'])
+  })
+})

@@ -413,7 +413,7 @@ describe('Receptionist', () => {
       replies: [
         reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
         (turn) => {
-          expect(turn.prompt).toMatch(/^NOTE: The user cut your last reply off\. They heard only: "Kevin is done\. Kevin here\. The \*INTERRUPTED\*"/)
+          expect(turn.prompt).toMatch(/^NOTE: Your last reply was cut off before the user heard all of it\. They heard only: "Kevin is done\. Kevin here\. The \*INTERRUPTED\*"/)
           expect(turn.prompt).toContain('THE USER SAYS: wait, what?')
           return reply([{ from: 'control', text: 'Sure.' }])
         },

@@ -91,6 +91,12 @@ const randomJobId = () => `rs_${randomUUID()}`
 
 export class RemoteSpeech {
   private readonly jobs = new Map<string, Job>()
+  /**
+   * Each client's jobs are sent one after another, in the order they were
+   * spoken: "let me check" and the answer behind it used to be synthesized
+   * side by side, and their sentences reached the phone interleaved.
+   */
+  private readonly lanes = new Map<string, Promise<void>>()
 
   constructor(private readonly deps: RemoteSpeechDeps) {}
 
@@ -128,6 +134,7 @@ export class RemoteSpeech {
 
   /** The client went away: whatever it was playing has stopped where it got to. */
   clientGone(clientId: string): void {
+    this.lanes.delete(clientId)
     for (const job of this.jobs.values()) {
       if (job.clientId === clientId && job.state === 'in_progress') this.end(job, 'cancelled_by_client')
     }
@@ -149,13 +156,16 @@ export class RemoteSpeech {
     }
     this.jobs.set(job.id, job)
     this.prune()
-    void this.pump(job)
+    const lane = (this.lanes.get(clientId) ?? Promise.resolve()).then(() => this.pump(job))
+    this.lanes.set(clientId, lane.catch(() => undefined))
     return { status: 202, body: this.snapshot(job) }
   }
 
   /** Synthesize each sentence in turn and send it on; the client queues them. */
   private async pump(job: Job): Promise<void> {
     for (const [index, sentence] of job.sentences.entries()) {
+      // Dropped while it waited its turn in the lane, or between sentences.
+      if (job.state !== 'in_progress') return
       const audio = await this.deps.synthesize(sentence.text, sentence.voice, job.abort.signal)
       if (job.state !== 'in_progress') return
       if (!audio) {
