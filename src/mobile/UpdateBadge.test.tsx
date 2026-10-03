@@ -20,7 +20,7 @@ describe('UpdateBadge', () => {
     behindOnTheApp()
     const bridge = installFakeBridge()
     let answer: (outcome: { ok: boolean; message?: string }) => void = () => undefined
-    bridge.installMobileApp = vi.fn(() => new Promise((resolve) => { answer = resolve }))
+    bridge.installMobileApp = vi.fn(() => new Promise<{ ok: boolean; message?: string }>((resolve) => { answer = resolve }))
     render(<UpdateBadge />)
     const badge = await screen.findByRole('button', { name: /Install the newer app/ })
 

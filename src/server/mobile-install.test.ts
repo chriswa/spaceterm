@@ -30,6 +30,23 @@ describe('MobileAppInstaller', () => {
 })
 
 describe('failureMessage', () => {
+  it('skips the rules devicectl draws around its errors', () => {
+    const output = [
+      'Installing…',
+      'ERROR: A connection to this device could not be established. (com.apple.dt.CoreDeviceError error 4000 (0xFA0))',
+      '       DeviceIdentifier = D31EE0AE',
+      '       ----------------------------------------',
+      '           Internal logic error: Connection was invalidated',
+      '       ----------------------------------------',
+      '',
+    ].join('\n')
+    expect(failureMessage(output).split('\n')).toEqual([
+      'ERROR: A connection to this device could not be established. (com.apple.dt.CoreDeviceError error 4000 (0xFA0))',
+      'DeviceIdentifier = D31EE0AE',
+      'Internal logic error: Connection was invalidated',
+    ])
+  })
+
   it('says something even when the script said nothing', () => {
     expect(failureMessage('\n\n')).toMatch(/without saying why/)
   })

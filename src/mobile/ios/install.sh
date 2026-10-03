@@ -20,9 +20,9 @@ devices_json="$(mktemp)"
 trap 'rm -f "$devices_json"' EXIT
 xcrun devicectl list devices --json-output "$devices_json" >/dev/null
 
-# "<coredevice identifier>\t<name>" of the best paired iPhone. Tab-separated:
-# names have spaces in them ("Chris’s iPhone").
-IFS=$'\t' read -r device_id device_name < <(python3 - "$devices_json" "${SPACETERM_IOS_DEVICE:-}" <<'PY'
+# "<coredevice identifier>\t<name>\t<tunnel state>" of the best paired iPhone.
+# Tab-separated: names have spaces in them ("Chris’s iPhone").
+IFS=$'\t' read -r device_id device_name device_tunnel < <(python3 - "$devices_json" "${SPACETERM_IOS_DEVICE:-}" <<'PY'
 import json, sys
 devices = json.load(open(sys.argv[1]))["result"]["devices"]
 want = sys.argv[2]
@@ -34,10 +34,11 @@ for d in devices:
     name = props.get("name", "")
     if want and want not in (name, d["identifier"], hw.get("udid")):
         continue
-    found.append((conn.get("tunnelState") == "connected", d["identifier"], name))
+    tunnel = conn.get("tunnelState", "")
+    found.append((tunnel == "connected", d["identifier"], name, tunnel))
 found.sort(reverse=True)
 if found:
-    print(found[0][1], found[0][2], sep="\t")
+    print(found[0][1], found[0][2], found[0][3], sep="\t")
 PY
 ) || true
 
@@ -46,6 +47,13 @@ if [ -z "${device_id:-}" ]; then
   echo "Devices and Simulators, select it, and tick \"Connect via network\". On the phone,"
   echo "trust this Mac and turn on Settings → Privacy & Security → Developer Mode."
   exit 1
+fi
+# Paired but out of reach — another network, Wi-Fi off, powered down. The
+# install would fail anyway, after a whole build; say so now, plainly. (The
+# phone's update badge shows this script's last line.)
+if [ "${device_tunnel:-}" = "unavailable" ]; then
+  echo "${device_name} isn't reachable from this Mac. Join the Mac's Wi-Fi (or plug it in) and try again."
+  exit 2
 fi
 echo "Building for ${device_name}…"
 

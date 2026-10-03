@@ -19,9 +19,13 @@ export interface MobileInstallDeps {
   run(): Promise<{ code: number | null; output: string }>
 }
 
-/** The script's closing lines, which is where it says what went wrong. */
+/**
+ * The script's closing lines, which is where it says what went wrong — less
+ * the rules Xcode's tools draw between parts of an error, which are most of
+ * its last lines and say nothing.
+ */
 export function failureMessage(output: string): string {
-  const lines = output.split('\n').map((l) => l.trim()).filter(Boolean)
+  const lines = output.split('\n').map((l) => l.trim()).filter((l) => /\w/.test(l))
   return lines.slice(-3).join('\n') || 'The install script failed without saying why.'
 }
 
