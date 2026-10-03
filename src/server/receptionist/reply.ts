@@ -132,8 +132,8 @@ export type Speaker = { name: string; voice: string }
  * Turn a reply's parts into speech.
  *
  * `{handle}` placeholders become names, and an agent's own part is introduced
- * in its own voice — "Kevin here." — so the voice and the name arrive together
- * every time and the listener learns which is which. The receptionist's parts
+ * in its own voice — "Kevin here." — whenever the voice changes to it, so the
+ * voice and the name arrive together and the listener learns which is which. The receptionist's parts
  * get no introduction.
  *
  * `resolve` assigns a name the first time a handle is spoken, which is the
@@ -148,13 +148,20 @@ export function renderSpeech(
 ): RenderedPart[] {
   const named = (text: string): string =>
     text.replace(/\{([A-Za-z0-9_-]+)\}/g, (_whole, handle: string) => resolve(handle)?.name ?? 'an agent')
+  let previousVoice: string | undefined
   return say.map(part => {
     const speaker = part.from === CONTROL ? undefined : resolve(part.from)
     // A part attributed to a handle that is not an agent is still the
     // receptionist talking; giving it a voice it does not own would break
     // the one rule the voices exist for.
-    if (!speaker) return { text: named(part.text), voice: controlVoice, introLength: 0 }
-    const intro = `${speaker.name} here. `
+    if (!speaker) {
+      previousVoice = controlVoice
+      return { text: named(part.text), voice: controlVoice, introLength: 0 }
+    }
+    // Introduced when the speaker changes, not on every part: an agent quoted
+    // twice in a row is still the one voice already introduced.
+    const intro = previousVoice === speaker.voice ? '' : `${speaker.name} here. `
+    previousVoice = speaker.voice
     return { text: `${intro}${named(part.text)}`, voice: speaker.voice, introLength: intro.length }
   })
 }

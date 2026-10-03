@@ -7,7 +7,7 @@ import type { SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
-import { DIRECTORY_PREFIX, Handles } from './handles'
+import { DIRECTORY_PREFIX, editDistance, Handles } from './handles'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import {
   FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderTurnBody, type ReceptionistEvent,
@@ -102,6 +102,8 @@ export interface ReceptionistDeps {
     get(nodeId: NodeId): NamedVoice | undefined
     assign(nodeId: NodeId): NamedVoice | undefined
     touch(nodeId: NodeId): void
+    /** The node holding a name, live or not. */
+    byName(name: string): NodeId | undefined
   }
   /**
    * Ask an agent a side question: answered inside the agent from its own
@@ -429,7 +431,7 @@ export class Receptionist {
         results.push(await this.findAgent(call.query, agents, handles))
         continue
       }
-      const nodeId = handles.find(call.agent)
+      const nodeId = this.resolve(call.agent, handles, agents)
       const agent = agents.find(candidate => candidate.nodeId === nodeId)
       // checkHandles already refused unknown handles; this only guards an agent
       // that vanished between the check and now.
@@ -537,6 +539,18 @@ export class Receptionist {
     return new Handles(directories.map(directory => directory.nodeId), DIRECTORY_PREFIX)
   }
 
+  /**
+   * The live agent a reference means: its handle, or — once it has one — its
+   * name, in any case. The user says names, so the model writes them; making
+   * the name a valid reference is what stops it writing both.
+   */
+  private resolve(ref: string, handles: Handles, agents: readonly RosterAgent[]): NodeId | undefined {
+    const byHandle = handles.find(ref)
+    if (byHandle) return byHandle
+    const byName = this.deps.names.byName(ref.trim())
+    return byName && agents.some(agent => agent.nodeId === byName) ? byName : undefined
+  }
+
   /** An agent as a confirmation names it: handle, name, and title, so a wrong pick shows. */
   private describe(agent: RosterAgent, handles: Handles): string {
     const name = this.deps.names.get(agent.nodeId)?.name
@@ -551,15 +565,25 @@ export class Receptionist {
   private checkHandles(reply: Reply, handles: Handles, agents: readonly RosterAgent[]): string[] {
     const problems: string[] = []
     const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
-    const suggest = (handle: string): string => {
-      const near = handles.nearest(handle).flatMap(candidate => {
-        const agent = byId.get(handles.find(candidate)!)
-        return agent ? [this.describe(agent, handles)] : []
-      })
+    // Names as well as handles: a misheard or misspelled name is the likelier slip.
+    const nameOf = new Map<string, NodeId>()
+    for (const agent of agents) {
+      const name = this.deps.names.get(agent.nodeId)?.name
+      if (name) nameOf.set(name.toLowerCase(), agent.nodeId)
+    }
+    const suggest = (ref: string): string => {
+      const wanted = ref.trim().toLowerCase()
+      const nearNames = [...nameOf.keys()].filter(name => editDistance(wanted, name) <= Math.max(1, Math.floor(name.length / 3)))
+      const near = [...new Set([...nearNames.map(name => nameOf.get(name)!), ...handles.nearest(ref).map(h => handles.find(h)!)])]
+        .slice(0, 2)
+        .flatMap(nodeId => {
+          const agent = byId.get(nodeId)
+          return agent ? [this.describe(agent, handles)] : []
+        })
       return near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_agents or find_agent to look it up.'
     }
-    const unknownAgent = (handle: string, where: string): void => {
-      if (!handles.find(handle)) problems.push(`"${handle}" (${where}) is not a live agent's handle.${suggest(handle)}`)
+    const unknownAgent = (ref: string, where: string): void => {
+      if (!this.resolve(ref, handles, agents)) problems.push(`"${ref}" (${where}) is not a live agent's name or handle.${suggest(ref)}`)
     }
     for (const call of reply.tools) {
       if (call.tool === 'spawn') {
@@ -627,13 +651,14 @@ export class Receptionist {
    * of. Returns which agents came up, first mention first.
    */
   private render(say: readonly SayPart[], agents: readonly RosterAgent[]): {
-    spoken: RenderedPart[]; mentioned: NodeId[]; byHandle: Map<string, RosterAgent>
+    spoken: RenderedPart[]; mentioned: NodeId[]
   } {
     const handles = this.handles(agents)
-    const byHandle = new Map(agents.map(agent => [handles.of(agent.nodeId)!, agent]))
+    const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
     const mentioned: NodeId[] = []
-    const resolve = (handle: string): { name: string; voice: string } | undefined => {
-      const agent = byHandle.get(handle)
+    const resolve = (ref: string): { name: string; voice: string } | undefined => {
+      const nodeId = this.resolve(ref, handles, agents)
+      const agent = nodeId ? byId.get(nodeId) : undefined
       if (!agent) return undefined
       const named = this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
       if (!named) return undefined
@@ -642,19 +667,21 @@ export class Receptionist {
     }
     const spoken = renderSpeech(say, resolve, RECEPTIONIST_VOICE)
     for (const nodeId of mentioned) this.deps.names.touch(nodeId)
-    return { spoken, mentioned, byHandle }
+    return { spoken, mentioned }
   }
 
   private async speak(attempt: Attempt, body: string, reply: Reply): Promise<boolean> {
-    const { spoken, mentioned, byHandle } = this.render(reply.say, this.deps.agents())
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    const { spoken, mentioned } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
     this.lastSpoken = spoken
     this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     // The camera follows the conversation: the agent quoted first, else the
     // agent mentioned first.
-    const quoted = froms.find(from => byHandle.has(from))
-    const focus = quoted ? byHandle.get(quoted)?.nodeId : mentioned[0]
+    const quoted = froms.map(from => from === CONTROL ? undefined : this.resolve(from, handles, agents)).find(Boolean)
+    const focus = quoted ?? mentioned[0]
     if (focus) this.deps.focus(focus)
     if (!spoken.length) return false
     return this.channel.deliver(attempt, spoken.map(({ text, voice }) => ({ text, voice })))

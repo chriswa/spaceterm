@@ -97,7 +97,8 @@ export class Handles {
 /** Directory handles carry a prefix, so an agent's and a directory's can never be confused. */
 export const DIRECTORY_PREFIX = 'dir-'
 
-function editDistance(a: string, b: string): number {
+/** Levenshtein distance, for "did you mean". */
+export function editDistance(a: string, b: string): number {
   let previous = Array.from({ length: b.length + 1 }, (_, i) => i)
   for (let i = 1; i <= a.length; i++) {
     const current = [i]

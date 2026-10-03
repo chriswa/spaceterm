@@ -45,6 +45,16 @@ describe('renderSpeech', () => {
     ])
   })
 
+  it('introduces an agent once when it is quoted twice in a row, and again after someone else speaks', () => {
+    const parts = renderSpeech([
+      { from: 'a1', text: 'First.' },
+      { from: 'a1', text: 'Second.' },
+      { from: CONTROL, text: 'Meanwhile.' },
+      { from: 'a1', text: 'Third.' },
+    ], resolveKevin, 'af_heart')
+    expect(parts.map(part => part.text)).toEqual(['Kevin here. First.', 'Second.', 'Meanwhile.', 'Kevin here. Third.'])
+  })
+
   it('never lends an agent voice to a part from an unknown handle', () => {
     const [part] = renderSpeech([{ from: 'zz', text: 'Hello.' }], resolveKevin, 'af_heart')
     expect(part.voice).toBe('af_heart')

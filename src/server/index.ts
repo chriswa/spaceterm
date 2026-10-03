@@ -3030,6 +3030,7 @@ async function startServer(): Promise<void> {
         return named
       },
       touch: (nodeId) => agentNames.touch(nodeId),
+      byName: (name) => agentNames.byName(name),
     },
     askAgent: async (nodeId, prompt) => {
       // The plugin identifies itself by the surface's current PTY session id.

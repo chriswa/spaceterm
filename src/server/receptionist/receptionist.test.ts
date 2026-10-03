@@ -136,6 +136,7 @@ function harness(opts: {
         return next
       },
       touch: () => {},
+      byName: (name) => [...assigned].find(([, named]) => named.name.toLowerCase() === name.toLowerCase())?.[0],
     },
     askAgent: async (nodeId, prompt) => {
       sideQuestions.push({ nodeId, prompt })
@@ -581,7 +582,7 @@ describe('Receptionist', () => {
         reply([{ from: 'control', text: `Sent to {${typo}}.` }], [{ tool: 'send', agent: typo, message: 'Commit, please.' }]),
         (turn) => {
           expect(turn.prompt).toMatch(/^NOTHING WAS DONE AND NOTHING YOU SAID WAS SPOKEN\./)
-          expect(turn.prompt).toContain(`"${typo}" (in send) is not a live agent's handle. Did you mean [${KEVIN}]`)
+          expect(turn.prompt).toContain(`"${typo}" (in send) is not a live agent's name or handle. Did you mean [${KEVIN}]`)
           return reply([{ from: 'control', text: `Sent to {${KEVIN}}.` }], [{ tool: 'send', agent: KEVIN, message: 'Commit, please.' }])
         },
       ],
@@ -597,7 +598,7 @@ describe('Receptionist', () => {
       replies: [
         reply([{ from: 'control', text: '{not-a-handle} finished.' }]),
         (turn) => {
-          expect(turn.prompt).toContain('"not-a-handle" (in what you said) is not a live agent\'s handle.')
+          expect(turn.prompt).toContain('"not-a-handle" (in what you said) is not a live agent\'s name or handle.')
           return reply([{ from: 'control', text: `{${KEVIN}} finished.` }])
         },
       ],
@@ -623,5 +624,41 @@ describe('Receptionist', () => {
     await h.receptionist.hear('ok')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  it('takes a live agent\'s name wherever a handle goes', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `{${KEVIN}} is on the water sim.` }]),
+        reply([{ from: 'control', text: 'Sent to {Kevin}.' }, { from: 'kevin', text: 'Volume is conserved.' }], [{ tool: 'send', agent: 'Kevin', message: 'Commit, please.' }]),
+      ],
+    })
+    await h.receptionist.hear('who is on the water sim?')
+    await flush()
+    await h.receptionist.hear('tell him to commit')
+    await flush()
+    expect(h.wire).toEqual([`send ${KEVIN_ID} Commit, please.`])
+    expect(h.spoken[1].content).toEqual([
+      { text: 'Sent to Kevin.', voice: RECEPTIONIST_VOICE },
+      { text: 'Kevin here. Volume is conserved.', voice: 'am_michael' },
+    ])
+  })
+
+  it('suggests the real name for a misheard one', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `{${KEVIN}} is here.` }]),
+        reply([{ from: 'control', text: 'Asking {Kevn}.' }], [{ tool: 'monitor', agent: 'Kevn' }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`"Kevn" (in monitor) is not a live agent's name or handle. Did you mean [${KEVIN}] Kevin ("water sim")?`)
+          return reply([{ from: 'control', text: 'Watching {Kevin}.' }], [{ tool: 'monitor', agent: 'Kevin' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('who is around?')
+    await flush()
+    await h.receptionist.hear('watch kevin')
+    await flush()
+    expect(h.turns).toHaveLength(3)
   })
 })
