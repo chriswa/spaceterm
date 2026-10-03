@@ -688,3 +688,13 @@ textarea, input, [contenteditable="true"], .cm-content {
   justify-content: center;
 }
 .m-hold-mic--on { background: var(--m-accent); color: #11111b; }
+/* On, but not holding the microphone yet: outlined in the accent, pulsing. */
+.m-hold-mic--preparing {
+  border-color: var(--m-accent);
+  color: var(--m-accent);
+  animation: m-hold-mic-preparing 1.2s ease-in-out infinite;
+}
+@keyframes m-hold-mic-preparing {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}

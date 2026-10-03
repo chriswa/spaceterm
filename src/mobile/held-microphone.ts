@@ -1,4 +1,5 @@
 import { beginRecordingSession } from './audio-session'
+import { playCue } from './cues'
 
 /**
  * The microphone, held open between dictations — as Voice Operator does on the
@@ -132,21 +133,49 @@ function captureOf(opened: Awaited<ReturnType<typeof openCapture>>, release: (br
   }
 }
 
+/**
+ * `preparing`: turned on, but not holding a microphone yet — opening one, or
+ * waiting for a headset or for the tap that lets iOS open it.
+ */
+export type HoldState = 'off' | 'preparing' | 'held'
+
 let wanted = (() => {
   try { return localStorage.getItem(KEY) === '1' } catch { return false }
 })()
 let held: { capture: Capture; close: () => void } | undefined
 let opening: Promise<Capture> | undefined
-const changeListeners = new Set<(on: boolean) => void>()
+const stateListeners = new Set<(state: HoldState) => void>()
+/** Nothing is held at load: the hold, if wanted, comes back with the next tap. */
+let lastState: HoldState = wanted ? 'preparing' : 'off'
+
+export function holdState(): HoldState {
+  if (!wanted) return 'off'
+  return held?.capture.healthy() ? 'held' : 'preparing'
+}
+
+export function onHoldStateChange(fn: (state: HoldState) => void): () => void {
+  stateListeners.add(fn)
+  return () => { stateListeners.delete(fn) }
+}
+
+/**
+ * Tell the button, and sound the hold taking or letting go of the microphone:
+ * the moment the always-on mode really starts or stops, not the tap that asked.
+ */
+function announce(): void {
+  const state = holdState()
+  const before = lastState
+  lastState = state
+  if (state === before) return
+  if (state === 'held') playCue('holdEngaged')
+  else if (before === 'held') playCue('holdReleased')
+  for (const fn of stateListeners) fn(state)
+}
 
 export function holdsMicrophone(): boolean {
   return wanted
 }
 
-export function onHoldChange(fn: (on: boolean) => void): () => void {
-  changeListeners.add(fn)
-  return () => { changeListeners.delete(fn) }
-}
 
 /** Turn holding on or off, remembered on this phone. Call inside a tap: turning it on opens the microphone now. */
 export function setHoldMicrophone(on: boolean): void {
@@ -155,7 +184,7 @@ export function setHoldMicrophone(on: boolean): void {
   log(on ? 'turned on' : 'turned off')
   if (on) void acquire().then((capture) => capture.release(), () => undefined)
   else closeHeld('turned off')
-  for (const fn of changeListeners) fn(on)
+  announce()
 }
 
 function closeHeld(why: string): void {
@@ -163,6 +192,7 @@ function closeHeld(why: string): void {
   log(`closing: ${why}`)
   held.close()
   held = undefined
+  announce()
 }
 
 /**
@@ -185,6 +215,7 @@ export function acquire(): Promise<Capture> {
       const capture = captureOf(opened, (broken) => { if (broken) closeHeld('it went silent') })
       held = { capture, close: opened.close }
       log(`holding "${label}" open`)
+      announce()
       return capture
     }
     if (wanted) log(`not holding "${label}": not a headset, and held open it would play through the earpiece`)

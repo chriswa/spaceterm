@@ -6,9 +6,14 @@
  * (~/voiceop/Sources/VoiceOperator/Core/SoundEffects.swift), so the note
  * tables below are copied from it verbatim, and the synthesis is its `chirp`
  * ported — 5 ms fades, `speedup` 2, output gain 0.35. Keep the two in step.
+ *
+ * Except the two hold cues, which are Spaceterm's own: the microphone held
+ * open (held-microphone.ts) taking hold and letting go. Two taps and a leap,
+ * so they never sound like a dictation starting or stopping.
  */
 
 export type Cue = 'listeningStarted' | 'listeningFinished' | 'pasted' | 'transcriptionFailed' | 'captureFailed'
+  | 'holdEngaged' | 'holdReleased'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
@@ -16,7 +21,9 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   listeningFinished: [[990, 0.09], [660, 0.11]],
   pasted: [[523, 0.09], [659, 0.09], [784, 0.09], [1047, 0.14]],
   transcriptionFailed: [[523, 0.10], [392, 0.10], [262, 0.22]],
-  captureFailed: [[196, 0.20], [0, 0.07], [196, 0.30]]
+  captureFailed: [[196, 0.20], [0, 0.07], [196, 0.30]],
+  holdEngaged: [[392, 0.06], [0, 0.04], [392, 0.06], [0, 0.04], [784, 0.18]],
+  holdReleased: [[587, 0.06], [0, 0.04], [587, 0.06], [0, 0.04], [294, 0.18]]
 }
 
 const SPEEDUP = 2

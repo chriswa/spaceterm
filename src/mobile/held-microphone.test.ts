@@ -9,15 +9,24 @@ function fakeBrowser(label: string) {
   const nodes: Array<{ port: { onmessage: ((e: { data: Float32Array }) => void) | null } }> = []
   let currentLabel = label
   const deviceListeners: Array<() => void> = []
+  const cues: string[] = []
+  // Cues play through an audio context of their own, so a microphone counts
+  // as opened when a stream is wired in, not when a context is made.
   class FakeContext {
     state = 'running'
     sampleRate = 48_000
+    destination = {}
     audioWorklet = { addModule: async () => undefined }
     record = { closed: false, label: currentLabel }
-    constructor() { opened.push(this.record) }
     resume() { return Promise.resolve() }
     close() { this.state = 'closed'; this.record.closed = true; return Promise.resolve() }
-    createMediaStreamSource() { return { connect: () => undefined } }
+    createMediaStreamSource() { opened.push(this.record); return { connect: () => undefined } }
+    createBuffer() { return { copyToChannel: () => undefined } }
+    createGain() { return { gain: { value: 0 }, connect: (next: unknown) => next } }
+    createBufferSource() { return { buffer: null, connect: (next: unknown) => next, start: () => undefined } }
+  }
+  ;(window as unknown as { api: unknown }).api = {
+    log: (message: string) => { const cue = /^\[cue\] (\w+)/.exec(message); if (cue) cues.push(cue[1]) },
   }
   class FakeNode {
     port = { onmessage: null as ((e: { data: Float32Array }) => void) | null }
@@ -40,6 +49,8 @@ function fakeBrowser(label: string) {
   URL.revokeObjectURL = () => undefined
   return {
     opened,
+    /** Cues played, in order. */
+    cues,
     /** Audio from the most recently opened microphone. */
     speak: (samples: number[]) => nodes.at(-1)!.port.onmessage?.({ data: Float32Array.from(samples) }),
     useMicrophone: (next: string) => { currentLabel = next },
@@ -168,5 +179,32 @@ describe('bringing the hold back', () => {
     tap(); await settle()
     expect(browser.opened).toHaveLength(2)
     expect(browser.opened[1].closed).toBe(false)
+  })
+})
+
+describe('the hold, as the button and the ear know it', () => {
+  it('prepares, sounds when it takes the microphone, and sounds again when it lets go', async () => {
+    const browser = fakeBrowser('AirPods Pro')
+    const held = await load()
+    const states: string[] = []
+    held.onHoldStateChange((state) => states.push(state))
+    expect(held.holdState()).toBe('off')
+    held.setHoldMicrophone(true)
+    expect(held.holdState()).toBe('preparing')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(held.holdState()).toBe('held')
+    held.setHoldMicrophone(false)
+    expect(states).toEqual(['preparing', 'held', 'off'])
+    expect(browser.cues).toEqual(['holdEngaged', 'holdReleased'])
+  })
+
+  it('stays preparing, and silent, without a headset to hold', async () => {
+    const browser = fakeBrowser('iPhone Microphone')
+    const held = await load()
+    held.setHoldMicrophone(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(held.holdState()).toBe('preparing')
+    held.setHoldMicrophone(false)
+    expect(browser.cues).toEqual([])
   })
 })
