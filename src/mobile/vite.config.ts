@@ -2,6 +2,7 @@ import { resolve } from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { nativeVersion } from './ios/native-version.mjs'
+import { hoverOnly } from './hover-only'
 
 /**
  * Each build's id, compiled into the page and published beside it in
@@ -34,6 +35,8 @@ export default defineConfig({
     }
   },
   define: { __MOBILE_BUILD_ID__: JSON.stringify(buildId) },
+  // A touch leaves :hover stuck on whatever it touched; see hover-only.ts.
+  css: { postcss: { plugins: [hoverOnly()] } },
   plugins: [
     react(),
     {
