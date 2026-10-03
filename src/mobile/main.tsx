@@ -49,6 +49,9 @@ if (!token) {
   // `window.api` must exist before App's modules run, as on the desktop.
   void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile').then(async (client) => {
     forwardLogs((message) => client.clientLog(message))
+    // Switching apps is when the phone's microphone and socket misbehave, so
+    // the log marks each one.
+    document.addEventListener('visibilitychange', () => window.api.log(`[lifecycle] page ${document.visibilityState}`))
     const { MobileApp } = await import('./MobileApp')
     root.render(
       <StrictMode>

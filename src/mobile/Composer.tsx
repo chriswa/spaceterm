@@ -24,6 +24,9 @@ import { TerminalGesture } from './terminal-gesture'
 /** A button press that must not take focus from the text (and so dismiss the keyboard). */
 const keepFocus = (e: { preventDefault(): void }) => e.preventDefault()
 
+/** How long a granted microphone may stay silent before dictation gives up on it. */
+const NO_AUDIO_TIMEOUT_MS = 2000
+
 type MicState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'transcribing' }
 
 export function Composer({ nodeId, onClose, onExitToCanvas, startDictation }: {
@@ -102,13 +105,24 @@ export function Composer({ nodeId, onClose, onExitToCanvas, startDictation }: {
     setMic({ kind: 'starting' })
     try {
       const dictation = await pending
+      // As on the desktop, the start cue means "safe to talk": it plays only
+      // once sound is actually arriving. A microphone that is granted but
+      // silent (see dictation.ts) fails here, rather than showing Stop over
+      // a recording of nothing.
+      const heard = await Promise.race([
+        dictation.audioArrived.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), NO_AUDIO_TIMEOUT_MS))
+      ])
       if (closedRef.current) {
         dictation.cancel()
         return
       }
+      if (!heard) {
+        window.api.log(`[dictation] no sound within ${NO_AUDIO_TIMEOUT_MS}ms: ${dictation.describe()}`)
+        dictation.cancel()
+        throw new Error('The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
+      }
       setMic({ kind: 'listening', dictation })
-      // As on the desktop, the start cue means "safe to talk": it plays only
-      // once the microphone is live.
       playCue('listeningStarted')
     } catch (err) {
       setMic({ kind: 'idle' })

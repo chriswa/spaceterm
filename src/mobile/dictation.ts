@@ -10,10 +10,46 @@ import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
  *
  * Audio captured before the server has answered `start` is held and sent once
  * it has — the first syllable is usually spoken before the round trip lands.
+ *
+ * iOS can hand back a microphone that is granted, "live", and silent — no
+ * samples at all, seen after switching away from the app and back. Nothing
+ * fails, so `audioArrived` is the only honest signal that listening has begun,
+ * and every step logs what it saw so the next such failure says why.
  */
 
 /** How much audio to batch per message: small enough to stream, large enough not to spam. */
 const SEND_INTERVAL_MS = 200
+
+const log = (message: string) => window.api?.log(`[dictation] ${message}`)
+
+/** What the microphone has delivered so far — counted, not kept. */
+export class AudioStats {
+  blocks = 0
+  samples = 0
+  /** Loudest sample, 0..1: tells silence (a zeroed stream) from no stream. */
+  peak = 0
+
+  push(block: Float32Array): void {
+    this.blocks++
+    this.samples += block.length
+    for (let i = 0; i < block.length; i++) {
+      const v = Math.abs(block[i])
+      if (v > this.peak) this.peak = v
+    }
+  }
+
+  describe(sampleRate: number): string {
+    const seconds = sampleRate > 0 ? this.samples / sampleRate : 0
+    const db = this.peak > 0 ? `${(20 * Math.log10(this.peak)).toFixed(0)} dBFS` : 'silent'
+    return `${this.blocks} blocks, ${seconds.toFixed(1)}s, peak ${db}`
+  }
+}
+
+/** The state of everything between the microphone and the worklet, for the log. */
+function describeCapture(stream: MediaStream, context: AudioContext): string {
+  const tracks = stream.getAudioTracks().map((t) => `${t.readyState}${t.muted ? ' muted' : ''}${t.enabled ? '' : ' disabled'} "${t.label}"`)
+  return `context ${context.state} @${context.sampleRate}Hz, track ${tracks.join(', ') || 'none'}`
+}
 
 const WORKLET = `
 class Tap extends AudioWorkletProcessor {
@@ -34,6 +70,10 @@ export class Dictation {
   private stopped = false
   /** Abandoned: the session, whenever it arrives, is to be thrown away. */
   private cancelled = false
+  private readonly stats = new AudioStats()
+  private readonly began = performance.now()
+  /** Resolves with the first block of sound — the moment it is safe to talk. */
+  readonly audioArrived: Promise<void>
 
   private constructor(
     private readonly api: DictationApi,
@@ -43,9 +83,22 @@ export class Dictation {
     started: Promise<string>
   ) {
     const resampler = new Downsampler(context.sampleRate)
+    let arrived: () => void = () => undefined
+    this.audioArrived = new Promise((resolve) => { arrived = resolve })
     node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+      if (this.stats.blocks === 0) {
+        log(`first audio after ${Math.round(performance.now() - this.began)}ms (${describeCapture(stream, context)})`)
+        arrived()
+      }
+      this.stats.push(event.data)
       const pcm = resampler.push(event.data)
       if (pcm.length > 0) this.queued.push(pcm)
+    }
+    context.onstatechange = () => log(`context now ${context.state}`)
+    for (const track of stream.getAudioTracks()) {
+      track.onmute = () => log('track muted')
+      track.onunmute = () => log('track unmuted')
+      track.onended = () => { if (!this.stopped) log('track ended while listening') }
     }
     this.timer = window.setInterval(() => this.flush(), SEND_INTERVAL_MS)
     started.then(
@@ -77,9 +130,10 @@ export class Dictation {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       })
-    } catch {
+    } catch (err) {
       void context.close()
       void started.then((id) => api.cancel(id), () => undefined)
+      log(`getUserMedia refused: ${err instanceof Error ? `${err.name} ${err.message}` : String(err)} (secure ${window.isSecureContext}, page ${document.visibilityState})`)
       throw new Error(
         window.isSecureContext
           ? 'Microphone permission was refused'
@@ -95,11 +149,18 @@ export class Dictation {
     const source = context.createMediaStreamSource(stream)
     const node = new AudioWorkletNode(context, 'spaceterm-tap')
     source.connect(node)
+    log(`capture open: ${describeCapture(stream, context)}, page ${document.visibilityState}`)
     return new Dictation(api, stream, context, node, started)
+  }
+
+  /** For the log when sound never came: what the capture looks like now. */
+  describe(): string {
+    return `${this.stats.describe(this.context.sampleRate)}; ${describeCapture(this.stream, this.context)}`
   }
 
   /** Stop listening and return the transcript, or throw with the server's reason. */
   async finish(): Promise<string> {
+    log(`finish: ${this.describe()}`)
     this.stopCapture()
     const id = await this.started
     this.flush()
@@ -107,6 +168,7 @@ export class Dictation {
   }
 
   cancel(): void {
+    if (!this.stopped) log(`cancel: ${this.describe()}`)
     this.cancelled = true
     this.stopCapture()
     if (this.id) this.api.cancel(this.id)
