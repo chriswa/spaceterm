@@ -756,6 +756,15 @@ export interface SummaryChatToggleMessage {
   playHere?: boolean
 }
 
+/**
+ * Build the iPhone app on this Mac and install it on the paired phone — the
+ * phone's update badge. See `src/server/mobile-install.ts`.
+ */
+export interface MobileAppInstallMessage {
+  type: 'mobile-app-install'
+  seq: number
+}
+
 /** What a client playing speech reports: a sentence began, ended, or could not be played. */
 export type SpeechProgressEvent = 'started' | 'finished' | 'failed'
 
@@ -1089,6 +1098,7 @@ export type ClientMessage =
   | SummaryChatFollowUpMessage
   | SummaryChatEndMessage
   | SpeechProgressMessage
+  | MobileAppInstallMessage
   | SpeakToggleMessage
   | SpeakStopMessage
   | SaveViewportMessage
@@ -1151,6 +1161,17 @@ export interface SpeechAudioMessage {
   count: number
   sampleRate: number
   pcm: string
+}
+
+/**
+ * Reply to {@link MobileAppInstallMessage}. A success rarely arrives: the new
+ * app replaces the one that asked.
+ */
+export interface MobileAppInstallResultMessage {
+  type: 'mobile-app-install-result'
+  seq: number
+  ok: boolean
+  message?: string
 }
 
 /** Stop playing a speech job now, and drop what is queued of it. */
@@ -1711,3 +1732,4 @@ export type ServerMessage =
   | UsageReportMessage
   | SpeechAudioMessage
   | SpeechStopMessage
+  | MobileAppInstallResultMessage

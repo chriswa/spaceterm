@@ -370,6 +370,11 @@ export interface Api {
   /** Abandon every Summary Chat conversation. */
   endSummaryChat(): void
   restartSpaceterm(): Promise<void>
+  /**
+   * Build the iPhone app on the Mac and install it on the paired phone. On
+   * success the new app replaces this one, so mostly only failures come back.
+   */
+  installMobileApp(): Promise<{ ok: boolean; message?: string }>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
   tts: TtsApi

@@ -106,7 +106,10 @@ textarea, input, [contenteditable="true"], .cm-content {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   -webkit-tap-highlight-color: transparent;
 }
-.m-update__explain {
+.m-update--busy { opacity: 0.85; }
+.m-update--busy .m-update__icon { animation: m-update-spin 0.9s linear infinite; }
+@keyframes m-update-spin { to { transform: rotate(360deg); } }
+.m-update__failure {
   position: fixed;
   left: 12px;
   right: 12px;
@@ -114,13 +117,13 @@ textarea, input, [contenteditable="true"], .cm-content {
   z-index: 2147483000;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--m-border);
+  border: 1px solid var(--m-danger);
   background: var(--m-surface);
   color: var(--m-text);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.4;
+  white-space: pre-wrap;
 }
-.m-update__explain code { display: block; margin-top: 6px; color: var(--m-accent); }
 
 /* AI usage, bottom left — the menu-bar tray's bars (see UsageReadout.tsx). */
 .m-usage {

@@ -462,6 +462,7 @@ export class FakeBridge implements Api {
   summaryChatFollowUp = (text: string): void => this.record('summaryChatFollowUp', text)
   endSummaryChat = (): void => this.record('endSummaryChat')
   restartSpaceterm = (): Promise<void> => this.reply('restartSpaceterm', undefined)
+  installMobileApp = (): Promise<{ ok: boolean; message?: string }> => this.reply('installMobileApp', { ok: true })
   writeDebugLog = (content: string): Promise<string> =>
     this.reply('writeDebugLog', '/tmp/fake-debug.log', content)
   openExternal = (url: string): Promise<void> => this.reply('openExternal', undefined, url)

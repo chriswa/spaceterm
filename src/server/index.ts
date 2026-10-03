@@ -39,6 +39,7 @@ import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
 import { UsageTracker } from './usage-tracker'
 import { RemoteSpeech } from './remote-speech'
+import { MobileAppInstaller, realMobileInstallDeps } from './mobile-install'
 import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
@@ -290,6 +291,9 @@ const directSpeech = new DirectSpeech({
 
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator())
+
+/** The phone's "App update" badge builds and installs the iPhone app from here. */
+const mobileAppInstaller = new MobileAppInstaller(realMobileInstallDeps(path.resolve(__dirname, '..', '..')))
 
 /** Speech on the phone, synthesized by Voice Operator — dictation in reverse. See remote-speech.ts. */
 const speechVoiceOperator = new VoiceOperator()
@@ -1353,6 +1357,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'summary-chat-follow-up': {
       const text = msg.text.trim()
       if (text) void summaryChat.followUp(text)
+      break
+    }
+
+    case 'mobile-app-install': {
+      void mobileAppInstaller.install().then((outcome) => send(client.link, {
+        type: 'mobile-app-install-result',
+        seq: msg.seq,
+        ok: outcome.ok,
+        ...(outcome.ok ? {} : { message: outcome.message }),
+      }))
       break
     }
 

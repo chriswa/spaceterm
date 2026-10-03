@@ -134,6 +134,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     log: (message) => platform.log(message),
     toggleSummaryChat: (nodeId, mode) => client.toggleSummaryChat(nodeId, mode, platform.playsSpeech ?? false),
     summaryChatFollowUp: (text) => client.summaryChatFollowUp(text),
+    installMobileApp: () => client.installMobileApp(),
     endSummaryChat: () => client.endSummaryChat(),
     async restartSpaceterm() {
       platform.log('[restart] Restart Spaceterm requested')

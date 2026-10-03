@@ -296,6 +296,7 @@ export class ServerClient {
       case 'server-restarted':
       case 'restart-flag-result':
       case 'usage-report-result':
+      case 'mobile-app-install-result':
       case 'listed':
       case 'attached':
       case 'detached':
@@ -759,6 +760,14 @@ export class ServerClient {
 
   dictationCancel(id: string): void {
     this.fireAndForget({ type: 'dictation-cancel', id })
+  }
+
+  /** Build and install the iPhone app from the Mac. Resolves when it fails, or — rarely seen — succeeds. */
+  async installMobileApp(): Promise<{ ok: boolean; message?: string }> {
+    this.log('[mobile-install] asking the Mac to build and install the app')
+    const resp = await this.request({ type: 'mobile-app-install' })
+    if (resp.type !== 'mobile-app-install-result') return unexpected(resp)
+    return { ok: resp.ok, message: resp.message }
   }
 
   speechProgress(id: string, index: number, event: SpeechProgressEvent): void {
