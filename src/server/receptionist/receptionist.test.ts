@@ -6,10 +6,11 @@ import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operat
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { forkPrompt, Receptionist, type ForkClient } from './receptionist'
-import { handleFor, type RosterAgent } from './roster'
+import { directoryHandleFor, handleFor, type RosterAgent } from './roster'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
+const DIR_ID = asNodeId('33333333-0000-4000-8000-000000000000')
 const KEVIN = handleFor(KEVIN_ID)
 const SALLY = handleFor(SALLY_ID)
 
@@ -84,6 +85,8 @@ function harness(opts: {
     focus: (nodeId) => focused.push(nodeId),
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
     interrupt: (nodeId) => wire.push(`escape ${nodeId}`),
+    directories: () => [{ nodeId: DIR_ID, cwd: '/Users/me/spaceterm' }],
+    spawn: (directory, title, prompt) => { wire.push(`spawn ${directory} ${title}: ${prompt}`); return SALLY_ID },
     log: () => {},
     sleep: async () => {},
     voiceOperatorDiscovered: () => true,
@@ -334,5 +337,28 @@ describe('Receptionist', () => {
     await h.receptionist.hear('tell Kevin to commit')
     await flush()
     expect(h.spoken[0].content).toEqual([{ text: 'Sent to Kevin.', voice: RECEPTIONIST_VOICE }])
+  })
+
+  it('starts a new agent in a directory it was shown, and watches for its first answer', async () => {
+    const h = harness({
+      replies: [
+        (request) => {
+          expect(h.latest(request)).toContain(`[${directoryHandleFor(DIR_ID)}] /Users/me/spaceterm`)
+          return reply([{ from: 'control', text: 'Starting one.' }], [
+            { tool: 'spawn', directory: directoryHandleFor(DIR_ID), title: 'shorter answers', prompt: 'Make Control answer in one sentence.' },
+          ])
+        },
+        (request) => {
+          expect(h.latest(request)).toContain('EVENTS')
+          return reply([{ from: 'control', text: 'The new agent finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('yes, start a new agent for that')
+    await flush()
+    expect(h.wire).toEqual([`spawn ${DIR_ID} shorter answers: Make Control answer in one sentence.`])
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.requests).toHaveLength(2)
   })
 })

@@ -38,7 +38,8 @@ import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCa
 import type { Camera } from './lib/camera'
 import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, EXTERNAL_UNFOCUS_ZOOM_OUT, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING, EDGE_TOUCH_THRESHOLD_PX } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
-import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from '../../../shared/node-label'
+import { useAgentNamesStore } from './stores/agentNamesStore'
+import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, placeNameTag, type NodeLabel } from '../../../shared/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
 import { DEFAULT_PRESET } from './lib/color-presets'
 
@@ -299,6 +300,16 @@ export function App() {
     [focusedId, rootCwd]
   )
 
+  /** The receptionist's names, worn above each named agent's label. */
+  const agentNames = useAgentNamesStore((s) => s.names)
+  const nameTags = useMemo(() => {
+    const labelFor = new Map(nameLabels.map((label) => [label.nodeId, label]))
+    return nodeList.flatMap((node) => {
+      const name = agentNames[node.id]
+      return name ? [placeNameTag(node, name, labelFor.get(node.id))] : []
+    })
+  }, [nodeList, nameLabels, agentNames])
+
   const nodeLabels = useMemo(
     () => (rootCwdLabel ? [...nameLabels, ...statusLabels, rootCwdLabel] : [...nameLabels, ...statusLabels]),
     [nameLabels, statusLabels, rootCwdLabel]
@@ -323,8 +334,12 @@ export function App() {
     for (const label of nodeLabels) {
       rects.push({ ...labelMaskShape(label), alwaysMasks: true })
     }
+    // A name tag masks like a label: it sits in the same lane above the card.
+    for (const tag of nameTags) {
+      rects.push({ ...labelMaskShape(tag), alwaysMasks: true })
+    }
     return rects
-  }, [markdowns, titles, nodeLabels])
+  }, [markdowns, titles, nodeLabels, nameTags])
   const maskRectsRef = useRef<MaskRect[]>([])
   maskRectsRef.current = maskRects
 
@@ -2740,6 +2755,7 @@ export function App() {
         <ResizeGhost />
         <NodeLabels
           labels={nodeLabels}
+          nameTags={nameTags}
           resolvedPresets={resolvedPresets}
           nodeFreshness={nodeFreshness}
           onLabelClick={focusParentOfNode}

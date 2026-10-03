@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  placeNameTag, NAME_TAG_GAP,
   nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES,
   LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel, COLD_LABEL_FG, deadlineExtended,
   labelClickAction, agentCaptionReserve, type NodeLabel, type CaptionReserve
@@ -590,5 +591,25 @@ describe('agentCaptionReserve', () => {
     expect(contains(below, hot)).toBe(true)
     const cold = layOutStatusLabel(terminal({ lastAgentActivityAt: NOW - 30 * 60_000 }), NOW)!
     expect(contains(below, cold)).toBe(true)
+  })
+})
+
+describe('placeNameTag', () => {
+  it('sits directly above the name label, centred on the card', () => {
+    const node = terminal({ name: 'Receptionist work' })
+    const label = layOutNodeLabel(node)!
+    const tag = placeNameTag(node, 'Tessa', label)
+    expect(tag.x).toBe(node.x)
+    expect(tag.y + tag.height / 2).toBeCloseTo(label.y - label.height / 2 - NAME_TAG_GAP)
+    expect(tag.textScale).toBe(label.textScale)
+    expect(tag).toMatchObject(labelBox(['Tessa'], label.textScale))
+    // It masks edges like a label, bridging to the card it names.
+    expect(labelMaskShape(tag).bridgeTo).toEqual({ x: node.x, y: node.y })
+  })
+
+  it('sits above the card when the node has no label', () => {
+    const node = terminal()
+    const tag = placeNameTag(node, 'Tessa', undefined)
+    expect(tag.y + tag.height / 2).toBeLessThan(node.y - measureCard(node).height / 2 - LABEL_CARD_GAP)
   })
 })

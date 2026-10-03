@@ -4082,23 +4082,28 @@ html, body, #root {
   transform: none;
 }
 
-/* The receptionist's name for an agent surface, worn like a name tag just
-   above the card: the card's highlight colour behind dark text, the inverse of
-   its body. Inline colours come from the card's preset. Scaled with the rest
-   of the card's chrome, from its bottom-left corner so it stays put. */
-.card-shell__name-tag {
+/* The receptionist's name for an agent surface ("Kevin"), worn like a name
+   tag directly above the node's label. `placeNameTag` sizes the box the way
+   labels are measured, so the edge mask covers it exactly; the text is centred
+   in it. On the canvas, not in the card: the card's paint containment would
+   clip it. */
+.agent-name-tag {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  padding: 3px 10px 4px;
-  border-radius: 6px;
-  font-size: 22px;
-  font-weight: 800;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 0.45em;
+  color: #000;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  /* The node label's own size — see `.node-label__text` — so the name is set
+     exactly as large as the title under it. */
+  font-size: calc(66px * var(--label-node-scale) * var(--node-label-text-scale));
+  font-weight: bold;
   line-height: 1;
-  letter-spacing: 0.02em;
   white-space: nowrap;
-  pointer-events: none;
   user-select: none;
-  transform: scale(var(--card-chrome-scale, 1));
-  transform-origin: bottom left;
+  -webkit-user-select: none;
+  transition: filter 0.25s ease;
 }

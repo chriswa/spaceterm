@@ -20,6 +20,7 @@ export type ToolCall =
   | { tool: 'monitor'; agent: string }
   | { tool: 'send'; agent: string; message: string }
   | { tool: 'interrupt'; agent: string }
+  | { tool: 'spawn'; directory: string; title: string; prompt: string }
 
 export interface Reply {
   say: SayPart[]
@@ -61,6 +62,14 @@ function parseSayPart(value: unknown): SayPart {
 
 function parseToolCall(value: unknown): ToolCall {
   if (!isRecord(value) || typeof value.tool !== 'string') throw new Error('each tool call needs a "tool" name')
+  if (value.tool === 'spawn') {
+    const field = (name: string): string => {
+      const text = typeof value[name] === 'string' ? (value[name] as string).trim() : ''
+      if (!text) throw new Error(`"spawn" needs a "${name}"`)
+      return text
+    }
+    return { tool: 'spawn', directory: field('directory'), title: field('title'), prompt: field('prompt') }
+  }
   const agent = typeof value.agent === 'string' ? value.agent.trim() : ''
   if (!agent) throw new Error(`tool "${value.tool}" needs an "agent" handle`)
   switch (value.tool) {

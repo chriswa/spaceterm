@@ -117,4 +117,23 @@ describe('NodeLabels', () => {
     const { container } = renderLabels([label()])
     expect((container.querySelector('.node-label') as HTMLElement).style.filter).toBe('')
   })
+
+  it('wears an agent name as a pill of the label colour, clicking through to the node', () => {
+    const onClick = vi.fn()
+    const presets = { [NODE]: COLOR_PRESET_MAP['teal'] }
+    const { container } = render(
+      <NodeLabels labels={[]} nameTags={[{ nodeId: NODE, name: 'Tessa', x: 200, y: -620, width: 300, height: 100, textScale: 2 / 3, anchorX: 200, anchorY: 0 }]}
+        resolvedPresets={presets} nodeFreshness={new Map()} onLabelClick={onClick} onCacheTimerMute={vi.fn()} />
+    )
+    const tag = container.querySelector('.agent-name-tag') as HTMLElement
+    expect(tag.textContent).toBe('Tessa')
+    expect(tag.style.left).toBe('50px')
+    expect(tag.style.top).toBe('-670px')
+    expect(tag.style.width).toBe('300px')
+    expect(tag.style.backgroundColor).not.toBe('')
+    expect(Number(tag.style.getPropertyValue('--node-label-text-scale'))).toBeCloseTo(2 / 3)
+    expect(tag.hasAttribute('data-node-id')).toBe(false)
+    fireEvent.click(tag)
+    expect(onClick).toHaveBeenCalledWith(NODE)
+  })
 })

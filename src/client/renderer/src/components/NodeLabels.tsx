@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, type CSSProperties } from 'react'
-import { deadlineExtended, labelClickAction, type NodeLabel } from '../../../../shared/node-label'
+import { deadlineExtended, labelClickAction, type NameTagPlacement, type NodeLabel } from '../../../../shared/node-label'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import { staleFilter } from '../lib/dim-stale'
 import type { NodeId } from '../../../../shared/ids'
 
 interface NodeLabelsProps {
   labels: readonly NodeLabel[]
+  /** The receptionist's names for agent surfaces, each worn above its node's label. */
+  nameTags?: readonly NameTagPlacement[]
   /** Inherited colour presets, keyed by node id — a label wears its node's colour. */
   resolvedPresets: Record<string, ColorPreset>
   /** "Dim stale nodes" freshness, so a label drains with the node that supplies it. */
@@ -35,7 +37,7 @@ interface NodeLabelsProps {
  * hover state. A caption that lit up under the pointer read as a control the
  * canvas was offering rather than as a name written on the canvas.
  */
-export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClick, onCacheTimerMute }: NodeLabelsProps) {
+export function NodeLabels({ labels, nameTags = [], resolvedPresets, nodeFreshness, onLabelClick, onCacheTimerMute }: NodeLabelsProps) {
   return (
     <>
       {labels.map((label) => (
@@ -51,6 +53,30 @@ export function NodeLabels({ labels, resolvedPresets, nodeFreshness, onLabelClic
           onCacheTimerMute={onCacheTimerMute}
         />
       ))}
+      {nameTags.map((tag) => {
+        const preset = resolvedPresets[tag.nodeId] ?? DEFAULT_PRESET
+        return (
+          // A pill of the node's label colour with black text: the inverse of
+          // the label beneath it, so it reads as a tag worn by the node rather
+          // than a second line of its name.
+          <div
+            key={`name-tag:${tag.nodeId}`}
+            className="agent-name-tag canvas-node"
+            style={{
+              left: tag.x - tag.width / 2,
+              top: tag.y - tag.height / 2,
+              width: tag.width,
+              height: tag.height,
+              backgroundColor: preset.titleBarBg,
+              '--node-label-text-scale': tag.textScale,
+              filter: staleFilter(nodeFreshness.get(tag.nodeId) ?? 1),
+            } as CSSProperties}
+            onClick={() => onLabelClick(tag.nodeId)}
+          >
+            {tag.name}
+          </div>
+        )
+      })}
     </>
   )
 }

@@ -32,6 +32,21 @@ export function handleFor(nodeId: NodeId): string {
   return `a${nodeId.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toLowerCase()}`
 }
 
+/** The short id the model uses for a directory node. See `handleFor`. */
+export function directoryHandleFor(nodeId: NodeId): string {
+  return `d${nodeId.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toLowerCase()}`
+}
+
+/** A directory node on the canvas: somewhere a new agent can be started. */
+export interface RosterDirectory {
+  nodeId: NodeId
+  cwd: string
+}
+
+export function renderDirectories(directories: readonly RosterDirectory[]): string {
+  return directories.map(directory => `[${directoryHandleFor(directory.nodeId)}] ${directory.cwd}`).join('\n')
+}
+
 /** Per-agent characters of the last agent message shown in the roster. */
 const ROSTER_LAST_MESSAGE_CHARS = 400
 /** Per-agent characters of the request that message answered. */

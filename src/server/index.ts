@@ -63,7 +63,7 @@ import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import { isNodeStamp, type MarkdownNodeData, type NodeData, type TerminalNodeData } from '../shared/state'
+import { isNodeStamp, type DirectoryNodeData, type MarkdownNodeData, type NodeData, type TerminalNodeData } from '../shared/state'
 import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
@@ -292,7 +292,7 @@ let agentNames: NameRegistry
  * the phone's talk button. The last thing chosen wins — a Summary Chat press
  * takes it, and so does selecting the receptionist.
  */
-let voiceTarget: 'summary' | 'receptionist' = 'summary'
+let voiceTarget: 'summary' | 'receptionist' = 'receptionist'
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
 /**
@@ -400,6 +400,23 @@ function trackPendingTurn(
       || hookType === 'SessionStart' || hookType === 'SessionEnd') {
     pendingTurnCache.clear(surfaceId)
   }
+}
+
+/**
+ * A new Claude surface parented to `parentNodeId`, started on `prompt` with
+ * its ancestors' prompts in front — the MCP `spawn_claude_surface` tool and the
+ * receptionist's `spawn` both come through here. Returns the new node.
+ */
+function spawnClaudeSurface(parentNodeId: NodeId, cwd: string | undefined, prompt: string, title?: string): TerminalNodeData {
+  const ancestorContext = gatherAncestorPrompt(stateManager.getState().nodes, parentNodeId)
+  const fullPrompt = ancestorContext ? `${ancestorContext}\n${prompt}` : prompt
+  const options = agentDrivers.claude.buildCreateOptions({ cwd, prompt: fullPrompt })
+  const { sessionId, cols, rows } = sessionManager.create(options)
+  snapshotManager.addSession(sessionId, cols, rows)
+  const position = computePlacement(stateManager.getState().nodes, parentNodeId, agentSurfaceFootprint(cols, rows))
+  return stateManager.createTerminal({
+    sessionId, parentId: parentNodeId, x: position.x, y: position.y, cols, rows, cwd, name: title,
+  })
 }
 
 /** Live Claude Code surfaces: everything the receptionist knows about. */
@@ -1149,17 +1166,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         break
       }
       try {
-        const spawnCwd = sessionManager.getCwd(msg.surfaceId)
-        const ancestorContext = gatherAncestorPrompt(stateManager.getState().nodes, spawnParentNodeId)
-        const fullPrompt = ancestorContext ? `${ancestorContext}\n${msg.prompt}` : msg.prompt
-        const spawnOptions = agentDrivers.claude.buildCreateOptions({ cwd: spawnCwd, prompt: fullPrompt })
-        const { sessionId: spawnSessionId, cols: spawnCols, rows: spawnRows } = sessionManager.create(spawnOptions)
-        snapshotManager.addSession(spawnSessionId, spawnCols, spawnRows)
-        const spawnPos = computePlacement(stateManager.getState().nodes, spawnParentNodeId, agentSurfaceFootprint(spawnCols, spawnRows))
-        stateManager.createTerminal({
-          sessionId: spawnSessionId, parentId: spawnParentNodeId, x: spawnPos.x, y: spawnPos.y,
-          cols: spawnCols, rows: spawnRows, cwd: spawnCwd, name: msg.title
-        })
+        spawnClaudeSurface(spawnParentNodeId, sessionManager.getCwd(msg.surfaceId), msg.prompt, msg.title)
         console.log(`[spawn-claude-surface] Created terminal "${msg.title}" parented to ${spawnParentNodeId.slice(0, 8)}`)
       } catch (err: any) {
         console.error(`[spawn-claude-surface] Failed: ${err.message}`)
@@ -3036,6 +3043,14 @@ async function startServer(): Promise<void> {
     send: (nodeId, text) => {
       const node = stateManager.getNode(nodeId)
       if (node?.type === 'terminal' && node.alive) shipToSession(node.sessionId, text, true)
+    },
+    directories: () => stateManager.getNodes()
+      .filter((node): node is DirectoryNodeData => node.type === 'directory')
+      .map((node) => ({ nodeId: node.id, cwd: node.cwd })),
+    spawn: (directoryNodeId, title, prompt) => {
+      const directory = stateManager.getNode(directoryNodeId)
+      if (directory?.type !== 'directory') throw new Error('that is not a directory node')
+      return spawnClaudeSurface(directory.id, expandTilde(directory.cwd) ?? directory.cwd, prompt, title).id
     },
     interrupt: (nodeId) => {
       const node = stateManager.getNode(nodeId)

@@ -14,7 +14,9 @@ import {
 import {
   isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
 } from './reply'
-import { handleFor, readAgent, renderRoster, STATE_WORDS, type RosterAgent } from './roster'
+import {
+  directoryHandleFor, handleFor, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+} from './roster'
 
 /**
  * Control: one voice conversation about every live agent.
@@ -57,6 +59,10 @@ export interface ReceptionistDeps {
   send(nodeId: NodeId, text: string): void
   /** Press Escape in an agent's terminal. */
   interrupt(nodeId: NodeId): void
+  /** Directory nodes, where a new agent can be started. */
+  directories(): RosterDirectory[]
+  /** Start a new Claude surface under a directory node. Returns its node. */
+  spawn(directoryNodeId: NodeId, title: string, prompt: string): NodeId
   /** Append-only record of every turn. Best-effort. */
   log(entry: Record<string, unknown>): void
   sleep(ms: number): Promise<void>
@@ -230,6 +236,7 @@ export class Receptionist {
       const context = renderContext(
         renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript),
         this.forkSummaries(agents),
+        renderDirectories(this.deps.directories()),
       )
       const [first, ...rest] = turn
       const messages = bounded([...this.history, { role: 'user', content: `${context}\n\n${first.content}` }, ...rest])
@@ -265,6 +272,10 @@ export class Receptionist {
     const results: string[] = []
     const interrupted = new Set<NodeId>()
     for (const call of calls) {
+      if (call.tool === 'spawn') {
+        results.push(this.spawn(call))
+        continue
+      }
       const agent = agents.find(candidate => handleFor(candidate.nodeId) === call.agent)
       if (!agent) {
         results.push(`${call.tool} ${call.agent}: no live agent has that handle.`)
@@ -293,6 +304,20 @@ export class Receptionist {
       this.deps.log({ event: 'tool', ...call, nodeId: agent.nodeId })
     }
     return results
+  }
+
+  /** Start a new agent, and watch for its first answer as for a send. */
+  private spawn(call: Extract<ToolCall, { tool: 'spawn' }>): string {
+    const directory = this.deps.directories().find(candidate => directoryHandleFor(candidate.nodeId) === call.directory)
+    if (!directory) return `spawn ${call.directory}: no directory has that handle.`
+    try {
+      const nodeId = this.deps.spawn(directory.nodeId, call.title, call.prompt)
+      this.monitors.add(nodeId)
+      this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt })
+      return `spawn: started {${handleFor(nodeId)}} in ${directory.cwd}.`
+    } catch (err) {
+      return `spawn ${call.directory} failed: ${err instanceof Error ? err.message : String(err)}`
+    }
   }
 
   /**

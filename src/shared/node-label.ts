@@ -258,7 +258,7 @@ export interface NodeLabel {
  * centre. Both regions are in the hull, so the line is covered continuously
  * from wherever it entered the label right through to the card.
  */
-export function labelMaskShape(label: NodeLabel): {
+export function labelMaskShape(label: Pick<NodeLabel, 'x' | 'y' | 'width' | 'height' | 'anchorX' | 'anchorY'>): {
   x: number
   y: number
   width: number
@@ -530,4 +530,49 @@ export function agentCaptionReserve(card: { width: number; height: number }): Ca
     { dx: 0, dy: nameLabelOffsetY(card.height, name.height), width: card.width * 2, height: name.height },
     { dx: 0, dy: (top + bottom) / 2, width: Math.max(...status.map((b) => b.width)), height: bottom - top },
   ]
+}
+
+/**
+ * Air between a receptionist name tag and whatever it sits on, in world units.
+ */
+export const NAME_TAG_GAP = 10
+
+/**
+ * Where an agent's receptionist name ("Kevin") is worn: a tag centred directly
+ * above the node's name label, or above the card itself when the node has no
+ * label, set at the label's own text size.
+ *
+ * Its box comes from `labelBox`, the measure labels use, and the view draws it
+ * at exactly that size, so the edge mask built from it covers what is on screen.
+ *
+ * On the canvas rather than in the card, because the card cannot draw outside
+ * itself: `.terminal-card` has `content-visibility: auto`, whose implied
+ * `contain: paint` clips anything hung above its top edge.
+ */
+export interface NameTagPlacement {
+  nodeId: NodeId
+  name: string
+  /** Centre and size of the tag, in world units. */
+  x: number
+  y: number
+  width: number
+  height: number
+  /** The node's label text scale, so the name is set exactly as large as its title. */
+  textScale: number
+  /** Centre of the card, which the edge mask bridges to — see `labelMaskShape`. */
+  anchorX: number
+  anchorY: number
+}
+
+export function placeNameTag(node: NodeData, name: string, nameLabel: NodeLabel | undefined): NameTagPlacement {
+  const textScale = nameLabel?.textScale ?? labelTextScale(node)
+  const box = labelBox([name], textScale)
+  const top = nameLabel
+    ? nameLabel.y - nameLabel.height / 2
+    : node.y - measureCard(node).height / 2 - LABEL_CARD_GAP
+  return {
+    nodeId: node.id, name, textScale,
+    x: node.x, y: top - NAME_TAG_GAP - box.height / 2, ...box,
+    anchorX: node.x, anchorY: node.y,
+  }
 }
