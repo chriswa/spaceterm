@@ -73,6 +73,53 @@ textarea, input, [contenteditable="true"], .cm-content {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* AI usage, bottom left — the menu-bar tray's bars (see UsageReadout.tsx). */
+.m-usage {
+  position: fixed;
+  left: calc(10px + var(--m-safe-left));
+  bottom: calc(10px + var(--m-safe-bottom));
+  z-index: 2147483000;
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  padding: 4px 6px 4px 1px;
+  border-radius: 6px;
+  background: rgba(24, 24, 37, 0.75);
+  -webkit-tap-highlight-color: transparent;
+}
+.m-usage__bars { display: flex; align-items: flex-end; }
+.m-usage__bar {
+  position: relative;
+  display: block;
+  width: 9px;
+  height: 24px;
+  background: #000;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.25);
+}
+.m-usage__bar--maxed { box-shadow: inset 0 0 0 0.5px #fff; }
+.m-usage__time,
+.m-usage__used {
+  position: absolute;
+  bottom: 0;
+}
+.m-usage__time { left: 0; right: 0; }
+.m-usage__used { right: 0; width: 3px; box-shadow: 0 0 1px rgba(0, 0, 0, 0.6); }
+.m-usage__error { margin-left: 5px; font-size: 18px; line-height: 24px; }
+.m-usage__age { color: var(--m-dim); font-size: 11px; line-height: 1; }
+.m-usage__detail {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--m-border);
+  background: var(--m-surface);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.m-usage__when { color: var(--m-dim); }
+
 /* ─── terminal view ─────────────────────────────────────────────────────── */
 
 .mobile-term,

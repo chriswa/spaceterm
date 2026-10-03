@@ -1,4 +1,5 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
+import type { UsageSnapshot } from './usage-report'
 import type { AgentSearchMode } from './protocol'
 import type {
   ClientMessage,
@@ -65,7 +66,7 @@ export type ServerEventType =
   | 'mod' | 'data' | 'exit' | 'node-updated' | 'node-added' | 'node-removed'
   | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active' | 'speaking-changed'
   | 'summary-chat-status' | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
-  | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required'
+  | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'agent-meta-availability' | 'server-error'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -271,6 +272,7 @@ export class ServerClient {
       case 'root-cwd':
       case 'auto-stamps-enabled':
       case 'restart-required':
+      case 'usage-report':
       case 'agent-meta-availability':
         this.emit(msg)
         return
@@ -290,6 +292,7 @@ export class ServerClient {
       case 'created':
       case 'server-restarted':
       case 'restart-flag-result':
+      case 'usage-report-result':
       case 'listed':
       case 'attached':
       case 'detached':
@@ -433,6 +436,12 @@ export class ServerClient {
   async restartFlagQuery(): Promise<{ required: boolean; reason: string }> {
     const resp = await this.request({ type: 'restart-flag-query' })
     if (resp.type === 'restart-flag-result') return { required: resp.required, reason: resp.reason }
+    return unexpected(resp)
+  }
+
+  async usageReportQuery(): Promise<UsageSnapshot | null> {
+    const resp = await this.request({ type: 'usage-report-query' })
+    if (resp.type === 'usage-report-result') return resp.snapshot
     return unexpected(resp)
   }
 

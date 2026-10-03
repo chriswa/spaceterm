@@ -9,6 +9,7 @@ import type { SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
 import type { NodeData, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
+import type { UsageSnapshot } from '../../../../shared/usage-report'
 
 /**
  * A stand-in for `window.api`, the preload bridge.
@@ -89,6 +90,8 @@ export interface FakeBridgeResponses {
   activeLaunchPrefs: LaunchPrefs
   /** Current restart-required state returned by `restartFlagStatus` (the PULL). */
   restartFlag: { required: boolean; reason: string }
+  /** What `usageReportStatus` returns (the PULL). */
+  usageReport: UsageSnapshot | null
   /** What `agentMetaToggle` reports the branch state as, afterwards. */
   agentMetaOpen: boolean
   /** What the availability PULL reports. */
@@ -130,6 +133,7 @@ export class FakeBridge implements Api {
     agentMetaAvailability: [],
     agentSearch: { ok: true, pass: 'titles', hits: [], noneProbability: 1, costUsd: 0 },
     restartFlag: { required: false, reason: '' },
+    usageReport: null,
     agentMemoryBytes: null
   }
 
@@ -159,6 +163,7 @@ export class FakeBridge implements Api {
   private readonly rootCwd = new Set<(cwd: string | undefined) => void>()
   private readonly autoStampsEnabled = new Set<(enabled: boolean) => void>()
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
+  private readonly usageReport = new Set<(snapshot: UsageSnapshot) => void>()
   private readonly agentMetaAvailability = new Set<(nodeId: NodeId, available: boolean) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusChanged = new Set<(focused: boolean) => void>()
@@ -245,6 +250,9 @@ export class FakeBridge implements Api {
     },
     restartRequired: (required: boolean, reason: string): void => {
       for (const fn of this.restartRequired) fn(required, reason)
+    },
+    usageReport: (snapshot: UsageSnapshot): void => {
+      for (const fn of this.usageReport) fn(snapshot)
     },
     visibilityChanged: (visible: boolean): void => {
       for (const fn of this.visibilityChanged) fn(visible)
@@ -382,7 +390,9 @@ export class FakeBridge implements Api {
     onAutoStampsEnabled: (cb) => subscribe(this.autoStampsEnabled, cb),
     onRestartRequired: (cb) => subscribe(this.restartRequired, cb),
     onAgentMetaAvailability: (cb) => subscribe(this.agentMetaAvailability, cb),
-    restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag)
+    restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag),
+    onUsageReport: (cb) => subscribe(this.usageReport, cb),
+    usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport)
   }
 
   readonly tts: TtsApi = {

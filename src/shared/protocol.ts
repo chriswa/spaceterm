@@ -127,6 +127,15 @@ export interface RestartFlagQueryMessage {
   seq: number
 }
 
+/**
+ * Ask for the latest AI usage reading (PULL), for a client that has just
+ * loaded. See {@link UsageReportMessage} and `src/server/usage-tracker.ts`.
+ */
+export interface UsageReportQueryMessage {
+  type: 'usage-report-query'
+  seq: number
+}
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -994,6 +1003,7 @@ export type ClientMessage =
   | ListMessage
   | ServerRestartMessage
   | RestartFlagQueryMessage
+  | UsageReportQueryMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage
@@ -1088,6 +1098,19 @@ export interface RestartRequiredMessage {
   reason: string
 }
 
+/** Reply to {@link UsageReportQueryMessage}; null until the tracker has been read. */
+export interface UsageReportResultMessage {
+  type: 'usage-report-result'
+  seq: number
+  snapshot: UsageSnapshot | null
+}
+
+/** Unsolicited broadcast: a new AI usage reading (PUSH). */
+export interface UsageReportMessage {
+  type: 'usage-report'
+  snapshot: UsageSnapshot
+}
+
 export interface ListedMessage {
   type: 'listed'
   seq: number
@@ -1134,6 +1157,7 @@ export interface ExitMessage {
 
 import type { ServerState, NodeData, NodeStamp } from './state'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
+import type { UsageSnapshot } from './usage-report'
 
 export interface SyncStateMessage {
   type: 'sync-state'
@@ -1625,3 +1649,5 @@ export type ServerMessage =
   | AutoStampsEnabledMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage
+  | UsageReportResultMessage
+  | UsageReportMessage

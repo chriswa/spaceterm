@@ -9,6 +9,7 @@ import { useVisualViewportVars } from './viewport'
 import { Dictation } from './dictation'
 import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
+import { UsageReadout } from './UsageReadout'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -76,6 +77,7 @@ export function MobileApp() {
   return (
     <>
       <App />
+      {!focusedTerminal && <UsageReadout />}
       {!focusedTerminal && (
         // Opens the toolbar, which on the phone is a sheet with the surfaces in it.
         <button

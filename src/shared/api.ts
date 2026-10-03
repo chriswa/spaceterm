@@ -37,6 +37,7 @@ import type { NodeData, NodeStamp, ServerState } from './state'
 import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
+import type { UsageSnapshot } from './usage-report'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
 
@@ -216,6 +217,10 @@ export interface NodeApi {
    * main-process socket open.
    */
   restartFlagStatus(): Promise<{ required: boolean; reason: string }>
+  /** Each new AI usage reading from AI Spend Tracker (PUSH). */
+  onUsageReport(callback: (snapshot: UsageSnapshot) => void): () => void
+  /** The latest AI usage reading (PULL), or null until there is one. */
+  usageReportStatus(): Promise<UsageSnapshot | null>
 }
 
 /** Status the toolbar renders for a surface's summary-chat session. */

@@ -37,6 +37,7 @@ import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrow
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
+import { UsageTracker } from './usage-tracker'
 import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
@@ -260,6 +261,8 @@ function ancestorCwd(nodes: Record<string, NodeData>, nodeId: NodeId): string | 
 let snapshotManager: SnapshotManager
 let sessionFileWatcher: SessionFileWatcher
 let restartFlagWatcher: (() => void) | null = null
+/** AI usage from AI Spend Tracker, for the phone's corner readout. */
+const usageTracker = new UsageTracker((snapshot) => broadcastToAll({ type: 'usage-report', snapshot }))
 let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
@@ -1313,6 +1316,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Give the acknowledgement a chance to leave the Unix socket before the
       // graceful shutdown closes all client connections.
       setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+      break
+    }
+
+    case 'usage-report-query': {
+      send(client.link, { type: 'usage-report-result', seq: msg.seq, snapshot: usageTracker.current() })
       break
     }
 
@@ -3052,6 +3060,7 @@ async function startServer(): Promise<void> {
   restartFlagWatcher = watchRestartFlag((flag) => {
     broadcastToAll({ type: 'restart-required', required: flag !== null, reason: flag?.reason ?? '' })
   })
+  usageTracker.start()
 
   // --- Hooks socket (fire-and-forget ingest from hooks, status-line, MCP tools) ---
   const hooksServer = net.createServer((socket) => {
@@ -3115,6 +3124,7 @@ async function startServer(): Promise<void> {
     fileContentManager.dispose()
     sessionFileWatcher.dispose()
     if (restartFlagWatcher) restartFlagWatcher()
+    usageTracker.stop()
     codexSessionFileWatcher.dispose()
     cursorSessionFileWatcher.dispose()
     // Awaited: Voice Operator is a separate process, so quitting mid-answer

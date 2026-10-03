@@ -42,7 +42,10 @@ Touches never reach xterm (`terminal-gesture.ts`):
 | long press | the keyboard and the extra-key row, typing straight into the terminal |
 
 On the canvas, a long press on a card is the desktop's ⌘-click: the
-quick-actions toolbar; moving on without lifting drags the card instead. Dictation streams 16 kHz PCM to the server, which
+quick-actions toolbar; moving on without lifting drags the card instead.
+The bottom-left corner shows AI usage as AI Spend Tracker's menu-bar bars,
+with the reading's age; the server reads the tracker's `--json` CLI
+(`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
 process that may hold Wispr's rotating tokens.
 

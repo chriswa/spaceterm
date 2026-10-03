@@ -127,7 +127,9 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onAgentMetaAvailability: (cb) => on('agent-meta-availability', (m) => cb(m.nodeId, m.available)),
       agentMetaAvailabilityStatus: () => client.agentMetaAvailabilityStatus(),
       agentSearch: (query, mode) => client.agentSearch(query, mode),
-      restartFlagStatus: () => client.restartFlagQuery()
+      restartFlagStatus: () => client.restartFlagQuery(),
+      onUsageReport: (cb) => on('usage-report', (m) => cb(m.snapshot)),
+      usageReportStatus: () => client.usageReportQuery()
     },
     log: (message) => platform.log(message),
     toggleSummaryChat: (nodeId, mode) => client.toggleSummaryChat(nodeId, mode),
