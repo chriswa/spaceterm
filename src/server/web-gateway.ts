@@ -102,10 +102,13 @@ function serveStatic(root: string, req: http.IncomingMessage, res: http.ServerRe
     return
   }
   const ext = path.extname(file)
+  // Only what the build put in assets/ is named by its content, and so can
+  // never change under its name. Everything else — the page, build.json (how
+  // the page learns a newer build exists) — must be asked for afresh.
+  const hashed = file.startsWith(path.join(root, 'assets') + path.sep)
   res.writeHead(200, {
     'content-type': CONTENT_TYPES[ext] ?? 'application/octet-stream',
-    // Built assets are content-hashed; the page that names them must not be cached.
-    'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
+    'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer'
   })

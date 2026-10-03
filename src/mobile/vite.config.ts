@@ -1,6 +1,15 @@
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { nativeVersion } from './ios/native-version.mjs'
+
+/**
+ * Each build's id, compiled into the page and published beside it in
+ * `build.json` with the native app's current version. A page whose id no
+ * longer matches is running an older build than the server has; see
+ * update-check.ts.
+ */
+const buildId = Date.now().toString(36)
 
 /**
  * The mobile web app. Served by the Spaceterm server's web gateway from
@@ -24,5 +33,18 @@ export default defineConfig({
       '@': resolve(__dirname, '../client/renderer/src')
     }
   },
-  plugins: [react()]
+  define: { __MOBILE_BUILD_ID__: JSON.stringify(buildId) },
+  plugins: [
+    react(),
+    {
+      name: 'spaceterm-build-json',
+      generateBundle() {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'build.json',
+          source: JSON.stringify({ web: buildId, native: nativeVersion() })
+        })
+      }
+    }
+  ]
 })

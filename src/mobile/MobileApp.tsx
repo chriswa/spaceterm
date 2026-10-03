@@ -10,6 +10,7 @@ import { Dictation } from './dictation'
 import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
 import { UsageReadout } from './UsageReadout'
+import { UpdateBadge } from './UpdateBadge'
 import { SummarizerButton } from './SummarizerButton'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 
@@ -82,6 +83,7 @@ export function MobileApp() {
     <>
       <App />
       {!focusedTerminal && <UsageReadout />}
+      {!focusedTerminal && <UpdateBadge />}
       {!focusedTerminal && (
         // Opens the toolbar, which on the phone is a sheet with the surfaces in it.
         <button

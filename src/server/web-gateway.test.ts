@@ -21,6 +21,7 @@ beforeAll(async () => {
   fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><title>app</title>')
   fs.mkdirSync(path.join(root, 'assets'))
   fs.writeFileSync(path.join(root, 'assets', 'app.js'), 'console.log(1)')
+  fs.writeFileSync(path.join(root, 'build.json'), '{"web":"x"}')
   fs.writeFileSync(path.join(os.tmpdir(), 'web-gateway-secret.txt'), 'secret')
   server = startWebGateway({
     port: 0,
@@ -82,6 +83,13 @@ describe('the app', () => {
 
     const asset = await fetch(`http://${base}/assets/app.js`)
     expect(asset.headers.get('content-type')).toMatch(/javascript/)
+    expect(asset.headers.get('cache-control')).toMatch(/immutable/)
+  })
+
+  it('caches only the content-named assets: build.json changes under its name', async () => {
+    const version = await fetch(`http://${base}/build.json`)
+    expect(version.headers.get('cache-control')).toBe('no-cache')
+    expect(await version.json()).toEqual({ web: 'x' })
   })
 
   it('never serves a file outside its root', () => {

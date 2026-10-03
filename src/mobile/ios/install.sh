@@ -54,6 +54,9 @@ echo "Building for ${device_name}…"
 # Automatic signing registers the paired phone with the team if it is new.
 # A previous run's signed app must not pass for this one's.
 rm -rf "$here/build/Release-iphoneos"
+# What this app is built from, so the page can tell when a newer one exists
+# (native-version.mjs; the web build publishes the current one).
+native_version="$(node "$here/native-version.mjs")"
 xcodebuild \
   -project "$here/SpacetermMobile.xcodeproj" \
   -target SpacetermMobile \
@@ -63,6 +66,7 @@ xcodebuild \
   -allowProvisioningDeviceRegistration \
   SYMROOT="$here/build" \
   SPACETERM_URL="$url" \
+  SPACETERM_NATIVE_VERSION="$native_version" \
   build | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
 
 app="$here/build/Release-iphoneos/SpacetermMobile.app"

@@ -22,6 +22,14 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         // Lets the page tell it is running inside the app, should it need to.
         config.applicationNameForUserAgent = "SpacetermApp/1"
 
+        // Which build of this app is running, for the page to compare with the
+        // newest source (native-version.mjs) and ask for an update when behind.
+        if let version = Bundle.main.object(forInfoDictionaryKey: "SpacetermNativeVersion") as? String,
+           !version.isEmpty {
+            config.userContentController.addUserScript(WKUserScript(
+                source: "window.spacetermNativeVersion = '\(version)'",
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         // The screen's corner radius, which a page cannot read: the canvas's
         // corner buttons sit as low and as far out as the curve allows.
         if let radius = Self.displayCornerRadius {

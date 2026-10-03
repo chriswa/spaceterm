@@ -87,6 +87,41 @@ textarea, input, [contenteditable="true"], .cm-content {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Older code than the Mac has (UpdateBadge.tsx): top left, under the status bar. */
+.m-update {
+  position: fixed;
+  left: 12px;
+  top: calc(var(--m-safe-top) + 6px);
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 14px;
+  border: none;
+  background: #f9e2af;
+  color: #11111b;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  -webkit-tap-highlight-color: transparent;
+}
+.m-update__explain {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: calc(var(--m-safe-top) + 44px);
+  z-index: 2147483000;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--m-border);
+  background: var(--m-surface);
+  color: var(--m-text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.m-update__explain code { display: block; margin-top: 6px; color: var(--m-accent); }
+
 /* AI usage, bottom left — the menu-bar tray's bars (see UsageReadout.tsx). */
 .m-usage {
   position: fixed;

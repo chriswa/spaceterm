@@ -6,6 +6,8 @@
 	     Filled in at build time by install.sh from `npm run mobile:link -- --url`. -->
 	<key>SpacetermURL</key>
 	<string>$(SPACETERM_URL)</string>
+	<key>SpacetermNativeVersion</key>
+	<string>$(SPACETERM_NATIVE_VERSION)</string>
 	<!-- Plain PNGs rather than an asset catalog: compiling a catalog needs an
 	     iOS simulator runtime installed, an 8 GB download for one icon. -->
 	<key>CFBundleIcons</key>

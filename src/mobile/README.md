@@ -43,6 +43,12 @@ Touches never reach xterm (`terminal-gesture.ts`):
 
 On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
+A badge in the top-left corner says when the phone runs older code than the
+Mac has: tap it to reload a newer page, or it explains that the native app needs
+`npm run mobile:ios`. The build writes `build.json` (its id and the native
+fingerprint from `ios/native-version.mjs`), which `install.sh` also stamps into
+the app — see `update-check.ts`.
+
 The bottom-left corner shows AI usage as AI Spend Tracker's menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
