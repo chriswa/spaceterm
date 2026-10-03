@@ -249,6 +249,13 @@ textarea, input, [contenteditable="true"], .cm-content {
   bottom: auto;
   height: var(--m-above-keyboard, calc(100% - 360px));
 }
+/* The terminal reaches a little into the top inset: the inset runs a good
+   way below the Dynamic Island, and those points are a whole extra row
+   (TerminalView sizes the grid to whatever room it is given). */
+.mobile-term {
+  --m-term-reach-up: 10px;
+  padding-top: max(0px, calc(var(--m-safe-top) - var(--m-term-reach-up)));
+}
 /* The keyboard's space, kept blank when it is down rather than showing the
    terminal behind. */
 .mobile-composer::after {
