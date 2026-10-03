@@ -23,6 +23,8 @@ export interface ClaudePrintRequest {
   sessionId?: string
   /** Disable extended thinking. The daemon's warm Haiku spare has it off. */
   noThinking?: boolean
+  /** Effort level (`low`, `medium`, …); the daemon defaults to medium. */
+  effort?: string
   /** The system prompt of a new session. Ignored when continuing one. */
   systemPrompt?: string
   /**
@@ -54,6 +56,14 @@ export interface ClaudePrintResponse {
   wall_ms: number
   /** The session's context after the turn. */
   context_tokens?: number
+  /** This turn's tokens, as the API reported them. */
+  usage?: {
+    input_tokens?: number
+    cache_creation_input_tokens?: number
+    cache_read_input_tokens?: number
+    output_tokens?: number
+    output_tokens_details?: { thinking_tokens?: number }
+  }
 }
 
 export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResponse> {
@@ -61,6 +71,7 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
   if (req.model) args.push('-m', req.model)
   if (req.sessionId) args.push('-s', req.sessionId)
   if (req.noThinking) args.push('--no-thinking')
+  if (req.effort) args.push('-e', req.effort)
   if (req.systemPrompt !== undefined && !req.sessionId) args.push('--system-file', systemPromptFile(req.systemPrompt))
   if (req.keepAlive) {
     args.push('--keep-alive', `${req.keepAlive.minutes}m`)

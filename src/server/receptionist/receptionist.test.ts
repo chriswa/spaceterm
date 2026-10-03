@@ -245,6 +245,25 @@ describe('Receptionist', () => {
     expect(h.spoken).toHaveLength(1)
   })
 
+  it('lists just the named agents, with handle and name, when asked for named_only', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `{${KEVIN}} is here.` }]),
+        reply([], [{ tool: 'list_agents', named_only: true }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`list_agents (named only):\n[${KEVIN}] Kevin: water sim`)
+          expect(turn.prompt).not.toContain('login page')
+          return reply([{ from: 'control', text: 'Found him.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('who is around?')
+    await flush()
+    await h.receptionist.hear('which one is Kevin?')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
   it('finds an agent with Jev, reporting confidences and the chance of none', async () => {
     const queries: string[] = []
     const h = harness({

@@ -397,7 +397,7 @@ export class Receptionist {
         continue
       }
       if (call.tool === 'list_agents') {
-        results.push(this.listAgents(agents))
+        results.push(call.namedOnly ? this.listNamedAgents(agents) : this.listAgents(agents))
         continue
       }
       if (call.tool === 'find_agent') {
@@ -508,6 +508,20 @@ export class Receptionist {
     const forks = this.forkSummaries(agents)
     if (forks.length) sections.push(`FORKS:\n${renderForks(forks)}`)
     return `list_agents:\n${sections.join('\n\n')}`
+  }
+
+  /**
+   * list_agents with named_only: just the handle, name and title of every agent
+   * that has a name. A few hundred tokens instead of the full list's thousands,
+   * for when the user names an agent and the only question is which handle
+   * that is.
+   */
+  private listNamedAgents(agents: readonly RosterAgent[]): string {
+    const lines = agents.flatMap(agent => {
+      const name = this.deps.names.get(agent.nodeId)?.name
+      return name ? [`[${handleFor(agent.nodeId)}] ${name}: ${agent.title}`] : []
+    })
+    return `list_agents (named only):\n${lines.length ? lines.join('\n') : 'No agent has a name yet.'}`
   }
 
   /** The find_agent tool: Jev's ranking, best first, with confidences. */

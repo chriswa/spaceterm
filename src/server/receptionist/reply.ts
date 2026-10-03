@@ -22,7 +22,7 @@ export type ToolCall =
   | { tool: 'interrupt'; agent: string }
   | { tool: 'spawn'; directory: string; title: string; prompt: string }
   | { tool: 'recall'; search: string }
-  | { tool: 'list_agents' }
+  | { tool: 'list_agents'; namedOnly?: boolean }
   | { tool: 'find_agent'; query: string }
 
 export interface Reply {
@@ -65,7 +65,7 @@ function parseSayPart(value: unknown): SayPart {
 
 function parseToolCall(value: unknown): ToolCall {
   if (!isRecord(value) || typeof value.tool !== 'string') throw new Error('each tool call needs a "tool" name')
-  if (value.tool === 'list_agents') return { tool: 'list_agents' }
+  if (value.tool === 'list_agents') return value.named_only === true ? { tool: 'list_agents', namedOnly: true } : { tool: 'list_agents' }
   if (value.tool === 'find_agent') {
     if (typeof value.query !== 'string' || !value.query.trim()) throw new Error('"find_agent" needs a "query"')
     return { tool: 'find_agent', query: value.query.trim() }

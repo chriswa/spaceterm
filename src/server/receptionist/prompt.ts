@@ -26,7 +26,7 @@ For example, asked "what's everyone doing?", after list_agents shows two agents,
 {"say": [{"from": "control", "text": "{a1f00aa} finished the water simulation."}, {"from": "a1f00aa", "text": "Volume is conserved now, and I left a note about the boundary handling."}, {"from": "control", "text": "{a2b00bb} is still working on the login form."}], "tools": []}
 
 "tools":
-- {"tool": "list_agents"} lists every live agent, the directories where a new agent can be started, and the forks you can still ask follow-ups.
+- {"tool": "list_agents"} lists every live agent, the directories where a new agent can be started, and the forks you can still ask follow-ups. Add "named_only": true to get just the handle, name and title of each agent that has a name: much shorter, and the quickest way to find the handle for a name the user said.
 - {"tool": "find_agent", "query": "..."} ranks the agents by how well they match a description, using their titles and recent transcripts, and gives each a confidence, with the chance that none matches. Describe the agent as fully as you can: what the user said about it, what it is working on, its directory. If no agent stands out, ask the user for more, or try again with a better description.
 - {"tool": "read", "agent": "<handle>"} returns the agent's recent conversation in full. Add "search": "words" to find passages about something specific.
 - {"tool": "ask_fork", "agent": "<handle>", "question": "..."} asks a disposable copy of the agent a question its transcript does not answer. The real agent is not disturbed and never learns of it. Add "fork": "<fork id>" to ask a copy you already made a follow-up, but only while list_agents says the agent has not moved on since; otherwise make a fresh copy.
