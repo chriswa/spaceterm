@@ -18,6 +18,7 @@ import { DictationIndicator } from './DictationIndicator'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { ControlButton } from './ControlButton'
+import { HoldMicButton } from './HoldMicButton'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -165,6 +166,7 @@ export function MobileApp() {
       {(summaryTarget || controlTarget) && !composerFor && (
         <SummarizerButton key={controlTarget ? 'control' : summaryTarget} nodeId={controlTarget ? null : summaryTarget} />
       )}
+      {(summaryTarget || controlTarget) && !composerFor && <HoldMicButton />}
       {/* Always on the canvas; over a terminal only while voice is in play, so
           it does not sit on the terminal's last lines for nothing. */}
       {!composerFor && (!focusedTerminal || summaryTarget || controlTarget || controlBusy) && <ControlButton />}

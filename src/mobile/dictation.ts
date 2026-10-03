@@ -1,6 +1,6 @@
 import type { DictationApi } from '../shared/api'
 import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
-import { beginRecordingSession } from './audio-session'
+import { acquire, type Capture } from './held-microphone'
 
 /**
  * One dictation: the microphone, streamed to the server as it is spoken.
@@ -40,7 +40,8 @@ export async function whenHearing(pending: Promise<Dictation>): Promise<Dictatio
   ])
   if (heard) return dictation
   log(`no sound within ${NO_AUDIO_TIMEOUT_MS}ms: ${dictation.describe()}`)
-  dictation.cancel()
+  // A held microphone that has gone silent is closed, so the next dictation opens a fresh one.
+  dictation.cancel({ broken: true })
   throw new Error('The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
 }
 
@@ -73,17 +74,6 @@ function describeCapture(stream: MediaStream, context: AudioContext): string {
   return `context ${context.state} @${context.sampleRate}Hz, track ${tracks.join(', ') || 'none'}`
 }
 
-const WORKLET = `
-class Tap extends AudioWorkletProcessor {
-  process(inputs) {
-    const channel = inputs[0] && inputs[0][0]
-    if (channel) this.port.postMessage(channel.slice(0))
-    return true
-  }
-}
-registerProcessor('spaceterm-tap', Tap)
-`
-
 export class Dictation {
   private id: string | null = null
   private queued: Int16Array[] = []
@@ -97,27 +87,28 @@ export class Dictation {
   /** Resolves with the first block of sound — the moment it is safe to talk. */
   readonly audioArrived: Promise<void>
 
+  /** Stops this dictation hearing the capture. */
+  private readonly unlisten: () => void
+
   private constructor(
     private readonly api: DictationApi,
-    private readonly stream: MediaStream,
-    private readonly context: AudioContext,
-    private readonly node: AudioWorkletNode,
+    /** The microphone: held open between dictations, or this one's own. See held-microphone.ts. */
+    private readonly capture: Capture,
     started: Promise<string>,
-    /** Hands the audio session back to playback; see audio-session.ts. */
-    private readonly releaseSession: () => void
   ) {
+    const { stream, context } = capture
     const resampler = new Downsampler(context.sampleRate)
     let arrived: () => void = () => undefined
     this.audioArrived = new Promise((resolve) => { arrived = resolve })
-    node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+    this.unlisten = capture.listen((block) => {
       if (this.stats.blocks === 0) {
         log(`first audio after ${Math.round(performance.now() - this.began)}ms (${describeCapture(stream, context)})`)
         arrived()
       }
-      this.stats.push(event.data)
-      const pcm = resampler.push(event.data)
+      this.stats.push(block)
+      const pcm = resampler.push(block)
       if (pcm.length > 0) this.queued.push(pcm)
-    }
+    })
     context.onstatechange = () => log(`context now ${context.state}`)
     for (const track of stream.getAudioTracks()) {
       track.onmute = () => log('track muted')
@@ -141,54 +132,30 @@ export class Dictation {
 
   private readonly started: Promise<string>
 
-  /** Ask for the microphone and open a server session, in parallel. */
+  /**
+   * Take the microphone and open a server session, in parallel. Call inside a
+   * tap: a microphone that is not held open yet is opened here.
+   */
   static async begin(api: DictationApi): Promise<Dictation> {
-    // Created before the first await: iOS only lets audio start inside the
-    // tap that asked for it, and an await ends the tap.
-    const context = new AudioContext()
-    void context.resume()
+    // Asked for before the first await, so a microphone that must be opened
+    // is opened inside the tap, as iOS requires.
+    const capturing = acquire()
     const started = api.start(TARGET_SAMPLE_RATE)
     started.catch(() => undefined)
-    // Earpiece-default play-and-record only while the microphone is open.
-    const releaseSession = beginRecordingSession()
-    let stream: MediaStream
+    let capture: Capture
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      })
+      capture = await capturing
     } catch (err) {
-      releaseSession()
-      void context.close()
-      void started.then((id) => api.cancel(id), () => undefined)
-      log(`getUserMedia refused: ${err instanceof Error ? `${err.name} ${err.message}` : String(err)} (secure ${window.isSecureContext}, page ${document.visibilityState})`)
-      throw new Error(
-        window.isSecureContext
-          ? 'Microphone permission was refused'
-          : 'The microphone needs HTTPS — open Spaceterm through its tailscale address'
-      )
-    }
-    const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }))
-    try {
-      await context.audioWorklet.addModule(url)
-      const source = context.createMediaStreamSource(stream)
-      const node = new AudioWorkletNode(context, 'spaceterm-tap')
-      source.connect(node)
-      log(`capture open: ${describeCapture(stream, context)}, page ${document.visibilityState}`)
-      return new Dictation(api, stream, context, node, started, releaseSession)
-    } catch (err) {
-      stream.getTracks().forEach((t) => t.stop())
-      releaseSession()
-      void context.close()
       void started.then((id) => api.cancel(id), () => undefined)
       throw err
-    } finally {
-      URL.revokeObjectURL(url)
     }
+    log(`capture open: ${describeCapture(capture.stream, capture.context)}, page ${document.visibilityState}`)
+    return new Dictation(api, capture, started)
   }
 
   /** For the log when sound never came: what the capture looks like now. */
   describe(): string {
-    return `${this.stats.describe(this.context.sampleRate)}; ${describeCapture(this.stream, this.context)}`
+    return `${this.stats.describe(this.capture.context.sampleRate)}; ${describeCapture(this.capture.stream, this.capture.context)}`
   }
 
   /** Stop listening and return the transcript, or throw with the server's reason. */
@@ -200,10 +167,11 @@ export class Dictation {
     return this.api.finish(id)
   }
 
-  cancel(): void {
+  /** Abandon the dictation. `broken`: its microphone went silent, so a held one is closed too. */
+  cancel({ broken = false }: { broken?: boolean } = {}): void {
     if (!this.stopped) log(`cancel: ${this.describe()}`)
     this.cancelled = true
-    this.stopCapture()
+    this.stopCapture(broken)
     if (this.id) this.api.cancel(this.id)
   }
 
@@ -220,14 +188,11 @@ export class Dictation {
     this.api.audio(this.id, pcmToBase64(joined))
   }
 
-  private stopCapture(): void {
+  private stopCapture(broken = false): void {
     if (this.stopped) return
     this.stopped = true
     window.clearInterval(this.timer)
-    this.node.port.onmessage = null
-    this.node.disconnect()
-    this.stream.getTracks().forEach((t) => t.stop())
-    void this.context.close()
-    this.releaseSession()
+    this.unlisten()
+    this.capture.release(broken)
   }
 }

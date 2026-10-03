@@ -177,7 +177,8 @@ textarea, input, [contenteditable="true"], .cm-content {
    rocket in the corner. Not a button. */
 .m-dictating {
   position: fixed;
-  left: calc(50% + 44px);
+  /* Right of the hold-microphone toggle, which sits right of the talk button. */
+  left: calc(50% + 28px + 12px + 44px + 8px);
   bottom: calc(var(--m-corner-gap) + 8px);
   z-index: 2147483300;
   width: 40px;
@@ -667,3 +668,23 @@ textarea, input, [contenteditable="true"], .cm-content {
 .floating-toolbar {
   scale: 1.33;
 }
+
+/* Hold the microphone open (held-microphone.ts): right of the talk button,
+   mirroring the Control button on its left. Lit while on. */
+.m-hold-mic {
+  position: fixed;
+  left: calc(50% + 28px + 12px);
+  bottom: calc(var(--m-corner-gap) + 6px);
+  z-index: 2147483300;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: var(--m-raised);
+  color: var(--m-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.m-hold-mic--on { background: var(--m-accent); color: #11111b; }

@@ -7,6 +7,7 @@ import { browserPlatform, forwardLogs } from './browser-platform'
 import { installDiagnostics } from './diagnostics'
 import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
+import { installHeldMicrophone } from './held-microphone'
 import '@/styles/index.css'
 import './mobile.css'
 
@@ -58,6 +59,7 @@ if (!token) {
     installDiagnostics((message) => window.api.log(message))
     // Sound to the speaker, not the earpiece, except while recording.
     initAudioSession()
+    installHeldMicrophone()
     // Summary Chat speaks here, not on the Mac (browserPlatform's playsSpeech).
     startSpeechPlayer(window.api.remoteSpeech, (message) => window.api.log(message))
     const { MobileApp } = await import('./MobileApp')
