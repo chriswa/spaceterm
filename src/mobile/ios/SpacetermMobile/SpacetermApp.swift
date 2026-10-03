@@ -6,6 +6,9 @@ import SwiftUI
 /// Everything the app does lives in the web app the Spaceterm server serves.
 /// This wrapper exists for what a browser tab cannot do: own the whole screen,
 /// keep its microphone permission, and take the form bar off the keyboard.
+///
+/// Installed from the Mac by `install.sh` — by hand, or when the page's
+/// "App update" badge asks the server to (src/server/mobile-install.ts).
 @main
 struct SpacetermApp: App {
     var body: some Scene {
