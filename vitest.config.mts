@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'url'
 import { defineConfig } from 'vitest/config'
 
 /**
@@ -29,6 +30,8 @@ export default defineConfig({
         },
       },
       {
+        // The phone's modules import the renderer as '@/…', as src/mobile/vite.config.ts resolves it.
+        resolve: { alias: { '@': fileURLToPath(new URL('./src/client/renderer/src', import.meta.url)) } },
         test: {
           name: 'renderer',
           environment: 'jsdom',

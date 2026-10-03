@@ -782,4 +782,14 @@ export class ServerClient {
     this.log(`[summary-chat] chord ${resp.outcome}${resp.message ? `: ${resp.message}` : ''}`)
     return { outcome: resp.outcome, message: resp.message }
   }
+
+  summaryChatFollowUp(text: string): void {
+    this.log(`[summary-chat] follow-up from this client (${text.length} chars)`)
+    this.fireAndForget({ type: 'summary-chat-follow-up', text })
+  }
+
+  endSummaryChat(): void {
+    this.log('[summary-chat] abandoned from this client')
+    this.fireAndForget({ type: 'summary-chat-end' })
+  }
 }

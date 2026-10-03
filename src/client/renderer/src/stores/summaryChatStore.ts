@@ -27,6 +27,12 @@ export const useSummaryChatStore = create<SummaryChatState>((set) => ({
       return
     }
     set((current) => {
+      // Abandoned: nothing for voice follow-ups to address on this surface any more.
+      if (state === 'ended') {
+        const phase = { ...current.phase }
+        delete phase[nodeId]
+        return { phase, targetNodeId: current.targetNodeId === nodeId ? null : current.targetNodeId }
+      }
       if (state === 'ready' || state === 'error') {
         if (!(nodeId in current.phase)) return current
         const phase = { ...current.phase }

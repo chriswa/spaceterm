@@ -22,6 +22,27 @@ const SEND_INTERVAL_MS = 200
 
 const log = (message: string) => window.api?.log(`[dictation] ${message}`)
 
+/** How long a granted microphone may stay silent before listening gives up on it. */
+export const NO_AUDIO_TIMEOUT_MS = 2000
+
+/**
+ * A dictation that has begun, once sound is actually arriving — the moment a
+ * start cue may honestly say "safe to talk". A microphone that is granted but
+ * silent throws here instead, having been cancelled, rather than leaving a
+ * Stop button over a recording of nothing.
+ */
+export async function whenHearing(pending: Promise<Dictation>): Promise<Dictation> {
+  const dictation = await pending
+  const heard = await Promise.race([
+    dictation.audioArrived.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), NO_AUDIO_TIMEOUT_MS))
+  ])
+  if (heard) return dictation
+  log(`no sound within ${NO_AUDIO_TIMEOUT_MS}ms: ${dictation.describe()}`)
+  dictation.cancel()
+  throw new Error('The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
+}
+
 /** What the microphone has delivered so far — counted, not kept. */
 export class AudioStats {
   blocks = 0

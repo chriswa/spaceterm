@@ -593,6 +593,17 @@ export class SummaryChat {
     }
   }
 
+  /**
+   * Abandon every conversation: cut off anything audible and forget them, so
+   * nothing is left for a follow-up to address until a new summary starts.
+   */
+  async end(): Promise<void> {
+    const all = Array.from(this.conversations.values())
+    this.conversations.clear()
+    await Promise.all(all.map(conversation => this.cancel(conversation)))
+    for (const conversation of all) this.onStatusChanged(conversation.nodeId, 'ended')
+  }
+
   async followUp(text: string): Promise<void> {
     const conversation = Array.from(this.conversations.values())
           .sort((a, b) => b.lastUsedSeq - a.lastUsedSeq)[0]

@@ -120,6 +120,60 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 .m-usage__when { color: var(--m-dim); }
 
+/* Summary Chat's talk button, bottom middle over everything while a
+   conversation is open (see SummarizerButton.tsx). Its colour is its state. */
+.m-summarizer {
+  position: fixed;
+  left: 50%;
+  bottom: calc(10px + var(--m-safe-bottom));
+  transform: translateX(-50%);
+  z-index: 2147483300;
+  width: 56px;
+  height: 56px;
+  border-radius: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: var(--m-accent);
+  color: #11111b;
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+.m-summarizer:disabled { opacity: 0.7; }
+.m-summarizer--listening { background: var(--m-danger); animation: m-summarizer-pulse 1.2s ease-in-out infinite; }
+.m-summarizer--starting,
+.m-summarizer--sending { background: var(--m-raised); color: var(--m-text); }
+.m-summarizer--thinking { background: #f9e2af; }
+.m-summarizer--synthesizing,
+.m-summarizer--speaking { background: #a6e3a1; }
+@keyframes m-summarizer-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.6); }
+  50% { box-shadow: 0 0 0 10px rgba(243, 139, 168, 0); }
+}
+.m-summarizer__error {
+  position: fixed;
+  left: 50%;
+  bottom: calc(76px + var(--m-safe-bottom));
+  transform: translateX(-50%);
+  z-index: 2147483300;
+  max-width: calc(100% - 32px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--m-surface);
+  border: 1px solid var(--m-danger);
+  color: var(--m-text);
+  font-size: 14px;
+}
+.m-summarizer-sheet {
+  position: fixed;
+  z-index: 2147483400;
+}
+.m-summarizer-sheet .mobile-confirm__panel { padding-bottom: calc(12px + var(--m-safe-bottom)); }
+.m-summarizer__about { color: var(--m-dim); font-size: 14px; text-align: center; }
+
 /* ─── terminal view ─────────────────────────────────────────────────────── */
 
 .mobile-term,

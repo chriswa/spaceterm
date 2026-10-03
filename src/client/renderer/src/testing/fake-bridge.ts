@@ -451,6 +451,8 @@ export class FakeBridge implements Api {
     this.record('toggleSummaryChat', nodeId, mode)
     return this.summaryChatToggleResult
   }
+  summaryChatFollowUp = (text: string): void => this.record('summaryChatFollowUp', text)
+  endSummaryChat = (): void => this.record('endSummaryChat')
   restartSpaceterm = (): Promise<void> => this.reply('restartSpaceterm', undefined)
   writeDebugLog = (content: string): Promise<string> =>
     this.reply('writeDebugLog', '/tmp/fake-debug.log', content)

@@ -1151,6 +1151,16 @@ export function App() {
     navigateToNode(nodeIdFromFirstPtySession(result.sessionId))
   }, [getParentCwd, navigateToNode])
 
+  // The Summary Chat chord as a button — the phone has no chord. Same toggle,
+  // same feedback: a press while an answer is audible cuts it off instead.
+  const handleSummarize = useCallback((nodeId: NodeId) => {
+    void pressSummaryChatChord(nodeId, 'summary', {
+      toggle: (id, mode) => window.api.toggleSummaryChat(id, mode),
+      ...REAL_CHORD_CUES,
+      rejected: (message) => { shakeCamera(); showToast(message) },
+    })
+  }, [shakeCamera, showToast])
+
   const handleForkSession = useCallback(async (nodeId: NodeId) => {
     try {
       const result = await sendForkSession(nodeId)
@@ -2765,6 +2775,7 @@ export function App() {
             terminalSessions={t.terminalSessions}
             onSessionRevive={handleSessionRevive}
             onFork={handleForkSession}
+            onSummarize={handleSummarize}
             onExtraCliArgs={handleExtraCliArgs}
             extraCliArgs={t.extraCliArgs}
             lastInteractedAt={t.lastInteractedAt}

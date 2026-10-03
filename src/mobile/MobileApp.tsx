@@ -10,6 +10,8 @@ import { Dictation } from './dictation'
 import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
 import { UsageReadout } from './UsageReadout'
+import { SummarizerButton } from './SummarizerButton'
+import { useSummaryChatStore } from '@/stores/summaryChatStore'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -33,6 +35,8 @@ function rememberOpen(nodeId: NodeId | null): void {
 export function MobileApp() {
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
+  /** The surface Summary Chat is talking about, while a conversation is open. */
+  const summaryTarget = useSummaryChatStore((s) => s.targetNodeId)
   useVisualViewportVars()
 
   /**
@@ -121,6 +125,8 @@ export function MobileApp() {
           }}
         />
       )}
+      {/* Over the canvas and the terminal view alike; the composer has its own microphone. */}
+      {summaryTarget && !composerFor && <SummarizerButton key={summaryTarget} nodeId={summaryTarget} />}
     </>
   )
 }

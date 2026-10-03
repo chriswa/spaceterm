@@ -24,6 +24,8 @@ export interface NodeActionBarProps {
   focused: boolean
   onShipIt?: (id: NodeId) => void
   onFork?: (id: NodeId) => void
+  /** Start Summary Chat on this surface — the chord's action, as a button. */
+  onSummarize?: (id: NodeId) => void
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   showColorPicker?: boolean
@@ -77,7 +79,7 @@ export interface NodeActionBarProps {
  */
 export function NodeActionBar({
   nodeId, preset, focused,
-  onShipIt, onFork, onExtraCliArgs, extraCliArgs,
+  onShipIt, onFork, onSummarize, onExtraCliArgs, extraCliArgs,
   showColorPicker, onColorChange, onStampChange,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   archivedChildren, onOpenArchiveSearch,
@@ -341,6 +343,22 @@ export function NodeActionBar({
             <path d="M7 13 L7 6" />
             <path d="M3 1 L3 5 Q3 6 7 6 Q11 6 11 5 L11 1" />
             <path d="M7 1 L7 6" />
+          </svg>
+        </button>
+      )}
+      {onSummarize && (
+        <button
+          className="node-titlebar__fork-btn node-titlebar__summarize-btn"
+          data-tooltip="Summary Chat — hear what the agent did, then ask about it"
+          aria-label="Summary Chat"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onSummarize(nodeId); onActionInvoked?.() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 3.5 Q2 2 3.5 2 L10.5 2 Q12 2 12 3.5 L12 8 Q12 9.5 10.5 9.5 L6 9.5 L3.5 12 L3.5 9.5 Q2 9.5 2 8 Z" />
+            <path d="M5 5 L9 5" />
+            <path d="M5 7 L8 7" />
           </svg>
         </button>
       )}

@@ -1189,6 +1189,23 @@ describe('followUp', () => {
   })
 })
 
+describe('end', () => {
+  it('forgets every conversation, so follow-ups have nothing to address, and says so per surface', async () => {
+    const h = harness()
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' })
+    expect(h.chat.getTargetNodeId()).toBe(NODE)
+    h.statuses.length = 0
+    h.http.calls.length = 0
+
+    await h.chat.end()
+
+    expect(h.chat.getTargetNodeId()).toBeUndefined()
+    expect(h.statuses.filter((s) => s.nodeId === NODE).at(-1)?.state).toBe('ended')
+    await h.chat.followUp('are you still there?')
+    expect(haikuCalls(h)).toHaveLength(0)
+  })
+})
+
 describe('getTargetNodeId', () => {
   it('is undefined before anything has started', () => {
     expect(harness().chat.getTargetNodeId()).toBeUndefined()

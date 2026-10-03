@@ -762,6 +762,21 @@ export interface SummaryChatToggleMessage {
  */
 export type SummaryChatMode = 'summary' | 'verbatim'
 
+/**
+ * Something the listener said to Summary Chat from a client — the phone's talk
+ * button — rather than through Voice Operator's command mode on the Mac. Goes
+ * to the same conversation a voice command would.
+ */
+export interface SummaryChatFollowUpMessage {
+  type: 'summary-chat-follow-up'
+  text: string
+}
+
+/** Abandon every Summary Chat conversation: stop speaking and forget them. */
+export interface SummaryChatEndMessage {
+  type: 'summary-chat-end'
+}
+
 export interface VoiceCommandMessage {
   type: 'voice-command'
   text: string
@@ -1055,6 +1070,8 @@ export type ClientMessage =
   | FocusIdRequestMessage
   | FocusClaudeSessionMessage
   | SummaryChatToggleMessage
+  | SummaryChatFollowUpMessage
+  | SummaryChatEndMessage
   | SpeakToggleMessage
   | SpeakStopMessage
   | SaveViewportMessage
@@ -1296,7 +1313,11 @@ export interface SpeakingChangedMessage {
  * spaceterm is audible only while Haiku is the thing being waited on.
  */
 export type SummaryChatPhase = 'thinking' | 'synthesizing' | 'speaking' | 'ready'
-export type SummaryChatUiState = SummaryChatPhase | 'target' | 'error'
+/**
+ * `ended`: the surface's conversation has been abandoned and forgotten — the
+ * phone's talk button goes with it. See `SummaryChat.end`.
+ */
+export type SummaryChatUiState = SummaryChatPhase | 'target' | 'error' | 'ended'
 
 /** Summary Chat lifecycle for the toolbar's thinking and target indicators. */
 export interface SummaryChatStatusMessage {

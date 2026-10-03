@@ -215,6 +215,7 @@ interface TerminalCardProps {
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
   onFork?: (id: NodeId) => void
+  onSummarize?: (id: NodeId) => void
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   lastInteractedAt?: number
@@ -242,7 +243,7 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onStampChange, onOpenArchiveSearch,
   claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, claudeContextPercent, claudeSessionLineCount, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef,
+  terminalSessions, onSessionRevive, onFork, onSummarize, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef,
   chromeless = false, autoFocus = true, onRowHeight
 }: TerminalCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
@@ -1341,6 +1342,8 @@ export function TerminalCard({
       onStartReparent={onStartReparent}
       onStartResize={onStartResize}
       onFork={agentType !== 'cursor' && agentType !== 'codex' && claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
+      // Needs a transcript to summarize; the server says so if it has none yet.
+      onSummarize={isAgentSurface ? onSummarize : undefined}
       // Cursor/Codex often lack SessionStart history; gate on agentType so restart stays available.
       onExtraCliArgs={
         agentType === 'claude' || agentType === 'cursor' || agentType === 'codex'

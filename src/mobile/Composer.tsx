@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNodeStore } from '@/stores/nodeStore'
 import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
-import { Dictation } from './dictation'
+import { Dictation, whenHearing } from './dictation'
 import { insertDictation } from './pcm'
 import { promptStore } from './prompt-store'
 import { playCue, primeCues } from './cues'
@@ -24,9 +24,6 @@ import { handTouchToCanvas } from '@/hooks/useTouchCamera'
 
 /** A button press that must not take focus from the text (and so dismiss the keyboard). */
 const keepFocus = (e: { preventDefault(): void }) => e.preventDefault()
-
-/** How long a granted microphone may stay silent before dictation gives up on it. */
-const NO_AUDIO_TIMEOUT_MS = 2000
 
 type MicState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'transcribing' }
 
@@ -105,23 +102,12 @@ export function Composer({ nodeId, onClose, onExitToCanvas, startDictation }: {
     rememberCursor()
     setMic({ kind: 'starting' })
     try {
-      const dictation = await pending
       // As on the desktop, the start cue means "safe to talk": it plays only
-      // once sound is actually arriving. A microphone that is granted but
-      // silent (see dictation.ts) fails here, rather than showing Stop over
-      // a recording of nothing.
-      const heard = await Promise.race([
-        dictation.audioArrived.then(() => true),
-        new Promise<false>((resolve) => setTimeout(() => resolve(false), NO_AUDIO_TIMEOUT_MS))
-      ])
+      // once sound is actually arriving (see whenHearing).
+      const dictation = await whenHearing(pending)
       if (closedRef.current) {
         dictation.cancel()
         return
-      }
-      if (!heard) {
-        window.api.log(`[dictation] no sound within ${NO_AUDIO_TIMEOUT_MS}ms: ${dictation.describe()}`)
-        dictation.cancel()
-        throw new Error('The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
       }
       setMic({ kind: 'listening', dictation })
       playCue('listeningStarted')

@@ -1335,6 +1335,17 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'summary-chat-follow-up': {
+      const text = msg.text.trim()
+      if (text) void summaryChat.followUp(text)
+      break
+    }
+
+    case 'summary-chat-end': {
+      void summaryChat.end()
+      break
+    }
+
     case 'summary-chat-toggle': {
       // A node that is not a terminal is treated as no node at all: the press
       // can still be a cancellation, and only SummaryChat knows whether it is.

@@ -354,6 +354,10 @@ export interface Api {
    * still cancels whatever is speaking, in either mode.
    */
   toggleSummaryChat(nodeId: NodeId | undefined, mode: SummaryChatMode): Promise<SummaryChatToggleResult>
+  /** Say something to Summary Chat, as Voice Operator's command mode would. */
+  summaryChatFollowUp(text: string): void
+  /** Abandon every Summary Chat conversation. */
+  endSummaryChat(): void
   restartSpaceterm(): Promise<void>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
