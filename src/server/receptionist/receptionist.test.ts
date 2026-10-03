@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  PROMPT_HASH, Receptionist, sideQuestionPrompt, type AgentRanking, type SavedSession, type SessionTurn,
+  PROMPT_HASH, Receptionist, sideQuestionPrompt, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles } from './handles'
@@ -52,6 +52,8 @@ function harness(opts: {
   replies: Script[]
   /** Status the speech job ends in. Defaults to completing. */
   speechEnds?: Partial<SpeechStatus>
+  /** What the user is looking at; by default nothing has said. */
+  userView?: () => ReturnType<ReceptionistDeps['userView']>
   /** How the agents answer side questions; by default every one answers. */
   askAgent?: (nodeId: NodeId, prompt: string) => Promise<SideQuestionResult>
   /** The session saved by an earlier server. */
@@ -148,6 +150,7 @@ function harness(opts: {
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
     interrupt: (nodeId) => wire.push(`escape ${nodeId}`),
     directories: () => [{ nodeId: DIR_ID, cwd: '/Users/me/spaceterm' }],
+    userView: opts.userView ?? (() => undefined),
     spawn: (directory, title, prompt) => { wire.push(`spawn ${directory} ${title}: ${prompt}`); return SALLY_ID },
     log: () => {},
     sleep: async () => {},
@@ -660,5 +663,45 @@ describe('Receptionist', () => {
     await h.receptionist.hear('watch kevin')
     await flush()
     expect(h.turns).toHaveLength(3)
+  })
+
+  it('says what the user is looking at: an agent by handle, anything else for what it is', async () => {
+    const view = { x: -500, y: -300, width: 1000, height: 600 }
+    const h = harness({
+      userView: () => ({
+        view,
+        nodes: [
+          { nodeId: SALLY_ID, type: 'terminal', label: 'login page', distance: 0, inView: true },
+          { nodeId: asNodeId('note-1'), type: 'markdown', label: 'Design notes', distance: 120, inView: true },
+          { nodeId: asNodeId('shell-1'), type: 'terminal', label: 'zsh', distance: 9_000, inView: false },
+        ],
+      }),
+      replies: [
+        reply([{ from: 'control', text: 'Let me see.' }], [{ tool: 'nearby' }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`under the middle of the screen: [${SALLY}] ("login page"), an agent, working`)
+          expect(turn.prompt).toContain('on screen: a note "Design notes"')
+          expect(turn.prompt).toContain('off screen, about 9 screens away: a terminal "zsh", not an agent you can act on')
+          return reply([{ from: 'control', text: `That's {${SALLY}}.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what is this one doing?')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('says so when no screen has reported where it is looking', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'nearby' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('where the user is looking is unknown')
+          return reply([{ from: 'control', text: 'Which one do you mean?' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what is this one doing?')
+    await flush()
   })
 })

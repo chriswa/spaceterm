@@ -8,6 +8,8 @@ import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } f
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { DIRECTORY_PREFIX, editDistance, Handles } from './handles'
+import { whereWords, type NearbyNode } from './nearby'
+import type { CameraBounds } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import {
   FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderTurnBody, type ReceptionistEvent,
@@ -122,6 +124,12 @@ export interface ReceptionistDeps {
   send(nodeId: NodeId, text: string): void
   /** Press Escape in an agent's terminal. */
   interrupt(nodeId: NodeId): void
+  /**
+   * What the user is looking at: the screen they last talked to the
+   * receptionist from (or, failing that, last moved), and the nodes nearest
+   * its middle. Undefined when no screen has reported where it is.
+   */
+  userView(): { view: CameraBounds; nodes: NearbyNode[] } | undefined
   /** Directory nodes, where a new agent can be started. */
   directories(): RosterDirectory[]
   /** Start a new Claude surface under a directory node. Returns its node. */
@@ -147,6 +155,17 @@ const MODEL_TIMEOUT_MS = 90_000
 const LAST_SAID_EVENT_CHARS = 1_500
 /** Agents `find_agent` reports, best first. */
 const FIND_AGENT_RESULTS = 10
+
+/** What each kind of node is, said plainly. */
+const NODE_WORDS: Record<NearbyNode['type'], string> = {
+  terminal: 'a terminal',
+  markdown: 'a note',
+  title: 'a title',
+  directory: 'a directory',
+  file: 'a file',
+  'meta-group': 'a group',
+  'meta-doc': 'a document',
+}
 
 /** What each failure means for what to do next, as the model is told it. */
 const SIDE_QUESTION_FAILURES: Record<Exclude<SideQuestionResult, { ok: true }>['reason'], string> = {
@@ -427,6 +446,10 @@ export class Receptionist {
         results.push(call.namedOnly ? this.listNamedAgents(agents, handles) : this.listAgents(agents, handles))
         continue
       }
+      if (call.tool === 'nearby') {
+        results.push(this.nearby(agents, handles))
+        continue
+      }
       if (call.tool === 'find_agent') {
         results.push(await this.findAgent(call.query, agents, handles))
         continue
@@ -601,6 +624,25 @@ export class Receptionist {
       for (const [, handle] of part.text.matchAll(/\{([A-Za-z0-9_-]+)\}/g)) unknownAgent(handle, 'in what you said')
     }
     return [...new Set(problems)]
+  }
+
+  /**
+   * The nearby tool: what the user is looking at, nearest the middle of their
+   * screen first. Agents come with their name or handle so they can be acted
+   * on; anything else is described for what it is.
+   */
+  private nearby(agents: readonly RosterAgent[], handles: Handles): string {
+    const seen = this.deps.userView()
+    if (!seen) return 'nearby: no screen has said where it is looking, so where the user is looking is unknown.'
+    const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
+    const lines = seen.nodes.map(node => {
+      const agent = byId.get(node.nodeId)
+      const what = agent
+        ? `${this.describe(agent, handles)}, an agent, ${STATE_WORDS[agent.state]}`
+        : `${NODE_WORDS[node.type]}${node.label ? ` "${node.label}"` : ''}${node.type === 'terminal' ? ', not an agent you can act on' : ''}`
+      return `${whereWords(node, seen.view)}: ${what}`
+    })
+    return `nearby:\n${lines.length ? lines.join('\n') : 'nothing is on the canvas.'}`
   }
 
   /** The list_agents tool: every live agent, and the directories. */

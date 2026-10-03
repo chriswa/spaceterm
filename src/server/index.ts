@@ -74,6 +74,7 @@ import { Receptionist } from './receptionist/receptionist'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
 import { SideQuestions, serveSideQuestions } from './side-questions'
+import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
@@ -227,6 +228,8 @@ interface ClientConnection {
   attachBuffers: Map<string, ServerMessage[]>
   parser: LineParser
   cameraBounds: CameraBounds | null
+  /** When `cameraBounds` last changed: which screen the user moved most recently. */
+  cameraBoundsAt?: number
 }
 
 /**
@@ -296,6 +299,12 @@ let sideQuestionServer: import('http').Server | undefined
  * takes it, and so does selecting the receptionist.
  */
 let voiceTarget: 'summary' | 'receptionist' = 'receptionist'
+/**
+ * The client the user last talked to the receptionist from, as the phone's
+ * talk button does; undefined after Voice Operator on the Mac, which belongs
+ * to no client. See `receptionistView`.
+ */
+let receptionistClientId: string | undefined
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
 /**
@@ -446,6 +455,19 @@ function receptionistAgents(): RosterAgent[] {
 function parseTimestamp(iso: string | undefined): number | undefined {
   const ms = iso ? Date.parse(iso) : NaN
   return Number.isFinite(ms) ? ms : undefined
+}
+
+/**
+ * What the user is looking at, for the receptionist's `nearby` tool: the
+ * screen they last talked to it from, else whichever screen moved last.
+ */
+function receptionistView(): { view: CameraBounds; nodes: NearbyNode[] } | undefined {
+  const spokenFrom = [...clients].find(client => client.id === receptionistClientId && client.cameraBounds)
+  const lastMoved = [...clients]
+    .filter(client => client.cameraBounds)
+    .sort((a, b) => (b.cameraBoundsAt ?? 0) - (a.cameraBoundsAt ?? 0))[0]
+  const view = (spokenFrom ?? lastMoved)?.cameraBounds
+  return view ? { view, nodes: nodesNearView(stateManager.getNodes(), view) } : undefined
 }
 
 function agentNameMap(): Record<string, string> {
@@ -1104,7 +1126,10 @@ function handleIngestMessage(msg: IngestMessage): void {
       const text = msg.text.trim()
       if (!text) break
       // Command mode is dictated on the Mac, so the receptionist answers there.
-      if (voiceTarget === 'receptionist' && receptionist) void receptionist.hear(text, speechVoiceOperator)
+      if (voiceTarget === 'receptionist' && receptionist) {
+        receptionistClientId = undefined
+        void receptionist.hear(text, speechVoiceOperator)
+      }
       else void summaryChat.followUp(text)
       break
     }
@@ -1441,6 +1466,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       if (!text) break
       // The receptionist answers on the device that spoke to it last.
       if (voiceTarget === 'receptionist' && receptionist) {
+        receptionistClientId = client.id
         void receptionist.hear(text, remoteSpeech.forClient(client.id, speechVoiceOperator))
       } else {
         void summaryChat.followUp(text)
@@ -2478,6 +2504,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'camera-bounds': {
       client.cameraBounds = msg.bounds
+      client.cameraBoundsAt = Date.now()
       const otherCount = clients.size - 1
       if (otherCount > 0) {
         serverLog(`[camera-bounds] client=${client.id.slice(0, 8)} broadcasting to ${otherCount} peers bounds=(${Math.round(msg.bounds.x)},${Math.round(msg.bounds.y)} ${Math.round(msg.bounds.width)}x${Math.round(msg.bounds.height)})`)
@@ -3045,6 +3072,7 @@ async function startServer(): Promise<void> {
       const node = stateManager.getNode(nodeId)
       if (node?.type === 'terminal' && node.alive) shipToSession(node.sessionId, text, true)
     },
+    userView: receptionistView,
     directories: () => stateManager.getNodes()
       .filter((node): node is DirectoryNodeData => node.type === 'directory')
       .map((node) => ({ nodeId: node.id, cwd: node.cwd })),

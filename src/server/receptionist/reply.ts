@@ -24,6 +24,7 @@ export type ToolCall =
   | { tool: 'recall'; search: string }
   | { tool: 'list_agents'; namedOnly?: boolean }
   | { tool: 'find_agent'; query: string }
+  | { tool: 'nearby' }
 
 export interface Reply {
   say: SayPart[]
@@ -32,7 +33,7 @@ export interface Reply {
 
 /** Tools whose results the model must see before it can speak. */
 export function isBlocking(call: ToolCall): boolean {
-  return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'find_agent'
+  return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'find_agent' || call.tool === 'nearby'
 }
 
 /**
@@ -65,6 +66,7 @@ function parseSayPart(value: unknown): SayPart {
 
 function parseToolCall(value: unknown): ToolCall {
   if (!isRecord(value) || typeof value.tool !== 'string') throw new Error('each tool call needs a "tool" name')
+  if (value.tool === 'nearby') return { tool: 'nearby' }
   if (value.tool === 'list_agents') return value.named_only === true ? { tool: 'list_agents', namedOnly: true } : { tool: 'list_agents' }
   if (value.tool === 'find_agent') {
     if (typeof value.query !== 'string' || !value.query.trim()) throw new Error('"find_agent" needs a "query"')
