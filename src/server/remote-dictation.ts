@@ -34,8 +34,26 @@ function describe(response: SpeechResponse, doing: string): string {
 
 export class RemoteDictation {
   private readonly sessions = new Map<string, Session>()
+  /** Sessions still taking the user's voice: from start until finish is asked for, or a cancel. */
+  private readonly listening = new Set<string>()
 
-  constructor(private readonly voice: Voice) {}
+  /**
+   * `onSpeaking` hears whether anyone is dictating now, on every change: what
+   * the receptionist waits on, so it never talks over the user.
+   */
+  constructor(private readonly voice: Voice, private readonly onSpeaking: (speaking: boolean) => void = () => {}) {}
+
+  /** Whether some client is dictating now. */
+  get speaking(): boolean {
+    return this.listening.size > 0
+  }
+
+  private setListening(id: string, on: boolean): void {
+    const before = this.speaking
+    if (on) this.listening.add(id)
+    else this.listening.delete(id)
+    if (this.speaking !== before) this.onSpeaking(this.speaking)
+  }
 
   async start(owner: string, sampleRate: number): Promise<DictationOutcome<string>> {
     const response = await this.voice.startTranscription(sampleRate)
@@ -44,6 +62,7 @@ export class RemoteDictation {
       return { ok: false, error: describe(response, 'start transcribing') }
     }
     this.sessions.set(id, { owner, chain: Promise.resolve() })
+    this.setListening(id, true)
     return { ok: true, value: id }
   }
 
@@ -61,6 +80,8 @@ export class RemoteDictation {
   async finish(owner: string, id: string): Promise<DictationOutcome<string>> {
     const session = this.owned(owner, id)
     if (!session) return { ok: false, error: 'That dictation has already ended' }
+    // The user has stopped talking; what is left is transcribing.
+    this.setListening(id, false)
     await session.chain
     this.sessions.delete(id)
     if (session.failure) {
@@ -78,6 +99,7 @@ export class RemoteDictation {
   cancel(owner: string, id: string): void {
     if (!this.owned(owner, id)) return
     this.sessions.delete(id)
+    this.setListening(id, false)
     void this.voice.cancelTranscription(id)
   }
 

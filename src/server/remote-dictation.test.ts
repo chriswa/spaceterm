@@ -77,3 +77,19 @@ describe('RemoteDictation', () => {
     expect((await d.finish('phone', 't1')).ok).toBe(false)
   })
 })
+
+describe('RemoteDictation, whether the user is speaking', () => {
+  it('says so from start until finish is asked for, or a cancel, and only on a change', async () => {
+    const heard: boolean[] = []
+    const d = new RemoteDictation(fakeVoice(), (speaking) => heard.push(speaking))
+    await d.start('phone', 16000)
+    expect(d.speaking).toBe(true)
+    const finishing = d.finish('phone', 't1')
+    // Stopped talking at once, though transcription is still under way.
+    expect(d.speaking).toBe(false)
+    await finishing
+    await d.start('phone', 16000)
+    d.cancelAllFor('phone')
+    expect(heard).toEqual([true, false, true, false])
+  })
+})

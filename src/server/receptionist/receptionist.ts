@@ -211,6 +211,12 @@ export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMP
  */
 const INTERRUPT_SETTLE_MS = 800
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
+/**
+ * How long after a dictation ends the receptionist stays held, for its words
+ * to arrive as a turn of their own: held, events wait for that turn rather
+ * than starting one that it would only supersede.
+ */
+const QUIET_GRACE_MS = 3_000
 
 /**
  * The question an agent is actually given. Unframed, an agent answering a bare
@@ -239,6 +245,17 @@ export class Receptionist {
   private readonly monitors = new Set<NodeId>()
   private readonly channel: SpeechChannel
   private talkToMe = true
+  /**
+   * The user is dictating, or has only just stopped: nothing may be said and
+   * no event may start a turn. See `userSpeaking`.
+   */
+  private held = false
+  /** Whether the last report was of dictation under way; bumped with every report, so a stale grace period does nothing. */
+  private dictating = false
+  private holdChanges = 0
+  private readonly heldWaiters = new Set<() => void>()
+  /** The turn under way that no one asked for, if any: dropped when the user starts talking. */
+  private unprompted: Attempt | undefined
 
   private readonly onError: (message: string) => void
 
@@ -270,7 +287,49 @@ export class Receptionist {
   /** The user said something to the receptionist, from the device `speech` plays on. */
   async hear(text: string, speech?: SpeechBackend): Promise<void> {
     if (speech) this.channel.speech = speech
+    // Their words are here, so they have finished: no need to wait out the grace period.
+    if (!this.dictating) this.release()
     await this.runTurn(text)
+  }
+
+  /**
+   * Whether the user is dictating, on any device. While they are, and for a
+   * moment after, the receptionist never talks over them, as Voice Operator
+   * holds its queue while the user speaks — and goes a step further: it does
+   * not even ask the model, since anything it came up with would be stale by
+   * the time it could be said. Events wait in the queue; an unprompted turn
+   * already under way is dropped, its events back in the queue; a reply the
+   * user asked for waits to be spoken.
+   */
+  userSpeaking(speaking: boolean): void {
+    const change = ++this.holdChanges
+    this.dictating = speaking
+    if (speaking) {
+      this.held = true
+      if (this.unprompted?.isCurrent) {
+        serverLog('[receptionist] the user started talking: dropping an unprompted turn until they finish')
+        void this.channel.cancel()
+      }
+      return
+    }
+    void this.deps.sleep(QUIET_GRACE_MS).then(() => {
+      if (change === this.holdChanges) this.release()
+    })
+  }
+
+  private release(): void {
+    this.holdChanges++
+    if (!this.held) return
+    this.held = false
+    for (const resume of this.heldWaiters) resume()
+    this.heldWaiters.clear()
+    this.maybeSpeakUp()
+  }
+
+  /** Resolves once the user is no longer dictating. */
+  private untilUserDone(): Promise<void> {
+    if (!this.held) return Promise.resolve()
+    return new Promise((resolve) => this.heldWaiters.add(resolve))
   }
 
   /** Stop whatever the receptionist is saying or about to say. */
@@ -302,7 +361,7 @@ export class Receptionist {
   }
 
   private maybeSpeakUp(): void {
-    if (!this.talkToMe || !this.events.length || this.channel.isProducing()) return
+    if (!this.talkToMe || this.held || !this.events.length || this.channel.isProducing()) return
     void this.runTurn(undefined)
   }
 
@@ -312,6 +371,7 @@ export class Receptionist {
    */
   private async runTurn(heard: string | undefined): Promise<void> {
     const attempt = this.channel.begin('thinking')
+    this.unprompted = heard === undefined ? attempt : undefined
     if (heard !== undefined) await this.noteInterruption()
     const events = this.events.splice(0)
     const body = renderTurnBody(events, heard)
@@ -386,6 +446,8 @@ export class Receptionist {
       // Words that came with a blocking tool are spoken now, while it runs:
       // the listener hears "let me check" instead of silence.
       if (reply.tools.some(isBlocking) && step < MAX_STEPS && reply.say.length) {
+        await this.untilUserDone()
+        if (!attempt.isCurrent) return undefined
         const { spoken } = this.render(reply.say, agents)
         await this.channel.deliverInterim(attempt, spoken.map(({ text, voice }) => ({ text, voice })))
         if (!attempt.isCurrent) return undefined
@@ -775,6 +837,12 @@ export class Receptionist {
   }
 
   private async speak(attempt: Attempt, body: string, reply: Reply): Promise<boolean> {
+    // Never over the user. Talked over while it waited, the reply is never said.
+    await this.untilUserDone()
+    if (!attempt.isCurrent) {
+      this.notes.push('Your previous reply was never spoken: the user spoke over it, so they heard none of it.')
+      return false
+    }
     const agents = this.deps.agents()
     const handles = this.handles(agents)
     const { spoken, mentioned } = this.render(reply.say, agents)

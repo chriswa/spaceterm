@@ -318,7 +318,7 @@ const directSpeech = new DirectSpeech({
 })
 
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
-const remoteDictation = new RemoteDictation(new VoiceOperator())
+const remoteDictation = new RemoteDictation(new VoiceOperator(), (speaking) => receptionist?.userSpeaking(speaking))
 
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
 const mobileAppInstaller = new MobileAppInstaller(realMobileInstallDeps(path.resolve(__dirname, '..', '..')))

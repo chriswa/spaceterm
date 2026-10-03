@@ -484,6 +484,73 @@ describe('Receptionist', () => {
     expect(h.turns).toHaveLength(2)
   })
 
+  it('never asks the model about events while the user is dictating, then sends them all at once', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Watching both.' }], [{ tool: 'monitor', agent: SALLY }, { tool: 'monitor', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`{${SALLY}} is now`)
+          expect(turn.prompt).toContain(`{${KEVIN}} is now`)
+          return reply([{ from: 'control', text: 'Both are done.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell me when Sally and Kevin are done')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    h.setState(SALLY_ID, 'stopped')
+    h.setState(KEVIN_ID, 'working')
+    h.setState(KEVIN_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(said(h).at(-1)).toContain('Both are done.')
+  })
+
+  it('drops an unprompted turn when the user starts talking, and brings its events back once they stop', async () => {
+    let releaseStale: ((text: string) => void) | undefined
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        () => new Promise<string>((resolve) => { releaseStale = resolve }),
+        (turn) => {
+          expect(turn.prompt).toContain('never spoken')
+          expect(turn.prompt).toContain(`{${SALLY}} is now`)
+          return reply([{ from: 'control', text: 'Sally finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    h.receptionist.userSpeaking(true)
+    releaseStale?.(reply([{ from: 'control', text: 'Stale news.' }]))
+    await flush()
+    expect(said(h).some(text => text.includes('Stale'))).toBe(false)
+    expect(h.turns).toHaveLength(2)
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(said(h).at(-1)).toContain('Sally finished.')
+  })
+
+  it('holds a reply the user asked for until they stop talking', async () => {
+    let answer: ((text: string) => void) | undefined
+    const h = harness({ replies: [() => new Promise<string>((resolve) => { answer = resolve })] })
+    void h.receptionist.hear('what is Kevin doing?')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    answer?.(reply([{ from: 'control', text: 'Kevin is testing.' }]))
+    await flush()
+    expect(h.spoken).toHaveLength(0)
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(said(h)).toEqual([JSON.stringify([{ text: 'Kevin is testing.', voice: RECEPTIONIST_VOICE }])])
+  })
+
   it('stays quiet when it decides an event is not worth saying', async () => {
     const h = harness({
       replies: [
