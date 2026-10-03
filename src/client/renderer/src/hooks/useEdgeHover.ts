@@ -12,16 +12,21 @@ export interface HoveredEdge {
   point: { x: number; y: number }
 }
 
-function findClosestEdge(
+/**
+ * The edge under a screen point, within `thresholdPx` of it on screen — a
+ * mouse's hover, or (with a fingertip's wider reach) a long press.
+ */
+export function findClosestEdge(
   screenX: number,
   screenY: number,
   viewportRect: DOMRect,
   cam: Camera,
-  edges: TreeLineNode[]
+  edges: TreeLineNode[],
+  thresholdPx = EDGE_HOVER_THRESHOLD_PX
 ): HoveredEdge | null {
   const canvasX = (screenX - viewportRect.left - cam.x) / cam.z
   const canvasY = (screenY - viewportRect.top - cam.y) / cam.z
-  const threshold = EDGE_HOVER_THRESHOLD_PX / cam.z
+  const threshold = thresholdPx / cam.z
 
   // Prebuild position lookup map to avoid O(n) find per edge
   const posMap = new Map<string, { x: number; y: number }>()

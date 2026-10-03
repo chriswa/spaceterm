@@ -108,6 +108,8 @@ export const ARCHIVE_POPUP_MAX_HEIGHT = 310
 
 // Edge hover detection
 export const EDGE_HOVER_THRESHOLD_PX = 12
+/** A long press finds an edge within this many screen pixels: a fingertip is no cursor. */
+export const EDGE_TOUCH_THRESHOLD_PX = 24
 export const EDGE_SPLIT_NODE_MARGIN_PX = 30
 
 // Camera history: ms after last user input before recording a "settle" position

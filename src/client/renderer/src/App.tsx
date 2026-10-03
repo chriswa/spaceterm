@@ -27,7 +27,7 @@ import { AgentSelector, AGENT_SELECTOR_OPTIONS } from './components/AgentSelecto
 import { ArchiveConfirm } from './components/ArchiveConfirm'
 import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
-import { useEdgeHover } from './hooks/useEdgeHover'
+import { useEdgeHover, findClosestEdge } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
@@ -36,7 +36,7 @@ import { useCoarseClock } from './hooks/useCoarseClock'
 import { loadClientMods } from './mods'
 import { cameraToFitBounds, cameraToFitBoundsWithCenter, unionBounds, screenToCanvas, computeFlyToDuration, computeFlyToSpeed, expandCameraToInclude, focusZoomCeiling } from './lib/camera'
 import type { Camera } from './lib/camera'
-import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, EXTERNAL_UNFOCUS_ZOOM_OUT, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING } from './lib/constants'
+import { ROOT_NODE_RADIUS, ROOT_FOCUS_RADIUS, UNFOCUS_SNAP_ZOOM, EXTERNAL_UNFOCUS_ZOOM_OUT, DEFAULT_COLS, DEFAULT_ROWS, DIRECTORY_HEIGHT, terminalPixelSize, resizeDraftSize, ZOOM_DRAG_SENSITIVITY, RTS_SELECT_FIT_PADDING, EDGE_TOUCH_THRESHOLD_PX } from './lib/constants'
 import { nodeDisplayTitle } from './lib/node-title'
 import { labelMaskShape, layOutNodeLabel, layOutRootCwdLabel, layOutStatusLabel, type NodeLabel } from '../../../shared/node-label'
 import { isDescendantOf, isImmediateChildOf, getDescendantIds, getAncestorCwd, resolveInheritedPreset, hasLiveChildren } from './lib/tree-utils'
@@ -173,7 +173,7 @@ export function App() {
   const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number; byTouch?: boolean } | null>(null)
   /** The node a finger long-pressed, and once it moves on, the drag of it. */
   const touchPressRef = useRef<{ nodeId: NodeId; drag: { startX: number; startY: number; zoom: number } | null } | null>(null)
-  const [edgeSplit, setEdgeSplit] = useState<{ parentId: NodeId; childId: NodeId; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
+  const [edgeSplit, setEdgeSplit] = useState<{ parentId: NodeId; childId: NodeId; worldPoint: { x: number; y: number }; screenX: number; screenY: number; byTouch?: boolean } | null>(null)
   const cmdClickPendingRef = useRef<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
   const shiftClickPendingRef = useRef(false)
   const pinnedFocusRef = useRef(false)
@@ -2532,7 +2532,16 @@ export function App() {
     onLongPress: ({ x, y }) => {
       const nodeId = document.elementFromPoint(x, y)?.closest('[data-node-id]')?.getAttribute('data-node-id')
       touchPressRef.current = nodeId ? { nodeId: nodeId as NodeId, drag: null } : null
-      if (nodeId) setQuickActions({ nodeId: nodeId as NodeId, screenX: x, screenY: y, byTouch: true })
+      if (nodeId) {
+        setQuickActions({ nodeId: nodeId as NodeId, screenX: x, screenY: y, byTouch: true })
+        return
+      }
+      // Between cards, on an edge: the add-node menu, as ⌘-click on an edge.
+      const viewport = document.querySelector('.canvas-viewport')
+      const edge = viewport && !focusRef.current
+        ? findClosestEdge(x, y, viewport.getBoundingClientRect(), cameraRef.current, edgesRef.current, EDGE_TOUCH_THRESHOLD_PX)
+        : null
+      if (edge) setEdgeSplit({ parentId: edge.parentId, childId: edge.childId, worldPoint: edge.point, screenX: x, screenY: y, byTouch: true })
     },
     // Moving on from the long press drags that node instead: the menu goes,
     // and the drag runs through the same start/move/end as a mouse drag by
@@ -2959,6 +2968,7 @@ export function App() {
           screenY={edgeSplit.screenY}
           onSelect={handleEdgeSplitSelect}
           onDismiss={() => setEdgeSplit(null)}
+          openedByTouch={edgeSplit.byTouch}
         />
       )}
       <Toast toasts={toasts} onExpire={expireToast} />
