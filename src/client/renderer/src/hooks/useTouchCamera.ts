@@ -20,6 +20,10 @@ import { Momentum, VelocityTracker } from '../lib/touch-momentum'
  * A pan that is still moving when the finger lifts carries on and eases to a
  * stop, the way iOS scroll views do (see touch-momentum.ts); the next touch
  * catches it.
+ *
+ * A touch that began somewhere else — the phone's full-screen terminal — can
+ * be handed over part way through with `handTouchToCanvas`, and carries on
+ * here as a pan or pinch from where the fingers are.
  */
 
 /** Movement below this many pixels is still a tap. */
@@ -45,6 +49,20 @@ export interface TouchCameraControls {
 }
 
 type Point = { x: number; y: number }
+
+/** The mounted canvas's way to take over a touch; see `handTouchToCanvas`. */
+let adoptTouch: ((e: TouchEvent) => boolean) | null = null
+
+/**
+ * Let the canvas finish a touch that something else began: one finger pans
+ * and two pinch, from their current positions, until the last finger lifts.
+ * Call it from that touch's own event, after the view that began it has
+ * decided to leave. The touch keeps its original target even if that view
+ * unmounts, so the canvas follows it there. False when there is no canvas.
+ */
+export function handTouchToCanvas(e: TouchEvent): boolean {
+  return adoptTouch?.(e) ?? false
+}
 
 const midpoint = (a: Touch, b: Touch): Point => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 })
 const distance = (a: Touch, b: Touch): number => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
@@ -184,11 +202,53 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
       }
     }
 
+    let releaseAdopted: (() => void) | null = null
+    adoptTouch = (e: TouchEvent) => {
+      const target = e.target
+      if (!target || e.touches.length === 0) return false
+      releaseAdopted?.()
+      stopGlide()
+      cancelPress()
+      tracker.reset()
+      longPressed = false
+      pressDragging = false
+      origin = last = null
+      panning = false
+      pinch = null
+      begin()
+      if (e.touches.length >= 2) {
+        const [a, b] = [e.touches[0], e.touches[1]]
+        pinch = { startDistance: Math.max(1, distance(a, b)), startZoom: controlsRef.current.getZoom(), last: midpoint(a, b) }
+      } else {
+        // Already moving: no slop to cross, it pans from the first move.
+        const t = e.touches[0]
+        origin = last = { x: t.clientX, y: t.clientY }
+        panning = true
+        tracker.add(t.clientX, t.clientY, e.timeStamp)
+      }
+      const end = (ev: TouchEvent) => {
+        onEnd(ev)
+        if (ev.touches.length === 0) releaseAdopted?.()
+      }
+      target.addEventListener('touchmove', onMove as EventListener, { passive: false })
+      target.addEventListener('touchend', end as EventListener, { passive: false })
+      target.addEventListener('touchcancel', end as EventListener, { passive: false })
+      releaseAdopted = () => {
+        target.removeEventListener('touchmove', onMove as EventListener)
+        target.removeEventListener('touchend', end as EventListener)
+        target.removeEventListener('touchcancel', end as EventListener)
+        releaseAdopted = null
+      }
+      return true
+    }
+
     el.addEventListener('touchstart', onStart, { passive: true })
     el.addEventListener('touchmove', onMove, { passive: false })
     el.addEventListener('touchend', onEnd, { passive: false })
     el.addEventListener('touchcancel', onEnd, { passive: false })
     return () => {
+      adoptTouch = null
+      releaseAdopted?.()
       cancelPress()
       stopGlide()
       el.removeEventListener('touchstart', onStart)

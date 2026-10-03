@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
-import { useTouchCamera, type TouchCameraControls } from './useTouchCamera'
+import { useTouchCamera, handTouchToCanvas, type TouchCameraControls } from './useTouchCamera'
 
 /**
  * jsdom has no `Touch` constructor, so touches are plain objects on a plain
@@ -119,6 +119,42 @@ describe('useTouchCamera', () => {
       expect(controls.pan).toHaveBeenLastCalledWith(-10, 0)
       touch(viewport, 'touchend', [])
       expect(onLongPressDragEnd).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('a touch handed over part way through', () => {
+    /** A touch on some other view, whose event is handed to the canvas. */
+    function handOver(points: Array<[number, number]>) {
+      const other = document.createElement('div')
+      document.body.appendChild(other)
+      const event = new Event('touchmove', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'touches', { value: points.map(([clientX, clientY]) => ({ clientX, clientY })) })
+      other.dispatchEvent(event)
+      return { other, adopted: handTouchToCanvas(event as TouchEvent) }
+    }
+
+    it('pans from the first move, with no slop, and follows the touch on its own target', () => {
+      const { controls } = setup()
+      const { other, adopted } = handOver([[200, 300]])
+      expect(adopted).toBe(true)
+      expect(controls.onGestureStart).toHaveBeenCalledTimes(1)
+      expect(touch(other, 'touchmove', [[197, 300]])).toBe(true)
+      expect(controls.pan).toHaveBeenLastCalledWith(3, 0)
+      touch(other, 'touchend', [])
+      // Released: later touches on that view are its own again.
+      touch(other, 'touchmove', [[150, 300]])
+      expect(controls.pan).toHaveBeenCalledTimes(1)
+    })
+
+    it('carries on a pinch from the span the fingers have now', () => {
+      const { controls } = setup()
+      const { other } = handOver([[100, 100], [200, 100]])
+      touch(other, 'touchmove', [[125, 100], [175, 100]])
+      expect(controls.zoom).toHaveBeenLastCalledWith({ x: 150, y: 100 }, 0.5)
+    })
+
+    it('is refused with no canvas to take it', () => {
+      expect(handOver([[1, 1]]).adopted).toBe(false)
     })
   })
 

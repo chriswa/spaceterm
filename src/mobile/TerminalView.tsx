@@ -4,6 +4,7 @@ import { useNodeStore } from '@/stores/nodeStore'
 import type { Camera } from '@/lib/camera'
 import { bareTerminalGridFor, bareTerminalPixelSize, CELL_HEIGHT } from '../shared/node-size'
 import type { NodeId } from '../shared/ids'
+import { handTouchToCanvas } from '@/hooks/useTouchCamera'
 import { KeyRow } from './KeyRow'
 import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
 
@@ -17,8 +18,9 @@ import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
  * its next start (see `terminalBorrowSize`).
  *
  * Every touch goes to the gesture layer, never to xterm: drag up/down to
- * scroll, flick sideways to leave, tap to compose, long-press to type with the
- * keyboard and the extra keys. See terminal-gesture.ts.
+ * scroll, swipe sideways or pinch in to leave, tap to compose, long-press to
+ * type with the keyboard and the extra keys. See terminal-gesture.ts. Leaving
+ * happens mid-gesture, and the canvas takes the rest of it as a pan or pinch.
  */
 
 /**
@@ -130,15 +132,26 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       g.begin(t.clientX, t.clientY, e.timeStamp)
       armTimer.current = setTimeout(() => { if (g.isStill()) setPressArmed(true) }, LONG_PRESS_MS)
     }
+    /** Far enough to leave: go now, and let the canvas carry on with the fingers. */
+    const leave = (e: TouchEvent) => {
+      clearTimeout(armTimer.current)
+      onClose()
+      handTouchToCanvas(e)
+    }
     const onMove = (e: TouchEvent) => {
       e.preventDefault()
       if (e.touches.length >= 2) {
         const pinch = g.pinchMove(span(e.touches))
         if (pinch.kind === 'pinch') setPinchScale(Math.min(1, pinch.scale))
+        else if (pinch.kind === 'exit') leave(e)
         return
       }
       const t = e.touches[0]
       const move = g.move(t.clientX, t.clientY)
+      if (move.kind === 'exit') {
+        leave(e)
+        return
+      }
       if (move.kind !== 'none') {
         clearTimeout(armTimer.current)
         setPressArmed(false)

@@ -8,6 +8,7 @@ import { promptStore } from './prompt-store'
 import { playCue, primeCues } from './cues'
 import { deleteWordBefore } from './text-edit'
 import { TerminalGesture } from './terminal-gesture'
+import { handTouchToCanvas } from '@/hooks/useTouchCamera'
 
 /**
  * Write a prompt away from the TUI — dictate, edit, then ship it to a surface.
@@ -231,6 +232,11 @@ export function Composer({ nodeId, onClose, onExitToCanvas, startDictation }: {
       if (e.touches.length !== 1) return
       const move = g.move(e.touches[0].clientX, e.touches[0].clientY)
       if (move.kind === 'swipe') setSwipeDx(move.dx)
+      else if (move.kind === 'exit') {
+        // Leave as it gets far enough; the rest of the drag pans the canvas.
+        onExitToCanvas()
+        handTouchToCanvas(e)
+      }
     }
     const onEnd = (e: TouchEvent) => {
       if (e.touches.length > 0) return

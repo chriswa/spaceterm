@@ -4,9 +4,11 @@
  * - **Drag up or down** scrolls — sent to the terminal as wheel events, so the
  *   TUI (or the shell's scrollback) decides what scrolling is, as it does for a
  *   trackpad on the desktop.
- * - **Flick left or right** past a threshold leaves for the canvas.
- * - **Pinch in** (zoom out) leaves for the canvas too — a smaller threshold,
- *   since nothing else uses two fingers here.
+ * - **Drag left or right** past a threshold leaves for the canvas the moment
+ *   it gets there, and the rest of the drag pans the canvas. A quicker flick
+ *   that falls short leaves on release.
+ * - **Pinch in** (zoom out) leaves too, after only a little closing, since
+ *   nothing else uses two fingers here; the rest of the pinch zooms the canvas.
  * - **Tap** opens the composer.
  * - **Long press** opens the keyboard for typing straight into the terminal.
  *
@@ -33,19 +35,24 @@ export const AXIS_DECISION_PX = 16
  * mistaken for a swipe throws you out of the terminal.
  */
 export const HORIZONTAL_DOMINANCE = 2
-/** A horizontal drag this far leaves, whatever its speed. */
-export const EXIT_DISTANCE_PX = 140
+/** A horizontal drag this far leaves, then and there, whatever its speed. */
+export const EXIT_DISTANCE_PX = 93
 /** A shorter one leaves if it is quick — a flick. */
-export const FLICK_DISTANCE_PX = 90
+export const FLICK_DISTANCE_PX = 60
 export const FLICK_SPEED_PX_PER_MS = 0.6
-/** Fingers brought this close, relative to where they started, leaves. */
-export const PINCH_EXIT_SCALE = 0.8
+/** Fingers brought this close, relative to where they started, leaves at once. */
+export const PINCH_EXIT_SCALE = 0.9
 
 export type GestureEnd = 'tap' | 'long-press' | 'exit' | 'none'
+/**
+ * `exit` is reported once, mid-gesture: the touch is over as far as this
+ * classifier is concerned, and its remainder belongs to the canvas.
+ */
 export type GestureMove =
   | { kind: 'scroll'; deltaY: number }
   | { kind: 'swipe'; dx: number }
   | { kind: 'pinch'; scale: number }
+  | { kind: 'exit' }
   | { kind: 'none' }
 
 export class TerminalGesture {
@@ -75,6 +82,7 @@ export class TerminalGesture {
   pinchMove(distance: number): GestureMove {
     if (this.axis !== 'pinch') return { kind: 'none' }
     this.pinchScale = distance / this.pinchStart
+    if (this.pinchScale <= PINCH_EXIT_SCALE) return this.exit()
     return { kind: 'pinch', scale: this.pinchScale }
   }
 
@@ -100,14 +108,24 @@ export class TerminalGesture {
       return { kind: 'scroll', deltaY }
     }
     this.last = { x, y }
-    return { kind: 'swipe', dx: x - this.start.x }
+    const dx = x - this.start.x
+    if (Math.abs(dx) >= EXIT_DISTANCE_PX && Math.abs(dx) >= HORIZONTAL_DOMINANCE * Math.abs(y - this.start.y)) return this.exit()
+    return { kind: 'swipe', dx }
+  }
+
+  /** Done here: nothing more from this touch until the next `begin`. */
+  private exit(): GestureMove {
+    this.start = null
+    this.axis = 'none'
+    return { kind: 'exit' }
   }
 
   end(t: number): GestureEnd {
     const start = this.start
     this.start = null
     if (!start) return 'none'
-    if (this.axis === 'pinch') return this.pinchScale <= PINCH_EXIT_SCALE ? 'exit' : 'none'
+    // A pinch far enough to leave left mid-move; one released short of that stays.
+    if (this.axis === 'pinch') return 'none'
     if (this.axis === 'none') {
       // Movement short of a decided direction: within the tap slop it was a
       // tap or a press; past it, an aborted drag that means nothing.
@@ -119,7 +137,6 @@ export class TerminalGesture {
       // Still mostly sideways at the end, or it drifted into a scroll.
       if (distance < HORIZONTAL_DOMINANCE * Math.abs(this.last.y - start.y)) return 'none'
       const speed = distance / Math.max(1, t - start.t)
-      if (distance >= EXIT_DISTANCE_PX) return 'exit'
       if (distance >= FLICK_DISTANCE_PX && speed >= FLICK_SPEED_PX_PER_MS) return 'exit'
     }
     return 'none'

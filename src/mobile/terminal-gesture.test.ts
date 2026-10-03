@@ -52,13 +52,15 @@ describe('TerminalGesture', () => {
     expect(g.end(100)).toBe('none')
   })
 
-  it('a long horizontal drag leaves, in either direction', () => {
+  it('a long horizontal drag leaves as it gets there, in either direction, and is then done', () => {
     for (const sign of [1, -1]) {
       const g = new TerminalGesture()
       g.begin(200, 300, 0)
-      g.move(200 + sign * 40, 302)
-      g.move(200 + sign * (EXIT_DISTANCE_PX + 5), 305)
-      expect(g.end(2000)).toBe('exit')
+      expect(g.move(200 + sign * 40, 302).kind).toBe('swipe')
+      expect(g.move(200 + sign * (EXIT_DISTANCE_PX + 5), 305)).toEqual({ kind: 'exit' })
+      // The rest of the touch belongs to the canvas.
+      expect(g.move(200 + sign * 300, 305).kind).toBe('none')
+      expect(g.end(2000)).toBe('none')
     }
   })
 
@@ -77,7 +79,7 @@ describe('TerminalGesture', () => {
   it('a short quick sideways nudge does not leave', () => {
     const g = new TerminalGesture()
     g.begin(200, 300, 0)
-    g.move(140, 301)
+    g.move(200 - (FLICK_DISTANCE_PX - 15), 301)
     expect(g.end(60)).toBe('none')
   })
 
@@ -95,21 +97,21 @@ describe('TerminalGesture', () => {
     expect(g.move(170, 303)).toEqual({ kind: 'swipe', dx: -30 })
   })
 
-  it('pinching in past the threshold leaves', () => {
+  it('pinching in past the threshold leaves then and there', () => {
     const g = new TerminalGesture()
     g.begin(150, 300, 0)
     g.pinch(200)
-    expect(g.pinchMove(170)).toEqual({ kind: 'pinch', scale: 0.85 })
-    g.pinchMove(200 * PINCH_EXIT_SCALE - 1)
-    expect(g.end(400)).toBe('exit')
+    expect(g.pinchMove(190)).toEqual({ kind: 'pinch', scale: 0.95 })
+    expect(g.pinchMove(200 * PINCH_EXIT_SCALE - 1)).toEqual({ kind: 'exit' })
+    expect(g.pinchMove(50).kind).toBe('none')
+    expect(g.end(400)).toBe('none')
   })
 
-  it('a pinch that comes back out before release stays', () => {
+  it('a pinch released short of the threshold stays', () => {
     const g = new TerminalGesture()
     g.begin(150, 300, 0)
     g.pinch(200)
-    g.pinchMove(120)
-    g.pinchMove(190)
+    g.pinchMove(200 * PINCH_EXIT_SCALE + 5)
     expect(g.end(400)).toBe('none')
   })
 
@@ -119,8 +121,7 @@ describe('TerminalGesture', () => {
     expect(g.move(150, 270).kind).toBe('scroll')
     g.pinch(180)
     expect(g.move(150, 200).kind).toBe('none')
-    g.pinchMove(100)
-    expect(g.end(500)).toBe('exit')
+    expect(g.pinchMove(100)).toEqual({ kind: 'exit' })
   })
 
   it('pinching out (zooming in) does not leave', () => {
