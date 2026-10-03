@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
+import { buttonsPerRow, EDGE_PAD, shiftIntoView } from '../lib/floating-layout'
 import type { ColorPreset } from '../lib/color-presets'
 import { nodeActionRegistry } from '../lib/action-registry'
 import { NodeActionBar } from './NodeActionBar'
@@ -61,21 +62,40 @@ export function FloatingToolbar({ nodeId, screenX, screenY, preset, onDismiss, o
     return () => window.removeEventListener('keydown', handler, { capture: true })
   }, [onDismiss])
 
+  // Whole on screen, wherever the press was: centred on it, wrapped into
+  // even rows if one row is wider than the window, then moved in from any
+  // edge it crosses. Measured as drawn — the phone enlarges the bar with CSS
+  // `scale` — and before the first paint, so it never visibly jumps.
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const actions = el.querySelector<HTMLElement>('.node-titlebar__actions')
+    el.style.left = `${screenX}px`
+    el.style.top = `${screenY}px`
+    if (actions) {
+      actions.style.display = ''
+      actions.style.gridTemplateColumns = ''
+      // Both on-screen widths, so the enlargement cancels out.
+      const drawn = el.getBoundingClientRect().width
+      const perRow = buttonsPerRow(actions.children.length, drawn, window.innerWidth - 2 * EDGE_PAD)
+      if (perRow !== null) {
+        actions.style.display = 'grid'
+        actions.style.gridTemplateColumns = `repeat(${perRow}, auto)`
+      }
+    }
+    const box = el.getBoundingClientRect()
+    el.style.left = `${screenX + shiftIntoView(box.left, box.right, window.innerWidth)}px`
+    el.style.top = `${screenY + shiftIntoView(box.top, box.bottom, window.innerHeight)}px`
+  }, [nodeId, screenX, screenY])
+
   const registeredProps = nodeActionRegistry.get(nodeId)
   if (!registeredProps) return null
-
-  // Clamp position to viewport bounds
-  const pad = 8
-  const left = Math.max(pad, Math.min(screenX, window.innerWidth - pad))
-  const top = Math.max(pad, Math.min(screenY, window.innerHeight - pad))
 
   return (
     <div
       ref={containerRef}
       className="floating-toolbar"
       style={{
-        left,
-        top,
         transform: 'translate(-50%, -50%)',
         background: preset.titleBarBg,
       }}
