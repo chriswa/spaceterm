@@ -10,10 +10,26 @@ interface FloatingToolbarProps {
   screenY: number
   preset: ColorPreset
   onDismiss: () => void
+  /**
+   * Opened by a long press, so the finger that opened it is still down,
+   * right over the middle of it. Its release must not choose a button.
+   */
+  openedByTouch?: boolean
 }
 
-export function FloatingToolbar({ nodeId, screenX, screenY, preset, onDismiss }: FloatingToolbarProps) {
+export function FloatingToolbar({ nodeId, screenX, screenY, preset, onDismiss, openedByTouch = false }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Lifting the finger that opened this makes a click wherever it lifts, and
+  // iOS does not reliably let that click be cancelled. So until a new touch
+  // begins, every click here is that one, and is swallowed.
+  const armedRef = useRef(!openedByTouch)
+  useEffect(() => {
+    if (armedRef.current) return
+    const arm = () => { armedRef.current = true }
+    window.addEventListener('touchstart', arm, { capture: true, passive: true })
+    return () => window.removeEventListener('touchstart', arm, { capture: true })
+  }, [])
 
   // Dismiss on click outside
   useEffect(() => {
@@ -64,6 +80,11 @@ export function FloatingToolbar({ nodeId, screenX, screenY, preset, onDismiss }:
         background: preset.titleBarBg,
       }}
       onMouseDown={(e) => e.stopPropagation()}
+      onClickCapture={(e) => {
+        if (armedRef.current) return
+        e.preventDefault()
+        e.stopPropagation()
+      }}
     >
       <NodeActionBar
         {...registeredProps}

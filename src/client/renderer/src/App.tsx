@@ -170,7 +170,7 @@ export function App() {
   const lastCrabRef = useRef<{ nodeId: NodeId; createdAt: string } | null>(null)
   const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: NodeId | null; toNodeId: NodeId; ts: number } | null>(null)
   const focusRestoredRef = useRef(false)
-  const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
+  const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number; byTouch?: boolean } | null>(null)
   /** The node a finger long-pressed, and once it moves on, the drag of it. */
   const touchPressRef = useRef<{ nodeId: NodeId; drag: { startX: number; startY: number; zoom: number } | null } | null>(null)
   const [edgeSplit, setEdgeSplit] = useState<{ parentId: NodeId; childId: NodeId; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
@@ -2522,7 +2522,7 @@ export function App() {
     onLongPress: ({ x, y }) => {
       const nodeId = document.elementFromPoint(x, y)?.closest('[data-node-id]')?.getAttribute('data-node-id')
       touchPressRef.current = nodeId ? { nodeId: nodeId as NodeId, drag: null } : null
-      if (nodeId) setQuickActions({ nodeId: nodeId as NodeId, screenX: x, screenY: y })
+      if (nodeId) setQuickActions({ nodeId: nodeId as NodeId, screenX: x, screenY: y, byTouch: true })
     },
     // Moving on from the long press drags that node instead: the menu goes,
     // and the drag runs through the same start/move/end as a mouse drag by
@@ -2939,6 +2939,7 @@ export function App() {
           screenY={quickActions.screenY}
           preset={resolvedPresets[quickActions.nodeId]}
           onDismiss={() => setQuickActions(null)}
+          openedByTouch={quickActions.byTouch}
         />
       )}
       {edgeSplit && (
