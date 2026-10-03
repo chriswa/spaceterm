@@ -21,7 +21,8 @@ import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
  * Every touch goes to the gesture layer, never to xterm: drag up/down to
  * scroll — and a flicked scroll carries on after the finger lifts, as any iOS
  * scroll view does (touch-momentum.ts) — swipe sideways or pinch in to leave, tap to compose, long-press to
- * type with the keyboard and the extra keys. See terminal-gesture.ts. Leaving
+ * type with the keyboard and the extra keys, and again to put them away. See
+ * terminal-gesture.ts. Leaving
  * happens mid-gesture, and the canvas takes the rest of it as a pan or pinch.
  */
 
@@ -56,6 +57,9 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
   const cardRef = useRef<HTMLDivElement>(null)
   const [area, setArea] = useState({ width: 0, height: 0 })
   const [keyboard, setKeyboard] = useState(false)
+  /** For the touch handlers, which are installed once. */
+  const keyboardRef = useRef(keyboard)
+  keyboardRef.current = keyboard
   const [swipeDx, setSwipeDx] = useState(0)
   const [pressArmed, setPressArmed] = useState(false)
   /** The row height the terminal really draws at on this phone; see TerminalCard's onRowHeight. */
@@ -195,6 +199,12 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       if (caughtGlide) return
       if (outcome === 'tap') onCompose()
       else if (outcome === 'long-press') {
+        // A second long press puts the keyboard away again; the blur ends
+        // typing mode (below).
+        if (keyboardRef.current) {
+          textarea()?.blur()
+          return
+        }
         // Inside the touch handler, or iOS will not raise the keyboard.
         textarea()?.focus()
         setKeyboard(true)
