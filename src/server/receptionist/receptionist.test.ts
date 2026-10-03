@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  PROMPT_HASH, Receptionist, sideQuestionPrompt, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
+  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles } from './handles'
@@ -61,6 +61,10 @@ function harness(opts: {
   findAgents?: (query: string) => Promise<AgentRanking>
   /** Sessions the fake daemon no longer has. */
   lostSessions?: string[]
+  /** When each answer says the daemon will compact the session (epoch ms); by default it never does. */
+  compactsAt?: number
+  /** How many messages find the session busy with a turn some earlier server left behind. */
+  busyFor?: number
 }) {
   const states = new Map<NodeId, ClaudeState>([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']])
   const agents = (): RosterAgent[] => [
@@ -71,7 +75,8 @@ function harness(opts: {
   const turns: SessionTurn[] = []
   const replies = [...opts.replies]
   let sessions = 0
-  let inFlight = 0
+  let busy = false
+  let busyFor = opts.busyFor ?? 0
   let overlapped = false
   const assigned = new Map<NodeId, NamedVoice>()
   const pool: NamedVoice[] = [
@@ -84,7 +89,7 @@ function harness(opts: {
   const wire: string[] = []
   const notices: string[] = []
   let session: SavedSession | undefined = opts.saved
-  const record: Array<{ role: string; content: string }> = []
+  const record: Array<{ role: 'user' | 'assistant'; content: string }> = []
   let job = 0
   const speech: SpeechBackend = {
     speak: async (content, voice) => {
@@ -95,11 +100,18 @@ function harness(opts: {
     drop: async (id) => ({ status: 410, body: { id, state: 'cancelled_by_client' } }),
   }
   const receptionist = new Receptionist({
-    askModel: async (turn) => {
+    // As the daemon: one turn at a time per session, and a turn it has started
+    // is finished even after its caller gives up — which, as the real client
+    // does, rejects at once on abort.
+    askModel: (turn, signal) => {
+      if (busy || busyFor > 0) {
+        if (busy) overlapped = true
+        busyFor--
+        return Promise.reject(new SessionBusy('session already has a turn in progress'))
+      }
       turns.push(turn)
-      if (inFlight > 0) overlapped = true
-      inFlight++
-      try {
+      busy = true
+      const answering = (async () => {
         if (turn.sessionId && opts.lostSessions?.includes(turn.sessionId)) throw new Error('session not found')
         const next = replies.shift()
         if (next === undefined) throw new Error('no scripted reply left')
@@ -114,10 +126,15 @@ function harness(opts: {
             throw err
           }
         }
-        return { text, sessionId: turn.sessionId ?? `session-${++sessions}` }
-      } finally {
-        inFlight--
-      }
+        return {
+          text, sessionId: turn.sessionId ?? `session-${++sessions}`,
+          ...(opts.compactsAt !== undefined ? { compactsAt: opts.compactsAt } : {}),
+        }
+      })().finally(() => { busy = false })
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        answering.then(resolve, reject)
+      })
     },
     findAgents: opts.findAgents ?? (async () => ({
       hits: [{ nodeId: SALLY_ID, probability: 0.82 }, { nodeId: KEVIN_ID, probability: 0.1 }], noneProbability: 0.08,
@@ -129,6 +146,7 @@ function harness(opts: {
     record: {
       append: (messages) => { record.push(...messages) },
       search: (query) => record.filter(message => message.content.includes(query)).map(message => message.content).join('\n') || 'nothing',
+      recent: (count) => record.slice(-count),
     },
     names: {
       get: (nodeId) => assigned.get(nodeId),
@@ -235,6 +253,42 @@ describe('Receptionist', () => {
     await flush()
     expect(h.turns.at(-1)?.sessionId).toBeUndefined()
     expect(h.session?.sessionId).toBe('session-1')
+    // The new session is told what was said before it, but not this message twice.
+    const prompt = h.turns.at(-1)!.prompt
+    expect(prompt).toMatch(/^EARLIER CONVERSATION[^]*THE USER SAYS: hello\?[^]*THE USER SAYS: hello again/)
+    expect(prompt.split('hello again')).toHaveLength(2)
+  })
+
+  it('waits out a session still busy with an abandoned turn, and keeps it', async () => {
+    const h = harness({
+      saved: { sessionId: 'kept', promptHash: PROMPT_HASH },
+      busyFor: 2,
+      replies: [reply([{ from: 'control', text: 'Here.' }])],
+    })
+    await h.receptionist.hear('still there?')
+    await flush()
+    expect(h.turns.map(turn => turn.sessionId)).toEqual(['kept'])
+    expect(h.session?.sessionId).toBe('kept')
+    expect(said(h)).toEqual([JSON.stringify([{ text: 'Here.', voice: RECEPTIONIST_VOICE }])])
+  })
+
+  it('repeats the last exchanges word for word to a session the daemon has since compacted', async () => {
+    const run = async (compactsAt: number) => {
+      const h = harness({
+        compactsAt,
+        replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }])],
+      })
+      await h.receptionist.hear('what is Kevin doing?')
+      await flush()
+      await h.receptionist.hear('tell him to do that now')
+      await flush()
+      return h.turns[1].prompt
+    }
+    const compacted = await run(Date.now() - 1_000)
+    expect(compacted).toMatch(/^EARLIER CONVERSATION[^]*THE USER SAYS: what is Kevin doing\?[^]*YOU: [^\n]*Kevin is on it/)
+    expect(compacted).toContain('THE USER SAYS: tell him to do that now')
+    // Not yet compacted: the session still has it all, and the cache does too.
+    expect(await run(Date.now() + 3_600_000)).toMatch(/^THE USER SAYS: tell him to do that now/)
   })
 
   it('lists the agents and directories when asked', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { searchConversation } from './real-deps'
+import { recentMessages, searchConversation } from './real-deps'
 
 const record = [
   { timestamp: '2026-10-02T09:00:00Z', role: 'user', content: 'Tell Kevin the bananas are ripe.' },
@@ -16,5 +16,22 @@ describe('searchConversation', () => {
 
   it('says so when nothing matches, and survives a torn last line', () => {
     expect(searchConversation(`${record}{"timestamp":`, 'kiwis')).toMatch(/Nothing in the conversation record/)
+  })
+})
+
+describe('recentMessages', () => {
+  it('takes the last messages, oldest first, skipping a line cut off by reading from the middle', () => {
+    const raw = [
+      'mestamp":"x","role":"user","content":"cut off"}',
+      '{"timestamp":"a","role":"user","content":"THE USER SAYS: one"}',
+      '{"timestamp":"b","role":"assistant","content":"two"}',
+      '{"timestamp":"c","role":"user","content":"THE USER SAYS: three"}',
+      '',
+    ].join('\n')
+    expect(recentMessages(raw, 2)).toEqual([
+      { role: 'assistant', content: 'two' },
+      { role: 'user', content: 'THE USER SAYS: three' },
+    ])
+    expect(recentMessages(raw, 10)).toHaveLength(3)
   })
 })

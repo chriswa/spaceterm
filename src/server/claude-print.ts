@@ -64,7 +64,15 @@ export interface ClaudePrintResponse {
     output_tokens?: number
     output_tokens_details?: { thinking_tokens?: number }
   }
+  /** What this turn arranged: a compaction started now (`size`), or scheduled for `at` (`auto`). */
+  next_compaction?: { trigger: 'auto' | 'size'; at: string }
 }
+
+/**
+ * The session is still running an earlier turn — one whose caller may have
+ * gone, since the daemon finishes a turn it started regardless.
+ */
+export class ClaudePrintBusy extends Error {}
 
 export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResponse> {
   const args = ['ask', '--tag', req.tag]
@@ -89,7 +97,8 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
       if (code !== 0) {
         // stderr carries the daemon's reason, which names the session and
         // how far it got; see ~/.claude-print-daemon/daemon.log for the rest.
-        reject(new Error(`${CLAUDE_PRINT_BIN} exited ${code}: ${(stderr || stdout).trim()}`))
+        const reason = `${CLAUDE_PRINT_BIN} exited ${code}: ${(stderr || stdout).trim()}`
+        reject(/409 Conflict/.test(stderr) ? new ClaudePrintBusy(reason) : new Error(reason))
         return
       }
       try {

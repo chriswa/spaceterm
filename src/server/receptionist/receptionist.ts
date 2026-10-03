@@ -57,13 +57,27 @@ export interface SessionAnswer {
   source?: string
   wallMs?: number
   costUsd?: number
+  /**
+   * When the daemon compacts the session next (epoch ms): a moment ago, for a
+   * compaction this turn started; an hour on, for the one it scheduled.
+   */
+  compactsAt?: number
 }
+
+/**
+ * The session is still answering an earlier message. Not a lost session: the
+ * daemon finishes a turn it started even after its caller has gone, so the
+ * next message waits for it.
+ */
+export class SessionBusy extends Error {}
 
 /** Which session Control is in, and which instructions it was started with. */
 export interface SavedSession {
   sessionId: string
   /** A new prompt means a new session: an old one keeps the instructions it began with. */
   promptHash: string
+  /** When the daemon compacts it, as its last answer said (epoch ms). */
+  compactsAt?: number
 }
 
 /** Jev's ranking of the agents against a description. */
@@ -99,6 +113,8 @@ export interface ReceptionistDeps {
   record: {
     append(messages: readonly RecordMessage[]): void
     search(query: string): string
+    /** The last `count` messages, oldest first. */
+    recent(count: number): RecordMessage[]
   }
   names: {
     get(nodeId: NodeId): NamedVoice | undefined
@@ -152,6 +168,15 @@ export interface ReceptionistOptions {
 const MAX_STEPS = 5
 /** Generous: a turn may wait behind a compaction the daemon is running. */
 const MODEL_TIMEOUT_MS = 90_000
+/** How long a message waits before trying a busy session again, and how many times. */
+const BUSY_RETRY_MS = 1_000
+const BUSY_RETRIES = 30
+/**
+ * The exchanges repeated word for word to a session that has just forgotten
+ * them, and the most of each that is kept.
+ */
+const RECAP_MESSAGES = 10
+const RECAP_MESSAGE_CHARS = 1_500
 const LAST_SAID_EVENT_CHARS = 1_500
 /** Agents `find_agent` reports, best first. */
 const FIND_AGENT_RESULTS = 10
@@ -284,10 +309,12 @@ export class Receptionist {
     if (heard !== undefined) await this.noteInterruption()
     const events = this.events.splice(0)
     const body = renderTurnBody(events, heard)
+    // Taken before this message joins the record, for a session that has forgotten what led up to it.
+    const earlier = this.deps.record.recent(RECAP_MESSAGES)
     if (heard !== undefined) this.deps.record.append([{ role: 'user', content: body }])
     let monitoring = false
     try {
-      const reply = await this.converse(attempt, body)
+      const reply = await this.converse(attempt, body, earlier)
       if (!attempt.isCurrent) {
         this.requeue(events)
         return
@@ -323,10 +350,10 @@ export class Receptionist {
    * the turn; everything else runs as soon as it is asked for. Returns the
    * final reply, or undefined if the attempt lost ownership.
    */
-  private async converse(attempt: Attempt, body: string): Promise<Reply | undefined> {
+  private async converse(attempt: Attempt, body: string, earlier: readonly RecordMessage[]): Promise<Reply | undefined> {
     let message = body
     for (let step = 1; step <= MAX_STEPS; step++) {
-      const answer = await this.ask(attempt, `${message}\n\n${FORMAT_REMINDER}`)
+      const answer = await this.ask(attempt, `${message}\n\n${FORMAT_REMINDER}`, step === 1 ? earlier : [])
       if (!attempt.isCurrent) return undefined
       this.deps.log({
         event: 'model-step', step, raw: answer.text, sessionId: answer.sessionId, source: answer.source ?? null,
@@ -376,23 +403,36 @@ export class Receptionist {
    * queued: a turn that supersedes another waits for the session to finish
    * answering the old one, since the daemon finishes a turn it started even
    * after its caller has gone.
+   *
+   * `earlier` is the conversation leading up to this message, repeated to a
+   * session that has forgotten it — a new one, or one compacted to a summary —
+   * so it never loses the thread of what was just said.
    */
-  private ask(attempt: Attempt, prompt: string): Promise<SessionAnswer> {
+  private ask(attempt: Attempt, prompt: string, earlier: readonly RecordMessage[]): Promise<SessionAnswer> {
     const run = async (): Promise<SessionAnswer> => {
       // Superseded while queued: never sent, so there is nothing to answer.
       if (!attempt.isCurrent) throw new Error('superseded before it was sent')
-      const signal = AbortSignal.any([attempt.signal, AbortSignal.timeout(MODEL_TIMEOUT_MS)])
-      const sessionId = this.session?.sessionId
+      // Not the attempt's signal. Being talked over must not cut the call
+      // short: the daemon would go on answering, the queue would move on, and
+      // the next message would find the session busy. The reply is let in and
+      // dropped below instead.
+      const signal = AbortSignal.timeout(MODEL_TIMEOUT_MS)
+      const session = this.session
+      const sessionId = session?.sessionId
       // Notes go on whatever message leaves next, read only now: the message
       // ahead of this one in the queue may have just produced one.
       const notes = this.notes.splice(0)
-      const message = notes.length ? `NOTE: ${notes.join(' ')}\n\n${prompt}` : prompt
+      const recap = forgets(session) ? renderRecap(earlier) : undefined
+      const message = [recap, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, prompt].filter(Boolean).join('\n\n')
       try {
-        const answer = await this.deps.askModel(
+        const answer = await this.askWhenFree(
           sessionId ? { prompt: message, sessionId } : { prompt: message, systemPrompt: RECEPTIONIST_SYSTEM_PROMPT }, signal,
         )
-        if (answer.sessionId !== sessionId) {
-          this.session = { sessionId: answer.sessionId, promptHash: PROMPT_HASH }
+        if (answer.sessionId !== sessionId || answer.compactsAt !== session?.compactsAt) {
+          this.session = {
+            sessionId: answer.sessionId, promptHash: PROMPT_HASH,
+            ...(answer.compactsAt !== undefined ? { compactsAt: answer.compactsAt } : {}),
+          }
           this.deps.session.save(this.session)
         }
         // The session answered, but the turn that asked is gone: nobody will
@@ -404,13 +444,29 @@ export class Receptionist {
         }
         return answer
       } catch (err) {
-        if (sessionId && !signal.aborted) throw new LostSession(err)
+        if (sessionId && !signal.aborted && !(err instanceof SessionBusy)) throw new LostSession(err)
         throw err
       }
     }
     const next = this.queue.then(run, run)
     this.queue = next.catch(() => undefined)
     return next
+  }
+
+  /**
+   * A busy session is still answering a message this server gave up on (it
+   * timed out, or a restart came in between), so it is waited for, never
+   * abandoned: abandoning it is what forgets the conversation.
+   */
+  private async askWhenFree(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.deps.askModel(turn, signal)
+      } catch (err) {
+        if (!(err instanceof SessionBusy) || signal.aborted || attempt >= BUSY_RETRIES) throw err
+        await this.deps.sleep(BUSY_RETRY_MS)
+      }
+    }
   }
 
   /** A session that will not answer is abandoned; the next turn starts a fresh one. */
@@ -773,6 +829,27 @@ function isSettled(state: ClaudeState): boolean {
 function storedReply(froms: readonly string[], spoken: readonly RenderedPart[]): string {
   const say: SayPart[] = spoken.map((part, i) => ({ from: froms[i], text: part.text.slice(part.introLength) }))
   return JSON.stringify({ say })
+}
+
+/**
+ * Whether the session has lost the conversation word for word: there is none
+ * yet, or the daemon has compacted it to a summary since its last answer. A
+ * compaction comes due on the daemon's clock; a message sent after that waits
+ * for it, so it reaches the compacted session.
+ */
+function forgets(session: SavedSession | undefined): boolean {
+  return !session || (session.compactsAt !== undefined && Date.now() >= session.compactsAt)
+}
+
+/** The conversation leading up to a message, for a session that has forgotten it. */
+function renderRecap(earlier: readonly RecordMessage[]): string | undefined {
+  if (!earlier.length) return undefined
+  const lines = earlier.map(({ role, content }) => {
+    const text = content.length <= RECAP_MESSAGE_CHARS ? content : `${content.slice(0, RECAP_MESSAGE_CHARS - 1)}…`
+    // A user message is a turn's body, already headed THE USER SAYS.
+    return role === 'user' ? text : `YOU: ${text}`
+  })
+  return `EARLIER CONVERSATION, word for word, oldest first:\n${lines.join('\n\n')}`
 }
 
 /** A session that failed to answer, as against a turn that was cancelled. */

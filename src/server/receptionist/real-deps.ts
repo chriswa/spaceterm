@@ -1,9 +1,9 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
-import { askClaudePrint } from '../claude-print'
+import { askClaudePrint, ClaudePrintBusy } from '../claude-print'
 import { serverLog } from '../server-log'
-import type { SavedSession, SessionAnswer, SessionTurn } from './receptionist'
+import { SessionBusy, type SavedSession, type SessionAnswer, type SessionTurn } from './receptionist'
 
 /**
  * The receptionist's real collaborators that are not the server's own state:
@@ -39,6 +39,8 @@ export async function askReceptionistModel(turn: SessionTurn, signal: AbortSigna
     autoCompact: { aboveTokens: RECEPTIONIST_COMPACT_ABOVE_TOKENS },
     tag: 'receptionist',
     signal,
+  }).catch((err: unknown) => {
+    throw err instanceof ClaudePrintBusy ? new SessionBusy(err.message) : err
   })
   return {
     text: response.result,
@@ -47,6 +49,7 @@ export async function askReceptionistModel(turn: SessionTurn, signal: AbortSigna
     source: response.source,
     wallMs: response.wall_ms,
     costUsd: response.total_cost_usd,
+    ...(response.next_compaction ? { compactsAt: Date.parse(response.next_compaction.at) } : {}),
   }
 }
 
@@ -68,7 +71,10 @@ export const REAL_RECEPTIONIST_SESSION = {
     try {
       const parsed = JSON.parse(fs.readFileSync(RECEPTIONIST_SESSION, 'utf8')) as Partial<SavedSession>
       return typeof parsed.sessionId === 'string' && typeof parsed.promptHash === 'string'
-        ? { sessionId: parsed.sessionId, promptHash: parsed.promptHash }
+        ? {
+            sessionId: parsed.sessionId, promptHash: parsed.promptHash,
+            ...(typeof parsed.compactsAt === 'number' ? { compactsAt: parsed.compactsAt } : {}),
+          }
         : undefined
     } catch {
       return undefined
@@ -87,6 +93,9 @@ export const REAL_RECEPTIONIST_SESSION = {
   },
 }
 
+/** Enough of the record's end for `recent`: a few dozen messages. */
+const RECENT_BYTES = 64 * 1024
+
 export const REAL_RECEPTIONIST_RECORD = {
   append(messages: readonly RecordMessage[]): void {
     try {
@@ -102,6 +111,38 @@ export const REAL_RECEPTIONIST_RECORD = {
     try { raw = fs.readFileSync(RECEPTIONIST_CONVERSATION, 'utf8') } catch { return 'There is no earlier conversation on record.' }
     return searchConversation(raw, query)
   },
+  recent(count: number): RecordMessage[] {
+    let raw: string
+    try { raw = readTail(RECEPTIONIST_CONVERSATION, RECENT_BYTES) } catch { return [] }
+    return recentMessages(raw, count)
+  },
+}
+
+function readTail(file: string, bytes: number): string {
+  const fd = fs.openSync(file, 'r')
+  try {
+    const size = fs.fstatSync(fd).size
+    const start = Math.max(0, size - bytes)
+    const buffer = Buffer.alloc(size - start)
+    fs.readSync(fd, buffer, 0, buffer.length, start)
+    return buffer.toString('utf8')
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+/** The last `count` messages of the record, oldest first. A line cut off by reading from the middle is skipped. */
+export function recentMessages(raw: string, count: number): RecordMessage[] {
+  const messages: RecordMessage[] = []
+  for (const line of raw.split('\n')) {
+    try {
+      const entry = JSON.parse(line) as Partial<RecordMessage>
+      if ((entry.role === 'user' || entry.role === 'assistant') && typeof entry.content === 'string') {
+        messages.push({ role: entry.role, content: entry.content })
+      }
+    } catch { /* blank, or the partial first line */ }
+  }
+  return messages.slice(-count)
 }
 
 /** The `recall` search over the conversation record, newest first. Split out to be tested on text. */
