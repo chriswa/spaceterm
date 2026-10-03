@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNodeStore } from '@/stores/nodeStore'
-import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
 import { Dictation } from './dictation'
 import { insertDictation } from './pcm'
@@ -217,10 +216,6 @@ export function Composer({ nodeId, onClose, onExitToCanvas }: {
       aria-label="Compose a prompt"
       style={swipeDx ? { transform: `translateX(${swipeDx}px)`, opacity: Math.max(0.4, 1 - Math.abs(swipeDx) / 300) } : undefined}
     >
-      <header className="mobile-term__bar">
-        <button className="mobile-btn" onClick={onClose}>‹ Terminal</button>
-        <span className="mobile-term__title">To: {node ? nodeDisplayTitle(node) : 'surface gone'}</span>
-      </header>
       <textarea
         ref={areaRef}
         className="mobile-composer__text"
@@ -253,6 +248,13 @@ export function Composer({ nodeId, onClose, onExitToCanvas }: {
           aria-label="Delete the word before the cursor"
         >
           ^W
+        </button>
+        <button
+          className="mobile-btn mobile-btn--icon mobile-btn--back"
+          onClick={onClose}
+          aria-label="Back to the terminal"
+        >
+          ‹
         </button>
         <button
           className={`mobile-btn mobile-btn--mic${mic.kind === 'listening' ? ' mobile-btn--recording' : ''}`}

@@ -440,9 +440,17 @@ textarea, input, [contenteditable="true"], .cm-content {
 .mobile-composer__actions {
   display: flex;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   flex: none;
 }
+/* Half as tall again as the app's other buttons: these are pressed a lot, by
+   a thumb, and the small ones are squares — never taller than wide. */
+.mobile-composer__actions .mobile-btn { min-height: 60px; }
+.mobile-composer__actions .mobile-btn--icon { min-width: 60px; padding: 0; }
+.mobile-btn--back { font-size: 28px; font-weight: 400; }
+/* What is left goes to these two, which give way rather than overflow. */
+.mobile-composer__actions .mobile-btn--mic,
+.mobile-composer__actions .mobile-btn--ship { min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; }
 .mobile-btn--icon { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; }
 .mobile-btn--mic { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .mobile-btn--ship { flex: 1; }
