@@ -21,6 +21,12 @@ interface SurfacePresenterState {
   /** Bumped by the host to ask App to unfocus. */
   unfocusRequests: number
   /**
+   * How far the latest unfocus request pulls the camera back, at least (see
+   * flyToUnfocusZoom); App's default when unset. The phone leaves further out
+   * after a sideways swipe than after a pinch.
+   */
+  unfocusZoomOut: number | undefined
+  /**
    * A surface the host wants focused — the phone's surface list. App navigates
    * to it exactly as for a toolbar crab, so unread clearing and the camera
    * behave the same on both.
@@ -36,7 +42,7 @@ interface SurfacePresenterState {
   setToolbarSheetOpen(open: boolean): void
   setExternal(external: boolean): void
   publishFocusedTerminal(nodeId: NodeId | null): void
-  requestUnfocus(): void
+  requestUnfocus(zoomOut?: number): void
   requestFocus(nodeId: NodeId): void
 }
 
@@ -44,6 +50,7 @@ export const useSurfacePresenterStore = create<SurfacePresenterState>((set) => (
   external: false,
   focusedTerminal: null,
   unfocusRequests: 0,
+  unfocusZoomOut: undefined,
   focusRequest: null,
   toolbarSheet: false,
   toolbarSheetOpen: false,
@@ -51,6 +58,6 @@ export const useSurfacePresenterStore = create<SurfacePresenterState>((set) => (
   setToolbarSheetOpen: (toolbarSheetOpen) => set({ toolbarSheetOpen }),
   setExternal: (external) => set({ external }),
   publishFocusedTerminal: (nodeId) => set((s) => (s.focusedTerminal === nodeId ? s : { focusedTerminal: nodeId })),
-  requestUnfocus: () => set((s) => ({ unfocusRequests: s.unfocusRequests + 1 })),
+  requestUnfocus: (zoomOut) => set((s) => ({ unfocusRequests: s.unfocusRequests + 1, unfocusZoomOut: zoomOut })),
   requestFocus: (nodeId) => set((s) => ({ focusRequest: { nodeId, seq: (s.focusRequest?.seq ?? 0) + 1 } }))
 }))

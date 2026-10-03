@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { TerminalGesture, LONG_PRESS_MS, EXIT_DISTANCE_PX, FLICK_DISTANCE_PX, PINCH_EXIT_SCALE } from './terminal-gesture'
+import { TerminalGesture, LONG_PRESS_MS, EXIT_DISTANCE_PX, FLICK_DISTANCE_PX, FLICK_SPEED_PX_PER_MS, PINCH_EXIT_SCALE } from './terminal-gesture'
 
 describe('TerminalGesture', () => {
   it('a quick touch without movement is a tap', () => {
@@ -68,7 +68,8 @@ describe('TerminalGesture', () => {
     const quick = new TerminalGesture()
     quick.begin(200, 300, 0)
     quick.move(200 - FLICK_DISTANCE_PX - 5, 302)
-    expect(quick.end(100)).toBe('exit')
+    // Faster than the flick speed over that distance.
+    expect(quick.end((FLICK_DISTANCE_PX + 5) / (FLICK_SPEED_PX_PER_MS * 1.5))).toBe('exit')
 
     const slow = new TerminalGesture()
     slow.begin(200, 300, 0)

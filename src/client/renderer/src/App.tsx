@@ -1462,7 +1462,9 @@ export function App() {
     handleUnfocus()
     // The host's view sits over a card fitted to a phone, already below the
     // desktop's unfocused zoom, so pull back from there as well.
-    if (!useCameraLockStore.getState().locked) flyToUnfocusZoom(EXTERNAL_UNFOCUS_ZOOM_OUT)
+    if (!useCameraLockStore.getState().locked) {
+      flyToUnfocusZoom(useSurfacePresenterStore.getState().unfocusZoomOut ?? EXTERNAL_UNFOCUS_ZOOM_OUT)
+    }
   }, [unfocusRequests, handleUnfocus, flyToUnfocusZoom])
   const focusRequest = useSurfacePresenterStore((s) => s.focusRequest)
   const handledFocusRef = useRef(0)

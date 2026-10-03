@@ -11,6 +11,7 @@ import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
 import { UsageReadout } from './UsageReadout'
 import { UpdateBadge } from './UpdateBadge'
+import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
 import { SummarizerButton } from './SummarizerButton'
 import { useDictationSession } from './dictation-session'
 import { DictationIndicator } from './DictationIndicator'
@@ -24,6 +25,12 @@ import { useSummaryChatStore } from '@/stores/summaryChatStore'
  * surfacePresenterStore): focusing a terminal works as it always has, and
  * this draws the result.
  */
+
+/**
+ * Leaving the terminal by swiping sideways zooms out twice as far as leaving
+ * otherwise: the card left behind ends a quarter of the size it filled.
+ */
+const SWIPE_EXIT_ZOOM_OUT = EXTERNAL_UNFOCUS_ZOOM_OUT ** 2
 
 /** Survives the reload that follows a reconnect, so a dropped link does not lose your place. */
 const OPEN_KEY = 'mobile.openTerminal'
@@ -72,13 +79,14 @@ export function MobileApp() {
     setCanvasCovered(focusedTerminal !== null)
   }, [focusedTerminal])
 
-  const closeTerminal = () => {
+  /** `zoomOut`: how far the canvas pulls back, when not its default. */
+  const closeTerminal = (zoomOut?: number) => {
     // Now, not from the effect after the re-render: the canvas's zoom-out on
     // the way back starts first, and a covered canvas snaps where it would fly.
     setCanvasCovered(false)
     rememberOpen(null)
     setComposerFor(null)
-    useSurfacePresenterStore.getState().requestUnfocus()
+    useSurfacePresenterStore.getState().requestUnfocus(zoomOut)
   }
 
   return (
@@ -104,7 +112,7 @@ export function MobileApp() {
         <TerminalView
           key={focusedTerminal}
           nodeId={focusedTerminal}
-          onClose={closeTerminal}
+          onClose={(via) => closeTerminal(via === 'swipe' ? SWIPE_EXIT_ZOOM_OUT : undefined)}
           onCompose={() => {
             // All inside the tap, which is what lets iOS raise the keyboard,
             // open the microphone and play sound.
@@ -126,8 +134,8 @@ export function MobileApp() {
           key={composerFor}
           nodeId={composerFor}
           onClose={() => setComposerFor(null)}
-          // Dictation carries on either way; see dictation-session.ts.
-          onExitToCanvas={closeTerminal}
+          // Always a sideways swipe. Dictation carries on; see dictation-session.ts.
+          onExitToCanvas={() => closeTerminal(SWIPE_EXIT_ZOOM_OUT)}
         />
       )}
       {dictating && !composerFor && <DictationIndicator />}

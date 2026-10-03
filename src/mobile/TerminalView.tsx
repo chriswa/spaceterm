@@ -40,7 +40,8 @@ function span(touches: TouchList): number {
 
 export function TerminalView({ nodeId, onClose, onCompose }: {
   nodeId: NodeId
-  onClose: () => void
+  /** Back to the canvas; `swipe` when a sideways swipe did it, which zooms further out. */
+  onClose: (via?: 'swipe') => void
   /** Called from inside the tap's touch handler, so it may take focus. */
   onCompose: () => void
 }) {
@@ -133,9 +134,9 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       armTimer.current = setTimeout(() => { if (g.isStill()) setPressArmed(true) }, LONG_PRESS_MS)
     }
     /** Far enough to leave: go now, and let the canvas carry on with the fingers. */
-    const leave = (e: TouchEvent) => {
+    const leave = (e: TouchEvent, via?: 'swipe') => {
       clearTimeout(armTimer.current)
-      onClose()
+      onClose(via)
       handTouchToCanvas(e)
     }
     const onMove = (e: TouchEvent) => {
@@ -149,7 +150,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       const t = e.touches[0]
       const move = g.move(t.clientX, t.clientY)
       if (move.kind === 'exit') {
-        leave(e)
+        leave(e, 'swipe')
         return
       }
       if (move.kind !== 'none') {
@@ -173,7 +174,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
         // Inside the touch handler, or iOS will not raise the keyboard.
         textarea()?.focus()
         setKeyboard(true)
-      } else if (outcome === 'exit') onClose()
+      } else if (outcome === 'exit') onClose('swipe')
     }
     el.addEventListener('touchstart', onStart, { passive: false })
     el.addEventListener('touchmove', onMove, { passive: false })
@@ -200,7 +201,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
 
   if (!terminal) {
     return (
-      <div className="mobile-term mobile-term--gone" onClick={onClose}>
+      <div className="mobile-term mobile-term--gone" onClick={() => onClose()}>
         <p>This surface is gone. Tap to return to the canvas.</p>
       </div>
     )

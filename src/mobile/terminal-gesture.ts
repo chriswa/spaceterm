@@ -36,9 +36,9 @@ export const AXIS_DECISION_PX = 16
  */
 export const HORIZONTAL_DOMINANCE = 2
 /** A horizontal drag this far leaves, then and there, whatever its speed. */
-export const EXIT_DISTANCE_PX = 93
+export const EXIT_DISTANCE_PX = 47
 /** A shorter one leaves if it is quick — a flick. */
-export const FLICK_DISTANCE_PX = 60
+export const FLICK_DISTANCE_PX = 30
 export const FLICK_SPEED_PX_PER_MS = 0.6
 /** Fingers brought this close, relative to where they started, leaves at once. */
 export const PINCH_EXIT_SCALE = 0.9
