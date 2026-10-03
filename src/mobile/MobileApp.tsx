@@ -12,6 +12,8 @@ import { setCanvasCovered } from './browser-platform'
 import { UsageReadout } from './UsageReadout'
 import { UpdateBadge } from './UpdateBadge'
 import { SummarizerButton } from './SummarizerButton'
+import { useDictationSession } from './dictation-session'
+import { DictationIndicator } from './DictationIndicator'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 
 /**
@@ -47,8 +49,8 @@ export function MobileApp() {
    * itself would not raise it.
    */
   const keyboardKeeperRef = useRef<HTMLInputElement>(null)
-  /** Listening started by the tap that opened the composer; see Composer's startDictation. */
-  const [openingDictation, setOpeningDictation] = useState<Promise<Dictation> | null>(null)
+  /** Dictating, with no composer open to show it: the bottom row's mic says so. */
+  const dictating = useDictationSession((s) => s.mic.kind !== 'idle')
 
   // Back to where we were after a reload, once the surface is known again.
   const restoring = useNodeStore((s) => {
@@ -108,9 +110,11 @@ export function MobileApp() {
             // open the microphone and play sound.
             keyboardKeeperRef.current?.focus()
             primeCues()
-            const dictation = Dictation.begin(window.api.dictation)
-            dictation.catch(() => undefined) // reported by the composer
-            setOpeningDictation(dictation)
+            // The composer opens into dictation — unless one is already going,
+            // started in another composer: this one takes it over.
+            if (useDictationSession.getState().mic.kind === 'idle') {
+              void useDictationSession.getState().start(Dictation.begin(window.api.dictation))
+            }
             setComposerFor(focusedTerminal)
           }}
         />
@@ -118,19 +122,15 @@ export function MobileApp() {
       <input ref={keyboardKeeperRef} className="mobile-keyboard-keeper" aria-hidden tabIndex={-1} />
       {composerFor && (
         <Composer
+          // Keyed, so opening another surface's composer starts fresh on its draft.
+          key={composerFor}
           nodeId={composerFor}
-          startDictation={openingDictation}
-          onClose={() => {
-            setComposerFor(null)
-            setOpeningDictation(null)
-          }}
-          onExitToCanvas={() => {
-            // Unmounting the composer cancels any dictation in progress.
-            setOpeningDictation(null)
-            closeTerminal()
-          }}
+          onClose={() => setComposerFor(null)}
+          // Dictation carries on either way; see dictation-session.ts.
+          onExitToCanvas={closeTerminal}
         />
       )}
+      {dictating && !composerFor && <DictationIndicator />}
       {/* Over the canvas and the terminal view alike; the composer has its own microphone. */}
       {summaryTarget && !composerFor && <SummarizerButton key={summaryTarget} nodeId={summaryTarget} />}
     </>

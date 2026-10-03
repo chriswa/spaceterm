@@ -172,6 +172,28 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 .m-usage__when { color: var(--m-dim); }
 
+/* Dictation still listening with no composer open (DictationIndicator.tsx):
+   on the bottom row, clear of Summary Chat's button in the middle and the
+   rocket in the corner. Not a button. */
+.m-dictating {
+  position: fixed;
+  left: calc(50% + 44px);
+  bottom: calc(var(--m-corner-gap) + 8px);
+  z-index: 2147483300;
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--m-danger);
+  color: #11111b;
+  pointer-events: none;
+  animation: m-summarizer-pulse 1.2s ease-in-out infinite;
+}
+.m-dictating--starting,
+.m-dictating--transcribing { background: var(--m-raised); color: var(--m-text); animation: none; }
+
 /* Summary Chat's talk button, bottom middle over everything while a
    conversation is open (see SummarizerButton.tsx). Its colour is its state. */
 .m-summarizer {

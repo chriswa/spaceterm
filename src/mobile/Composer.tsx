@@ -2,10 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNodeStore } from '@/stores/nodeStore'
 import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
-import { Dictation, whenHearing } from './dictation'
+import { Dictation } from './dictation'
 import { insertDictation } from './pcm'
 import { promptStore } from './prompt-store'
 import { playCue, primeCues } from './cues'
+import { useDictationSession } from './dictation-session'
 import { deleteWordBefore } from './text-edit'
 import { TerminalGesture } from './terminal-gesture'
 import { handTouchToCanvas } from '@/hooks/useTouchCamera'
@@ -20,32 +21,30 @@ import { handTouchToCanvas } from '@/hooks/useTouchCamera'
  * iOS evicts a backgrounded page freely, and a dictated paragraph lost to a
  * trip to another app is the failure worth designing against. Shipping or
  * clearing moves the draft into a history the ✕ sheet can restore from.
+ *
+ * The microphone is not the composer's: dictation carries on when it closes
+ * (dictation-session.ts), and whichever composer is open when it stops takes
+ * the words at its caret.
  */
 
 /** A button press that must not take focus from the text (and so dismiss the keyboard). */
 const keepFocus = (e: { preventDefault(): void }) => e.preventDefault()
 
-type MicState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'transcribing' }
-
-export function Composer({ nodeId, onClose, onExitToCanvas, startDictation }: {
+export function Composer({ nodeId, onClose, onExitToCanvas }: {
   nodeId: NodeId
   /** Back to the terminal. */
   onClose: () => void
   /** All the way back to the canvas — a sideways swipe, as in the terminal view. */
   onExitToCanvas: () => void
-  /**
-   * Listening already begun by the tap that opened this — it has to start
-   * inside that tap, or iOS will not let it record. Dictating is what the
-   * composer opens into.
-   */
-  startDictation?: Promise<Dictation> | null
 }) {
   const node = useNodeStore((s) => s.nodes[nodeId])
   const store = useMemo(() => promptStore(nodeId), [nodeId])
   const [text, setTextState] = useState(() => store.draft())
   const [history, setHistory] = useState(() => store.history())
-  const [mic, setMic] = useState<MicState>({ kind: 'idle' })
-  const [error, setError] = useState<string | null>(null)
+  const mic = useDictationSession((s) => s.mic)
+  const micError = useDictationSession((s) => s.error)
+  const [localError, setError] = useState<string | null>(null)
+  const error = localError ?? micError
   const [shipping, setShipping] = useState(false)
   const [clearSheet, setClearSheet] = useState(false)
   const [swipeDx, setSwipeDx] = useState(0)
@@ -82,78 +81,43 @@ export function Composer({ nodeId, onClose, onExitToCanvas, startDictation }: {
     area.setSelectionRange(area.value.length, area.value.length)
   }, [])
 
-  // Leaving with the mic open throws the audio away rather than leaking it.
-  const micRef = useRef(mic)
-  micRef.current = mic
+  /** Closed while a transcript was on its way: it goes to the end of the saved draft instead. */
   const closedRef = useRef(false)
-  useEffect(() => () => {
-    closedRef.current = true
-    const m = micRef.current
-    if (m.kind === 'listening') m.dictation.cancel()
-  }, [])
+  useEffect(() => () => { closedRef.current = true }, [])
 
   const rememberCursor = () => {
     cursorRef.current = areaRef.current?.selectionStart ?? text.length
   }
 
-  /** Voice Operator's cues throughout: started, finished, pasted — and its failure tones. */
-  const listen = async (pending: Promise<Dictation>) => {
-    setError(null)
-    rememberCursor()
-    setMic({ kind: 'starting' })
-    try {
-      // As on the desktop, the start cue means "safe to talk": it plays only
-      // once sound is actually arriving (see whenHearing).
-      const dictation = await whenHearing(pending)
-      if (closedRef.current) {
-        dictation.cancel()
-        return
-      }
-      setMic({ kind: 'listening', dictation })
-      playCue('listeningStarted')
-    } catch (err) {
-      setMic({ kind: 'idle' })
-      playCue('captureFailed')
-      setError(err instanceof Error ? err.message : String(err))
+  /**
+   * Stop the dictation — whichever composer began it — and put what was said
+   * at this one's caret. Resolves to the text afterwards.
+   */
+  const finishDictation = async (): Promise<string> => {
+    const transcript = await useDictationSession.getState().finish()
+    if (closedRef.current) {
+      const draft = store.draft()
+      if (transcript) store.setDraft(insertDictation(draft, draft.length, transcript).text)
+      return store.draft()
     }
-  }
-
-  // Open straight into dictation when the tap that opened us started it.
-  const startedRef = useRef(false)
-  useEffect(() => {
-    if (startedRef.current || !startDictation) return
-    startedRef.current = true
-    void listen(startDictation)
-  }, [startDictation])
-
-  /** Stop listening and put what was said at the caret. Resolves to the text afterwards. */
-  const finishDictation = async (dictation: Dictation): Promise<string> => {
-    playCue('listeningFinished')
-    setMic({ kind: 'transcribing' })
     const current = areaRef.current?.value ?? text
-    try {
-      const transcript = await dictation.finish()
-      const next = insertDictation(current, Math.min(cursorRef.current, current.length), transcript)
-      if (next.text !== current) {
-        setText(next.text, next.cursor)
-        playCue('pasted')
-      }
-      return next.text
-    } catch (err) {
-      playCue('transcriptionFailed')
-      setError(err instanceof Error ? err.message : String(err))
-      return current
-    } finally {
-      setMic({ kind: 'idle' })
+    if (!transcript) return current
+    const next = insertDictation(current, Math.min(cursorRef.current, current.length), transcript)
+    if (next.text !== current) {
+      setText(next.text, next.cursor)
+      playCue('pasted')
     }
+    return next.text
   }
 
   const toggleMic = () => {
     if (mic.kind === 'idle') {
+      setError(null)
+      rememberCursor()
       primeCues()
-      void listen(Dictation.begin(window.api.dictation))
+      void useDictationSession.getState().start(Dictation.begin(window.api.dictation))
     } else if (mic.kind === 'listening') {
-      void finishDictation(mic.dictation)
+      void finishDictation()
     }
   }
 
@@ -163,7 +127,7 @@ export function Composer({ nodeId, onClose, onExitToCanvas, startDictation }: {
     setShipping(true)
     setError(null)
     try {
-      const outgoing = mic.kind === 'listening' ? await finishDictation(mic.dictation) : text
+      const outgoing = mic.kind === 'listening' ? await finishDictation() : text
       if (!outgoing.trim()) return
       await window.api.node.shipIt(nodeId, outgoing)
       store.shipped(outgoing)
