@@ -1,0 +1,155 @@
+/**
+ * What the receptionist's model says back, and how it becomes speech.
+ *
+ * The model answers every turn with one JSON object: the parts it wants spoken,
+ * and the tools it wants run. JSON rather than real tool use because the model
+ * runs through claude-print-daemon's warm `claude -p` processes, which is what
+ * keeps a turn near the API's own latency; the price is that the shape is
+ * checked here instead of by the API.
+ */
+import { redactUnheard } from '../summary-chat'
+
+/** Who a spoken part comes from: the receptionist itself, or an agent by handle. */
+export const CONTROL = 'control'
+
+export type SayPart = { from: string; text: string }
+
+export type ToolCall =
+  | { tool: 'read'; agent: string; search?: string }
+  | { tool: 'ask_fork'; agent: string; question: string; fork?: string }
+  | { tool: 'monitor'; agent: string }
+
+export interface Reply {
+  say: SayPart[]
+  tools: ToolCall[]
+}
+
+/** Tools whose results the model must see before it can speak. */
+export function isBlocking(call: ToolCall): boolean {
+  return call.tool === 'read'
+}
+
+/**
+ * Parse one model reply. Throws with a reason the model can be shown when the
+ * reply is not the agreed shape, so a retry can tell it what went wrong.
+ */
+export function parseReply(raw: string): Reply {
+  const json = extractJsonObject(raw)
+  if (json === undefined) throw new Error('reply was not a JSON object')
+  let value: unknown
+  try { value = JSON.parse(json) } catch (err) {
+    throw new Error(`reply was not valid JSON: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (!isRecord(value)) throw new Error('reply was not a JSON object')
+  const say = value.say ?? []
+  const tools = value.tools ?? []
+  if (!Array.isArray(say)) throw new Error('"say" must be an array')
+  if (!Array.isArray(tools)) throw new Error('"tools" must be an array')
+  return {
+    say: say.map(parseSayPart).filter(part => part.text !== ''),
+    tools: tools.map(parseToolCall),
+  }
+}
+
+function parseSayPart(value: unknown): SayPart {
+  if (!isRecord(value) || typeof value.text !== 'string') throw new Error('each "say" part needs a "text" string')
+  const from = typeof value.from === 'string' && value.from.trim() ? value.from.trim() : CONTROL
+  return { from, text: value.text.trim() }
+}
+
+function parseToolCall(value: unknown): ToolCall {
+  if (!isRecord(value) || typeof value.tool !== 'string') throw new Error('each tool call needs a "tool" name')
+  const agent = typeof value.agent === 'string' ? value.agent.trim() : ''
+  if (!agent) throw new Error(`tool "${value.tool}" needs an "agent" handle`)
+  switch (value.tool) {
+    case 'read':
+      return typeof value.search === 'string' && value.search.trim()
+        ? { tool: 'read', agent, search: value.search.trim() }
+        : { tool: 'read', agent }
+    case 'ask_fork': {
+      if (typeof value.question !== 'string' || !value.question.trim()) throw new Error('"ask_fork" needs a "question"')
+      const fork = typeof value.fork === 'string' && value.fork.trim() ? value.fork.trim() : undefined
+      return { tool: 'ask_fork', agent, question: value.question.trim(), ...(fork ? { fork } : {}) }
+    }
+    case 'monitor':
+      return { tool: 'monitor', agent }
+    default:
+      throw new Error(`unknown tool "${value.tool}"`)
+  }
+}
+
+/**
+ * The outermost `{…}` in a reply. Haiku sometimes wraps JSON in a code fence
+ * or a sentence of preamble despite being told not to; neither is worth a
+ * retry when the object itself is intact.
+ */
+function extractJsonObject(raw: string): string | undefined {
+  const start = raw.indexOf('{')
+  const end = raw.lastIndexOf('}')
+  return start >= 0 && end > start ? raw.slice(start, end + 1) : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** One part, ready for the speech backend: words and the voice to say them in. */
+export type SpokenPart = { text: string; voice?: string }
+
+/** What a handle resolves to when it is spoken: its name, assigned on first use, and its voice. */
+export type Speaker = { name: string; voice: string }
+
+/**
+ * Turn a reply's parts into speech.
+ *
+ * `{handle}` placeholders become names, and an agent's own part is introduced
+ * in its own voice — "Kevin here." — so the voice and the name arrive together
+ * every time and the listener learns which is which. The receptionist's parts
+ * get no introduction.
+ *
+ * `resolve` assigns a name the first time a handle is spoken, which is the
+ * whole of when names get assigned: nothing is named until it is mentioned.
+ * Unknown handles are left as written rather than guessed at.
+ */
+export function renderSpeech(
+  say: readonly SayPart[],
+  resolve: (handle: string) => Speaker | undefined,
+  controlVoice: string,
+): SpokenPart[] {
+  const named = (text: string): string =>
+    text.replace(/\{([A-Za-z0-9_-]+)\}/g, (whole, handle: string) => resolve(handle)?.name ?? whole)
+  return say.map(part => {
+    if (part.from === CONTROL) return { text: named(part.text), voice: controlVoice }
+    const speaker = resolve(part.from)
+    // A part attributed to a handle that is not an agent is still the
+    // receptionist talking; giving it a voice it does not own would break
+    // the one rule the voices exist for.
+    if (!speaker) return { text: named(part.text), voice: controlVoice }
+    return { text: `${speaker.name} here. ${named(part.text)}`, voice: speaker.voice }
+  })
+}
+
+/**
+ * The listener's view of a spoken reply, cut to what they heard.
+ *
+ * `heard` is Voice Operator's `character_offset` into the parts joined with a
+ * single space — the convention the speech backends share. Parts after the cut
+ * are dropped, and the part it fell in is cut the way Summary Chat cuts an
+ * answer: see `redactUnheard`, whose rules about the half-heard word apply
+ * unchanged within a part.
+ */
+export function redactSpoken(parts: readonly SpokenPart[], heard: number): SpokenPart[] {
+  const kept: SpokenPart[] = []
+  let start = 0
+  for (const part of parts) {
+    const end = start + part.text.length
+    if (heard >= end) {
+      kept.push(part)
+    } else {
+      kept.push({ ...part, text: redactUnheard(part.text, Math.max(0, heard - start)) })
+      return kept
+    }
+    start = end + 1
+  }
+  return kept
+}
