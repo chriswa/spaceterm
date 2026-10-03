@@ -6,9 +6,9 @@ import type { UsageBar, UsagePalette, UsageSnapshot } from '../shared/usage-repo
  * menu bar (TrayBars.swift): one bar per window, filling bottom-up — a dim
  * column for time elapsed, a bright stripe in its right-hand lane for usage —
  * on black, framed by a hairline that turns white at 100%. Tight gaps within a
- * provider, wider between. Beside it, how old the reading is.
+ * provider, wider between. Only the bars, always.
  *
- * Tap for each bar's name and figures.
+ * Tap for each bar's name and figures, and how old the reading is.
  */
 
 /** The tracker's brand colours (PieChart.palette); time is the same at half brightness. */
@@ -24,10 +24,10 @@ const PALETTE_RGB: Record<UsagePalette, [number, number, number]> = {
 const rgb = ([r, g, b]: [number, number, number], k = 1) => `rgb(${Math.round(r * k)}, ${Math.round(g * k)}, ${Math.round(b * k)})`
 const pct = (f: number) => `${Math.round(f * 100)}%`
 
-/** "just now", "4m", "1h 5m" — how long ago, at a glance. */
+/** "moments", "4m", "1h 5m" — how long ago, as in "4m ago". */
 export function ageText(ms: number): string {
   const minutes = Math.floor(ms / 60_000)
-  if (minutes < 1) return 'now'
+  if (minutes < 1) return 'moments'
   if (minutes < 60) return `${minutes}m`
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
@@ -61,14 +61,13 @@ export function UsageReadout() {
     return () => { live = false; off() }
   }, [])
 
-  // The age label only shows minutes.
+  // The details' age only shows minutes.
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(timer)
   }, [])
 
   if (!snapshot || snapshot.bars.length === 0) return null
-  const age = snapshot.updatedAt === null ? '?' : ageText(now - snapshot.updatedAt)
 
   return (
     <div className="m-usage" onClick={() => setOpen((o) => !o)}>
@@ -80,14 +79,15 @@ export function UsageReadout() {
             </div>
           ))}
           {snapshot.updatedAt !== null && (
-            <div className="m-usage__when">Read {new Date(snapshot.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
+            <div className="m-usage__when">
+              Read {new Date(snapshot.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} ({ageText(now - snapshot.updatedAt)} ago)
+            </div>
           )}
         </div>
       )}
       <span className="m-usage__bars">
         {snapshot.bars.map((b) => <Bar key={b.label} bar={b} />)}
       </span>
-      <span className="m-usage__age">{age}</span>
     </div>
   )
 }

@@ -120,7 +120,6 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-usage__time { left: 0; right: 0; }
 .m-usage__used { right: 0; width: 3px; box-shadow: 0 0 1px rgba(0, 0, 0, 0.6); }
 .m-usage__error { margin-left: 5px; font-size: 18px; line-height: 24px; }
-.m-usage__age { color: var(--m-dim); font-size: 11px; line-height: 1; }
 .m-usage__detail {
   position: absolute;
   left: 0;
