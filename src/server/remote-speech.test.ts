@@ -1,0 +1,142 @@
+import { describe, it, expect, vi } from 'vitest'
+import { RemoteSpeech, splitSentences } from './remote-speech'
+import { parseWav, speechStatus, type SpeechBackend } from './voice-operator'
+import type { ServerMessage } from '../shared/protocol'
+
+const PHONE = 'phone-client'
+
+function harness(opts: { connected?: boolean; synthesize?: (text: string) => Uint8Array | undefined } = {}) {
+  const sent: ServerMessage[] = []
+  let connected = opts.connected ?? true
+  let ids = 0
+  const speech = new RemoteSpeech({
+    synthesize: async (text) => {
+      const pcm = opts.synthesize ? opts.synthesize(text) : new Uint8Array(4)
+      return pcm && { pcm, sampleRate: 24000 }
+    },
+    send: (_clientId, msg) => {
+      if (!connected) return false
+      sent.push(msg)
+      return true
+    },
+    isConnected: () => connected,
+    newId: () => `rs_${++ids}`,
+  })
+  const fallback: SpeechBackend = {
+    speak: vi.fn(async () => ({ status: 202, body: { id: 'sp_mac', state: 'in_progress' } })),
+    status: vi.fn(async () => ({ status: 200, body: { id: 'sp_mac', state: 'completed' } })),
+    drop: vi.fn(async () => ({ status: 410, body: { id: 'sp_mac', state: 'cancelled_by_client' } })),
+  }
+  const backend = speech.forClient(PHONE, fallback)
+  return { speech, backend, fallback, sent, disconnect: () => { connected = false } }
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+const TEXT = 'The agent fixed the bug. It also added a test! Anything else?'
+
+describe('splitSentences', () => {
+  it('keeps each sentence with its place in the text', () => {
+    const sentences = splitSentences(TEXT)
+    expect(sentences.map((s) => s.text)).toEqual(['The agent fixed the bug.', 'It also added a test!', 'Anything else?'])
+    for (const s of sentences) expect(TEXT.slice(s.start, s.end)).toBe(s.text)
+  })
+
+  it('keeps an unterminated tail', () => {
+    expect(splitSentences('One. Two').map((s) => s.text)).toEqual(['One.', 'Two'])
+  })
+})
+
+describe('RemoteSpeech', () => {
+  it('sends each sentence to the phone, in order, as Voice Operator would accept a job', async () => {
+    const h = harness()
+    const job = speechStatus(await h.backend.speak(TEXT))
+    expect(job).toMatchObject({ id: 'rs_1', state: 'in_progress', playback_state: 'queued' })
+    await settle()
+    expect(h.sent.map((m) => m.type === 'speech-audio' && [m.index, m.count])).toEqual([[0, 3], [1, 3], [2, 3]])
+  })
+
+  it('is speaking once the phone starts, has heard what it finished, and completes on the last', async () => {
+    const h = harness()
+    await h.backend.speak(TEXT)
+    await settle()
+    h.speech.progress(PHONE, 'rs_1', 0, 'started')
+    expect(speechStatus(await h.backend.status('rs_1'))?.playback_state).toBe('speaking')
+    h.speech.progress(PHONE, 'rs_1', 0, 'finished')
+    expect(speechStatus(await h.backend.status('rs_1'))?.character_offset).toBe('The agent fixed the bug.'.length)
+    h.speech.progress(PHONE, 'rs_1', 1, 'finished')
+    h.speech.progress(PHONE, 'rs_1', 2, 'finished')
+    expect(speechStatus(await h.backend.status('rs_1'))).toMatchObject({ state: 'completed', character_offset: TEXT.length })
+  })
+
+  it('a long poll with a cursor wakes on the next change', async () => {
+    const h = harness()
+    const job = speechStatus(await h.backend.speak(TEXT))!
+    const poll = h.backend.status('rs_1', { wait: 30, since: job.version })
+    h.speech.progress(PHONE, 'rs_1', 0, 'started')
+    expect(speechStatus(await poll)?.playback_state).toBe('speaking')
+  })
+
+  it('dropping stops the phone and reports how far the listener got, as Voice Operator does', async () => {
+    const h = harness()
+    await h.backend.speak(TEXT)
+    await settle()
+    h.speech.progress(PHONE, 'rs_1', 0, 'finished')
+    const dropped = await h.backend.drop('rs_1')
+    expect(dropped?.status).toBe(410)
+    expect(speechStatus(dropped)).toMatchObject({ state: 'cancelled_by_client', character_offset: 24 })
+    expect(h.sent.at(-1)).toEqual({ type: 'speech-stop', id: 'rs_1' })
+  })
+
+  it('a sentence that cannot be synthesized fails the job', async () => {
+    const h = harness({ synthesize: (text) => text.startsWith('It') ? undefined : new Uint8Array(4) })
+    await h.backend.speak(TEXT)
+    await settle()
+    expect(speechStatus(await h.backend.status('rs_1'))?.state).toBe('synthesis_failed')
+  })
+
+  it('the phone going away ends its job where it got to', async () => {
+    const h = harness()
+    await h.backend.speak(TEXT)
+    h.speech.clientGone(PHONE)
+    expect(speechStatus(await h.backend.status('rs_1'))?.state).toBe('cancelled_by_client')
+  })
+
+  it('speaks on the Mac when the phone is not connected, and follows that job there', async () => {
+    const h = harness({ connected: false })
+    expect(speechStatus(await h.backend.speak(TEXT))?.id).toBe('sp_mac')
+    await h.backend.drop('sp_mac')
+    expect(h.fallback.drop).toHaveBeenCalledWith('sp_mac')
+  })
+
+  it('ignores another client reporting on a job it does not own', async () => {
+    const h = harness()
+    await h.backend.speak(TEXT)
+    h.speech.progress('someone-else', 'rs_1', 0, 'started')
+    expect(speechStatus(await h.backend.status('rs_1'))?.playback_state).toBe('queued')
+  })
+})
+
+describe('parseWav', () => {
+  function wav(samples: number[], sampleRate = 24000): Uint8Array {
+    const data = new Int16Array(samples)
+    const out = new Uint8Array(44 + data.byteLength)
+    const view = new DataView(out.buffer)
+    const tag = (at: number, s: string) => [...s].forEach((c, i) => { out[at + i] = c.charCodeAt(0) })
+    tag(0, 'RIFF'); view.setUint32(4, 36 + data.byteLength, true); tag(8, 'WAVE')
+    tag(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true)
+    view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true)
+    tag(36, 'data'); view.setUint32(40, data.byteLength, true)
+    out.set(new Uint8Array(data.buffer), 44)
+    return out
+  }
+
+  it('finds the samples and the rate', () => {
+    const parsed = parseWav(wav([1, -2, 3]))
+    expect(parsed?.sampleRate).toBe(24000)
+    expect([...new Int16Array(parsed!.pcm.buffer.slice(0))]).toEqual([1, -2, 3])
+  })
+
+  it('refuses what is not a WAV', () => {
+    expect(parseWav(new Uint8Array(50))).toBeUndefined()
+  })
+})

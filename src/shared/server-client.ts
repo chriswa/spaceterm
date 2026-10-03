@@ -1,6 +1,6 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
-import type { AgentSearchMode } from './protocol'
+import type { AgentSearchMode, SpeechProgressEvent } from './protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -67,6 +67,7 @@ export type ServerEventType =
   | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active' | 'speaking-changed'
   | 'summary-chat-status' | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
+  | 'speech-audio' | 'speech-stop'
   | 'agent-meta-availability' | 'server-error'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -273,6 +274,8 @@ export class ServerClient {
       case 'auto-stamps-enabled':
       case 'restart-required':
       case 'usage-report':
+      case 'speech-audio':
+      case 'speech-stop':
       case 'agent-meta-availability':
         this.emit(msg)
         return
@@ -758,6 +761,10 @@ export class ServerClient {
     this.fireAndForget({ type: 'dictation-cancel', id })
   }
 
+  speechProgress(id: string, index: number, event: SpeechProgressEvent): void {
+    this.fireAndForget({ type: 'speech-progress', id, index, event })
+  }
+
   // ─── speech ───────────────────────────────────────────────────────────────
 
   /** Speak a selection, or stop what is already being said — the server rules on which. */
@@ -775,9 +782,9 @@ export class ServerClient {
    * One press of the Summary Chat chord. Request/reply because only the server
    * can say whether a press started an answer or cut one off.
    */
-  async toggleSummaryChat(nodeId: NodeId | undefined, mode: SummaryChatMode): Promise<SummaryChatToggleResult> {
-    this.log(`[summary-chat] ${mode} chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}`)
-    const resp = await this.request({ type: 'summary-chat-toggle', mode, ...(nodeId ? { nodeId } : {}) })
+  async toggleSummaryChat(nodeId: NodeId | undefined, mode: SummaryChatMode, playHere = false): Promise<SummaryChatToggleResult> {
+    this.log(`[summary-chat] ${mode} chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}${playHere ? ', speaking here' : ''}`)
+    const resp = await this.request({ type: 'summary-chat-toggle', mode, ...(nodeId ? { nodeId } : {}), ...(playHere ? { playHere } : {}) })
     if (resp.type !== 'summary-chat-toggle-result') return unexpected(resp)
     this.log(`[summary-chat] chord ${resp.outcome}${resp.message ? `: ${resp.message}` : ''}`)
     return { outcome: resp.outcome, message: resp.message }

@@ -1,7 +1,7 @@
 import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
-  SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi
+  SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
@@ -406,6 +406,14 @@ export class FakeBridge implements Api {
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
     cancel: (id) => this.record('dictation.cancel', id)
+  }
+
+  private readonly speechAudio = new Set<Parameters<RemoteSpeechApi['onAudio']>[0]>()
+  private readonly speechStop = new Set<(id: string) => void>()
+  readonly remoteSpeech: RemoteSpeechApi = {
+    onAudio: (cb) => subscribe(this.speechAudio, cb),
+    onStop: (cb) => subscribe(this.speechStop, cb),
+    progress: (id, index, event) => this.record('remoteSpeech.progress', id, index, event)
   }
 
   readonly perf: PerfApi = {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   SummaryChat,
   finalAgentMessage,
@@ -1186,6 +1186,25 @@ describe('followUp', () => {
     h.statuses.length = 0
     await h.chat.followUp('hello')
     expect(h.statuses.every((s) => s.nodeId === other)).toBe(true)
+  })
+})
+
+describe('speaking somewhere other than Voice Operator', () => {
+  it('a conversation started with a backend speaks its answer and its follow-ups there', async () => {
+    const h = harness()
+    const spoken: string[] = []
+    const phone = {
+      speak: vi.fn(async (text: string) => {
+        spoken.push(text)
+        return { status: 202, body: { id: `rs_${spoken.length}`, state: 'in_progress', version: 1 } }
+      }),
+      status: vi.fn(async (id: string) => ({ status: 200, body: { id, state: 'completed', version: 2 } })),
+      drop: vi.fn(async (id: string) => ({ status: 410, body: { id, state: 'cancelled_by_client' } })),
+    }
+    await h.chat.start(NODE, { transcriptPath: '/t.jsonl' }, 'summary', phone)
+    await h.chat.followUp('and then?')
+    expect(spoken).toHaveLength(2)
+    expect(h.http.calls.filter((c) => c.url.includes('/v1/speech'))).toEqual([])
   })
 })
 

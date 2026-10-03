@@ -132,7 +132,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       usageReportStatus: () => client.usageReportQuery()
     },
     log: (message) => platform.log(message),
-    toggleSummaryChat: (nodeId, mode) => client.toggleSummaryChat(nodeId, mode),
+    toggleSummaryChat: (nodeId, mode) => client.toggleSummaryChat(nodeId, mode, platform.playsSpeech ?? false),
     summaryChatFollowUp: (text) => client.summaryChatFollowUp(text),
     endSummaryChat: () => client.endSummaryChat(),
     async restartSpaceterm() {
@@ -153,6 +153,11 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       audio: (id, pcm) => client.dictationAudio(id, pcm),
       finish: (id) => client.dictationFinish(id),
       cancel: (id) => client.dictationCancel(id)
+    },
+    remoteSpeech: {
+      onAudio: (cb) => on('speech-audio', ({ id, index, count, sampleRate, pcm }) => cb({ id, index, count, sampleRate, pcm })),
+      onStop: (cb) => on('speech-stop', (m) => cb(m.id)),
+      progress: (id, index, event) => client.speechProgress(id, index, event)
     },
     perf: platform.perf,
     window: {

@@ -30,7 +30,7 @@ import type {
   SpeakOutcome,
   SummaryChatMode,
   SummaryChatToggleOutcome,
-  SummaryChatUiState,
+  SummaryChatUiState, SpeechProgressEvent
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { NodeData, NodeStamp, ServerState } from './state'
@@ -276,6 +276,17 @@ export interface DictationApi {
   cancel(id: string): void
 }
 
+/**
+ * Speech played on this client — the phone — rather than by Voice Operator on
+ * the Mac: audio arrives a sentence at a time, and the client reports what it
+ * has played. See `src/server/remote-speech.ts`.
+ */
+export interface RemoteSpeechApi {
+  onAudio(callback: (audio: { id: string; index: number; count: number; sampleRate: number; pcm: string }) => void): () => void
+  onStop(callback: (id: string) => void): () => void
+  progress(id: string, index: number, event: SpeechProgressEvent): void
+}
+
 export interface PerfApi {
   startTrace(): Promise<void>
   stopTrace(): Promise<string>
@@ -363,6 +374,7 @@ export interface Api {
   openExternal(url: string): Promise<void>
   tts: TtsApi
   dictation: DictationApi
+  remoteSpeech: RemoteSpeechApi
   perf: PerfApi
   window: WindowApi
   system: SystemApi
@@ -398,6 +410,8 @@ export interface PlatformApi {
   window: Omit<WindowApi, 'onFocusNode'>
   /** Agent memory is measured by the server, not the host; see `createApi`. */
   system: Omit<SystemApi, 'getAgentMemory'>
+  /** This client plays Summary Chat's speech itself, rather than the Mac. */
+  playsSpeech?: boolean
 }
 
 export type ServerPipeEventKind = 'open' | 'data' | 'close'

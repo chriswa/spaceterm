@@ -42,6 +42,20 @@ export function cueSamples(cue: Cue): Float32Array<ArrayBuffer> {
 let context: AudioContext | null = null
 
 /**
+ * The page's one audio context — cues and spoken answers both play through it,
+ * so a tap that wakes it for one has woken it for the other. Null when the
+ * browser offers no Web Audio.
+ */
+export function audioContext(): AudioContext | null {
+  try {
+    context ??= new AudioContext()
+    return context
+  } catch {
+    return null
+  }
+}
+
+/**
  * Play a cue. Fire-and-forget, and silent rather than throwing when audio is
  * unavailable: a cue is confirmation, never a reason for something to fail.
  */

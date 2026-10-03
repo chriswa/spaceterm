@@ -4,6 +4,7 @@ import { installApi } from '@/lib/install-api'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
 import { browserPlatform, forwardLogs } from './browser-platform'
+import { startSpeechPlayer } from './speech-player'
 import '@/styles/index.css'
 import './mobile.css'
 
@@ -52,6 +53,8 @@ if (!token) {
     // Switching apps is when the phone's microphone and socket misbehave, so
     // the log marks each one.
     document.addEventListener('visibilitychange', () => window.api.log(`[lifecycle] page ${document.visibilityState}`))
+    // Summary Chat speaks here, not on the Mac (browserPlatform's playsSpeech).
+    startSpeechPlayer(window.api.remoteSpeech, (message) => window.api.log(message))
     const { MobileApp } = await import('./MobileApp')
     root.render(
       <StrictMode>

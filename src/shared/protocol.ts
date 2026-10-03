@@ -749,6 +749,22 @@ export interface SummaryChatToggleMessage {
   seq: number
   nodeId?: NodeId
   mode: SummaryChatMode
+  /**
+   * Speak on this client rather than through Voice Operator on the Mac — the
+   * phone. See `src/server/remote-speech.ts`.
+   */
+  playHere?: boolean
+}
+
+/** What a client playing speech reports: a sentence began, ended, or could not be played. */
+export type SpeechProgressEvent = 'started' | 'finished' | 'failed'
+
+/** A client's playback of a {@link SpeechAudioMessage}, sentence by sentence. */
+export interface SpeechProgressMessage {
+  type: 'speech-progress'
+  id: string
+  index: number
+  event: SpeechProgressEvent
 }
 
 /**
@@ -1072,6 +1088,7 @@ export type ClientMessage =
   | SummaryChatToggleMessage
   | SummaryChatFollowUpMessage
   | SummaryChatEndMessage
+  | SpeechProgressMessage
   | SpeakToggleMessage
   | SpeakStopMessage
   | SaveViewportMessage
@@ -1120,6 +1137,26 @@ export interface UsageReportResultMessage {
   type: 'usage-report-result'
   seq: number
   snapshot: UsageSnapshot | null
+}
+
+/**
+ * One sentence of a speech job for this client to play, after any before it.
+ * Signed 16-bit mono PCM, base64. See `src/server/remote-speech.ts`.
+ */
+export interface SpeechAudioMessage {
+  type: 'speech-audio'
+  id: string
+  index: number
+  /** Sentences in the whole job; the last is `count - 1`. */
+  count: number
+  sampleRate: number
+  pcm: string
+}
+
+/** Stop playing a speech job now, and drop what is queued of it. */
+export interface SpeechStopMessage {
+  type: 'speech-stop'
+  id: string
 }
 
 /** Unsolicited broadcast: a new AI usage reading (PUSH). */
@@ -1672,3 +1709,5 @@ export type ServerMessage =
   | RestartRequiredMessage
   | UsageReportResultMessage
   | UsageReportMessage
+  | SpeechAudioMessage
+  | SpeechStopMessage

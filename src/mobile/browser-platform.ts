@@ -74,6 +74,8 @@ export function browserPlatform(): PlatformApi {
       if (/^https?:\/\//.test(url)) window.open(url, '_blank', 'noopener')
     },
     restartClient: () => window.setTimeout(() => window.location.reload(), 1500),
+    // The phone is where its listener is: Summary Chat answers play here.
+    playsSpeech: true,
     raiseWindow: () => undefined,
     onFocusRequest: () => () => undefined,
     perf: {

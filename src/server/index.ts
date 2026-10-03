@@ -38,6 +38,7 @@ import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
 import { UsageTracker } from './usage-tracker'
+import { RemoteSpeech } from './remote-speech'
 import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
@@ -289,6 +290,19 @@ const directSpeech = new DirectSpeech({
 
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator())
+
+/** Speech on the phone, synthesized by Voice Operator — dictation in reverse. See remote-speech.ts. */
+const speechVoiceOperator = new VoiceOperator()
+const findClient = (id: string) => [...clients].find((c) => c.id === id)
+const remoteSpeech = new RemoteSpeech({
+  synthesize: (text, voice, signal) => speechVoiceOperator.synthesize(text, voice, signal),
+  send: (clientId, msg) => {
+    const client = findClient(clientId)
+    if (client) send(client.link, msg)
+    return client !== undefined
+  },
+  isConnected: (clientId) => findClient(clientId) !== undefined,
+})
 
 /**
  * Point the right transcript watcher at a surface's agent session.
@@ -727,6 +741,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
     close() {
       if (!clients.delete(client)) return
       remoteDictation.cancelAllFor(client.id)
+      remoteSpeech.clientGone(client.id)
       for (const [nodeId, owner] of terminalBorrowers) {
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
       }
@@ -1341,6 +1356,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'speech-progress': {
+      remoteSpeech.progress(client.id, msg.id, msg.index, msg.event)
+      break
+    }
+
     case 'summary-chat-end': {
       void summaryChat.end()
       break
@@ -1356,7 +1376,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         sourceAgentSessionId: terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
         claudeState: terminal?.claudeState,
         pendingTurn: terminal && pendingTurnCache.get(terminal.sessionId),
-      }, msg.mode).then((result) => {
+      }, msg.mode, msg.playHere ? remoteSpeech.forClient(client.id, speechVoiceOperator) : undefined).then((result) => {
         // Back to the client that pressed the key, not to every peer: the
         // chirp, the shake and the toast belong to one person.
         send(client.link, {

@@ -9,7 +9,7 @@ import type { ClaudeState } from '../shared/state'
 import type { PendingTurn } from './pending-turn'
 import { speakableToolText } from './speakable-tool-text'
 import {
-  VoiceOperator, speechStatus, DISCOVERY_PATH, type SpeechResponse, type SpeechStatus,
+  VoiceOperator, speechStatus, DISCOVERY_PATH, type SpeechBackend, type SpeechResponse, type SpeechStatus,
 } from './voice-operator'
 import type {
   SummaryChatMode, SummaryChatPhase, SummaryChatToggleOutcome, SummaryChatUiState,
@@ -233,6 +233,8 @@ interface PreparedCommon {
   caution?: string
   /** Which interactive tool's input was injected, if any. Audited. */
   injectedTool?: PendingTurn['tool']
+  /** Where this conversation speaks; Voice Operator on the Mac unless the press said otherwise. */
+  speech?: SpeechBackend
 }
 
 /**
@@ -276,6 +278,11 @@ interface Conversation {
   /** Prefixed to this conversation's first answer only. See `PENDING_TURN_CAUTION`. */
   caution?: string
   voice?: string
+  /**
+   * Where every answer in this conversation is spoken, fixed when it starts:
+   * the device that asked hears the follow-ups too.
+   */
+  speech: SpeechBackend
   speechId?: string
   /** The run currently allowed to act on this conversation. See `Attempt`. */
   attempt?: Attempt
@@ -433,11 +440,13 @@ export class SummaryChat {
    */
   async toggle(
     nodeId: NodeId | undefined, snapshot: SurfaceSnapshot = {}, mode: SummaryChatMode = 'summary',
+    speech?: SpeechBackend,
   ): Promise<ToggleResult> {
     if (await this.cancelAll()) return { outcome: 'cancelled' }
     if (!nodeId) return { outcome: 'rejected', message: 'Focus an agent terminal to start Summary Chat.' }
     const prepared = this.prepare(nodeId, snapshot, mode)
     if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
+    prepared.speech = speech
     // Answer the press now rather than when the answer is ready. The exchange
     // takes seconds; a confirmation that waited for it would land long after
     // the gesture it is confirming, and a second press in the meantime would
@@ -478,9 +487,11 @@ export class SummaryChat {
    */
   async start(
     nodeId: NodeId, snapshot: SurfaceSnapshot = {}, mode: SummaryChatMode = 'summary',
+    speech?: SpeechBackend,
   ): Promise<ToggleResult> {
     const prepared = this.prepare(nodeId, snapshot, mode)
     if ('message' in prepared) return { outcome: 'rejected', message: prepared.message }
+    prepared.speech = speech
     await this.run(prepared)
     return { outcome: 'started' }
   }
@@ -553,6 +564,7 @@ export class SummaryChat {
       haikuHistory: [],
       caution,
       voice: this.voiceFor(nodeId),
+      speech: prepared.speech ?? this.vo,
       phase: 'ready',
       lastUsedSeq: ++this.useCounter,
     }
@@ -705,13 +717,13 @@ export class SummaryChat {
     // The Voice Operator may have appeared after this chat started. Lock a
     // deterministic voice as soon as its voice list becomes available.
     conversation.voice ??= this.voiceFor(conversation.nodeId)
-    const speech = await this.speak(text, conversation.voice)
+    const speech = await this.speak(conversation.speech, text, conversation.voice)
     if (!attempt.isCurrent) {
       // Cancelled while the POST was in flight. The job now exists and no
       // monitor will ever adopt it, so it has to be dropped right here — this
       // is the window that used to speak a whole answer at a listener who had
       // already asked for silence.
-      if (speech.job) void this.dropSpeech(speech.job.id)
+      if (speech.job) void conversation.speech.drop(speech.job.id)
       return false
     }
     if (speech.error) {
@@ -864,7 +876,7 @@ export class SummaryChat {
     if (recorded !== undefined) return recorded
     // Still-live job: the follow-up beat the monitor to the terminal status.
     if (!conversation.speechId) return undefined
-    const status = speechStatus(await this.vo.status(conversation.speechId))
+    const status = speechStatus(await conversation.speech.status(conversation.speechId))
     if (status?.state !== 'interrupted_by_user') return undefined
     return status.character_offset ?? 0
   }
@@ -887,7 +899,7 @@ export class SummaryChat {
     attempt?.abandon()
     this.setPhase(conversation, 'ready')
     if (!speechId) return
-    const status = speechStatus(await this.dropSpeech(speechId))
+    const status = speechStatus(await conversation.speech.drop(speechId))
     // Being cut off is exactly the situation the interruption offset exists to
     // describe, so record it for the next follow-up. A reported zero is a real
     // answer — the listener heard no complete sentence — and has to be told
@@ -896,11 +908,6 @@ export class SummaryChat {
     if (typeof status?.character_offset === 'number') {
       conversation.interruptedAtCharacter = status.character_offset
     }
-  }
-
-  /** Ask Voice Operator to drop a job, wherever it is in its lifecycle. */
-  private dropSpeech(speechId: string): Promise<SpeechResponse> {
-    return this.vo.drop(speechId)
   }
 
   /**
@@ -926,7 +933,7 @@ export class SummaryChat {
       // The default request timeout is intentionally short for one-shot
       // operations. A speech monitor, however, must tolerate a stalled local
       // service without falsely declaring the job finished.
-      const status = speechStatus(await this.vo.status(
+      const status = speechStatus(await conversation.speech.status(
         speechId,
         { wait, ...(cursor === undefined ? {} : { since: cursor }) },
         { signal: attempt.signal },
@@ -1007,8 +1014,10 @@ export class SummaryChat {
    * the chord and then heard nothing deserves to be told which of "muted" and
    * "broken" they are looking at.
    */
-  private async speak(text: string, voice: string | undefined): Promise<{ job?: SpeechStatus; error?: string }> {
-    const response = await this.vo.speak(text, voice)
+  private async speak(
+    backend: SpeechBackend, text: string, voice: string | undefined,
+  ): Promise<{ job?: SpeechStatus; error?: string }> {
+    const response = await backend.speak(text, voice)
     const job = speechStatus(response)
     if (job?.id) return { job }
     // An absent response covers two different situations, and reporting both as

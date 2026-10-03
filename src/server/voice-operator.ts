@@ -66,6 +66,13 @@ export function speechStatus(response: SpeechResponse): SpeechStatus | undefined
   return typeof body?.id === 'string' && typeof body.state === 'string' ? body : undefined
 }
 
+/**
+ * Somewhere speech jobs can be run: Voice Operator itself, which plays on the
+ * Mac, or `RemoteSpeech`, which plays on a phone. Both answer in Voice
+ * Operator's job format, so Summary Chat follows either the same way.
+ */
+export type SpeechBackend = Pick<VoiceOperator, 'speak' | 'status' | 'drop'>
+
 export class VoiceOperator {
   constructor(private readonly deps: VoiceOperatorDeps = REAL_VOICE_OPERATOR_DEPS) {}
 
@@ -123,6 +130,28 @@ export class VoiceOperator {
     return this.request(`/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}${since}`, init, timeoutMs)
   }
 
+  /**
+   * The audio for one piece of text, handed back rather than played: signed
+   * 16-bit mono PCM and its rate. Undefined when Voice Operator could not be
+   * reached or could not synthesize. See RemoteSpeech.
+   */
+  async synthesize(text: string, voice?: string, signal?: AbortSignal): Promise<{ pcm: Uint8Array; sampleRate: number } | undefined> {
+    const port = this.port()
+    if (port === undefined) return undefined
+    try {
+      const response = await this.deps.fetch(`http://127.0.0.1:${port}/v1/synthesize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text, ...(voice ? { voice } : {}) }),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+      })
+      if (response.status !== 200) return undefined
+      return parseWav(new Uint8Array(await response.arrayBuffer()))
+    } catch {
+      return undefined
+    }
+  }
+
   // ─── remote transcription ───────────────────────────────────────────────
   //
   // Voice Operator owns the Wispr session (its refresh tokens rotate, so only
@@ -161,4 +190,29 @@ export class VoiceOperator {
     const port = discovery.port
     return typeof port === 'number' && port > 0 && port < 65536 ? port : undefined
   }
+}
+
+/**
+ * The samples and rate of a PCM WAV — 16-bit mono, which is what Voice
+ * Operator's synthesizer returns. Walks the chunks rather than assuming a
+ * 44-byte header.
+ */
+export function parseWav(bytes: Uint8Array): { pcm: Uint8Array; sampleRate: number } | undefined {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const tag = (at: number) => String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3])
+  if (bytes.length < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return undefined
+  let sampleRate = 0
+  for (let at = 12; at + 8 <= bytes.length;) {
+    const size = view.getUint32(at + 4, true)
+    if (tag(at) === 'fmt ') {
+      if (view.getUint16(at + 8 + 2, true) !== 1 || view.getUint16(at + 8 + 14, true) !== 16) return undefined
+      sampleRate = view.getUint32(at + 8 + 4, true)
+    } else if (tag(at) === 'data') {
+      if (!sampleRate) return undefined
+      const end = Math.min(bytes.length, at + 8 + size)
+      return { pcm: bytes.slice(at + 8, end - ((end - at - 8) % 2)), sampleRate }
+    }
+    at += 8 + size + (size % 2)
+  }
+  return undefined
 }
