@@ -79,19 +79,31 @@ export function MobileApp() {
   }, [restoring, restored])
 
   useEffect(() => {
+    window.api.log(`[mobile-view] focused terminal ${focusedTerminal ?? 'none'}`)
     if (focusedTerminal) rememberOpen(focusedTerminal)
     // The terminal view covers the whole canvas: let it stop drawing.
     setCanvasCovered(focusedTerminal !== null)
   }, [focusedTerminal])
 
-  /** `zoomOut`: how far the canvas pulls back, when not its default. */
-  const closeTerminal = (zoomOut?: number) => {
-    window.api.log(`[mobile-view] terminal closed${zoomOut === undefined ? '' : ` (zoom out ${zoomOut})`}${composerFor ? ', from the composer' : ''}`)
+  /**
+   * `zoomOut`: how far the canvas pulls back, when not its default. `from`
+   * says which gesture asked, for the log.
+   *
+   * Only while a terminal is open: the canvas zooms out by `zoomOut` from
+   * wherever it is, so a second exit — a stray gesture in the composer as it
+   * closed, say — pulled back a further four times, to a canvas so wide its
+   * drawing ran the page out of memory, and the reload came back to the same
+   * place.
+   */
+  const closeTerminal = (from: string, zoomOut?: number) => {
+    const open = useSurfacePresenterStore.getState().focusedTerminal
+    window.api.log(`[mobile-view] terminal close from ${from}${zoomOut === undefined ? '' : ` (zoom out ${zoomOut})`}${open ? '' : ' — none open, ignored'}`)
+    setComposerFor(null)
+    if (!open) return
     // Now, not from the effect after the re-render: the canvas's zoom-out on
     // the way back starts first, and a covered canvas snaps where it would fly.
     setCanvasCovered(false)
     rememberOpen(null)
-    setComposerFor(null)
     useSurfacePresenterStore.getState().requestUnfocus(zoomOut)
   }
 
@@ -118,7 +130,7 @@ export function MobileApp() {
         <TerminalView
           key={focusedTerminal}
           nodeId={focusedTerminal}
-          onClose={(via) => closeTerminal(via === 'swipe' ? SWIPE_EXIT_ZOOM_OUT : undefined)}
+          onClose={(via) => closeTerminal(`the terminal (${via ?? 'pinch or tap'})`, via === 'swipe' ? SWIPE_EXIT_ZOOM_OUT : undefined)}
           onCompose={() => {
             // All inside the tap, which is what lets iOS raise the keyboard,
             // open the microphone and play sound.
@@ -145,7 +157,7 @@ export function MobileApp() {
             setComposerFor(null)
           }}
           // Always a sideways swipe. Dictation carries on; see dictation-session.ts.
-          onExitToCanvas={() => closeTerminal(SWIPE_EXIT_ZOOM_OUT)}
+          onExitToCanvas={() => closeTerminal('the composer (swipe)', SWIPE_EXIT_ZOOM_OUT)}
         />
       )}
       {dictating && !composerFor && <DictationIndicator />}

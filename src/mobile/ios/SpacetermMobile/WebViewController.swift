@@ -4,6 +4,8 @@ import WebKit
 /// The web view, configured for an app that is a web page and nothing else.
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate {
     private var webView: WKWebView!
+    /// Times iOS has ended the page's process since launch; see below.
+    private var processRestarts = 0
 
     /// `SpacetermURL` from Info.plist, written at build time by install.sh.
     private let startURL: URL? = {
@@ -106,7 +108,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
 
     /// iOS kills a page's process when it uses too much memory; without this
     /// the app would sit on a blank screen.
+    /// The reloaded page is told how many times, so its log says why it reloaded.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        processRestarts += 1
+        webView.configuration.userContentController.addUserScript(WKUserScript(
+            source: "window.spacetermProcessRestarts = \(processRestarts)",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         load()
     }
 

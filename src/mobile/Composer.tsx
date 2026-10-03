@@ -80,6 +80,11 @@ export function Composer({ nodeId, onClose, onExitToCanvas }: {
     area.setSelectionRange(area.value.length, area.value.length)
   }, [])
 
+  useEffect(() => {
+    window.api.log(`[mobile-view] composer mounted for ${nodeId}`)
+    return () => window.api.log(`[mobile-view] composer unmounted for ${nodeId}`)
+  }, [nodeId])
+
   /** Closed while a transcript was on its way: it goes to the end of the saved draft instead. */
   const closedRef = useRef(false)
   useEffect(() => () => { closedRef.current = true }, [])

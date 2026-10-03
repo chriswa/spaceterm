@@ -84,6 +84,11 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
   /** How far a pinch has closed, for the view to shrink with it; 1 when not pinching. */
   const [pinchScale, setPinchScale] = useState(1)
 
+  useEffect(() => {
+    window.api.log(`[mobile-view] terminal view mounted for ${nodeId}`)
+    return () => window.api.log(`[mobile-view] terminal view unmounted for ${nodeId}`)
+  }, [nodeId])
+
   // Hand the surface back to the canvas card on the way out (this card held
   // the live subscription), and give the surface its own size back.
   useEffect(() => {

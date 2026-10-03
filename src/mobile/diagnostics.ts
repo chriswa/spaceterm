@@ -2,7 +2,7 @@
  * Logging for a freeze: the screen stops updating while the page goes on
  * running (seen leaving the terminal view after a dictation in the composer —
  * the canvas kept panning, by the server's log, behind a frozen picture of
- * the terminal). Three things to tell apart, each in the server's log:
+ * the terminal). Things to tell apart, each in the server's log:
  *
  * - `[focus]` — what holds the focus as it moves. A text box focused or
  *   removed while the keyboard comes and goes is the prime suspect.
@@ -11,7 +11,14 @@
  * - `[frames]` — the page's frames stopping while its timers still run: the
  *   web view no longer drawing, rather than the page hung. Logged when it
  *   starts and when it ends, if it ends.
+ * - `[lifecycle]` — the page reloaded because iOS ended its process, as it
+ *   does to a page using too much memory (the app counts them; see
+ *   WebViewController's `webViewWebContentProcessDidTerminate`).
  */
+
+declare global {
+  interface Window { spacetermProcessRestarts?: number }
+}
 
 /** No frame for this long while the page is visible is a stall worth logging. */
 const STALL_MS = 1000
@@ -24,6 +31,10 @@ function describe(el: Element | null): string {
 }
 
 export function installDiagnostics(log: (message: string) => void): void {
+  if (window.spacetermProcessRestarts) {
+    log(`[lifecycle] reloaded because iOS ended the page's process (${window.spacetermProcessRestarts} this launch)`)
+  }
+
   document.addEventListener('focusin', (e) => log(`[focus] in ${describe(e.target as Element)}`), true)
   document.addEventListener('focusout', (e) => {
     const target = e.target as Element
