@@ -365,14 +365,53 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 /* The hover actions a hidden-head card keeps for the desktop. */
 .mobile-term .card-shell__hidden-head-actions { display: none; }
-.mobile-term__press {
-  position: absolute;
+/* The long-press menu around the thumb (RadialMenu.tsx, radial-menu.ts). */
+.m-radial {
+  position: fixed;
   inset: 0;
-  box-shadow: inset 0 0 0 3px var(--m-accent);
+  z-index: 2147483150;
   pointer-events: none;
-  animation: mobile-press-in 120ms ease-out;
+  animation: m-radial-in 120ms ease-out;
 }
-@keyframes mobile-press-in { from { opacity: 0; } }
+@keyframes m-radial-in { from { opacity: 0; transform: scale(0.9); } }
+.m-radial__hub {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border-radius: 10px;
+  border: 2px solid var(--m-accent);
+}
+.m-radial__item {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 50%;
+  background: var(--m-raised);
+  border: 1px solid var(--m-border);
+  color: var(--m-text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  transition: transform 80ms ease-out, background 80ms;
+}
+.m-radial__item--selected { background: var(--m-accent); color: #11111b; transform: scale(1.12); }
+.m-radial__icon { font-size: 22px; line-height: 1; }
+.m-radial__label { font: 600 11px/1.1 -apple-system, system-ui, sans-serif; text-align: center; padding: 0 6px; }
+.mobile-term__notice {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--m-danger);
+  background: var(--m-surface);
+  color: var(--m-text);
+  font-size: 14px;
+  pointer-events: none;
+}
 
 /* Takes focus inside the tap that opens the composer; see MobileApp. */
 .mobile-keyboard-keeper {

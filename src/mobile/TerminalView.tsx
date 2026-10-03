@@ -8,6 +8,9 @@ import { handTouchToCanvas } from '@/hooks/useTouchCamera'
 import { NO_GLIDE, startGlide, VelocityTracker } from '@/lib/touch-momentum'
 import { KeyRow } from './KeyRow'
 import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
+import { layoutRadial, pickRadial, type Point, type RadialLayout } from './radial-menu'
+import { RadialMenu } from './RadialMenu'
+import { pressSummaryChatChord, REAL_CHORD_CUES } from '@/lib/summary-chat-chord'
 
 /**
  * One terminal surface, filling the screen and nothing else.
@@ -20,8 +23,10 @@ import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
  *
  * Every touch goes to the gesture layer, never to xterm: drag up/down to
  * scroll — and a flicked scroll carries on after the finger lifts, as any iOS
- * scroll view does (touch-momentum.ts) — swipe sideways or pinch in to leave, tap to compose, long-press to
- * type with the keyboard and the extra keys, and again to put them away. See
+ * scroll view does (touch-momentum.ts) — swipe sideways or pinch in to leave,
+ * tap to compose. A long press opens a radial menu around the thumb (the
+ * keyboard and its extra keys, Summary Chat); the thumb aims, releasing
+ * chooses, and releasing in the middle chooses nothing. See
  * terminal-gesture.ts. Leaving
  * happens mid-gesture, and the canvas takes the rest of it as a pan or pinch.
  */
@@ -35,6 +40,10 @@ const SCALE = 0.94
 const BORROW_SETTLE_MS = 150
 
 const noop = () => undefined
+
+/** What a long press offers, in order around the arc from the left. */
+type RadialOptionId = 'keyboard' | 'summarize'
+const RADIAL_OPTIONS: RadialOptionId[] = ['keyboard', 'summarize']
 
 /** Distance between the first two touches. */
 function span(touches: TouchList): number {
@@ -61,7 +70,15 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
   const keyboardRef = useRef(keyboard)
   keyboardRef.current = keyboard
   const [swipeDx, setSwipeDx] = useState(0)
-  const [pressArmed, setPressArmed] = useState(false)
+  /** The long-press menu around the thumb, and the option it points at. */
+  const [radial, setRadial] = useState<{ layout: RadialLayout; selected: number | null } | null>(null)
+  /** A short message over the terminal — Summary Chat saying why it could not start. */
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), 4000)
+    return () => clearTimeout(timer)
+  }, [notice])
   /** The row height the terminal really draws at on this phone; see TerminalCard's onRowHeight. */
   const [rowHeight, setRowHeight] = useState(CELL_HEIGHT)
   /** How far a pinch has closed, for the view to shrink with it; 1 when not pinching. */
@@ -129,6 +146,30 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
     let glide = NO_GLIDE
     /** A touch that stopped a glide stops it and nothing more — not a tap that opens the composer. */
     let caughtGlide = false
+    /** Open while a long-pressing thumb is choosing; the finger only aims then. */
+    let menu: RadialLayout | null = null
+    let thumb: Point = { x: 0, y: 0 }
+    const closeMenu = () => {
+      menu = null
+      setRadial(null)
+    }
+    /** What a released long press chose. Inside the touch handler, where iOS lets the keyboard rise. */
+    const choose = (option: RadialOptionId) => {
+      if (option === 'keyboard') {
+        // The blur ends typing mode (see below).
+        if (keyboardRef.current) textarea()?.blur()
+        else {
+          textarea()?.focus()
+          setKeyboard(true)
+        }
+      } else {
+        void pressSummaryChatChord(nodeId, 'summary', {
+          toggle: (id, mode) => window.api.toggleSummaryChat(id, mode),
+          ...REAL_CHORD_CUES,
+          rejected: setNotice,
+        })
+      }
+    }
 
     const onStart = (e: TouchEvent) => {
       // Owning the touch from its start is what stops WebKit beginning a
@@ -141,14 +182,20 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       clearTimeout(armTimer.current)
       if (e.touches.length >= 2) {
         // A second finger: the touch is a pinch from here on.
-        setPressArmed(false)
+        closeMenu()
         setSwipeDx(0)
         g.pinch(span(e.touches))
         return
       }
       const t = e.touches[0]
+      thumb = { x: t.clientX, y: t.clientY }
       g.begin(t.clientX, t.clientY, e.timeStamp)
-      armTimer.current = setTimeout(() => { if (g.isStill()) setPressArmed(true) }, LONG_PRESS_MS)
+      // Held still long enough: the menu opens around the thumb.
+      armTimer.current = setTimeout(() => {
+        if (!g.isStill()) return
+        menu = layoutRadial(RADIAL_OPTIONS.length, thumb, { width: window.innerWidth, height: window.innerHeight })
+        setRadial({ layout: menu, selected: pickRadial(menu, thumb) })
+      }, LONG_PRESS_MS)
     }
     /** Far enough to leave: go now, and let the canvas carry on with the fingers. */
     const leave = (e: TouchEvent, via?: 'swipe') => {
@@ -165,15 +212,19 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
         return
       }
       const t = e.touches[0]
+      thumb = { x: t.clientX, y: t.clientY }
+      if (menu) {
+        // Choosing, not scrolling.
+        const selected = pickRadial(menu, thumb)
+        setRadial((current) => current && current.selected !== selected ? { ...current, selected } : current)
+        return
+      }
       const move = g.move(t.clientX, t.clientY)
       if (move.kind === 'exit') {
         leave(e, 'swipe')
         return
       }
-      if (move.kind !== 'none') {
-        clearTimeout(armTimer.current)
-        setPressArmed(false)
-      }
+      if (move.kind !== 'none') clearTimeout(armTimer.current)
       if (move.kind === 'scroll') {
         scrollBy(move.deltaY, t.clientX, t.clientY)
         tracker.add(t.clientX, t.clientY, e.timeStamp)
@@ -186,10 +237,15 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       // No synthetic mouse events or click: xterm must never see the touch.
       e.preventDefault()
       clearTimeout(armTimer.current)
-      setPressArmed(false)
       setSwipeDx(0)
       setPinchScale(1)
       const outcome = g.end(e.timeStamp)
+      if (menu) {
+        const picked = e.type === 'touchend' ? pickRadial(menu, thumb) : null
+        closeMenu()
+        if (picked !== null) choose(RADIAL_OPTIONS[picked])
+        return
+      }
       if (scrolled) {
         // Finger up is a positive wheel delta, so the glide's travel is negated.
         const at = scrolled
@@ -197,18 +253,9 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
         return
       }
       if (caughtGlide) return
+      // A long press released in the menu's middle chose nothing: nothing happens.
       if (outcome === 'tap') onCompose()
-      else if (outcome === 'long-press') {
-        // A second long press puts the keyboard away again; the blur ends
-        // typing mode (below).
-        if (keyboardRef.current) {
-          textarea()?.blur()
-          return
-        }
-        // Inside the touch handler, or iOS will not raise the keyboard.
-        textarea()?.focus()
-        setKeyboard(true)
-      } else if (outcome === 'exit') onClose('swipe')
+      else if (outcome === 'exit') onClose('swipe')
     }
     el.addEventListener('touchstart', onStart, { passive: false })
     el.addEventListener('touchmove', onMove, { passive: false })
@@ -222,7 +269,7 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
       clearTimeout(armTimer.current)
       glide.stop()
     }
-  }, [onClose, onCompose])
+  }, [nodeId, onClose, onCompose])
 
   // The keyboard's own dismiss (and any other blur) ends typing mode.
   useEffect(() => {
@@ -300,7 +347,16 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
             onRowHeight={setRowHeight}
           />
         </div>
-        {pressArmed && <div className="mobile-term__press" aria-hidden />}
+        {notice && <div className="mobile-term__notice" role="alert">{notice}</div>}
+        {radial && (
+          <RadialMenu
+            layout={radial.layout}
+            selected={radial.selected}
+            options={RADIAL_OPTIONS.map((id) => id === 'keyboard'
+              ? { label: keyboard ? 'Hide keyboard' : 'Keyboard', icon: '⌨︎' }
+              : { label: 'Summarize', icon: '🗣︎' })}
+          />
+        )}
       </div>
       {keyboard && <KeyRow sessionId={terminal.sessionId} onHide={() => textarea()?.blur()} />}
     </div>
