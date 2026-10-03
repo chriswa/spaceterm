@@ -11,6 +11,10 @@
  * - `[frames]` — the page's frames stopping while its timers still run: the
  *   web view no longer drawing, rather than the page hung. Logged when it
  *   starts and when it ends, if it ends.
+ * - `[zoom]` — the camera's zoom each time it crosses an octave, mid-gesture
+ *   included, with how many cards are glowing: a page killed mid-pinch dies
+ *   with its last zoom in the log. (Glows sized for one zoom and magnified by
+ *   another were what killed it pinching in from fully zoomed out.)
  * - `[lifecycle]` — the page reloaded because iOS ended its process, as it
  *   does to a page using too much memory (the app counts them; see
  *   WebViewController's `webViewWebContentProcessDidTerminate`).
@@ -66,8 +70,18 @@ export function installDiagnostics(log: (message: string) => void): void {
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)
+  let lastOctave: number | null = null
   let lastTick = performance.now()
   setInterval(() => {
+    const surface = document.querySelector<HTMLElement>('.canvas-surface')
+    const zoom = Number(surface?.style.getPropertyValue('--camera-zoom'))
+    if (zoom > 0) {
+      const octave = Math.round(Math.log2(zoom))
+      if (octave !== lastOctave) {
+        lastOctave = octave
+        log(`[zoom] ${zoom.toFixed(4)}, ${document.querySelectorAll('.card-shell--glow').length} glowing cards`)
+      }
+    }
     const now = performance.now()
     const late = now - lastTick - WATCH_MS
     lastTick = now
