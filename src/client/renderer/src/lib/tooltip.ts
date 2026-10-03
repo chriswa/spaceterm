@@ -143,6 +143,12 @@ function hide() {
   currentTarget = null
 }
 
+/**
+ * Tooltips follow a real mouse only. A touch screen fires compatibility
+ * `mouseover` on every tap, and with no `mouseout` to follow until the next tap
+ * elsewhere, a tapped button's tooltip stayed stuck over the canvas on the phone.
+ * Hover is a mouse idea; a finger gets no tooltip at all.
+ */
 export function initTooltips(): void {
   // Watch for data-tooltip attribute changes while a tooltip is visible.
   // This handles cases where React re-renders a button mid-hover (e.g. toggle
@@ -153,7 +159,8 @@ export function initTooltips(): void {
     }
   })
 
-  document.addEventListener('mouseover', (e) => {
+  document.addEventListener('pointerover', (e) => {
+    if (e.pointerType !== 'mouse') return
     const target = (e.target as HTMLElement).closest?.('[data-tooltip]') as HTMLElement | null
     if (target) {
       observer.disconnect()
@@ -164,8 +171,8 @@ export function initTooltips(): void {
     }
   })
 
-  document.addEventListener('mouseout', (e) => {
-    if (!currentTarget) return
+  document.addEventListener('pointerout', (e) => {
+    if (!currentTarget || e.pointerType !== 'mouse') return
     const related = e.relatedTarget as HTMLElement | null
     if (!related || !currentTarget.contains(related)) {
       observer.disconnect()
