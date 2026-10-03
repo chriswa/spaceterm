@@ -86,6 +86,7 @@ export function MobileApp() {
 
   /** `zoomOut`: how far the canvas pulls back, when not its default. */
   const closeTerminal = (zoomOut?: number) => {
+    window.api.log(`[mobile-view] terminal closed${zoomOut === undefined ? '' : ` (zoom out ${zoomOut})`}${composerFor ? ', from the composer' : ''}`)
     // Now, not from the effect after the re-render: the canvas's zoom-out on
     // the way back starts first, and a covered canvas snaps where it would fly.
     setCanvasCovered(false)
@@ -128,6 +129,7 @@ export function MobileApp() {
             if (useDictationSession.getState().mic.kind === 'idle') {
               void useDictationSession.getState().start(Dictation.begin(window.api.dictation))
             }
+            window.api.log('[mobile-view] composer opened')
             setComposerFor(focusedTerminal)
           }}
         />
@@ -138,7 +140,10 @@ export function MobileApp() {
           // Keyed, so opening another surface's composer starts fresh on its draft.
           key={composerFor}
           nodeId={composerFor}
-          onClose={() => setComposerFor(null)}
+          onClose={() => {
+            window.api.log('[mobile-view] composer closed')
+            setComposerFor(null)
+          }}
           // Always a sideways swipe. Dictation carries on; see dictation-session.ts.
           onExitToCanvas={() => closeTerminal(SWIPE_EXIT_ZOOM_OUT)}
         />
