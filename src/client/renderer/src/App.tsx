@@ -171,6 +171,8 @@ export function App() {
   const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: NodeId | null; toNodeId: NodeId; ts: number } | null>(null)
   const focusRestoredRef = useRef(false)
   const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
+  /** The node a finger long-pressed, and once it moves on, the drag of it. */
+  const touchPressRef = useRef<{ nodeId: NodeId; drag: { startX: number; startY: number; zoom: number } | null } | null>(null)
   const [edgeSplit, setEdgeSplit] = useState<{ parentId: NodeId; childId: NodeId; worldPoint: { x: number; y: number }; screenX: number; screenY: number } | null>(null)
   const cmdClickPendingRef = useRef<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
   const shiftClickPendingRef = useRef(false)
@@ -2516,7 +2518,29 @@ export function App() {
     // The touch version of ⌘-click: the quick-actions toolbar for that node.
     onLongPress: ({ x, y }) => {
       const nodeId = document.elementFromPoint(x, y)?.closest('[data-node-id]')?.getAttribute('data-node-id')
+      touchPressRef.current = nodeId ? { nodeId: nodeId as NodeId, drag: null } : null
       if (nodeId) setQuickActions({ nodeId: nodeId as NodeId, screenX: x, screenY: y })
+    },
+    // Moving on from the long press drags that node instead: the menu goes,
+    // and the drag runs through the same start/move/end as a mouse drag by
+    // the title bar, descendants and undo included.
+    onLongPressDrag: (dx, dy) => {
+      const press = touchPressRef.current
+      if (!press) return false
+      if (!press.drag) {
+        const node = useNodeStore.getState().nodes[press.nodeId]
+        if (!node || press.nodeId === ROOT_NODE_ID) return false
+        setQuickActions(null)
+        press.drag = { startX: node.x, startY: node.y, zoom: cameraRef.current.z }
+        handleDragStart(press.nodeId)
+      }
+      handleMove(press.nodeId, press.drag.startX + dx / press.drag.zoom, press.drag.startY + dy / press.drag.zoom)
+      return true
+    },
+    onLongPressDragEnd: () => {
+      const press = touchPressRef.current
+      touchPressRef.current = null
+      if (press?.drag) handleDragEnd(press.nodeId)
     }
   })
 

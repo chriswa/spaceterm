@@ -405,3 +405,9 @@ textarea, input, [contenteditable="true"], .cm-content {
   border-radius: 8px;
   background: var(--m-surface);
 }
+
+/* The long-press quick actions, a third bigger for a thumb. `scale` composes
+   with the toolbar's own centring transform. */
+.floating-toolbar {
+  scale: 1.33;
+}

@@ -83,6 +83,45 @@ describe('useTouchCamera', () => {
     expect(touch(viewport, 'touchend', [])).toBe(false)
   })
 
+  describe('moving on from a long press', () => {
+    const pressAndHold = (viewport: Element) => {
+      touch(viewport, 'touchstart', [[120, 140]])
+      vi.advanceTimersByTime(500)
+    }
+
+    it('drags instead of panning, measured from where it was pressed', () => {
+      vi.useFakeTimers()
+      const { viewport, controls } = setup()
+      const onLongPressDrag = vi.fn(() => true)
+      const onLongPressDragEnd = vi.fn()
+      Object.assign(controls, { onLongPressDrag, onLongPressDragEnd })
+      pressAndHold(viewport)
+      // Within the slop it is still only a long press.
+      touch(viewport, 'touchmove', [[123, 141]])
+      expect(onLongPressDrag).not.toHaveBeenCalled()
+      expect(touch(viewport, 'touchmove', [[150, 160]])).toBe(true)
+      touch(viewport, 'touchmove', [[170, 100]])
+      expect(onLongPressDrag).toHaveBeenLastCalledWith(50, -40)
+      expect(controls.pan).not.toHaveBeenCalled()
+      expect(onLongPressDragEnd).not.toHaveBeenCalled()
+      expect(touch(viewport, 'touchend', [])).toBe(true)
+      expect(onLongPressDragEnd).toHaveBeenCalledTimes(1)
+    })
+
+    it('pans when there is nothing to drag, and ends no drag', () => {
+      vi.useFakeTimers()
+      const { viewport, controls } = setup()
+      const onLongPressDragEnd = vi.fn()
+      Object.assign(controls, { onLongPressDrag: vi.fn(() => false), onLongPressDragEnd })
+      pressAndHold(viewport)
+      touch(viewport, 'touchmove', [[150, 140]])
+      touch(viewport, 'touchmove', [[160, 140]])
+      expect(controls.pan).toHaveBeenLastCalledWith(-10, 0)
+      touch(viewport, 'touchend', [])
+      expect(onLongPressDragEnd).not.toHaveBeenCalled()
+    })
+  })
+
   describe('momentum', () => {
     const fling = (viewport: Element, endAt: number) => {
       touch(viewport, 'touchstart', [[300, 300]], 1000)

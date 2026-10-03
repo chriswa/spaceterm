@@ -14,6 +14,8 @@ import { Momentum, VelocityTracker } from '../lib/touch-momentum'
  * browser still turns it into the click that focuses a card. A finger held
  * still is a long press — the touch version of a desktop ⌘-click — and its
  * click is suppressed, so it does not also focus whatever it was held on.
+ * Moving on from a long press, without lifting, drags what was pressed
+ * instead of panning — the touch version of dragging a card by its title.
  *
  * A pan that is still moving when the finger lifts carries on and eases to a
  * stop, the way iOS scroll views do (see touch-momentum.ts); the next touch
@@ -32,6 +34,14 @@ export interface TouchCameraControls {
   onGestureStart(): void
   /** A finger held still on one spot. */
   onLongPress?(point: { x: number; y: number }): void
+  /**
+   * The finger moved on after a long press. `dx`, `dy` are screen pixels from
+   * where it was pressed. Returning false from the first call (nothing there
+   * to drag) makes it an ordinary pan.
+   */
+  onLongPressDrag?(dx: number, dy: number): boolean
+  /** The finger lifted from a long-press drag. */
+  onLongPressDragEnd?(): void
 }
 
 type Point = { x: number; y: number }
@@ -53,6 +63,8 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
     let pinch: { startDistance: number; startZoom: number; last: Point } | null = null
     let pressTimer: ReturnType<typeof setTimeout> | undefined
     let longPressed = false
+    /** After a long press, whether the finger has moved on to drag a node. */
+    let pressDragging = false
     const cancelPress = () => clearTimeout(pressTimer)
 
     const tracker = new VelocityTracker()
@@ -95,6 +107,7 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
         panning = false
         pinch = null
         longPressed = false
+        pressDragging = false
         const at = origin
         cancelPress()
         pressTimer = setTimeout(() => {
@@ -122,6 +135,19 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
       }
       if (e.touches.length !== 1 || !origin || !last) return
       const t = e.touches[0]
+      if (longPressed && !panning) {
+        e.preventDefault()
+        const dx = t.clientX - origin.x
+        const dy = t.clientY - origin.y
+        if (pressDragging) {
+          controlsRef.current.onLongPressDrag?.(dx, dy)
+          return
+        }
+        if (Math.hypot(dx, dy) < TAP_SLOP_PX) return
+        pressDragging = !!controlsRef.current.onLongPressDrag?.(dx, dy)
+        if (pressDragging) return
+        // Nothing to drag: pan from here, as if the press had not been held.
+      }
       if (!panning) {
         if (Math.hypot(t.clientX - origin.x, t.clientY - origin.y) < TAP_SLOP_PX) return
         begin()
@@ -138,6 +164,8 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
         cancelPress()
         // The press already did something; it must not also become a click.
         if (longPressed && e.cancelable) e.preventDefault()
+        if (pressDragging) controlsRef.current.onLongPressDragEnd?.()
+        pressDragging = false
         if (panning && !pinch && !longPressed) {
           const { vx, vy } = tracker.velocity(e.timeStamp)
           glide(vx, vy)
