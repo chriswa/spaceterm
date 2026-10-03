@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { crabEffortSteps } from './crab-effort'
 
 describe('crabEffortSteps', () => {
-  it('measures Claude and Cursor from high', () => {
-    expect(crabEffortSteps('claude', 'high')).toBe(0)
-    expect(crabEffortSteps('claude', 'max')).toBe(2)
-    expect(crabEffortSteps('claude', 'off')).toBe(-3)
+  it('measures Claude from medium', () => {
+    expect(crabEffortSteps('claude', 'medium')).toBe(0)
+    expect(crabEffortSteps('claude', 'high')).toBe(1)
+    expect(crabEffortSteps('claude', 'max')).toBe(3)
+    expect(crabEffortSteps('claude', 'off')).toBe(-2)
+  })
+
+  it('measures Cursor from high', () => {
+    expect(crabEffortSteps('cursor', 'high')).toBe(0)
     expect(crabEffortSteps('cursor', 'medium')).toBe(-1)
   })
 

@@ -218,10 +218,10 @@ describe('the effort signs on the agent mark', () => {
 
   it('shows how far the surface is from the default effort, and follows a switch', () => {
     const { container, rerender } = render(<TerminalCard {...props({ claudeEffort: 'max' })} />)
-    expect(stepsIn(container)).toBe('2')
+    expect(stepsIn(container)).toBe('3')
     rerender(<TerminalCard {...props({ claudeEffort: 'low' })} />)
-    expect(stepsIn(container)).toBe('-2')
-    rerender(<TerminalCard {...props({ claudeEffort: 'high' })} />)
+    expect(stepsIn(container)).toBe('-1')
+    rerender(<TerminalCard {...props({ claudeEffort: 'medium' })} />)
     expect(stepsIn(container)).toBeNull()
   })
 })

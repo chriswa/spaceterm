@@ -8,7 +8,7 @@ import type { AgentIndicatorKind } from './crab-nav'
  * of difference.
  */
 export const DEFAULT_EFFORT: Record<AgentType, AgentEffort> = {
-  claude: 'high',
+  claude: 'medium',
   cursor: 'high',
   codex: 'medium',
 }
