@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { staleness } from './update-check'
+import { staleness, runningNative } from './update-check'
+
+describe('runningNative', () => {
+  it('an app too old to say its version counts as behind any version; a browser has none', () => {
+    const old = runningNative('Mozilla/5.0 (iPhone) SpacetermApp/1', undefined)
+    expect(staleness({ native: old }, { native: 'b74af39cb3ce' }).native).toBe(true)
+    expect(runningNative('Mozilla/5.0 (iPhone) Safari', undefined)).toBeUndefined()
+    expect(runningNative('… SpacetermApp/1', 'abc')).toBe('abc')
+  })
+})
 
 describe('staleness', () => {
   it('a page built before the latest build needs a reload', () => {

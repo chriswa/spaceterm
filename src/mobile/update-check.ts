@@ -28,10 +28,20 @@ export function staleness(running: Versions, published: Versions): Staleness {
   return { web: behind(running.web, published.web), native: behind(running.native, published.native) }
 }
 
+/**
+ * Inside the app but told no version: an app installed before it learned to
+ * say, which is older than anything that does.
+ */
+const UNVERSIONED_APP = 'unversioned'
+
+export function runningNative(userAgent: string, injected: string | undefined): string | undefined {
+  return injected ?? (userAgent.includes('SpacetermApp/') ? UNVERSIONED_APP : undefined)
+}
+
 function running(): Versions {
   return {
     web: typeof __MOBILE_BUILD_ID__ === 'string' ? __MOBILE_BUILD_ID__ : undefined,
-    native: window.spacetermNativeVersion
+    native: runningNative(navigator.userAgent, window.spacetermNativeVersion)
   }
 }
 
