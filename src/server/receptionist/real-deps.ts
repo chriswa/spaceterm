@@ -15,8 +15,13 @@ const RECEPTIONIST_DIR = path.join(SOCKET_DIR, 'receptionist')
 /** Every turn, model step, and tool call, appended, for diagnosis. */
 export const RECEPTIONIST_LOG = path.join(RECEPTIONIST_DIR, 'log.jsonl')
 
-/** Which model Control runs on, and how. One place, so a benchmark changes one line. */
-export const RECEPTIONIST_MODEL = { model: 'haiku', noThinking: true }
+/**
+ * Which model Control runs on, and how. One place, so a benchmark changes one
+ * line. Sonnet with low thinking, on trial: the October 2026 benchmark had it
+ * about 0.7s slower per turn than Haiku without thinking (1.78s median against
+ * 1.05s) at roughly 1.3x the cost, traded for better judgement.
+ */
+export const RECEPTIONIST_MODEL = { model: 'sonnet', noThinking: false, effort: 'low' }
 
 /**
  * Past this many tokens of context the daemon compacts Control's session.
