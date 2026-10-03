@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { NAME_VOICE_TABLE, RECEPTIONIST_VOICE, rosterEntry } from './name-voice-table'
-import { phoneticKey } from './name-aliases'
+import { phoneticKey } from './name-phonetics'
 
 /**
  * Conventional gender of each roster name, independent of the table, so a

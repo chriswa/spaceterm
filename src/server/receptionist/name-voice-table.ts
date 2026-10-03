@@ -5,7 +5,7 @@
  *
  * Ported from Voice Operator's NameVoiceTable.swift (deleted in voiceop
  * 548e981). The names are that app's curated, speech-to-text round-tripped
- * roster: every one has a `PHONETIC_KEY` entry in name-aliases.ts. Roughly
+ * roster: every one has a `PHONETIC_KEY` entry in name-phonetics.ts. Roughly
  * three names share each voice, so the name pool runs deep while the registry
  * can still give concurrent agents distinct voices (see name-registry.ts).
  *

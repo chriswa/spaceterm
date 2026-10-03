@@ -161,6 +161,8 @@ export class SpeechChannel {
   private currentPhase: SpeechPhase = 'ready'
   private attempt: Attempt | undefined
   private job: LiveJob | undefined
+  /** Jobs spoken by `deliverInterim` this attempt: not followed, but dropped by `cancel`. */
+  private interimJobs: LiveJob[] = []
   /**
    * Where the listener cut off the last spoken answer, recorded at the moment
    * the interruption was observed. Consumed by `heardPrefix`.
@@ -215,6 +217,7 @@ export class SpeechChannel {
    */
   begin(phase: 'thinking' | 'synthesizing'): Attempt {
     this.attempt?.abandon()
+    this.interimJobs = []
     const attempt = new Attempt(this.owner)
     this.attempt = attempt
     this.setPhase(phase)
@@ -268,6 +271,30 @@ export class SpeechChannel {
   }
 
   /**
+   * Speak something while the attempt is still working: "let me check" before
+   * a slow step, so the listener hears what is happening instead of silence.
+   *
+   * Queued with the backend ahead of the answer the attempt will deliver, so
+   * it plays first. It is not followed — the answer's job is the one whose
+   * interruption offset means anything — but `cancel` drops it with the rest,
+   * so a stop still stops everything. The phase moves to `synthesizing`: the
+   * wait now belongs to the speech backend, and a `thinking` cue would play
+   * over the words.
+   */
+  async deliverInterim(attempt: Attempt, content: SpeechContent): Promise<void> {
+    const backend = this.speech
+    const speech = await this.speak(backend, content, undefined)
+    if (!attempt.isCurrent) {
+      if (speech.job) void backend.drop(speech.job.id)
+      return
+    }
+    // A refusal is left for the answer to report: one toast, not two.
+    if (!speech.job) return
+    this.interimJobs.push({ id: speech.job.id, backend })
+    this.setPhase('synthesizing')
+  }
+
+  /**
    * End an attempt, returning the channel to idle.
    *
    * Silently does nothing for an attempt that no longer owns the channel, so
@@ -277,6 +304,7 @@ export class SpeechChannel {
   settle(attempt: Attempt): void {
     if (!attempt.isCurrent) return
     this.job = undefined
+    this.interimJobs = []
     this.attempt = undefined
     this.setPhase('ready')
   }
@@ -293,8 +321,11 @@ export class SpeechChannel {
   async cancel(): Promise<boolean> {
     const job = this.job
     const attempt = this.attempt
+    const interim = this.interimJobs
     this.job = undefined
     this.attempt = undefined
+    this.interimJobs = []
+    for (const spoken of interim) void spoken.backend.drop(spoken.id)
     // Abandoning aborts the request the attempt is parked on, which is what
     // frees a monitor sitting in a thirty-second long poll.
     attempt?.abandon()

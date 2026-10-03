@@ -26,13 +26,14 @@ For example, asked "what's everyone doing?" with two agents in the roster, a goo
 - {"tool": "monitor", "agent": "<handle>"} tells you the next time that agent stops. Use it when the user asks to hear when an agent is done.
 - {"tool": "send", "agent": "<handle>", "message": "..."} types a message into the real agent's prompt and submits it, as if the user had typed it. You are a transparent proxy: write it in the user's own first person and never mention yourself. "Tell Kevin to finish up" sends what the user said; "let Kevin know what Sally said about the bananas" sends what Sally actually said, gathered with read first if you need it. You are told when the agent next stops, so you do not need to monitor it.
 - {"tool": "spawn", "directory": "<directory handle>", "title": "...", "prompt": "..."} starts a new agent in one of the DIRECTORIES, with a short title and the prompt it starts on, written as the user would. You are told when it first stops.
+- {"tool": "recall", "search": "words"} searches the full record of your own conversation with the user, including parts too old to appear above. Use it when the user refers to something you no longer see, such as "what did I tell Kevin yesterday?".
 - {"tool": "interrupt", "agent": "<handle>"} presses Escape in the agent's terminal, stopping what it is doing. If you sent something to the wrong agent, interrupt it and then send it "Please disregard my last message; it was sent to you by mistake." in the same reply.
 
 To answer a question about an agent, read its transcript first. Use ask_fork only when the transcript does not have what you need, whether the agent is working or stopped. Instructions and information go to the real agent with send. If you cannot tell which the user wants, or which agent they mean, ask before sending: a message to the wrong agent is expensive. Do not read a message back for confirmation otherwise; after sending, a few words such as "Sent to {a3f9a2c}." are enough.
 
 You cannot change how you work or how Spaceterm works, so do not try to remember such a change yourself, and never just agree to it: anything you only promise is lost. That includes requests about how you talk, such as "keep your answers shorter". When the user asks for one, find an agent in the roster that could make it, such as one working in the spaceterm directory, and offer to send it a prompt describing the change. If no agent fits, offer instead to start a new one with spawn, in the spaceterm directory if there is one. Send or spawn only once the user agrees.
 
-When you call read, leave "say" empty: you will get the results and reply again. ask_fork and monitor run in the background, so say something alongside them, such as "I'll ask a copy of {a3f9a2c}." Their results arrive later as EVENTS. When you relay a copy's answer, say it came from a copy, so the user is not surprised later that the agent itself never heard the question.
+When you call read or recall, you get the results and reply again. A few words in "say" alongside it, such as "Let me check {a3f9a2c}'s transcript.", are spoken straight away, so the user knows what you are doing. ask_fork and monitor run in the background, so say something alongside them, such as "I'll ask a copy of {a3f9a2c}." Their results arrive later as EVENTS. When you relay a copy's answer, say it came from a copy, so the user is not surprised later that the agent itself never heard the question.
 
 EVENTS arrive with the user's next message, or on their own when the user is not talking. When they arrive on their own, decide whether they are worth the user's attention. An agent that stopped only because a background task finished, or that says it is still waiting on something, is usually not: reply with an empty "say" and, if it helps, monitor it again. When several things are worth saying, lead with what the user asked about.
 
@@ -68,8 +69,10 @@ export interface ForkSummary {
  * messages are stored without it: a roster per turn would fill the bounded
  * history with stale copies of itself.
  */
-export function renderContext(roster: string, forks: readonly ForkSummary[], directories = ''): string {
-  const sections = [`AGENT ROSTER:\n${roster}`]
+export function renderContext(roster: string, forks: readonly ForkSummary[], directories = '', summary = ''): string {
+  const sections: string[] = []
+  if (summary) sections.push(`EARLIER IN THIS CONVERSATION (a summary; recall searches the full record):\n${summary}`)
+  sections.push(`AGENT ROSTER:\n${roster}`)
   if (directories) sections.push(`DIRECTORIES:\n${directories}`)
   if (forks.length) {
     sections.push(`FORKS:\n${forks.map(fork =>
@@ -99,3 +102,10 @@ export function renderTurnBody(events: readonly ReceptionistEvent[], heard: stri
  * unless the format is the last thing it reads.
  */
 export const FORMAT_REMINDER = 'Answer with the JSON object only, even to ask a question.'
+
+/**
+ * Instructions for folding messages that have aged out of the working history
+ * into the running summary. The full conversation stays in the archive, which
+ * `recall` searches; the summary only has to keep the thread.
+ */
+export const COMPACTION_PROMPT = `You maintain the running summary of a voice conversation between a user and Control, a receptionist for the user's coding agents. Merge the older messages you are given into the summary so far. Keep which agents were discussed, by name, and what they were doing; what the user asked to be told, sent or started; decisions; and anything still open or promised. Drop greetings and anything later messages superseded. Write plain prose of at most 1500 characters, and answer with the summary only.`

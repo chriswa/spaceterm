@@ -90,6 +90,27 @@ describe('SpeechChannel', () => {
     expect(vo.spoken).toEqual([{ content: 'Hello there.', voice: 'voice-a' }])
   })
 
+  it('speaks an interim line ahead of the answer, handing the wait to the backend', async () => {
+    const vo = fakeBackend()
+    const h = harness(vo.backend)
+    const attempt = h.channel.begin('thinking')
+    await h.channel.deliverInterim(attempt, 'Let me check.')
+    expect(h.channel.phase).toBe('synthesizing')
+    await h.channel.deliver(attempt, 'Kevin finished.')
+    await flush()
+    expect(vo.spoken.map(entry => entry.content)).toEqual(['Let me check.', 'Kevin finished.'])
+  })
+
+  it('a cancel drops the interim line too, so a stop stops everything', async () => {
+    const vo = fakeBackend({ statuses: [{ state: 'in_progress', playback_state: 'speaking', version: 2 }] })
+    const h = harness(vo.backend, { stallBetweenPolls: true })
+    const attempt = h.channel.begin('thinking')
+    await h.channel.deliverInterim(attempt, 'Let me check.')
+    expect(await h.channel.cancel()).toBe(true)
+    expect(vo.drops).toEqual(['job-1'])
+    expect(h.channel.phase).toBe('ready')
+  })
+
   it('a new begin supersedes the running attempt and aborts what it was waiting on', () => {
     const h = harness(fakeBackend().backend)
     const first = h.channel.begin('thinking')

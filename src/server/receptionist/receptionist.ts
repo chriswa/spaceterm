@@ -9,7 +9,7 @@ import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } f
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import {
-  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderContext, renderTurnBody, type ForkSummary, type ReceptionistEvent,
+  COMPACTION_PROMPT, FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderContext, renderTurnBody, type ForkSummary, type ReceptionistEvent,
 } from './prompt'
 import {
   isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
@@ -34,6 +34,12 @@ import {
 
 type HistoryMessage = ModelRequest['messages'][number]
 
+/** Control's working memory: the recent window, and a summary of everything before it. */
+export interface SavedConversation {
+  messages: HistoryMessage[]
+  summary: string
+}
+
 /** What a fork said, and what saying it cost when Claude reports that. */
 export interface ForkAnswer { forkId: string; answer: string; costUsd?: number }
 
@@ -53,10 +59,17 @@ export interface ReceptionistDeps {
   readTranscript(path: string): TranscriptMessage[]
   /** The whole transcript, for searches. */
   readWholeTranscript(path: string): TranscriptMessage[]
-  /** The conversation, kept across server restarts. Best-effort both ways. */
+  /**
+   * The conversation, across server restarts. `save` keeps the working state —
+   * the bounded window and the summary of what aged out of it — and `append`
+   * adds to the full record, which is never trimmed and which `search` reads.
+   * Best-effort throughout.
+   */
   history: {
-    load(): Array<{ role: 'user' | 'assistant'; content: string }> | undefined
-    save(messages: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>): void
+    load(): SavedConversation | undefined
+    save(state: SavedConversation): void
+    append(messages: readonly HistoryMessage[]): void
+    search(query: string): string
   }
   names: {
     get(nodeId: NodeId): NamedVoice | undefined
@@ -99,6 +112,8 @@ const MAX_HISTORY_CHARS = 40_000
 const MAX_STEPS = 4
 const MODEL_TIMEOUT_MS = 30_000
 const LAST_SAID_EVENT_CHARS = 1_500
+/** Room the running summary gets in every request; see `compact`. */
+const MAX_SUMMARY_CHARS = 2_000
 /**
  * How long a send waits after an interrupt in the same reply, so Claude Code
  * has left the turn it was in before the next prompt is typed.
@@ -130,6 +145,10 @@ interface LastAnswer {
 
 export class Receptionist {
   private history: HistoryMessage[] = []
+  /** What aged out of `history`, folded into prose by the model. See `compact`. */
+  private summary = ''
+  /** Compactions run one at a time, off the turn path. */
+  private compaction: Promise<void> = Promise.resolve()
   private events: ReceptionistEvent[] = []
   private readonly monitors = new Set<NodeId>()
   private readonly forks = new Map<string, ForkRecord>()
@@ -141,7 +160,9 @@ export class Receptionist {
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
-    this.history = bounded(deps.history.load() ?? [])
+    const saved = deps.history.load()
+    this.history = bounded(saved?.messages ?? [])
+    this.summary = saved?.summary ?? ''
     this.channel = new SpeechChannel({
       speech: opts.speech,
       label: 'receptionist',
@@ -254,6 +275,7 @@ export class Receptionist {
         renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript),
         this.forkSummaries(agents),
         renderDirectories(this.deps.directories()),
+        this.summary,
       )
       const [first, ...rest] = turn
       const messages = bounded([...this.history, { role: 'user', content: `${context}\n\n${first.content}` }, ...rest])
@@ -278,6 +300,13 @@ export class Receptionist {
       }
       const results = this.runTools(reply.tools, agents)
       if (!reply.tools.some(isBlocking) || step === MAX_STEPS) return reply
+      // Words that came with a read are spoken now, while it runs: the
+      // listener hears "let me check" instead of silence.
+      if (reply.say.length) {
+        const { spoken } = this.render(reply.say, agents)
+        await this.channel.deliverInterim(attempt, spoken.map(({ text, voice }) => ({ text, voice })))
+        if (!attempt.isCurrent) return undefined
+      }
       turn.push({ role: 'assistant', content: answer.text })
       turn.push({ role: 'user', content: `TOOL RESULTS:\n${results.join('\n\n')}` })
     }
@@ -291,6 +320,10 @@ export class Receptionist {
     for (const call of calls) {
       if (call.tool === 'spawn') {
         results.push(this.spawn(call))
+        continue
+      }
+      if (call.tool === 'recall') {
+        results.push(`recall "${call.search}":\n${this.deps.history.search(call.search)}`)
         continue
       }
       const agent = agents.find(candidate => handleFor(candidate.nodeId) === call.agent)
@@ -333,6 +366,7 @@ export class Receptionist {
       const nodeId = this.deps.spawn(directory.nodeId, call.title, call.prompt)
       this.monitors.add(nodeId)
       this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt })
+      this.deps.history.append([{ role: 'assistant', content: `STARTED AN AGENT in ${directory.cwd}: ${call.prompt}` }])
       return `spawn: started {${handleFor(nodeId)}} in ${directory.cwd}.`
     } catch (err) {
       return `spawn ${call.directory} failed: ${err instanceof Error ? err.message : String(err)}`
@@ -347,7 +381,11 @@ export class Receptionist {
     if (afterInterrupt) await this.deps.sleep(INTERRUPT_SETTLE_MS)
     this.deps.send(nodeId, message)
     this.monitors.add(nodeId)
-    this.deps.log({ event: 'sent', nodeId, name: this.deps.names.get(nodeId)?.name ?? null, message })
+    // Named now if it has none: "Sent to Kevin" is about to be said anyway.
+    const name = (this.deps.names.get(nodeId) ?? this.deps.names.assign(nodeId))?.name ?? 'an agent'
+    this.deps.log({ event: 'sent', nodeId, name, message })
+    // Into the full record, so `recall` can answer "what did I tell Kevin?".
+    this.deps.history.append([{ role: 'assistant', content: `SENT TO ${name}: ${message}` }])
   }
 
   private async askFork(agent: RosterAgent, question: string, forkId: string | undefined): Promise<void> {
@@ -402,8 +440,13 @@ export class Receptionist {
   }
 
   /** Say a reply. Returns whether a speech monitor now owns the phase. */
-  private async speak(attempt: Attempt, body: string, reply: Reply): Promise<boolean> {
-    const agents = this.deps.agents()
+  /**
+   * A reply's parts as speech, naming each agent the first time it is spoken
+   * of. Returns which agents came up, first mention first.
+   */
+  private render(say: readonly SayPart[], agents: readonly RosterAgent[]): {
+    spoken: RenderedPart[]; mentioned: NodeId[]; byHandle: Map<string, RosterAgent>
+  } {
     const byHandle = new Map(agents.map(agent => [handleFor(agent.nodeId), agent]))
     const mentioned: NodeId[] = []
     const resolve = (handle: string): { name: string; voice: string } | undefined => {
@@ -414,16 +457,18 @@ export class Receptionist {
       if (!mentioned.includes(agent.nodeId)) mentioned.push(agent.nodeId)
       return { name: named.name, voice: named.voice }
     }
-    const spoken = renderSpeech(reply.say, resolve, RECEPTIONIST_VOICE)
+    const spoken = renderSpeech(say, resolve, RECEPTIONIST_VOICE)
     for (const nodeId of mentioned) this.deps.names.touch(nodeId)
+    return { spoken, mentioned, byHandle }
+  }
+
+  private async speak(attempt: Attempt, body: string, reply: Reply): Promise<boolean> {
+    const { spoken, mentioned, byHandle } = this.render(reply.say, this.deps.agents())
     const froms = reply.say.map(part => part.from)
     // Committed together, and only now: a turn superseded before this point
     // leaves the history exactly as it found it.
-    this.history = bounded([
-      ...this.history, { role: 'user', content: body }, { role: 'assistant', content: storedReply(froms, spoken) },
-    ])
+    this.commit([{ role: 'user', content: body }, { role: 'assistant', content: storedReply(froms, spoken) }])
     this.lastAnswer = { historyIndex: this.history.length - 1, froms, spoken }
-    this.deps.history.save(this.history)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     // The camera follows the conversation: the agent quoted first, else the
     // agent mentioned first.
@@ -442,7 +487,45 @@ export class Receptionist {
     if (heard === undefined || !last || this.history[last.historyIndex]?.role !== 'assistant') return
     const kept = redactSpoken(last.spoken, heard)
     this.history[last.historyIndex] = { role: 'assistant', content: storedReply(last.froms, kept) }
-    this.deps.history.save(this.history)
+    this.save()
+  }
+
+  /**
+   * Add a turn to the history: to the full record, and to the working window.
+   * Whatever the window no longer holds is folded into the summary.
+   */
+  private commit(messages: HistoryMessage[]): void {
+    this.deps.history.append(messages)
+    const all = [...this.history, ...messages]
+    this.history = bounded(all)
+    // `bounded` only ever drops from the front.
+    const aged = all.slice(0, all.length - this.history.length)
+    this.save()
+    if (aged.length) this.compaction = this.compaction.then(() => this.compact(aged))
+  }
+
+  /**
+   * Fold messages that aged out of the window into the summary. Off the turn
+   * path, one at a time. A failure keeps the old summary: nothing is lost,
+   * since the full record still has every word.
+   */
+  private async compact(aged: readonly HistoryMessage[]): Promise<void> {
+    const older = aged.map(message => `${message.role === 'user' ? 'USER' : 'CONTROL'}: ${message.content}`).join('\n\n')
+    try {
+      const answer = await this.deps.askModel({
+        instructions: COMPACTION_PROMPT,
+        messages: [{ role: 'user', content: `SUMMARY SO FAR:\n${this.summary || '(none yet)'}\n\nOLDER MESSAGES:\n${older}` }],
+      }, AbortSignal.timeout(MODEL_TIMEOUT_MS))
+      this.summary = answer.text.trim().slice(0, MAX_SUMMARY_CHARS)
+      this.save()
+      this.deps.log({ event: 'compacted', messages: aged.length, summaryCharacters: this.summary.length })
+    } catch (err) {
+      serverLog(`[receptionist] compaction failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  private save(): void {
+    this.deps.history.save({ messages: this.history, summary: this.summary })
   }
 }
 

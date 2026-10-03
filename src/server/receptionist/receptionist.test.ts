@@ -5,7 +5,8 @@ import type { ModelRequest, TranscriptMessage } from '../summary-chat'
 import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operator'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
-import { forkPrompt, Receptionist, type ForkClient } from './receptionist'
+import { forkPrompt, Receptionist, type ForkClient, type SavedConversation } from './receptionist'
+import { COMPACTION_PROMPT } from './prompt'
 import { directoryHandleFor, handleFor, type RosterAgent } from './roster'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
@@ -47,7 +48,7 @@ function harness(opts: {
   speechEnds?: Partial<SpeechStatus>
   forks?: Partial<ForkClient>
   /** A conversation saved by an earlier server. */
-  savedHistory?: ModelRequest['messages']
+  saved?: SavedConversation
 }) {
   const states = new Map<NodeId, ClaudeState>([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']])
   const agents = (): RosterAgent[] => [
@@ -66,7 +67,9 @@ function harness(opts: {
   const forkCalls: Array<Record<string, unknown>> = []
   const wire: string[] = []
   const notices: string[] = []
-  const saved: ModelRequest['messages'] = []
+  let saved: SavedConversation = { messages: [], summary: '' }
+  const record: ModelRequest['messages'] = []
+  const compactions: ModelRequest[] = []
   let job = 0
   const speech: SpeechBackend = {
     speak: async (content, voice) => {
@@ -78,6 +81,11 @@ function harness(opts: {
   }
   const receptionist = new Receptionist({
     askModel: async (request) => {
+      // Compaction runs beside the conversation; it never takes a scripted reply.
+      if (request.instructions === COMPACTION_PROMPT) {
+        compactions.push(request)
+        return { text: `summary #${compactions.length}` }
+      }
       requests.push(request)
       const next = replies.shift()
       if (next === undefined) throw new Error('no scripted reply left')
@@ -92,7 +100,12 @@ function harness(opts: {
     agents,
     readTranscript: (path) => (TRANSCRIPTS[path] ?? []).slice(-2),
     readWholeTranscript: (path) => [...(EARLY[path] ?? []), ...(TRANSCRIPTS[path] ?? [])],
-    history: { load: () => opts.savedHistory, save: (messages) => { saved.splice(0, saved.length, ...messages) } },
+    history: {
+      load: () => opts.saved,
+      save: (state) => { saved = { messages: [...state.messages], summary: state.summary } },
+      append: (messages) => { record.push(...messages) },
+      search: (query) => record.filter(message => message.content.includes(query)).map(message => message.content).join('\n') || 'nothing',
+    },
     names: {
       get: (nodeId) => assigned.get(nodeId),
       assign: (nodeId) => {
@@ -118,7 +131,8 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { speech, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, requests, spoken, focused, forkCalls, assigned, wire, saved, notices,
+    receptionist, requests, spoken, focused, forkCalls, assigned, wire, notices, record, compactions,
+    get saved() { return saved },
     setState(nodeId: NodeId, state: ClaudeState) {
       states.set(nodeId, state)
       receptionist.agentStateChanged(nodeId, state)
@@ -341,6 +355,7 @@ describe('Receptionist', () => {
     await h.receptionist.hear('tell Kevin to finish up and commit')
     await flush()
     expect(h.wire).toEqual([`send ${KEVIN_ID} Please finish up and commit.`])
+    expect(h.record.some(message => message.content === 'SENT TO Kevin: Please finish up and commit.')).toBe(true)
     h.setState(KEVIN_ID, 'working')
     h.setState(KEVIN_ID, 'stopped')
     await flush()
@@ -409,7 +424,7 @@ describe('Receptionist', () => {
     await first.receptionist.hear('what is Kevin doing?')
     await flush()
     const second = harness({
-      savedHistory: [...first.saved],
+      saved: first.saved,
       replies: [(request) => {
         expect(request.messages[0].content).toBe('THE USER SAYS: what is Kevin doing?')
         expect(request.messages[1].content).toContain('water sim')
@@ -419,5 +434,58 @@ describe('Receptionist', () => {
     await second.receptionist.hear('and now?')
     await flush()
     expect(second.requests).toHaveLength(1)
+  })
+
+  it('keeps every word in the record, folds what ages out of the window into a summary, and shows that summary', async () => {
+    const turns = 14
+    const h = harness({
+      replies: Array.from({ length: turns }, (_, i) => (request: ModelRequest) => {
+        if (i === turns - 1) expect(h.latest(request)).toContain('EARLIER IN THIS CONVERSATION')
+        return reply([{ from: 'control', text: `answer ${i}` }])
+      }),
+    })
+    for (let i = 0; i < turns; i++) {
+      await h.receptionist.hear(`question ${i}`)
+      await flush()
+    }
+    expect(h.record).toHaveLength(turns * 2)
+    expect(h.compactions.length).toBeGreaterThan(0)
+    expect(h.compactions[0].messages[0].content).toContain('question 0')
+    expect(h.saved.summary).toMatch(/^summary #/)
+    expect(h.saved.messages.length).toBeLessThan(turns * 2)
+  })
+
+  it('recalls from the full record what the window no longer holds', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Noted the bananas.' }]),
+        reply([{ from: 'control', text: 'Let me look back.' }], [{ tool: 'recall', search: 'bananas' }]),
+        (request) => {
+          expect(h.latest(request)).toContain('recall "bananas"')
+          expect(h.latest(request)).toContain('Noted the bananas')
+          return reply([{ from: 'control', text: 'You mentioned bananas.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('remember the bananas')
+    await flush()
+    await h.receptionist.hear('what did I say about bananas?')
+    await flush()
+    expect(h.spoken.map(entry => JSON.stringify(entry.content)).some(text => text.includes('Let me look back'))).toBe(true)
+  })
+
+  it('speaks what it says alongside a read before the answer', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `Let me check {${KEVIN}}'s transcript.` }], [{ tool: 'read', agent: KEVIN }]),
+        reply([{ from: KEVIN, text: 'Volume is conserved now.' }]),
+      ],
+    })
+    await h.receptionist.hear('what did Kevin finish?')
+    await flush()
+    expect(h.spoken.map(entry => entry.content)).toEqual([
+      [{ text: "Let me check Kevin's transcript.", voice: RECEPTIONIST_VOICE }],
+      [{ text: 'Kevin here. Volume is conserved now.', voice: 'am_michael' }],
+    ])
   })
 })

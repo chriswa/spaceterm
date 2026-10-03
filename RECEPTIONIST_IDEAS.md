@@ -16,7 +16,9 @@ that transcript for the reasoning behind any item here.
 - **Brain**: Haiku through claude-print-daemon, no thinking. Each turn the
   model sees the roster of live Claude surfaces and the directory nodes, and
   answers with one JSON object: parts to speak, and tool calls (`read`,
-  `ask_fork`, `monitor`, `send`, `interrupt`, `spawn`). See `prompt.ts`.
+  `recall`, `ask_fork`, `monitor`, `send`, `interrupt`, `spawn`). See
+  `prompt.ts`. Words that come with a `read`/`recall` ("let me check") are
+  spoken straight away, ahead of the answer.
 - **Speech**: one Voice Operator job per reply, multi-voice (`parts`), through
   the `SpeechChannel` shared with Summary Chat. Interruptions cut the stored
   history down to what was heard.
@@ -34,9 +36,17 @@ that transcript for the reasoning behind any item here.
 - **Sending**: Ship it into the agent's PTY; Escape to interrupt. Every send
   and spawn is logged to `~/.spaceterm/receptionist/log.jsonl` and
   auto-monitored.
-- **Persistence**: conversation in `~/.spaceterm/receptionist/history.json`,
-  names in `names.json`. Talk-to-me is a ServerState setting. The voice
+- **Memory**: three layers under `~/.spaceterm/receptionist/`.
+  `conversation.jsonl` is the full record of every message, sends and spawns
+  included, never trimmed; `recall` searches it. `history.json` is the
+  working memory: a bounded window (24 messages / 40k chars) plus a running
+  summary that Haiku folds aged-out messages into, off the turn path.
+  Names live in `names.json`. Talk-to-me is a ServerState setting; the voice
   target defaults to Control on every server start.
+- **Misheard names**: no deterministic layer. The prompt says input is
+  dictated, gives examples ("heaven" for Evan), and asks Control to confirm
+  when unsure. The registry still never assigns two sound-alike names at once
+  (`name-phonetics.ts`).
 
 ## MVP leftovers (small, not done)
 
@@ -50,10 +60,6 @@ that transcript for the reasoning behind any item here.
 - **The worked example in the prompt** quotes an agent straight from the
   roster preview without a `read`, which slightly contradicts the
   "read before quoting" rule.
-- **Unused code to delete or use**: `name-aliases.ts` (ported sound-alike
-  matching; superseded by telling the model its input is dictated), and the
-  `--fork` option added to claude-print-daemon (see "Forks through the daemon"
-  below).
 - **Spoken acknowledgement for spawn.** A reply that sends and says nothing
   gets an automatic "Sent to Kevin."; a silent spawn gets nothing.
 
@@ -65,10 +71,10 @@ that transcript for the reasoning behind any item here.
   between raise-hand and talk-to-me.
 - **Permission prompts by voice** (`waiting_permission`). Explicitly out of
   MVP. Also `waiting_question` / AskUserQuestion answers.
-- **Long-term memory.** Compact Control's own conversation when it grows, and
-  give it a tool to search its history and the sent-message log ("what did I
-  tell Kevin last night?"). If it moves to Sonnet, compact a big session just
-  before its prompt cache's TTL expires.
+- **Smarter memory.** Compaction and `recall` exist; `recall` is a plain
+  substring search, newest first. Ideas: search by time ("last night"), read
+  a stretch of the record around a hit, and, if Control moves to Sonnet,
+  compact a big session just before its prompt cache's TTL expires.
 - **Fork lineage.** Record where in a transcript a session was forked and from
   which session, so Control knows "this agent was forked from Kevin", across
   chains of forks.
@@ -83,12 +89,11 @@ that transcript for the reasoning behind any item here.
   the agent's input box.
 - **Replace Summary Chat.** Control is meant to replace it; for now they
   coexist and a Summary Chat press takes the voice target.
-- **Forks through the daemon.** Today each fork question is one cold
-  `claude -p` process (about 3 s). claude-print-daemon could run forks if it
-  accepted the caller's full command line, cwd and env instead of its own
-  profile (`--system-prompt "" --tools "" --setting-sources "" --model …`,
-  which is what broke caching). That would keep a fork's process alive for
-  quick follow-ups and put fork costs in the daemon's usage log.
+- **Forks through the daemon: decided against.** Each fork question is one
+  cold `claude -p` process (about 3 s). The daemon is fast because it keeps
+  *empty* sessions warm, and a fork is never empty; its fixed profile (no
+  system prompt, no tools) is also what broke caching. The `--fork` option
+  added to it was reverted.
 
 ## Rough edges not yet looked at
 
@@ -97,9 +102,6 @@ that transcript for the reasoning behind any item here.
   go to Control instead.
 - After the camera follows an agent, keyboard focus stays on whichever
   terminal had it, which may now be off screen.
-- When the model calls `read`, anything it put in `say` in that same step is
-  discarded. Only the reply after the read is spoken. A filler like "let me
-  check" therefore never plays.
 - Status errors show only as a toast.
 - The phone may not play Control's waiting echo; the cue lives in the
   desktop renderer's server-sync.

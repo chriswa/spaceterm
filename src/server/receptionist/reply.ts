@@ -21,6 +21,7 @@ export type ToolCall =
   | { tool: 'send'; agent: string; message: string }
   | { tool: 'interrupt'; agent: string }
   | { tool: 'spawn'; directory: string; title: string; prompt: string }
+  | { tool: 'recall'; search: string }
 
 export interface Reply {
   say: SayPart[]
@@ -29,7 +30,7 @@ export interface Reply {
 
 /** Tools whose results the model must see before it can speak. */
 export function isBlocking(call: ToolCall): boolean {
-  return call.tool === 'read'
+  return call.tool === 'read' || call.tool === 'recall'
 }
 
 /**
@@ -62,6 +63,10 @@ function parseSayPart(value: unknown): SayPart {
 
 function parseToolCall(value: unknown): ToolCall {
   if (!isRecord(value) || typeof value.tool !== 'string') throw new Error('each tool call needs a "tool" name')
+  if (value.tool === 'recall') {
+    if (typeof value.search !== 'string' || !value.search.trim()) throw new Error('"recall" needs a "search"')
+    return { tool: 'recall', search: value.search.trim() }
+  }
   if (value.tool === 'spawn') {
     const field = (name: string): string => {
       const text = typeof value[name] === 'string' ? (value[name] as string).trim() : ''

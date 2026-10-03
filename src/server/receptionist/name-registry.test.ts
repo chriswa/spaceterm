@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { asNodeId, type NodeId } from '../../shared/ids'
 import { fileStore, NameRegistry, type NameRegistryStore } from './name-registry'
 import { NAME_VOICE_TABLE, RECEPTIONIST_VOICE } from './name-voice-table'
-import { phoneticKey, resolveName } from './name-aliases'
+import { phoneticKey } from './name-phonetics'
 
 const VOICE_COUNT = new Set(NAME_VOICE_TABLE.map((e) => e.voice)).size
 
@@ -91,14 +91,6 @@ describe('NameRegistry', () => {
     // Capacity is the number of distinct phonetic keys in the roster.
     expect(names.length).toBe(new Set(NAME_VOICE_TABLE.map((e) => phoneticKey(e.name))).size)
     expect(reg.assign(node('one-too-many'))).toBeUndefined()
-  })
-
-  it('makes every held name resolvable from what was heard', () => {
-    const { reg } = setup()
-    for (let i = 0; i < 40; i++) reg.assign(node(i), i)
-    for (const name of reg.assignedNames()) {
-      expect(resolveName(name.toLowerCase(), reg.assignedNames())).toBe(name)
-    }
   })
 
   it('releases archived or deleted surfaces only when a new assignment is needed', () => {

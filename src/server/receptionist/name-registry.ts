@@ -29,7 +29,7 @@ import { SOCKET_DIR } from '../../shared/protocol'
 import { asNodeId, type NodeId } from '../../shared/ids'
 import { serverLog } from '../server-log'
 import { NAME_VOICE_TABLE, RECEPTIONIST_VOICE, rosterEntry, type NamedVoice } from './name-voice-table'
-import { phoneticKey } from './name-aliases'
+import { phoneticKey } from './name-phonetics'
 
 /** Raw storage for the registry's JSON document. */
 export interface NameRegistryStore {
@@ -147,7 +147,7 @@ export class NameRegistry {
     return undefined
   }
 
-  /** Every name currently assigned: the `candidates` for `resolveName`. */
+  /** Every name currently assigned. */
   assignedNames(): string[] {
     return [...this.assignments.values()].map((e) => e.name)
   }
