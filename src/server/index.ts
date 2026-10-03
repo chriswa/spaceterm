@@ -71,7 +71,9 @@ import { PotentialErrorDetector } from './auto-continue'
 import { SummaryChat, readTranscript } from './summary-chat'
 import { Receptionist } from './receptionist/receptionist'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
-import { REAL_FORK_CLIENT, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import { appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import { SessionForks, type ForkLaunch } from './receptionist/session-fork'
+import { scrubInheritedAgentEnv } from './spawn-env'
 import type { RosterAgent } from './receptionist/roster'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
@@ -412,8 +414,36 @@ function receptionistAgents(): RosterAgent[] {
       state: node.claudeState,
       transcriptPath: transcriptPathForTerminal(node),
       claudeSessionId: node.claudeSessionHistory.at(-1)?.claudeSessionId,
-      model: node.claudeModel,
     }))
+}
+
+/**
+ * How a receptionist fork of a surface is launched: the surface's own command
+ * line from its driver, plus the read-only guard hook. See `SessionForks` for
+ * why it must be the surface's own and not a profile of the fork's.
+ *
+ * The environment is the one a surface gets (see SessionManager) minus the
+ * surface's identity, so the copy's hooks cannot report state for the surface
+ * it was copied from.
+ */
+function forkLaunchFor(nodeId: NodeId): ForkLaunch | undefined {
+  const node = stateManager.getNode(nodeId)
+  if (node?.type !== 'terminal' || !node.alive || (node.agentType ?? 'claude') !== 'claude' || !node.cwd) return undefined
+  const options = agentDrivers.claude.buildCreateOptions({
+    cwd: node.cwd,
+    extraArgs: parseExtraCliArgs(node.extraCliArgs),
+    extraSettings: {
+      hooks: {
+        PreToolUse: [{
+          matcher: '*',
+          hooks: [{ type: 'command', command: path.join(REAL_AGENT_PROVISIONING.claudePluginDir(), 'scripts/fork-read-only-guard.sh') }],
+        }],
+      },
+    },
+  })
+  const env = scrubInheritedAgentEnv(loginEnv.current() ?? process.env)
+  if (process.env.SPACETERM_HOME) env.SPACETERM_HOME = process.env.SPACETERM_HOME
+  return { cwd: expandTilde(options.cwd) ?? node.cwd, command: options.command ?? 'claude', args: options.args ?? [], env }
 }
 
 function agentNameMap(): Record<string, string> {
@@ -3001,7 +3031,7 @@ async function startServer(): Promise<void> {
       },
       touch: (nodeId) => agentNames.touch(nodeId),
     },
-    forks: REAL_FORK_CLIENT,
+    forks: new SessionForks(forkLaunchFor),
     focus: (nodeId) => broadcastToAll({ type: 'camera-follow', nodeId }),
     send: (nodeId, text) => {
       const node = stateManager.getNode(nodeId)

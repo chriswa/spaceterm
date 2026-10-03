@@ -35,7 +35,7 @@ function harness(opts: {
 } ) {
   const states = new Map<NodeId, ClaudeState>([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']])
   const agents = (): RosterAgent[] => [
-    { nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session', model: 'opus' },
+    { nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session' },
     { nodeId: SALLY_ID, title: 'login page', cwd: '/src/web', state: states.get(SALLY_ID)!, transcriptPath: '/t/sally.jsonl', claudeSessionId: 'sally-session' },
   ]
   const requests: ModelRequest[] = []
@@ -244,7 +244,7 @@ describe('Receptionist', () => {
     await h.receptionist.hear('ask Kevin exactly how many litres')
     await flush()
     expect(h.forkCalls[0]).toEqual({
-      kind: 'fork', sessionId: 'kevin-session', cwd: '/src/fluids', prompt: forkPrompt('Exactly how many litres?'), model: 'opus',
+      kind: 'fork', nodeId: KEVIN_ID, sessionId: 'kevin-session', prompt: forkPrompt('Exactly how many litres?'),
     })
     await h.receptionist.hear('and the small tank?')
     await flush()

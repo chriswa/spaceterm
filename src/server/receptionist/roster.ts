@@ -21,8 +21,6 @@ export interface RosterAgent {
   transcriptPath?: string
   /** The surface's current Claude Code session, which a fork branches from. */
   claudeSessionId?: string
-  /** The model the surface runs, so a fork of it reuses the same prompt cache. */
-  model?: string
 }
 
 /**

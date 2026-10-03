@@ -4,11 +4,11 @@ import { SOCKET_DIR } from '../../shared/protocol'
 import { askClaudePrint } from '../claude-print'
 import { serverLog } from '../server-log'
 import { renderModelRequest, type ModelAnswer, type ModelRequest } from '../summary-chat'
-import type { ForkClient } from './receptionist'
 
 /**
  * The receptionist's real collaborators that are not the server's own state:
- * Haiku and session forks through claude-print-daemon, and its log.
+ * Haiku through claude-print-daemon, and its log. Forks are `SessionForks`,
+ * which launch the surface's own command line rather than a daemon profile.
  */
 
 const RECEPTIONIST_DIR = path.join(SOCKET_DIR, 'receptionist')
@@ -33,19 +33,6 @@ export async function askReceptionistModel(request: ModelRequest, signal: AbortS
     wallMs: response.wall_ms,
     costUsd: response.total_cost_usd,
   }
-}
-
-export const REAL_FORK_CLIENT: ForkClient = {
-  async fork({ sessionId, cwd, prompt, model }) {
-    const response = await askClaudePrint({
-      prompt, fork: { sessionId, cwd }, ...(model ? { model } : {}), tag: 'receptionist-fork',
-    })
-    return { forkId: response.session_id, answer: response.result }
-  },
-  async ask({ forkId, prompt }) {
-    const response = await askClaudePrint({ prompt, sessionId: forkId, tag: 'receptionist-fork' })
-    return { forkId: response.session_id, answer: response.result }
-  },
 }
 
 export function appendReceptionistLog(entry: Record<string, unknown>): void {

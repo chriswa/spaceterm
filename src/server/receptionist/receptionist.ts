@@ -32,10 +32,10 @@ import { handleFor, readAgent, renderRoster, STATE_WORDS, type RosterAgent } fro
 
 type HistoryMessage = ModelRequest['messages'][number]
 
-/** A Claude Code session fork, through claude-print-daemon. */
+/** Disposable copies of a live surface's Claude session. See `SessionForks`. */
 export interface ForkClient {
-  /** Fork `sessionId` (filed under `cwd`) and ask the copy `prompt`. */
-  fork(req: { sessionId: string; cwd: string; prompt: string; model?: string }): Promise<{ forkId: string; answer: string }>
+  /** Fork the surface's current session `sessionId` and ask the copy `prompt`. */
+  fork(req: { nodeId: NodeId; sessionId: string; prompt: string }): Promise<{ forkId: string; answer: string }>
   /** Ask an existing fork again. */
   ask(req: { forkId: string; prompt: string }): Promise<{ forkId: string; answer: string }>
 }
@@ -314,10 +314,10 @@ export class Receptionist {
       if (existing && existing.nodeId === agent.nodeId) {
         result = await this.deps.forks.ask({ forkId: existing.forkId, prompt: question })
       } else {
-        if (!agent.claudeSessionId || !agent.cwd) throw new Error('that agent has no Claude Code session to copy')
+        if (!agent.claudeSessionId) throw new Error('that agent has no Claude Code session to copy')
         const lastSaidAtFork = this.lastSaid(agent)
         result = await this.deps.forks.fork({
-          sessionId: agent.claudeSessionId, cwd: agent.cwd, prompt: forkPrompt(question), model: agent.model,
+          nodeId: agent.nodeId, sessionId: agent.claudeSessionId, prompt: forkPrompt(question),
         })
         this.forks.set(result.forkId, {
           forkId: result.forkId, nodeId: agent.nodeId, lastSaidAtFork, sessionAtFork: agent.claudeSessionId,

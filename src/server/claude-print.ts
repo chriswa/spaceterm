@@ -17,12 +17,6 @@ export interface ClaudePrintRequest {
   model?: string
   /** Continue this Claude Code session rather than starting one. */
   sessionId?: string
-  /**
-   * Fork this Claude Code session, filed under `cwd`, and ask the copy. The
-   * source transcript is never written to; the copy runs with no tools, so it
-   * can only answer from the conversation. Exclusive with `sessionId`.
-   */
-  fork?: { sessionId: string; cwd: string }
   /** Disable extended thinking. The daemon's warm Haiku spare has it off. */
   noThinking?: boolean
   /** Names the caller in the daemon's usage log, which is where cost is tracked. */
@@ -33,10 +27,8 @@ export interface ClaudePrintRequest {
 
 export interface ClaudePrintResponse {
   session_id: string
-  /** `spare`, `live`, `cold`, `resume` or `fork`: how the turn got its process. */
+  /** `spare`, `live`, `cold` or `resume`: how the turn got its process. */
   source: string
-  /** The session a fork was copied from. */
-  forked_from?: string
   model: string
   result: string
   is_error: boolean
@@ -48,7 +40,6 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
   const args = ['ask', '--tag', req.tag]
   if (req.model) args.push('-m', req.model)
   if (req.sessionId) args.push('-s', req.sessionId)
-  if (req.fork) args.push('--fork', req.fork.sessionId, '--cwd', req.fork.cwd)
   if (req.noThinking) args.push('--no-thinking')
   return new Promise((resolve, reject) => {
     const child = spawn(CLAUDE_PRINT_BIN, args, { stdio: ['pipe', 'pipe', 'pipe'], signal: req.signal })

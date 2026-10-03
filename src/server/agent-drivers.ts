@@ -20,6 +20,12 @@ export interface AgentLaunchSpec {
   appendSystemPrompt?: boolean
   /** From the surface's "Extra CLI arguments" control. */
   extraArgs?: string[]
+  /**
+   * Merged into Claude's `--settings` JSON. Settings never reach the model's
+   * prompt, which is what lets a receptionist fork add a guard hook and still
+   * read its source surface's prompt cache. Claude only.
+   */
+  extraSettings?: Record<string, unknown>
 }
 
 /**
@@ -97,13 +103,14 @@ function claudeDriver(provisioning: AgentProvisioning): AgentDriver {
       requiresResumableSession: true,
       forkStrategy: 'transcript-clone'
     },
-    buildCreateOptions({ cwd, resumeSessionId, prompt, appendSystemPrompt, extraArgs }) {
+    buildCreateOptions({ cwd, resumeSessionId, prompt, appendSystemPrompt, extraArgs, extraSettings }) {
       const pluginDir = provisioning.claudePluginDir()
       const statusLineSettings = JSON.stringify({
         statusLine: {
           type: 'command',
           command: path.join(pluginDir, 'scripts/statusline-handler.sh')
-        }
+        },
+        ...extraSettings
       })
       const args = [
         '--plugin-dir', pluginDir,
