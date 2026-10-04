@@ -31,7 +31,7 @@ import type {
   SummaryChatMode,
   SummaryChatPhase,
   SummaryChatToggleOutcome,
-  SummaryChatUiState, SpeechProgressEvent
+  SummaryChatUiState, SpeechProgressEvent, HandsFreeTuning
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { NodeData, NodeStamp, ReceptionistHolder, ServerState } from './state'
@@ -287,6 +287,23 @@ export interface DictationApi {
 }
 
 /**
+ * Hands-free mode: a client holding its microphone open listens for the wake
+ * word on its own, and talks to Control without a press. See
+ * `src/mobile/hands-free.ts`.
+ */
+export interface HandsFreeApi {
+  /**
+   * Is this clip (16 kHz s16le mono, base64) the wake word alone? Checked on
+   * the Mac, on-device. `error` says why it could not be checked at all.
+   */
+  checkWakeWord(pcmBase64: string): Promise<{ match: boolean; error?: string }>
+  /** Words said after the wake word: to Control, which comes to this device. */
+  say(text: string): void
+  /** The operator's tuning overrides; replayed to a late subscriber. */
+  onTuning(callback: (tuning: Partial<HandsFreeTuning>) => void): () => void
+}
+
+/**
  * Speech played on this client — the phone — rather than by Voice Operator on
  * the Mac: audio arrives a sentence at a time, and the client reports what it
  * has played. See `src/server/remote-speech.ts`.
@@ -429,6 +446,7 @@ export interface Api {
   openExternal(url: string): Promise<void>
   tts: TtsApi
   dictation: DictationApi
+  handsFree: HandsFreeApi
   remoteSpeech: RemoteSpeechApi
   receptionist: ReceptionistApi
   perf: PerfApi

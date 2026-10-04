@@ -68,13 +68,13 @@ export class AudioStats {
   }
 }
 
-/** The state of everything between the microphone and the worklet, for the log. */
-function describeCapture(stream: MediaStream, context: AudioContext): string {
-  const tracks = stream.getAudioTracks().map((t) => `${t.readyState}${t.muted ? ' muted' : ''}${t.enabled ? '' : ' disabled'} "${t.label}"`)
-  return `context ${context.state} @${context.sampleRate}Hz, track ${tracks.join(', ') || 'none'}`
-}
-
 export class Dictation {
+  /**
+   * Dictations capturing now, on this page. Hands-free mode stands aside while
+   * one it did not start is under way.
+   */
+  static live = 0
+
   private id: string | null = null
   private queued: Int16Array[] = []
   private timer: number | undefined
@@ -96,25 +96,19 @@ export class Dictation {
     private readonly capture: Capture,
     started: Promise<string>,
   ) {
-    const { stream, context } = capture
-    const resampler = new Downsampler(context.sampleRate)
+    const resampler = new Downsampler(capture.sampleRate)
     let arrived: () => void = () => undefined
     this.audioArrived = new Promise((resolve) => { arrived = resolve })
+    Dictation.live++
     this.unlisten = capture.listen((block) => {
       if (this.stats.blocks === 0) {
-        log(`first audio after ${Math.round(performance.now() - this.began)}ms (${describeCapture(stream, context)})`)
+        log(`first audio after ${Math.round(performance.now() - this.began)}ms (${capture.describe()})`)
         arrived()
       }
       this.stats.push(block)
       const pcm = resampler.push(block)
       if (pcm.length > 0) this.queued.push(pcm)
     })
-    context.onstatechange = () => log(`context now ${context.state}`)
-    for (const track of stream.getAudioTracks()) {
-      track.onmute = () => log('track muted')
-      track.onunmute = () => log('track unmuted')
-      track.onended = () => { if (!this.stopped) log('track ended while listening') }
-    }
     this.timer = window.setInterval(() => this.flush(), SEND_INTERVAL_MS)
     started.then(
       (id) => {
@@ -149,13 +143,13 @@ export class Dictation {
       void started.then((id) => api.cancel(id), () => undefined)
       throw err
     }
-    log(`capture open: ${describeCapture(capture.stream, capture.context)}, page ${document.visibilityState}`)
+    log(`capture open: ${capture.describe()}, page ${document.visibilityState}`)
     return new Dictation(api, capture, started)
   }
 
   /** For the log when sound never came: what the capture looks like now. */
   describe(): string {
-    return `${this.stats.describe(this.capture.context.sampleRate)}; ${describeCapture(this.capture.stream, this.capture.context)}`
+    return `${this.stats.describe(this.capture.sampleRate)}; ${this.capture.describe()}`
   }
 
   /** Stop listening and return the transcript, or throw with the server's reason. */
@@ -191,6 +185,7 @@ export class Dictation {
   private stopCapture(broken = false): void {
     if (this.stopped) return
     this.stopped = true
+    Dictation.live--
     window.clearInterval(this.timer)
     this.unlisten()
     this.capture.release(broken)

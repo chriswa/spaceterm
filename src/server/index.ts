@@ -4,7 +4,7 @@ import * as path from 'path'
 import { execFile } from 'child_process'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
-import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, HandsFreeTuning } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps, type SpawnedPty } from './terminal-respawn'
@@ -38,6 +38,7 @@ import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrow
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
+import { checkWakeWord, parseHandsFreeTuning } from './hands-free'
 import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
 import { RemoteSpeech } from './remote-speech'
@@ -332,6 +333,28 @@ const directSpeech = new DirectSpeech({
 
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator(), (speaking) => receptionist?.userSpeaking(speaking))
+
+/**
+ * Hands-free: the wake-word checks a listening phone asks for, and the
+ * operator's thresholds from `~/.spaceterm/hands-free.json`, pushed to every
+ * client whenever the file changes. See hands-free.ts.
+ */
+const wakeWordVoiceOperator = new VoiceOperator()
+const HANDS_FREE_TUNING_PATH = path.join(SOCKET_DIR, 'hands-free.json')
+let handsFreeTuning: Partial<HandsFreeTuning> = {}
+function readHandsFreeTuning(): void {
+  let text: string | undefined
+  try { text = fs.readFileSync(HANDS_FREE_TUNING_PATH, 'utf8') } catch { text = undefined }
+  const { tuning, problems } = parseHandsFreeTuning(text)
+  for (const problem of problems) serverLog(`[hands-free] ${HANDS_FREE_TUNING_PATH}: ${problem}`)
+  handsFreeTuning = tuning
+}
+readHandsFreeTuning()
+fs.watchFile(HANDS_FREE_TUNING_PATH, { interval: 2000, persistent: false }, () => {
+  readHandsFreeTuning()
+  serverLog(`[hands-free] tuning now ${JSON.stringify(handsFreeTuning)}`)
+  broadcastToAll({ type: 'hands-free-tuning', tuning: handsFreeTuning })
+})
 
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
 const mobileAppInstaller = new MobileAppInstaller(realMobileInstallDeps(path.resolve(__dirname, '..', '..')))
@@ -915,6 +938,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, receptionistStatus())
   send(link, { type: 'receptionist-holder', holder: stateManager.getReceptionistHolder() })
   send(link, { type: 'agent-names', names: agentNameMap() })
+  send(link, { type: 'hands-free-tuning', tuning: handsFreeTuning })
 
   // Availability is pushed on change, which a client that connected after the
   // last change would never have heard. Replay what is known.
@@ -1759,6 +1783,29 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-cancel': {
       remoteDictation.cancel(client.id, msg.id)
+      break
+    }
+
+    case 'wake-word-check': {
+      const seq = msg.seq
+      void checkWakeWord(wakeWordVoiceOperator, Buffer.from(msg.pcm, 'base64')).then((outcome) => {
+        if (!outcome.ok) serverLog(`[hands-free] ${outcome.error}`)
+        else if (outcome.match) serverLog(`[hands-free] wake word heard on ${client.device?.label ?? client.id.slice(0, 8)}`)
+        send(client.link, outcome.ok
+          ? { type: 'wake-word-result', seq, match: outcome.match }
+          : { type: 'wake-word-result', seq, match: false, error: outcome.error })
+      })
+      break
+    }
+
+    case 'receptionist-hands-free': {
+      const text = msg.text.trim()
+      if (!text || !receptionist) break
+      // The wake word names Control: whatever the voice target was, this is
+      // for it, and — as speaking to it does — it brings Control here.
+      if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
+      setVoiceTarget('receptionist')
+      void receptionist.hear(text)
       break
     }
 

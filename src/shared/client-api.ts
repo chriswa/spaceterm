@@ -60,6 +60,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
   const onReceptionistStatus = latest('receptionist-status')
   const onReceptionistHolder = latest('receptionist-holder')
   const onAgentNames = latest('agent-names')
+  const onHandsFreeTuning = latest('hands-free-tuning')
 
   return {
     pty: {
@@ -186,6 +187,11 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       audio: (id, pcm) => client.dictationAudio(id, pcm),
       finish: (id) => client.dictationFinish(id),
       cancel: (id) => client.dictationCancel(id)
+    },
+    handsFree: {
+      checkWakeWord: (pcm) => client.checkWakeWord(pcm),
+      say: (text) => client.receptionistHandsFree(text),
+      onTuning: (cb) => onHandsFreeTuning((m) => cb(m.tuning))
     },
     remoteSpeech: {
       onAudio: (cb) => on('speech-audio', ({ id, index, count, sampleRate, pcm }) => cb({ id, index, count, sampleRate, pcm })),

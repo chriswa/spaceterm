@@ -2,11 +2,11 @@ import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
-  ReceptionistApi, ReceptionistStatus
+  ReceptionistApi, ReceptionistStatus, HandsFreeApi
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
-import type { SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
+import type { HandsFreeTuning, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
 import type { NodeData, ReceptionistHolder, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
@@ -179,6 +179,7 @@ export class FakeBridge implements Api {
   private readonly agentNames = new Set<(names: Record<string, string>) => void>()
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
+  private readonly handsFreeTuning = new Set<(tuning: Partial<HandsFreeTuning>) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -288,6 +289,7 @@ export class FakeBridge implements Api {
     },
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
+    handsFreeTuning: (tuning: Partial<HandsFreeTuning>): void => { for (const fn of this.handsFreeTuning) fn(tuning) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
@@ -434,6 +436,12 @@ export class FakeBridge implements Api {
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
     cancel: (id) => this.record('dictation.cancel', id)
+  }
+
+  readonly handsFree: HandsFreeApi = {
+    checkWakeWord: (pcm) => this.reply('handsFree.checkWakeWord', { match: false } as { match: boolean; error?: string }, pcm),
+    say: (text) => this.record('handsFree.say', text),
+    onTuning: (cb) => subscribe(this.handsFreeTuning, cb)
   }
 
   private readonly speechAudio = new Set<Parameters<RemoteSpeechApi['onAudio']>[0]>()

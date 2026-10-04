@@ -22,7 +22,7 @@ every canvas card on snapshots and publishes which terminal is focused, and
 `MobileApp` draws it. Focus, unread handling and the camera stay `App`'s.
 
 Phone-only: the gestures, the key row, the composer (dictate → edit → ship),
-the surface list, and dictation capture.
+the surface list, dictation capture, and hands-free mode (below).
 
 ## The terminal view
 
@@ -65,6 +65,35 @@ system monitor as mini-stats (`~/mini-stats`) draws it in the menu bar
 mini-stats writes what its menu-bar item draws, colours and sizes decided, to
 `~/.mini-stats/menubar.json`; the server reads it every 2 s, but only while a
 phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
+
+## Hands-free: "Control"
+
+The hold-mic button (the microphone with a lock, right of the talk button) is
+the always-listen switch. While it holds the microphone, saying **"Control"**
+on its own — quiet before it, then a pause — plays the start tone and opens an
+ordinary Wispr dictation on the microphone that is already open, exactly as
+the talk button would. It ends when you stop talking, and the words go to
+Control, which comes to this phone.
+
+- **In the app** the microphone is the app's own (`NativeMicrophone.swift`,
+  `native-microphone.ts`), so no AirPods are needed: it plays through the
+  speaker, keeps listening with the screen locked, and comes back by itself
+  after Siri, a call, a relaunch, or AirPods coming and going. In a browser
+  the page holds it, and only with a headset (`held-microphone.ts`).
+- **Nothing leaves the phone** until a burst of speech is one word long with
+  quiet before it (`wake-listener.ts`). Only that clip, about a second, goes to
+  the Mac, where Voice Operator checks it with Apple's on-device model
+  (`POST /v1/wake-word`) — never Wispr. Audio is otherwise only ever in a
+  three-second buffer in memory.
+- It does not listen while the phone is playing anything, or for a moment
+  after, so Control never wakes itself; nor during a dictation it did not
+  start.
+- **Thresholds** are in `~/.spaceterm/hands-free.json` on the Mac, read again
+  whenever it changes — any of `silenceBeforeMs` (700), `silenceAfterMs` (400),
+  `wordMinMs` (250), `wordMaxMs` (1000), `endSilenceMs` (1500),
+  `noSpeechTimeoutMs` (6000), `maxUtteranceMs` (60000), `playbackTailMs` (400).
+  The server log's `[hands-free]` lines say what each candidate measured and
+  whether it was the word, never what was said.
 
 ## Running it
 

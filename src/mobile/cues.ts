@@ -63,6 +63,33 @@ export function audioContext(): AudioContext | null {
 }
 
 /**
+ * When this page's sound stops being audible, by `performance.now()`. Cues and
+ * spoken answers both report here, so hands-free mode can tell when the
+ * microphone is hearing the phone itself rather than the room.
+ */
+let soundingUntil = 0
+
+/** Something just scheduled on `ctx` is audible until `until` on its clock. */
+export function noteSounding(ctx: AudioContext, until: number): void {
+  soundingUntil = Math.max(soundingUntil, performance.now() + Math.max(0, until - ctx.currentTime) * 1000)
+}
+
+/** Everything this page was playing has been cut off. */
+export function noteSilenced(): void {
+  soundingUntil = Math.min(soundingUntil, performance.now())
+}
+
+/** How long this page has been silent, in ms; 0 while it is playing. */
+export function quietForMs(): number {
+  return Math.max(0, performance.now() - soundingUntil)
+}
+
+/** How long a cue lasts, in ms. */
+export function cueMs(cue: Cue): number {
+  return (cueSamples(cue).length / SAMPLE_RATE) * 1000
+}
+
+/**
  * Play a cue. Fire-and-forget, and silent rather than throwing when audio is
  * unavailable: a cue is confirmation, never a reason for something to fail.
  */
@@ -79,6 +106,7 @@ export function playCue(cue: Cue): void {
     source.buffer = buffer
     source.connect(gain).connect(context.destination)
     source.start()
+    noteSounding(context, context.currentTime + buffer.duration)
     // In the server log, so a cue that seems quiet or missing can be traced.
     window.api?.log(`[cue] ${cue} (audio ${context.state})`)
   } catch {

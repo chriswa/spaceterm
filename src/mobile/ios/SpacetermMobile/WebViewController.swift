@@ -6,6 +6,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private var webView: WKWebView!
     /// Times iOS has ended the page's process since launch; see below.
     private var processRestarts = 0
+    /// The app's own microphone, which the page asks for: hands-free mode.
+    private let microphone = NativeMicrophone()
 
     /// `SpacetermURL` from Info.plist, written at build time by install.sh.
     private let startURL: URL? = {
@@ -40,7 +42,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
 
+        // `window.webkit.messageHandlers.nativeMicrophone` is also how the
+        // page knows it can hold a microphone without AirPods.
+        config.userContentController.add(microphone, name: "nativeMicrophone")
+
         webView = WKWebView(frame: .zero, configuration: config)
+        microphone.webView = webView
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.isOpaque = false

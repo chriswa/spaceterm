@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 6
+export const CLIENT_PROTOCOL_VERSION = 7
 
 /**
  * Oldest client protocol this build still serves.
@@ -40,5 +40,8 @@ export const CLIENT_PROTOCOL_VERSION = 6
  *
  * v5 and below name no device in `client-hello`, so they can never hold
  * Control; their Talk To Me toggle, replaced in v6 by holding, does nothing.
+ *
+ * v6 has no hands-free mode (`wake-word-check`, `receptionist-hands-free`,
+ * `hands-free-tuning`); it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

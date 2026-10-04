@@ -784,6 +784,9 @@ textarea, input, [contenteditable="true"], .cm-content {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
 }
+/* Hands-free (hands-free.ts): it heard "Control" and is taking down what you
+   say, or sending it. Green, as a talk button that is listening. */
+.m-hold-mic--hearing { background: #a6e3a1; color: #11111b; }
 
 /* Nothing on the canvas animates on the phone: no dancing crab, no pulsing
    glow or unread badge. An animation of transform or opacity gives its element

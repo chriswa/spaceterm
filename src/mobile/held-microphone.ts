@@ -1,5 +1,6 @@
 import { beginRecordingSession } from './audio-session'
 import { playCue } from './cues'
+import { nativeMicrophoneAvailable, openNativeMicrophone } from './native-microphone'
 
 /**
  * The microphone, held open between dictations — as Voice Operator does on the
@@ -12,10 +13,15 @@ import { playCue } from './cues'
  * a stream that is already flowing; between dictations the audio is dropped
  * here, on the phone, and nothing is sent anywhere.
  *
- * Only while the input is a headset. WebKit can hold a microphone only in
- * play-and-record, which on the phone's own speaker plays through the earpiece
- * — so held open without AirPods, every spoken answer would come out as a
- * whisper. Voice Operator has the same rule ("Only When Using AirPods").
+ * In the iPhone app, the app holds it (native-microphone.ts), with or without
+ * a headset, and holding it is hands-free mode: the phone listens for
+ * "Control" on its own (hands-free.ts).
+ *
+ * In a browser, only while the input is a headset. WebKit can hold a
+ * microphone only in play-and-record, which on the phone's own speaker plays
+ * through the earpiece — so held open without AirPods, every spoken answer
+ * would come out as a whisper. Voice Operator has the same rule ("Only When
+ * Using AirPods").
  *
  * Remembered per device. iOS only opens a microphone inside a tap, so after a
  * relaunch, or after iOS takes the microphone away in the background, the hold
@@ -31,10 +37,10 @@ export function isHeadset(label: string): boolean {
   return /airpods|bluetooth|headset|headphone|beats|buds|hands-?free/i.test(label)
 }
 
-/** One open capture: the stream, the graph, and who is listening to it. */
+/** One open microphone, and who is listening to it: the page's own, or the app's. */
 export interface Capture {
-  readonly context: AudioContext
-  readonly stream: MediaStream
+  /** Hz of the blocks `listen` hands out. */
+  readonly sampleRate: number
   /** Blocks of audio from now on, until the returned function is called. */
   listen(fn: (block: Float32Array) => void): () => void
   /** Whether it is still delivering: not closed, and its track still live. */
@@ -44,6 +50,8 @@ export interface Capture {
    * `broken` (it went silent); a capture that is not held closes.
    */
   release(broken?: boolean): void
+  /** Its state, for the log. */
+  describe(): string
 }
 
 const WORKLET = `
@@ -110,15 +118,28 @@ export async function openCapture(): Promise<{
   }
 }
 
+/** The state of everything between the microphone and the worklet, for the log. */
+function describeWebCapture(stream: MediaStream, context: AudioContext): string {
+  const tracks = stream.getAudioTracks().map((t) => `${t.readyState}${t.muted ? ' muted' : ''}${t.enabled ? '' : ' disabled'} "${t.label}"`)
+  return `context ${context.state} @${context.sampleRate}Hz, track ${tracks.join(', ') || 'none'}`
+}
+
 /** A capture's audio, fanned out to whoever is listening. */
 function captureOf(opened: Awaited<ReturnType<typeof openCapture>>, release: (broken: boolean) => void): Capture {
   const listeners = new Set<(block: Float32Array) => void>()
   opened.node.port.onmessage = (event: MessageEvent<Float32Array>) => {
     for (const fn of listeners) fn(event.data)
   }
+  const { context, stream } = opened
+  context.onstatechange = () => log(`context now ${context.state}`)
+  for (const track of stream.getAudioTracks?.() ?? []) {
+    track.onmute = () => log('track muted')
+    track.onunmute = () => log('track unmuted')
+    track.onended = () => log('track ended')
+  }
   return {
-    context: opened.context,
-    stream: opened.stream,
+    sampleRate: context.sampleRate,
+    describe: () => describeWebCapture(stream, context),
     listen(fn) {
       listeners.add(fn)
       return () => { listeners.delete(fn) }
@@ -142,7 +163,8 @@ export type HoldState = 'off' | 'preparing' | 'held'
 let wanted = (() => {
   try { return localStorage.getItem(KEY) === '1' } catch { return false }
 })()
-let held: { capture: Capture; close: () => void } | undefined
+/** `headset`: the label of a held web microphone, rechecked when devices change. Absent for the app's own. */
+let held: { capture: Capture; close: () => void; headset?: string } | undefined
 let opening: Promise<Capture> | undefined
 const stateListeners = new Set<(state: HoldState) => void>()
 /** Nothing is held at load: the hold, if wanted, comes back with the next tap. */
@@ -177,7 +199,15 @@ export function holdsMicrophone(): boolean {
 }
 
 
-/** Turn holding on or off, remembered on this phone. Call inside a tap: turning it on opens the microphone now. */
+/** The microphone held open now, if it is: what hands-free mode listens to. */
+export function heldCapture(): Capture | undefined {
+  return held?.capture.healthy() ? held.capture : undefined
+}
+
+/**
+ * Turn holding on or off, remembered on this phone. In a browser call it
+ * inside a tap: turning it on opens the microphone now.
+ */
 export function setHoldMicrophone(on: boolean): void {
   wanted = on
   try { localStorage.setItem(KEY, on ? '1' : '0') } catch { /* private mode: this session only */ }
@@ -202,18 +232,32 @@ function closeHeld(why: string): void {
  */
 export function acquire(): Promise<Capture> {
   if (held?.capture.healthy()) {
-    void held.capture.context.resume()
     log('using the held microphone')
     return Promise.resolve(held.capture)
   }
   if (held) closeHeld('it stopped delivering')
   if (opening) return opening
   opening = (async () => {
+    // The app's own microphone: no headset needed, and no tap.
+    if (wanted && nativeMicrophoneAvailable()) {
+      const native = await openNativeMicrophone()
+      const capture: Capture = {
+        sampleRate: native.sampleRate,
+        listen: (fn) => native.listen(fn),
+        healthy: () => native.healthy(),
+        describe: () => native.describe(),
+        release: (broken = false) => { if (broken) closeHeld('it went silent') },
+      }
+      held = { capture, close: () => native.close() }
+      log('holding the app\'s own microphone open')
+      announce()
+      return capture
+    }
     const opened = await openCapture()
     const label = opened.stream.getAudioTracks()[0]?.label ?? ''
     if (wanted && isHeadset(label)) {
       const capture = captureOf(opened, (broken) => { if (broken) closeHeld('it went silent') })
-      held = { capture, close: opened.close }
+      held = { capture, close: opened.close, headset: label }
       log(`holding "${label}" open`)
       announce()
       return capture
@@ -226,13 +270,40 @@ export function acquire(): Promise<Capture> {
 
 /** Movement that still counts as a tap. */
 const TAP_SLOP_PX = 10
+/** How often the app's own microphone is checked on, and taken back if it stopped. */
+const NATIVE_CHECK_MS = 5000
 
 /**
- * Bring the hold back after a relaunch or a background trip: iOS opens a
- * microphone only inside a gesture, so the next tap anywhere does it. A
- * headset coming or going is rechecked too.
+ * Bring the hold back after a relaunch or a background trip. In the app that
+ * needs nothing from the user: its microphone is opened now, and again
+ * whenever it is found to have stopped.
+ */
+function installNativeHold(): () => void {
+  const check = () => {
+    announce()
+    if (!wanted || held?.capture.healthy() || opening) return
+    if (held) closeHeld('it stopped delivering')
+    void acquire().then((capture) => capture.release(), (err) => {
+      log(`could not open the app's microphone: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
+  check()
+  const timer = setInterval(check, NATIVE_CHECK_MS)
+  const onVisible = () => { if (document.visibilityState === 'visible') check() }
+  document.addEventListener('visibilitychange', onVisible)
+  return () => {
+    clearInterval(timer)
+    document.removeEventListener('visibilitychange', onVisible)
+  }
+}
+
+/**
+ * Bring the hold back after a relaunch or a background trip. In a browser iOS
+ * opens a microphone only inside a gesture, so the next tap anywhere does it,
+ * and a headset coming or going is rechecked too.
  */
 export function installHeldMicrophone(): () => void {
+  if (nativeMicrophoneAvailable()) return installNativeHold()
   /**
    * Set when an attempt found no headset to hold (or no microphone at all):
    * nothing changes that until a device comes or goes. Without it every touch
@@ -272,8 +343,7 @@ export function installHeldMicrophone(): () => void {
   }
   const onDeviceChange = () => {
     waitForDevice = false
-    const label = held?.capture.stream.getAudioTracks()[0]?.label
-    if (held && (!held.capture.healthy() || !isHeadset(label ?? ''))) closeHeld('the headset went away')
+    if (held && (!held.capture.healthy() || !isHeadset(held.headset ?? ''))) closeHeld('the headset went away')
   }
   const options = { capture: true, passive: true }
   document.addEventListener('pointerdown', onDown, options)

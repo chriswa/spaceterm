@@ -393,6 +393,29 @@ export interface DictationCancelMessage {
 }
 
 /**
+ * Hands-free: is this short clip the wake word ("control") said on its own?
+ * The client cut it out of what its held-open microphone heard; the server
+ * asks Voice Operator, which checks it on the Mac with Apple's on-device
+ * speech model — never Wispr, since the clip is whatever was said in the
+ * room. Replies `wake-word-result`, or a correlated `server-error`.
+ */
+export interface WakeWordCheckMessage {
+  type: 'wake-word-check'
+  seq: number
+  /** 16 kHz signed 16-bit little-endian mono, base64. */
+  pcm: string
+}
+
+/**
+ * Words dictated hands-free, after the wake word: for Control, whatever the
+ * voice target. Takes Control to this device, as speaking to it does.
+ */
+export interface ReceptionistHandsFreeMessage {
+  type: 'receptionist-hands-free'
+  text: string
+}
+
+/**
  * Borrow a terminal surface's grid — the phone fitting it to its screen. The
  * server remembers the surface's own size (persisted, as `homeSize`) and gives
  * it back on `terminal-return-size`, on this client's disconnect, or on the
@@ -1071,6 +1094,8 @@ export type ClientMessage =
   | DictationAudioMessage
   | DictationFinishMessage
   | DictationCancelMessage
+  | WakeWordCheckMessage
+  | ReceptionistHandsFreeMessage
   | AgentSearchMessage
   | AgentMetaAvailabilityQueryMessage
   | AgentMetaToggleMessage
@@ -1782,6 +1807,47 @@ export interface DictationResultMessage {
   text: string
 }
 
+/**
+ * The verdict on a `wake-word-check`. A failed check (Voice Operator not
+ * running, too old) is no match plus `error`, not a `server-error`: a broadcast
+ * error would toast on every short word said near the phone.
+ */
+export interface WakeWordResultMessage {
+  type: 'wake-word-result'
+  seq: number
+  match: boolean
+  error?: string
+}
+
+/**
+ * Hands-free mode's thresholds, every one in milliseconds. Defaults live with
+ * the listener (`src/mobile/wake-listener.ts`); the operator overrides any of
+ * them in `~/.spaceterm/hands-free.json`, read again whenever it changes.
+ */
+export interface HandsFreeTuning {
+  /** Quiet before the word: no other words were just spoken. */
+  silenceBeforeMs: number
+  /** Quiet after it: the pause that says "I'm talking to you", before the cue. */
+  silenceAfterMs: number
+  /** How long the word itself may last. */
+  wordMinMs: number
+  wordMaxMs: number
+  /** After the cue: quiet that ends what is being said to Control. */
+  endSilenceMs: number
+  /** After the cue: how long to wait for speech to start before giving up. */
+  noSpeechTimeoutMs: number
+  /** The longest anything said hands-free may run. */
+  maxUtteranceMs: number
+  /** After this device stops playing sound, how long before listening resumes (echo). */
+  playbackTailMs: number
+}
+
+/** The operator's overrides from `~/.spaceterm/hands-free.json`. Sent on connect and on every change. */
+export interface HandsFreeTuningMessage {
+  type: 'hands-free-tuning'
+  tuning: Partial<HandsFreeTuning>
+}
+
 export interface AgentMemoryResultMessage {
   type: 'agent-memory-result'
   seq: number
@@ -1836,6 +1902,8 @@ export type ServerMessage =
   | ReceptionistHolderMessage
   | CameraFollowMessage
   | ReceptionistNoticeMessage
+  | WakeWordResultMessage
+  | HandsFreeTuningMessage
   | AgentNamesMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage

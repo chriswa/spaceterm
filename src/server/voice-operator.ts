@@ -236,6 +236,17 @@ export class VoiceOperator {
     return this.request(`/v1/transcriptions/${encodeURIComponent(id)}`, { method: 'DELETE' })
   }
 
+  /**
+   * Hands-free: is this clip the wake word alone? Raw s16le mono PCM at
+   * 16 kHz. Checked by Apple's on-device model, never Wispr. The first check
+   * after Voice Operator starts loads the model, about a second.
+   */
+  checkWakeWord(pcm: Uint8Array, word: string): Promise<SpeechResponse> {
+    return this.request(`/v1/wake-word?word=${encodeURIComponent(word)}&sample_rate=16000`, {
+      method: 'POST', body: new Uint8Array(pcm), headers: { 'content-type': 'application/octet-stream' },
+    }, 5_000)
+  }
+
   /** Every voice the service offers, unfiltered. */
   voices(): Promise<SpeechResponse> {
     return this.request('/v1/voices')

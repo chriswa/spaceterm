@@ -73,6 +73,7 @@ export type ServerEventType =
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
+  | 'hands-free-tuning'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -288,6 +289,7 @@ export class ServerClient {
       case 'camera-follow':
       case 'agent-names':
       case 'receptionist-notice':
+      case 'hands-free-tuning':
         this.emit(msg)
         return
 
@@ -326,6 +328,7 @@ export class ServerClient {
       case 'agent-search-result':
       case 'dictation-started':
       case 'dictation-result':
+      case 'wake-word-result':
       case 'agent-memory-result': {
         const pending = this.pending.get(msg.seq)
         if (!pending) return
@@ -777,6 +780,21 @@ export class ServerClient {
 
   dictationCancel(id: string): void {
     this.fireAndForget({ type: 'dictation-cancel', id })
+  }
+
+  // ─── hands-free ───────────────────────────────────────────────────────────
+
+  /** Whether a clip (16 kHz s16le mono, base64) is the wake word alone; `error` when it could not be checked. */
+  async checkWakeWord(pcmBase64: string): Promise<{ match: boolean; error?: string }> {
+    const resp = await this.request({ type: 'wake-word-check', pcm: pcmBase64 })
+    if (resp.type === 'wake-word-result') return { match: resp.match, error: resp.error }
+    return unexpected(resp)
+  }
+
+  /** Words said hands-free, for Control. */
+  receptionistHandsFree(text: string): void {
+    this.log(`[hands-free] ${text.length} chars to Control`)
+    this.fireAndForget({ type: 'receptionist-hands-free', text })
   }
 
   /** Build and install the iPhone app from the Mac. Resolves when it fails, or — rarely seen — succeeds. */

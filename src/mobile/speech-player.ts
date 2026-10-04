@@ -1,5 +1,5 @@
 import type { RemoteSpeechApi } from '../shared/api'
-import { audioContext } from './cues'
+import { audioContext, noteSilenced, noteSounding } from './cues'
 import { describeAudioSession } from './audio-session'
 
 /**
@@ -56,6 +56,8 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
       source.onended = null
       try { source.stop() } catch { /* never started */ }
     }
+    // Cut off, so silent now — unless another job is still queued behind it.
+    if (jobs.size === 0) noteSilenced()
   }
 
   const offAudio = api.onAudio(({ id, index, count, sampleRate, pcm }) => {
@@ -82,6 +84,7 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
       if (index === count - 1) jobs.delete(id)
     }
     source.start(at)
+    noteSounding(ctx, playing.endsAt)
     playing.sources.push(source)
     playing.timers.push(window.setTimeout(() => api.progress(id, index, 'started'), Math.max(0, (at - ctx.currentTime) * 1000)))
     // The session's mode is where it is heard: play-and-record with no microphone open plays at the earpiece.

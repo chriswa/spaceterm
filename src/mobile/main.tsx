@@ -10,6 +10,7 @@ import { installMemoryProbe } from './memory-probe'
 import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
 import { installHeldMicrophone } from './held-microphone'
+import { installHandsFree } from './hands-free'
 import { phoneDevice } from './device'
 import '@/styles/index.css'
 import './mobile.css'
@@ -67,6 +68,8 @@ if (!token) {
     // Sound to the speaker, not the earpiece, except while recording.
     initAudioSession()
     installHeldMicrophone()
+    // Listens for "Control" on the held microphone; see hands-free.ts.
+    installHandsFree(window.api)
     // Summary Chat speaks here, not on the Mac (browserPlatform's playsSpeech).
     startSpeechPlayer(window.api.remoteSpeech, (message) => window.api.log(message))
     const { MobileApp } = await import('./MobileApp')
