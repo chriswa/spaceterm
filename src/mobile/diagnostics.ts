@@ -17,7 +17,13 @@
  *   another were what killed it pinching in from fully zoomed out.)
  * - `[lifecycle]` — the page reloaded because iOS ended its process, as it
  *   does to a page using too much memory (the app counts them; see
- *   WebViewController's `webViewWebContentProcessDidTerminate`).
+ *   WebViewController's `webViewWebContentProcessDidTerminate`). A killed
+ *   page's last log lines are often lost with its socket, so a breadcrumb —
+ *   the zoom, the cards and the last camera event, written every tick to
+ *   localStorage, which outlives the page's process — is logged on reload as
+ *   what the page was doing when it died.
+ * - `[camera]` — what moves the camera: Control's camera follow, and a pinch
+ *   with the zoom it started and ended at. A kill mid-motion then says which.
  */
 
 declare global {
@@ -27,6 +33,19 @@ declare global {
 /** No frame for this long while the page is visible is a stall worth logging. */
 const STALL_MS = 1000
 const WATCH_MS = 250
+const BREADCRUMB_KEY = 'spaceterm:diagnostics-breadcrumb'
+
+function readBreadcrumb(): string | null {
+  try { return localStorage.getItem(BREADCRUMB_KEY) } catch { return null }
+}
+
+function writeBreadcrumb(crumb: string): void {
+  try { localStorage.setItem(BREADCRUMB_KEY, crumb) } catch { /* private mode, or full */ }
+}
+
+function cameraZoom(): number {
+  return Number(document.querySelector<HTMLElement>('.canvas-surface')?.style.getPropertyValue('--camera-zoom'))
+}
 
 function describe(el: Element | null): string {
   if (!el || el === document.body) return 'body'
@@ -37,7 +56,29 @@ function describe(el: Element | null): string {
 export function installDiagnostics(log: (message: string) => void): void {
   if (window.spacetermProcessRestarts) {
     log(`[lifecycle] reloaded because iOS ended the page's process (${window.spacetermProcessRestarts} this launch)`)
+    const crumb = readBreadcrumb()
+    if (crumb) log(`[lifecycle] last seen before the kill: ${crumb}`)
   }
+
+  let lastCameraEvent = 'none'
+  const cameraEvent = (event: string) => {
+    lastCameraEvent = `${event} (${new Date().toISOString()})`
+    log(`[camera] ${event}`)
+  }
+  window.api.receptionist.onCameraFollow((nodeId) => cameraEvent(`follow to ${nodeId.slice(0, 8)} from zoom ${cameraZoom().toFixed(4)}`))
+  let pinching = false
+  document.addEventListener('touchstart', (e) => {
+    if (pinching || e.touches.length < 2) return
+    pinching = true
+    cameraEvent(`pinch from zoom ${cameraZoom().toFixed(4)}`)
+  }, { capture: true, passive: true })
+  const touchEnded = (e: TouchEvent) => {
+    if (!pinching || e.touches.length > 0) return
+    pinching = false
+    cameraEvent(`pinch ended at zoom ${cameraZoom().toFixed(4)}`)
+  }
+  document.addEventListener('touchend', touchEnded, { capture: true, passive: true })
+  document.addEventListener('touchcancel', touchEnded, { capture: true, passive: true })
 
   document.addEventListener('focusin', (e) => log(`[focus] in ${describe(e.target as Element)}`), true)
   document.addEventListener('focusout', (e) => {
@@ -73,15 +114,16 @@ export function installDiagnostics(log: (message: string) => void): void {
   let lastOctave: number | null = null
   let lastTick = performance.now()
   setInterval(() => {
-    const surface = document.querySelector<HTMLElement>('.canvas-surface')
-    const zoom = Number(surface?.style.getPropertyValue('--camera-zoom'))
+    const zoom = cameraZoom()
+    const glowing = document.querySelectorAll('.card-shell--glow').length
     if (zoom > 0) {
       const octave = Math.round(Math.log2(zoom))
       if (octave !== lastOctave) {
         lastOctave = octave
-        log(`[zoom] ${zoom.toFixed(4)}, ${document.querySelectorAll('.card-shell--glow').length} glowing cards`)
+        log(`[zoom] ${zoom.toFixed(4)}, ${glowing} glowing cards`)
       }
     }
+    writeBreadcrumb(`${new Date().toISOString()} zoom ${zoom.toFixed(4)}, ${glowing} glowing of ${document.querySelectorAll('.card-shell').length} cards, ${pinching ? 'pinching' : 'not pinching'}, ${document.visibilityState}; last camera event: ${lastCameraEvent}`)
     const now = performance.now()
     const late = now - lastTick - WATCH_MS
     lastTick = now

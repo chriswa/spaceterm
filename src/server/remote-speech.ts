@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { ServerMessage, SpeechProgressEvent } from '../shared/protocol'
-import { speechPartStarts, type SpeechBackend, type SpeechContent, type SpeechResponse, type SpeechStatus } from './voice-operator'
+import { speechPartStarts, type SpeechBackend, type SpeechContent, type SpeechResponse, type SpeechStatus, type SynthesizedSpeech, type TimedWord } from './voice-operator'
 import { serverLog } from './server-log'
 
 /**
@@ -16,8 +16,8 @@ import { serverLog } from './server-log'
  */
 
 export interface RemoteSpeechDeps {
-  /** One sentence's audio, or undefined when it could not be made. */
-  synthesize(text: string, voice: string | undefined, signal: AbortSignal): Promise<{ pcm: Uint8Array; sampleRate: number } | undefined>
+  /** One sentence's audio and its word timings, or undefined when it could not be made. */
+  synthesize(text: string, voice: string | undefined, signal: AbortSignal): Promise<SynthesizedSpeech | undefined>
   /** Send to a connected client; false when it is not connected. */
   send(clientId: string, msg: ServerMessage): boolean
   isConnected(clientId: string): boolean
@@ -28,14 +28,26 @@ export interface RemoteSpeechDeps {
 /** A sentence to speak. `start`/`end` index the job's whole text — see `joinSpeechParts`. */
 interface Sentence { text: string; start: number; end: number; voice?: string }
 
+/** A sentence's audio as sent: how long it runs, and where its words fall, when they were timed. */
+interface SentenceAudio { seconds: number; words?: TimedWord[] }
+
+/** The sentence the client is playing, and when it said it started. */
+interface Playing { index: number; startedAt: number; audio: SentenceAudio }
+
 interface Job {
   id: string
   clientId: string
   sentences: Sentence[]
   state: SpeechStatus['state']
   playback: NonNullable<SpeechStatus['playback_state']>
-  /** End of the last sentence the client finished playing: what was heard. */
+  /**
+   * What was heard: past the last sentence the client finished playing, and
+   * on a cut, into the one it was part way through — see `cutOff`.
+   */
   offset: number
+  /** Each sentence's audio, once synthesized. */
+  audio: SentenceAudio[]
+  playing?: Playing
   version: number
   abort: AbortController
   changed: Set<() => void>
@@ -113,17 +125,19 @@ export class RemoteSpeech {
     }
   }
 
-  /** The client's account of its playback. */
-  progress(clientId: string, id: string, index: number, event: SpeechProgressEvent): void {
+  /** The client's account of its playback. `now` is when it arrived. */
+  progress(clientId: string, id: string, index: number, event: SpeechProgressEvent, now = Date.now()): void {
     const job = this.jobs.get(id)
     if (!job || job.clientId !== clientId || job.state !== 'in_progress') return
     if (event === 'started') {
+      const audio = job.audio[index]
+      if (audio) job.playing = { index, startedAt: now, audio }
       if (job.playback !== 'speaking') this.change(job, () => { job.playback = 'speaking' })
     } else if (event === 'finished') {
-      const sentence = job.sentences[index]
-      if (!sentence) return
+      if (!job.sentences[index]) return
+      if (job.playing?.index === index) job.playing = undefined
       this.change(job, () => {
-        job.offset = Math.max(job.offset, sentence.end)
+        job.offset = Math.max(job.offset, heardThrough(job.sentences, index))
         if (index === job.sentences.length - 1) job.state = 'completed'
       })
     } else {
@@ -133,10 +147,13 @@ export class RemoteSpeech {
   }
 
   /** The client went away: whatever it was playing has stopped where it got to. */
-  clientGone(clientId: string): void {
+  clientGone(clientId: string, now = Date.now()): void {
     this.lanes.delete(clientId)
     for (const job of this.jobs.values()) {
-      if (job.clientId === clientId && job.state === 'in_progress') this.end(job, 'cancelled_by_client')
+      if (job.clientId === clientId && job.state === 'in_progress') {
+        this.cutOff(job, now)
+        this.end(job, 'cancelled_by_client')
+      }
     }
   }
 
@@ -150,6 +167,7 @@ export class RemoteSpeech {
       state: 'in_progress',
       playback: 'queued',
       offset: 0,
+      audio: [],
       version: 1,
       abort: new AbortController(),
       changed: new Set(),
@@ -173,6 +191,8 @@ export class RemoteSpeech {
         this.end(job, 'synthesis_failed')
         return
       }
+      // s16le mono: two bytes a sample.
+      job.audio[index] = { seconds: audio.pcm.byteLength / 2 / audio.sampleRate, words: audio.words }
       const sent = this.deps.send(job.clientId, {
         type: 'speech-audio',
         id: job.id,
@@ -212,11 +232,45 @@ export class RemoteSpeech {
     return { status: httpStatus(job.state), body: this.snapshot(job) }
   }
 
-  private async drop(id: string): Promise<SpeechResponse> {
+  private async drop(id: string, now = Date.now()): Promise<SpeechResponse> {
     const job = this.jobs.get(id)
     if (!job) return { status: 404, body: { error: 'unknown_job' } }
-    if (job.state === 'in_progress') this.end(job, 'cancelled_by_client')
+    if (job.state === 'in_progress') {
+      this.cutOff(job, now)
+      this.end(job, 'cancelled_by_client')
+    }
     return { status: httpStatus(job.state), body: this.snapshot(job) }
+  }
+
+  /**
+   * Count what was heard of the sentence playing when the job was cut off.
+   *
+   * The phone reports only sentence boundaries, and a sentence can run for
+   * seconds: counting only finished ones once told the receptionist the
+   * listener had heard none of a question they were already answering. So the
+   * time since the phone said the sentence started is looked up in its word
+   * timings, by Voice Operator's own rule for speech it plays itself: a word
+   * counts once it has started, and the offset lands just past it, so
+   * `redactUnheard` marks it as the word the listener cut in on.
+   *
+   * The clock is this server's, so it is off by however long the "started"
+   * report took to arrive, less however long the phone keeps playing until the
+   * stop reaches it. Both are network hops on the same link, far shorter than
+   * a word.
+   *
+   * Untimed audio, from an older Voice Operator or words it could not align,
+   * counts nothing of the sentence rather than guessing.
+   */
+  private cutOff(job: Job, now: number): void {
+    const playing = job.playing
+    if (!playing) return
+    const elapsed = (now - playing.startedAt) / 1000
+    if (elapsed >= playing.audio.seconds) {
+      job.offset = Math.max(job.offset, heardThrough(job.sentences, playing.index))
+      return
+    }
+    const word = playing.audio.words?.filter((w) => w.start <= elapsed).at(-1)
+    if (word) job.offset = Math.max(job.offset, job.sentences[playing.index].start + word.characterEnd)
   }
 
   private end(job: Job, state: Exclude<SpeechStatus['state'], 'in_progress'>): void {
@@ -246,6 +300,17 @@ export class RemoteSpeech {
     const finished = [...this.jobs.values()].filter((j) => j.state !== 'in_progress')
     for (const job of finished.slice(0, Math.max(0, finished.length - KEEP_FINISHED))) this.jobs.delete(job.id)
   }
+}
+
+/**
+ * The offset that says every sentence up to `index` was heard in full: the
+ * start of the next one, past the whitespace between them, which is what
+ * `redactUnheard` reads as a sentence finished. An offset at the sentence's own
+ * last character reads as a cut just past its last word, which dropped that
+ * word from what was heard.
+ */
+function heardThrough(sentences: readonly Sentence[], index: number): number {
+  return sentences[index + 1]?.start ?? sentences[index].end
 }
 
 /** The HTTP status Voice Operator answers a job in this state with. */

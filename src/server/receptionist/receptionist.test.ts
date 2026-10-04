@@ -225,7 +225,7 @@ describe('Receptionist', () => {
     expect(h.focused).toEqual([])
   })
 
-  it('starts one session with the instructions, then sends only what is new into it', async () => {
+  it('starts one session, then sends only what is new into it, always with the instructions', async () => {
     const h = harness({ replies: [reply([{ from: 'control', text: 'Hi.' }]), reply([{ from: 'control', text: 'Again.' }])] })
     await h.receptionist.hear('hello')
     await flush()
@@ -233,8 +233,10 @@ describe('Receptionist', () => {
     await flush()
     expect(h.turns[0]).toMatchObject({ systemPrompt: RECEPTIONIST_SYSTEM_PROMPT })
     expect(h.turns[0].sessionId).toBeUndefined()
-    expect(h.turns[1]).toMatchObject({ sessionId: 'session-1' })
-    expect(h.turns[1].systemPrompt).toBeUndefined()
+    // The instructions go every time: a process the daemon resumes on the
+    // session runs on whatever prompt the message carries, and on none if it
+    // carries none, which leaves Control without its tools.
+    expect(h.turns[1]).toMatchObject({ sessionId: 'session-1', systemPrompt: RECEPTIONIST_SYSTEM_PROMPT })
     // No roster, no history: the session has those.
     expect(h.turns[1].prompt).toMatch(/^THE USER SAYS: anything else\?/)
     expect(h.turns[1].prompt).not.toContain('hello')
@@ -245,7 +247,7 @@ describe('Receptionist', () => {
     const same = harness({ saved: { sessionId: 'kept', promptHash: PROMPT_HASH }, replies: [reply([{ from: 'control', text: 'Yes.' }])] })
     await same.receptionist.hear('still there?')
     await flush()
-    expect(same.turns[0].sessionId).toBe('kept')
+    expect(same.turns[0]).toMatchObject({ sessionId: 'kept', systemPrompt: RECEPTIONIST_SYSTEM_PROMPT })
 
     const stale = harness({ saved: { sessionId: 'old', promptHash: 'other' }, replies: [reply([{ from: 'control', text: 'Yes.' }])] })
     await stale.receptionist.hear('still there?')
@@ -296,13 +298,17 @@ describe('Receptionist', () => {
       await flush()
       await h.receptionist.hear('tell him to do that now')
       await flush()
-      return h.turns[1].prompt
+      return h.turns[1]
     }
-    const compacted = await run(Date.now() - 1_000)
+    const after = await run(Date.now() - 1_000)
+    // The process that resumes the compacted session takes its instructions,
+    // tool list included, from this message: Claude Code does not keep them.
+    expect(after.systemPrompt).toBe(RECEPTIONIST_SYSTEM_PROMPT)
+    const compacted = after.prompt
     expect(compacted).toMatch(/^EARLIER CONVERSATION[^]*THE USER SAYS: what is Kevin doing\?[^]*YOU: [^\n]*Kevin is on it/)
     expect(compacted).toContain('THE USER SAYS: tell him to do that now')
     // Not yet compacted: the session still has it all, and the cache does too.
-    expect(await run(Date.now() + 3_600_000)).toMatch(/^THE USER SAYS: tell him to do that now/)
+    expect((await run(Date.now() + 3_600_000)).prompt).toMatch(/^THE USER SAYS: tell him to do that now/)
   })
 
   it('lists the agents and directories when asked', async () => {

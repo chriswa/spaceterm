@@ -184,21 +184,26 @@ export class VoiceOperator {
 
   /**
    * The audio for one piece of text, handed back rather than played: signed
-   * 16-bit mono PCM and its rate. Undefined when Voice Operator could not be
-   * reached or could not synthesize. See RemoteSpeech.
+   * 16-bit mono PCM and its rate, and where each word falls in it. Undefined
+   * when Voice Operator could not be reached or could not synthesize. See
+   * RemoteSpeech.
    */
-  async synthesize(text: string, voice?: string, signal?: AbortSignal): Promise<{ pcm: Uint8Array; sampleRate: number } | undefined> {
+  async synthesize(text: string, voice?: string, signal?: AbortSignal): Promise<SynthesizedSpeech | undefined> {
     const port = this.port()
     if (port === undefined) return undefined
     try {
       const response = await this.deps.fetch(`http://127.0.0.1:${port}/v1/synthesize`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text, ...(voice ? { voice } : {}) }),
+        body: JSON.stringify({ text, ...(voice ? { voice } : {}), word_timings: true }),
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
       })
       if (response.status !== 200) return undefined
-      return parseWav(new Uint8Array(await response.arrayBuffer()))
+      // An older Voice Operator ignores `word_timings` and answers with the bare WAV.
+      if (!response.headers.get('content-type')?.includes('json')) {
+        return parseWav(new Uint8Array(await response.arrayBuffer()))
+      }
+      return parseTimedSynthesis(await response.json())
     } catch {
       return undefined
     }
@@ -242,6 +247,40 @@ export class VoiceOperator {
     const port = discovery.port
     return typeof port === 'number' && port > 0 && port < 65536 ? port : undefined
   }
+}
+
+/** One word of synthesized speech: when it sounds, and where it ends in the text. */
+export interface TimedWord {
+  /** Seconds from the start of the audio. */
+  start: number
+  /** UTF-16 offset in the synthesized text just past the word. */
+  characterEnd: number
+}
+
+export interface SynthesizedSpeech {
+  pcm: Uint8Array
+  sampleRate: number
+  /** Absent when Voice Operator could not time the words, or is too old to. */
+  words?: TimedWord[]
+}
+
+/**
+ * A timed `/v1/synthesize` answer: the WAV as base64 `audio`, and `words` with
+ * `start` seconds and `character_end`. Malformed words are dropped as a set —
+ * a partial list would misplace every word after the gap.
+ */
+export function parseTimedSynthesis(body: unknown): SynthesizedSpeech | undefined {
+  if (!body || typeof body !== 'object') return undefined
+  const { audio, words } = body as { audio?: unknown; words?: unknown }
+  if (typeof audio !== 'string') return undefined
+  const wav = parseWav(new Uint8Array(Buffer.from(audio, 'base64')))
+  if (!wav) return undefined
+  if (!Array.isArray(words)) return wav
+  const timed = words.map((word: { start?: unknown; character_end?: unknown }) =>
+    typeof word?.start === 'number' && typeof word.character_end === 'number'
+      ? { start: word.start, characterEnd: word.character_end }
+      : undefined)
+  return timed.every((word) => word !== undefined) ? { ...wav, words: timed as TimedWord[] } : wav
 }
 
 /**

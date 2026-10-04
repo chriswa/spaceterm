@@ -32,7 +32,8 @@ export const RECEPTIONIST_COMPACT_ABOVE_TOKENS = 40_000
 export async function askReceptionistModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer> {
   const response = await askClaudePrint({
     prompt: turn.prompt,
-    ...(turn.sessionId ? { sessionId: turn.sessionId } : { systemPrompt: turn.systemPrompt }),
+    systemPrompt: turn.systemPrompt,
+    ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
     ...RECEPTIONIST_MODEL,
     // Warm all day, compacted before the cache goes cold: see the daemon's README.
     keepAlive: { minutes: 60, priority: true },

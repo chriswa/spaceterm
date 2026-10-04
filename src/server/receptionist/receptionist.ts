@@ -45,8 +45,13 @@ import {
 export interface SessionTurn {
   prompt: string
   sessionId?: string
-  /** The system prompt, for a new session only. */
-  systemPrompt?: string
+  /**
+   * The system prompt, sent with every message, not just the first. Claude Code
+   * does not keep it with the session: a process resumed on the session (after
+   * a compaction, the daemon's keep-alive running out, or a daemon restart) runs
+   * on whatever prompt the message that resumed it carried.
+   */
+  systemPrompt: string
 }
 
 export interface SessionAnswer {
@@ -540,7 +545,7 @@ export class Receptionist {
       const message = [recap, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, prompt].filter(Boolean).join('\n\n')
       try {
         const answer = await this.askWhenFree(
-          sessionId ? { prompt: message, sessionId } : { prompt: message, systemPrompt: RECEPTIONIST_SYSTEM_PROMPT }, signal,
+          { prompt: message, systemPrompt: RECEPTIONIST_SYSTEM_PROMPT, ...(sessionId ? { sessionId } : {}) }, signal,
         )
         if (answer.sessionId !== sessionId || answer.compactsAt !== session?.compactsAt) {
           this.session = {

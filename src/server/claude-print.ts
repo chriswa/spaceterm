@@ -25,7 +25,11 @@ export interface ClaudePrintRequest {
   noThinking?: boolean
   /** Effort level (`low`, `medium`, …); the daemon defaults to medium. */
   effort?: string
-  /** The system prompt of a new session. Ignored when continuing one. */
+  /**
+   * The session's system prompt. Send it when continuing a session too: a live
+   * process keeps the one it started with, but one the daemon resumes (after a
+   * compaction or an eviction) gets this one, and none if it is left out.
+   */
   systemPrompt?: string
   /**
    * Keep the session's process live this long after the turn (at most an hour)
@@ -80,7 +84,7 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
   if (req.sessionId) args.push('-s', req.sessionId)
   if (req.noThinking) args.push('--no-thinking')
   if (req.effort) args.push('-e', req.effort)
-  if (req.systemPrompt !== undefined && !req.sessionId) args.push('--system-file', systemPromptFile(req.systemPrompt))
+  if (req.systemPrompt !== undefined) args.push('--system-file', systemPromptFile(req.systemPrompt))
   if (req.keepAlive) {
     args.push('--keep-alive', `${req.keepAlive.minutes}m`)
     if (req.keepAlive.priority) args.push('--priority')

@@ -26,6 +26,13 @@ describe('parseReply', () => {
     expect(() => parseReply('{"tools":[{"tool":"read"}]}')).toThrow(/agent/)
   })
 
+  it('answers a guessed tool with the real ones, not with the fields the guess lacks', () => {
+    // The guesses Control made with no instructions to go on.
+    expect(() => parseReply('{"tools":[{"name":"send_to_agent","input":{"agent":"a1","message":"hi"}}]}')).toThrow(/"tool" name, one of: [^]*\bsend\b/)
+    expect(() => parseReply('{"tools":[{"tool":"Bash","input":{"command":"ls"}}]}')).toThrow(/unknown tool "Bash"; the tools are: [^]*\bspawn\b/)
+    expect(() => parseReply('{"tools":[{"tool":"send","input":{"agent":"a1","message":"hi"}}]}')).toThrow(/beside "tool", not under "input"/)
+  })
+
   it('only read blocks the turn', () => {
     expect(isBlocking({ tool: 'read', agent: 'a1' })).toBe(true)
     expect(isBlocking({ tool: 'monitor', agent: 'a1' })).toBe(false)

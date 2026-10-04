@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { RemoteSpeech, splitSentences, splitSpeech } from './remote-speech'
-import { joinSpeechParts, parseWav, speechStatus, type SpeechBackend } from './voice-operator'
+import { redactUnheard } from './summary-chat'
+import { joinSpeechParts, parseTimedSynthesis, parseWav, speechStatus, type SpeechBackend, type TimedWord } from './voice-operator'
 import type { ServerMessage } from '../shared/protocol'
 
 const PHONE = 'phone-client'
 
-function harness(opts: { connected?: boolean; synthesize?: (text: string) => Uint8Array | undefined } = {}) {
+function harness(opts: { connected?: boolean; synthesize?: (text: string) => Uint8Array | undefined; words?: (text: string) => TimedWord[] | undefined } = {}) {
   const sent: ServerMessage[] = []
   let connected = opts.connected ?? true
   let ids = 0
@@ -14,7 +15,8 @@ function harness(opts: { connected?: boolean; synthesize?: (text: string) => Uin
     synthesize: async (text, voice) => {
       synthesized.push([text, voice])
       const pcm = opts.synthesize ? opts.synthesize(text) : new Uint8Array(4)
-      return pcm && { pcm, sampleRate: 24000 }
+      const words = opts.words?.(text)
+      return pcm && { pcm, sampleRate: 24000, ...(words ? { words } : {}) }
     },
     send: (_clientId, msg) => {
       if (!connected) return false
@@ -82,7 +84,7 @@ describe('RemoteSpeech', () => {
     h.speech.progress(PHONE, 'rs_1', 0, 'started')
     expect(speechStatus(await h.backend.status('rs_1'))?.playback_state).toBe('speaking')
     h.speech.progress(PHONE, 'rs_1', 0, 'finished')
-    expect(speechStatus(await h.backend.status('rs_1'))?.character_offset).toBe('The agent fixed the bug.'.length)
+    expect(speechStatus(await h.backend.status('rs_1'))?.character_offset).toBe('The agent fixed the bug. '.length)
     h.speech.progress(PHONE, 'rs_1', 1, 'finished')
     h.speech.progress(PHONE, 'rs_1', 2, 'finished')
     expect(speechStatus(await h.backend.status('rs_1'))).toMatchObject({ state: 'completed', character_offset: TEXT.length })
@@ -103,7 +105,7 @@ describe('RemoteSpeech', () => {
     h.speech.progress(PHONE, 'rs_1', 0, 'finished')
     const dropped = await h.backend.drop('rs_1')
     expect(dropped?.status).toBe(410)
-    expect(speechStatus(dropped)).toMatchObject({ state: 'cancelled_by_client', character_offset: 24 })
+    expect(speechStatus(dropped)).toMatchObject({ state: 'cancelled_by_client', character_offset: 25 })
     expect(h.sent.at(-1)).toEqual({ type: 'speech-stop', id: 'rs_1' })
   })
 
@@ -140,9 +142,58 @@ describe('RemoteSpeech', () => {
     h.speech.progress(PHONE, 'rs_1', 1, 'finished')
     const joined = joinSpeechParts(parts)
     const offset = speechStatus(await h.backend.status('rs_1'))!.character_offset!
-    expect(joined.slice(0, offset)).toBe('Hello caller. How can I help?')
+    expect(joined.slice(0, offset)).toBe('Hello caller. How can I help? ')
     h.speech.progress(PHONE, 'rs_1', 2, 'finished')
     expect(speechStatus(await h.backend.status('rs_1'))).toMatchObject({ state: 'completed', character_offset: joined.length })
+  })
+
+  it('a finished sentence is heard whole, not cut in its last word', async () => {
+    const h = harness()
+    await h.backend.speak(TEXT)
+    await settle()
+    h.speech.progress(PHONE, 'rs_1', 0, 'finished')
+    const offset = speechStatus(await h.backend.drop('rs_1'))!.character_offset!
+    expect(redactUnheard(TEXT, offset)).toBe('The agent fixed the bug. *INTERRUPTED*')
+  })
+
+  describe('a cut part way through a sentence', () => {
+    const QUESTION = "That's a change to the app, so an agent should do it. Want me to send it to Tessa, or start a new agent?"
+    /** Each word a third of a second, the first at zero: Kokoro's timings, as Voice Operator aligns them. */
+    const timed = (text: string): TimedWord[] =>
+      [...text.matchAll(/[\w']+/g)].map((m, i) => ({ start: i / 3, characterEnd: m.index + m[0].length }))
+    // Four seconds of audio a sentence: 24000 samples a second, two bytes a sample.
+    const fourSeconds = () => new Uint8Array(4 * 24000 * 2)
+
+    /** Play the first sentence, then cut in `seconds` into the second. */
+    async function cutInto(seconds: number, words?: typeof timed) {
+      const h = harness({ synthesize: fourSeconds, words })
+      await h.backend.speak(QUESTION)
+      await settle()
+      const now = Date.now()
+      h.speech.progress(PHONE, 'rs_1', 0, 'started', now - 4000 - seconds * 1000)
+      h.speech.progress(PHONE, 'rs_1', 0, 'finished', now - seconds * 1000)
+      h.speech.progress(PHONE, 'rs_1', 1, 'started', now - seconds * 1000)
+      return redactUnheard(QUESTION, speechStatus(await h.backend.drop('rs_1'))!.character_offset!)
+    }
+
+    it('is heard up to the word that was sounding', async () => {
+      // "Tessa" is the seventh word: it starts at two seconds.
+      expect(await cutInto(2.1, timed)).toBe("That's a change to the app, so an agent should do it. Want me to send it to *INTERRUPTED*")
+      expect(await cutInto(2.4, timed)).toBe("That's a change to the app, so an agent should do it. Want me to send it to Tessa, *INTERRUPTED*")
+    })
+
+    it('without word timings, counts none of it rather than guessing', async () => {
+      expect(await cutInto(2.1)).toBe("That's a change to the app, so an agent should do it. *INTERRUPTED*")
+    })
+  })
+
+  it('a sentence the phone has not yet started is not counted', async () => {
+    const h = harness()
+    await h.backend.speak(TEXT)
+    await settle()
+    h.speech.progress(PHONE, 'rs_1', 0, 'finished')
+    h.speech.clientGone(PHONE)
+    expect(speechStatus(await h.backend.status('rs_1'))?.character_offset).toBe('The agent fixed the bug. '.length)
   })
 
   it('ignores another client reporting on a job it does not own', async () => {
@@ -150,6 +201,35 @@ describe('RemoteSpeech', () => {
     await h.backend.speak(TEXT)
     h.speech.progress('someone-else', 'rs_1', 0, 'started')
     expect(speechStatus(await h.backend.status('rs_1'))?.playback_state).toBe('queued')
+  })
+})
+
+describe('parseTimedSynthesis', () => {
+  const wavBase64 = () => {
+    const out = new Uint8Array(44 + 4)
+    const view = new DataView(out.buffer)
+    out.set(new TextEncoder().encode('RIFF'), 0)
+    out.set(new TextEncoder().encode('WAVEfmt '), 8)
+    view.setUint32(16, 16, true)
+    view.setUint16(20, 1, true)
+    view.setUint16(22, 1, true)
+    view.setUint32(24, 24000, true)
+    view.setUint16(34, 16, true)
+    out.set(new TextEncoder().encode('data'), 36)
+    view.setUint32(40, 4, true)
+    return Buffer.from(out).toString('base64')
+  }
+
+  it('reads the audio and each word', () => {
+    const parsed = parseTimedSynthesis({ audio: wavBase64(), words: [{ start: 0, end: 0.2, character_end: 5 }] })
+    expect(parsed).toMatchObject({ sampleRate: 24000, words: [{ start: 0, characterEnd: 5 }] })
+    expect(parsed?.pcm.length).toBe(4)
+  })
+
+  it('keeps the audio but no words when any word is malformed', () => {
+    const parsed = parseTimedSynthesis({ audio: wavBase64(), words: [{ start: 0, character_end: 5 }, { start: 1 }] })
+    expect(parsed).toBeDefined()
+    expect(parsed?.words).toBeUndefined()
   })
 })
 

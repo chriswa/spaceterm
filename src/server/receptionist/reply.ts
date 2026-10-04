@@ -66,8 +66,20 @@ function parseSayPart(value: unknown): SayPart {
   return { from, text: value.text.trim() }
 }
 
+/** Every tool, so a wrong name is answered with the right ones rather than a guess at its fields. */
+const TOOL_NAMES: Record<ToolCall['tool'], true> = {
+  read: true, ask_agent: true, monitor: true, send: true, interrupt: true, archive_agent: true,
+  spawn: true, recall: true, list_agents: true, find_agent: true, nearby: true, force_user_camera: true,
+}
+const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
+
 function parseToolCall(value: unknown): ToolCall {
-  if (!isRecord(value) || typeof value.tool !== 'string') throw new Error('each tool call needs a "tool" name')
+  if (!isRecord(value) || typeof value.tool !== 'string') {
+    throw new Error(`each tool call needs a "tool" name, one of: ${TOOL_LIST}`)
+  }
+  if (!Object.hasOwn(TOOL_NAMES, value.tool)) throw new Error(`unknown tool "${value.tool}"; the tools are: ${TOOL_LIST}`)
+  // The shape of a native tool call, which a model without its instructions falls back on.
+  if ('input' in value) throw new Error(`a tool call's fields go beside "tool", not under "input"`)
   if (value.tool === 'nearby') return { tool: 'nearby' }
   if (value.tool === 'force_user_camera') {
     if (typeof value.target !== 'string' || !value.target.trim()) throw new Error('"force_user_camera" needs a "target"')
