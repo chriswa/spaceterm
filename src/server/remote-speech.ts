@@ -229,7 +229,11 @@ export class RemoteSpeech {
         signal?.addEventListener('abort', done)
       })
     }
-    return { status: httpStatus(job.state), body: this.snapshot(job) }
+    const body = this.snapshot(job)
+    // Mid-speech, where the voice is now: word by word through the sentence
+    // playing, as Voice Operator reports the speech it plays itself.
+    if (job.state === 'in_progress') body.character_offset = this.heardOffset(job, Date.now())
+    return { status: httpStatus(job.state), body }
   }
 
   private async drop(id: string, now = Date.now()): Promise<SpeechResponse> {
@@ -262,15 +266,17 @@ export class RemoteSpeech {
    * counts nothing of the sentence rather than guessing.
    */
   private cutOff(job: Job, now: number): void {
+    job.offset = this.heardOffset(job, now)
+  }
+
+  /** How much of the job has been heard at `now`, without changing the job: see `cutOff`. */
+  private heardOffset(job: Job, now: number): number {
     const playing = job.playing
-    if (!playing) return
+    if (!playing) return job.offset
     const elapsed = (now - playing.startedAt) / 1000
-    if (elapsed >= playing.audio.seconds) {
-      job.offset = Math.max(job.offset, heardThrough(job.sentences, playing.index))
-      return
-    }
+    if (elapsed >= playing.audio.seconds) return Math.max(job.offset, heardThrough(job.sentences, playing.index))
     const word = playing.audio.words?.filter((w) => w.start <= elapsed).at(-1)
-    if (word) job.offset = Math.max(job.offset, job.sentences[playing.index].start + word.characterEnd)
+    return word ? Math.max(job.offset, job.sentences[playing.index].start + word.characterEnd) : job.offset
   }
 
   private end(job: Job, state: Exclude<SpeechStatus['state'], 'in_progress'>): void {

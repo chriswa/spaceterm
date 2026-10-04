@@ -182,6 +182,19 @@ describe('RemoteSpeech', () => {
       expect(await cutInto(2.4, timed)).toBe("That's a change to the app, so an agent should do it. Want me to send it to Tessa, *INTERRUPTED*")
     })
 
+    it('reports the word sounding now to a status read mid-speech, as Voice Operator does', async () => {
+      const h = harness({ synthesize: fourSeconds, words: timed })
+      await h.backend.speak(QUESTION)
+      await settle()
+      const now = Date.now()
+      h.speech.progress(PHONE, 'rs_1', 0, 'started', now - 4000 - 2400)
+      h.speech.progress(PHONE, 'rs_1', 0, 'finished', now - 2400)
+      h.speech.progress(PHONE, 'rs_1', 1, 'started', now - 2400)
+      const live = speechStatus(await h.backend.status('rs_1'))!
+      expect(live.state).toBe('in_progress')
+      expect(redactUnheard(QUESTION, live.character_offset!)).toBe("That's a change to the app, so an agent should do it. Want me to send it to Tessa, *INTERRUPTED*")
+    })
+
     it('without word timings, counts none of it rather than guessing', async () => {
       expect(await cutInto(2.1)).toBe("That's a change to the app, so an agent should do it. *INTERRUPTED*")
     })
