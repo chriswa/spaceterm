@@ -105,7 +105,8 @@ function byRelevance(a: RosterAgent, b: RosterAgent): number {
   return (b.lastActivityAt ?? b.stateSince ?? 0) - (a.lastActivityAt ?? a.stateSince ?? 0)
 }
 
-function cacheWords(agent: RosterAgent, now: number): string {
+/** The agent's prompt cache, as list_agents and read report it: whether ask_agent is cheap now. */
+export function cacheWords(agent: RosterAgent, now: number): string {
   const until = agent.cacheWarmUntil ?? 0
   const size = agent.cacheWarmTokens ? ` (${Math.round(agent.cacheWarmTokens / 1000)}k tokens)` : ''
   return until > now ? `warm for ${ago(until - now)} more${size}` : `cold for ${ago(now - until)}${size}`

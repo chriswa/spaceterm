@@ -18,7 +18,7 @@ import {
   CONTROL, isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
 } from './reply'
 import {
-  readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+  cacheWords, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
 
 /**
@@ -612,7 +612,9 @@ export class Receptionist {
           // A search covers the whole session; a plain read is the recent part.
           const read = call.search ? this.deps.readWholeTranscript : this.deps.readTranscript
           const messages = agent.transcriptPath ? read(agent.transcriptPath) : []
-          results.push(`read {${call.agent}}${call.search ? ` for "${call.search}"` : ''}:\n${readAgent(messages, call.search)}`)
+          // The cache comes with the transcript: it decides whether ask_agent is worth it.
+          const cache = agent.cacheWarmUntil !== undefined ? `\ncache: ${cacheWords(agent, Date.now())}` : ''
+          results.push(`read {${call.agent}}${call.search ? ` for "${call.search}"` : ''}:${cache}\n${readAgent(messages, call.search)}`)
           break
         }
         case 'monitor':

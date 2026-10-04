@@ -71,10 +71,15 @@ function harness(opts: {
   compactsAt?: number
   /** How many messages find the session busy with a turn some earlier server left behind. */
   busyFor?: number
+  /** When Kevin's prompt cache goes cold (epoch ms); by default nothing is known of it. */
+  kevinCacheWarmUntil?: number
 }) {
   const states = new Map<NodeId, ClaudeState>([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']])
   const agents = (): RosterAgent[] => [
-    { nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session' },
+    {
+      nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session',
+      ...(opts.kevinCacheWarmUntil !== undefined ? { cacheWarmUntil: opts.kevinCacheWarmUntil, cacheWarmTokens: 38_000 } : {}),
+    },
     { nodeId: SALLY_ID, title: 'login page', cwd: '/src/web', state: states.get(SALLY_ID)!, transcriptPath: '/t/sally.jsonl', claudeSessionId: 'sally-session' },
   ]
   /** Every message sent, in order, with the session it went to. */
@@ -387,6 +392,22 @@ describe('Receptionist', () => {
       [{ text: "Let me check Kevin's transcript.", voice: RECEPTIONIST_VOICE }],
       [{ text: 'Kevin here. Volume is conserved now.', voice: 'am_michael' }],
     ])
+  })
+
+  it('says with a read whether the agent\'s cache is warm, which decides whether to ask it', async () => {
+    const h = harness({
+      kevinCacheWarmUntil: Date.now() - 20 * 60_000,
+      replies: [
+        reply([], [{ tool: 'read', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(new RegExp(`read \\{${KEVIN}\\}:\\ncache: cold for 20 minutes \\(38k tokens\\)`))
+          return reply([{ from: 'control', text: 'Summarized.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what is Kevin up to?')
+    await flush()
+    expect(h.turns).toHaveLength(2)
   })
 
   it('searches the whole transcript, while a plain read stays recent', async () => {
