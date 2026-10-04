@@ -806,14 +806,3 @@ textarea, input, [contenteditable="true"], .cm-content {
 .canvas-surface {
   --glow-scale: min(3, max(1, calc(1 / var(--camera-zoom, 1))));
 }
-
-/* While the zoom is changing (ZOOMING_HIDE_BELOW, set by the camera on every
-   frame and cleared once it holds still), a card is its own box and nothing
-   inside it. WebKit repaints every card's contents at every scale a zoom
-   passes through: measured in desktop WebKit at the phone's size and
-   density, a zoom-out from 0.31 to 0.03 took its memory up by about 210MB,
-   and about 105MB with this; with a dozen cards in view the first was enough
-   for iOS to kill the page. At rest, at any zoom, everything is drawn. */
-.canvas-surface[data-zooming] .card-shell > * > * {
-  display: none;
-}

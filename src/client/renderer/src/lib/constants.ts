@@ -50,18 +50,6 @@ export const GRID_COLS = 3
 // Absolute bounds — zoom is hard-clamped to this range everywhere.
 // No code path should ever produce a zoom outside [MIN_ZOOM, MAX_ZOOM].
 export const MIN_ZOOM = 0.005
-/**
- * While the zoom is changing below this, the canvas surface carries
- * `data-zooming`, cleared ZOOMING_SETTLE_MS after it stops. The phone hides
- * card contents then (mobile.css): WebKit repaints every card's contents at
- * every scale a zoom passes through, and a zoom-out from 0.31 to 0.03 took
- * its memory up by about 210MB, which with a dozen cards in view was enough
- * for iOS to kill the page. Hidden only while moving, it took 105MB, and at
- * rest, at any zoom, everything is drawn.
- */
-export const ZOOMING_HIDE_BELOW = 0.5
-/** How long the zoom must hold still before card contents come back. */
-export const ZOOMING_SETTLE_MS = 150
 export const MAX_ZOOM = 2.0
 
 // Elastic snap-back targets — the "comfortable" range.
