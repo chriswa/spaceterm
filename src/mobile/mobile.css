@@ -806,3 +806,14 @@ textarea, input, [contenteditable="true"], .cm-content {
 .canvas-surface {
   --glow-scale: min(3, max(1, calc(1 / var(--camera-zoom, 1))));
 }
+
+/* Zoomed far out (FAR_ZOOM, set on the surface every camera frame), a card
+   is drawn as its own box and nothing inside it: unreadable at that size, and
+   painting it at every scale of a zoom-out cost WebKit about 190MB, measured
+   in desktop WebKit at the phone's size and density, against about 40MB for
+   boxes alone. That is what got the page killed zooming out with a dozen
+   cards in view; the glows were a red herring. The labels above the cards
+   are drawn apart from them and stay. */
+.canvas-surface[data-far] .card-shell > * > * {
+  display: none;
+}

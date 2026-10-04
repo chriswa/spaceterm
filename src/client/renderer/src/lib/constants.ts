@@ -50,6 +50,14 @@ export const GRID_COLS = 3
 // Absolute bounds — zoom is hard-clamped to this range everywhere.
 // No code path should ever produce a zoom outside [MIN_ZOOM, MAX_ZOOM].
 export const MIN_ZOOM = 0.005
+/**
+ * Below this zoom the canvas surface carries `data-far`: a card is about 200
+ * pixels wide on screen and its contents are past reading. The phone draws
+ * cards as plain boxes then (mobile.css): painting their contents at every
+ * scale of a zoom-out took WebKit's memory up by about 190MB, enough for iOS
+ * to kill the page with a dozen cards in view.
+ */
+export const FAR_ZOOM = 0.16
 export const MAX_ZOOM = 2.0
 
 // Elastic snap-back targets — the "comfortable" range.
