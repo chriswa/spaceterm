@@ -239,7 +239,17 @@ textarea, input, [contenteditable="true"], .cm-content {
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
-.m-updates__action { flex: none; color: #f9e2af; font-weight: 600; }
+.m-updates__action { flex: none; color: #f9e2af; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+/* The row being acted on stays bright while the others dim. */
+.m-updates__row--busy:disabled { opacity: 1; }
+.m-updates__spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: m-update-spin 0.9s linear infinite;
+}
 .m-updates__failure {
   margin: 4px 4px 2px;
   padding: 8px 10px;

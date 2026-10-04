@@ -62,11 +62,33 @@ describe('UpdatesButton', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Server restart needed' }))
     expect(screen.getByText('protocol changed')).toBeTruthy()
+    const chip = screen.getByRole('button', { name: 'Server restart needed' })
     fireEvent.click(screen.getByRole('button', { name: /Restart/ }))
     expect(bridge.restartSpaceterm).toHaveBeenCalledTimes(1)
+    // Shows at once, and stays restarting once the server has taken it: the
+    // page reloads when the server is back.
+    expect(screen.getByText('Restarting…')).toBeTruthy()
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByText('Restarting…')).toBeTruthy()
+    expect(chip.className).toContain('m-updates--busy')
 
     act(() => useRestartRequiredStore.getState().set(false, ''))
     expect(container.innerHTML).toBe('')
+  })
+
+  it('shows a reload at once, before the page goes', async () => {
+    window.spacetermNativeVersion = 'same'
+    vi.stubGlobal('__MOBILE_BUILD_ID__', 'older')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ web: 'newer', native: 'same' }))))
+    installFakeBridge()
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { frames.push(fn); return frames.length })
+    render(<UpdatesButton />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Newer page' }))
+    fireEvent.click(screen.getByRole('button', { name: /Reload/ }))
+    expect(screen.getByText('Reloading…')).toBeTruthy()
+    // The reload itself waits two frames, for that to be painted.
+    expect(frames).toHaveLength(1)
   })
 
   it('shows nothing when everything is up to date', async () => {

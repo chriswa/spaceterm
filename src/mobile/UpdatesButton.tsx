@@ -23,6 +23,9 @@ import { useStaleness } from './update-check'
 
 export type UpdateKind = 'restart' | 'install' | 'reload'
 
+/** How long a restarted server may take before the button stops saying it is restarting. */
+const RESTART_PATIENCE_MS = 60_000
+
 export function pendingUpdates(state: { restart: boolean; native: boolean; web: boolean }): UpdateKind[] {
   const kinds: UpdateKind[] = []
   if (state.restart) kinds.push('restart')
@@ -81,27 +84,38 @@ export function UpdatesButton() {
 
   if (kinds.length === 0) return null
 
+  /**
+   * Busy from the tap until the thing is done — which for all three is this
+   * page going away: reloaded, reloaded once the restarted server is back
+   * (install-api), or replaced with the new app. Clearing it when the Mac
+   * merely accepted a restart put the button back to "Restart" while the
+   * server was still going down, so a tap looked like it had done nothing.
+   */
   const run = async (kind: UpdateKind) => {
-    if (kind === 'reload') {
-      window.location.reload()
-      return
-    }
     if (busy) return
     setFailure(null)
     setBusy(kind)
+    if (kind === 'reload') {
+      // Two frames: "Reloading…" is painted before the page goes.
+      requestAnimationFrame(() => requestAnimationFrame(() => window.location.reload()))
+      return
+    }
     try {
       if (kind === 'restart') {
-        // Success reloads this page once the server is back.
         await window.api.restartSpaceterm()
-      } else {
-        const outcome = await window.api.installMobileApp()
-        if (!outcome.ok) setFailure(outcome.message ?? 'The install failed.')
+        window.setTimeout(() => {
+          setBusy((current) => (current === 'restart' ? null : current))
+          setFailure('The server has not come back yet.')
+        }, RESTART_PATIENCE_MS)
+        return
       }
+      const outcome = await window.api.installMobileApp()
+      if (outcome.ok) return
+      setFailure(outcome.message ?? 'The install failed.')
     } catch (err) {
       setFailure(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(null)
     }
+    setBusy(null)
   }
 
   const rows: Record<UpdateKind, { title: string; detail: string; action: string; doing: string }> = {
@@ -127,13 +141,16 @@ export function UpdatesButton() {
           <div className="m-updates__scrim" onClick={() => setOpen(false)} />
           <div className="m-updates__panel" role="dialog" aria-label="Updates">
             {kinds.map((kind) => (
-              <button key={kind} className="m-updates__row" disabled={busy !== null} onClick={() => void run(kind)}>
+              <button key={kind} className={`m-updates__row${busy === kind ? ' m-updates__row--busy' : ''}`} disabled={busy !== null} onClick={() => void run(kind)}>
                 <span className="m-updates__icon"><Icon kind={kind} size={18} /></span>
                 <span className="m-updates__text">
                   <span className="m-updates__title">{rows[kind].title}</span>
                   <span className="m-updates__detail">{rows[kind].detail}</span>
                 </span>
-                <span className="m-updates__action">{busy === kind ? rows[kind].doing : rows[kind].action}</span>
+                <span className="m-updates__action">
+                  {busy === kind && <span className="m-updates__spinner" aria-hidden="true" />}
+                  {busy === kind ? rows[kind].doing : rows[kind].action}
+                </span>
               </button>
             ))}
             {failure && <div className="m-updates__failure" role="alert">{failure}</div>}
