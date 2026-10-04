@@ -792,6 +792,26 @@ function returnBorrowedSize(nodeId: NodeId, why: string): void {
  * Paste text into a live surface and (usually) submit it. Every way of
  * shipping — the client's `ship-it`, the scripts socket — goes through here.
  */
+/**
+ * Archive a node and everything under it: the client's archive, and Control's
+ * archive_agent. Returns how many nodes went.
+ */
+function archiveNode(nodeId: NodeId): number {
+  const subtree = stateManager.subtreeNodes(nodeId)
+  // Close any agent-meta branches in the subtree first, so their cards are
+  // torn down by their owner rather than swept into the archive entry.
+  for (const node of subtree) {
+    agentMetaManager.onHostRemoved(node.id)
+    agentMetaAvailability.forget(node.id)
+  }
+  // Leaf-first, so a child's surface is released before its parent's.
+  for (const node of stateManager.subtreeNodes(nodeId)) {
+    releaseNodeResources(node)
+  }
+  stateManager.archiveSubtree(nodeId)
+  return subtree.length
+}
+
 function shipToSession(sessionId: PtySessionId, text: string, submit: boolean): void {
   // An agent waiting on an AskUserQuestion prompt would take the text as a choice; see shipIt.
   const surface = stateManager.getNodes().find((node) => node.type === 'terminal' && node.sessionId === sessionId)
@@ -1782,17 +1802,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-archive': {
-      // Close any agent-meta branches in the subtree first, so their cards are
-      // torn down by their owner rather than swept into the archive entry.
-      for (const node of stateManager.subtreeNodes(msg.nodeId)) {
-        agentMetaManager.onHostRemoved(node.id)
-        agentMetaAvailability.forget(node.id)
-      }
-      // Leaf-first, so a child's surface is released before its parent's.
-      for (const node of stateManager.subtreeNodes(msg.nodeId)) {
-        releaseNodeResources(node)
-      }
-      stateManager.archiveSubtree(msg.nodeId)
+      archiveNode(msg.nodeId)
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -3093,6 +3103,7 @@ async function startServer(): Promise<void> {
     },
     focus: (nodeId) => broadcastToAll({ type: 'camera-follow', nodeId }),
     nodeIds: () => Object.keys(stateManager.getState().nodes) as NodeId[],
+    archive: (nodeId) => archiveNode(nodeId),
     notify: (text) => broadcastToAll({ type: 'receptionist-notice', text }),
     send: (nodeId, text) => {
       const node = stateManager.getNode(nodeId)

@@ -20,6 +20,7 @@ export type ToolCall =
   | { tool: 'monitor'; agent: string }
   | { tool: 'send'; agent: string; message: string }
   | { tool: 'interrupt'; agent: string }
+  | { tool: 'archive_agent'; agent: string }
   | { tool: 'spawn'; directory: string; title: string; prompt: string }
   | { tool: 'recall'; search: string }
   | { tool: 'list_agents'; namedOnly?: boolean }
@@ -106,6 +107,8 @@ function parseToolCall(value: unknown): ToolCall {
       return { tool: 'send', agent, message: value.message.trim() }
     case 'interrupt':
       return { tool: 'interrupt', agent }
+    case 'archive_agent':
+      return { tool: 'archive_agent', agent }
     default:
       throw new Error(`unknown tool "${value.tool}"`)
   }

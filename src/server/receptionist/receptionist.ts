@@ -136,6 +136,8 @@ export interface ReceptionistDeps {
   focus(nodeId: NodeId): void
   /** Every node on the canvas, for the handles force_user_camera takes. */
   nodeIds(): NodeId[]
+  /** Archive a node and everything under it, as the user's own archive does. Returns how many nodes went. */
+  archive(nodeId: NodeId): number
   /**
    * A toast on every client. Side questions are what the receptionist pays
    * the agents' model for, so each one is announced with what it used.
@@ -616,7 +618,8 @@ export class Receptionist {
       }
       // An agent acted on is about to be spoken of, so it is named now: the
       // confirmation should carry the name the user will hear.
-      if (call.tool !== 'read') this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
+      // Not one being archived: its name goes back to the pool with it.
+      if (call.tool !== 'read' && call.tool !== 'archive_agent') this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
       const who = this.describe(agent, handles)
       switch (call.tool) {
         case 'read': {
@@ -646,6 +649,14 @@ export class Receptionist {
           void this.send(agent.nodeId, call.message, interrupted.has(agent.nodeId))
           done.push(`send delivered to ${who}, which is now watched for its reply`)
           break
+        case 'archive_agent': {
+          this.monitors.delete(agent.nodeId)
+          const count = this.deps.archive(agent.nodeId)
+          // Into the full record, so `recall` can answer "what happened to Kevin?".
+          this.deps.record.append([{ role: 'assistant', content: `ARCHIVED ${who}` }])
+          done.push(`archive_agent archived ${who}${count > 1 ? `, with the ${count - 1} node${count === 2 ? '' : 's'} under it` : ''}; it is in the archive, where the user can restore it`)
+          break
+        }
       }
       this.deps.log({ event: 'tool', ...call, nodeId: agent.nodeId })
     }

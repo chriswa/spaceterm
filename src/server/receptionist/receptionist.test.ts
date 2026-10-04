@@ -176,6 +176,7 @@ function harness(opts: {
     },
     focus: (nodeId) => focused.push(nodeId),
     nodeIds: () => NODE_IDS,
+    archive: (nodeId) => { wire.push(`archive ${nodeId}`); return nodeId === KEVIN_ID ? 3 : 1 },
     notify: (text) => notices.push(text),
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
     interrupt: (nodeId) => wire.push(`escape ${nodeId}`),
@@ -670,6 +671,33 @@ describe('Receptionist', () => {
     h.setState(KEVIN_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  it('archives an agent when asked, says what went with it, and stops watching it', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+        reply([{ from: 'control', text: `Archived {${KEVIN}}.` }], [{ tool: 'archive_agent', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`archive_agent archived [${KEVIN}]`)
+          expect(turn.prompt).toContain('with the 2 nodes under it')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell me when Kevin is done')
+    await flush()
+    await h.receptionist.hear('archive Kevin')
+    await flush()
+    expect(h.wire).toEqual([`archive ${KEVIN_ID}`])
+    expect(h.record.at(-2)?.content).toMatch(/^ARCHIVED \[/)
+    // No longer watched: its stopping says nothing.
+    h.setState(KEVIN_ID, 'working')
+    h.setState(KEVIN_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    await h.receptionist.hear('thanks')
+    await flush()
   })
 
   it('retracts a misdirected message: Escape first, then the correction', async () => {
