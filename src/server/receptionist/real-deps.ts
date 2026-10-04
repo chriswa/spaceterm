@@ -32,13 +32,17 @@ export const RECEPTIONIST_COMPACT_ABOVE_TOKENS = 40_000
 export async function askReceptionistModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer> {
   const response = await askClaudePrint({
     prompt: turn.prompt,
-    systemPrompt: turn.systemPrompt,
+    ...(turn.systemPrompt !== undefined ? { systemPrompt: turn.systemPrompt } : {}),
     ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
     ...RECEPTIONIST_MODEL,
-    // Warm all day, compacted before the cache goes cold: see the daemon's README.
-    keepAlive: { minutes: 60, priority: true },
-    autoCompact: { aboveTokens: RECEPTIONIST_COMPACT_ABOVE_TOKENS },
-    tag: 'receptionist',
+    // Warm all day, compacted before the cache goes cold: see the daemon's
+    // README. Not a session on its way out: left out, the daemon cancels its
+    // compaction and lets its process go.
+    ...(turn.retiring ? {} : {
+      keepAlive: { minutes: 60, priority: true },
+      autoCompact: { aboveTokens: RECEPTIONIST_COMPACT_ABOVE_TOKENS },
+    }),
+    tag: turn.retiring ? 'receptionist-handover' : 'receptionist',
     signal,
   }).catch((err: unknown) => {
     throw err instanceof ClaudePrintBusy ? new SessionBusy(err.message) : err

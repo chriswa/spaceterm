@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { SpeechChannel, speechFailureMessage, type SpeechFailure, type SpeechPhase } from './speech-channel'
+import { SpeechChannel, speechFailureMessage, type SpeechFailure, type SpeechPhase, type SpeechProgress } from './speech-channel'
 import type { SpeechBackend, SpeechContent, SpeechResponse, SpeechStatus } from './voice-operator'
 
 type StatusCall = { id: string; opts?: { wait?: number; since?: number } }
@@ -253,5 +253,38 @@ describe('SpeechChannel', () => {
     const parts = [{ text: 'Hello.', voice: 'af_bella' }, { text: 'Hi.' }]
     await h.channel.deliver(h.channel.begin('synthesizing'), parts, 'am_adam')
     expect(vo.spoken).toEqual([{ content: parts, voice: 'am_adam' }])
+  })
+
+  it('reports how far the listener has got, then how the answer ended, before settling', async () => {
+    const vo = fakeBackend({
+      statuses: [
+        { state: 'in_progress', playback_state: 'speaking', character_offset: 0, version: 2 },
+        { state: 'in_progress', playback_state: 'speaking', character_offset: 13, version: 3 },
+        { state: 'interrupted_by_user', character_offset: 20, version: 4 },
+      ],
+    })
+    const h = harness(vo.backend)
+    const progress: Array<SpeechProgress | SpeechPhase> = []
+    await h.channel.deliver(h.channel.begin('thinking'), 'Sent to Jack. And Tessa is ready.', undefined, (p) => progress.push(p))
+    await flush()
+    expect(progress).toEqual([
+      { kind: 'playing', heard: 0 }, { kind: 'playing', heard: 13 }, { kind: 'ended', state: 'interrupted_by_user', heard: 20 },
+    ])
+    expect(h.channel.phase).toBe('ready')
+  })
+
+  it('follows an interim line for its progress when asked, leaving the phase to the answer', async () => {
+    const vo = fakeBackend({
+      statuses: [
+        { state: 'in_progress', playback_state: 'speaking', character_offset: 5, version: 2 },
+        { state: 'completed', character_offset: 13, version: 3 },
+      ],
+    })
+    const h = harness(vo.backend)
+    const progress: SpeechProgress[] = []
+    expect(await h.channel.deliverInterim(h.channel.begin('thinking'), 'Bringing Jack back.', (p) => progress.push(p))).toBe(true)
+    await flush()
+    expect(progress).toEqual([{ kind: 'playing', heard: 5 }, { kind: 'ended', state: 'completed', heard: 13 }])
+    expect(h.channel.phase).toBe('synthesizing')
   })
 })

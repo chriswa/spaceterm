@@ -26,9 +26,10 @@ export interface ClaudePrintRequest {
   /** Effort level (`low`, `medium`, …); the daemon defaults to medium. */
   effort?: string
   /**
-   * The session's system prompt. Send it when continuing a session too: a live
-   * process keeps the one it started with, but one the daemon resumes (after a
-   * compaction or an eviction) gets this one, and none if it is left out.
+   * The session's system prompt. It is fixed when the session starts: Claude
+   * Code stores it with the transcript, and a resumed process ignores a new one.
+   * Sent when continuing a session, it must be the session's own, or the
+   * daemon refuses the request; left out, the session keeps its own.
    */
   systemPrompt?: string
   /**

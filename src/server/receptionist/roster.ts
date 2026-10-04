@@ -2,6 +2,7 @@ import * as path from 'path'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { finalAgentMessage, type TranscriptMessage } from '../summary-chat'
+import { agentToken } from './agent-token'
 
 /**
  * What the receptionist knows about the agents, and the transcript reading its
@@ -35,6 +36,8 @@ export interface RosterAgent {
   startedAt?: number
   /** False when its Claude Code predates side questions and cannot take ask_agent until restarted; undefined when unknown. */
   takesSideQuestions?: boolean
+  /** The name other Claude Code sessions message it by with SendMessage, such as `spaceterm-43`: see `claude-peer-names`. */
+  messagingId?: string
 }
 
 /** A directory node on the canvas: somewhere a new agent can be started. */
@@ -84,7 +87,7 @@ export function renderRoster(
   if (!agents.length) return 'No agents are running.'
   return [...agents].sort(byRelevance).map(agent => {
     const name = nameOf(agent.nodeId)
-    const lines = [`[${handleOf(agent.nodeId)}]${name ? ` ${name}` : ' (no name yet)'}: ${agent.title}`]
+    const lines = [`${agentToken(handleOf(agent.nodeId), name)}${name ? '' : ' (no name yet)'}: ${agent.title}`]
     if (agent.unread) lines.push('  UNREAD: it has news the user has not looked at')
     if (agent.cwd) lines.push(`  directory: ${path.basename(agent.cwd)}`)
     lines.push(`  state: ${STATE_WORDS[agent.state]}${agent.stateSince ? `, for ${ago(now - agent.stateSince)}` : ''}`)
@@ -92,6 +95,7 @@ export function renderRoster(
     if (agent.cacheWarmUntil !== undefined) lines.push(`  cache: ${cacheWords(agent, now)}`)
     if (agent.takesSideQuestions === false) lines.push(`  ${NO_SIDE_QUESTIONS}`)
     if (agent.startedAt) lines.push(`  started: ${ago(now - agent.startedAt)} ago`)
+    if (agent.messagingId) lines.push(`  messaging id: ${agent.messagingId}`)
     const messages = agent.transcriptPath ? readTranscript(agent.transcriptPath) : []
     const request = lastUserMessage(messages)
     if (request) lines.push(`  last asked: ${clip(request, ROSTER_LAST_REQUEST_CHARS)}`)

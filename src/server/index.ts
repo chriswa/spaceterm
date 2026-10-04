@@ -73,11 +73,13 @@ import { PotentialErrorDetector } from './auto-continue'
 import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat'
 import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
+import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
 import { SideQuestions, serveSideQuestions } from './side-questions'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
+import { readPeerNames } from './claude-peer-names'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
 import { DirectSpeech } from './direct-speech'
@@ -99,6 +101,8 @@ const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 0
  * caller believes does not exist.
  */
 const FORK_SETTLE_TIMEOUT_MS = 30_000
+/** How long Control's unarchive_agent waits for the agent to be ready, as a fork waits to settle. */
+const UNARCHIVE_READY_TIMEOUT_MS = FORK_SETTLE_TIMEOUT_MS
 
 /** Spaceterm project root (two levels up from src/server/). */
 
@@ -442,6 +446,7 @@ function spawnClaudeSurface(parentNodeId: NodeId, cwd: string | undefined, promp
 
 /** Live Claude Code surfaces: everything the receptionist knows about. */
 function receptionistAgents(): RosterAgent[] {
+  const messagingIds = readPeerNames()
   return stateManager.getNodes()
     .filter(isAgentSurface)
     .filter(node => node.alive && (node.agentType ?? 'claude') === 'claude')
@@ -459,6 +464,7 @@ function receptionistAgents(): RosterAgent[] {
       cacheWarmTokens: node.cacheWarmTokens,
       startedAt: parseTimestamp(node.claudeSessionHistory[0]?.timestamp),
       takesSideQuestions: sideQuestions.takesSideQuestions(node.sessionId),
+      messagingId: messagingIds.get(node.claudeSessionHistory.at(-1)?.claudeSessionId ?? ''),
     }))
 }
 
@@ -953,12 +959,32 @@ function broadcastToOthers(exclude: ClientConnection, msg: ServerMessage): void 
   })
 }
 
-/** Pending fork-settle callbacks: surfaceId → { respond, timeoutId }. */
-interface PendingForkSettle {
-  respond: (error?: string) => void
-  timeoutId: ReturnType<typeof setTimeout>
+/** How a new agent session's start went: see `untilSessionStarts`. */
+type SessionStartOutcome = { kind: 'started' } | { kind: 'timed-out' } | { kind: 'exited'; exitCode: number }
+
+/** Surfaces waiting for their agent's SessionStart: pty session id → how to tell them. */
+const pendingSessionStarts = new Map<string, (outcome: SessionStartOutcome) => void>()
+
+/**
+ * Resolves once the agent on a pty just spawned has started: its SessionStart
+ * hook fired, which is when Claude Code has loaded its transcript and takes
+ * input. Or once its pty exits first, or `timeoutMs` passes. Call it in the
+ * same tick as the spawn: the hook cannot arrive before then.
+ */
+function untilSessionStarts(ptyId: PtySessionId, timeoutMs: number): Promise<SessionStartOutcome> {
+  return new Promise((resolve) => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const settle = (outcome: SessionStartOutcome): void => {
+      if (pendingSessionStarts.get(ptyId) !== settle) return
+      pendingSessionStarts.delete(ptyId)
+      clearTimeout(timeoutId)
+      resolve(outcome)
+    }
+    pendingSessionStarts.get(ptyId)?.({ kind: 'timed-out' })
+    pendingSessionStarts.set(ptyId, settle)
+    timeoutId = setTimeout(() => settle({ kind: 'timed-out' }), timeoutMs)
+  })
 }
-const pendingForkSettles = new Map<string, PendingForkSettle>()
 
 // --- Script socket (scripts.sock) ---
 
@@ -1054,20 +1080,14 @@ const scriptApi = new ScriptApi({
         sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
       }
 
-      // The pty exists but Claude has not replayed the transcript yet. Settle
-      // is signalled by the SessionStart hook, or by the pty exiting first.
-      let settled = false
-      const respond = (error?: string): void => {
-        if (settled) return
-        settled = true
-        pendingForkSettles.delete(forkPtyId)
-        if (error) reject(new Error(error))
+      // The pty exists but Claude has not replayed the transcript yet.
+      void untilSessionStarts(forkPtyId, FORK_SETTLE_TIMEOUT_MS).then((outcome) => {
+        if (outcome.kind === 'timed-out') reject(new Error('Timed out waiting for session to settle'))
+        else if (outcome.kind === 'exited') reject(new Error(`Session exited with code ${outcome.exitCode} before settling`))
         // createTerminal seeds the node id from the pty session id, so for a
         // terminal that has never restarted the two are the same value.
         else resolve(nodeIdFromFirstPtySession(forkPtyId))
-      }
-      const timeoutId = setTimeout(() => respond('Timed out waiting for session to settle'), FORK_SETTLE_TIMEOUT_MS)
-      pendingForkSettles.set(forkPtyId, { respond, timeoutId })
+      })
 
       serverLog(`[script-fork-claude] Forked terminal ${sourceNodeId.slice(0, 8)} → ${forkPtyId.slice(0, 8)} (parent ${parentId.slice(0, 8)}), waiting for settle...`)
     })
@@ -1178,15 +1198,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         )
       }
 
-      // Resolve pending fork-settle if this surface has one waiting
-      if (hookType === 'SessionStart') {
-        const pending = pendingForkSettles.get(msg.surfaceId)
-        if (pending) {
-          clearTimeout(pending.timeoutId)
-          pendingForkSettles.delete(msg.surfaceId)
-          pending.respond()
-        }
-      }
+      if (hookType === 'SessionStart') pendingSessionStarts.get(msg.surfaceId)?.({ kind: 'started' })
 
       if (hookType === 'UserPromptSubmit' && msg.payload && typeof msg.payload === 'object' && 'prompt' in msg.payload) {
         const promptNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
@@ -2851,13 +2863,7 @@ async function startServer(): Promise<void> {
         )
       }
 
-      // If this PTY was awaiting fork-settle, fail it immediately
-      const pendingFork = pendingForkSettles.get(sessionId)
-      if (pendingFork) {
-        clearTimeout(pendingFork.timeoutId)
-        pendingForkSettles.delete(sessionId)
-        pendingFork.respond(`Session exited with code ${exitCode} before settling`)
-      }
+      pendingSessionStarts.get(sessionId)?.({ kind: 'exited', exitCode })
 
       sessionFileWatcher.unwatch(sessionId)
       codexSessionFileWatcher.unwatch(sessionId)
@@ -2941,7 +2947,10 @@ async function startServer(): Promise<void> {
         )
       }
 
+      // How the agent was, for Control, before the exit takes it off the roster.
+      const ending = nodeId ? receptionistAgents().find((agent) => agent.nodeId === nodeId) : undefined
       stateManager.terminalExited(sessionId, exitCode)
+      if (ending) receptionist?.agentEnded(ending, !stateManager.getNode(ending.nodeId))
       broadcastToAttached(sessionId, { type: 'exit', sessionId, exitCode })
       scriptApi.broadcast('exit', nodeId ?? undefined, { type: 'exit', nodeId, sessionId, exitCode })
       unsubscribeAll(sessionId)
@@ -3127,6 +3136,9 @@ async function startServer(): Promise<void> {
     // search box, asked with the receptionist's description instead.
     // Jev weighs whether news that arrives mid-reply should cut it short: see self-interruption.ts.
     judgeInterruption: jevJudge(agentSearchDeps.runJev),
+    // Kept on disk: what Control set aside outlasts its compacted memory. Jev picks what comes next: see backlog.ts.
+    backlog: new Backlog(),
+    judgeBacklog: jevBacklogJudge(agentSearchDeps.runJev),
     findAgents: (query, agents) => searchAgentSurfaces(query, agents.map((agent) => ({
       nodeId: agent.nodeId, title: agent.title, cwd: agent.cwd, archived: false, transcriptPath: agent.transcriptPath,
     })), agentSearchDeps, 'transcripts'),
@@ -3139,6 +3151,12 @@ async function startServer(): Promise<void> {
       },
       touch: (nodeId) => agentNames.touch(nodeId),
       byName: (name) => agentNames.byName(name),
+      nameProblem: (nodeId, name) => agentNames.nameProblem(nodeId, name),
+      setName: (nodeId, name, gender) => {
+        const result = agentNames.setName(nodeId, name, gender)
+        if (result.ok) broadcastToAll({ type: 'agent-names', names: agentNameMap() })
+        return result
+      },
     },
     askAgent: async (nodeId, prompt) => {
       // The plugin identifies itself by the surface's current PTY session id.
@@ -3151,6 +3169,21 @@ async function startServer(): Promise<void> {
     },
     nodeIds: () => Object.keys(stateManager.getState().nodes) as NodeId[],
     archive: (nodeId) => archiveNode(nodeId),
+    unarchive: async (nodeId) => {
+      const found = stateManager.findArchivedNode(nodeId)
+      if (!found) return 'not-archived'
+      restoreArchiveEntry(found.hostNodeId, found.path)
+      const node = stateManager.getNode(nodeId)
+      if (node?.type !== 'terminal' || !node.alive) return 'failed'
+      // Typed into before Claude Code is up, a message can be lost: wait for
+      // the session to say it has started. Agents that never say so are only
+      // known to be back.
+      if (!agentDriver(node.agentType).capabilities.claudeTranscript) return 'not-ready'
+      const started = await untilSessionStarts(node.sessionId, UNARCHIVE_READY_TIMEOUT_MS)
+      serverLog(`[receptionist] unarchived ${nodeId.slice(0, 8)}: session ${started.kind}`)
+      if (started.kind === 'exited') return 'failed'
+      return started.kind === 'started' ? 'ready' : 'not-ready'
+    },
     notify: (text) => broadcastToAll({ type: 'receptionist-notice', text }),
     send: (nodeId, text) => {
       const node = stateManager.getNode(nodeId)
@@ -3165,10 +3198,13 @@ async function startServer(): Promise<void> {
       if (directory?.type !== 'directory') throw new Error('that is not a directory node')
       return spawnClaudeSurface(directory.id, expandTilde(directory.cwd) ?? directory.cwd, prompt, title).id
     },
+    retitle: (nodeId, title) => stateManager.renameNode(nodeId, title),
     interrupt: (nodeId) => {
       const node = stateManager.getNode(nodeId)
       if (node?.type === 'terminal' && node.alive) sessionManager.write(node.sessionId, '\x1b')
     },
+    // What the Control button does when it lets go: see `receptionist-select`.
+    letGo: () => setReceptionistHolder(null),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceOperatorDiscovered: () => speechVoiceOperator.isRunning(),

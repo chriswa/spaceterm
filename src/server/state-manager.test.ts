@@ -951,6 +951,30 @@ describe('findArchivedNodeForFocus', () => {
   })
 })
 
+describe('findArchivedNode', () => {
+  // Control's unarchive_agent: the node id is known, the route back is not.
+  it('finds a surface by its node id, buried or not, with the path that restores it', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'grandparent')
+    createTerminal(sm, 'parent', nid('grandparent'))
+    createTerminal(sm, 'child', nid('parent'))
+    recordAgentSession(sm, 'parent', 'agent-parent')
+    recordAgentSession(sm, 'child', 'agent-child')
+    sm.archiveNode(nid('child'))
+    sm.archiveNode(nid('parent'))
+
+    expect(sm.findArchivedNode(nid('child'))).toEqual({ hostNodeId: 'grandparent', path: ['parent', 'child'] })
+    expect(sm.findArchivedNode(nid('parent'))).toEqual({ hostNodeId: 'grandparent', path: ['parent'] })
+  })
+
+  it('is undefined for a live node, or one never archived', () => {
+    const { sm } = harness()
+    createTerminal(sm, 't1')
+    expect(sm.findArchivedNode(nid('t1'))).toBeUndefined()
+    expect(sm.findArchivedNode(nid('nobody'))).toBeUndefined()
+  })
+})
+
 describe('unarchiveNodeAtPath', () => {
   it('pops a buried node out to its host and leaves the chain otherwise intact', () => {
     const { sm } = harness()

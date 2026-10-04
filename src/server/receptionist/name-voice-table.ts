@@ -25,7 +25,10 @@
 
 export type VoiceGender = 'masculine' | 'feminine'
 
-/** A roster entry: a name and the Kokoro voice id it is always spoken in. */
+/**
+ * A name and the Kokoro voice id it is always spoken in: a roster entry, or a
+ * name the receptionist chose, paired with a voice of the gender it gave.
+ */
 export interface NamedVoice {
   readonly name: string
   readonly voice: string
@@ -84,3 +87,12 @@ const BY_LOWER_NAME = new Map(NAME_VOICE_TABLE.map((e) => [e.name.toLowerCase(),
 export function rosterEntry(name: string): NamedVoice | undefined {
   return BY_LOWER_NAME.get(name.toLowerCase())
 }
+
+/**
+ * Every voice an agent can be given, with its gender: the roster's voices,
+ * which never include `RECEPTIONIST_VOICE`. A name Control gives an agent
+ * need not be in the roster, but its voice is always one of these.
+ */
+export const AGENT_VOICES: ReadonlyMap<string, VoiceGender> = new Map(
+  NAME_VOICE_TABLE.filter((e) => e.voice !== RECEPTIONIST_VOICE).map((e) => [e.voice, e.gender]),
+)

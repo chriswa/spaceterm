@@ -737,6 +737,20 @@ export class StateManager {
   }
 
   /**
+   * Where an archived node sits, by its own id, to any depth — for restoring a
+   * surface whose id is already known (Control's unarchive_agent).
+   */
+  findArchivedNode(nodeId: NodeId): { hostNodeId: NodeId; path: NodeId[] } | undefined {
+    const found = this.archivedNodesWithLocation()
+      .filter((m) => m.node.id === nodeId)
+      .reduce<LocatedArchive | undefined>(
+        (best, m) => (!best || m.entry.archivedAt > best.entry.archivedAt ? m : best),
+        undefined
+      )
+    return found && { hostNodeId: found.hostNodeId, path: found.path }
+  }
+
+  /**
    * Handle terminal PTY exit: update metadata then immediately archive.
    *
    * An exit archives its surface unless the pty carries an override — see

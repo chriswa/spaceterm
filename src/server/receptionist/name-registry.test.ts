@@ -4,7 +4,7 @@ import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { asNodeId, type NodeId } from '../../shared/ids'
 import { fileStore, NameRegistry, type NameRegistryStore } from './name-registry'
-import { NAME_VOICE_TABLE, RECEPTIONIST_VOICE } from './name-voice-table'
+import { AGENT_VOICES, NAME_VOICE_TABLE, RECEPTIONIST_VOICE, rosterEntry } from './name-voice-table'
 import { phoneticKey } from './name-phonetics'
 
 const VOICE_COUNT = new Set(NAME_VOICE_TABLE.map((e) => e.voice)).size
@@ -176,5 +176,123 @@ describe('NameRegistry', () => {
     const { reg } = setup(store)
     expect(reg.assignedNames()).toEqual(['Oliver'])
     expect(reg.get(node('b'))?.voice).toBe('am_adam')
+  })
+})
+
+describe('NameRegistry.setName', () => {
+  it('gives a name outside the roster a voice of the gender it was given', () => {
+    const { reg } = setup()
+    const result = reg.setName(node('a'), 'bartholomew', 'masculine', 1)
+    expect(result).toMatchObject({ ok: true, named: { name: 'Bartholomew', gender: 'masculine' }, voiceChanged: false })
+    expect(AGENT_VOICES.get(reg.get(node('a'))!.voice)).toBe('masculine')
+    expect(reg.byName('bartholomew')).toBe(node('a'))
+  })
+
+  it("gives a roster name its own voice when no one else is using it, in the roster's spelling", () => {
+    const { reg } = setup()
+    const result = reg.setName(node('a'), 'emma', 'feminine', 1)
+    expect(result.ok && result.named).toEqual(rosterEntry('Emma'))
+  })
+
+  it('keeps the voice when the new name is the same gender', () => {
+    const { reg } = setup()
+    const before = reg.assign(node('a'), 1)!
+    const result = reg.setName(node('a'), 'Quentin', before.gender, 2)
+    expect(result).toMatchObject({ ok: true, voiceChanged: false })
+    expect(reg.get(node('a'))).toEqual({ name: 'Quentin', voice: before.voice, gender: before.gender })
+  })
+
+  it('changes the voice to match when the new name is the other gender', () => {
+    const { reg } = setup()
+    reg.setName(node('a'), 'Quentin', 'masculine', 1)
+    const before = reg.get(node('a'))!
+    const result = reg.setName(node('a'), 'Matilda', 'feminine', 2)
+    expect(result).toMatchObject({ ok: true, voiceChanged: true, named: { name: 'Matilda', gender: 'feminine' } })
+    const after = reg.get(node('a'))!
+    expect(after.voice).not.toBe(before.voice)
+    expect(AGENT_VOICES.get(after.voice)).toBe('feminine')
+    expect(after.voice).not.toBe(RECEPTIONIST_VOICE)
+    // The old name is free again.
+    expect(reg.byName('Quentin')).toBeUndefined()
+  })
+
+  it('changes the voice when only the gender is corrected', () => {
+    const { reg } = setup()
+    reg.setName(node('a'), 'Sam', 'masculine', 1)
+    const result = reg.setName(node('a'), 'Sam', 'feminine', 2)
+    expect(result).toMatchObject({ ok: true, voiceChanged: true })
+    expect(AGENT_VOICES.get(reg.get(node('a'))!.voice)).toBe('feminine')
+  })
+
+  it('prefers a voice of that gender no other surface is using', () => {
+    const { reg } = setup()
+    const feminine = [...AGENT_VOICES].filter(([, g]) => g === 'feminine').map(([v]) => v)
+    const given = feminine.slice(1).map((_, i) => {
+      const result = reg.setName(node(i), `Given${'abcdefghijklmnop'[i]}`, 'feminine', i)
+      return result.ok ? result.named.voice : undefined
+    })
+    // Each took a voice of its own, and the last one goes to the last free voice.
+    expect(new Set(given).size).toBe(feminine.length - 1)
+    const result = reg.setName(node('last'), 'Matilda', 'feminine', 100)
+    expect(result.ok && result.named.voice).toBe(feminine.find((v) => !given.includes(v)))
+  })
+
+  it('refuses a name another live surface has, or one that sounds like it, and changes nothing', () => {
+    const { reg } = setup()
+    reg.setName(node('a'), 'Dean', 'masculine', 1)
+    reg.setName(node('b'), 'Quentin', 'masculine', 1)
+    expect(reg.nameProblem(node('b'), 'dean')).toEqual({ kind: 'taken', by: node('a'), name: 'Dean' })
+    expect(reg.setName(node('b'), 'Dana', 'feminine', 2)).toEqual({ ok: false, problem: { kind: 'taken', by: node('a'), name: 'Dean' } })
+    expect(reg.get(node('b'))!.name).toBe('Quentin')
+    // Its own name is no obstacle, and nor is a name on a surface that is gone.
+    expect(reg.nameProblem(node('a'), 'Dean')).toBeUndefined()
+    expect(reg.nameProblem(undefined, 'Dean')).toMatchObject({ kind: 'taken' })
+  })
+
+  it('frees the name of a surface that is gone', () => {
+    const { reg, dead } = setup()
+    reg.setName(node('a'), 'Quentin', 'masculine', 1)
+    dead.add(node('a'))
+    expect(reg.setName(node('b'), 'Quentin', 'masculine', 2)).toMatchObject({ ok: true })
+  })
+
+  it('refuses what is not a single spoken word, and its own name', () => {
+    const { reg } = setup()
+    for (const name of ['Mary Jane', 'R2D2', "O'Neil", 'x', '{Kevin}']) {
+      expect(reg.nameProblem(node('a'), name)).toEqual({ kind: 'not-a-name' })
+    }
+    expect(reg.nameProblem(node('a'), 'control')).toEqual({ kind: 'reserved' })
+  })
+
+  it('keeps a lazily assigned name clear of one it was given', () => {
+    const { reg } = setup()
+    reg.setName(node('a'), 'Dean', 'masculine', 1)
+    for (let i = 0; i < 100; i++) {
+      const a = reg.assign(node(i), i)
+      if (!a) break
+      expect(phoneticKey(a.name)).not.toBe(phoneticKey('Dean'))
+    }
+  })
+
+  it('round-trips a given name and its voice through the store', () => {
+    const store = memoryStore()
+    const { reg } = setup(store)
+    reg.setName(node('a'), 'Matilda', 'feminine', 1)
+    reg.setName(node('b'), 'Emma', 'masculine', 1)
+    const again = setup(store).reg
+    expect(again.get(node('a'))).toEqual(reg.get(node('a')))
+    // A roster name keeps the voice it was given, not the table's.
+    expect(again.get(node('b'))).toEqual(reg.get(node('b')))
+    expect(AGENT_VOICES.get(again.get(node('b'))!.voice)).toBe('masculine')
+  })
+
+  it('drops a saved assignment whose voice an agent may not have', () => {
+    const store = memoryStore()
+    store.json = JSON.stringify({
+      version: 2,
+      assignments: { 'node-a': { name: 'Matilda', voice: RECEPTIONIST_VOICE }, 'node-b': { name: 'Quentin', voice: 'xx_nobody' } },
+      lastUsedAt: {},
+    })
+    expect(setup(store).reg.assignedNames()).toEqual([])
   })
 })

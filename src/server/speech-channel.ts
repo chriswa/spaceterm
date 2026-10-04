@@ -100,6 +100,17 @@ export interface SpeechChannelOptions {
   deps: SpeechChannelDeps
 }
 
+/**
+ * How far the listener has got through something delivered: where the voice
+ * is while it plays, as each status reports it, and then how it ended, with
+ * where it stopped if it was cut off. `lost` is a job Voice Operator stopped
+ * answering about. For timing something to the words — see the receptionist,
+ * whose actions wait for the words that come before them.
+ */
+export type SpeechProgress =
+  | { kind: 'playing'; heard: number }
+  | { kind: 'ended'; state: Exclude<SpeechStatus['state'], 'in_progress'> | 'lost'; heard?: number }
+
 /** The job the channel is following, and the backend that owns it. */
 interface LiveJob {
   id: string
@@ -232,8 +243,14 @@ export class SpeechChannel {
    * settles unless this returned true is the intended shape). Everything from
    * the POST onwards is here, down to the window where a cancel that lands
    * mid-POST has to drop the job.
+   *
+   * `onProgress` hears how far the listener gets, until the job ends — but
+   * only while it is followed: a `false` here, or the attempt losing the
+   * channel, means it will hear nothing more.
    */
-  async deliver(attempt: Attempt, content: SpeechContent, voice?: string): Promise<boolean> {
+  async deliver(
+    attempt: Attempt, content: SpeechContent, voice?: string, onProgress?: (progress: SpeechProgress) => void,
+  ): Promise<boolean> {
     const characters = joinSpeechParts(content).length
     const backend = this.speech
     const speech = await this.speak(backend, content, voice)
@@ -266,7 +283,7 @@ export class SpeechChannel {
     // read out, and it logged that just as loudly on the presses where not
     // one word was ever synthesized.
     serverLog(`${this.label} queued ${characters} chars as speech ${speech.job.id}: ${quoteForLog(content)}`)
-    void this.monitor(attempt, this.job, speech.job)
+    void this.monitor(attempt, this.job, speech.job, onProgress)
     return true
   }
 
@@ -280,19 +297,36 @@ export class SpeechChannel {
    * so a stop still stops everything. The phase moves to `synthesizing`: the
    * wait now belongs to the speech backend, and a `thinking` cue would play
    * over the words.
+   *
+   * With `onProgress`, the job is followed — for its progress only; the
+   * phase stays the answer's to drive — and returns whether it is: as
+   * `deliver`, a `false` means `onProgress` will hear nothing.
    */
-  async deliverInterim(attempt: Attempt, content: SpeechContent): Promise<void> {
+  async deliverInterim(
+    attempt: Attempt, content: SpeechContent, onProgress?: (progress: SpeechProgress) => void,
+  ): Promise<boolean> {
     const backend = this.speech
     const speech = await this.speak(backend, content, undefined)
     if (!attempt.isCurrent) {
       if (speech.job) void backend.drop(speech.job.id)
-      return
+      return false
     }
     // A refusal is left for the answer to report: one toast, not two.
-    if (!speech.job) return
+    if (!speech.job) return false
     serverLog(`${this.label} queued interim speech ${speech.job.id}: ${quoteForLog(content)}`)
-    this.interimJobs.push({ id: speech.job.id, backend })
+    const job = { id: speech.job.id, backend }
+    this.interimJobs.push(job)
     this.setPhase('synthesizing')
+    if (!onProgress) return false
+    void this.follow(attempt, job, speech.job, (status) => {
+      if (!status) onProgress({ kind: 'ended', state: 'lost' })
+      else if (status.state === 'in_progress') {
+        if (typeof status.character_offset === 'number') onProgress({ kind: 'playing', heard: status.character_offset })
+      } else {
+        onProgress({ kind: 'ended', state: status.state, ...(typeof status.character_offset === 'number' ? { heard: status.character_offset } : {}) })
+      }
+    })
+    return true
   }
 
   /**
@@ -402,38 +436,22 @@ export class SpeechChannel {
   }
 
   /**
-   * Follow one speech job until it stops, keeping the phase in step.
-   *
-   * Two polling strategies, chosen by whether the backend offers a change
-   * cursor. With one, this parks in a long poll that the service wakes on *any*
-   * observable change — including the cancellation we issue ourselves, so a
-   * cancel and its monitor never have to race. Without one (an older service),
-   * it falls back to the short-poll cadence that cursor replaced; see
-   * `pollWaitSeconds` for why that cadence had to exist at all.
+   * Follow one speech job until it stops, keeping the phase in step, and
+   * telling `onProgress` how far the listener has got.
    */
-  private async monitor(attempt: Attempt, job: LiveJob, accepted: SpeechStatus): Promise<void> {
+  private async monitor(
+    attempt: Attempt, job: LiveJob, accepted: SpeechStatus, onProgress: ((progress: SpeechProgress) => void) | undefined,
+  ): Promise<void> {
     const startedAt = Date.now()
-    let cursor = accepted.version
     let reportedPlayback: string | undefined
     let stallReported = false
-    while (attempt.isCurrent) {
-      // A cursor poll is paced by the service; a legacy poll is paced by us.
-      const wait = cursor === undefined ? pollWaitSeconds(this.currentPhase) : SPEECH_LONG_POLL_SECONDS
-      // The default request timeout is intentionally short for one-shot
-      // operations. A speech monitor, however, must tolerate a stalled local
-      // service without falsely declaring the job finished.
-      const status = speechStatus(await job.backend.status(
-        job.id,
-        { wait, ...(cursor === undefined ? {} : { since: cursor }) },
-        { signal: attempt.signal },
-        wait === 0 ? 3_000 : SPEECH_LONG_POLL_TIMEOUT_MS,
-      ))
-      if (!attempt.isCurrent) return
+    await this.follow(attempt, job, accepted, (status) => {
       if (!status) {
         // Voice Operator stopped answering about a job it had already accepted.
         // Settling is right — the channel must not hang on it — but it is not
         // the same as an answer that finished, and it left no trace at all.
         serverLog(`${this.label} lost track of speech ${job.id} after ${sinceSeconds(startedAt)}`)
+        onProgress?.({ kind: 'ended', state: 'lost' })
         this.settle(attempt)
         return
       }
@@ -452,14 +470,8 @@ export class SpeechChannel {
         // playback state is what distinguishes those (see playbackPhase), so
         // the phase is driven from there rather than from the job.
         this.setPhase(playbackPhase(status.playback_state, this.currentPhase))
-        // A poll that did not advance the cursor told us nothing, so fall back
-        // to the floor rather than trust the service to pace us. Without this a
-        // service that ignores `since` — while still reporting a version —
-        // would spin this loop as fast as the event loop allows.
-        const advanced = cursor !== undefined && status.version !== undefined && status.version > cursor
-        cursor = status.version
-        if (!advanced) await this.deps.sleep(SPEECH_POLL_INTERVAL_MS)
-        continue
+        if (typeof status.character_offset === 'number') onProgress?.({ kind: 'playing', heard: status.character_offset })
+        return
       }
       serverLog(`${this.label} speech ${job.id} ended as ${status.state} after ${sinceSeconds(startedAt)}`)
       // Capture the cut-off point now, while the job is fresh in hand. A job
@@ -475,8 +487,51 @@ export class SpeechChannel {
       // full. To a listener those two are the same event — silence — so the
       // one that is a fault has to say so.
       if (status.state === 'synthesis_failed') this.onFailure({ kind: 'synthesis_failed' })
+      // Before settling: settling announces `ready`, which may start the next turn.
+      onProgress?.({ kind: 'ended', state: status.state, ...(typeof status.character_offset === 'number' ? { heard: status.character_offset } : {}) })
       this.settle(attempt)
-      return
+    })
+  }
+
+  /**
+   * Hand every status of one job to `seen`, until it ends (`seen` gets its
+   * final status) or Voice Operator stops answering (`seen` gets undefined).
+   * Returns silently, without another call, once the attempt no longer owns
+   * the channel.
+   *
+   * Two polling strategies, chosen by whether the backend offers a change
+   * cursor. With one, this parks in a long poll that the service wakes on *any*
+   * observable change — including the cancellation we issue ourselves, so a
+   * cancel and its monitor never have to race. Without one (an older service),
+   * it falls back to the short-poll cadence that cursor replaced; see
+   * `pollWaitSeconds` for why that cadence had to exist at all.
+   */
+  private async follow(
+    attempt: Attempt, job: LiveJob, accepted: SpeechStatus, seen: (status: SpeechStatus | undefined) => void,
+  ): Promise<void> {
+    let cursor = accepted.version
+    while (attempt.isCurrent) {
+      // A cursor poll is paced by the service; a legacy poll is paced by us.
+      const wait = cursor === undefined ? pollWaitSeconds(this.currentPhase) : SPEECH_LONG_POLL_SECONDS
+      // The default request timeout is intentionally short for one-shot
+      // operations. A speech monitor, however, must tolerate a stalled local
+      // service without falsely declaring the job finished.
+      const status = speechStatus(await job.backend.status(
+        job.id,
+        { wait, ...(cursor === undefined ? {} : { since: cursor }) },
+        { signal: attempt.signal },
+        wait === 0 ? 3_000 : SPEECH_LONG_POLL_TIMEOUT_MS,
+      ))
+      if (!attempt.isCurrent) return
+      seen(status)
+      if (status?.state !== 'in_progress') return
+      // A poll that did not advance the cursor told us nothing, so fall back
+      // to the floor rather than trust the service to pace us. Without this a
+      // service that ignores `since` — while still reporting a version —
+      // would spin this loop as fast as the event loop allows.
+      const advanced = cursor !== undefined && status.version !== undefined && status.version > cursor
+      cursor = status.version
+      if (!advanced) await this.deps.sleep(SPEECH_POLL_INTERVAL_MS)
     }
   }
 

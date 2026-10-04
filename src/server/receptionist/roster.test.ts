@@ -20,7 +20,7 @@ describe('renderRoster', () => {
   it('shows name, directory, state and the last exchange', () => {
     const a = agent('11111111-0000-4000-8000-000000000000')
     const text = renderRoster([a], () => 'Kevin', () => transcript, H)
-    expect(text).toContain(`[${H(a.nodeId)}] Kevin: water sim`)
+    expect(text).toContain(`{Kevin:${H(a.nodeId)}}: water sim`)
     expect(text).toContain('directory: fluids')
     expect(text).toContain('state: stopped')
     expect(text).toContain('last asked: Make the water simulation')
@@ -37,7 +37,15 @@ describe('renderRoster', () => {
     const fresh = agent('44444444-0000-4000-8000-000000000000', { takesSideQuestions: true })
     const text = renderRoster([old, fresh], () => undefined, () => [], H)
     expect(text.match(/ask_agent: unavailable/g)).toHaveLength(1)
-    expect(text.split(`[${H(fresh.nodeId)}]`)[1]).not.toContain('ask_agent: unavailable')
+    expect(text.split(`${H(fresh.nodeId)}}`)[1]).not.toContain('ask_agent: unavailable')
+  })
+
+  it('shows the messaging id other agents send to, when it is known', () => {
+    const known = agent('55555555-0000-4000-8000-000000000000', { messagingId: 'spaceterm-43' })
+    const unknown = agent('66666666-0000-4000-8000-000000000000')
+    const text = renderRoster([known, unknown], () => undefined, () => [], H)
+    expect(text.match(/messaging id:/g)).toHaveLength(1)
+    expect(text).toContain('messaging id: spaceterm-43')
   })
 
   it('says so when nothing is running', () => {

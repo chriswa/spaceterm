@@ -20,6 +20,14 @@
  *   assigned and whenever the receptionist mentions its surface (`touch`), so a
  *   recently heard name is the last to be given to a different surface.
  *
+ * The receptionist can also give a surface a name of its own choosing
+ * (`setName`): on spawn, or to rename an agent. Such a name need not be in the
+ * roster, so it comes with a gender, and the surface's voice follows it: kept
+ * if it is already that gender, otherwise replaced by one that is, so a name
+ * is never spoken in a voice of the other gender. The same distinctness rule
+ * holds, but only roster names have phonetic keys, so a name outside the
+ * roster is told apart from the others by spelling alone.
+ *
  * Persisted as JSON at `<SPACETERM_HOME>/receptionist/names.json`.
  */
 
@@ -28,7 +36,9 @@ import * as path from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
 import { asNodeId, type NodeId } from '../../shared/ids'
 import { serverLog } from '../server-log'
-import { NAME_VOICE_TABLE, RECEPTIONIST_VOICE, rosterEntry, type NamedVoice } from './name-voice-table'
+import {
+  AGENT_VOICES, NAME_VOICE_TABLE, RECEPTIONIST_NAME, RECEPTIONIST_VOICE, rosterEntry, type NamedVoice, type VoiceGender,
+} from './name-voice-table'
 import { phoneticKey } from './name-phonetics'
 
 /** Raw storage for the registry's JSON document. */
@@ -69,14 +79,38 @@ export function fileStore(file: string): NameRegistryStore {
   }
 }
 
-const VERSION = 1
+const VERSION = 2
 
 interface Persisted {
   version: number
-  /** nodeId → assigned roster name. The voice is looked up from the table. */
-  assignments: Record<string, string>
+  /**
+   * nodeId → assigned name and voice; the gender is the voice's. Version 1
+   * stored only a roster name, whose voice was the table's.
+   */
+  assignments: Record<string, { name: string; voice: string } | string>
   /** roster name → epoch ms it was last assigned or mentioned. */
   lastUsedAt: Record<string, number>
+}
+
+/** A name the receptionist can give: one spoken word, which an agent token can carry. */
+const NAME_PATTERN = /^[A-Za-z]{2,20}$/
+
+/** Why a name can't be given, as `nameProblem` reports it. */
+export type NameProblem =
+  | { kind: 'not-a-name' }
+  | { kind: 'reserved' }
+  /** Held by another live surface, or sounds like one that is. */
+  | { kind: 'taken'; by: NodeId; name: string }
+
+/** What sets two names apart by ear: the phonetic key for roster names, the spelling for others. */
+function soundKey(name: string): string {
+  return phoneticKey(name) ?? name.toLowerCase()
+}
+
+/** A name as it is kept: the roster's spelling if it is a roster name, else capitalized. */
+function normalizeName(name: string): string {
+  const trimmed = name.trim()
+  return rosterEntry(trimmed)?.name ?? trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
 }
 
 /** Small stable string hash (FNV-1a), to spread never-used ties across the roster. */
@@ -117,9 +151,7 @@ export class NameRegistry {
     const existing = this.assignments.get(nodeId)
     if (existing) return existing
 
-    for (const id of [...this.assignments.keys()]) {
-      if (!this.isLive(id)) this.assignments.delete(id)
-    }
+    this.releaseDead()
 
     const chosen = this.choose(nodeId)
     if (chosen) {
@@ -134,8 +166,45 @@ export class NameRegistry {
   touch(nodeId: NodeId, now = Date.now()): void {
     const entry = this.assignments.get(nodeId)
     if (!entry) return
-    this.lastUsedAt.set(entry.name, now)
+    this.markUsed(entry.name, now)
     this.save()
+  }
+
+  /**
+   * Why `name` can't be given to `nodeId` (or to a surface not yet made, when
+   * undefined), or undefined if it can. Releases names held by surfaces that
+   * are gone first, as `assign` does.
+   */
+  nameProblem(nodeId: NodeId | undefined, name: string): NameProblem | undefined {
+    const trimmed = name.trim()
+    if (!NAME_PATTERN.test(trimmed)) return { kind: 'not-a-name' }
+    if (trimmed.toLowerCase() === RECEPTIONIST_NAME.toLowerCase()) return { kind: 'reserved' }
+    this.releaseDead()
+    const key = soundKey(trimmed)
+    for (const [holder, entry] of this.assignments) {
+      if (holder !== nodeId && soundKey(entry.name) === key) return { kind: 'taken', by: holder, name: entry.name }
+    }
+    return undefined
+  }
+
+  /**
+   * Give the surface `name`, as a name of `gender`. Its voice is kept if it
+   * has one of that gender; otherwise it gets a voice of that gender, the one
+   * fewest other surfaces are using, preferring the name's own roster voice.
+   * Fails, changing nothing, for any reason `nameProblem` gives.
+   */
+  setName(
+    nodeId: NodeId, name: string, gender: VoiceGender, now = Date.now(),
+  ): { ok: true; named: NamedVoice; voiceChanged: boolean } | { ok: false; problem: NameProblem } {
+    const problem = this.nameProblem(nodeId, name)
+    if (problem) return { ok: false, problem }
+    const previous = this.assignments.get(nodeId)
+    const voice = previous?.gender === gender ? previous.voice : this.voiceFor(nodeId, name, gender)
+    const named: NamedVoice = { name: normalizeName(name), voice, gender }
+    this.assignments.set(nodeId, named)
+    this.markUsed(named.name, now)
+    this.save()
+    return { ok: true, named, voiceChanged: previous !== undefined && previous.voice !== voice }
   }
 
   /** The surface currently holding `name` (exact, case-insensitive), if any. */
@@ -152,13 +221,38 @@ export class NameRegistry {
     return [...this.assignments.values()].map((e) => e.name)
   }
 
+  private releaseDead(): void {
+    for (const id of [...this.assignments.keys()]) {
+      if (!this.isLive(id)) this.assignments.delete(id)
+    }
+  }
+
+  /** Only roster names are chosen by `lastUsedAt`, so only theirs is kept. */
+  private markUsed(name: string, now: number): void {
+    const entry = rosterEntry(name)
+    if (entry) this.lastUsedAt.set(entry.name, now)
+  }
+
+  /** A voice of `gender` for `nodeId`, which is being given `name`: see `setName`. */
+  private voiceFor(nodeId: NodeId, name: string, gender: VoiceGender): string {
+    const others = [...this.assignments].filter(([id]) => id !== nodeId).map(([, e]) => e.voice)
+    const users = (voice: string): number => others.filter((v) => v === voice).length
+    const own = rosterEntry(name)?.voice
+    const voices = [...AGENT_VOICES].filter(([, g]) => g === gender).map(([voice]) => voice)
+    const offset = hash(nodeId) % voices.length
+    const rank = (voice: string): number => (voices.indexOf(voice) - offset + voices.length) % voices.length
+    return [...voices].sort((a, b) =>
+      users(a) - users(b) || Number(b === own) - Number(a === own) || rank(a) - rank(b),
+    )[0]
+  }
+
   private choose(nodeId: NodeId): NamedVoice | undefined {
     const held = [...this.assignments.values()]
-    const heldKeys = new Set(held.map((e) => phoneticKey(e.name) ?? e.name.toLowerCase()))
+    const heldKeys = new Set(held.map((e) => soundKey(e.name)))
     const heldVoices = new Set(held.map((e) => e.voice))
 
     const eligible = NAME_VOICE_TABLE.filter(
-      (e) => e.voice !== RECEPTIONIST_VOICE && !heldKeys.has(phoneticKey(e.name) ?? e.name.toLowerCase()),
+      (e) => e.voice !== RECEPTIONIST_VOICE && !heldKeys.has(soundKey(e.name)),
     )
     const freshVoice = eligible.filter((e) => !heldVoices.has(e.voice))
     const pool = freshVoice.length > 0 ? freshVoice : eligible
@@ -185,17 +279,18 @@ export class NameRegistry {
       serverLog(`receptionist names: unreadable ${NAMES_FILE}, starting empty: ${String(err)}`)
       return
     }
-    if (doc?.version !== VERSION) {
+    if (doc?.version !== VERSION && doc?.version !== 1) {
       serverLog(`receptionist names: ignoring version ${String(doc?.version)}`)
       return
     }
-    // Names that left the roster (or moved onto the reserved voice) are dropped,
-    // so a roster change can't resurrect a stale pairing.
+    // Pairings that are no longer valid are dropped: a roster name whose voice
+    // left the roster (or moved onto the reserved voice), a voice no agent may
+    // have, a duplicate. So a roster change can't resurrect a stale pairing.
     const taken = new Set<string>()
-    for (const [nodeId, name] of Object.entries(doc.assignments ?? {})) {
-      const entry = rosterEntry(name)
-      if (!entry || entry.voice === RECEPTIONIST_VOICE || taken.has(entry.name)) continue
-      taken.add(entry.name)
+    for (const [nodeId, saved] of Object.entries(doc.assignments ?? {})) {
+      const entry = this.restored(saved)
+      if (!entry || taken.has(soundKey(entry.name))) continue
+      taken.add(soundKey(entry.name))
       this.assignments.set(asNodeId(nodeId), entry)
     }
     for (const [name, at] of Object.entries(doc.lastUsedAt ?? {})) {
@@ -204,10 +299,24 @@ export class NameRegistry {
     }
   }
 
+  /** A saved assignment, or undefined if it is not one that could be made now. */
+  private restored(saved: unknown): NamedVoice | undefined {
+    if (typeof saved === 'string') {
+      const entry = rosterEntry(saved)
+      return entry && entry.voice !== RECEPTIONIST_VOICE ? entry : undefined
+    }
+    if (typeof saved !== 'object' || saved === null) return undefined
+    const { name, voice } = saved as Record<string, unknown>
+    if (typeof name !== 'string' || typeof voice !== 'string') return undefined
+    const gender = AGENT_VOICES.get(voice)
+    if (!gender || !NAME_PATTERN.test(name) || name.toLowerCase() === RECEPTIONIST_NAME.toLowerCase()) return undefined
+    return { name: normalizeName(name), voice, gender }
+  }
+
   private save(): void {
     const doc: Persisted = {
       version: VERSION,
-      assignments: Object.fromEntries([...this.assignments].map(([id, e]) => [id, e.name])),
+      assignments: Object.fromEntries([...this.assignments].map(([id, e]) => [id, { name: e.name, voice: e.voice }])),
       lastUsedAt: Object.fromEntries(this.lastUsedAt),
     }
     try {
