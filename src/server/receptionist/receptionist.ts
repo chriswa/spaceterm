@@ -260,7 +260,16 @@ export class Receptionist {
   /** The last reply spoken, so an interruption can say how much of it was heard. */
   private lastSpoken?: RenderedPart[]
   private events: ReceptionistEvent[] = []
-  private readonly monitors = new Set<NodeId>()
+  /**
+   * Agents being watched for their next stop. `after-work` is a send's or a
+   * spawn's: only a stop after the agent has started working on the message
+   * counts. A stop on the way in — the Escape that declines a pending
+   * question, before the message is even pasted — used to fire it at once,
+   * with nothing said, and the real answer then went unreported.
+   */
+  private readonly monitors = new Map<NodeId, 'next-stop' | 'after-work'>()
+  /** The stop each agent was last reported at (its `stateSince`), so the same stop is never reported twice. */
+  private readonly reportedStops = new Map<NodeId, number | undefined>()
   private readonly channel: SpeechChannel
   private talkToMe = true
   /**
@@ -366,10 +375,29 @@ export class Receptionist {
 
   /** An agent's Claude state changed. Fires a monitor if one is waiting on it. */
   agentStateChanged(nodeId: NodeId, state: ClaudeState): void {
-    if (!this.monitors.has(nodeId) || !isSettled(state)) return
+    const waiting = this.monitors.get(nodeId)
+    if (!waiting) return
+    if (!isSettled(state)) {
+      if (waiting === 'after-work') this.monitors.set(nodeId, 'next-stop')
+      return
+    }
+    if (waiting === 'after-work') return
+    this.fireMonitor(nodeId, state)
+  }
+
+  /** Watch an agent until its next stop; see `monitors`. */
+  private watch(nodeId: NodeId, kind: 'next-stop' | 'after-work'): void {
+    // Already at work on it: its next stop is the one.
+    const state = this.deps.agents().find(candidate => candidate.nodeId === nodeId)?.state
+    this.monitors.set(nodeId, kind === 'after-work' && state && !isSettled(state) ? 'next-stop' : kind)
+  }
+
+  /** The agent has stopped: tell the model what it last said. */
+  private fireMonitor(nodeId: NodeId, state: ClaudeState): void {
     const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
     this.monitors.delete(nodeId)
     if (!agent) return
+    this.reportedStops.set(nodeId, agent.stateSince)
     const lastSaid = agent.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
     this.events.push({
       kind: 'agent-stopped', handle: this.handles([agent]).of(nodeId) ?? nodeId, state: STATE_WORDS[state],
@@ -633,8 +661,19 @@ export class Receptionist {
           break
         }
         case 'monitor':
-          this.monitors.add(agent.nodeId)
-          done.push(`monitor is watching ${who}`)
+          // Already stopped at a stop not yet reported — it may have answered
+          // a moment before the monitor was set — so it is reported now, not
+          // at a stop that may never come.
+          // Unless it is the very stop just reported: watching again for a
+          // later one is what monitor means then.
+          if (isSettled(agent.state) && !(this.reportedStops.has(agent.nodeId) && this.reportedStops.get(agent.nodeId) === agent.stateSince)) {
+            this.monitors.set(agent.nodeId, 'next-stop')
+            this.fireMonitor(agent.nodeId, agent.state)
+            done.push(`monitor found ${who} already stopped; what it last said comes as an event`)
+          } else {
+            this.watch(agent.nodeId, 'next-stop')
+            done.push(`monitor is watching ${who}`)
+          }
           break
         case 'ask_agent':
           void this.askAgent(agent, call.question, handles)
@@ -671,7 +710,7 @@ export class Receptionist {
     if (!directory) return `spawn {${call.directory}}: that directory is gone.`
     try {
       const nodeId = this.deps.spawn(directory.nodeId, call.title, call.prompt)
-      this.monitors.add(nodeId)
+      this.watch(nodeId, 'after-work')
       this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt })
       this.deps.record.append([{ role: 'assistant', content: `STARTED AN AGENT in ${directory.cwd}: ${call.prompt}` }])
       const handle = this.handles([...agents.map(agent => agent.nodeId), nodeId].map(id => ({ nodeId: id }))).of(nodeId)
@@ -688,7 +727,7 @@ export class Receptionist {
   private async send(nodeId: NodeId, message: string, afterInterrupt: boolean): Promise<void> {
     if (afterInterrupt) await this.deps.sleep(INTERRUPT_SETTLE_MS)
     this.deps.send(nodeId, message)
-    this.monitors.add(nodeId)
+    this.watch(nodeId, 'after-work')
     // Named now if it has none: "Sent to Kevin" is about to be said anyway.
     const name = (this.deps.names.get(nodeId) ?? this.deps.names.assign(nodeId))?.name ?? 'an agent'
     this.deps.log({ event: 'sent', nodeId, name, message })

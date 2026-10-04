@@ -525,11 +525,11 @@ describe('Receptionist', () => {
         },
       ],
     })
+    h.setState(KEVIN_ID, 'working')
     await h.receptionist.hear('tell me when Sally and Kevin are done')
     await flush()
     h.receptionist.userSpeaking(true)
     h.setState(SALLY_ID, 'stopped')
-    h.setState(KEVIN_ID, 'working')
     h.setState(KEVIN_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(1)
@@ -579,6 +579,48 @@ describe('Receptionist', () => {
     h.receptionist.userSpeaking(false)
     await flush()
     expect(said(h)).toEqual([JSON.stringify([{ text: 'Kevin is testing.', voice: RECEPTIONIST_VOICE }])])
+  })
+
+  it('reports an answer that came before the monitor did, and ignores the stop of a declined question', async () => {
+    // Sally is sitting on a question. The send's Escape declines it — a stop —
+    // before the message goes in; then she works, and answers.
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `Sent to {${SALLY}}.` }], [{ tool: 'send', agent: SALLY, message: 'Do not push.' }]),
+        (turn) => {
+          // Only her real answer, not the declined question's stop.
+          expect(turn.prompt).toContain(`{${SALLY}} is now stopped`)
+          expect(turn.prompt).toContain('Working on the login form validation.')
+          return reply([{ from: 'control', text: 'She answered.' }])
+        },
+      ],
+    })
+    h.setState(SALLY_ID, 'waiting_question')
+    await h.receptionist.hear('tell Sally not to push')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    h.setState(SALLY_ID, 'working')
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('fires a monitor set on an agent that already stopped unreported, but not again for a stop it reported', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`{${KEVIN}} is now stopped`)
+          return reply([], [{ tool: 'monitor', agent: KEVIN }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell me when Kevin is done')
+    await flush()
+    // Reported at once; watched again, the same stop is not reported twice.
+    expect(h.turns).toHaveLength(2)
   })
 
   it('stays quiet when it decides an event is not worth saying', async () => {
@@ -685,6 +727,7 @@ describe('Receptionist', () => {
         },
       ],
     })
+    h.setState(KEVIN_ID, 'working')
     await h.receptionist.hear('tell me when Kevin is done')
     await flush()
     await h.receptionist.hear('archive Kevin')
@@ -839,6 +882,7 @@ describe('Receptionist', () => {
         },
       ],
     })
+    h.setState(KEVIN_ID, 'working')
     await h.receptionist.hear('who is around?')
     await flush()
     await h.receptionist.hear('watch kevin')
