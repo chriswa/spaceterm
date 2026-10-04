@@ -69,13 +69,17 @@ async function createSurface(app: LaunchedApp): Promise<string> {
 }
 
 /**
- * The card's rendered width. Scaled by the camera, so only ratios are
- * meaningful. Scoped to `.card-shell` because the toolbar carries a crab slot
- * tagged with the same node id.
+ * The card's laid-out width in canvas pixels, before the camera's transform.
+ *
+ * Deliberately not `getBoundingClientRect()`: that is scaled by the camera, and
+ * the camera is still flying to a freshly focused surface when these tests
+ * start, so two on-screen readings taken seconds apart differ by the zoom
+ * animation even when the surface is untouched. Scoped to `.card-shell`
+ * because the toolbar carries a crab slot tagged with the same node id.
  */
 function cardWidth(app: LaunchedApp, id: string): Promise<number> {
   return app.window.locator(`.card-shell[data-node-id="${id}"]`).evaluate(
-    (el) => (el as HTMLElement).getBoundingClientRect().width
+    (el) => (el as HTMLElement).offsetWidth
   )
 }
 
@@ -248,10 +252,6 @@ describeE2E('resizing a terminal surface', () => {
     await resizeTo(launched, id, 200, 60)
     await waitForPersistedSize(launched, id, { cols: 200, rows: 60 })
 
-    const zoom = await launched.window.evaluate(() => {
-      const surface = document.querySelector('.canvas-surface') as HTMLElement | null
-      return surface ? new DOMMatrix(getComputedStyle(surface).transform).a : 1
-    })
-    expect(await cardWidth(launched, id)).toBeCloseTo(terminalPixelSize(200, 60).width * zoom, 0)
+    expect(await cardWidth(launched, id)).toBe(terminalPixelSize(200, 60).width)
   })
 })
