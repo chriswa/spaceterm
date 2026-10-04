@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { getCameraTransform } from '../lib/camera'
 import type { Camera } from '../lib/camera'
 
 interface CanvasProps {
@@ -97,15 +96,18 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectSta
   return (
     <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick}>
       {background}
-      <div
-        ref={surfaceRef}
-        className="canvas-surface"
-        style={{
-          transform: getCameraTransform(camera),
-          transformOrigin: '0 0',
-        } as React.CSSProperties}
-      >
-        {children}
+      {/* The zoom layer moves the surface while the camera does, on the phone,
+          so the cards are scaled as drawn rather than redrawn at every scale;
+          see deferCameraScaleWhileMoving. The surface's transform is the
+          camera's, written by useCamera's applyToDOM and nowhere else. */}
+      <div className="canvas-zoom-layer">
+        <div
+          ref={surfaceRef}
+          className="canvas-surface"
+          style={{ transformOrigin: '0 0' }}
+        >
+          {children}
+        </div>
       </div>
       {overlay}
     </div>

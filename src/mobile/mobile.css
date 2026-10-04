@@ -806,3 +806,10 @@ textarea, input, [contenteditable="true"], .cm-content {
 .canvas-surface {
   --glow-scale: min(3, max(1, calc(1 / var(--camera-zoom, 1))));
 }
+
+/* The zoom layer carries the camera while it moves (useCamera's
+   deferCameraScaleWhileMoving): its own compositor layer, so a zoom scales
+   what the cards last drew instead of redrawing them at every scale. */
+.canvas-zoom-layer {
+  will-change: transform;
+}

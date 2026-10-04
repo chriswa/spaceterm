@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { installApi } from '@/lib/install-api'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
+import { deferCameraScaleWhileMoving } from '@/hooks/useCamera'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
 import { browserPlatform, forwardLogs } from './browser-platform'
 import { installDiagnostics } from './diagnostics'
@@ -49,6 +50,9 @@ if (!token) {
 } else {
   // Before anything renders: the canvas must never mount a live terminal in a card.
   useSurfacePresenterStore.getState().setExternal(true)
+  // A zoom scales the cards as drawn and redraws them once it settles: redrawn
+  // at every scale, a zoom-out ran WebKit out of memory. See useCamera.
+  deferCameraScaleWhileMoving(true)
   // No bar along the bottom; the corner button opens the toolbar as a sheet.
   useSurfacePresenterStore.getState().setToolbarSheet(true)
   // `window.api` must exist before App's modules run, as on the desktop.

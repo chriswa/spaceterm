@@ -21,6 +21,31 @@ const DEFAULT_CAMERA: Camera = { x: window.innerWidth / 2, y: window.innerHeight
 
 // Settle delay is imported as CAMERA_SETTLE_DELAY from constants.ts
 
+/**
+ * On the phone: while the camera moves, move the zoom layer around the
+ * canvas surface instead of the surface, and give the surface the camera
+ * only once it settles.
+ *
+ * WebKit redraws a layer's contents whenever its scale changes, and keeps
+ * what it drew. Writing the camera to the surface every frame of a zoom-out
+ * redrew every card in view at every scale on the way: measured in desktop
+ * WebKit at the phone's size and density, 0.31 to 0.03 grew the page's
+ * memory by 100-190MB, and iOS killed the page with a dozen cards in view.
+ * Moving the layer around the surface instead, the cards are scaled as last
+ * drawn (+5-40MB), then drawn once, sharp, at the zoom the camera settles at.
+ * Nothing is hidden: a pinch in is softer until it stops, as in Photos.
+ */
+let deferScaleWhileMoving = false
+export function deferCameraScaleWhileMoving(on: boolean): void {
+  deferScaleWhileMoving = on
+}
+
+/** The transform that takes what `committed` shows to what `cam` would. */
+export function relativeCameraTransform(committed: Camera, cam: Camera): string {
+  const s = cam.z / committed.z
+  return `translate(${cam.x - committed.x * s}px, ${cam.y - committed.y * s}px) scale(${s})`
+}
+
 function lerpCamera(from: Camera, to: Camera, t: number): Camera {
   return {
     x: from.x + (to.x - from.x) * t,
@@ -65,13 +90,29 @@ export function useCamera(
   const onCameraEventRef = useRef(onCameraEvent)
   onCameraEventRef.current = onCameraEvent
 
+  /** The camera the surface's own transform shows, while deferring; see deferCameraScaleWhileMoving. */
+  const committedRef = useRef<Camera | null>(null)
+  const commitTimerRef = useRef<number>(0)
+
   const applyToDOM = useCallback((cam: Camera) => {
-    if (surfaceRef.current) {
-      const z = clampZoom(cam.z)
-      const safeCam = z === cam.z ? cam : { ...cam, z }
-      surfaceRef.current.style.transform = getCameraTransform(safeCam)
-      surfaceRef.current.style.setProperty('--camera-zoom', String(z))
+    const surface = surfaceRef.current
+    if (!surface) return
+    const z = clampZoom(cam.z)
+    const safeCam = z === cam.z ? cam : { ...cam, z }
+    const layer = deferScaleWhileMoving && surface.parentElement?.classList.contains('canvas-zoom-layer') ? surface.parentElement : null
+    const commit = (to: Camera) => {
+      surface.style.transform = getCameraTransform(to)
+      surface.style.setProperty('--camera-zoom', String(to.z))
+      if (layer) layer.style.transform = ''
+      committedRef.current = to
     }
+    if (!layer || !committedRef.current) {
+      commit(safeCam)
+      return
+    }
+    layer.style.transform = relativeCameraTransform(committedRef.current, safeCam)
+    clearTimeout(commitTimerRef.current)
+    commitTimerRef.current = window.setTimeout(() => commit(safeCam), CAMERA_SETTLE_DELAY)
   }, [])
 
   const scheduleSync = useCallback(() => {
@@ -98,6 +139,7 @@ export function useCamera(
       cancelAnimationFrame(rafRef.current)
       clearTimeout(syncTimerRef.current)
       clearTimeout(snapBackTimerRef.current)
+      clearTimeout(commitTimerRef.current)
     }
   }, [])
 

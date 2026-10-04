@@ -687,6 +687,14 @@ html, body, #root {
   cursor: crosshair;
 }
 
+/* Moves the surface while the camera does, on the phone; see useCamera's
+   deferCameraScaleWhileMoving. Elsewhere it never has a transform. */
+.canvas-zoom-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
 .canvas-surface {
   position: absolute;
   top: 0;
