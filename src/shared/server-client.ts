@@ -73,7 +73,7 @@ export type ServerEventType =
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
-  | 'hands-free-tuning'
+  | 'hands-free-tuning' | 'dictation-end-phrase'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -290,6 +290,7 @@ export class ServerClient {
       case 'agent-names':
       case 'receptionist-notice':
       case 'hands-free-tuning':
+      case 'dictation-end-phrase':
         this.emit(msg)
         return
 
@@ -761,8 +762,8 @@ export class ServerClient {
   // For a client that captures audio but cannot transcribe it: the server
   // relays the PCM through Voice Operator. See src/server/remote-dictation.ts.
 
-  async dictationStart(sampleRate: number): Promise<string> {
-    const resp = await this.request({ type: 'dictation-start', sampleRate })
+  async dictationStart(sampleRate: number, endPhrase?: string): Promise<string> {
+    const resp = await this.request({ type: 'dictation-start', sampleRate, ...(endPhrase ? { endPhrase } : {}) })
     if (resp.type === 'dictation-started') return resp.id
     return unexpected(resp)
   }

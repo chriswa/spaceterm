@@ -180,6 +180,7 @@ export class FakeBridge implements Api {
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly handsFreeTuning = new Set<(tuning: Partial<HandsFreeTuning>) => void>()
+  private readonly dictationEndPhrase = new Set<(id: string) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -290,6 +291,7 @@ export class FakeBridge implements Api {
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     handsFreeTuning: (tuning: Partial<HandsFreeTuning>): void => { for (const fn of this.handsFreeTuning) fn(tuning) },
+    dictationEndPhrase: (id: string): void => { for (const fn of this.dictationEndPhrase) fn(id) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
@@ -432,10 +434,11 @@ export class FakeBridge implements Api {
   }
 
   readonly dictation: DictationApi = {
-    start: (sampleRate) => this.reply('dictation.start', 'fake-dictation', sampleRate),
+    start: (sampleRate, endPhrase) => this.reply('dictation.start', 'fake-dictation', sampleRate, endPhrase),
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
-    cancel: (id) => this.record('dictation.cancel', id)
+    cancel: (id) => this.record('dictation.cancel', id),
+    onEndPhrase: (cb) => subscribe(this.dictationEndPhrase, cb)
   }
 
   readonly handsFree: HandsFreeApi = {

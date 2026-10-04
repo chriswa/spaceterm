@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener, type UtteranceEvent, type WakeEvent } from './wake-listener'
+import { DEFAULT_TUNING, LEAD_MS, UtteranceEndpointer, WakeListener, type UtteranceEnd } from './wake-listener'
 
 /**
  * Synthetic audio: "speech" is a 200 Hz tone at about −20 dBFS, "quiet" is a
@@ -32,55 +32,53 @@ function feed<E>(push: (block: Int16Array) => E[], ...parts: Int16Array[]): E[] 
   return events
 }
 
-const kinds = (events: WakeEvent[]) => events.map((e) => e.kind)
+const seconds = (samples: number) => samples / RATE
 
 describe('WakeListener', () => {
-  it('hears a word said on its own, then the pause after it', () => {
+  it('hands out the first second of speech that follows a quiet spell, and remembers where it began', () => {
     const listener = new WakeListener()
-    const events = feed((b) => listener.push(b), quiet(1500), speech(500), quiet(800))
-    expect(kinds(events)).toEqual(['candidate', 'pause'])
-    const candidate = events[0] as Extract<WakeEvent, { kind: 'candidate' }>
-    expect(candidate.wordMs).toBeGreaterThan(400)
-    expect(candidate.wordMs).toBeLessThan(600)
-    // The clip carries the word with a little either side, and nothing like the whole buffer.
-    expect(candidate.clip.length / RATE).toBeGreaterThan(0.5)
-    expect(candidate.clip.length / RATE).toBeLessThan(1)
+    const candidates = feed((b) => listener.push(b), quiet(1500), speech(3000), quiet(500))
+    expect(candidates).toHaveLength(1)
+    const [c] = candidates
+    // About the window plus the lead, not the whole sentence.
+    expect(seconds(c.clip.length)).toBeGreaterThan(1.1)
+    expect(seconds(c.clip.length)).toBeLessThan(1.4)
+    expect(seconds(c.start)).toBeCloseTo(1.5, 1)
+    expect(c.quietBeforeMs).toBeGreaterThanOrEqual(1400)
   })
 
-  it('ignores a word that follows other talk too closely', () => {
+  it('hands out a word said on its own as soon as it stops', () => {
     const listener = new WakeListener()
-    const events = feed((b) => listener.push(b), quiet(1500), speech(1500), quiet(300), speech(500), quiet(800))
-    expect(kinds(events)).toEqual([])
+    const candidates = feed((b) => listener.push(b), quiet(1500), speech(500), quiet(400))
+    expect(candidates).toHaveLength(1)
+    expect(seconds(candidates[0].clip.length)).toBeLessThan(1)
   })
 
-  it('ignores conversation: bursts too long to be one word', () => {
+  it('ignores speech that follows other talk too closely: the wake word has to come first', () => {
     const listener = new WakeListener()
-    expect(kinds(feed((b) => listener.push(b), quiet(1500), speech(2500), quiet(1500)))).toEqual([])
+    const candidates = feed((b) => listener.push(b), quiet(1500), speech(1500), quiet(300), speech(1500), quiet(300), speech(500), quiet(800))
+    // Only the start of the first sentence; nothing said mid-conversation.
+    expect(candidates).toHaveLength(1)
+    expect(seconds(candidates[0].start)).toBeCloseTo(1.5, 1)
   })
 
   it('ignores a click too short to be a word', () => {
     const listener = new WakeListener()
-    expect(kinds(feed((b) => listener.push(b), quiet(1500), speech(100), quiet(1500)))).toEqual([])
-  })
-
-  it('withdraws a candidate when talk carries straight on ("control the lights")', () => {
-    const listener = new WakeListener()
-    const events = feed((b) => listener.push(b), quiet(1500), speech(500), quiet(200), speech(800), quiet(1000))
-    expect(kinds(events)).toEqual(['candidate', 'withdrawn'])
+    expect(feed((b) => listener.push(b), quiet(1500), speech(100), quiet(1500))).toEqual([])
   })
 
   it('keeps a short gap inside a word from splitting it', () => {
     const listener = new WakeListener()
-    const events = feed((b) => listener.push(b), quiet(1500), speech(250), quiet(80), speech(250), quiet(800))
-    expect(kinds(events)).toEqual(['candidate', 'pause'])
+    const candidates = feed((b) => listener.push(b), quiet(1500), speech(250), quiet(80), speech(250), quiet(800))
+    expect(candidates).toHaveLength(1)
   })
 
   it('takes its thresholds from tuning', () => {
     const listener = new WakeListener({ ...DEFAULT_TUNING, silenceBeforeMs: 2000 })
-    expect(kinds(feed((b) => listener.push(b), quiet(1500), speech(500), quiet(800)))).toEqual([])
-    listener.setTuning({ ...DEFAULT_TUNING, silenceAfterMs: 1200 })
-    // Quiet enough before, but the pause after is now too short.
-    expect(kinds(feed((b) => listener.push(b), quiet(1500), speech(500), quiet(800)))).toEqual(['candidate'])
+    expect(feed((b) => listener.push(b), quiet(1500), speech(2000), quiet(800))).toEqual([])
+    listener.setTuning({ ...DEFAULT_TUNING, onsetWindowMs: 500 })
+    const [c] = feed((b) => listener.push(b), quiet(1500), speech(2000), quiet(800))
+    expect(seconds(c.clip.length)).toBeLessThan(0.8)
   })
 
   it('needs quiet from the moment it resumes, whatever came before', () => {
@@ -88,32 +86,34 @@ describe('WakeListener', () => {
     feed((b) => listener.push(b), quiet(3000))
     listener.resume()
     // 300 ms after resuming is not 700 ms of quiet, though the room was quiet for seconds.
-    expect(kinds(feed((b) => listener.push(b), quiet(300), speech(500), quiet(800)))).toEqual([])
+    expect(feed((b) => listener.push(b), quiet(300), speech(2000), quiet(800))).toEqual([])
+  })
+
+  it('still has everything since a candidate began, for a dictation that starts late', () => {
+    const listener = new WakeListener()
+    const [c] = feed((b) => listener.push(b), quiet(1500), speech(1200))
+    // The check took a while; the user kept talking.
+    feed((b) => listener.push(b), speech(2000))
+    const since = listener.audioSince(c.start)
+    expect(seconds(since.length)).toBeCloseTo(LEAD_MS / 1000 + 3.2, 1)
   })
 })
 
 describe('UtteranceEndpointer', () => {
-  const ends = (events: UtteranceEvent[]) => events.filter((e) => e.kind === 'ended')
+  const run = (endpointer: UtteranceEndpointer, ...parts: Int16Array[]): UtteranceEnd[] =>
+    feed((b) => { const end = endpointer.push(b); return end ? [end] : [] }, ...parts)
 
-  it('ends after the user stops talking for endSilenceMs', () => {
-    const endpointer = new UtteranceEndpointer()
-    const events = feed((b) => endpointer.push(b), quiet(500), speech(2000), quiet(300), speech(1000), quiet(2000))
-    expect(events[0]).toEqual({ kind: 'started' })
-    expect(ends(events)).toEqual([{ kind: 'ended', reason: 'silence' }])
+  it('ends after the user stops talking for endSilenceMs — five seconds by default', () => {
+    expect(run(new UtteranceEndpointer(), speech(2000), quiet(3000), speech(1000), quiet(4000))).toEqual([])
+    expect(run(new UtteranceEndpointer(), speech(2000), quiet(5500))).toEqual(['silence'])
   })
 
-  it('does not end on a pause shorter than endSilenceMs', () => {
-    const endpointer = new UtteranceEndpointer()
-    expect(ends(feed((b) => endpointer.push(b), speech(1000), quiet(1000)))).toEqual([])
-  })
-
-  it('gives up when nothing is said', () => {
-    const endpointer = new UtteranceEndpointer({ ...DEFAULT_TUNING, noSpeechTimeoutMs: 2000 })
-    expect(ends(feed((b) => endpointer.push(b), quiet(2500)))).toEqual([{ kind: 'ended', reason: 'no-speech' }])
+  it('takes its silence from tuning', () => {
+    expect(run(new UtteranceEndpointer({ ...DEFAULT_TUNING, endSilenceMs: 1500 }), speech(1000), quiet(2000))).toEqual(['silence'])
   })
 
   it('stops at the cap, and only ends once', () => {
     const endpointer = new UtteranceEndpointer({ ...DEFAULT_TUNING, maxUtteranceMs: 3000 })
-    expect(ends(feed((b) => endpointer.push(b), speech(5000), quiet(3000)))).toEqual([{ kind: 'ended', reason: 'too-long' }])
+    expect(run(endpointer, speech(5000), quiet(6000))).toEqual(['too-long'])
   })
 })

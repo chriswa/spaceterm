@@ -9,7 +9,7 @@ describe('parseHandsFreeTuning', () => {
 
   it('keeps known keys and names what it dropped', () => {
     const { tuning, problems } = parseHandsFreeTuning(JSON.stringify({
-      silenceBeforeMs: 900, silenceAftrMs: 300, endSilenceMs: 'long', wordMaxMs: -1,
+      silenceBeforeMs: 900, silenceAftrMs: 300, endSilenceMs: 'long', wordMinMs: -1,
     }))
     expect(tuning).toEqual({ silenceBeforeMs: 900 })
     expect(problems).toHaveLength(3)
@@ -26,8 +26,16 @@ describe('checkWakeWord', () => {
   const pcm = new Uint8Array([0, 0])
 
   it('passes the verdict through', async () => {
-    const voice = { checkWakeWord: async () => ({ status: 200, body: { match: true, heard: 'Control.' } }) }
+    const asked: string[] = []
+    const voice = {
+      checkWakeWord: async (_pcm: Uint8Array, word: string, match: string) => {
+        asked.push(`${word} ${match}`)
+        return { status: 200, body: { match: true, heard: 'Control, what is' } }
+      },
+    }
     expect(await checkWakeWord(voice, pcm)).toEqual({ ok: true, match: true })
+    // The start of what was said, not a word on its own.
+    expect(asked).toEqual(['control start'])
   })
 
   it('explains a Voice Operator that is not running, or too old', async () => {

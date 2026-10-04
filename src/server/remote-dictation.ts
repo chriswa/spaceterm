@@ -20,6 +20,8 @@ interface Session {
   chain: Promise<void>
   /** The first audio failure, reported at finish rather than dropped. */
   failure?: string
+  /** Its end phrase has been heard, and the client told. */
+  ended?: boolean
 }
 
 type Voice = Pick<VoiceOperator, 'startTranscription' | 'sendTranscriptionAudio' | 'finishTranscription' | 'cancelTranscription'>
@@ -39,9 +41,15 @@ export class RemoteDictation {
 
   /**
    * `onSpeaking` hears whether anyone is dictating now, on every change: what
-   * the receptionist waits on, so it never talks over the user.
+   * the receptionist waits on, so it never talks over the user. `onEndPhrase`
+   * hears, once per dictation, that the phrase it was started with has been
+   * said — the client's cue to finish it.
    */
-  constructor(private readonly voice: Voice, private readonly onSpeaking: (speaking: boolean) => void = () => {}) {}
+  constructor(
+    private readonly voice: Voice,
+    private readonly onSpeaking: (speaking: boolean) => void = () => {},
+    private readonly onEndPhrase: (owner: string, id: string) => void = () => {},
+  ) {}
 
   /** Whether some client is dictating now. */
   get speaking(): boolean {
@@ -55,8 +63,9 @@ export class RemoteDictation {
     if (this.speaking !== before) this.onSpeaking(this.speaking)
   }
 
-  async start(owner: string, sampleRate: number): Promise<DictationOutcome<string>> {
-    const response = await this.voice.startTranscription(sampleRate)
+  /** `endPhrase`: listen for it alongside (hands-free's "over and out"); see `onEndPhrase`. */
+  async start(owner: string, sampleRate: number, endPhrase?: string): Promise<DictationOutcome<string>> {
+    const response = await this.voice.startTranscription(sampleRate, endPhrase)
     const id = (response?.body as { id?: unknown } | undefined)?.id
     if (response?.status !== 201 || typeof id !== 'string') {
       return { ok: false, error: describe(response, 'start transcribing') }
@@ -73,7 +82,14 @@ export class RemoteDictation {
     session.chain = session.chain.then(async () => {
       if (session.failure) return
       const response = await this.voice.sendTranscriptionAudio(id, pcm)
-      if (response?.status !== 204) session.failure = describe(response, 'take the audio')
+      if (response?.status === 200 && (response.body as { heard?: unknown } | undefined)?.heard === true) {
+        if (!session.ended) {
+          session.ended = true
+          this.onEndPhrase(owner, id)
+        }
+      } else if (response?.status !== 204) {
+        session.failure = describe(response, 'take the audio')
+      }
     })
   }
 

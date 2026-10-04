@@ -7,20 +7,20 @@ import { nativeMicrophoneAvailable } from './native-microphone'
 const BROWSER_LABELS: Record<HoldState, string> = {
   off: 'Hold the microphone open with AirPods, so dictation starts instantly',
   preparing: 'Getting the microphone ready to hold open — needs AirPods, and a tap after the app comes back. Tap to turn off',
-  held: 'Microphone held open with AirPods — say "Control", pause, and talk. Tap to let it close between dictations',
+  held: 'Microphone held open with AirPods — start talking with "Control", end with "over and out". Tap to let it close between dictations',
 }
 
 /** In the app: the app holds the microphone itself, with or without AirPods, and listens for "Control". */
 const APP_LABELS: Record<HoldState, string> = {
-  off: 'Always listen: say "Control", pause for the tone, and talk — no button, no AirPods needed',
+  off: 'Always listen: start talking with "Control", end with "over and out" — no button, no AirPods needed',
   preparing: 'Starting the microphone to listen for "Control". Tap to turn off',
-  held: 'Listening for "Control" — everything else is ignored. Tap to stop listening',
+  held: 'Listening for "Control" at the start of what you say — everything else is ignored. Tap to stop listening',
 }
 
 /**
  * Keep the microphone open, right of the talk button in the bottom bar — and
- * with it hands-free mode (hands-free.ts): say "Control" on its own, pause,
- * and talk to Control without a press.
+ * with it hands-free mode (hands-free.ts): start talking with "Control", end
+ * with "over and out", and Control gets it without a press.
  * Outlined and pulsing while it is on but not holding the microphone yet;
  * lit once it is; green while hands-free is taking down what you say.
  * In a browser it only takes effect with a headset — see held-microphone.ts.
@@ -33,7 +33,7 @@ export function HoldMicButton() {
   const on = state !== 'off'
   const hearing = phase === 'hearing' || phase === 'sending'
   const label = hearing
-    ? phase === 'hearing' ? 'Heard "Control" — listening to you; stop talking to send' : 'Sending what you said to Control'
+    ? phase === 'hearing' ? 'Heard "Control" — listening; say "over and out", or go quiet, to send' : 'Sending what you said to Control'
     : (nativeMicrophoneAvailable() ? APP_LABELS : BROWSER_LABELS)[state]
   return (
     <button

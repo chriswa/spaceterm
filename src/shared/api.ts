@@ -277,13 +277,18 @@ export interface TtsApi {
  * Operator listens to the microphone itself.
  */
 export interface DictationApi {
-  /** Open a session for s16le mono PCM at `sampleRate`. Rejects with a readable reason. */
-  start(sampleRate: number): Promise<string>
+  /**
+   * Open a session for s16le mono PCM at `sampleRate`. Rejects with a readable
+   * reason. `endPhrase`: see `onEndPhrase`.
+   */
+  start(sampleRate: number, endPhrase?: string): Promise<string>
   /** One chunk, base64. */
   audio(id: string, pcmBase64: string): void
   /** No more audio; resolves to the transcript exactly as Wispr returned it. */
   finish(id: string): Promise<string>
   cancel(id: string): void
+  /** The `endPhrase` a session was started with has been said; finishing it is the caller's to do. */
+  onEndPhrase(callback: (id: string) => void): () => void
 }
 
 /**

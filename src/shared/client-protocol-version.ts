@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 7
+export const CLIENT_PROTOCOL_VERSION = 8
 
 /**
  * Oldest client protocol this build still serves.
@@ -43,5 +43,9 @@ export const CLIENT_PROTOCOL_VERSION = 7
  *
  * v6 has no hands-free mode (`wake-word-check`, `receptionist-hands-free`,
  * `hands-free-tuning`); it loses nothing else.
+ *
+ * v7 asks whether a clip is "control" alone rather than whether it starts
+ * with it, so this build's wake-word check ("starts with") triggers it on more
+ * than it expects; and it never asks for an end phrase. Nothing else differs.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

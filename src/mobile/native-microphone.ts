@@ -89,6 +89,11 @@ function install(): void {
   }
 }
 
+/** A tap the user can feel, from the app; nothing in a browser. */
+export function nativeHaptic(): void {
+  handler()?.postMessage({ action: 'haptic' })
+}
+
 /** The native microphone, opened. */
 export interface NativeCaptureHandle {
   readonly sampleRate: number

@@ -215,12 +215,16 @@ export class VoiceOperator {
   // one process may hold them) and the streaming connection. These relay audio
   // captured elsewhere — the phone — through it. See RemoteDictation.
 
-  /** Open a transcription; Voice Operator starts streaming to Wispr at once. */
-  startTranscription(sampleRate: number): Promise<SpeechResponse> {
-    return this.request('/v1/transcriptions', { method: 'POST', body: JSON.stringify({ sample_rate: sampleRate }) })
+  /**
+   * Open a transcription; Voice Operator starts streaming to Wispr at once.
+   * `watch`: a phrase it listens for alongside, on-device; the audio post
+   * that follows its being heard answers 200 `{ heard: true }`.
+   */
+  startTranscription(sampleRate: number, watch?: string): Promise<SpeechResponse> {
+    return this.request('/v1/transcriptions', { method: 'POST', body: JSON.stringify({ sample_rate: sampleRate, ...(watch ? { watch } : {}) }) })
   }
 
-  /** Raw PCM, signed 16-bit little-endian mono, at the session's rate. */
+  /** Raw PCM, signed 16-bit little-endian mono, at the session's rate. 204, or 200 once a watched-for phrase is heard. */
   sendTranscriptionAudio(id: string, pcm: Uint8Array): Promise<SpeechResponse> {
     return this.request(`/v1/transcriptions/${encodeURIComponent(id)}/audio`, {
       method: 'POST', body: new Uint8Array(pcm), headers: { 'content-type': 'application/octet-stream' },
@@ -237,12 +241,12 @@ export class VoiceOperator {
   }
 
   /**
-   * Hands-free: is this clip the wake word alone? Raw s16le mono PCM at
-   * 16 kHz. Checked by Apple's on-device model, never Wispr. The first check
+   * Hands-free: does this clip start with the wake word (`start`), or is it
+   * the word alone (`only`)? Raw s16le mono PCM at 16 kHz. Checked by Apple's on-device model, never Wispr. The first check
    * after Voice Operator starts loads the model, about a second.
    */
-  checkWakeWord(pcm: Uint8Array, word: string): Promise<SpeechResponse> {
-    return this.request(`/v1/wake-word?word=${encodeURIComponent(word)}&sample_rate=16000`, {
+  checkWakeWord(pcm: Uint8Array, word: string, match: 'start' | 'only'): Promise<SpeechResponse> {
+    return this.request(`/v1/wake-word?word=${encodeURIComponent(word)}&match=${match}&sample_rate=16000`, {
       method: 'POST', body: new Uint8Array(pcm), headers: { 'content-type': 'application/octet-stream' },
     }, 5_000)
   }

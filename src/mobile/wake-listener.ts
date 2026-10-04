@@ -5,15 +5,15 @@ import { TARGET_SAMPLE_RATE } from './pcm'
  * Hands-free mode's ears: what the held-open microphone hears, cut into speech
  * and silence, and two questions asked of it.
  *
- * While waiting for the wake word (`WakeListener`): was that a burst of speech
- * one word long, with quiet before it? Then it is a *candidate* — its audio is
- * handed out to be checked on the Mac — and if the quiet after it lasts too,
- * that is the *pause* that says "I'm talking to you". Everything else is
- * forgotten as it scrolls out of a three-second buffer; nothing is kept,
- * transcribed or sent.
+ * While waiting for the wake word (`WakeListener`): has the user just started
+ * talking after a quiet spell? Then the first second of it is a *candidate* —
+ * handed out to be checked on the Mac for a leading "Control" — and the audio
+ * from its start stays in an eight-second buffer, so that a dictation can be
+ * fed everything said from the first syllable, however long the check took.
+ * Everything else is forgotten as it scrolls out of the buffer; nothing is
+ * kept, transcribed or sent.
  *
- * After the cue (`UtteranceEndpointer`): has the user started talking, and
- * have they stopped?
+ * After the wake word (`UtteranceEndpointer`): has the user stopped talking?
  *
  * Pure: audio in, events out, time measured in samples. No clock, no
  * microphone, no network — so every threshold is testable with synthetic tones.
@@ -22,12 +22,10 @@ import { TARGET_SAMPLE_RATE } from './pcm'
 
 export const DEFAULT_TUNING: HandsFreeTuning = {
   silenceBeforeMs: 700,
-  silenceAfterMs: 400,
+  onsetWindowMs: 1000,
   wordMinMs: 250,
-  wordMaxMs: 1000,
-  endSilenceMs: 1500,
-  noSpeechTimeoutMs: 6000,
-  maxUtteranceMs: 60_000,
+  endSilenceMs: 5000,
+  maxUtteranceMs: 120_000,
   playbackTailMs: 400,
 }
 
@@ -152,31 +150,32 @@ class Recent {
   clear(): void { this.buffer.fill(0) }
 }
 
-export type WakeEvent =
-  /** One word's worth of speech with quiet before it: is it the wake word? */
-  | { kind: 'candidate'; id: number; clip: Int16Array; quietBeforeMs: number; wordMs: number }
-  /** The candidate has been followed by the quiet the user leaves before talking. */
-  | { kind: 'pause'; id: number }
-  /** Speech came back before the pause was long enough: not said on its own. */
-  | { kind: 'withdrawn'; id: number }
+/**
+ * Speech began after a quiet spell, and here is its start — the first
+ * `onsetWindowMs`, or all of it if it stopped sooner. `start` is the sample it
+ * began at, for `WakeListener.audioSince`.
+ */
+export interface WakeCandidate {
+  id: number
+  clip: Int16Array
+  start: number
+  quietBeforeMs: number
+}
 
-/** Audio kept either side of a candidate, so the word's soft edges reach the check. */
-const CLIP_LEAD_MS = 200
-const CLIP_TAIL_MS = 100
+/** Audio kept before the speech began, so its soft first consonant reaches the check and Wispr. */
+export const LEAD_MS = 200
 
 /** Listening for the wake word: see the file comment. */
 export class WakeListener {
   private readonly gate = new SpeechGate()
   private readonly framer = new Framer()
-  private readonly recent = new Recent(3)
+  private readonly recent = new Recent(8)
   /** Absolute sample number of the next frame. */
   private at = 0
   /** Where the last speech ended (or listening resumed): quiet is measured from here. */
   private quietFrom = 0
-  /** The speech under way: where it began, and the quiet before it. */
-  private speech: { start: number; quietBefore: number } | null = null
-  /** A candidate waiting for its pause: from the end of its speech. */
-  private waiting: { id: number; end: number } | null = null
+  /** Speech under way after enough quiet, not yet handed out. */
+  private onset: { start: number; quietBefore: number } | null = null
   private nextId = 1
 
   constructor(private tuning: HandsFreeTuning = DEFAULT_TUNING) {}
@@ -184,21 +183,25 @@ export class WakeListener {
   setTuning(tuning: HandsFreeTuning): void { this.tuning = tuning }
 
   /**
-   * Start over, as if everything before now were noise: a candidate needs a
-   * full `silenceBeforeMs` of quiet from here. For after a cue or Control's
-   * voice, which the microphone heard too.
+   * Start over, as if everything before now were noise: speech counts only
+   * after a full `silenceBeforeMs` of quiet from here. For after Control's
+   * voice or a cue, which the microphone heard too.
    */
   resume(): void {
     this.gate.reset()
     this.framer.reset()
     this.recent.clear()
-    this.speech = null
-    this.waiting = null
+    this.onset = null
     this.quietFrom = this.at
   }
 
-  push(block: Int16Array): WakeEvent[] {
-    const events: WakeEvent[] = []
+  /** Everything heard from sample `from` (with `LEAD_MS` before it) up to now, as far back as the buffer goes. */
+  audioSince(from: number): Int16Array {
+    return this.recent.slice(from - samplesOf(LEAD_MS), this.at)
+  }
+
+  push(block: Int16Array): WakeCandidate[] {
+    const candidates: WakeCandidate[] = []
     for (const frame of this.framer.frames(block)) {
       this.recent.push(frame)
       const frameStart = this.at
@@ -207,75 +210,70 @@ export class WakeListener {
       if (change === 'start') {
         // It began START_FRAMES ago; the frames that set it off are speech.
         const start = frameStart - (SpeechGate.START_FRAMES - 1) * FRAME_SAMPLES
-        if (this.waiting) {
-          events.push({ kind: 'withdrawn', id: this.waiting.id })
-          this.waiting = null
-        }
-        this.speech = { start, quietBefore: start - this.quietFrom }
-      } else if (change === 'stop' && this.speech) {
+        const quietBefore = start - this.quietFrom
+        if (ms(quietBefore) >= this.tuning.silenceBeforeMs) this.onset = { start, quietBefore }
+      } else if (change === 'stop') {
         // It ended HANGOVER_FRAMES ago.
         const end = this.at - SpeechGate.HANGOVER_FRAMES * FRAME_SAMPLES
-        const { start, quietBefore } = this.speech
-        this.speech = null
         this.quietFrom = end
-        const wordMs = ms(end - start)
-        if (ms(quietBefore) >= this.tuning.silenceBeforeMs && wordMs >= this.tuning.wordMinMs && wordMs <= this.tuning.wordMaxMs) {
-          const id = this.nextId++
-          const clip = this.recent.slice(start - samplesOf(CLIP_LEAD_MS), end + samplesOf(CLIP_TAIL_MS))
-          events.push({ kind: 'candidate', id, clip, quietBeforeMs: Math.round(ms(quietBefore)), wordMs: Math.round(wordMs) })
-          this.waiting = { id, end }
+        // Stopped before its window filled: hand out what there was — unless it was a click or a cough.
+        if (this.onset) {
+          const onset = this.onset
+          this.onset = null
+          if (ms(end - onset.start) >= this.tuning.wordMinMs) candidates.push(this.candidate(onset))
         }
       }
-      if (this.waiting && !this.gate.speaking && ms(this.at - this.waiting.end) >= this.tuning.silenceAfterMs) {
-        events.push({ kind: 'pause', id: this.waiting.id })
-        this.waiting = null
+      if (this.onset && ms(this.at - this.onset.start) >= this.tuning.onsetWindowMs) {
+        candidates.push(this.candidate(this.onset))
+        this.onset = null
       }
     }
-    return events
+    return candidates
+  }
+
+  private candidate(onset: { start: number; quietBefore: number }): WakeCandidate {
+    return {
+      id: this.nextId++,
+      clip: this.audioSince(onset.start),
+      start: onset.start,
+      quietBeforeMs: Math.round(ms(onset.quietBefore)),
+    }
   }
 }
 
-export type UtteranceEvent =
-  | { kind: 'started' }
-  /** `silence`: they stopped talking. `no-speech`: they never started. `too-long`: the cap. */
-  | { kind: 'ended'; reason: 'silence' | 'no-speech' | 'too-long' }
+/**
+ * After the wake word, while the user is talking: have they stopped? Ends,
+ * exactly once, after `endSilenceMs` of quiet or at `maxUtteranceMs`. It
+ * starts mid-speech — the wake word began it — so quiet counts from now.
+ */
+export type UtteranceEnd = 'silence' | 'too-long'
 
-/** After the cue: has the user started talking, and stopped? Ends exactly once. */
 export class UtteranceEndpointer {
   private readonly gate = new SpeechGate()
   private readonly framer = new Framer()
   private at = 0
-  private started = false
   private lastSpeech = 0
   private done = false
 
   constructor(private readonly tuning: HandsFreeTuning = DEFAULT_TUNING) {}
 
-  push(block: Int16Array): UtteranceEvent[] {
-    const events: UtteranceEvent[] = []
-    if (this.done) return events
+  /** The reason it ended, the first time it does; otherwise null. */
+  push(block: Int16Array): UtteranceEnd | null {
+    if (this.done) return null
     for (const frame of this.framer.frames(block)) {
       this.at += frame.length
-      const change = this.gate.push(frame)
-      if (change === 'start' && !this.started) {
-        this.started = true
-        events.push({ kind: 'started' })
-      }
+      this.gate.push(frame)
       if (this.gate.speaking) this.lastSpeech = this.at
-      const elapsed = ms(this.at)
-      const reason = !this.started
-        ? (elapsed >= this.tuning.noSpeechTimeoutMs ? 'no-speech' : null)
-        : elapsed >= this.tuning.maxUtteranceMs
-          ? 'too-long'
-          : !this.gate.speaking && ms(this.at - this.lastSpeech) + (SpeechGate.HANGOVER_FRAMES * FRAME_MS) >= this.tuning.endSilenceMs
-            ? 'silence'
-            : null
+      const reason: UtteranceEnd | null = ms(this.at) >= this.tuning.maxUtteranceMs
+        ? 'too-long'
+        : !this.gate.speaking && ms(this.at - this.lastSpeech) + SpeechGate.HANGOVER_FRAMES * FRAME_MS >= this.tuning.endSilenceMs
+          ? 'silence'
+          : null
       if (reason) {
         this.done = true
-        events.push({ kind: 'ended', reason })
-        break
+        return reason
       }
     }
-    return events
+    return null
   }
 }

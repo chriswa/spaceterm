@@ -8,16 +8,18 @@ import type { SpeechResponse, VoiceOperator } from './voice-operator'
  * clips that already look like one word said on its own get this far.
  */
 
-/** The word that starts a hands-free dictation. */
+/** The word that starts a hands-free dictation: the first word of what is said. */
 export const WAKE_WORD = 'control'
+/** The phrase that ends one, wherever it is said; watched for on-device. */
+export const END_PHRASE = 'over and out'
 
 export type WakeWordOutcome = { ok: true; match: boolean } | { ok: false; error: string }
 
 type Voice = Pick<VoiceOperator, 'checkWakeWord'>
 
-/** Ask Voice Operator whether `pcm` (16 kHz s16le mono) is the wake word alone. */
+/** Ask Voice Operator whether `pcm` (16 kHz s16le mono, the start of an utterance) begins with the wake word. */
 export async function checkWakeWord(voice: Voice, pcm: Uint8Array): Promise<WakeWordOutcome> {
-  const response: SpeechResponse = await voice.checkWakeWord(pcm, WAKE_WORD)
+  const response: SpeechResponse = await voice.checkWakeWord(pcm, WAKE_WORD, 'start')
   if (!response) return { ok: false, error: 'Voice Operator is not running, so the wake word cannot be checked' }
   const body = response.body as { match?: unknown; error?: string; detail?: string } | undefined
   if (response.status === 200 && typeof body?.match === 'boolean') return { ok: true, match: body.match }
@@ -25,8 +27,7 @@ export async function checkWakeWord(voice: Voice, pcm: Uint8Array): Promise<Wake
 }
 
 const TUNING_KEYS: ReadonlyArray<keyof HandsFreeTuning> = [
-  'silenceBeforeMs', 'silenceAfterMs', 'wordMinMs', 'wordMaxMs',
-  'endSilenceMs', 'noSpeechTimeoutMs', 'maxUtteranceMs', 'playbackTailMs',
+  'silenceBeforeMs', 'onsetWindowMs', 'wordMinMs', 'endSilenceMs', 'maxUtteranceMs', 'playbackTailMs',
 ]
 
 /**

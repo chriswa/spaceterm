@@ -58,6 +58,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             switch action {
             case "start": start()
             case "stop": stop()
+            // Hands-free heard "Control": a tap the user feels, since a tone would land mid-sentence.
+            case "haptic": UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             default: log("unknown action \(action ?? "nil")")
             }
         }
@@ -102,6 +104,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             engine.inputNode.removeTap(onBus: 0)
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
+            // iOS silences haptics while recording unless told otherwise; hands-free's cue is one.
+            try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
             try session.setActive(true)
             engine = AVAudioEngine()
             let input = engine.inputNode

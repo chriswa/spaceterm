@@ -332,7 +332,14 @@ const directSpeech = new DirectSpeech({
 })
 
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
-const remoteDictation = new RemoteDictation(new VoiceOperator(), (speaking) => receptionist?.userSpeaking(speaking))
+const remoteDictation = new RemoteDictation(
+  new VoiceOperator(),
+  (speaking) => receptionist?.userSpeaking(speaking),
+  (owner, id) => {
+    const client = [...clients].find((c) => c.id === owner)
+    if (client) send(client.link, { type: 'dictation-end-phrase', id })
+  },
+)
 
 /**
  * Hands-free: the wake-word checks a listening phone asks for, and the
@@ -1757,7 +1764,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-start': {
       const seq = msg.seq
-      void remoteDictation.start(client.id, msg.sampleRate).then((outcome) => {
+      void remoteDictation.start(client.id, msg.sampleRate, msg.endPhrase).then((outcome) => {
         send(client.link, outcome.ok
           ? { type: 'dictation-started', seq, id: outcome.value }
           : { type: 'server-error', seq, message: outcome.error })

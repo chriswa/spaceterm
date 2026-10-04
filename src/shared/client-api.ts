@@ -183,10 +183,11 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onActiveChanged: (cb) => on('speech-active', (m) => cb(m.active))
     },
     dictation: {
-      start: (sampleRate) => client.dictationStart(sampleRate),
+      start: (sampleRate, endPhrase) => client.dictationStart(sampleRate, endPhrase),
       audio: (id, pcm) => client.dictationAudio(id, pcm),
       finish: (id) => client.dictationFinish(id),
-      cancel: (id) => client.dictationCancel(id)
+      cancel: (id) => client.dictationCancel(id),
+      onEndPhrase: (cb) => on('dictation-end-phrase', (m) => cb(m.id))
     },
     handsFree: {
       checkWakeWord: (pcm) => client.checkWakeWord(pcm),

@@ -371,6 +371,13 @@ export interface DictationStartMessage {
   seq: number
   /** Hz. PCM is signed 16-bit little-endian mono at this rate. */
   sampleRate: number
+  /**
+   * A phrase that ends this dictation wherever it is said (hands-free's "over
+   * and out"), listened for on the Mac alongside Wispr, on-device. When it is
+   * heard the server sends `dictation-end-phrase`; finishing is still the
+   * client's to do.
+   */
+  endPhrase?: string
 }
 
 /** One chunk of audio, base64. Fire-and-forget: failures surface at finish. */
@@ -1812,6 +1819,12 @@ export interface DictationResultMessage {
  * running, too old) is no match plus `error`, not a `server-error`: a broadcast
  * error would toast on every short word said near the phone.
  */
+/** The end phrase a `dictation-start` asked for has been said. */
+export interface DictationEndPhraseMessage {
+  type: 'dictation-end-phrase'
+  id: string
+}
+
 export interface WakeWordResultMessage {
   type: 'wake-word-result'
   seq: number
@@ -1825,17 +1838,14 @@ export interface WakeWordResultMessage {
  * them in `~/.spaceterm/hands-free.json`, read again whenever it changes.
  */
 export interface HandsFreeTuning {
-  /** Quiet before the word: no other words were just spoken. */
+  /** Quiet before speech for its start to be checked for the wake word: no other words were just spoken. */
   silenceBeforeMs: number
-  /** Quiet after it: the pause that says "I'm talking to you", before the cue. */
-  silenceAfterMs: number
-  /** How long the word itself may last. */
+  /** How much of the start of what is said is sent to be checked. */
+  onsetWindowMs: number
+  /** Shorter bursts of speech (a click, a cough) are not checked at all. */
   wordMinMs: number
-  wordMaxMs: number
-  /** After the cue: quiet that ends what is being said to Control. */
+  /** After the wake word: quiet that ends what is being said to Control, when "over and out" is not said. */
   endSilenceMs: number
-  /** After the cue: how long to wait for speech to start before giving up. */
-  noSpeechTimeoutMs: number
   /** The longest anything said hands-free may run. */
   maxUtteranceMs: number
   /** After this device stops playing sound, how long before listening resumes (echo). */
@@ -1904,6 +1914,7 @@ export type ServerMessage =
   | ReceptionistNoticeMessage
   | WakeWordResultMessage
   | HandsFreeTuningMessage
+  | DictationEndPhraseMessage
   | AgentNamesMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage

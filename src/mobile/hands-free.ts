@@ -1,24 +1,36 @@
 import { create } from 'zustand'
 import type { DictationApi, HandsFreeApi } from '../shared/api'
 import type { HandsFreeTuning } from '../shared/protocol'
-import { cueMs, playCue, quietForMs, type Cue } from './cues'
-import { Dictation } from './dictation'
+import { playCue, quietForMs, type Cue } from './cues'
+import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, onHoldStateChange, type Capture } from './held-microphone'
+import { nativeHaptic } from './native-microphone'
 import { Downsampler, pcmToBase64 } from './pcm'
-import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener } from './wake-listener'
+import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener, type UtteranceEnd } from './wake-listener'
 
 /**
- * Hands-free mode: say "Control", pause, hear the cue, and talk.
+ * Hands-free mode: start talking with "Control" and just keep going — "Control,
+ * what's Kevin doing?" — and end with "over and out", or by going quiet.
  *
  * Runs whenever this phone holds its microphone open (held-microphone.ts) —
  * the hold button *is* the always-listen switch. What the microphone hears
- * goes through `WakeListener`, on the phone; nothing leaves it unless a short
- * burst with quiet before it looks like one word. That clip goes to the Mac,
- * where Voice Operator checks it with Apple's on-device model (never Wispr).
- * If it was "control", and the quiet after it lasted, the start cue plays and
- * an ordinary Wispr dictation opens on the microphone that is already open —
- * exactly as if the talk button had been pressed — and ends on silence. The
- * words go to Control, which comes to this device.
+ * goes through `WakeListener`, on the phone. Nothing leaves it unless the user
+ * starts talking after a quiet spell: then the first second of that goes to
+ * the Mac, where Voice Operator checks, with Apple's on-device model (never
+ * Wispr), whether its first word is "control". Only "Control" said first
+ * counts; the word anywhere else in a sentence does not.
+ *
+ * On a match the phone taps (a haptic, in the app) and the hold button turns
+ * green, and an ordinary Wispr dictation opens on the microphone that is
+ * already open — fed everything said since the first syllable, out of the
+ * listener's buffer, then live. So nothing waits on the check: it is
+ * retroactive. A start tone would land mid-sentence, in the recording; the end
+ * tone is the confirmation that it was heard and sent.
+ *
+ * It ends when Voice Operator hears "over and out" (watched for on-device,
+ * alongside Wispr), or after `endSilenceMs` of quiet. "Control" is stripped
+ * off the front of the transcript, "over and out" and anything after it off
+ * the end, and the rest goes to Control, which comes to this device.
  *
  * It does not listen while this phone is playing anything (Control's voice, a
  * cue) or for `playbackTailMs` after, so it never hears itself; nor while a
@@ -28,9 +40,26 @@ import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener } from './wake-listen
  * its timings.
  */
 
+export const WAKE_WORD = 'control'
+export const END_PHRASE = 'over and out'
+
 export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
 
 export const useHandsFree = create<{ phase: HandsFreePhase }>(() => ({ phase: 'off' }))
+
+/**
+ * What Wispr wrote, as Control should get it: the wake word off the front,
+ * the end phrase and anything after it off the end. Punctuation and case
+ * around either are ignored. Empty when nothing else was said.
+ */
+export function cleanHandsFreeText(text: string): string {
+  let out = text.trim().replace(/^control\b[\s,.!?:;…—–-]*/i, '')
+  const end = /\bover[\s,.!?…—–-]+(?:and|&)[\s,.!?…—–-]+out\b/gi
+  let last: RegExpExecArray | null = null
+  for (let match = end.exec(out); match; match = end.exec(out)) last = match
+  if (last) out = out.slice(0, last.index)
+  return out.replace(/[\s,;:…—–-]+$/, '').trim()
+}
 
 /** A dictation as hands-free mode drives it. */
 export interface HandsFreeDictation {
@@ -47,9 +76,10 @@ export interface HandsFreeDeps {
   /** How long this device has been silent; 0 while it plays. */
   quietForMs(): number
   playCue(cue: Cue): void
-  cueMs(cue: Cue): number
+  /** A tap the user can feel: the wake word was heard. Nothing, where there is no way to. */
+  haptic(): void
   /** A dictation on the held microphone. */
-  beginDictation(): Promise<HandsFreeDictation>
+  beginDictation(options: DictationOptions): Promise<HandsFreeDictation>
   /** Whether some other dictation is capturing on this page. */
   othersDictating(): boolean
   sleep(ms: number): Promise<void>
@@ -62,17 +92,18 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
   onHoldStateChange,
   quietForMs,
   playCue,
-  cueMs,
-  beginDictation: () => Dictation.begin(api.dictation),
+  haptic: nativeHaptic,
+  beginDictation: (options) => Dictation.begin(api.dictation, options),
   // Its own dictation counts as one while it is hearing; see `hearing` below.
   othersDictating: () => Dictation.live > (useHandsFree.getState().phase === 'hearing' ? 1 : 0),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 })
 
-/** How long after the start cue ends before the dictation opens, so the cue is not in it. */
-const AFTER_CUE_MS = 60
 /** While the page is hidden, how often to note that audio is still arriving. */
 const BACKGROUND_REPORT_MS = 60_000
+
+/** Why a dictation ended: the endpointer's reasons, the end phrase, or the microphone going away. */
+type EndReason = UtteranceEnd | 'over and out' | 'lost'
 
 export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps = REAL_DEPS(api)): () => void {
   const { log } = deps
@@ -87,12 +118,9 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let downsampler: Downsampler | undefined
   /** Set while not listening — this device playing, another dictation — so listening starts afresh after. */
   let stoodAside = false
-  /** Each candidate's check, until its pause or withdrawal. */
-  const checks = new Map<number, Promise<boolean>>()
-  /** The dictation after the cue, fed to its endpointer, and how to say it has ended. */
+  /** The dictation after the wake word, fed to its endpointer, and how to say it has ended. */
   let utterance: UtteranceEndpointer | undefined
-  /** `lost`: the microphone went away, or stopped sending, mid-dictation. */
-  let endUtterance: ((reason: 'silence' | 'no-speech' | 'too-long' | 'lost') => void) | undefined
+  let endUtterance: ((reason: EndReason) => void) | undefined
   let checkError: string | undefined
   let heardSamples = 0
   let lastReport = 0
@@ -113,35 +141,37 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       return false
     })
 
-  /** The wake word, then the pause: cue, dictate until quiet, send to Control. */
-  const respond = async () => {
+  /** The wake word heard: dictate from where the user started, until the end phrase or quiet; send to Control. */
+  const respond = async (start: number) => {
     setPhase('hearing')
+    deps.haptic()
     let dictation: HandsFreeDictation | undefined
     try {
-      deps.playCue('listeningStarted')
-      await deps.sleep(deps.cueMs('listeningStarted') + AFTER_CUE_MS)
       if (!capture) throw new Error('the microphone went away')
-      dictation = await deps.beginDictation()
-      // Ends on what the endpointer hears — or, if audio stops coming, on the clock.
-      const reason = await new Promise<'silence' | 'no-speech' | 'too-long' | 'lost'>((resolve) => {
-        utterance = new UtteranceEndpointer(tuning)
-        endUtterance = resolve
-        void deps.sleep(tuning.maxUtteranceMs + tuning.noSpeechTimeoutMs).then(() => resolve('lost'))
+      // Ends on the end phrase, on what the endpointer hears — or, if audio stops coming, on the clock.
+      let ended: (reason: EndReason) => void = () => undefined
+      const end = new Promise<EndReason>((resolve) => { ended = resolve })
+      dictation = await deps.beginDictation({
+        backlog: () => listener.audioSince(start),
+        endPhrase: END_PHRASE,
+        onEndPhrase: () => ended('over and out'),
       })
+      utterance = new UtteranceEndpointer(tuning)
+      endUtterance = ended
+      void deps.sleep(tuning.maxUtteranceMs + 10_000).then(() => ended('lost'))
+      const reason = await end
       utterance = undefined
       endUtterance = undefined
-      if (reason === 'no-speech' || reason === 'lost') {
-        log(reason === 'lost' ? 'the microphone stopped mid-dictation' : 'nothing said after the cue')
+      deps.playCue('listeningFinished')
+      if (reason === 'lost') {
+        log('the microphone stopped mid-dictation')
         dictation.cancel()
-        deps.playCue('listeningFinished')
         return
       }
-      deps.playCue('listeningFinished')
       setPhase('sending')
-      const text = (await dictation.finish()).trim()
+      const text = cleanHandsFreeText(await dictation.finish())
       if (!text) {
-        log('Wispr heard nothing')
-        deps.playCue('transcriptionFailed')
+        log(`nothing to send besides the wake word (ended on ${reason})`)
         return
       }
       log(`${text.length} chars to Control (ended on ${reason})`)
@@ -170,15 +200,12 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     }
     const phase = useHandsFree.getState().phase
     if (phase === 'hearing') {
-      if (!utterance) return
-      for (const event of utterance.push(pcm)) {
-        if (event.kind === 'ended') endUtterance?.(event.reason)
-      }
+      const reason = utterance?.push(pcm)
+      if (reason) endUtterance?.(reason)
       return
     }
     if (phase !== 'listening') return
     if (deps.quietForMs() < tuning.playbackTailMs || deps.othersDictating()) {
-      if (!stoodAside) checks.clear()
       stoodAside = true
       return
     }
@@ -186,21 +213,12 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       stoodAside = false
       listener.resume()
     }
-    for (const event of listener.push(pcm)) {
-      if (event.kind === 'candidate') {
-        log(`candidate: ${event.wordMs}ms of speech after ${event.quietBeforeMs}ms of quiet — checking`)
-        checks.set(event.id, check(event.clip))
-      } else if (event.kind === 'withdrawn') {
-        checks.delete(event.id)
-        log('candidate withdrawn: talk carried straight on')
-      } else {
-        const verdict = checks.get(event.id)
-        checks.delete(event.id)
-        void verdict?.then((match) => {
-          log(match ? 'wake word, then the pause: listening' : 'not the wake word')
-          if (match && useHandsFree.getState().phase === 'listening') void respond()
-        })
-      }
+    for (const candidate of listener.push(pcm)) {
+      log(`speech after ${candidate.quietBeforeMs}ms of quiet — checking its start for "${WAKE_WORD}"`)
+      void check(candidate.clip).then((match) => {
+        log(match ? 'it starts with the wake word: dictating from its start' : 'not the wake word')
+        if (match && useHandsFree.getState().phase === 'listening' && capture) void respond(candidate.start)
+      })
     }
   }
 
@@ -211,7 +229,6 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     unlisten?.()
     unlisten = undefined
     capture = next
-    checks.clear()
     if (!next) {
       downsampler = undefined
       endUtterance?.('lost')
@@ -223,7 +240,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     listener.resume()
     unlisten = next.listen(onBlock)
     if (useHandsFree.getState().phase === 'off') setPhase('listening')
-    log(`listening for the wake word (${next.describe()})`)
+    log(`listening for "${WAKE_WORD}" (${next.describe()})`)
   }
   follow()
   const offHold = deps.onHoldStateChange(follow)
