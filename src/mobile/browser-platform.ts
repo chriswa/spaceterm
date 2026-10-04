@@ -73,7 +73,13 @@ export function browserPlatform(): PlatformApi {
     openExternal: async (url) => {
       if (/^https?:\/\//.test(url)) window.open(url, '_blank', 'noopener')
     },
-    restartClient: () => window.setTimeout(() => window.location.reload(), 1500),
+    // Nothing to do here: the restarting server drops this page's connection,
+    // and install-api reloads the page once it reconnects — which is to say
+    // once the new server is actually up. Reloading on a timer instead raced
+    // the server's start: the reload found nothing listening, the app's web
+    // view was left on its load error, and with no page there was no script
+    // left to try again — a black screen until the app was relaunched.
+    restartClient: () => undefined,
     // The phone is where its listener is: Summary Chat answers play here.
     playsSpeech: true,
     raiseWindow: () => undefined,
