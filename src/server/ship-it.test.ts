@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { bracketedPaste, shipIt, SHIP_IT_SUBMIT_DELAY_MS } from './ship-it'
+import { bracketedPaste, DISMISS_QUESTION_DELAY_MS, shipIt, SHIP_IT_SUBMIT_DELAY_MS } from './ship-it'
 
 function harness() {
   const written: string[] = []
@@ -41,5 +41,18 @@ describe('shipIt', () => {
     shipIt(h.deps, 'draft', false)
     expect(h.written).toEqual(['\x1b[200~draft\x1b[201~'])
     expect(h.scheduled).toEqual([])
+  })
+})
+
+describe('shipIt to an agent waiting on a question', () => {
+  it('presses Escape first, then pastes and submits once the prompt is back', () => {
+    const h = harness()
+    shipIt(h.deps, 'hello', true, { dismissQuestion: true })
+    expect(h.written).toEqual(['\x1b'])
+    expect(h.scheduled.map((s) => s.ms)).toEqual([DISMISS_QUESTION_DELAY_MS])
+    h.scheduled[0].fn()
+    expect(h.written).toEqual(['\x1b', bracketedPaste('hello')])
+    h.scheduled[1].fn()
+    expect(h.written.at(-1)).toBe('\r')
   })
 })

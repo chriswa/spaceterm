@@ -793,7 +793,11 @@ function returnBorrowedSize(nodeId: NodeId, why: string): void {
  * shipping — the client's `ship-it`, the scripts socket — goes through here.
  */
 function shipToSession(sessionId: PtySessionId, text: string, submit: boolean): void {
-  shipIt({ write: (data) => sessionManager.write(sessionId, data), schedule: (fn, ms) => setTimeout(fn, ms) }, text, submit)
+  // An agent waiting on an AskUserQuestion prompt would take the text as a choice; see shipIt.
+  const surface = stateManager.getNodes().find((node) => node.type === 'terminal' && node.sessionId === sessionId)
+  const dismissQuestion = surface?.type === 'terminal' && surface.claudeState === 'waiting_question'
+  if (dismissQuestion) serverLog(`[ship-it] ${sessionId.slice(0, 8)} is waiting on a question: Escape first`)
+  shipIt({ write: (data) => sessionManager.write(sessionId, data), schedule: (fn, ms) => setTimeout(fn, ms) }, text, submit, { dismissQuestion })
   // Mark read; the resulting UserPromptSubmit hook drives the working state.
   claudeStateMachine.handleClientInteract(sessionId)
 }
