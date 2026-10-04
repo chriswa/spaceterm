@@ -693,7 +693,7 @@ export class Receptionist {
           const count = this.deps.archive(agent.nodeId)
           // Into the full record, so `recall` can answer "what happened to Kevin?".
           this.deps.record.append([{ role: 'assistant', content: `ARCHIVED ${who}` }])
-          done.push(`archive_agent archived ${who}${count > 1 ? `, with the ${count - 1} node${count === 2 ? '' : 's'} under it` : ''}; it is in the archive, where the user can restore it`)
+          done.push(`archive_agent archived ${who}${count > 1 ? `, with the ${count - 1} node${count === 2 ? '' : 's'} under it` : ''}`)
           break
         }
       }
