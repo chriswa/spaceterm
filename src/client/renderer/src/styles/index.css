@@ -688,7 +688,7 @@ html, body, #root {
 }
 
 /* Moves the surface while the camera does, on the phone; see useCamera's
-   deferCameraScaleWhileMoving. Elsewhere it never has a transform. */
+   deferCameraScaleWhileMoving. The desktop does not render it. */
 .canvas-zoom-layer {
   position: absolute;
   inset: 0;
@@ -700,15 +700,6 @@ html, body, #root {
   top: 0;
   left: 0;
   will-change: transform;
-  /* Counter-scale for anything that must keep its on-screen size while the
-     surface is scaled by the camera — card glows, today. Derived from
-     `--camera-zoom`, which useCamera writes with the transform on every frame,
-     so the two can never disagree. It used to be a React-rendered value that
-     only caught up when the camera settled: pinching in from fully zoomed out,
-     every glow kept its zoomed-out size — a blur thousands of world units
-     wide — while the camera magnified it, and the glows' layers grew with the
-     square of the zoom until iOS killed the page. */
-  --glow-scale: max(1, calc(1 / var(--camera-zoom, 1)));
 }
 
 /* Cmd+E's selector is renderer-only: it borrows the canvas visually without
@@ -2998,12 +2989,12 @@ html, body, #root {
    which is what this replaced — re-rasterises a blur every frame, and a blur
    is the expensive half.
 
-   `--glow-scale` is `max(1, 1/z)`, declared once on `.canvas-surface` from
-   the `--camera-zoom` written with every camera frame. The surface is scaled
-   by the camera, so a glow in card-space would shrink with it; this
-   counter-scale keeps it the same size on screen at any zoom, mid-gesture
-   included. One declaration on one element, inherited — rather than the old
-   per-card per-frame read of `cameraRef.current.z`. */
+   `--glow-scale` is `max(1, 1/z)`, set once on `.canvas-surface` (by Canvas
+   on the desktop, from the settled camera; by mobile.css on the phone, from
+   the per-frame `--camera-zoom`). The surface is scaled by the camera, so a
+   glow in card-space would shrink with it; this counter-scale keeps it the
+   same size on screen at any zoom. One declaration on one element, inherited
+   — rather than the old per-card per-frame read of `cameraRef.current.z`. */
 .card-shell--glow::before {
   content: '';
   position: absolute;

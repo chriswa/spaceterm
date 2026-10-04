@@ -55,6 +55,10 @@ let deferScaleWhileMoving = false
 export function deferCameraScaleWhileMoving(on: boolean): void {
   deferScaleWhileMoving = on
 }
+/** Whether the phone's deferred camera scale is on; the desktop leaves it off. */
+export function isDeferringCameraScale(): boolean {
+  return deferScaleWhileMoving
+}
 
 /** The transform that takes what `committed` shows to what `cam` would. */
 export function relativeCameraTransform(committed: Camera, cam: Camera): string {

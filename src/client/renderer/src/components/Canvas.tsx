@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
-import type { Camera } from '../lib/camera'
+import { getCameraTransform, type Camera } from '../lib/camera'
+import { isDeferringCameraScale } from '../hooks/useCamera'
 
 interface CanvasProps {
   camera: Camera
@@ -96,19 +97,38 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectSta
   return (
     <div className="canvas-viewport" ref={viewportRef} onMouseDown={handleMouseDown} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick}>
       {background}
-      {/* The zoom layer moves the surface while the camera does, on the phone,
-          so the cards are scaled as drawn rather than redrawn at every scale;
-          see deferCameraScaleWhileMoving. The surface's transform is the
-          camera's, written by useCamera's applyToDOM and nowhere else. */}
-      <div className="canvas-zoom-layer">
+      {isDeferringCameraScale() ? (
+        // The phone: the zoom layer moves the surface while the camera does,
+        // so the cards are scaled as drawn rather than redrawn at every scale;
+        // see deferCameraScaleWhileMoving. The surface's transform is the
+        // camera's, written by useCamera's applyToDOM and nowhere else, and
+        // its glows' counter-scale comes from mobile.css.
+        <div className="canvas-zoom-layer">
+          <div ref={surfaceRef} className="canvas-surface" style={{ transformOrigin: '0 0' }}>
+            {children}
+          </div>
+        </div>
+      ) : (
         <div
           ref={surfaceRef}
           className="canvas-surface"
-          style={{ transformOrigin: '0 0' }}
+          style={{
+            transform: getCameraTransform(camera),
+            transformOrigin: '0 0',
+            // Counter-scale for anything that must keep its on-screen size while
+            // the surface is scaled by the camera — card glows, today. Declared
+            // here because this is the one element that already re-renders on
+            // every camera change, so it costs nothing extra and is inherited by
+            // every card, rather than each of them reading the zoom per frame.
+            // Settled values only: deriving it from the per-frame --camera-zoom
+            // re-rasterized every glow's blur on every frame of a zoom, and the
+            // desktop's zooming stuttered and its labels flickered.
+            '--glow-scale': String(Math.max(1, 1 / camera.z)),
+          } as React.CSSProperties}
         >
           {children}
         </div>
-      </div>
+      )}
       {overlay}
     </div>
   )
