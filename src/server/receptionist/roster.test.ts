@@ -32,6 +32,14 @@ describe('renderRoster', () => {
     expect(text).toContain('(no name yet)')
   })
 
+  it('says which agents cannot take side questions until they restart', () => {
+    const old = agent('33333333-0000-4000-8000-000000000000', { takesSideQuestions: false })
+    const fresh = agent('44444444-0000-4000-8000-000000000000', { takesSideQuestions: true })
+    const text = renderRoster([old, fresh], () => undefined, () => [], H)
+    expect(text.match(/ask_agent: unavailable/g)).toHaveLength(1)
+    expect(text.split(`[${H(fresh.nodeId)}]`)[1]).not.toContain('ask_agent: unavailable')
+  })
+
   it('says so when nothing is running', () => {
     expect(renderRoster([], () => undefined, () => [], H)).toMatch(/No agents/)
   })

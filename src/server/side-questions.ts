@@ -77,12 +77,24 @@ export class SideQuestions {
   private readonly lastPolled = new Map<string, number>()
   private readonly pending = new Map<string, PendingAnswer>()
 
-  constructor(private readonly deps: SideQuestionsDeps = REAL_DEPS) {}
+  /** `startedAt`: when this server began hearing polls, before which no silence means anything. */
+  constructor(private readonly deps: SideQuestionsDeps = REAL_DEPS, private readonly startedAt = Date.now()) {}
 
   /** Whether a plugin has polled for this surface recently: it can take side questions. */
   isListening(surfaceId: string, now = Date.now()): boolean {
     const last = this.lastPolled.get(surfaceId)
     return last !== undefined && now - last <= LISTENING_WINDOW_MS
+  }
+
+  /**
+   * Whether a surface takes side questions, as far as this server can tell:
+   * undefined until the server has been up a whole listening window, since a
+   * plugin cut off by the restart has not polled again yet. False means its
+   * Claude Code predates side questions and needs a restart.
+   */
+  takesSideQuestions(surfaceId: string, now = Date.now()): boolean | undefined {
+    if (this.isListening(surfaceId, now)) return true
+    return now - this.startedAt < LISTENING_WINDOW_MS ? undefined : false
   }
 
   /** Ask a surface's agent a side question. Always resolves; never rejects. */

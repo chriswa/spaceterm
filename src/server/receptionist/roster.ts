@@ -33,6 +33,8 @@ export interface RosterAgent {
   cacheWarmTokens?: number
   /** epoch ms — when the surface's first Claude session started. */
   startedAt?: number
+  /** False when its Claude Code predates side questions and cannot take ask_agent until restarted; undefined when unknown. */
+  takesSideQuestions?: boolean
 }
 
 /** A directory node on the canvas: somewhere a new agent can be started. */
@@ -64,6 +66,9 @@ export const STATE_WORDS: Record<ClaudeState, string> = {
   potential_error: 'possibly stuck on an error',
 }
 
+/** Said of an agent whose Claude Code started before side questions existed. */
+export const NO_SIDE_QUESTIONS = 'ask_agent: unavailable — it was started before side questions existed, and takes them after a restart'
+
 /**
  * The roster as the model sees it each turn: one block per agent, named if the
  * agent has a name yet. The last request and reply are what lets "the one doing
@@ -85,6 +90,7 @@ export function renderRoster(
     lines.push(`  state: ${STATE_WORDS[agent.state]}${agent.stateSince ? `, for ${ago(now - agent.stateSince)}` : ''}`)
     if (agent.lastActivityAt) lines.push(`  last active: ${ago(now - agent.lastActivityAt)} ago`)
     if (agent.cacheWarmUntil !== undefined) lines.push(`  cache: ${cacheWords(agent, now)}`)
+    if (agent.takesSideQuestions === false) lines.push(`  ${NO_SIDE_QUESTIONS}`)
     if (agent.startedAt) lines.push(`  started: ${ago(now - agent.startedAt)} ago`)
     const messages = agent.transcriptPath ? readTranscript(agent.transcriptPath) : []
     const request = lastUserMessage(messages)

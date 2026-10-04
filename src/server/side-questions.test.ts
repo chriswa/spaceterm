@@ -55,6 +55,15 @@ describe('SideQuestions', () => {
     expect(broker.isListening('s1', 1_001 + LISTENING_WINDOW_MS)).toBe(false)
   })
 
+  it('says an agent takes no side questions only once the server has been up long enough to know', () => {
+    const broker = new SideQuestions(fakeTimers().deps, 0)
+    // Just restarted: a plugin cut off by the restart has not polled again yet.
+    expect(broker.takesSideQuestions('old', 1_000)).toBeUndefined()
+    void broker.poll('new', 2_000)
+    expect(broker.takesSideQuestions('new', 3_000)).toBe(true)
+    expect(broker.takesSideQuestions('old', LISTENING_WINDOW_MS + 1)).toBe(false)
+  })
+
   it('times a question out, and takes it back from the queue', async () => {
     const t = fakeTimers()
     const broker = new SideQuestions(t.deps)

@@ -641,14 +641,15 @@ describe('Receptionist', () => {
       replies: [
         reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'Done yet?' }]),
         (turn) => {
-          expect(turn.prompt).toContain(`Asking {${KEVIN}} "Done yet?" failed: that agent cannot take side questions`)
+          expect(turn.prompt).toContain(`Asking {${KEVIN}} "Done yet?" failed: that agent's Claude Code was started before side questions were added`)
+          expect(turn.prompt).toContain('This is not because it is busy')
           return reply([{ from: 'control', text: `{${KEVIN}} needs a restart before I can ask it things.` }])
         },
       ],
     })
     await h.receptionist.hear('ask Kevin if he is done')
     await flush()
-    expect(h.notices).toEqual(["Control's question to Kevin failed: not-listening"])
+    expect(h.notices).toEqual(["Control's question to Kevin failed: it was started before side questions existed, and takes them after a restart"])
   })
 
   it('sends a message to the real agent, records it, and then watches for its answer', async () => {

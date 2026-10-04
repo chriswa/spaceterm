@@ -18,7 +18,7 @@ import {
   CONTROL, isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
 } from './reply'
 import {
-  cacheWords, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+  cacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
 
 /**
@@ -199,11 +199,22 @@ const NODE_WORDS: Record<NearbyNode['type'], string> = {
 
 /** What each failure means for what to do next, as the model is told it. */
 const SIDE_QUESTION_FAILURES: Record<Exclude<SideQuestionResult, { ok: true }>['reason'], string> = {
-  'not-listening': 'that agent cannot take side questions (it was started before they existed, and needs a restart); send it a message instead if it matters',
+  'not-listening': "that agent's Claude Code was started before side questions were added to Spaceterm, so it is not listening for them, and it will not be until it restarts. This is not because it is busy: an up-to-date agent answers side questions while it works. Answer from its transcript with read instead, or send it the question if the user wants the agent itself to answer; offer the user to restart it if they want it to take side questions",
   'nothing-to-fork': 'that agent has not finished its first reply yet, so there is nothing to ask',
   timeout: 'no answer came in time',
   'api-error': 'the model request failed',
   'empty-reply': 'the agent gave no answer',
+  aborted: 'the question was cut off',
+  'invalid-reply': 'the answer came back garbled',
+}
+
+/** The same failures, as a toast on the user's screen says them. */
+const SIDE_QUESTION_TOASTS: Record<Exclude<SideQuestionResult, { ok: true }>['reason'], string> = {
+  'not-listening': 'it was started before side questions existed, and takes them after a restart',
+  'nothing-to-fork': 'it has not answered anything yet',
+  timeout: 'no answer in time',
+  'api-error': 'the model request failed',
+  'empty-reply': 'it gave no answer',
   aborted: 'the question was cut off',
   'invalid-reply': 'the answer came back garbled',
 }
@@ -613,7 +624,8 @@ export class Receptionist {
           const read = call.search ? this.deps.readWholeTranscript : this.deps.readTranscript
           const messages = agent.transcriptPath ? read(agent.transcriptPath) : []
           // The cache comes with the transcript: it decides whether ask_agent is worth it.
-          const cache = agent.cacheWarmUntil !== undefined ? `\ncache: ${cacheWords(agent, Date.now())}` : ''
+          const cache = (agent.cacheWarmUntil !== undefined ? `\ncache: ${cacheWords(agent, Date.now())}` : '')
+            + (agent.takesSideQuestions === false ? `\n${NO_SIDE_QUESTIONS}` : '')
           results.push(`read {${call.agent}}${call.search ? ` for "${call.search}"` : ''}:${cache}\n${readAgent(messages, call.search)}`)
           break
         }
@@ -690,7 +702,7 @@ export class Receptionist {
       this.events.push({ kind: 'agent-answer', handle, question, answer: result.text })
     } else {
       serverLog(`[receptionist] side question to ${handle} failed: ${result.reason}${result.detail ? ` ${result.detail}` : ''}`)
-      this.deps.notify(`Control's question to ${name} failed: ${result.reason}`)
+      this.deps.notify(`Control's question to ${name} failed: ${SIDE_QUESTION_TOASTS[result.reason]}`)
       this.events.push({ kind: 'agent-answer-failed', handle, question, reason: SIDE_QUESTION_FAILURES[result.reason] })
     }
     this.maybeSpeakUp()

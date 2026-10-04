@@ -449,6 +449,7 @@ function receptionistAgents(): RosterAgent[] {
       cacheWarmUntil: node.cacheWarmUntil,
       cacheWarmTokens: node.cacheWarmTokens,
       startedAt: parseTimestamp(node.claudeSessionHistory[0]?.timestamp),
+      takesSideQuestions: sideQuestions.takesSideQuestions(node.sessionId),
     }))
 }
 
