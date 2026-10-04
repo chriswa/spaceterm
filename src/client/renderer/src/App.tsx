@@ -97,6 +97,26 @@ function cameraFittingEverything(viewportWidth: number, viewportHeight: number):
   return cameraToFitBoundsWithCenter({ x: 0, y: 0 }, rects, viewportWidth, viewportHeight, 0.05, UNFOCUS_SNAP_ZOOM)
 }
 
+const fmtCam = (c: Camera) => `x ${c.x.toFixed(0)} y ${c.y.toFixed(0)} z ${c.z.toFixed(4)}`
+
+/**
+ * Where the camera is every half second for four seconds after the startup
+ * fly-out begins, and whether it got there: on the phone it has been seen to
+ * stop near the root, zoomed into its black circle, and nothing said why.
+ */
+function traceStartupFly(camera: () => Camera, target: Camera): void {
+  const steps: string[] = []
+  let n = 0
+  const timer = setInterval(() => {
+    const c = camera()
+    steps.push(`${c.z.toFixed(3)}${document.visibilityState === 'visible' ? '' : ' hidden'}`)
+    if (++n < 8) return
+    clearInterval(timer)
+    const arrived = Math.abs(c.z - target.z) < 0.001 && Math.abs(c.x - target.x) < 1 && Math.abs(c.y - target.y) < 1
+    window.api.log(`[camera] start fly-out ${arrived ? 'arrived' : `DID NOT ARRIVE, at ${fmtCam(c)}`}; zoom every 0.5s: ${steps.join(' ')}`)
+  }, 500)
+}
+
 function agentCreateOptions(agent: AgentType, cwd: string | undefined): CreateOptions {
   switch (agent) {
     case 'claude': return { cwd, claude: { appendSystemPrompt: false } }
@@ -567,9 +587,10 @@ export function App() {
                   n.y + half.h > topLeft.y && n.y - half.h < bottomRight.y)
         })
         // Also check root node at origin
-        if (hasVisibleNode ||
-            (ROOT_NODE_RADIUS > topLeft.x && -ROOT_NODE_RADIUS < bottomRight.x &&
-             ROOT_NODE_RADIUS > topLeft.y && -ROOT_NODE_RADIUS < bottomRight.y)) {
+        const rootVisible = ROOT_NODE_RADIUS > topLeft.x && -ROOT_NODE_RADIUS < bottomRight.x &&
+          ROOT_NODE_RADIUS > topLeft.y && -ROOT_NODE_RADIUS < bottomRight.y
+        window.api.log(`[camera] start: restored ${fmtCam(cam)} in ${vw}x${vh}, ${allNodes.length} nodes, ${hasVisibleNode ? 'a node' : rootVisible ? 'the root' : 'nothing'} in view`)
+        if (hasVisibleNode || rootVisible) {
           // User can see something — keep restored camera. Restore focus state.
           const savedFocus = loadFocusState()
           if (savedFocus?.focusedId) {
@@ -609,6 +630,10 @@ export function App() {
 
       resetCamera()  // instant teleport to origin, zoomed in at z:10
       flyTo(target)
+      // The phone has been seen stuck zoomed into the root's black circle after
+      // a reload: this path, with the fly-out stopped around z 2. Trace it.
+      window.api.log(`[camera] start: ${restoredFromStorageRef.current ? 'restored camera showed nothing' : 'no stored camera'}; ${useNodeStore.getState().nodeList.length} nodes; flying out from the root to ${fmtCam(target)} (${document.visibilityState})`)
+      traceStartupFly(() => cameraRef.current, target)
     })
   }, [initialSyncDone, flyTo, resetCamera])
 
