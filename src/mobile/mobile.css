@@ -698,3 +698,15 @@ textarea, input, [contenteditable="true"], .cm-content {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
 }
+
+/* An unread card glows without pulsing on the phone. The pulse animates
+   opacity, which gives the glow — and the card content painted over it — a
+   compositor layer of its own, and iOS WebKit rasterizes such a layer at its
+   own size in card units times the screen's density, whatever the camera's
+   scale: tens of megabytes per card, though it is a few pixels on screen.
+   Zooming out brought five unread cards into view at once and iOS killed the
+   page every time. Held still, the glow is painted with the canvas at the
+   camera's real scale and costs next to nothing. */
+.card-shell--glow-pulse::before {
+  animation: none;
+}
