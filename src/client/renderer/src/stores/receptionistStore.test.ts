@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
+import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { initServerSync, destroyServerSync } from '../lib/server-sync'
 import { useReceptionistStore } from './receptionistStore'
 import { useAgentNamesStore } from './agentNamesStore'
@@ -14,7 +14,7 @@ let bridge: FakeBridge
 
 beforeEach(() => {
   bridge = installFakeBridge(globalThis as never)
-  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, talkToMe: true })
+  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null })
   useAgentNamesStore.setState({ names: {} })
 })
 
@@ -36,19 +36,21 @@ describe('receptionist status', () => {
     expect(useReceptionistStore.getState().error).toBeNull()
   })
 
-  it('takes talk-to-me from the pull, and from the push after it', async () => {
-    bridge.responses.syncRequest = { ...bridge.responses.syncRequest, receptionistTalkToMe: false }
+  it('takes the holder from the pull, and from the push after it, telling this device apart', async () => {
+    bridge.responses.syncRequest = { ...bridge.responses.syncRequest, receptionistHolder: { deviceId: 'phone-1', label: 'Phone' } }
     await initServerSync()
-    expect(useReceptionistStore.getState().talkToMe).toBe(false)
+    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Phone', mine: false })
 
-    bridge.emit.receptionistTalkToMe(true)
-    expect(useReceptionistStore.getState().talkToMe).toBe(true)
+    bridge.emit.receptionistHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac' })
+    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Mac', mine: true })
+
+    bridge.emit.receptionistHolder(null)
+    expect(useReceptionistStore.getState().holder).toBeNull()
   })
 
-  it('treats an absent talk-to-me in the pull as on', async () => {
-    useReceptionistStore.setState({ talkToMe: false })
+  it('reads an absent holder in the pull as the Mac', async () => {
     await initServerSync()
-    expect(useReceptionistStore.getState().talkToMe).toBe(true)
+    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Mac', mine: false })
   })
 })
 

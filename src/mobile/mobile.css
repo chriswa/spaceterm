@@ -347,13 +347,15 @@ textarea, input, [contenteditable="true"], .cm-content {
   50% { box-shadow: 0 0 0 10px rgba(243, 139, 168, 0); }
 }
 /* Control's button (ControlButton.tsx): left of the talk button, or the
-   bar's middle alone when there is no conversation. Colour is state, in the
-   talk button's palette. */
-.m-control--target { background: var(--m-accent); color: #11111b; }
-.m-control--thinking { background: #f9e2af; color: #11111b; }
-.m-control--synthesizing,
-.m-control--speaking { background: #a6e3a1; color: #11111b; }
-.m-control--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
+   bar's middle alone when there is no conversation. Its fill is where Control
+   is; a ring is what it is doing, in the talk button's palette. */
+.m-control--away { background: #000; color: var(--m-text); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
+.m-control--here { background: #fff; color: #11111b; }
+.m-control--summary { background: #e040fb; color: #11111b; }
+.m-control[data-phase="thinking"] { box-shadow: 0 0 0 3px #f9e2af; }
+.m-control[data-phase="synthesizing"],
+.m-control[data-phase="speaking"] { box-shadow: 0 0 0 3px #a6e3a1; }
+.m-control.m-control--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
 .m-summarizer__error {
   position: fixed;
   left: 50%;

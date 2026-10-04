@@ -78,16 +78,57 @@ export function renderEvent(event: ReceptionistEvent): string {
   }
 }
 
+/** What the user missed while nobody could hear Control, told on the first turn they can. */
+export interface ReturnNews {
+  /** Events Control was given, and acted on, while the user was away. */
+  events: ReceptionistEvent[]
+  /** What the user heard of the reply they left in the middle of, if they left in the middle of one. */
+  cutOff?: string
+  /** Whether a whole reply went unheard: written for the user, finished after they had gone. */
+  unheard: boolean
+  /** Whether they switched devices, rather than (or as well as) going away and coming back. */
+  moved?: boolean
+}
+
+/**
+ * Sent while nobody can hear: the device holding Control is gone, or no device
+ * holds it. Turns still run, since what the user asked for earlier has to get
+ * done, but the reply is refused if it says anything — see `AWAY_REFUSAL`.
+ */
+const AWAY = 'THE USER IS AWAY: no device is listening, so nothing you say can be heard, and "say" must be empty — this overrides confirming your actions aloud. ' +
+  'Still do anything the user asked you to do when this happened, with tools. Leave the telling for later: when the user is back, you are told, with these events again.'
+
+function renderReturn(news: ReturnNews): string {
+  const away = news.unheard || news.events.length > 0
+  const lines = [news.moved && !away
+    ? 'THE USER SWITCHED DEVICES: you are heard on the new one now.'
+    : 'THE USER IS BACK: they can hear you again, and heard nothing you said while they were away.']
+  if (news.cutOff !== undefined) {
+    lines.push(`They left in the middle of your reply, and heard only: "${news.cutOff}".`)
+  } else if (news.unheard) {
+    lines.push('A reply you wrote just as they left was never spoken.')
+  }
+  if (news.events.length) {
+    lines.push(`While they were away, you were told (and have already acted on):\n${news.events.map(renderEvent).join('\n')}`)
+  }
+  lines.push('Decide what, if anything, is worth telling them now, most important first. Do not repeat what they heard.')
+  return lines.join('\n')
+}
+
 /**
  * One turn's message: any events, and then what the user said — or nothing, when the turn is the receptionist
- * deciding whether events are worth speaking up about.
+ * deciding whether events are worth speaking up about. `listener` is `away` when nobody can hear the reply, or
+ * what the user missed when they have just come back.
  */
-export function renderTurnBody(events: readonly ReceptionistEvent[], heard: string | undefined): string {
+export function renderTurnBody(
+  events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews,
+): string {
   const sections: string[] = []
+  if (listener && listener !== 'away') sections.push(renderReturn(listener))
   if (events.length) sections.push(`EVENTS:\n${events.map(renderEvent).join('\n')}`)
-  sections.push(heard === undefined
-    ? 'The user has not said anything. Decide whether the events are worth speaking up about.'
-    : `THE USER SAYS: ${heard}`)
+  if (heard !== undefined) sections.push(`THE USER SAYS: ${heard}`)
+  if (listener === 'away') sections.push(AWAY)
+  else if (heard === undefined && events.length) sections.push('The user has not said anything. Decide whether the events are worth speaking up about.')
   return sections.join('\n\n')
 }
 

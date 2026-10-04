@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 5
+export const CLIENT_PROTOCOL_VERSION = 6
 
 /**
  * Oldest client protocol this build still serves.
@@ -37,5 +37,8 @@ export const CLIENT_PROTOCOL_VERSION = 5
  * `attached`, which v5 dropped in favour of the node fields `node-updated`
  * already carried — so an older client's card footer shows neither. It also
  * loses the plan-diff button, which was removed.
+ *
+ * v5 and below name no device in `client-hello`, so they can never hold
+ * Control; their Talk To Me toggle, replaced in v6 by holding, does nothing.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

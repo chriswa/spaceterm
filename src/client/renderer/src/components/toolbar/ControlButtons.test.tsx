@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, fireEvent, act } from '@testing-library/react'
-import { ControlButton, ControlTalkToMeToggle } from './ControlButtons'
-import { installFakeBridge, type FakeBridge } from '../../testing/fake-bridge'
+import { ControlButton } from './ControlButtons'
+import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '../../testing/fake-bridge'
 import { useReceptionistStore } from '../../stores/receptionistStore'
 import type { ReceptionistStatus } from '../../../../../shared/api'
 
 /**
- * Both controls ask; neither decides. A press goes to the server, and what the
+ * The button asks; it never decides. A press goes to the server, and what the
  * buttons show is whatever the server then broadcasts.
  */
 let bridge: FakeBridge
@@ -15,9 +15,15 @@ function status(s: ReceptionistStatus): void {
   act(() => useReceptionistStore.getState().setStatus(s))
 }
 
+/** Control on this device, or on `label`'s. */
+function heldBy(label: 'here' | string): void {
+  act(() => useReceptionistStore.getState().setHolder(
+    label === 'here' ? { deviceId: FAKE_DEVICE_ID, label: 'Mac' } : { deviceId: 'other', label }, FAKE_DEVICE_ID))
+}
+
 beforeEach(() => {
   bridge = installFakeBridge(globalThis as never)
-  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, talkToMe: true })
+  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null })
 })
 
 afterEach(cleanup)
@@ -32,18 +38,27 @@ describe('ControlButton', () => {
     expect(bridge.callsTo('receptionist.select')).toHaveLength(2)
   })
 
-  it('lights up only while it is the voice target', () => {
+  it('is black elsewhere, white here and talked to, magenta here with the voice on Summary Chat', () => {
     const { container } = render(<ControlButton />)
     const button = container.querySelector('button')!
-    expect(button.className).not.toContain('toolbar__btn--active')
-    expect(button.getAttribute('aria-pressed')).toBe('false')
-
+    heldBy('Phone')
     status({ phase: 'ready', target: true })
+    expect(button.className).toContain('toolbar__control--away')
+    expect(button.dataset.tooltip).toMatch(/On your Phone\. Click to bring it here/)
+
+    heldBy('here')
+    expect(button.className).toContain('toolbar__control--here')
     expect(button.className).toContain('toolbar__btn--active')
     expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(button.dataset.tooltip).toMatch(/let go/)
+
+    status({ phase: 'ready', target: false })
+    expect(button.className).toContain('toolbar__control--summary')
+    expect(button.dataset.tooltip).toMatch(/Summary Chat\. Click to talk to Control/)
   })
 
-  it('wears the Summary Chat bubble for its phase', () => {
+  it('wears the Summary Chat bubble for its phase while it is here', () => {
+    heldBy('here')
     const { container } = render(<ControlButton />)
     expect(container.querySelector('.toolbar__summary-bubble')).toBeNull()
 
@@ -57,34 +72,22 @@ describe('ControlButton', () => {
     expect(container.querySelector('.toolbar__summary-bubble--talking')).not.toBeNull()
   })
 
-  it('shows it speaking up even when it is not the target', () => {
+  it('shows it speaking up even when the voice is on Summary Chat, and not when it is elsewhere', () => {
+    heldBy('here')
     const { container } = render(<ControlButton />)
     status({ phase: 'speaking', target: false })
     expect(container.querySelector('.toolbar__summary-bubble--talking')).not.toBeNull()
-    expect(container.querySelector('button')!.dataset.tooltip).toMatch(/stop/)
+
+    status({ phase: 'speaking', target: true })
+    expect(container.querySelector('button')!.dataset.tooltip).toMatch(/stop it and let go/)
+
+    heldBy('Phone')
+    expect(container.querySelector('.toolbar__summary-bubble')).toBeNull()
   })
 
   it('says why it failed', () => {
     const { container } = render(<ControlButton />)
     status({ phase: 'ready', target: false, message: 'no API key' })
     expect(container.querySelector('button')!.dataset.tooltip).toBe('Control — no API key')
-  })
-})
-
-describe('ControlTalkToMeToggle', () => {
-  it('asks the server for the opposite of what it shows', () => {
-    const { container } = render(<ControlTalkToMeToggle />)
-    fireEvent.click(container.querySelector('button')!)
-    expect(bridge.lastCall('receptionist.setTalkToMe')).toEqual([false])
-  })
-
-  it('shows the state the server pushed, not the click', () => {
-    const { container } = render(<ControlTalkToMeToggle />)
-    const button = container.querySelector('button')!
-    fireEvent.click(button)
-    expect(button.className).toContain('toolbar__btn--active')
-
-    act(() => useReceptionistStore.getState().setTalkToMe(false))
-    expect(button.className).not.toContain('toolbar__btn--active')
   })
 })

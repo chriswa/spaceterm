@@ -58,6 +58,8 @@ function harness(opts: {
   replies: Script[]
   /** Status the speech job ends in. Defaults to completing. */
   speechEnds?: Partial<SpeechStatus>
+  /** Where Control speaks to begin with, in place of the recording fake. */
+  speech?: SpeechBackend
   /** What the user is looking at; by default nothing has said. */
   userView?: () => ReturnType<ReceptionistDeps['userView']>
   /** How the agents answer side questions; by default every one answers. */
@@ -186,9 +188,9 @@ function harness(opts: {
     log: () => {},
     sleep: async () => {},
     voiceOperatorDiscovered: () => true,
-  }, { speech, onPhase: () => {}, onError: () => {} })
+  }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, turns, spoken, focused, sideQuestions, assigned, wire, notices, record,
+    receptionist, listener: { id: 'here', speech }, turns, spoken, focused, sideQuestions, assigned, wire, notices, record,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -643,26 +645,130 @@ describe('Receptionist', () => {
     expect(h.spoken).toHaveLength(1)
   })
 
-  it('holds events for the next question when talk-to-me is off', async () => {
+  it('acts on what it was asked while nobody can hear, refusing a reply that talks, and catches the user up on their return', async () => {
     const h = harness({
       replies: [
         reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
         (turn) => {
-          expect(turn.prompt).toContain('EVENTS')
-          expect(turn.prompt).toContain('THE USER SAYS: any news?')
-          return reply([{ from: 'control', text: 'Sally finished.' }])
+          expect(turn.prompt).toContain(`{${SALLY}} is now stopped`)
+          expect(turn.prompt).toContain('THE USER IS AWAY')
+          return reply([{ from: 'control', text: `Passing it to {${KEVIN}}.` }], [{ tool: 'send', agent: KEVIN, message: 'Sally fixed the form.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain('the user is away, so "say" must be empty')
+          return reply([], [{ tool: 'send', agent: KEVIN, message: 'Sally fixed the form.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain('THE USER IS BACK')
+          // What happened while they were gone, told again: the session may have compacted it away.
+          expect(turn.prompt).toContain(`{${SALLY}} is now stopped`)
+          expect(turn.prompt).not.toContain('THE USER IS AWAY')
+          return reply([{ from: 'control', text: 'Sally finished, and I told Kevin.' }])
         },
       ],
     })
-    h.receptionist.setTalkToMe(false)
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('when Sally is done, tell Kevin what she did')
     await flush()
+    h.receptionist.setListener(undefined)
     h.setState(SALLY_ID, 'stopped')
     await flush()
+    // The refused reply's send never went; the silent one did, once.
+    expect(h.wire).toEqual([`send ${KEVIN_ID} Sally fixed the form.`])
+    expect(said(h)).toHaveLength(1)
+    h.receptionist.setListener(h.listener)
+    await flush()
+    expect(h.turns).toHaveLength(4)
+    expect(said(h).at(-1)).toContain('Sally finished, and I told Kevin.')
+  })
+
+  it('tells the user on their return where they left the reply they walked out on', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('They left in the middle of your reply, and heard only: "Kevin is done. Kevin here. The *INTERRUPTED*')
+          return reply([{ from: 'control', text: 'As I was saying.' }])
+        },
+      ],
+      // The phone's page went, mid-sentence.
+      speechEnds: { state: 'cancelled_by_client', character_offset: 'Kevin is done. Kevin here. The sol'.length },
+    })
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    h.receptionist.setListener(undefined)
+    await flush()
     expect(h.turns).toHaveLength(1)
-    await h.receptionist.hear('any news?')
+    h.receptionist.setListener(h.listener)
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  it('comes back without a word when nothing happened while the user was away', async () => {
+    const h = harness({ replies: [reply([{ from: 'control', text: 'Hi.' }])] })
+    await h.receptionist.hear('hello')
+    await flush()
+    h.receptionist.setListener(undefined)
+    await flush()
+    h.receptionist.setListener(h.listener)
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    // The same listener handed over again is no move either.
+    h.receptionist.setListener(h.listener)
+    await flush()
+    expect(h.turns).toHaveLength(1)
+  })
+
+  it('cuts off a reply when Control moves to another device, and carries on there from where it was cut', async () => {
+    const cut = { id: 'long', state: 'cancelled_by_client' as const, character_offset: 'Kevin is done. Kevin here. The sol'.length, version: 2 }
+    let dropped: (() => void) | undefined
+    // The Mac, still talking when the phone takes Control.
+    const mac: SpeechBackend = {
+      speak: async () => ({ status: 202, body: { id: 'long', state: 'in_progress', playback_state: 'speaking', version: 1 } }),
+      status: () => new Promise((resolve) => { dropped = () => resolve({ status: 410, body: cut }) }),
+      drop: async () => { dropped?.(); return { status: 410, body: cut } },
+    }
+    const h = harness({
+      speech: mac,
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('THE USER SWITCHED DEVICES')
+          expect(turn.prompt).toContain('heard only: "Kevin is done. Kevin here. The *INTERRUPTED*')
+          return reply([{ from: KEVIN, text: 'The solver works and the tests pass.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    expect(h.spoken).toHaveLength(0)
+    h.receptionist.setListener({ id: 'phone', speech: h.listener.speech })
+    await flush()
+    expect(said(h)).toEqual([JSON.stringify([{ text: 'Kevin here. The solver works and the tests pass.', voice: 'am_michael' }])])
+  })
+
+  it('drops the words of a reply finished after the user left, and says so', async () => {
+    let answer: ((text: string) => void) | undefined
+    const h = harness({
+      replies: [
+        () => new Promise<string>((resolve) => { answer = resolve }),
+        (turn) => {
+          expect(turn.prompt).toContain('the user was away, so they heard none of it')
+          expect(turn.prompt).toContain('A reply you wrote just as they left was never spoken.')
+          return reply([{ from: 'control', text: 'Sorry, as I was saying.' }])
+        },
+      ],
+    })
+    void h.receptionist.hear('tell Kevin to commit')
+    await flush()
+    h.receptionist.setListener(undefined)
+    answer?.(reply([{ from: 'control', text: `Sent to {${KEVIN}}.` }], [{ tool: 'send', agent: KEVIN, message: 'Commit.' }]))
+    await flush()
+    // Its tools ran all the same.
+    expect(h.wire).toEqual([`send ${KEVIN_ID} Commit.`])
+    expect(h.spoken).toHaveLength(0)
+    h.receptionist.setListener(h.listener)
+    await flush()
+    expect(said(h)).toHaveLength(1)
   })
 
   it('asks the agent itself a side question, and toasts what it used', async () => {

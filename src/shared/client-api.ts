@@ -58,7 +58,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     }
   }
   const onReceptionistStatus = latest('receptionist-status')
-  const onReceptionistTalkToMe = latest('receptionist-talk-to-me')
+  const onReceptionistHolder = latest('receptionist-holder')
   const onAgentNames = latest('agent-names')
 
   return {
@@ -194,9 +194,10 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     },
     receptionist: {
       select: () => client.selectReceptionist(),
-      setTalkToMe: (enabled) => client.setReceptionistTalkToMe(enabled),
+      stop: () => client.stopReceptionist(),
       onStatus: (cb) => onReceptionistStatus(({ phase, target, message }) => cb({ phase, target, message })),
-      onTalkToMe: (cb) => onReceptionistTalkToMe((m) => cb(m.enabled)),
+      deviceId: client.device.id,
+      onHolder: (cb) => onReceptionistHolder((m) => cb(m.holder)),
       onAgentNames: (cb) => onAgentNames((m) => cb(m.names)),
       onCameraFollow: (cb) => on('camera-follow', (m) => cb(m.nodeId)),
       onNotice: (cb) => on('receptionist-notice', (m) => cb(m.text))

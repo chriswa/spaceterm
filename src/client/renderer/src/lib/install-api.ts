@@ -1,4 +1,5 @@
 import type { PlatformApi } from '../../../../shared/api'
+import type { ClientDevice } from '../../../../shared/protocol'
 import { createApi } from '../../../../shared/client-api'
 import { ServerClient, type ServerTransport } from '../../../../shared/server-client'
 
@@ -23,9 +24,10 @@ const STARTUP_CONNECT_GRACE_MS = 8_000
 export async function installApi(
   transport: ServerTransport,
   platform: PlatformApi,
-  clientName: string
+  clientName: string,
+  device: ClientDevice
 ): Promise<ServerClient> {
-  const client = new ServerClient(transport, { clientName, log: (m) => platform.log(m) })
+  const client = new ServerClient(transport, { clientName, device, log: (m) => platform.log(m) })
   window.api = createApi(client, platform)
 
   const pendingFocus: string[] = []

@@ -34,7 +34,7 @@ import type {
   SummaryChatUiState, SpeechProgressEvent
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
-import type { NodeData, NodeStamp, ServerState } from './state'
+import type { NodeData, NodeStamp, ReceptionistHolder, ServerState } from './state'
 import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
@@ -316,12 +316,19 @@ export interface ReceptionistStatus {
  * a camera move is an instruction for now, not state.
  */
 export interface ReceptionistApi {
-  /** Press Control: become the voice target, or stop the receptionist speaking. */
+  /**
+   * Press Control: bring it to this device and talk to it, or talk to it again
+   * after Summary Chat, or — when it is here and talked to — let go of it,
+   * which silences it until some device takes it. The server decides which.
+   */
   select(): void
-  /** Whether Control may speak up unprompted, for every client. */
-  setTalkToMe(enabled: boolean): void
+  /** Stop Control mid-answer without letting go of it, as a talk button pressed over it does. */
+  stop(): void
+  /** This client's device, to tell whether it is the one holding Control. */
+  readonly deviceId: string
   onStatus(callback: (status: ReceptionistStatus) => void): () => void
-  onTalkToMe(callback: (enabled: boolean) => void): () => void
+  /** Who holds Control: null when nobody does. */
+  onHolder(callback: (holder: ReceptionistHolder | null) => void): () => void
   /** Every agent surface's name, whole, keyed by node id. */
   onAgentNames(callback: (names: Record<string, string>) => void): () => void
   /** Move the camera to a surface the conversation is about — no raise, no focus. */

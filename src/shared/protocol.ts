@@ -808,22 +808,21 @@ export interface SummaryChatFollowUpMessage {
 }
 
 /**
- * Make the receptionist ("Control") the target of the listener's voice: Voice
+ * The Control button. Held by another device or by none, it brings Control to
+ * this client's device and makes it the target of the listener's voice (Voice
  * Operator command-mode transcripts and the phone's talk button go to it until
- * a Summary Chat press takes them back. A press while the receptionist is
- * producing speech stops it instead — the same toggle the summary chord is.
+ * a Summary Chat press takes them back). Held here with the voice on Summary
+ * Chat, it makes Control the target again. Held here and the target, it lets
+ * go of Control, which silences it. Answered by `receptionist-holder` and
+ * `receptionist-status`.
  */
 export interface ReceptionistSelectMessage {
   type: 'receptionist-select'
 }
 
-/**
- * Whether the receptionist may speak up on its own when something it was
- * watching for happens. Answered by `receptionist-talk-to-me`.
- */
-export interface SetReceptionistTalkToMeMessage {
-  type: 'set-receptionist-talk-to-me'
-  enabled: boolean
+/** Stop Control mid-answer, without letting go of it: a talk button pressed over it. */
+export interface ReceptionistStopMessage {
+  type: 'receptionist-stop'
 }
 
 /** Abandon every Summary Chat conversation: stop speaking and forget them. */
@@ -870,6 +869,18 @@ export interface ClientHelloMessage {
   protocolVersion: number
   /** Free-form identifier for the server log, e.g. "spaceterm-electron/0.1.0". */
   client?: string
+  /**
+   * The device this client runs on, the same across reconnects and restarts:
+   * what holds Control (see `ReceptionistHolder`). Every Electron window on
+   * the Mac is one device.
+   */
+  device?: ClientDevice
+}
+
+export interface ClientDevice {
+  id: string
+  /** What the device is called where Control's holder is shown, e.g. "Phone". */
+  label: string
 }
 
 export interface ClientHelloResult {
@@ -1135,7 +1146,7 @@ export type ClientMessage =
   | SetRootCwdMessage
   | SetAutoStampsEnabledMessage
   | ReceptionistSelectMessage
-  | SetReceptionistTalkToMeMessage
+  | ReceptionistStopMessage
 
 // --- Server → Client messages ---
 
@@ -1277,7 +1288,7 @@ export interface ExitMessage {
 
 // --- Server → Client node state messages ---
 
-import type { ServerState, NodeData, NodeStamp } from './state'
+import type { ServerState, NodeData, NodeStamp, ReceptionistHolder } from './state'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
@@ -1510,10 +1521,10 @@ export interface ReceptionistStatusMessage {
   message?: string
 }
 
-/** Whether the receptionist may speak unprompted. Sent on connect and broadcast on every change. */
-export interface ReceptionistTalkToMeMessage {
-  type: 'receptionist-talk-to-me'
-  enabled: boolean
+/** Which device holds Control, if any. Sent on connect and broadcast on every change. */
+export interface ReceptionistHolderMessage {
+  type: 'receptionist-holder'
+  holder: ReceptionistHolder | null
 }
 
 /**
@@ -1822,7 +1833,7 @@ export type ServerMessage =
   | RootCwdMessage
   | AutoStampsEnabledMessage
   | ReceptionistStatusMessage
-  | ReceptionistTalkToMeMessage
+  | ReceptionistHolderMessage
   | CameraFollowMessage
   | ReceptionistNoticeMessage
   | AgentNamesMessage

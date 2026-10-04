@@ -10,6 +10,7 @@ import { installMemoryProbe } from './memory-probe'
 import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
 import { installHeldMicrophone } from './held-microphone'
+import { phoneDevice } from './device'
 import '@/styles/index.css'
 import './mobile.css'
 
@@ -56,7 +57,7 @@ if (!token) {
   // No bar along the bottom; the corner button opens the toolbar as a sheet.
   useSurfacePresenterStore.getState().setToolbarSheet(true)
   // `window.api` must exist before App's modules run, as on the desktop.
-  void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile').then(async (client) => {
+  void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
     forwardLogs((message) => client.clientLog(message))
     // Switching apps is when the phone's microphone and socket misbehave, so
     // the log marks each one.

@@ -9,7 +9,7 @@ import { useSummaryChatStore } from '../stores/summaryChatStore'
 import { useRestartRequiredStore } from '../stores/restartRequiredStore'
 import { useReceptionistStore } from '../stores/receptionistStore'
 import { useAgentNamesStore } from '../stores/agentNamesStore'
-import type { NodeData, NodeStamp } from '../../../../shared/state'
+import { receptionistHolderOf, type NodeData, type NodeStamp } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
@@ -207,8 +207,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.receptionist.onTalkToMe((enabled) => {
-      useReceptionistStore.getState().setTalkToMe(enabled)
+    window.api.receptionist.onHolder((holder) => {
+      useReceptionistStore.getState().setHolder(holder, window.api.receptionist.deviceId)
     })
   )
 
@@ -231,7 +231,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
     useRootCwdStore.getState().set(serverState.rootCwd)
     useAutoStampsEnabledStore.getState().set(serverState.autoStampsEnabled !== false)
-    useReceptionistStore.getState().setTalkToMe(serverState.receptionistTalkToMe !== false)
+    useReceptionistStore.getState().setHolder(receptionistHolderOf(serverState), window.api.receptionist.deviceId)
 
     // Authoritative on reload: the PUSH above only fires when the flag changes
     // while the socket stays open, which a renderer refresh does not repeat.

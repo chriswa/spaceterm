@@ -16,8 +16,10 @@ import type {
   GitStatus,
   AlertType,
   AutoStamp,
-  NodeStamp
+  NodeStamp,
+  ReceptionistHolder
 } from '../shared/state'
+import { receptionistHolderOf } from '../shared/state'
 import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import type { CacheWarmth } from './cache-warmth'
@@ -479,15 +481,18 @@ export class StateManager {
     this.schedulePersist()
   }
 
-  /** Whether the receptionist may speak up unprompted. On unless turned off. */
-  getReceptionistTalkToMe(): boolean {
-    return this.state.receptionistTalkToMe !== false
+  /** The device holding Control, or null when none does. The Mac unless changed. */
+  getReceptionistHolder(): ReceptionistHolder | null {
+    return receptionistHolderOf(this.state)
   }
 
-  setReceptionistTalkToMe(enabled: boolean): void {
-    if (enabled === this.getReceptionistTalkToMe()) return
-    this.state.receptionistTalkToMe = enabled
+  /** Returns whether anything changed. */
+  setReceptionistHolder(holder: ReceptionistHolder | null): boolean {
+    const current = this.getReceptionistHolder()
+    if (current?.deviceId === holder?.deviceId && current?.label === holder?.label) return false
+    this.state.receptionistHolder = holder
     this.schedulePersist()
+    return true
   }
 
   /** Every live node, for sweeps that consider them all. */

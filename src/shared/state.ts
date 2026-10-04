@@ -529,8 +529,25 @@ export interface ServerState {
   rootCwd?: string
   /** Whether surfaces get auto-stamp icons drawn for them. Absent means on. See `auto-stamp.ts`. */
   autoStampsEnabled?: boolean
-  /** Whether the receptionist may speak up unprompted. On unless turned off. */
-  receptionistTalkToMe?: boolean
+  /**
+   * The device Control speaks to, kept while that device is away; null when
+   * nobody holds it. Absent means the Mac, as before devices could hold it.
+   */
+  receptionistHolder?: ReceptionistHolder | null
+}
+
+/** The device Control speaks to: see `ClientDevice`. */
+export interface ReceptionistHolder {
+  deviceId: string
+  label: string
+}
+
+/** The Mac: every Electron window, and Voice Operator's own dictation. */
+export const DESKTOP_DEVICE: ReceptionistHolder = { deviceId: 'desktop', label: 'Mac' }
+
+/** Who holds Control in `state`, reading an absent field as the Mac. */
+export function receptionistHolderOf(state: Pick<ServerState, 'receptionistHolder'>): ReceptionistHolder | null {
+  return state.receptionistHolder === undefined ? DESKTOP_DEVICE : state.receptionistHolder
 }
 
 /** What kind of background work a launch represents. Mirrors `LaunchKind`. */

@@ -209,17 +209,6 @@ export function HeadsetIcon() {
   )
 }
 
-export function SpeakUpIcon() {
-  // A speaker with sound coming out: may Control speak up unprompted.
-  return (
-    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
-      <path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" fillOpacity="0.2" />
-      <path d="M10.5 5.5a3.5 3.5 0 0 1 0 5" />
-      <path d="M12.5 3.5a6.3 6.3 0 0 1 0 9" />
-    </svg>
-  )
-}
-
 export function RollingRestartIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>

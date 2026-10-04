@@ -1,32 +1,38 @@
-import { useReceptionistStore } from '@/stores/receptionistStore'
+import { controlLook, useReceptionistStore } from '@/stores/receptionistStore'
 
 /**
  * Control, the receptionist, beside the talk button: the phone's version of
- * the desktop toolbar's headset. A tap makes Control the voice target — the
- * talk button then speaks to it — or stops it while it is answering; the
- * server decides which. Its colour is the receptionist's state, in the talk
- * button's palette.
+ * the desktop toolbar's headset, with the same three states — black while
+ * another device (or none) holds Control, white while this phone does and the
+ * talk button speaks to it, magenta while this phone does but the voice last
+ * went to Summary Chat. A tap brings Control here, gives it the voice back,
+ * or — when white — lets go of it, which silences it; the server decides
+ * which. A ring says what it is doing, in the talk button's palette.
  */
 export function ControlButton() {
   const target = useReceptionistStore((s) => s.target)
   const phase = useReceptionistStore((s) => s.phase)
   const error = useReceptionistStore((s) => s.error)
+  const holder = useReceptionistStore((s) => s.holder)
+  const look = controlLook(holder, target)
 
-  const state = error ? 'error' : phase !== 'ready' ? phase : target ? 'target' : 'idle'
-  const label = {
-    idle: 'Control — tap to talk to it instead of Summary Chat',
-    target: 'Control — your voice goes to Control',
-    thinking: 'Control — thinking, tap to stop it',
-    synthesizing: 'Control — about to speak, tap to stop it',
-    speaking: 'Control — speaking, tap to stop it',
-    error: `Control — ${error ?? ''}`
-  }[state]
+  const label = error
+    ? `Control — ${error}`
+    : look === 'away'
+      ? holder ? `Control — on your ${holder.label}, tap to bring it here` : 'Control — nobody holds it, so it works silently; tap to bring it here'
+      : look === 'summary'
+        ? 'Control — here, but your voice goes to Summary Chat; tap to talk to Control'
+        : phase === 'ready'
+          ? 'Control — your voice goes to Control; tap to let go of it, which silences it'
+          : `Control — ${phase === 'speaking' ? 'speaking' : 'thinking'}; tap to stop it and let go of it`
 
   return (
     <button
-      className={`m-control m-control--${state}`}
+      className={`m-control m-control--${look}${error ? ' m-control--error' : ''}`}
+      // Busy elsewhere is that device's to show.
+      data-phase={look === 'away' ? 'ready' : phase}
       aria-label={label}
-      aria-pressed={target}
+      aria-pressed={look === 'here'}
       onContextMenu={(e) => e.preventDefault()}
       onClick={() => window.api.receptionist.select()}
     >

@@ -1,6 +1,6 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
-import type { AgentSearchMode, SpeechProgressEvent } from './protocol'
+import type { AgentSearchMode, ClientDevice, SpeechProgressEvent } from './protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -58,6 +58,8 @@ export interface ServerTransport {
 export interface ServerClientOptions {
   /** Named in the `client-hello` handshake, for the server's logs. */
   clientName: string
+  /** The device this client runs on, named in `client-hello`: what holds Control. */
+  device: ClientDevice
   log?: (message: string) => void
 }
 
@@ -70,7 +72,7 @@ export type ServerEventType =
   | 'system-stats'
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
-  | 'receptionist-status' | 'receptionist-talk-to-me' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
+  | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -282,7 +284,7 @@ export class ServerClient {
       case 'mobile-build-changed':
       case 'agent-meta-availability':
       case 'receptionist-status':
-      case 'receptionist-talk-to-me':
+      case 'receptionist-holder':
       case 'camera-follow':
       case 'agent-names':
       case 'receptionist-notice':
@@ -348,7 +350,8 @@ export class ServerClient {
       const reply = await this.request({
         type: 'client-hello',
         protocolVersion: CLIENT_PROTOCOL_VERSION,
-        client: this.options.clientName
+        client: this.options.clientName,
+        device: this.options.device
       })
       if (reply.type !== 'client-hello-result') return
       if (reply.compatible) {
@@ -833,7 +836,10 @@ export class ServerClient {
     this.fireAndForget({ type: 'receptionist-select' })
   }
 
-  setReceptionistTalkToMe(enabled: boolean): void {
-    this.fireAndForget({ type: 'set-receptionist-talk-to-me', enabled })
+  /** The device this client runs on. */
+  get device(): ClientDevice { return this.options.device }
+
+  stopReceptionist(): void {
+    this.fireAndForget({ type: 'receptionist-stop' })
   }
 }

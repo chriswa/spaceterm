@@ -4,7 +4,7 @@ import * as path from 'path'
 import { execFile } from 'child_process'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
-import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps, type SpawnedPty } from './terminal-respawn'
@@ -65,13 +65,13 @@ import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import { isNodeStamp, type DirectoryNodeData, type MarkdownNodeData, type NodeData, type TerminalNodeData } from '../shared/state'
+import { DESKTOP_DEVICE, isNodeStamp, type DirectoryNodeData, type MarkdownNodeData, type NodeData, type ReceptionistHolder, type TerminalNodeData } from '../shared/state'
 import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat'
-import { Receptionist } from './receptionist/receptionist'
+import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
 import { SideQuestions, serveSideQuestions } from './side-questions'
@@ -219,6 +219,8 @@ interface ClientConnection {
   link: ClientLink
   /** What the client called itself in `client-hello`, once it has. */
   name?: string
+  /** The device it said it runs on in `client-hello`: what can hold Control. */
+  device?: ClientDevice
   subscriptions: Map<PtySessionId, TerminalSubscription>
   /**
    * Sessions mid-attach: live output is queued here instead of being sent,
@@ -311,12 +313,6 @@ let sideQuestionServer: import('http').Server | undefined
  * takes it, and so does selecting the receptionist.
  */
 let voiceTarget: 'summary' | 'receptionist' = 'receptionist'
-/**
- * The client the user last talked to the receptionist from, as the phone's
- * talk button does; undefined after Voice Operator on the Mac, which belongs
- * to no client. See `receptionistView`.
- */
-let receptionistClientId: string | undefined
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
 /**
@@ -470,12 +466,49 @@ function parseTimestamp(iso: string | undefined): number | undefined {
   return Number.isFinite(ms) ? ms : undefined
 }
 
+/** A `client-hello` device worth trusting with Control: it arrives off the wire. */
+function isClientDevice(value: unknown): value is ClientDevice {
+  if (typeof value !== 'object' || value === null) return false
+  const { id, label } = value as Record<string, unknown>
+  return typeof id === 'string' && id !== '' && typeof label === 'string' && label !== ''
+}
+
+/** The connections from the device holding Control, newest last. */
+function holderClients(): ClientConnection[] {
+  const holder = stateManager.getReceptionistHolder()
+  return holder ? [...clients].filter(client => client.device?.id === holder.deviceId) : []
+}
+
+/**
+ * Point Control at the device holding it, or at nobody when no device does or
+ * the one that does is not connected. Called on everything that changes
+ * either: a hold, a device naming itself, a disconnect.
+ */
+function updateReceptionistListener(): void {
+  if (!receptionist) return
+  const holder = stateManager.getReceptionistHolder()
+  const client = holderClients().at(-1)
+  receptionist.setListener(!holder || !client ? undefined
+    // The Mac's voice is Voice Operator, which plays it itself, whichever window is open.
+    : holder.deviceId === DESKTOP_DEVICE.deviceId ? { id: holder.deviceId, speech: speechVoiceOperator }
+    : { id: client.id, speech: remoteSpeech.forClient(client.id, NO_LISTENER) })
+}
+
+/** Hand Control to a device, or to nobody, and tell every client. */
+function setReceptionistHolder(holder: ReceptionistHolder | null): void {
+  if (stateManager.setReceptionistHolder(holder)) {
+    serverLog(`[receptionist] now held by ${holder?.label ?? 'nobody'}`)
+    broadcastToAll({ type: 'receptionist-holder', holder })
+  }
+  updateReceptionistListener()
+}
+
 /**
  * What the user is looking at, for the receptionist's `nearby` tool: the
- * screen they last talked to it from, else whichever screen moved last.
+ * screen of the device holding Control, else whichever screen moved last.
  */
 function receptionistView(): { view: CameraBounds; nodes: NearbyNode[] } | undefined {
-  const spokenFrom = [...clients].find(client => client.id === receptionistClientId && client.cameraBounds)
+  const spokenFrom = holderClients().filter(client => client.cameraBounds).at(-1)
   const lastMoved = [...clients]
     .filter(client => client.cameraBounds)
     .sort((a, b) => (b.cameraBoundsAt ?? 0) - (a.cameraBoundsAt ?? 0))[0]
@@ -873,7 +906,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, { type: 'root-cwd', cwd: stateManager.getRootCwd() })
   send(link, { type: 'auto-stamps-enabled', enabled: stateManager.getAutoStampsEnabled() })
   send(link, receptionistStatus())
-  send(link, { type: 'receptionist-talk-to-me', enabled: stateManager.getReceptionistTalkToMe() })
+  send(link, { type: 'receptionist-holder', holder: stateManager.getReceptionistHolder() })
   send(link, { type: 'agent-names', names: agentNameMap() })
 
   // Availability is pushed on change, which a client that connected after the
@@ -895,6 +928,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
       updateSystemStatsWatched()
       remoteDictation.cancelAllFor(client.id)
       remoteSpeech.clientGone(client.id)
+      updateReceptionistListener()
       for (const [nodeId, owner] of terminalBorrowers) {
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
       }
@@ -1163,10 +1197,10 @@ function handleIngestMessage(msg: IngestMessage): void {
     case 'voice-command': {
       const text = msg.text.trim()
       if (!text) break
-      // Command mode is dictated on the Mac, so the receptionist answers there.
+      // Command mode is dictated on the Mac, so the Mac takes Control.
       if (voiceTarget === 'receptionist' && receptionist) {
-        receptionistClientId = undefined
-        void receptionist.hear(text, speechVoiceOperator)
+        setReceptionistHolder(DESKTOP_DEVICE)
+        void receptionist.hear(text)
       }
       else void summaryChat.followUp(text)
       break
@@ -1449,6 +1483,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const { compatible, error } = checkProtocolVersion(msg.protocolVersion, CLIENT_PROTOCOL_RANGE)
       const who = msg.client ?? 'unknown client'
       client.name = msg.client
+      if (isClientDevice(msg.device)) {
+        client.device = { id: msg.device.id, label: msg.device.label }
+        updateReceptionistListener()
+      }
       serverLog(
         compatible
           ? `[client] ${who} connected on protocol v${msg.protocolVersion}`
@@ -1509,10 +1547,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'summary-chat-follow-up': {
       const text = msg.text.trim()
       if (!text) break
-      // The receptionist answers on the device that spoke to it last.
+      // Speaking to Control is holding it: it answers on the device that spoke.
       if (voiceTarget === 'receptionist' && receptionist) {
-        receptionistClientId = client.id
-        void receptionist.hear(text, remoteSpeech.forClient(client.id, speechVoiceOperator))
+        if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
+        void receptionist.hear(text)
       } else {
         void summaryChat.followUp(text)
       }
@@ -1520,19 +1558,23 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'receptionist-select': {
-      // A press is "stop" whenever anything is audible, whoever is talking —
-      // the same rule as the summary chord — and "talk to Control" otherwise.
-      void (async () => {
-        const stopped = (await receptionist?.cancel()) || (await summaryChat.cancelAll())
-        if (!stopped) setVoiceTarget('receptionist')
-      })()
+      // The Control button, decided here so that two devices pressing at once
+      // agree: held elsewhere or nowhere, it takes Control here and talks to
+      // it; held here with the voice on Summary Chat, it talks to Control; held
+      // here and talked to, it lets go, which silences Control.
+      const device = client.device
+      if (!device) { setVoiceTarget('receptionist'); break }
+      if (stateManager.getReceptionistHolder()?.deviceId === device.id && voiceTarget === 'receptionist') {
+        setReceptionistHolder(null)
+      } else {
+        setReceptionistHolder({ deviceId: device.id, label: device.label })
+        setVoiceTarget('receptionist')
+      }
       break
     }
 
-    case 'set-receptionist-talk-to-me': {
-      stateManager.setReceptionistTalkToMe(msg.enabled === true)
-      receptionist?.setTalkToMe(stateManager.getReceptionistTalkToMe())
-      broadcastToAll({ type: 'receptionist-talk-to-me', enabled: stateManager.getReceptionistTalkToMe() })
+    case 'receptionist-stop': {
+      void receptionist?.cancel()
       break
     }
 
@@ -3101,7 +3143,9 @@ async function startServer(): Promise<void> {
       if (node?.type !== 'terminal' || !node.alive) return { ok: false, reason: 'not-listening' }
       return sideQuestions.ask(node.sessionId, prompt)
     },
-    focus: (nodeId) => broadcastToAll({ type: 'camera-follow', nodeId }),
+    focus: (nodeId) => {
+      for (const client of holderClients()) send(client.link, { type: 'camera-follow', nodeId })
+    },
     nodeIds: () => Object.keys(stateManager.getState().nodes) as NodeId[],
     archive: (nodeId) => archiveNode(nodeId),
     notify: (text) => broadcastToAll({ type: 'receptionist-notice', text }),
@@ -3126,14 +3170,14 @@ async function startServer(): Promise<void> {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceOperatorDiscovered: () => speechVoiceOperator.isRunning(),
   }, {
-    speech: speechVoiceOperator,
+    listener: undefined,
     onPhase: () => broadcastToAll(receptionistStatus()),
     onError: (message) => {
       serverLog(`[receptionist] ${message}`)
       broadcastToAll(receptionistStatus(message))
     },
   })
-  receptionist.setTalkToMe(stateManager.getReceptionistTalkToMe())
+  updateReceptionistListener()
 
   autoStamper = new AutoStamper({
     async ask(prompt, signal) {

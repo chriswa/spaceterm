@@ -43,7 +43,7 @@ class FakeTransport implements ServerTransport {
 
 function connected(): { t: FakeTransport; client: ServerClient } {
   const t = new FakeTransport()
-  const client = new ServerClient(t, { clientName: 'test' })
+  const client = new ServerClient(t, { clientName: 'test', device: { id: 'phone-1', label: 'Phone' } })
   void client.connect()
   t.accept()
   return { t, client }
@@ -55,7 +55,7 @@ afterEach(() => { vi.useRealTimers() })
 describe('ServerClient', () => {
   it('announces itself on connect', () => {
     const { t } = connected()
-    expect(t.last('client-hello').msg).toMatchObject({ client: 'test' })
+    expect(t.last('client-hello').msg).toMatchObject({ client: 'test', device: { id: 'phone-1', label: 'Phone' } })
   })
 
   it('correlates a reply to its request by seq, whatever arrives in between', async () => {
@@ -106,7 +106,7 @@ describe('ServerClient', () => {
 
   it('refuses requests while disconnected instead of queueing them', async () => {
     const t = new FakeTransport()
-    const client = new ServerClient(t, { clientName: 'test' })
+    const client = new ServerClient(t, { clientName: 'test', device: { id: 'phone-1', label: 'Phone' } })
     await expect(client.list()).rejects.toThrow('Not connected')
   })
 
@@ -179,20 +179,21 @@ describe('createApi', () => {
     const api = createApi(client, platform)
     t.receive(
       { type: 'receptionist-status', phase: 'ready', target: true },
-      { type: 'receptionist-talk-to-me', enabled: false },
+      { type: 'receptionist-holder', holder: { deviceId: 'phone-1', label: 'Phone' } },
       { type: 'agent-names', names: { n1: 'Kevin' } },
       { type: 'camera-follow', nodeId: 'n1' }
     )
     const status = vi.fn()
-    const talk = vi.fn()
+    const holder = vi.fn()
     const names = vi.fn()
     const follow = vi.fn()
     api.receptionist.onStatus(status)
-    api.receptionist.onTalkToMe(talk)
+    api.receptionist.onHolder(holder)
     api.receptionist.onAgentNames(names)
     api.receptionist.onCameraFollow(follow)
     expect(status).toHaveBeenCalledWith({ phase: 'ready', target: true, message: undefined })
-    expect(talk).toHaveBeenCalledWith(false)
+    expect(holder).toHaveBeenCalledWith({ deviceId: 'phone-1', label: 'Phone' })
+    expect(api.receptionist.deviceId).toBe('phone-1')
     expect(names).toHaveBeenCalledWith({ n1: 'Kevin' })
     // A camera move is an instruction for then, not state: never replayed.
     expect(follow).not.toHaveBeenCalled()
@@ -206,9 +207,9 @@ describe('createApi', () => {
     const { t, client } = connected()
     const api = createApi(client, platform)
     api.receptionist.select()
-    api.receptionist.setTalkToMe(true)
+    api.receptionist.stop()
     expect(t.last('receptionist-select').msg).toEqual({ type: 'receptionist-select' })
-    expect(t.last('set-receptionist-talk-to-me').msg).toEqual({ type: 'set-receptionist-talk-to-me', enabled: true })
+    expect(t.last('receptionist-stop').msg).toEqual({ type: 'receptionist-stop' })
   })
 
   it('filters mod traffic to the mod that asked', () => {

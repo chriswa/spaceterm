@@ -345,6 +345,19 @@ export class SpeechChannel {
   }
 
   /**
+   * Stop whatever is audible, as though the listener had cut it off, but leave
+   * the attempt running: the listener has gone, and the work that produced
+   * the speech still matters. The monitor sees the job end cut off, records
+   * how far it got for `heardPrefix`, and settles as it would after any cut.
+   */
+  async silence(): Promise<void> {
+    const interim = this.interimJobs
+    this.interimJobs = []
+    for (const spoken of interim) void spoken.backend.drop(spoken.id)
+    if (this.job) await this.job.backend.drop(this.job.id)
+  }
+
+  /**
    * How much of the previous answer the listener actually heard, if they cut it
    * off: a UTF-16 offset into `joinSpeechParts` of what was delivered. Consumed
    * once, so a later turn does not repeat stale context.

@@ -60,8 +60,20 @@ that transcript for the reasoning behind any item here.
   sends and spawns included, never trimmed, for `recall`, since compaction
   forgets detail. `session.json` holds the session id; `names.json` the
   names. (`history.json` is left over from the earlier design and unused.)
-  Talk-to-me is a ServerState setting; the voice target defaults to Control
-  on every server start.
+  The voice target defaults to Control on every server start.
+- **Holding**: Control speaks to one device, its holder (`receptionistHolder`
+  in ServerState; the Mac until changed), kept while that device is closed.
+  Speaking to Control from a device takes it there. The Control button
+  (which absorbed Talk To Me) is black while another device or none holds
+  Control, white while this one does and the voice goes to it, magenta while
+  this one does but the voice went to Summary Chat; a press brings black and
+  magenta to white, and lets go from white. Moving between two connected
+  devices cuts the old one off, and Control carries on on the new one from
+  where it was cut. While the holder is
+  not connected, or nobody holds it, turns still run — standing instructions
+  get carried out — but each says THE USER IS AWAY and a reply that talks is
+  refused. When the holder is back, one turn gets what was missed: where the
+  last reply was cut off, and the events acted on meanwhile.
 - **Misheard names**: no deterministic layer. The prompt says input is
   dictated, gives examples ("heaven" for Evan), and asks Control to confirm
   when unsure. The registry still never assigns two sound-alike names at once

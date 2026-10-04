@@ -7,7 +7,7 @@ import type {
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
 import type { SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
-import type { NodeData, ServerState } from '../../../../shared/state'
+import type { NodeData, ReceptionistHolder, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
 import type { UsageSnapshot } from '../../../../shared/usage-report'
@@ -104,6 +104,9 @@ export interface FakeBridgeResponses {
   agentMemoryBytes: number | null
 }
 
+/** The device the fake bridge says it runs on: emit a holder with this id to make it this client's. */
+export const FAKE_DEVICE_ID = 'fake-device'
+
 const EMPTY_STATE: ServerState = {
   version: 0,
   nextZIndex: 1,
@@ -172,7 +175,7 @@ export class FakeBridge implements Api {
   private readonly focusChanged = new Set<(focused: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId | null) => void>()
   private readonly receptionistStatus = new Set<(status: ReceptionistStatus) => void>()
-  private readonly receptionistTalkToMe = new Set<(enabled: boolean) => void>()
+  private readonly receptionistHolder = new Set<(holder: ReceptionistHolder | null) => void>()
   private readonly agentNames = new Set<(names: Record<string, string>) => void>()
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
@@ -277,8 +280,8 @@ export class FakeBridge implements Api {
     receptionistStatus: (status: ReceptionistStatus): void => {
       for (const fn of this.receptionistStatus) fn(status)
     },
-    receptionistTalkToMe: (enabled: boolean): void => {
-      for (const fn of this.receptionistTalkToMe) fn(enabled)
+    receptionistHolder: (holder: ReceptionistHolder | null): void => {
+      for (const fn of this.receptionistHolder) fn(holder)
     },
     agentNames: (names: Record<string, string>): void => {
       for (const fn of this.agentNames) fn(names)
@@ -447,9 +450,10 @@ export class FakeBridge implements Api {
    */
   readonly receptionist: ReceptionistApi = {
     select: () => this.record('receptionist.select'),
-    setTalkToMe: (enabled) => this.record('receptionist.setTalkToMe', enabled),
+    stop: () => this.record('receptionist.stop'),
+    deviceId: FAKE_DEVICE_ID,
     onStatus: (cb) => subscribe(this.receptionistStatus, cb),
-    onTalkToMe: (cb) => subscribe(this.receptionistTalkToMe, cb),
+    onHolder: (cb) => subscribe(this.receptionistHolder, cb),
     onAgentNames: (cb) => subscribe(this.agentNames, cb),
     onCameraFollow: (cb) => subscribe(this.cameraFollow, cb),
     onNotice: (cb) => subscribe(this.receptionistNotice, cb)

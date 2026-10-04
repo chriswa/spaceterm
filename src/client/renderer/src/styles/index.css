@@ -4098,6 +4098,18 @@ html, body, #root {
   position: relative;
 }
 
+/* Control's three states (ControlButtons.tsx); white is toolbar__btn--active. */
+.toolbar__control--away {
+  background: #000;
+  border-color: rgba(255,255,255,0.15);
+}
+
+.toolbar__control--summary,
+.toolbar__control--summary:hover {
+  background: #e040fb;
+  color: #000;
+}
+
 .toolbar__control .toolbar__summary-bubble {
   left: auto;
   right: -6px;

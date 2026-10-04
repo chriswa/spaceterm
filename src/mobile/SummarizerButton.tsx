@@ -71,8 +71,8 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId | null }) {
     setError(null)
     // A press over an answer is an interruption: stop it, then listen.
     if (phase) {
-      // Control's press is the same toggle: it stops it while it is answering.
-      if (toControl) window.api.receptionist.select()
+      // Stopped, not let go of: the user is about to talk to it.
+      if (toControl) window.api.receptionist.stop()
       else void window.api.toggleSummaryChat(undefined, 'summary').catch(() => undefined)
     }
     setMic({ kind: 'starting' })

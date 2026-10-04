@@ -1,5 +1,28 @@
 import { create } from 'zustand'
 import type { ReceptionistStatus, SummaryChatPhase } from '../../../../shared/api'
+import type { ReceptionistHolder } from '../../../../shared/state'
+
+/** Who holds Control, as this client sees it. */
+export interface ReceptionistHolding {
+  /** What the holding device is called, e.g. "Phone". */
+  label: string
+  /** Whether it is this client's device. */
+  mine: boolean
+}
+
+/**
+ * The Control button's three states, the same on every client: `away` (black)
+ * while another device or none holds Control, `here` (white) while this one
+ * does and the voice goes to it, `summary` (magenta) while this one does but
+ * the voice last went to Summary Chat. A press moves `away` and `summary` to
+ * `here`, and `here` to `away` — see `ReceptionistSelectMessage`.
+ */
+export type ControlLook = 'away' | 'here' | 'summary'
+
+export function controlLook(holder: ReceptionistHolding | null, target: boolean): ControlLook {
+  if (!holder?.mine) return 'away'
+  return target ? 'here' : 'summary'
+}
 
 interface ReceptionistState {
   /** What the receptionist is doing. Server-owned, the same on every client. */
@@ -8,10 +31,11 @@ interface ReceptionistState {
   target: boolean
   /** Why it last failed, while it stays failed. */
   error: string | null
-  /** Whether it may speak up unprompted. Mirrors `ServerState.receptionistTalkToMe`, on unless turned off. */
-  talkToMe: boolean
+  /** The device Control speaks to, or null when nobody holds it. Mirrors `ServerState.receptionistHolder`. */
+  holder: ReceptionistHolding | null
   setStatus: (status: ReceptionistStatus) => void
-  setTalkToMe: (enabled: boolean) => void
+  /** `deviceId` is this client's own. */
+  setHolder: (holder: ReceptionistHolder | null, deviceId: string) => void
 }
 
 /**
@@ -23,7 +47,7 @@ export const useReceptionistStore = create<ReceptionistState>((set) => ({
   phase: 'ready',
   target: false,
   error: null,
-  talkToMe: true,
+  holder: null,
   setStatus: ({ phase, target, message }) => set({ phase, target, error: message ?? null }),
-  setTalkToMe: (talkToMe) => set({ talkToMe }),
+  setHolder: (holder, deviceId) => set({ holder: holder && { label: holder.label, mine: holder.deviceId === deviceId } }),
 }))

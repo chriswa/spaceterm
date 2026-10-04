@@ -12,7 +12,7 @@ import { whereWords, type NearbyNode } from './nearby'
 import type { CameraBounds } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import {
-  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderTurnBody, type ReceptionistEvent,
+  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderTurnBody, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
 import {
   CONTROL, isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
@@ -135,7 +135,7 @@ export interface ReceptionistDeps {
    */
   askAgent(nodeId: NodeId, prompt: string): Promise<SideQuestionResult>
   /**
-   * Move the camera to a node, on every client. Only ever because the user
+   * Move the camera to a node, on the device holding Control. Only ever because the user
    * asked to be taken there: see the force_user_camera tool.
    */
   focus(nodeId: NodeId): void
@@ -153,8 +153,8 @@ export interface ReceptionistDeps {
   /** Press Escape in an agent's terminal. */
   interrupt(nodeId: NodeId): void
   /**
-   * What the user is looking at: the screen they last talked to the
-   * receptionist from (or, failing that, last moved), and the nodes nearest
+   * What the user is looking at: the screen of the device holding Control
+   * (or, failing that, the one that last moved), and the nodes nearest
    * its middle. Undefined when no screen has reported where it is.
    */
   userView(): { view: CameraBounds; nodes: NearbyNode[] } | undefined
@@ -169,9 +169,15 @@ export interface ReceptionistDeps {
   voiceOperatorDiscovered(): boolean
 }
 
-export interface ReceptionistOptions {
-  /** Where speech goes until someone talks to the receptionist from somewhere else. */
+/** Who hears Control: a device's speech, and an id telling one device from another. */
+export interface Listener {
+  id: string
   speech: SpeechBackend
+}
+
+export interface ReceptionistOptions {
+  /** Who hears Control to begin with, or nobody: see `setListener`. */
+  listener: Listener | undefined
   onPhase(phase: SpeechPhase): void
   onError(message: string): void
 }
@@ -226,6 +232,17 @@ const SIDE_QUESTION_TOASTS: Record<Exclude<SideQuestionResult, { ok: true }>['re
   'invalid-reply': 'the answer came back garbled',
 }
 
+/**
+ * Speech for when nobody is listening. Never reached — nothing is delivered
+ * without a listener — but the channel needs a backend, and one that refuses
+ * is the safe thing to leave there.
+ */
+export const NO_LISTENER: SpeechBackend = {
+  speak: async () => ({ status: 410, body: { error: 'no_listener' } }),
+  status: async () => ({ status: 404, body: { error: 'unknown_job' } }),
+  drop: async () => ({ status: 404, body: { error: 'unknown_job' } }),
+}
+
 /** Identifies a version of the instructions; a session started on another one is replaced. */
 export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMPT).digest('hex').slice(0, 16)
 /**
@@ -234,6 +251,8 @@ export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMP
  */
 const INTERRUPT_SETTLE_MS = 800
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
+/** Said to a model that talked when told the user is away: see `renderTurnBody`'s `away`. */
+const AWAY_REFUSAL = 'NOTHING WAS DONE: the user is away, so "say" must be empty. Reply again with the same tools and an empty "say".'
 /**
  * How long after a dictation ends the receptionist stays held, for its words
  * to arrive as a turn of their own: held, events wait for that turn rather
@@ -276,7 +295,22 @@ export class Receptionist {
   /** The stop each agent was last reported at (its `stateSince`), so the same stop is never reported twice. */
   private readonly reportedStops = new Map<NodeId, number | undefined>()
   private readonly channel: SpeechChannel
-  private talkToMe = true
+  /**
+   * Whether anyone can hear Control: the device holding it is connected. While
+   * nobody can, turns still run — "when Alice is done, tell Bob" has to work
+   * with the phone in a pocket — but must say nothing. See `setListener`.
+   */
+  private listening: boolean
+  /** Which listener Control's words go to: see `setListener`. */
+  private listenerId: string | undefined
+  /**
+   * What the user has missed since nobody could hear: the events Control acted
+   * on silently, how its last words were cut off, whether a reply went unheard.
+   * Started when the listener goes, handed to `returnNews` when it comes back.
+   */
+  private missed: ReturnNews | undefined
+  /** What the user missed, for the first turn they can hear — see `missed`. */
+  private returnNews: ReturnNews | undefined
   /**
    * The user is dictating, or has only just stopped: nothing may be said and
    * no event may start a turn. See `userSpeaking`.
@@ -297,8 +331,11 @@ export class Receptionist {
     // Instructions are fixed when a session starts, so a session begun on an
     // older prompt would quietly keep following it.
     this.session = saved?.promptHash === PROMPT_HASH ? saved : undefined
+    this.listening = opts.listener !== undefined
+    this.listenerId = opts.listener?.id
+    if (!this.listening) this.missed = emptyNews()
     this.channel = new SpeechChannel({
-      speech: opts.speech,
+      speech: opts.listener?.speech ?? NO_LISTENER,
       label: 'receptionist',
       onPhase: (phase) => {
         opts.onPhase(phase)
@@ -316,9 +353,11 @@ export class Receptionist {
 
   get phase(): SpeechPhase { return this.channel.phase }
 
-  /** The user said something to the receptionist, from the device `speech` plays on. */
-  async hear(text: string, speech?: SpeechBackend): Promise<void> {
-    if (speech) this.channel.speech = speech
+  /**
+   * The user said something to the receptionist. The caller makes the device
+   * they said it on the listener first: speaking to Control is holding it.
+   */
+  async hear(text: string): Promise<void> {
     // Their words are here, so they have finished: no need to wait out the grace period.
     if (!this.dictating) this.release()
     await this.runTurn(text)
@@ -370,12 +409,50 @@ export class Receptionist {
   }
 
   /**
-   * Whether background results may be spoken unprompted. Off, they wait and
-   * come with the user's next question instead.
+   * Where Control's words go, or undefined when nobody can hear them: no
+   * device holds Control, or the one that does has gone away. `id` names the
+   * listener, so that the same one handed over again is not a move.
+   *
+   * Going away cuts off whatever is playing, the same as being talked over,
+   * but leaves a turn in progress to finish: its tools still run, and only its
+   * words go unheard. Coming back gives Control one turn to tell the user what
+   * they missed, if they missed anything. Moving to another device is both at
+   * once: the old one is cut off, and Control picks up on the new one from
+   * where it was cut.
    */
-  setTalkToMe(enabled: boolean): void {
-    this.talkToMe = enabled
-    if (enabled) this.maybeSpeakUp()
+  setListener(listener: Listener | undefined): void {
+    if (!listener) {
+      if (!this.listening) return
+      this.listening = false
+      this.listenerId = undefined
+      this.channel.speech = NO_LISTENER
+      this.missed = emptyNews()
+      // What was heard of the reply they left in the middle of, if they did:
+      // news for when they are back.
+      void this.channel.silence().then(() => this.noteInterruption())
+      return
+    }
+    const from = this.listenerId
+    this.listenerId = listener.id
+    this.channel.speech = listener.speech
+    if (this.listening) {
+      if (from === listener.id) return
+      // Moved. The job being cut off keeps the backend it started on, so
+      // silencing reaches the old device; anything said next goes to the new.
+      this.missed = { ...emptyNews(), moved: true }
+      void this.channel.silence().then(() => this.noteInterruption()).then(() => this.arrive())
+      return
+    }
+    this.listening = true
+    this.arrive()
+  }
+
+  /** The listener is here: what it missed, if anything, gets a turn. */
+  private arrive(): void {
+    const missed = this.missed
+    this.missed = undefined
+    if (missed && hasNews(missed)) this.returnNews = mergeNews(this.returnNews, missed)
+    this.maybeSpeakUp()
   }
 
   /** An agent's Claude state changed. Fires a monitor if one is waiting on it. */
@@ -412,7 +489,8 @@ export class Receptionist {
   }
 
   private maybeSpeakUp(): void {
-    if (!this.talkToMe || this.held || !this.events.length || this.channel.isProducing()) return
+    if (this.held || this.channel.isProducing()) return
+    if (!this.events.length && !(this.listening && this.returnNews)) return
     void this.runTurn(undefined)
   }
 
@@ -423,29 +501,35 @@ export class Receptionist {
   private async runTurn(heard: string | undefined): Promise<void> {
     const attempt = this.channel.begin('thinking')
     this.unprompted = heard === undefined ? attempt : undefined
-    if (heard !== undefined) await this.noteInterruption()
+    await this.noteInterruption()
+    // Read after that await: the listener may have come or gone during it.
+    const away = !this.listening
     const events = this.events.splice(0)
-    const body = renderTurnBody(events, heard)
+    const news = away ? undefined : this.returnNews
+    this.returnNews = undefined
+    const body = renderTurnBody(events, heard, away ? 'away' : news)
     // Taken before this message joins the record, for a session that has forgotten what led up to it.
     const earlier = this.deps.record.recent(RECAP_MESSAGES)
     if (heard !== undefined) this.deps.record.append([{ role: 'user', content: body }])
     let monitoring = false
     try {
-      const reply = await this.converse(attempt, body, earlier)
+      const reply = await this.converse(attempt, body, earlier, away)
       if (!attempt.isCurrent) {
-        this.requeue(events)
+        this.requeue(events, news)
         return
       }
       if (!reply) return
+      // Acted on where the user could not hear: theirs to be told of when they are back.
+      if (away) this.missed?.events.push(...events)
       monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply))
     } catch (err) {
-      if (!attempt.isCurrent) { this.requeue(events); return }
+      if (!attempt.isCurrent) { this.requeue(events, news); return }
       if (err instanceof LostSession) this.forgetSession()
       const message = err instanceof Error ? err.message : String(err)
       serverLog(`[receptionist] turn failed: ${message}`)
       this.deps.log({ event: 'turn-failed', heard: heard ?? null, error: message })
       this.onError(`The receptionist could not answer: ${message}`)
-      monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
+      if (this.listening) monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
     } finally {
       if (!monitoring) this.channel.settle(attempt)
     }
@@ -456,8 +540,9 @@ export class Receptionist {
    * that superseded this one may already be over by now — so this has to
    * offer them a turn of their own, not just wait for the next phase change.
    */
-  private requeue(events: readonly ReceptionistEvent[]): void {
-    if (!events.length) return
+  private requeue(events: readonly ReceptionistEvent[], news: ReturnNews | undefined): void {
+    if (news) this.returnNews = mergeNews(news, this.returnNews)
+    if (!events.length && !news) return
     this.events.unshift(...events)
     this.maybeSpeakUp()
   }
@@ -467,7 +552,9 @@ export class Receptionist {
    * the turn; everything else runs as soon as it is asked for. Returns the
    * final reply, or undefined if the attempt lost ownership.
    */
-  private async converse(attempt: Attempt, body: string, earlier: readonly RecordMessage[]): Promise<Reply | undefined> {
+  private async converse(
+    attempt: Attempt, body: string, earlier: readonly RecordMessage[], away: boolean,
+  ): Promise<Reply | undefined> {
     let message = body
     for (let step = 1; step <= MAX_STEPS; step++) {
       const answer = await this.ask(attempt, `${message}\n\n${FORMAT_REMINDER}`, step === 1 ? earlier : [])
@@ -489,6 +576,10 @@ export class Receptionist {
       // agent, or be spoken as "an agent". Check every one before anything
       // runs or is said, and have the model correct it.
       const problems = this.checkHandles(reply, handles, agents)
+      // Told the user is away, and talking anyway: refused like a bad handle,
+      // so the model learns it rather than being quietly ignored. Out of
+      // steps, its tools run and its words go unheard as any others would.
+      if (away && reply.say.length) problems.unshift(AWAY_REFUSAL)
       if (problems.length && step < MAX_STEPS) {
         this.deps.log({ event: 'bad-handles', step, problems })
         message = `NOTHING WAS DONE AND NOTHING YOU SAID WAS SPOKEN. ${problems.join(' ')} Reply again with the right handles.`
@@ -496,7 +587,7 @@ export class Receptionist {
       }
       // Words that came with a blocking tool are spoken now, while it runs:
       // the listener hears "let me check" instead of silence.
-      if (reply.tools.some(isBlocking) && step < MAX_STEPS && reply.say.length) {
+      if (reply.tools.some(isBlocking) && step < MAX_STEPS && reply.say.length && this.listening) {
         await this.untilUserDone()
         if (!attempt.isCurrent) return undefined
         const { spoken } = this.render(reply.say, agents)
@@ -946,6 +1037,16 @@ export class Receptionist {
       this.notes.push('Your previous reply was never spoken: the user spoke over it, so they heard none of it.')
       return false
     }
+    if (!this.listening) {
+      // Gone while the reply was being written. Its tools have run; its words
+      // are dropped, and the model told, as when it is talked over.
+      if (reply.say.length) {
+        this.notes.push('Your previous reply was never spoken: the user was away, so they heard none of it.')
+        if (this.missed) this.missed.unheard = true
+      }
+      this.deps.log({ event: 'turn', body, say: reply.say, spoken: [], tools: reply.tools, away: true })
+      return false
+    }
     const agents = this.deps.agents()
     const handles = this.handles(agents)
     // The camera stays where the user put it: an agent being spoken of is no
@@ -973,6 +1074,30 @@ export class Receptionist {
     const audible = kept.map(part => part.text).join(' ')
     // Talked over, or lost with the phone's page: either way, only this much was heard.
     this.notes.push(`Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest; if it still matters, say it again.`)
+    // Cut off by leaving, or by moving: said again when they are back, since
+    // the note above may go with a turn they cannot hear.
+    if (this.missed) this.missed.cutOff = audible
+  }
+}
+
+function emptyNews(): ReturnNews {
+  return { events: [], unheard: false }
+}
+
+/** Whether there is anything to tell: a move with nothing cut off is not news. */
+function hasNews(news: ReturnNews): boolean {
+  return news.events.length > 0 || news.cutOff !== undefined || news.unheard
+}
+
+/** Two absences' news as one, `earlier` first. */
+function mergeNews(earlier: ReturnNews | undefined, later: ReturnNews | undefined): ReturnNews | undefined {
+  if (!earlier || !later) return earlier ?? later
+  const cutOff = earlier.cutOff ?? later.cutOff
+  return {
+    events: [...earlier.events, ...later.events],
+    unheard: earlier.unheard || later.unheard,
+    ...(cutOff !== undefined ? { cutOff } : {}),
+    ...(earlier.moved || later.moved ? { moved: true } : {}),
   }
 }
 
