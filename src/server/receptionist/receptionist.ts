@@ -202,7 +202,7 @@ const NODE_WORDS: Record<NearbyNode['type'], string> = {
 /** What each failure means for what to do next, as the model is told it. */
 const SIDE_QUESTION_FAILURES: Record<Exclude<SideQuestionResult, { ok: true }>['reason'], string> = {
   'not-listening': "that agent's Claude Code was started before side questions were added to Spaceterm, so it is not listening for them, and it will not be until it restarts. This is not because it is busy: an up-to-date agent answers side questions while it works. Answer from its transcript with read instead, or send it the question if the user wants the agent itself to answer; offer the user to restart it if they want it to take side questions",
-  'nothing-to-fork': 'that agent has not finished its first reply yet, so there is nothing to ask',
+  'nothing-to-fork': "that agent's Claude Code has not sent the model anything since it started — it was just restarted or resumed, or it is still on its very first reply — and a side question replays its last request, so there is nothing to ask until its next turn. Its conversation is all in its transcript: answer from that with read instead",
   timeout: 'no answer came in time',
   'api-error': 'the model request failed',
   'empty-reply': 'the agent gave no answer',
@@ -213,7 +213,7 @@ const SIDE_QUESTION_FAILURES: Record<Exclude<SideQuestionResult, { ok: true }>['
 /** The same failures, as a toast on the user's screen says them. */
 const SIDE_QUESTION_TOASTS: Record<Exclude<SideQuestionResult, { ok: true }>['reason'], string> = {
   'not-listening': 'it was started before side questions existed, and takes them after a restart',
-  'nothing-to-fork': 'it has not answered anything yet',
+  'nothing-to-fork': 'it has not taken a turn since it was started or resumed',
   timeout: 'no answer in time',
   'api-error': 'the model request failed',
   'empty-reply': 'it gave no answer',

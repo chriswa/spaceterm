@@ -36,7 +36,9 @@ export type SideQuestionResult =
      * `not-listening`: no plugin is polling for that surface — the agent was
      * started before the plugin carried the module, or is not Claude Code.
      * `timeout`: asked, but no answer in time. The rest are `$.model.fork`'s
-     * own reasons: `nothing-to-fork` before the agent's first reply.
+     * own reasons: `nothing-to-fork` before the agent's process has made its
+     * first request — a fresh agent, or one just restarted and resumed, whose
+     * conversation is on disk but whose last request is not in memory.
      */
     reason: 'not-listening' | 'timeout' | 'nothing-to-fork' | 'api-error' | 'empty-reply' | 'aborted' | 'invalid-reply'
     detail?: string

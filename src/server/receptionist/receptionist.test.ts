@@ -678,6 +678,23 @@ describe('Receptionist', () => {
     expect(h.spoken).toHaveLength(2)
   })
 
+  it('says a just-resumed agent has nothing to ask yet, and to read its transcript instead', async () => {
+    const h = harness({
+      askAgent: async () => ({ ok: false, reason: 'nothing-to-fork' }),
+      replies: [
+        reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'Done yet?' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('it was just restarted or resumed')
+          expect(turn.prompt).toContain('answer from that with read instead')
+          return reply([{ from: 'control', text: 'Reading instead.' }], [])
+        },
+      ],
+    })
+    await h.receptionist.hear('ask Kevin if he is done')
+    await flush()
+    expect(h.notices).toEqual(["Control's question to Kevin failed: it has not taken a turn since it was started or resumed"])
+  })
+
   it('tells the model why an agent could not answer, so it can send instead', async () => {
     const h = harness({
       askAgent: async () => ({ ok: false, reason: 'not-listening' }),
