@@ -3067,6 +3067,7 @@ async function startServer(): Promise<void> {
       return sideQuestions.ask(node.sessionId, prompt)
     },
     focus: (nodeId) => broadcastToAll({ type: 'camera-follow', nodeId }),
+    nodeIds: () => Object.keys(stateManager.getState().nodes) as NodeId[],
     notify: (text) => broadcastToAll({ type: 'receptionist-notice', text }),
     send: (nodeId, text) => {
       const node = stateManager.getNode(nodeId)

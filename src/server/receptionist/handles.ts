@@ -96,6 +96,8 @@ export class Handles {
 
 /** Directory handles carry a prefix, so an agent's and a directory's can never be confused. */
 export const DIRECTORY_PREFIX = 'dir-'
+/** As do handles for any other node — a note, a title — which only the camera can go to. */
+export const NODE_PREFIX = 'node-'
 
 /** Levenshtein distance, for "did you mean". */
 export function editDistance(a: string, b: string): number {

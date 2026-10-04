@@ -7,7 +7,7 @@ import type { SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
-import { DIRECTORY_PREFIX, editDistance, Handles } from './handles'
+import { DIRECTORY_PREFIX, editDistance, Handles, NODE_PREFIX } from './handles'
 import { whereWords, type NearbyNode } from './nearby'
 import type { CameraBounds } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
@@ -129,8 +129,13 @@ export interface ReceptionistDeps {
    * `side-questions.ts`. Always resolves.
    */
   askAgent(nodeId: NodeId, prompt: string): Promise<SideQuestionResult>
-  /** Move the camera to a surface, on every client. */
+  /**
+   * Move the camera to a node, on every client. Only ever because the user
+   * asked to be taken there: see the force_user_camera tool.
+   */
   focus(nodeId: NodeId): void
+  /** Every node on the canvas, for the handles force_user_camera takes. */
+  nodeIds(): NodeId[]
   /**
    * A toast on every client. Side questions are what the receptionist pays
    * the agents' model for, so each one is announced with what it used.
@@ -574,6 +579,18 @@ export class Receptionist {
         results.push(this.nearby(agents, handles))
         continue
       }
+      if (call.tool === 'force_user_camera') {
+        const nodeId = this.resolveTarget(call.target, handles, agents)
+        if (!nodeId) {
+          done.push(`force_user_camera [${call.target}]: that is gone, so the camera did not move`)
+          continue
+        }
+        this.deps.focus(nodeId)
+        this.deps.log({ event: 'camera', target: call.target, nodeId })
+        const agent = agents.find(candidate => candidate.nodeId === nodeId)
+        done.push(`force_user_camera took the user to ${agent ? this.describe(agent, handles) : `[${call.target}]`}`)
+        continue
+      }
       if (call.tool === 'find_agent') {
         results.push(await this.findAgent(call.query, agents, handles))
         continue
@@ -686,6 +703,18 @@ export class Receptionist {
     return new Handles(directories.map(directory => directory.nodeId), DIRECTORY_PREFIX)
   }
 
+  /** Handles for any node on the canvas, as nearby gives them for what is not an agent. */
+  private nodeHandles(): Handles {
+    return new Handles(this.deps.nodeIds(), NODE_PREFIX)
+  }
+
+  /** Whatever force_user_camera can take the user to: an agent by handle or name, a directory, or any node. */
+  private resolveTarget(ref: string, handles: Handles, agents: readonly RosterAgent[]): NodeId | undefined {
+    return this.resolve(ref, handles, agents)
+      ?? this.directoryHandles(this.deps.directories()).find(ref)
+      ?? this.nodeHandles().find(ref)
+  }
+
   /**
    * The live agent a reference means: its handle, or — once it has one — its
    * name, in any case. The user says names, so the model writes them; making
@@ -739,6 +768,10 @@ export class Receptionist {
           const near = directories.nearest(call.directory)
           problems.push(`"${call.directory}" (in spawn) is not a directory's handle.${near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_agents to see the directories.'}`)
         }
+      } else if (call.tool === 'force_user_camera') {
+        if (!this.resolveTarget(call.target, handles, agents)) {
+          problems.push(`"${call.target}" (in force_user_camera) is not a live agent, a directory, or a node from nearby.${suggest(call.target)}`)
+        }
       } else if ('agent' in call) {
         unknownAgent(call.agent, `in ${call.tool}`)
       }
@@ -759,11 +792,12 @@ export class Receptionist {
     const seen = this.deps.userView()
     if (!seen) return 'nearby: no screen has said where it is looking, so where the user is looking is unknown.'
     const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
+    const nodeHandles = this.nodeHandles()
     const lines = seen.nodes.map(node => {
       const agent = byId.get(node.nodeId)
       const what = agent
         ? `${this.describe(agent, handles)}, an agent, ${STATE_WORDS[agent.state]}`
-        : `${NODE_WORDS[node.type]}${node.label ? ` "${node.label}"` : ''}${node.type === 'terminal' ? ', not an agent you can act on' : ''}`
+        : `[${nodeHandles.of(node.nodeId) ?? node.nodeId}] ${NODE_WORDS[node.type]}${node.label ? ` "${node.label}"` : ''}${node.type === 'terminal' ? ', not an agent you can act on' : ''}`
       return `${whereWords(node, seen.view)}: ${what}`
     })
     return `nearby:\n${lines.length ? lines.join('\n') : 'nothing is on the canvas.'}`
@@ -845,16 +879,13 @@ export class Receptionist {
     }
     const agents = this.deps.agents()
     const handles = this.handles(agents)
-    const { spoken, mentioned } = this.render(reply.say, agents)
+    // The camera stays where the user put it: an agent being spoken of is no
+    // reason to move it. Only force_user_camera does, when they ask.
+    const { spoken } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
     this.lastSpoken = spoken
     this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
-    // The camera follows the conversation: the agent quoted first, else the
-    // agent mentioned first.
-    const quoted = froms.map(from => from === CONTROL ? undefined : this.resolve(from, handles, agents)).find(Boolean)
-    const focus = quoted ?? mentioned[0]
-    if (focus) this.deps.focus(focus)
     if (!spoken.length) return false
     return this.channel.deliver(attempt, spoken.map(({ text, voice }) => ({ text, voice })))
   }

@@ -11,7 +11,7 @@ import {
   PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
-import { DIRECTORY_PREFIX, Handles } from './handles'
+import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
@@ -20,6 +20,12 @@ const HANDLES = new Handles([KEVIN_ID, SALLY_ID])
 const KEVIN = HANDLES.of(KEVIN_ID)!
 const SALLY = HANDLES.of(SALLY_ID)!
 const DIR = new Handles([DIR_ID], DIRECTORY_PREFIX).of(DIR_ID)!
+const NOTE_ID = asNodeId('note-1')
+const SHELL_ID = asNodeId('shell-1')
+/** Every node on the fake canvas. */
+const NODE_IDS = [KEVIN_ID, SALLY_ID, DIR_ID, NOTE_ID, SHELL_ID]
+const NOTE = new Handles(NODE_IDS, NODE_PREFIX).of(NOTE_ID)!
+const SHELL = new Handles(NODE_IDS, NODE_PREFIX).of(SHELL_ID)!
 
 const TRANSCRIPTS: Record<string, TranscriptMessage[]> = {
   '/t/kevin.jsonl': [
@@ -164,6 +170,7 @@ function harness(opts: {
       return { ok: true, text: 'It was 42 litres exactly.', usage: { cache_read_input_tokens: 38_291, input_tokens: 40 } }
     },
     focus: (nodeId) => focused.push(nodeId),
+    nodeIds: () => NODE_IDS,
     notify: (text) => notices.push(text),
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
     interrupt: (nodeId) => wire.push(`escape ${nodeId}`),
@@ -208,7 +215,8 @@ describe('Receptionist', () => {
     ])
     // Sally was never mentioned, so she was never named.
     expect([...h.assigned.keys()]).toEqual([KEVIN_ID])
-    expect(h.focused).toEqual([KEVIN_ID])
+    // Talking about an agent never moves the user's camera.
+    expect(h.focused).toEqual([])
   })
 
   it('starts one session with the instructions, then sends only what is new into it', async () => {
@@ -795,16 +803,16 @@ describe('Receptionist', () => {
         view,
         nodes: [
           { nodeId: SALLY_ID, type: 'terminal', label: 'login page', distance: 0, inView: true },
-          { nodeId: asNodeId('note-1'), type: 'markdown', label: 'Design notes', distance: 120, inView: true },
-          { nodeId: asNodeId('shell-1'), type: 'terminal', label: 'zsh', distance: 9_000, inView: false },
+          { nodeId: NOTE_ID, type: 'markdown', label: 'Design notes', distance: 120, inView: true },
+          { nodeId: SHELL_ID, type: 'terminal', label: 'zsh', distance: 9_000, inView: false },
         ],
       }),
       replies: [
         reply([{ from: 'control', text: 'Let me see.' }], [{ tool: 'nearby' }]),
         (turn) => {
           expect(turn.prompt).toContain(`under the middle of the screen: [${SALLY}] ("login page"), an agent, working`)
-          expect(turn.prompt).toContain('on screen: a note "Design notes"')
-          expect(turn.prompt).toContain('off screen, about 9 screens away: a terminal "zsh", not an agent you can act on')
+          expect(turn.prompt).toContain(`on screen: [${NOTE}] a note "Design notes"`)
+          expect(turn.prompt).toContain(`off screen, about 9 screens away: [${SHELL}] a terminal "zsh", not an agent you can act on`)
           return reply([{ from: 'control', text: `That's {${SALLY}}.` }])
         },
       ],
@@ -812,6 +820,42 @@ describe('Receptionist', () => {
     await h.receptionist.hear('what is this one doing?')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  it('moves the camera only with force_user_camera: to an agent, a directory, or a node from nearby', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `Here is {${KEVIN}}.` }], [{ tool: 'force_user_camera', target: KEVIN }]),
+        reply([{ from: 'control', text: 'There.' }], [{ tool: 'force_user_camera', target: DIR }, { tool: 'force_user_camera', target: NOTE }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`force_user_camera took the user to [${DIR}]`)
+          return reply([{ from: 'control', text: 'Done.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('take me to Kevin')
+    await flush()
+    expect(h.focused).toEqual([KEVIN_ID])
+    await h.receptionist.hear('show me the spaceterm directory, then the design notes')
+    await flush()
+    await h.receptionist.hear('thanks')
+    await flush()
+    expect(h.focused).toEqual([KEVIN_ID, DIR_ID, NOTE_ID])
+  })
+
+  it('refuses a camera target that is nothing, before anything moves', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Going there.' }], [{ tool: 'force_user_camera', target: 'node-nowhere-at-all' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('"node-nowhere-at-all" (in force_user_camera) is not a live agent, a directory, or a node from nearby')
+          return reply([{ from: 'control', text: 'I could not find that.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('take me there')
+    await flush()
+    expect(h.focused).toEqual([])
   })
 
   it('says so when no screen has reported where it is looking', async () => {
