@@ -2013,7 +2013,7 @@ describe('Receptionist backlog', () => {
       replies: [
         reply([], [{ tool: 'backlog_next' }]),
         (turn) => {
-          expect(turn.prompt).toMatch(/backlog_next: Sally is stuck on an error\. \(set aside 1 minute ago\)\. It is off the backlog now; 2 more waiting/)
+          expect(turn.prompt).toMatch(/backlog_next: Sally is stuck on an error\. \(set aside 1 minute ago\)\. It is off the backlog now; 2 items are still waiting\./)
           return reply([{ from: 'control', text: 'Sally is stuck. Two more things after that.' }])
         },
       ],
@@ -2021,6 +2021,92 @@ describe('Receptionist backlog', () => {
     await h.receptionist.hear('thanks, that settles it')
     await flush()
     expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.', 'Leon finished the go-quiet follow-up.'])
+  })
+
+  it('takes the one item about what the user asks about', async () => {
+    const h = harness({
+      backlog: ['Dean asked two questions.', 'Leon finished the go-quiet follow-up.', 'Sally is stuck on an error.'],
+      judgeBacklog: async (ctx) => {
+        expect(ctx.about).toBe("Leon's go-quiet follow-up")
+        return [0.05, 0.9, 0.03]
+      },
+      replies: [
+        reply([], [{ tool: 'backlog_next', about: "Leon's go-quiet follow-up" }]),
+        (turn) => {
+          expect(turn.prompt).toContain('backlog_next: Leon finished the go-quiet follow-up. (set aside 2 minutes ago). It is off the backlog now; 2 items are still waiting.')
+          return reply([{ from: 'control', text: 'Leon finished it.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what happened with Leon?')
+    await flush()
+    expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.', 'Sally is stuck on an error.'])
+  })
+
+  it('takes every item about what the user asks about, and puts them all back if the reply goes unheard', async () => {
+    let h: ReturnType<typeof harness> | undefined
+    h = harness({
+      backlog: ['Leon finished the go-quiet work.', 'Dean asked two questions.', 'Leon asked whether to restart the server.'],
+      judgeBacklog: async () => [0.8, 0.1, 0.7],
+      replies: [
+        reply([], [{ tool: 'backlog_next', about: "Leon's go-quiet work" }]),
+        (turn) => {
+          expect(turn.prompt).toContain('backlog_next: 2 items:\n- Leon finished the go-quiet work. (set aside 3 minutes ago)\n- Leon asked whether to restart the server.')
+          expect(turn.prompt).toContain('They are off the backlog now; 1 item is still waiting. If the user does not want any of them now, add those back with backlog_add.')
+          h!.receptionist.userSpeaking(true)
+          return reply([{ from: 'control', text: 'Two things from Leon.' }])
+        },
+        reply([{ from: 'control', text: 'Go ahead.' }]),
+      ],
+    })
+    void h.receptionist.hear('where are we with Leon?')
+    await flush()
+    expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.'])
+    const answered = h.receptionist.hear('actually, wait')
+    h.receptionist.userSpeaking(false)
+    await answered
+    await flush()
+    expect(h.backlog.size).toBe(3)
+  })
+
+  it('takes nothing when no item is the one Control asks for', async () => {
+    const h = harness({
+      backlog: ['Dean asked two questions.', 'Leon finished.'],
+      judgeBacklog: async () => [0.1, 0.1],
+      replies: [
+        reply([], [{ tool: 'backlog_next', about: 'the release notes' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('backlog_next: nothing on the backlog is about the release notes, so nothing was taken off it; 2 items are still waiting.')
+          return reply([{ from: 'control', text: 'Nothing new on the release notes.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('any news on the release notes?')
+    await flush()
+    expect(h.backlog.size).toBe(2)
+  })
+
+  it('notes the agents an item names, and warns Jev when one is about to go cold', async () => {
+    const h = harness({
+      kevinCacheWarmUntil: Date.now() + 3 * 60_000,
+      backlog: ['Dean asked two questions.'],
+      judgeBacklog: async (ctx) => {
+        expect(ctx.items[0].cache).toBeUndefined()
+        expect(ctx.items[1].cache).toMatch(new RegExp(`^WARNING: \\{(\\w+:)?${KEVIN}\\}'s prompt cache goes cold in 3 minutes`))
+        return [0.3, 0.7]
+      },
+      replies: [
+        reply([{ from: 'control', text: 'Noted.' }], [{ tool: 'backlog_add', item: `{${KEVIN}} finished the water simulation.` }]),
+        reply([], [{ tool: 'backlog_next' }]),
+        reply([{ from: 'control', text: 'Kevin finished.' }]),
+      ],
+    })
+    await h.receptionist.hear('anyway')
+    await flush()
+    expect(h.backlog.all()[1].agents).toEqual([KEVIN_ID])
+    await h.receptionist.hear('done with that')
+    await flush()
+    expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.'])
   })
 
   it('gives the oldest item when Jev cannot say', async () => {

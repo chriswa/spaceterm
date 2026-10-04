@@ -42,7 +42,8 @@ export type ToolCall = { after?: number } & (
   | { tool: 'force_user_camera'; target: string }
   | { tool: 'go_quiet' }
   | { tool: 'backlog_add'; item: string }
-  | { tool: 'backlog_next' }
+  /** `about` describes a particular item to take, rather than whichever matters most. */
+  | { tool: 'backlog_next'; about?: string }
 )
 
 export interface Reply {
@@ -150,7 +151,10 @@ function parseToolCall(value: unknown): ToolCall {
   if ('input' in value) throw new Error(`a tool call's fields go beside "tool", not under "input"`)
   if (value.tool === 'nearby') return { tool: 'nearby' }
   if (value.tool === 'go_quiet') return { tool: 'go_quiet' }
-  if (value.tool === 'backlog_next') return { tool: 'backlog_next' }
+  if (value.tool === 'backlog_next') {
+    const about = typeof value.about === 'string' ? value.about.trim() : ''
+    return about ? { tool: 'backlog_next', about } : { tool: 'backlog_next' }
+  }
   if (value.tool === 'backlog_add') {
     if (typeof value.item !== 'string' || !value.item.trim()) throw new Error('"backlog_add" needs an "item"')
     return { tool: 'backlog_add', item: value.item.trim() }

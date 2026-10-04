@@ -24,7 +24,7 @@ import {
   type RenderedPart, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { HeardActions } from './heard-actions'
-import { ageWords, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
+import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import {
   cacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
@@ -117,7 +117,7 @@ export interface ReceptionistDeps {
   judgeInterruption(ctx: InterruptionContext): Promise<number>
   /** Things Control set aside to bring up with the user later: see backlog.ts. */
   backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore'>
-  /** Jev's probability for each backlog item, in order, that it should be brought up next: see backlog.ts. */
+  /** Jev's probability for each backlog item, in order: that it should come next, or that it is about `ctx.about`. See backlog.ts. */
   judgeBacklog(ctx: BacklogContext): Promise<number[]>
   /** One message to Control's Claude Code session. Rejects on failure or abort. */
   askModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer>
@@ -991,7 +991,7 @@ export class Receptionist {
         continue
       }
       if (call.tool === 'backlog_next') {
-        results.push(await this.backlogNext(taken))
+        results.push(await this.backlogNext(taken, call.about))
         continue
       }
       if (call.tool === 'backlog_add') {
@@ -1087,32 +1087,58 @@ export class Receptionist {
    * is read the same way, but without a cache to weigh: it cannot be asked.
    */
   /**
-   * The backlog item that matters most now, as Jev judges it, taken off the
-   * backlog. `taken` collects it, so that a reply nobody hears puts it back.
-   * Every pick is logged, for checking Jev's judgement.
+   * The backlog item that matters most now, or every item about what `about`
+   * describes, as Jev judges it, taken off the backlog. `taken` collects them,
+   * so that a reply nobody hears puts them back. Every pick is logged, for
+   * checking Jev's judgement.
    */
-  private async backlogNext(taken: BacklogItem[]): Promise<string> {
+  private async backlogNext(taken: BacklogItem[], about: string | undefined): Promise<string> {
     const items = this.deps.backlog.all()
     if (!items.length) return 'backlog_next: the backlog is empty.'
     const now = Date.now()
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    // What waiting costs: each agent the item is about whose cache is still warm.
+    const cache = (item: BacklogItem): string | undefined => (item.agents ?? []).flatMap((nodeId) => {
+      const until = agents.find(agent => agent.nodeId === nodeId)?.cacheWarmUntil
+      const note = until === undefined ? undefined : cacheNote(this.token(nodeId, handles), until, now)
+      return note ? [note] : []
+    }).join('; ') || undefined
     const ctx: BacklogContext = {
       conversation: this.recentConversation(),
-      items: items.map(item => ({ text: item.text, age: ageWords(now - item.addedAt) })),
+      items: items.map(item => {
+        const note = cache(item)
+        return { text: item.text, age: ageWords(now - item.addedAt), ...(note && { cache: note }) }
+      }),
+      ...(about !== undefined && { about }),
     }
     const pick = await pickNext(ctx, (c) => this.deps.judgeBacklog(c))
-    serverLog(`[receptionist] backlog_next: ${pick.reason}, item ${pick.index + 1} of ${items.length}`)
-    this.deps.log({ event: 'backlog-next', ...pick, items: ctx.items })
-    const item = this.deps.backlog.take(pick.index)
-    if (!item) return 'backlog_next: the backlog is empty.'
-    taken.push(item)
+    serverLog(`[receptionist] backlog_next${about !== undefined ? ' about' : ''}: ${pick.reason}, ` +
+      `took ${pick.indices.length ? pick.indices.map(i => i + 1).join(', ') : 'none'} of ${items.length}`)
+    this.deps.log({ event: 'backlog-next', ...pick, about: about ?? null, items: ctx.items })
+    const waiting = (count: number): string => `${count} ${count === 1 ? 'item is' : 'items are'} still waiting`
+    if (!pick.indices.length) {
+      const why = pick.reason === 'judge-failed' ? 'the backlog could not be searched just now' : `nothing on the backlog is about ${about}`
+      return `backlog_next: ${why}, so nothing was taken off it; ${waiting(items.length)}.`
+    }
+    const took = this.deps.backlog.take(pick.indices)
+    if (!took.length) return 'backlog_next: the backlog is empty.'
+    taken.push(...took)
     const left = this.deps.backlog.size
-    return `backlog_next: ${item.text} (set aside ${ctx.items[pick.index].age}). It is off the backlog now; ` +
-      `${left ? `${left} more waiting` : 'nothing else is waiting'}. If the user does not want it now, add it back with backlog_add.`
+    const described = pick.indices.map(i => `${ctx.items[i].text} (set aside ${ctx.items[i].age})`)
+    const them = took.length === 1 ? 'it' : 'any of them'
+    return `backlog_next: ${took.length === 1 ? `${described[0]}.` : `${took.length} items:\n${described.map(text => `- ${text}`).join('\n')}\n`} ` +
+      `${took.length === 1 ? 'It is' : 'They are'} off the backlog now; ${left ? waiting(left) : 'nothing else is waiting'}. ` +
+      `If the user does not want ${them} now, add ${them === 'it' ? 'it' : 'those'} back with backlog_add.`
   }
 
+  /** Set an item aside, with the surfaces of the live agents its tokens name, so that their caches can be weighed later. */
   private backlogAdd(text: string): void {
-    const dropped = this.deps.backlog.add(text)
-    this.deps.log({ event: 'backlog-add', item: text, size: this.deps.backlog.size, dropped })
+    const live = this.deps.agents()
+    const handles = this.handles(live)
+    const agents = [...new Set([...text.matchAll(AGENT_TOKEN)].flatMap(([, ref]) => this.resolve(ref, handles, live) ?? []))]
+    const dropped = this.deps.backlog.add(text, Date.now(), agents)
+    this.deps.log({ event: 'backlog-add', item: text, agents, size: this.deps.backlog.size, dropped })
     if (dropped.length) {
       this.notes.push(`Your backlog was full, so its oldest item was dropped: ${dropped.map(item => item.text).join('; ')}.`)
     }
