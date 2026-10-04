@@ -59,3 +59,21 @@ describe('the phone’s terminal view and composer', () => {
     expect(views()).toBe(0)
   })
 })
+
+describe('the phone’s bottom bar', () => {
+  it('opens the surface list from the rocket and closes it again', () => {
+    const { getByRole } = render(<MobileApp Canvas={() => null} />)
+    fireEvent.click(getByRole('button', { name: 'Toolbar and surfaces' }))
+    expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(true)
+    fireEvent.click(getByRole('button', { name: 'Back to the canvas' }))
+    expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(false)
+  })
+
+  it('never shows over a terminal, even with a conversation open', () => {
+    useSummaryChatStore.setState({ targetNodeId: SURFACE })
+    const { container } = render(<MobileApp Canvas={() => null} />)
+    expect(container.querySelector('.m-bar')).not.toBeNull()
+    act(() => useSurfacePresenterStore.getState().publishFocusedTerminal(SURFACE))
+    expect(container.querySelector('.m-bar')).toBeNull()
+  })
+})

@@ -39,6 +39,7 @@ import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
 import { UsageTracker } from './usage-tracker'
+import { SystemStatsWatcher } from './system-stats'
 import { RemoteSpeech } from './remote-speech'
 import { MobileAppInstaller, realMobileInstallDeps } from './mobile-install'
 import { readAgentMemoryBytes } from './agent-memory'
@@ -230,6 +231,8 @@ interface ClientConnection {
   cameraBounds: CameraBounds | null
   /** When `cameraBounds` last changed: which screen the user moved most recently. */
   cameraBoundsAt?: number
+  /** Receives the system monitor (`system-stats-watch`). */
+  watchesSystemStats?: boolean
 }
 
 /**
@@ -275,6 +278,15 @@ let restartFlagWatcher: (() => void) | null = null
 let stopWatchingMobileSources: (() => void) | null = null
 /** AI usage from AI Spend Tracker, for the phone's corner readout. */
 const usageTracker = new UsageTracker((snapshot) => broadcastToAll({ type: 'usage-report', snapshot }))
+/** The Mac's system monitor from mini-stats, for the phones watching it. */
+const systemStats = new SystemStatsWatcher((snapshot) => {
+  clients.forEach((client) => {
+    if (client.watchesSystemStats) send(client.link, { type: 'system-stats', snapshot })
+  })
+})
+function updateSystemStatsWatched(): void {
+  systemStats.setWatched([...clients].some((client) => client.watchesSystemStats))
+}
 let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
@@ -856,6 +868,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
     // Idempotent: a socket error is followed by a close, and both end here.
     close() {
       if (!clients.delete(client)) return
+      updateSystemStatsWatched()
       remoteDictation.cancelAllFor(client.id)
       remoteSpeech.clientGone(client.id)
       for (const [nodeId, owner] of terminalBorrowers) {
@@ -1443,6 +1456,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Give the acknowledgement a chance to leave the Unix socket before the
       // graceful shutdown closes all client connections.
       setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+      break
+    }
+
+    case 'system-stats-watch': {
+      client.watchesSystemStats = msg.watching
+      updateSystemStatsWatched()
+      if (msg.watching) send(client.link, { type: 'system-stats', snapshot: systemStats.current() })
       break
     }
 
@@ -3396,6 +3416,7 @@ async function startServer(): Promise<void> {
     if (restartFlagWatcher) restartFlagWatcher()
     stopWatchingMobileSources?.()
     usageTracker.stop()
+    systemStats.setWatched(false)
     codexSessionFileWatcher.dispose()
     cursorSessionFileWatcher.dispose()
     // Awaited: Voice Operator is a separate process, so quitting mid-answer

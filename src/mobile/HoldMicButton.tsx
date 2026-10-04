@@ -8,7 +8,8 @@ const LABELS: Record<HoldState, string> = {
 }
 
 /**
- * Keep the microphone open between dictations, right of the talk button.
+ * Keep the microphone open between dictations, right of the talk button in
+ * the bottom bar.
  * Outlined and pulsing while it is on but not holding the microphone yet;
  * lit once it is. Only takes effect with a headset — see held-microphone.ts.
  * Remembered on this phone.

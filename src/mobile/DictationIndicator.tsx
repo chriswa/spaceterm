@@ -1,8 +1,8 @@
 import { useDictationSession } from './dictation-session'
 
 /**
- * Dictation is still listening, with no composer open: a mark on the bottom
- * row, right of Summary Chat's button. Only a mark — any composer shows the
+ * Dictation is still listening, with no composer open: a mark at the bottom
+ * bar's right. Only a mark — any composer shows the
  * dictation, and stops or ships it.
  */
 export function DictationIndicator() {

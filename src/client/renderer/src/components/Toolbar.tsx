@@ -27,11 +27,9 @@ export type ToolbarProps = ToolbarHost & {
    * then the surfaces as a list rather than a row of icons.
    */
   variant?: 'bar' | 'sheet'
-  /** Sheet only: back to where you were, without picking a surface. Leads the strip. */
-  onClose?: () => void
 }
 
-export function Toolbar({ variant = 'bar', onClose, ...host }: ToolbarProps) {
+export function Toolbar({ variant = 'bar', ...host }: ToolbarProps) {
   const props: ToolbarHost = variant === 'sheet' ? { ...host, crabLayout: 'list' } : host
   // A keyed Fragment, not a wrapper element: `.toolbar__zoom > :last-child` in
   // the stylesheet selects the final *element* in the status slot, and a
@@ -52,13 +50,6 @@ export function Toolbar({ variant = 'bar', onClose, ...host }: ToolbarProps) {
     return (
       <div className="toolbar toolbar--sheet">
         <div className="toolbar__strip">
-          {onClose && (
-            <button className="toolbar__btn toolbar__btn--close-sheet" onClick={onClose} aria-label="Back to the canvas">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 3 5 8l5 5" />
-              </svg>
-            </button>
-          )}
           {strip.map(render)}
         </div>
         {crabs && render(crabs)}

@@ -895,7 +895,7 @@ export function App() {
 
   /**
    * Bring a node into view the way `navigateToNode` does — a glide when it is
-   * near or already on screen, a hop when it is not, and only widening the
+   * near or already on screen, a hop when it is not (never on the phone), and only widening the
    * view under camera lock. The camera only: focus, selection and z-order are
    * the caller's business, which is what lets camera follow use it without
    * taking anything from whoever is typing.
@@ -932,7 +932,11 @@ export function App() {
           targetBounds.x + targetBounds.width <= bottomRight.x &&
           targetBounds.y + targetBounds.height <= bottomRight.y
 
-        if (targetInViewport) {
+        // Never a hop on the phone. A hop dives toward the zoom floor and back
+        // in a few hundred milliseconds — pinching in from fully zoomed out,
+        // compressed — and iOS killed the page mid-hop each time Control's
+        // camera follow sent one, taking the reply it was about to speak.
+        if (targetInViewport || useSurfacePresenterStore.getState().external) {
           flyTo(targetCamera, computeFlyToSpeed(dist))
         } else {
           hopFlyTo({ targetCamera, targetBounds, duration: computeFlyToDuration(dist) })
@@ -2982,14 +2986,14 @@ export function App() {
         if (!toolbarSheet) return <Toolbar {...toolbarProps} />
         if (!toolbarSheetOpen) return null
         const closeSheet = () => useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
-        // The phone's: the same toolbar, opened as a sheet; picking a surface closes it.
+        // The phone's: the same toolbar, opened as a sheet; picking a surface
+        // closes it, as does the bottom bar's rocket that opened it.
         return (
           <div className="toolbar-sheet" onClick={closeSheet}>
             <div className="toolbar-sheet__panel" onClick={(e) => e.stopPropagation()}>
               <Toolbar
                 {...toolbarProps}
                 variant="sheet"
-                onClose={closeSheet}
                 onCrabClick={(nodeId, metaKey) => { closeSheet(); handleCrabClick(nodeId, metaKey) }}
               />
             </div>

@@ -67,6 +67,7 @@ export type ServerEventType =
   | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active' | 'speaking-changed'
   | 'summary-chat-status' | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
+  | 'system-stats'
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-talk-to-me' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
@@ -275,6 +276,7 @@ export class ServerClient {
       case 'auto-stamps-enabled':
       case 'restart-required':
       case 'usage-report':
+      case 'system-stats':
       case 'speech-audio':
       case 'speech-stop':
       case 'mobile-build-changed':
@@ -704,6 +706,11 @@ export class ServerClient {
 
   setAlertsReadTimestamp(nodeId: NodeId, timestamp: number): void {
     this.fireAndForget({ type: 'set-alerts-read-timestamp', nodeId, timestamp })
+  }
+
+  /** Not remembered across a reconnect: the caller sends it again on 'connect'. */
+  watchSystemStats(watching: boolean): void {
+    this.fireAndForget({ type: 'system-stats-watch', watching })
   }
 
   sendCameraBounds(bounds: CameraBounds): void {

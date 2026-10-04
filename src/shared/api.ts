@@ -39,6 +39,7 @@ import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
+import type { SystemStatsSnapshot } from './system-stats'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
 
@@ -224,6 +225,12 @@ export interface NodeApi {
   onMobileBuildChanged(callback: () => void): () => void
   /** The latest AI usage reading (PULL), or null until there is one. */
   usageReportStatus(): Promise<UsageSnapshot | null>
+  /**
+   * The Mac's system monitor from mini-stats, at once and on every change,
+   * until the returned function is called — the server reads it only while
+   * someone watches. Null while mini-stats is not running.
+   */
+  watchSystemStats(callback: (snapshot: SystemStatsSnapshot | null) => void): () => void
 }
 
 /** Status the toolbar renders for a surface's summary-chat session. */

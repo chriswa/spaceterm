@@ -10,7 +10,8 @@ import { Dictation } from './dictation'
 import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
 import { UsageReadout } from './UsageReadout'
-import { UpdateBadge } from './UpdateBadge'
+import { UpdatesButton } from './UpdatesButton'
+import { SystemStatsReadout } from './SystemStatsReadout'
 import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
 import { SummarizerButton } from './SummarizerButton'
 import { useDictationSession } from './dictation-session'
@@ -19,6 +20,7 @@ import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { ControlButton } from './ControlButton'
 import { HoldMicButton } from './HoldMicButton'
+import { BottomBar } from './BottomBar'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -59,12 +61,14 @@ const childKey = (kind: 'terminal' | 'composer' | 'talk', id: string) => `${kind
 /** `Canvas` is the desktop's App unless a test stands in for it. */
 export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
+  const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
   /** The surface Summary Chat is talking about, while a conversation is open. */
   const summaryTarget = useSummaryChatStore((s) => s.targetNodeId)
   /** Control holds the voice target: the talk button speaks to it instead. */
   const controlTarget = useReceptionistStore((s) => s.target)
-  const controlBusy = useReceptionistStore((s) => s.phase !== 'ready')
+  /** A conversation to talk into: the talk button and its neighbours are up. */
+  const voice = summaryTarget !== null || controlTarget
   useVisualViewportVars()
 
   /**
@@ -74,7 +78,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
    * itself would not raise it.
    */
   const keyboardKeeperRef = useRef<HTMLInputElement>(null)
-  /** Dictating, with no composer open to show it: the bottom row's mic says so. */
+  /** Dictating, with no composer open to show it: the bottom bar says so. */
   const dictating = useDictationSession((s) => s.mic.kind !== 'idle')
 
   // Back to where we were after a reload, once the surface is known again.
@@ -123,22 +127,6 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   return (
     <>
       <Canvas />
-      {!focusedTerminal && <UsageReadout />}
-      {!focusedTerminal && <UpdateBadge />}
-      {!focusedTerminal && (
-        // Opens the toolbar, which on the phone is a sheet with the surfaces in it.
-        <button
-          className="mobile-fab"
-          onClick={() => useSurfacePresenterStore.getState().setToolbarSheetOpen(true)}
-          aria-label="Toolbar and surfaces"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            {/* A rocket climbing to the upper right. */}
-            <path d="M20.6 3.4c-3.9-.3-7.6 1.3-10.2 4.3L8.9 9.4l-3.6.4L3 12.1l3.7 1.2 4 4 1.2 3.7 2.3-2.3.4-3.6 1.7-1.5c3-2.6 4.6-6.3 4.3-10.2zM15.5 10.4a1.9 1.9 0 1 1 0-3.8 1.9 1.9 0 0 1 0 3.8z" />
-            <path d="M6.2 15.9c-1.3.4-2.2 1.9-2.6 4.5 2.6-.4 4.1-1.3 4.5-2.6z" opacity="0.7" />
-          </svg>
-        </button>
-      )}
       {focusedTerminal && (
         <TerminalView
           key={childKey('terminal', focusedTerminal)}
@@ -173,15 +161,49 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           onExitToCanvas={() => closeTerminal('the composer (swipe)', SWIPE_EXIT_ZOOM_OUT)}
         />
       )}
-      {dictating && !composerFor && <DictationIndicator />}
-      {/* Over the canvas and the terminal view alike; the composer has its own microphone. */}
-      {(summaryTarget || controlTarget) && !composerFor && (
-        <SummarizerButton key={childKey('talk', controlTarget ? 'control' : summaryTarget ?? '')} nodeId={controlTarget ? null : summaryTarget} />
+      {/* On the canvas and over the surface list, never over a terminal, which
+          keeps the whole screen. The composer has its own microphone. */}
+      {!focusedTerminal && !composerFor && (
+        <BottomBar
+          start={
+            // The Mac's two readouts stacked against Control: its system
+            // monitor over the AI usage.
+            <div className="m-bar__readouts">
+              <SystemStatsReadout />
+              <UsageReadout />
+            </div>
+          }
+          middle={
+            <>
+              <ControlButton />
+              {voice && (
+                <SummarizerButton key={childKey('talk', controlTarget ? 'control' : summaryTarget ?? '')} nodeId={controlTarget ? null : summaryTarget} />
+              )}
+              {voice && <HoldMicButton />}
+            </>
+          }
+          end={
+            <>
+              {dictating && <DictationIndicator />}
+              <UpdatesButton />
+              {/* Opens the toolbar, which on the phone is a sheet with the
+                  surfaces in it, and closes it again: the bar stays over it. */}
+              <button
+                className={`m-bar__button${toolbarSheetOpen ? ' m-bar__button--on' : ''}`}
+                onClick={() => useSurfacePresenterStore.getState().setToolbarSheetOpen(!toolbarSheetOpen)}
+                aria-label={toolbarSheetOpen ? 'Back to the canvas' : 'Toolbar and surfaces'}
+                aria-expanded={toolbarSheetOpen}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  {/* A rocket climbing to the upper right. */}
+                  <path d="M20.6 3.4c-3.9-.3-7.6 1.3-10.2 4.3L8.9 9.4l-3.6.4L3 12.1l3.7 1.2 4 4 1.2 3.7 2.3-2.3.4-3.6 1.7-1.5c3-2.6 4.6-6.3 4.3-10.2zM15.5 10.4a1.9 1.9 0 1 1 0-3.8 1.9 1.9 0 0 1 0 3.8z" />
+                  <path d="M6.2 15.9c-1.3.4-2.2 1.9-2.6 4.5 2.6-.4 4.1-1.3 4.5-2.6z" opacity="0.7" />
+                </svg>
+              </button>
+            </>
+          }
+        />
       )}
-      {(summaryTarget || controlTarget) && !composerFor && <HoldMicButton />}
-      {/* Always on the canvas; over a terminal only while voice is in play, so
-          it does not sit on the terminal's last lines for nothing. */}
-      {!composerFor && (!focusedTerminal || summaryTarget || controlTarget || controlBusy) && <ControlButton />}
     </>
   )
 }

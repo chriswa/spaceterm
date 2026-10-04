@@ -11,6 +11,7 @@ import type { NodeData, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
 import type { UsageSnapshot } from '../../../../shared/usage-report'
+import type { SystemStatsSnapshot } from '../../../../shared/system-stats'
 
 /**
  * A stand-in for `window.api`, the preload bridge.
@@ -165,6 +166,7 @@ export class FakeBridge implements Api {
   private readonly autoStampsEnabled = new Set<(enabled: boolean) => void>()
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
   private readonly usageReport = new Set<(snapshot: UsageSnapshot) => void>()
+  private readonly systemStats = new Set<(snapshot: SystemStatsSnapshot | null) => void>()
   private readonly agentMetaAvailability = new Set<(nodeId: NodeId, available: boolean) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusChanged = new Set<(focused: boolean) => void>()
@@ -259,6 +261,10 @@ export class FakeBridge implements Api {
     },
     usageReport: (snapshot: UsageSnapshot): void => {
       for (const fn of this.usageReport) fn(snapshot)
+    },
+    /** To each `watchSystemStats` watcher, as the server would. */
+    systemStats: (snapshot: SystemStatsSnapshot | null): void => {
+      for (const fn of this.systemStats) fn(snapshot)
     },
     visibilityChanged: (visible: boolean): void => {
       for (const fn of this.visibilityChanged) fn(visible)
@@ -410,7 +416,8 @@ export class FakeBridge implements Api {
     restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag),
     onUsageReport: (cb) => subscribe(this.usageReport, cb),
     onMobileBuildChanged: () => () => undefined,
-    usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport)
+    usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport),
+    watchSystemStats: (cb) => subscribe(this.systemStats, cb)
   }
 
   readonly tts: TtsApi = {

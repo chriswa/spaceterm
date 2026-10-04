@@ -136,6 +136,16 @@ export interface UsageReportQueryMessage {
   seq: number
 }
 
+/**
+ * Start or stop receiving the Mac's system monitor. While watching, the
+ * client gets a {@link SystemStatsMessage} at once and on every change. Not
+ * remembered across a reconnect. See `src/server/system-stats.ts`.
+ */
+export interface SystemStatsWatchMessage {
+  type: 'system-stats-watch'
+  watching: boolean
+}
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -1063,6 +1073,7 @@ export type ClientMessage =
   | ServerRestartMessage
   | RestartFlagQueryMessage
   | UsageReportQueryMessage
+  | SystemStatsWatchMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage
@@ -1210,6 +1221,12 @@ export interface MobileBuildChangedMessage {
   type: 'mobile-build-changed'
 }
 
+/** To watching clients only: the system monitor, or null when mini-stats is not running (PUSH). */
+export interface SystemStatsMessage {
+  type: 'system-stats'
+  snapshot: SystemStatsSnapshot | null
+}
+
 /** Unsolicited broadcast: a new AI usage reading (PUSH). */
 export interface UsageReportMessage {
   type: 'usage-report'
@@ -1263,6 +1280,7 @@ export interface ExitMessage {
 import type { ServerState, NodeData, NodeStamp } from './state'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
+import type { SystemStatsSnapshot } from './system-stats'
 
 export interface SyncStateMessage {
   type: 'sync-state'
@@ -1812,6 +1830,7 @@ export type ServerMessage =
   | RestartRequiredMessage
   | UsageReportResultMessage
   | UsageReportMessage
+  | SystemStatsMessage
   | SpeechAudioMessage
   | SpeechStopMessage
   | MobileAppInstallResultMessage

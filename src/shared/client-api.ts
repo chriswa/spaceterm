@@ -149,6 +149,18 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       restartFlagStatus: () => client.restartFlagQuery(),
       onUsageReport: (cb) => on('usage-report', (m) => cb(m.snapshot)),
       usageReportStatus: () => client.usageReportQuery(),
+      watchSystemStats: (cb) => {
+        // The server forgets a watch with its connection: ask again on each one.
+        const watch = () => client.watchSystemStats(true)
+        const offStats = on('system-stats', (m) => cb(m.snapshot))
+        const offConnect = client.onLifecycle('connect', watch)
+        watch()
+        return () => {
+          offStats()
+          offConnect()
+          client.watchSystemStats(false)
+        }
+      },
       onMobileBuildChanged: (cb) => on('mobile-build-changed', () => cb())
     },
     log: (message) => platform.log(message),

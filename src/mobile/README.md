@@ -45,17 +45,26 @@ On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
 The server rebuilds the bundle a couple of seconds after its sources stop
 changing (`MobileBuildKeeper` in `src/server/mobile-build.ts`) and tells the
-phone. A badge in the top-left corner then says the phone runs older code than
-the Mac has: tap **Reload** for a newer page, or to have the Mac build and install the
-newer native app (`src/server/mobile-install.ts`, the same `install.sh`). The build writes `build.json` (its id and the native
+phone. A yellow chip on the bottom bar, beside the rocket (`UpdatesButton.tsx`),
+then lists what is waiting — a server restart an agent flagged, a newer native
+app, a newer page — each with its own button: **Restart**, **Install** (the Mac
+builds and installs the app: `src/server/mobile-install.ts`, the same
+`install.sh`), **Reload**. The build writes `build.json` (its id and the native
 fingerprint from `ios/native-version.mjs`), which `install.sh` also stamps into
 the app — see `update-check.ts`.
 
-The bottom-left corner shows AI usage as AI Spend Tracker's menu-bar bars,
+The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control and the talk buttons in the middle, the toolbar's rocket on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and never shows over a terminal. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
 process that may hold Wispr's rotating tokens.
+
+Stacked over the AI usage on the bottom bar, against Control, is the Mac's
+system monitor as mini-stats (`~/mini-stats`) draws it in the menu bar
+(`SystemStatsReadout.tsx`), shrunk to fit and without the bars' letters.
+mini-stats writes what its menu-bar item draws, colours and sizes decided, to
+`~/.mini-stats/menubar.json`; the server reads it every 2 s, but only while a
+phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
 
 ## Running it
 

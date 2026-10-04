@@ -26,6 +26,10 @@
    */
   --m-corner-radius: 62px;
   --m-corner-gap: 4px;
+  /* The bottom bar (BottomBar.tsx): as tall as the talk button once stood. */
+  --m-bar-height: 64px;
+  --m-bar-talk: 52px;
+  --m-bar-button: 42px;
 }
 
 html, body {
@@ -66,78 +70,192 @@ textarea, input, [contenteditable="true"], .cm-content {
 .mobile-btn--accent { background: var(--m-accent); border-color: var(--m-accent); color: #11111b; }
 .mobile-btn--recording { background: var(--m-danger); border-color: var(--m-danger); color: #11111b; }
 
-/* In the bottom-right corner, as low and as far out as the screen's curve
-   allows (see --m-corner-radius): a white rocket on black. */
-.mobile-fab {
+/* ─── bottom bar ────────────────────────────────────────────────────────── */
+
+/* The canvas ends where the bar begins, so nothing on it hides behind. */
+.app {
+  padding-bottom: var(--m-bar-height);
+}
+
+/*
+ * Readouts | voice | getting around (BottomBar.tsx). The middle column is
+ * centred on the screen whatever the sides hold. Its sides come in from the
+ * screen's rounded corners: an item centred in the bar is well up the curve,
+ * where it is far narrower than --m-corner-radius, and 0.3 of it clears every
+ * item here with a few points to spare.
+ *
+ * No transform or filter on the bar: Summary Chat's sheet and error, inside
+ * it, are fixed to the screen.
+ */
+.m-bar {
   position: fixed;
-  right: calc(var(--m-corner-radius) - 22px);
-  bottom: var(--m-corner-gap);
-  z-index: 2147483000;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 22px;
-  border: none;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Over the toolbar sheet, whose rocket closes it again (MobileApp.tsx). */
+  z-index: 2147483160;
+  height: var(--m-bar-height);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 0 calc(var(--m-corner-radius) * 0.3);
   background: #000;
-  color: #fff;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.m-bar__zone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.m-bar__zone--middle { justify-content: center; }
+.m-bar__zone--end { justify-content: flex-end; }
+
+/* The bar's round buttons; the talk button is the one bigger than these. */
+.m-bar__button,
+.m-control,
+.m-hold-mic {
+  flex: none;
+  width: var(--m-bar-button);
+  height: var(--m-bar-button);
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: var(--m-raised);
+  color: var(--m-text);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  transition: background-color 150ms, color 150ms;
 }
+.m-bar__button--on { background: var(--m-accent); color: #11111b; }
+.m-bar__button:active,
+.m-control:active,
+.m-hold-mic:active { filter: brightness(1.25); }
 
-/* Older code than the Mac has (UpdateBadge.tsx): top left, under the status bar. */
-.m-update {
-  position: fixed;
-  left: 12px;
-  top: calc(var(--m-safe-top) + 6px);
-  z-index: 2147483000;
+/* The Mac's two readouts, the bar's left (MobileApp.tsx): its system monitor
+   over the AI usage, both right-aligned against Control. */
+.m-bar__zone--start { justify-content: flex-end; }
+.m-bar__readouts {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: 14px;
-  border: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+/* The system monitor (SystemStatsReadout.tsx). Shrinks rather than overflow
+   into the screen's corner when the talk buttons crowd it. Touches go
+   through. */
+.m-stats {
+  display: flex;
+  max-width: 100%;
+  pointer-events: none;
+}
+.m-stats svg { display: block; max-width: 100%; height: auto; }
+
+/* Waiting updates (UpdatesButton.tsx): beside the rocket, in the colour of
+   something to do rather than something wrong. Pops in when one arrives. */
+.m-updates {
+  position: relative;
   background: #f9e2af;
   color: #11111b;
-  font-size: 13px;
-  font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  animation: m-updates-in 260ms cubic-bezier(0.3, 1.5, 0.6, 1);
+}
+.m-updates--busy svg { animation: m-update-spin 0.9s linear infinite; }
+@keyframes m-update-spin { to { transform: rotate(360deg); } }
+@keyframes m-updates-in { from { transform: scale(0.4); opacity: 0; } }
+.m-updates__count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #000;
+  color: #f9e2af;
+  box-shadow: 0 0 0 1.5px #f9e2af;
+  font: 700 11px/17px -apple-system, system-ui, sans-serif;
+}
+.m-updates__scrim {
+  position: fixed;
+  inset: 0;
+  bottom: var(--m-bar-height);
+}
+.m-updates__panel {
+  position: fixed;
+  right: calc(var(--m-corner-radius) * 0.3);
+  bottom: calc(var(--m-bar-height) + 8px);
+  width: min(320px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--m-border);
+  background: var(--m-surface);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+  animation: m-radial-in 140ms ease-out;
+  transform-origin: bottom right;
+}
+.m-updates__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--m-text);
+  text-align: left;
+  font: 15px/1.25 -apple-system, system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
-.m-update--busy { opacity: 0.85; }
-.m-update--busy .m-update__icon { animation: m-update-spin 0.9s linear infinite; }
-@keyframes m-update-spin { to { transform: rotate(360deg); } }
-.m-update__failure {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  top: calc(var(--m-safe-top) + 44px);
-  z-index: 2147483000;
-  padding: 10px 12px;
+.m-updates__row:active { background: var(--m-raised); }
+.m-updates__row:disabled { opacity: 0.6; }
+.m-updates__icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(249, 226, 175, 0.15);
+  color: #f9e2af;
+}
+.m-updates__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.m-updates__title { font-weight: 600; }
+.m-updates__detail {
+  color: var(--m-dim);
+  font-size: 13px;
+  /* The restart's reason is worth reading: two lines, then cut. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.m-updates__action { flex: none; color: #f9e2af; font-weight: 600; }
+.m-updates__failure {
+  margin: 4px 4px 2px;
+  padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--m-danger);
-  background: var(--m-surface);
   color: var(--m-text);
   font-size: 13px;
   line-height: 1.4;
   white-space: pre-wrap;
 }
 
-/* AI usage, bottom left — the menu-bar tray's bars (see UsageReadout.tsx). */
+/* AI usage, the bar's left — the menu-bar tray's bars (see UsageReadout.tsx). */
 .m-usage {
-  position: fixed;
-  /* Its 6px corner against the screen's curve; see --m-corner-radius. */
-  left: calc(var(--m-corner-radius) - 6px);
-  bottom: var(--m-corner-gap);
-  z-index: 2147483000;
+  position: relative;
   display: flex;
   align-items: flex-end;
-  gap: 5px;
-  padding: 4px 6px 4px 1px;
-  border-radius: 6px;
-  background: rgba(24, 24, 37, 0.75);
   -webkit-tap-highlight-color: transparent;
 }
 .m-usage__bars { display: flex; align-items: flex-end; }
@@ -173,17 +291,11 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-usage__when { color: var(--m-dim); }
 
 /* Dictation still listening with no composer open (DictationIndicator.tsx):
-   on the bottom row, clear of Summary Chat's button in the middle and the
-   rocket in the corner. Not a button. */
+   the bar's right, beside the rocket. Not a button. */
 .m-dictating {
-  position: fixed;
-  /* Right of the hold-microphone toggle, which sits right of the talk button. */
-  left: calc(50% + 28px + 12px + 44px + 8px);
-  bottom: calc(var(--m-corner-gap) + 8px);
-  z-index: 2147483300;
-  width: 40px;
-  height: 40px;
-  border-radius: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -195,26 +307,21 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-dictating--starting,
 .m-dictating--transcribing { background: var(--m-raised); color: var(--m-text); animation: none; }
 
-/* Summary Chat's talk button, bottom middle over everything while a
-   conversation is open (see SummarizerButton.tsx). Its colour is its state. */
+/* Summary Chat's talk button, the middle of the bar while a conversation is
+   open (see SummarizerButton.tsx). Its colour is its state. */
 .m-summarizer {
-  position: fixed;
-  left: 50%;
-  /* On the same baseline as the corner buttons either side. */
-  bottom: var(--m-corner-gap);
-  transform: translateX(-50%);
-  z-index: 2147483300;
-  width: 56px;
-  height: 56px;
-  border-radius: 28px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  flex: none;
+  width: var(--m-bar-talk);
+  height: var(--m-bar-talk);
+  padding: 0;
+  border-radius: 50%;
+  border: none;
   background: var(--m-accent);
   color: #11111b;
   font-size: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
@@ -229,36 +336,18 @@ textarea, input, [contenteditable="true"], .cm-content {
   0%, 100% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.6); }
   50% { box-shadow: 0 0 0 10px rgba(243, 139, 168, 0); }
 }
-/* Control's button (ControlButton.tsx): left of the talk button, mirroring
-   the dictation indicator on its right. Colour is state, in the same palette. */
-.m-control {
-  position: fixed;
-  left: calc(50% - 28px - 12px - 44px);
-  bottom: calc(var(--m-corner-gap) + 6px);
-  z-index: 2147483300;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 22px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  background: var(--m-raised);
-  color: var(--m-text);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  -webkit-tap-highlight-color: transparent;
-  -webkit-touch-callout: none;
-}
+/* Control's button (ControlButton.tsx): left of the talk button, or the
+   bar's middle alone when there is no conversation. Colour is state, in the
+   talk button's palette. */
 .m-control--target { background: var(--m-accent); color: #11111b; }
 .m-control--thinking { background: #f9e2af; color: #11111b; }
 .m-control--synthesizing,
 .m-control--speaking { background: #a6e3a1; color: #11111b; }
-.m-control--error { border-color: var(--m-danger); color: var(--m-danger); }
+.m-control--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
 .m-summarizer__error {
   position: fixed;
   left: 50%;
-  bottom: calc(66px + var(--m-corner-gap));
+  bottom: calc(var(--m-bar-height) + 10px);
   transform: translateX(-50%);
   z-index: 2147483300;
   max-width: calc(100% - 32px);
@@ -545,7 +634,8 @@ textarea, input, [contenteditable="true"], .cm-content {
   display: flex;
   flex-direction: column;
   background: var(--m-bg);
-  padding: var(--m-safe-top) var(--m-safe-right) var(--m-safe-bottom) var(--m-safe-left);
+  /* Down to the bottom bar, which stays over the sheet. */
+  padding: var(--m-safe-top) var(--m-safe-right) var(--m-bar-height) var(--m-safe-left);
 }
 .toolbar.toolbar--sheet {
   flex: 1;
@@ -671,26 +761,10 @@ textarea, input, [contenteditable="true"], .cm-content {
 
 /* Hold the microphone open (held-microphone.ts): right of the talk button,
    mirroring the Control button on its left. Lit while on. */
-.m-hold-mic {
-  position: fixed;
-  left: calc(50% + 28px + 12px);
-  bottom: calc(var(--m-corner-gap) + 6px);
-  z-index: 2147483300;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 22px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  background: var(--m-raised);
-  color: var(--m-text);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .m-hold-mic--on { background: var(--m-accent); color: #11111b; }
 /* On, but not holding the microphone yet: outlined in the accent, pulsing. */
 .m-hold-mic--preparing {
-  border-color: var(--m-accent);
+  box-shadow: inset 0 0 0 2px var(--m-accent);
   color: var(--m-accent);
   animation: m-hold-mic-preparing 1.2s ease-in-out infinite;
 }

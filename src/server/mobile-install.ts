@@ -4,7 +4,7 @@ import { serverLog } from './server-log'
 
 /**
  * Build and install the iPhone app on the paired phone, when the phone asks —
- * its update badge (src/mobile/UpdateBadge.tsx). The same script as
+ * its updates button (src/mobile/UpdatesButton.tsx). The same script as
  * `npm run mobile:ios`, run on this Mac, which is the only side that can.
  *
  * Success ends with the new app launched over the old one, so the phone that
