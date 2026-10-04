@@ -785,16 +785,22 @@ textarea, input, [contenteditable="true"], .cm-content {
   50% { opacity: 0.45; }
 }
 
-/* An unread card glows without pulsing on the phone. The pulse animates
-   opacity, which gives the glow — and the card content painted over it — a
-   compositor layer of its own, and iOS WebKit rasterizes such a layer at its
-   own size in card units times the screen's density, whatever the camera's
-   scale: tens of megabytes per card, though it is a few pixels on screen.
-   Zooming out brought five unread cards into view at once and iOS killed the
-   page every time. Held still, the glow is painted with the canvas at the
-   camera's real scale and costs next to nothing. */
-.card-shell--glow-pulse::before {
-  animation: none;
+/* Nothing on the canvas animates on the phone: no dancing crab, no pulsing
+   glow or unread badge. An animation of transform or opacity gives its element
+   a compositor layer, and so does everything painted over it — the crab sits
+   behind its card, so the card's shell and its terminal got layers too — and
+   iOS WebKit rasterizes such a layer at its own size in card units times the
+   screen's density, whatever the camera's scale: 35MB for a terminal card,
+   132MB for a wide glowing one, though each is a few pixels on screen at 0.05.
+   A pinch out brought them into view by the dozen and the page went from
+   840MB to the 2GB limit in under a second (caught live on the phone through
+   Web Inspector's layer tree). Held still, they paint with the canvas at the
+   camera's real scale and cost next to nothing. The pseudo-elements are
+   named because `*` does not match them, and the glow is a `::before`. */
+.canvas-surface *,
+.canvas-surface *::before,
+.canvas-surface *::after {
+  animation: none !important;
 }
 
 /* On the phone a glow stops growing in card units past a counter-scale of 3
@@ -811,7 +817,13 @@ textarea, input, [contenteditable="true"], .cm-content {
 
 /* The zoom layer carries the camera while it moves (useCamera's
    deferCameraScaleWhileMoving): its own compositor layer, so a zoom scales
-   what the cards last drew instead of redrawing them at every scale. */
+   what the cards last drew instead of redrawing them at every scale. It is
+   the only layer the canvas gets: the surface inside it paints into it rather
+   than holding a second, tiled copy of the canvas of its own, which on the
+   phone cost 225MB at rest and doubled what a pinch allocated. */
 .canvas-zoom-layer {
   will-change: transform;
+}
+.canvas-surface {
+  will-change: auto;
 }

@@ -34,7 +34,23 @@ const DEFAULT_CAMERA: Camera = { x: window.innerWidth / 2, y: window.innerHeight
  * Moving the layer around the surface instead, the cards are scaled as last
  * drawn (+5-40MB), then drawn once, sharp, at the zoom the camera settles at.
  * Nothing is hidden: a pinch in is softer until it stops, as in Photos.
+ *
+ * Only within a factor of DEFERRED_SCALE_LIMIT, though: past it the surface
+ * takes the camera there and then, mid-gesture. A drawing scaled down by a
+ * factor k leaves k² screens of canvas to draw at the old zoom's resolution,
+ * and a pinch from 0.28 to 0.01 measured on the phone took the page from 235MB
+ * to 1.3GB before the camera settled. Redrawing at each factor of two keeps
+ * what is drawn to about four screens at any zoom, at the cost of a redraw
+ * per doubling (five from 0.28 to 0.01), not one per frame.
  */
+export const DEFERRED_SCALE_LIMIT = 2
+
+/** Whether the camera has moved too far in scale from what the surface shows to keep scaling that drawing. */
+export function outgrowsDeferredScale(committed: Camera, cam: Camera): boolean {
+  const s = cam.z / committed.z
+  return s > DEFERRED_SCALE_LIMIT || s < 1 / DEFERRED_SCALE_LIMIT
+}
+
 let deferScaleWhileMoving = false
 export function deferCameraScaleWhileMoving(on: boolean): void {
   deferScaleWhileMoving = on
@@ -106,7 +122,8 @@ export function useCamera(
       if (layer) layer.style.transform = ''
       committedRef.current = to
     }
-    if (!layer || !committedRef.current) {
+    if (!layer || !committedRef.current || outgrowsDeferredScale(committedRef.current, safeCam)) {
+      clearTimeout(commitTimerRef.current)
       commit(safeCam)
       return
     }

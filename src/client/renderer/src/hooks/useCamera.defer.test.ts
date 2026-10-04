@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { relativeCameraTransform } from './useCamera'
+import { DEFERRED_SCALE_LIMIT, outgrowsDeferredScale, relativeCameraTransform } from './useCamera'
 import { getCameraTransform, type Camera } from '../lib/camera'
 
 /** Where a world point lands under a camera, and under the zoom layer's transform over the committed one. */
@@ -27,5 +27,19 @@ describe('relativeCameraTransform', () => {
     const cam = { x: 5, y: 6, z: 0.5 }
     expect(parse(relativeCameraTransform(cam, cam))).toEqual({ x: 0, y: 0, z: 1 })
     expect(getCameraTransform(cam)).toContain('scale(0.5)')
+  })
+})
+
+describe('outgrowsDeferredScale', () => {
+  const committed = { x: 0, y: 0, z: 0.28 }
+  it('keeps scaling the drawing within the limit, either way, and while only panning', () => {
+    expect(outgrowsDeferredScale(committed, { x: 900, y: -300, z: 0.28 })).toBe(false)
+    expect(outgrowsDeferredScale(committed, { x: 0, y: 0, z: (0.28 / DEFERRED_SCALE_LIMIT) * 1.01 })).toBe(false)
+    expect(outgrowsDeferredScale(committed, { x: 0, y: 0, z: 0.28 * DEFERRED_SCALE_LIMIT * 0.99 })).toBe(false)
+  })
+
+  it('redraws once the camera is past the limit, zooming out or in', () => {
+    expect(outgrowsDeferredScale(committed, { x: 0, y: 0, z: 0.01 })).toBe(true)
+    expect(outgrowsDeferredScale(committed, { x: 0, y: 0, z: 0.28 * DEFERRED_SCALE_LIMIT * 1.01 })).toBe(true)
   })
 })
