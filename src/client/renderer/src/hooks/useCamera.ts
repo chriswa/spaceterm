@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCamera, zoomCameraToElastic, wheelZoomFactor, clampZoom, loadCameraFromStorage, saveCameraToStorage, clampHeightArc } from '../lib/camera'
-import { FAR_ZOOM, MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
+import { ZOOMING_HIDE_BELOW, ZOOMING_SETTLE_MS, MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 import { useCameraLockStore } from '../stores/cameraLockStore'
 
@@ -65,14 +65,25 @@ export function useCamera(
   const onCameraEventRef = useRef(onCameraEvent)
   onCameraEventRef.current = onCameraEvent
 
+  /** The zoom last written, and the timer that ends `data-zooming`; see ZOOMING_HIDE_BELOW. */
+  const lastZoomRef = useRef<number | null>(null)
+  const zoomingTimerRef = useRef<number>(0)
+
   const applyToDOM = useCallback((cam: Camera) => {
-    if (surfaceRef.current) {
+    const surface = surfaceRef.current
+    if (surface) {
       const z = clampZoom(cam.z)
       const safeCam = z === cam.z ? cam : { ...cam, z }
-      surfaceRef.current.style.transform = getCameraTransform(safeCam)
-      surfaceRef.current.style.setProperty('--camera-zoom', String(z))
-      // Every frame, gestures included, so it is never a zoom behind; see FAR_ZOOM.
-      surfaceRef.current.toggleAttribute('data-far', z < FAR_ZOOM)
+      surface.style.transform = getCameraTransform(safeCam)
+      surface.style.setProperty('--camera-zoom', String(z))
+      // A pan repaints nothing at a new scale; only a changing zoom counts.
+      const zooming = lastZoomRef.current !== null && z !== lastZoomRef.current && z < ZOOMING_HIDE_BELOW
+      lastZoomRef.current = z
+      if (zooming) {
+        surface.setAttribute('data-zooming', '')
+        clearTimeout(zoomingTimerRef.current)
+        zoomingTimerRef.current = window.setTimeout(() => surface.removeAttribute('data-zooming'), ZOOMING_SETTLE_MS)
+      }
     }
   }, [])
 
@@ -100,6 +111,7 @@ export function useCamera(
       cancelAnimationFrame(rafRef.current)
       clearTimeout(syncTimerRef.current)
       clearTimeout(snapBackTimerRef.current)
+      clearTimeout(zoomingTimerRef.current)
     }
   }, [])
 
