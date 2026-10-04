@@ -5,6 +5,7 @@ import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
 import { browserPlatform, forwardLogs } from './browser-platform'
 import { installDiagnostics } from './diagnostics'
+import { installMemoryProbe } from './memory-probe'
 import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
 import { installHeldMicrophone } from './held-microphone'
@@ -57,6 +58,7 @@ if (!token) {
     // the log marks each one.
     document.addEventListener('visibilitychange', () => window.api.log(`[lifecycle] page ${document.visibilityState}`))
     installDiagnostics((message) => window.api.log(message))
+    installMemoryProbe((message) => window.api.log(message), Boolean(window.spacetermProcessRestarts))
     // Sound to the speaker, not the earpiece, except while recording.
     initAudioSession()
     installHeldMicrophone()
