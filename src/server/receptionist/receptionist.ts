@@ -3,7 +3,7 @@ import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
 import { finalAgentMessage, type TranscriptMessage } from '../summary-chat'
-import type { SpeechBackend } from '../voice-operator'
+import { joinSpeechParts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
@@ -12,8 +12,11 @@ import { whereWords, type NearbyNode } from './nearby'
 import type { CameraBounds } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import {
-  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderTurnBody, type ReceptionistEvent, type ReturnNews,
+  FORMAT_REMINDER, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
+import {
+  CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext,
+} from './self-interruption'
 import {
   CONTROL, isBlocking, parseReply, redactSpoken, renderSpeech, type RenderedPart, type Reply, type SayPart, type ToolCall,
 } from './reply'
@@ -95,6 +98,11 @@ type RecordMessage = { role: 'user' | 'assistant'; content: string }
 
 
 export interface ReceptionistDeps {
+  /**
+   * Jev's probability that Control should cut its own reply short for news
+   * that arrived while it was speaking: see self-interruption.ts.
+   */
+  judgeInterruption(ctx: InterruptionContext): Promise<number>
   /** One message to Control's Claude Code session. Rejects on failure or abort. */
   askModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer>
   /** Rank the live agents against a description, with Jev. */
@@ -284,6 +292,12 @@ export class Receptionist {
   /** The last reply spoken, so an interruption can say how much of it was heard. */
   private lastSpoken?: RenderedPart[]
   private events: ReceptionistEvent[] = []
+  /** A self-interruption check is under way; see `maybeInterruptSelf`. */
+  private judging = false
+  /** The reply last judged, and how many events it was judged against: each piece of news is weighed once per reply. */
+  private judgedFor: { spoken: RenderedPart[]; events: number } | undefined
+  /** Control cut its own reply short for news: the next turn opens with "Hang on." and tells the model so. */
+  private selfInterrupted = false
   /**
    * Agents being watched for their next stop. `after-work` is a send's or a
    * spawn's: only a stop after the agent has started working on the message
@@ -489,9 +503,52 @@ export class Receptionist {
   }
 
   private maybeSpeakUp(): void {
-    if (this.held || this.channel.isProducing()) return
+    if (this.held) return
+    if (this.channel.isProducing()) {
+      void this.maybeInterruptSelf()
+      return
+    }
     if (!this.events.length && !(this.listening && this.returnNews)) return
     void this.runTurn(undefined)
+  }
+
+  /**
+   * News arrived while Control is speaking a reply: ask whether it should cut
+   * itself off for it (self-interruption.ts), and if so, stop the speech. The
+   * channel then settles as after any cut, and the events get their turn,
+   * which opens with "Hang on.". Every verdict is logged, for tuning.
+   */
+  private async maybeInterruptSelf(): Promise<void> {
+    const spoken = this.lastSpoken
+    const pending = this.events.length
+    if (this.judging || !pending || !spoken || !this.listening || this.channel.phase !== 'speaking') return
+    if (this.judgedFor?.spoken === spoken && this.judgedFor.events >= pending) return
+    this.judging = true
+    this.judgedFor = { spoken, events: pending }
+    try {
+      const offset = await this.channel.liveOffset()
+      if (offset === undefined || this.lastSpoken !== spoken) return
+      const conversation = this.deps.record.recent(RECAP_MESSAGES)
+        .map(({ role, content }) => `${role === 'user' ? '' : 'YOU: '}${content}`).join('\n')
+      const ctx: InterruptionContext = {
+        speech: splitAtOffset(joinSpeechParts(spoken.map(({ text, voice }) => ({ text, voice }))), offset),
+        conversation: lastWords(conversation, CONVERSATION_WORDS),
+        events: this.events.map(renderEvent),
+      }
+      const verdict = await decideInterruption(ctx, (c) => this.deps.judgeInterruption(c))
+      serverLog(`[receptionist] self-interruption: ${verdict.reason}${'probability' in verdict ? ` ${verdict.probability.toFixed(2)}` : ''}, ${verdict.wordsLeft} words left → ${verdict.interrupt ? 'cut in' : 'carry on'}`)
+      this.deps.log({
+        event: 'self-interruption', ...verdict, offset,
+        currentWord: ctx.speech.currentWord, remaining: ctx.speech.remaining, news: ctx.events,
+      })
+      // Still the same reply playing, with the news still waiting, and the user still listening and not talking.
+      if (!verdict.interrupt || this.lastSpoken !== spoken || !this.events.length || !this.listening || this.held) return
+      if (this.channel.phase !== 'speaking') return
+      this.selfInterrupted = true
+      await this.channel.silence()
+    } finally {
+      this.judging = false
+    }
   }
 
   /**
@@ -501,7 +558,11 @@ export class Receptionist {
   private async runTurn(heard: string | undefined): Promise<void> {
     const attempt = this.channel.begin('thinking')
     this.unprompted = heard === undefined ? attempt : undefined
-    await this.noteInterruption()
+    // Cut short for news: say so at once, while the turn that brings it is written.
+    const selfInterrupted = this.selfInterrupted
+    this.selfInterrupted = false
+    if (selfInterrupted && this.listening) await this.channel.deliverInterim(attempt, [{ text: HANG_ON, voice: RECEPTIONIST_VOICE }])
+    await this.noteInterruption(selfInterrupted)
     // Read after that await: the listener may have come or gone during it.
     const away = !this.listening
     const events = this.events.splice(0)
@@ -1065,13 +1126,17 @@ export class Receptionist {
    * heard: the session keeps the whole reply, and the next answer must not
    * build on words nobody heard.
    */
-  private async noteInterruption(): Promise<void> {
+  private async noteInterruption(selfInterrupted = false): Promise<void> {
     const heard = await this.channel.heardPrefix()
     const spoken = this.lastSpoken
     this.lastSpoken = undefined
     if (heard === undefined || !spoken) return
     const kept = redactSpoken(spoken, heard)
     const audible = kept.map(part => part.text).join(' ')
+    if (selfInterrupted) {
+      this.notes.push(`You stopped your own last reply to bring the news below, and have just said "${HANG_ON}". The user heard only: "${audible}". Give the news first; say again only what of the rest still stands and matters.`)
+      return
+    }
     // Talked over, or lost with the phone's page: either way, only this much was heard.
     this.notes.push(`Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest; if it still matters, say it again.`)
     // Cut off by leaving, or by moving: said again when they are back, since

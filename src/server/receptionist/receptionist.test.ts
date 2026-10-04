@@ -73,6 +73,8 @@ function harness(opts: {
   compactsAt?: number
   /** How many messages find the session busy with a turn some earlier server left behind. */
   busyFor?: number
+  /** Jev's verdict on cutting a reply short; by default never. */
+  judgeInterruption?: ReceptionistDeps['judgeInterruption']
   /** When Kevin's prompt cache goes cold (epoch ms); by default nothing is known of it. */
   kevinCacheWarmUntil?: number
 }) {
@@ -178,6 +180,7 @@ function harness(opts: {
     },
     focus: (nodeId) => focused.push(nodeId),
     nodeIds: () => NODE_IDS,
+    judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     archive: (nodeId) => { wire.push(`archive ${nodeId}`); return nodeId === KEVIN_ID ? 3 : 1 },
     notify: (text) => notices.push(text),
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
@@ -744,6 +747,88 @@ describe('Receptionist', () => {
     h.receptionist.setListener({ id: 'phone', speech: h.listener.speech })
     await flush()
     expect(said(h)).toEqual([JSON.stringify([{ text: 'Kevin here. The solver works and the tests pass.', voice: 'am_michael' }])])
+  })
+
+  describe('self-interruption', () => {
+    const LONG = `{${KEVIN}} is still working on the solver. He expects to need another hour, and then he will run the full test suite before he commits anything.`
+    /** Speech that is audibly playing until dropped; a bare status read says where the voice is. */
+    function playing(offset: () => number) {
+      const spoken: SpeechContent[] = []
+      const pending = new Map<string, () => void>()
+      const polled = new Set<string>()
+      let jobs = 0
+      const cut = (id: string) => ({ status: 410, body: { id, state: 'cancelled_by_client' as const, character_offset: offset(), version: 3 } })
+      const backend: SpeechBackend = {
+        speak: async (content) => {
+          spoken.push(content)
+          return { status: 202, body: { id: `job-${++jobs}`, state: 'in_progress', playback_state: 'queued', version: 1 } }
+        },
+        status: (id, opts) => {
+          if (opts === undefined) return Promise.resolve({ status: 200, body: { id, state: 'in_progress', playback_state: 'speaking', character_offset: offset(), version: 2 } })
+          if (!polled.has(id)) {
+            polled.add(id)
+            return Promise.resolve({ status: 200, body: { id, state: 'in_progress', playback_state: 'speaking', version: 2 } })
+          }
+          return new Promise((resolve) => pending.set(id, () => resolve(cut(id))))
+        },
+        drop: async (id) => { pending.get(id)?.(); return cut(id) },
+      }
+      return { backend, spoken }
+    }
+    const watchSally = reply([{ from: 'control', text: LONG }], [{ tool: 'monitor', agent: SALLY }])
+
+    it('cuts its own reply short for news that makes the rest stale, says "Hang on.", and tells the model what was heard', async () => {
+      const speech = playing(() => 'Kevin is still working'.length)
+      const judged: string[] = []
+      const h = harness({
+        speech: speech.backend,
+        judgeInterruption: async (ctx) => { judged.push(`${ctx.speech.currentWord}|${ctx.speech.remaining.slice(0, 15)}|${ctx.events.length}`); return 0.9 },
+        replies: [
+          watchSally,
+          (turn) => {
+            expect(turn.prompt).toContain('You stopped your own last reply to bring the news below, and have just said "Hang on."')
+            // Cut where the voice was: the word being said counts as heard, the rest does not.
+            expect(turn.prompt).toMatch(/The user heard only: "\w+ is still \*INTERRUPTED\*"/)
+            expect(turn.prompt).toContain(`{${SALLY}} is now stopped`)
+            return reply([{ from: 'control', text: `{${SALLY}} just finished.` }])
+          },
+        ],
+      })
+      await h.receptionist.hear('what is Kevin doing? and watch Sally')
+      await flush()
+      h.setState(SALLY_ID, 'stopped')
+      await flush()
+      expect(judged).toEqual(['working|on the solver. |1'])
+      expect(speech.spoken.map(c => JSON.stringify(c))).toContainEqual(JSON.stringify([{ text: 'Hang on.', voice: RECEPTIONIST_VOICE }]))
+      expect(h.turns).toHaveLength(2)
+    })
+
+    it('finishes without asking when a dozen words or fewer are left', async () => {
+      const text = 'Kevin is still working on the solver. He expects to need another hour, and then he will run the full test suite before he commits anything.'
+      const speech = playing(() => text.indexOf('run the full'))
+      let asked = false
+      const h = harness({ speech: speech.backend, judgeInterruption: async () => { asked = true; return 1 }, replies: [watchSally] })
+      await h.receptionist.hear('what is Kevin doing? and watch Sally')
+      await flush()
+      h.setState(SALLY_ID, 'stopped')
+      await flush()
+      expect(asked).toBe(false)
+      expect(h.turns).toHaveLength(1)
+    })
+
+    it('carries on below the threshold, and weighs the same news only once', async () => {
+      const speech = playing(() => 'Kevin is'.length)
+      let asked = 0
+      const h = harness({ speech: speech.backend, judgeInterruption: async () => { asked++; return 0.2 }, replies: [watchSally] })
+      await h.receptionist.hear('what is Kevin doing? and watch Sally')
+      await flush()
+      h.setState(SALLY_ID, 'stopped')
+      await flush()
+      h.receptionist.agentStateChanged(KEVIN_ID, 'working')
+      await flush()
+      expect(asked).toBe(1)
+      expect(h.turns).toHaveLength(1)
+    })
   })
 
   it('drops the words of a reply finished after the user left, and says so', async () => {

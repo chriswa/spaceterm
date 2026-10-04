@@ -358,6 +358,20 @@ export class SpeechChannel {
   }
 
   /**
+   * Where the voice is in the answer being spoken now: a UTF-16 offset into
+   * `joinSpeechParts` of what was delivered, just past the word sounding, as
+   * Voice Operator and the phone both report it mid-speech. Undefined unless
+   * an answer is audibly playing — not while it is queued or synthesizing,
+   * and never for "let me check" words, which are not the answer.
+   */
+  async liveOffset(): Promise<number | undefined> {
+    const job = this.job
+    if (!job || this.currentPhase !== 'speaking') return undefined
+    const status = speechStatus(await job.backend.status(job.id))
+    return status?.state === 'in_progress' && typeof status.character_offset === 'number' ? status.character_offset : undefined
+  }
+
+  /**
    * How much of the previous answer the listener actually heard, if they cut it
    * off: a UTF-16 offset into `joinSpeechParts` of what was delivered. Consumed
    * once, so a later turn does not repeat stale context.

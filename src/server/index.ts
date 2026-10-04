@@ -72,6 +72,7 @@ import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat'
 import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
+import { jevJudge } from './receptionist/self-interruption'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
 import { SideQuestions, serveSideQuestions } from './side-questions'
@@ -3124,6 +3125,8 @@ async function startServer(): Promise<void> {
     record: REAL_RECEPTIONIST_RECORD,
     // Jev over titles and recent transcripts: the same chooser as the agent
     // search box, asked with the receptionist's description instead.
+    // Jev weighs whether news that arrives mid-reply should cut it short: see self-interruption.ts.
+    judgeInterruption: jevJudge(agentSearchDeps.runJev),
     findAgents: (query, agents) => searchAgentSurfaces(query, agents.map((agent) => ({
       nodeId: agent.nodeId, title: agent.title, cwd: agent.cwd, archived: false, transcriptPath: agent.transcriptPath,
     })), agentSearchDeps, 'transcripts'),
