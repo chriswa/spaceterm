@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, QUIET_OVER, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
+  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
@@ -84,6 +84,8 @@ function harness(opts: {
   unarchived?: 'ready' | 'not-ready' | 'failed'
   /** When Kevin's prompt cache goes cold (epoch ms); by default nothing is known of it. */
   kevinCacheWarmUntil?: number
+  /** How waiting goes; by default every wait is over at once. */
+  sleep?: (ms: number) => Promise<void>
 }) {
   const states = new Map<NodeId, ClaudeState>([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']])
   /** Agents off the live roster: ended, or archived. */
@@ -227,7 +229,7 @@ function harness(opts: {
     spawn: (directory, title, prompt) => { wire.push(`spawn ${directory} ${title}: ${prompt}`); return SALLY_ID },
     retitle: (nodeId, title) => wire.push(`retitle ${nodeId} ${title}`),
     log: () => {},
-    sleep: async () => {},
+    sleep: opts.sleep ?? (async () => {}),
     voiceOperatorDiscovered: () => true,
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {} })
   return {
@@ -1037,6 +1039,56 @@ describe('Receptionist', () => {
     expect(h.sideQuestions[0].prompt).toMatch(/text-to-speech[^]*concise and conversational[^]*summarized by the receptionist[^]*Question: Exactly how many litres\?$/)
     expect(h.notices).toEqual(['Control asked Kevin: 38.3k cached, 0k new'])
     expect(h.spoken).toHaveLength(2)
+  })
+
+  describe('a cold agent', () => {
+    const asked = reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'Exactly how many litres?' }])
+    const answered = reply([{ from: KEVIN, text: 'It was 42 litres exactly.' }])
+    // The wake-up never times out unless a test says so.
+    const patient = (ms: number) => ms === WARM_UP_TIMEOUT_MS ? new Promise<void>(() => {}) : Promise.resolve()
+
+    it('is woken with a real turn before the side question, so both read one cache', async () => {
+      const h = harness({ kevinCacheWarmUntil: Date.now() - 60_000, sleep: patient, replies: [asked, answered] })
+      await h.receptionist.hear('ask Kevin exactly how many litres')
+      await flush()
+      expect(h.wire).toEqual([`send ${KEVIN_ID} ${WARM_UP_MESSAGE}`])
+      expect(h.sideQuestions).toHaveLength(0)
+      // A stop before it has even started on the wake-up is not its answer.
+      h.setState(KEVIN_ID, 'stopped')
+      await flush()
+      expect(h.sideQuestions).toHaveLength(0)
+      h.setState(KEVIN_ID, 'working')
+      h.setState(KEVIN_ID, 'stopped')
+      await flush()
+      expect(h.sideQuestions).toEqual([{ nodeId: KEVIN_ID, prompt: sideQuestionPrompt('Exactly how many litres?') }])
+      // The wake-up is between Control and the agent: not in the record, and its "ok" is no news.
+      expect(h.record.some(entry => entry.content.includes('SENT TO'))).toBe(false)
+      expect(h.turns).toHaveLength(2)
+    })
+
+    it('is asked anyway when it never answers the wake-up', async () => {
+      const h = harness({ kevinCacheWarmUntil: Date.now() - 60_000, replies: [asked, answered] })
+      await h.receptionist.hear('ask Kevin exactly how many litres')
+      await flush()
+      expect(h.wire).toEqual([`send ${KEVIN_ID} ${WARM_UP_MESSAGE}`])
+      expect(h.sideQuestions).toHaveLength(1)
+    })
+
+    it('is not woken when its cache is warm, or when it is busy', async () => {
+      const warm = harness({ kevinCacheWarmUntil: Date.now() + 60_000, sleep: patient, replies: [asked, answered] })
+      await warm.receptionist.hear('ask Kevin exactly how many litres')
+      await flush()
+      expect(warm.wire).toEqual([])
+      expect(warm.sideQuestions).toHaveLength(1)
+
+      // Waiting on a permission prompt: a wake-up typed there would answer it.
+      const waiting = harness({ kevinCacheWarmUntil: Date.now() - 60_000, sleep: patient, replies: [asked, answered] })
+      waiting.setState(KEVIN_ID, 'waiting_permission')
+      await waiting.receptionist.hear('ask Kevin exactly how many litres')
+      await flush()
+      expect(waiting.wire).toEqual([])
+      expect(waiting.sideQuestions).toHaveLength(1)
+    })
   })
 
   it('says a just-resumed agent has nothing to ask yet, and to read its transcript instead', async () => {

@@ -316,6 +316,13 @@ const AWAY_REFUSAL = 'NOTHING WAS DONE: the user is away, so "say" must be empty
  * than starting one that it would only supersede.
  */
 const QUIET_GRACE_MS = 3_000
+/** Typed into a cold agent before a side question to it: see `warmUp`. */
+export const WARM_UP_MESSAGE = 'Control is about to ask you a side question and is warming your prompt cache first. Nothing needs doing: reply with just the word ok.'
+/** How long a side question waits for a cold agent to answer its wake-up. Rebuilding a big cache takes a while. */
+export const WARM_UP_TIMEOUT_MS = 90_000
+
+/** A cold agent answering its wake-up: `worked` once it started the turn, `answered` once it stopped again. */
+interface Waking { worked: boolean; done(): void; answered: Promise<void> }
 
 /**
  * The question an agent is actually given. Unframed, an agent answering a bare
@@ -365,6 +372,8 @@ export class Receptionist {
   private readonly ended = new Map<NodeId, EndedAgent>()
   /** The stop each agent was last reported at (its `stateSince`), so the same stop is never reported twice. */
   private readonly reportedStops = new Map<NodeId, number | undefined>()
+  /** Cold agents being woken before a side question reaches them: see `warmUp`. */
+  private readonly warming = new Map<NodeId, Waking>()
   private readonly channel: SpeechChannel
   /**
    * Whether anyone can hear Control: the device holding it is connected. While
@@ -566,6 +575,13 @@ export class Receptionist {
 
   /** An agent's Claude state changed. Fires a monitor if one is waiting on it. */
   agentStateChanged(nodeId: NodeId, state: ClaudeState): void {
+    const waking = this.warming.get(nodeId)
+    if (waking) {
+      if (!isSettled(state)) waking.worked = true
+      else if (waking.worked) waking.done()
+      // The wake-up's "ok" is not news: a monitor waits for a real stop.
+      return
+    }
     const waiting = this.monitors.get(nodeId)
     if (!waiting) return
     if (!isSettled(state)) {
@@ -1302,6 +1318,7 @@ export class Receptionist {
     const named = this.named(agent.nodeId, handles)
     const name = named?.name ?? agent.title
     const token = this.token(agent.nodeId, handles)
+    await this.warmUp(agent)
     const result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
     this.deps.log({ event: 'side-question', nodeId: agent.nodeId, question, result })
     if (result.ok) {
@@ -1313,6 +1330,39 @@ export class Receptionist {
       this.events.push({ kind: 'agent-answer-failed', agent: token, question, reason: SIDE_QUESTION_FAILURES[result.reason] })
     }
     this.maybeSpeakUp()
+  }
+
+  /**
+   * Have a stopped agent whose prompt cache has gone cold take one real turn
+   * before a side question reaches it.
+   *
+   * A side question replays the agent's last request with the question after
+   * it, through Claude Code's `$.model.fork`. Against a cold cache it pays to
+   * write the whole conversation — and the entry it writes is one the agent's
+   * own next request never reads: measured on two agents, each paid for its
+   * conversation twice, the second time 11 seconds after the first. The fork takes no cache
+   * options, so that is out of spaceterm's reach. The other way round works:
+   * a fork reads what the agent's own turn cached, which is what side
+   * questions were built on. So the agent caches its conversation once, and
+   * the question and whatever it is sent next both read it.
+   *
+   * A working agent is warm, and one waiting on a prompt must not have it
+   * answered by the wake-up. Gives up waiting after WARM_UP_TIMEOUT_MS and
+   * asks anyway: an answer at the old price beats none.
+   */
+  private async warmUp(agent: RosterAgent): Promise<void> {
+    const { nodeId } = agent
+    const already = this.warming.get(nodeId)
+    if (already) return already.answered
+    if (agent.state !== 'stopped' || agent.cacheWarmUntil === undefined || agent.cacheWarmUntil > Date.now()) return
+    let done!: () => void
+    const answered = new Promise<void>((resolve) => { done = resolve })
+    this.warming.set(nodeId, { worked: false, done, answered })
+    this.deps.log({ event: 'warm-up', nodeId })
+    this.deps.send(nodeId, WARM_UP_MESSAGE)
+    await Promise.race([answered, this.deps.sleep(WARM_UP_TIMEOUT_MS)])
+    this.warming.delete(nodeId)
+    done()
   }
 
   /**

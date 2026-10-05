@@ -18,6 +18,11 @@ import { serverLog } from './server-log'
  * Verified on an interactive Opus 5.5 session with 38k tokens of context:
  * three questions each read the full prefix from cache, wrote nothing, and
  * paid for about 40 uncached tokens, in about 2 seconds.
+ *
+ * That is against a warm cache. Against a cold one a fork writes the whole
+ * prefix afresh, into an entry the agent's own next request does not read, so
+ * the conversation is paid for twice; the receptionist wakes a cold agent with
+ * a real turn first (`Receptionist.warmUp`).
  */
 
 /** The token counts a fork reports, as the API spells them. */
