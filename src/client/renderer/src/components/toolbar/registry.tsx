@@ -3,7 +3,7 @@ import type { NodeId } from '../../../../../shared/ids'
 import type { CrabEntry } from '../../lib/crab-nav'
 import { CrabGroup, type CrabNavEvent } from './CrabGroup'
 import { PowerMonitor } from './PowerMonitor'
-import { ControlButton } from './ControlButtons'
+import { ControlButton, ControlTranscriptButton } from './ControlButtons'
 import {
   AgentMemoryMetric,
   CameraLockToggle,
@@ -92,6 +92,8 @@ interface ToolbarWidgetBase {
   /** Stable key. Also the React key, so it must not change between renders. */
   readonly id: string
   readonly slot: ToolbarSlot
+  /** Left out of the phone's toolbar sheet, where the bottom bar does the same job its own way. */
+  readonly desktopOnly?: true
 }
 
 /**
@@ -157,7 +159,8 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   { id: 'power-monitor', slot: 'status', kind: 'standalone', render: () => <PowerMonitor /> },
 
   // The receptionist sits with the surfaces it talks about, left of the crabs.
-  { id: 'control', slot: 'surfaces', kind: 'standalone', render: () => <ControlButton /> },
+  { id: 'control', slot: 'surfaces', kind: 'standalone', desktopOnly: true, render: () => <ControlButton /> },
+  { id: 'control-transcript', slot: 'surfaces', kind: 'standalone', desktopOnly: true, render: () => <ControlTranscriptButton /> },
   {
     id: 'crab-group',
     slot: 'surfaces',

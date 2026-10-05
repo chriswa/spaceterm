@@ -98,6 +98,8 @@ export const UNFOCUS_SPEED = 24
 
 export const WHEEL_DECAY_MS = 80
 export const HORIZONTAL_SCROLL_THRESHOLD = 15
+/** A sideways scroll this decisive dismisses Control's transcript dialog: well past a stray sideways jitter. */
+export const TRANSCRIPT_DISMISS_SCROLL_THRESHOLD = 80
 export const PINCH_ZOOM_THRESHOLD = 2
 
 export const CHILD_PLACEMENT_DISTANCE = 1250

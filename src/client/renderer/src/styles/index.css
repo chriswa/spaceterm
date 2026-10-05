@@ -3851,6 +3851,14 @@ html, body, #root {
   color: var(--ct-text);
 }
 
+/* Under the desktop dialog, over the canvas: a click on it closes the dialog. */
+.control-transcript-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 8999;
+  background: rgba(0, 0, 0, 0.35);
+}
+
 .control-transcript--modal {
   position: absolute;
   inset: 2.5% max(2.5%, calc(50% - 480px));

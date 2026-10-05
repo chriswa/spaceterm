@@ -2560,8 +2560,8 @@ export function App() {
   }, [flyTo, cameraRef])
 
   const handleCanvasWheel = useCallback((e: WheelEvent) => {
-    // Search/help modals and Control's transcript handle their own wheel events
-    if ((e.target as HTMLElement).closest('.search-modal, .help-modal, .control-transcript')) return
+    // Search/help modals and Control's transcript (and the backdrop under it) handle their own wheel events
+    if ((e.target as HTMLElement).closest('.search-modal, .help-modal, .control-transcript, .control-transcript-backdrop')) return
     setSearchVisible(false)
     setAgentSearchVisible(false)
     setHelpVisible(false)

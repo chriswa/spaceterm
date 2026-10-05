@@ -166,3 +166,63 @@ describe('mergeEntries', () => {
     expect(merged.map((entry) => entry.offset)).toEqual([0, 100, 200])
   })
 })
+
+describe('the desktop dialog closes like a modal', () => {
+  const wheel = (deltaX: number, deltaY = 0) => window.dispatchEvent(new WheelEvent('wheel', { deltaX, deltaY }))
+
+  it('on a click outside it, but not on one inside it or on the buttons that toggle it', async () => {
+    const onDismiss = vi.fn()
+    const toggle = document.createElement('button')
+    toggle.setAttribute('data-control-transcript-toggle', '')
+    document.body.appendChild(toggle)
+    render(<ControlTranscript variant="modal" onDismiss={onDismiss} />)
+    await screen.findByText('Nothing said to Control yet')
+
+    fireEvent.pointerDown(screen.getByPlaceholderText('Message Control'))
+    fireEvent.pointerDown(toggle)
+    expect(onDismiss).not.toHaveBeenCalled()
+
+    // A press on the backdrop over the canvas is the backdrop's: it closes on the click.
+    const backdrop = document.querySelector('.control-transcript-backdrop')!
+    fireEvent.pointerDown(backdrop)
+    expect(onDismiss).not.toHaveBeenCalled()
+    fireEvent.click(backdrop)
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+
+    // Anywhere else — the toolbar — closes it as well.
+    fireEvent.pointerDown(document.body)
+    expect(onDismiss).toHaveBeenCalledTimes(2)
+    toggle.remove()
+  })
+
+  it('on a decisive sideways scroll, but not a vertical one or a sideways nudge', async () => {
+    const onDismiss = vi.fn()
+    render(<ControlTranscript variant="modal" onDismiss={onDismiss} />)
+    await screen.findByText('Nothing said to Control yet')
+    let now = 1000
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    wheel(0, 400)
+    expect(onDismiss).not.toHaveBeenCalled()
+    // A moment later, once that scroll has died away.
+    now += 1000
+    wheel(20)
+    expect(onDismiss).not.toHaveBeenCalled()
+    now += 1000
+    wheel(60)
+    now += 16
+    wheel(60)
+    expect(onDismiss).toHaveBeenCalled()
+    clock.mockRestore()
+  })
+
+  it('not on the phone, whose screen a sideways drag dismisses instead', async () => {
+    const onDismiss = vi.fn()
+    render(<ControlTranscript variant="screen" onDismiss={onDismiss} />)
+    await screen.findByText('Nothing said to Control yet')
+    fireEvent.pointerDown(document.body)
+    wheel(200)
+    expect(onDismiss).not.toHaveBeenCalled()
+    expect(document.querySelector('.control-transcript-backdrop')).toBeNull()
+  })
+})
+

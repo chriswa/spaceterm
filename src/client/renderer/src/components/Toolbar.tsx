@@ -23,7 +23,7 @@ const CRAB_GROUP = 'crab-group'
 export type ToolbarProps = ToolbarHost & {
   /**
    * `bar`, along the bottom of the desktop window. `sheet`, the phone's: every
-   * button and readout in one strip that scrolls sideways, the readouts last,
+   * button and readout not marked `desktopOnly` in one strip that scrolls sideways, the readouts last,
    * then the surfaces as a list rather than a row of icons.
    */
   variant?: 'bar' | 'sheet'
@@ -45,7 +45,7 @@ export function Toolbar({ variant = 'bar', ...host }: ToolbarProps) {
       ...widgetsInSlot('buttons', TOOLBAR_WIDGETS),
       ...widgetsInSlot('surfaces', TOOLBAR_WIDGETS).filter((w) => w.id !== CRAB_GROUP),
       ...widgetsInSlot('status', TOOLBAR_WIDGETS)
-    ]
+    ].filter((w) => !w.desktopOnly)
     const crabs = TOOLBAR_WIDGETS.find((w) => w.id === CRAB_GROUP)
     return (
       <div className="toolbar toolbar--sheet">

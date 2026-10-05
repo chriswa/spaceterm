@@ -209,6 +209,16 @@ export function HeadsetIcon() {
   )
 }
 
+export function TranscriptIcon() {
+  // Control's transcript: a speech bubble with lines of text.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+      <path d="M5 6h6M5 8.5h4" />
+    </svg>
+  )
+}
+
 export function RollingRestartIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>

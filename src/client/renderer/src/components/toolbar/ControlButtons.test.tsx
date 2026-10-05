@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, act } from '@testing-library/react'
-import { ControlButton } from './ControlButtons'
+import { ControlButton, ControlTranscriptButton } from './ControlButtons'
+import { Toolbar } from '../Toolbar'
 import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '../../testing/fake-bridge'
 import { useReceptionistStore } from '../../stores/receptionistStore'
 import { useControlTranscriptStore } from '../../stores/controlTranscriptStore'
@@ -119,5 +120,36 @@ describe('ControlButton', () => {
     const { container } = render(<ControlButton />)
     status({ phase: 'ready', target: false, message: 'no API key' })
     expect(container.querySelector('button')!.dataset.tooltip).toMatch(/^Control — no API key\./)
+  })
+})
+
+describe('ControlTranscriptButton', () => {
+  it('shows the transcript on a click and hides it on the next', () => {
+    act(() => useControlTranscriptStore.getState().setOpen(false))
+    const { container } = render(<ControlTranscriptButton />)
+    const button = container.querySelector('button')!
+    fireEvent.click(button)
+    expect(useControlTranscriptStore.getState().open).toBe(true)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(button)
+    expect(useControlTranscriptStore.getState().open).toBe(false)
+  })
+})
+
+describe('the phone toolbar sheet', () => {
+  it('leaves out Control and its transcript button, which the bottom bar covers', () => {
+    const host = {
+      onHelpClick: () => {}, keycastEnabled: false, onKeycastToggle: () => {}, onDebugCapture: () => {},
+      onInertiaLogDump: () => {}, restartingSpaceterm: false, onRestartSpaceterm: () => {}, crabs: [],
+      onCrabClick: () => {}, onCrabReorder: () => {}, selectedNodeId: null, crabNavEvent: null, now: 0, onStepOut: () => {}
+    }
+    const bar = render(<Toolbar {...host} />)
+    expect(bar.queryByRole('button', { name: 'Control' })).not.toBeNull()
+    expect(bar.queryByRole('button', { name: 'Control transcript' })).not.toBeNull()
+    bar.unmount()
+
+    const sheet = render(<Toolbar {...host} variant="sheet" />)
+    expect(sheet.queryByRole('button', { name: 'Control' })).toBeNull()
+    expect(sheet.queryByRole('button', { name: 'Control transcript' })).toBeNull()
   })
 })

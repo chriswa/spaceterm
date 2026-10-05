@@ -21,7 +21,7 @@ export type WheelGesture = 'vertical' | 'horizontal' | 'zoom'
  * threshold, so without this rule Cmd+scroll over a focused terminal would
  * just scroll the terminal.
  */
-export function classifyWheelEvent(acc: WheelAccumulator, ev: WheelEvent): WheelGesture {
+export function classifyWheelEvent(acc: WheelAccumulator, ev: WheelEvent, horizontalThreshold = HORIZONTAL_SCROLL_THRESHOLD): WheelGesture {
   if (ev.metaKey) return 'zoom'
   if (ev.ctrlKey && Math.abs(ev.deltaY) > PINCH_ZOOM_THRESHOLD) return 'zoom'
 
@@ -32,7 +32,7 @@ export function classifyWheelEvent(acc: WheelAccumulator, ev: WheelEvent): Wheel
   acc.dy = acc.dy * decay + Math.abs(ev.deltaY)
   acc.t = now
 
-  if (acc.dx > HORIZONTAL_SCROLL_THRESHOLD && acc.dx > acc.dy) {
+  if (acc.dx > horizontalThreshold && acc.dx > acc.dy) {
     acc.dx = 0
     acc.dy = 0
     return 'horizontal'

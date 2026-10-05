@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ControlTranscriptEntry } from '../../../../shared/protocol'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { useReceptionistStore } from '../stores/receptionistStore'
+import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
+import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
 
 /**
  * Control's transcript: the whole conversation with the receptionist, from
@@ -26,6 +28,48 @@ export function mergeEntries(have: readonly ControlTranscriptEntry[], added: rea
   return [...byOffset.values()].sort((a, b) => a.offset - b.offset)
 }
 
+/**
+ * Marks the buttons that open and close the transcript themselves (the Mac's
+ * Control and transcript buttons): a press on one is not a click outside the
+ * dialog, or the dialog would close on the press and reopen on the click.
+ */
+export const TRANSCRIPT_TOGGLE_ATTR = 'data-control-transcript-toggle'
+
+/**
+ * The desktop dialog closes like a modal: a press anywhere outside it, or a
+ * decisive sideways scroll anywhere (the same classifier that lets a sideways
+ * swipe leave a focused terminal, at a higher threshold).
+ *
+ * A press on the backdrop over the canvas is the backdrop's own to handle (see
+ * below), so the canvas never sees it; a press elsewhere — the toolbar — closes
+ * the dialog and still does what it was for.
+ */
+function useModalDismiss(enabled: boolean, dialogRef: React.RefObject<HTMLDivElement>, onDismiss: () => void): void {
+  // Read through a ref: callers pass a fresh arrow each render, and
+  // resubscribing would reset the sideways-scroll tally mid-gesture.
+  const dismiss = useRef(onDismiss)
+  dismiss.current = onDismiss
+  useEffect(() => {
+    if (!enabled) return
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Element | null
+      if (!target || dialogRef.current?.contains(target)) return
+      if (target.closest(`.control-transcript-backdrop, [${TRANSCRIPT_TOGGLE_ATTR}]`)) return
+      dismiss.current()
+    }
+    const acc = createWheelAccumulator()
+    const onWheel = (e: WheelEvent) => {
+      if (classifyWheelEvent(acc, e, TRANSCRIPT_DISMISS_SCROLL_THRESHOLD) === 'horizontal') dismiss.current()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('wheel', onWheel, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('wheel', onWheel, { capture: true })
+    }
+  }, [enabled, dialogRef])
+}
+
 /** How to put the scroll back once new entries are drawn. */
 type Restore = 'bottom' | { fromBottom: number }
 
@@ -46,6 +90,8 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   /** Control's thinking cue is playing: a circle at the bottom goes round with it. */
   const thinking = useReceptionistStore((s) => s.phase === 'thinking')
   const contentRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useModalDismiss(variant === 'modal', dialogRef, onDismiss)
 
   /** The newest page when `before` is undefined, else the page before that offset. */
   const load = useCallback(async (before: number | undefined) => {
@@ -145,10 +191,12 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
     inputRef.current?.focus()
   }
 
-  return (
+  const dialog = (
     <div
+      ref={dialogRef}
       className={`control-transcript control-transcript--${variant}`}
       role="dialog"
+      aria-modal={variant === 'modal' || undefined}
       aria-label="Control"
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
@@ -221,6 +269,19 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
         <button className="control-transcript__send" type="submit" disabled={!draft.trim()}>Send</button>
       </form>
     </div>
+  )
+  if (variant !== 'modal') return dialog
+  // A click on the canvas around the dialog closes it and goes no further: the
+  // canvas under the backdrop neither pans nor loses its focused card.
+  return (
+    <>
+      <div
+        className="control-transcript-backdrop"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onDismiss() }}
+      />
+      {dialog}
+    </>
   )
 }
 

@@ -1,9 +1,10 @@
 import { controlLook, useReceptionistStore, type ControlLook, type ReceptionistHolding } from '../../stores/receptionistStore'
 import { useSummaryBubble, BUBBLE_STATE } from '../../mods/summary-chat/bubble-facet'
 import type { SummaryChatPhase } from '../../../../../shared/api'
-import { HeadsetIcon } from './icons'
+import { HeadsetIcon, TranscriptIcon } from './icons'
 import { useLongPress } from '../../hooks/useLongPress'
 import { useControlTranscriptStore } from '../../stores/controlTranscriptStore'
+import { TRANSCRIPT_TOGGLE_ATTR } from '../ControlTranscript'
 
 /**
  * The receptionist's toolbar button. Standalone: its state is the server's,
@@ -56,12 +57,34 @@ export function ControlButton() {
       {...press}
       aria-pressed={look === 'here'}
       aria-label="Control"
+      {...{ [TRANSCRIPT_TOGGLE_ATTR]: '' }}
       data-phase={phase}
       data-tooltip={transcriptOpen ? 'Control — Click to close the transcript' : `${controlTooltip(look, holder, phase, error)}. Hold for the transcript`}
       data-tooltip-no-flip
     >
       <HeadsetIcon />
       {showBubble && <Bubble state={BUBBLE_STATE[phase]} />}
+    </button>
+  )
+}
+
+/**
+ * Shows and hides Control's transcript with a click, beside the Control
+ * button, whose long press does the same.
+ */
+export function ControlTranscriptButton() {
+  const open = useControlTranscriptStore((s) => s.open)
+  return (
+    <button
+      className={'toolbar__btn' + (open ? ' toolbar__btn--active' : '')}
+      onClick={() => useControlTranscriptStore.getState().setOpen(!open)}
+      aria-pressed={open}
+      aria-label="Control transcript"
+      {...{ [TRANSCRIPT_TOGGLE_ATTR]: '' }}
+      data-tooltip={open ? 'Hide Control\'s transcript' : 'Show Control\'s transcript'}
+      data-tooltip-no-flip
+    >
+      <TranscriptIcon />
     </button>
   )
 }
