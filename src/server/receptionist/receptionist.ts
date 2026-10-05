@@ -1027,7 +1027,7 @@ export class Receptionist {
       // Not one being archived: its name goes back to the pool with it. Nor one
       // being given a name: it is about to have the one Control chose.
       const naming = call.tool === 'rename_agent' && call.name !== undefined
-      if (call.tool !== 'read' && call.tool !== 'archive_agent' && !naming) this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
+      if (call.tool !== 'read' && call.tool !== 'archive_agent' && !naming) this.named(agent.nodeId, handles)
       const who = this.describe(agent, handles)
       switch (call.tool) {
         case 'read':
@@ -1058,7 +1058,7 @@ export class Receptionist {
           done.push(`interrupt pressed Escape for ${who}`)
           break
         case 'send':
-          void this.send(agent.nodeId, call.message, interrupted.has(agent.nodeId))
+          void this.send(agent.nodeId, call.message, interrupted.has(agent.nodeId), handles)
           done.push(`send delivered to ${who}, which is now watched for its reply`)
           break
         case 'unarchive_agent':
@@ -1281,12 +1281,12 @@ export class Receptionist {
    * Ship a message to a real agent, and watch for its answer: whoever sends
    * an agent something wants to hear back.
    */
-  private async send(nodeId: NodeId, message: string, afterInterrupt: boolean): Promise<void> {
+  private async send(nodeId: NodeId, message: string, afterInterrupt: boolean, handles: Handles): Promise<void> {
     if (afterInterrupt) await this.deps.sleep(INTERRUPT_SETTLE_MS)
     this.deps.send(nodeId, message)
     this.watch(nodeId, 'after-work')
     // Named now if it has none: "Sent to Kevin" is about to be said anyway.
-    const name = (this.deps.names.get(nodeId) ?? this.deps.names.assign(nodeId))?.name ?? 'an agent'
+    const name = this.named(nodeId, handles)?.name ?? 'an agent'
     this.deps.log({ event: 'sent', nodeId, name, message })
     // Into the full record, so `recall` can answer "what did I tell Kevin?".
     this.deps.record.append([{ role: 'assistant', content: `SENT TO ${name}: ${message}` }])
@@ -1299,7 +1299,7 @@ export class Receptionist {
   private async askAgent(agent: RosterAgent, question: string, handles: Handles): Promise<void> {
     // Named now if it has no name yet: its answer will be quoted in its voice,
     // and the toast should already call it what the listener will hear.
-    const named = this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
+    const named = this.named(agent.nodeId, handles)
     const name = named?.name ?? agent.title
     const token = this.token(agent.nodeId, handles)
     const result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
@@ -1313,6 +1313,25 @@ export class Receptionist {
       this.events.push({ kind: 'agent-answer-failed', agent: token, question, reason: SIDE_QUESTION_FAILURES[result.reason] })
     }
     this.maybeSpeakUp()
+  }
+
+  /**
+   * The agent's name, giving it one if it has none. Every name Control does
+   * not choose itself is given here, lazily, as the agent is first spoken of
+   * or acted on: by then the model has written the reply, and its last
+   * list_agents still says "no name yet". So it is told, or it goes on
+   * thinking the agent nameless while the user hears and sees the name, and
+   * denies knowing an agent the user asks about by it.
+   */
+  private named(nodeId: NodeId, handles: Handles): NamedVoice | undefined {
+    const existing = this.deps.names.get(nodeId)
+    if (existing) return existing
+    const named = this.deps.names.assign(nodeId)
+    if (named) {
+      const handle = handles.of(nodeId) ?? nodeId
+      this.notes.push(`{${handle}}, which had no name, has been given one: it is now ${agentToken(handle, named.name)}, and the user hears and sees it as ${named.name}.`)
+    }
+    return named
   }
 
   /** Handles for these agents, distinct among them. See `handles.ts`. */
@@ -1528,7 +1547,7 @@ export class Receptionist {
       const nodeId = this.resolve(ref, handles, agents)
       const agent = nodeId ? byId.get(nodeId) : undefined
       if (!agent) return undefined
-      const named = this.deps.names.get(agent.nodeId) ?? this.deps.names.assign(agent.nodeId)
+      const named = this.named(agent.nodeId, handles)
       if (!named) return undefined
       if (!mentioned.includes(agent.nodeId)) mentioned.push(agent.nodeId)
       return { name: named.name, voice: named.voice }

@@ -529,7 +529,7 @@ describe('Receptionist', () => {
       replies: [
         reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
         (turn) => {
-          expect(turn.prompt).toMatch(/^NOTE: Your last reply was cut off before the user heard all of it\. They heard only: "Kevin is done\. Kevin here\. The \*INTERRUPTED\*"/)
+          expect(turn.prompt).toMatch(/^NOTE: (.* )?Your last reply was cut off before the user heard all of it\. They heard only: "Kevin is done\. Kevin here\. The \*INTERRUPTED\*"/)
           expect(turn.prompt).toContain('THE USER SAYS: wait, what?')
           return reply([{ from: 'control', text: 'Sure.' }])
         },
@@ -1300,12 +1300,37 @@ describe('Receptionist', () => {
     expect(h.spoken.map(entry => entry.content)).toEqual([[{ text: 'Kevin finished.', voice: RECEPTIONIST_VOICE }]])
   })
 
+  it('tells the model the name an agent was given as it was spoken of', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `{${KEVIN}} finished.` }]),
+        (turn) => {
+          // Its list_agents said "no name yet"; without this it would deny knowing Kevin.
+          expect(turn.prompt).toContain(`NOTE: {${KEVIN}}, which had no name, has been given one: it is now {Kevin:${KEVIN}}, and the user hears and sees it as Kevin.`)
+          return reply([{ from: 'control', text: `{Kevin:${KEVIN}} is done.` }])
+        },
+        (turn) => {
+          expect(turn.prompt).not.toContain('has been given one')
+          return reply([{ from: 'control', text: 'Yes.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('who finished?')
+    await flush()
+    expect(h.spoken.map(entry => entry.content)[0]).toEqual([{ text: 'Kevin finished.', voice: RECEPTIONIST_VOICE }])
+    await h.receptionist.hear('tell me about Kevin')
+    await flush()
+    await h.receptionist.hear('really?')
+    await flush()
+    expect(h.spoken).toHaveLength(3)
+  })
+
   it('tells the model which agent each action reached, with the next message', async () => {
     const h = harness({
       replies: [
         reply([{ from: 'control', text: `Sent to {${KEVIN}}.` }], [{ tool: 'send', agent: KEVIN, message: 'Commit, please.' }, { tool: 'monitor', agent: SALLY }]),
         (turn) => {
-          expect(turn.prompt).toContain(`NOTE: Your last actions: send delivered to {Kevin:${KEVIN}} ("water sim")`)
+          expect(turn.prompt).toContain(`Your last actions: send delivered to {Kevin:${KEVIN}} ("water sim")`)
           expect(turn.prompt).toContain(`monitor is watching {Sally:${SALLY}} ("login page")`)
           return reply([{ from: 'control', text: 'Done.' }])
         },
