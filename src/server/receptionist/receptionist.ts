@@ -316,8 +316,12 @@ const AWAY_REFUSAL = 'NOTHING WAS DONE: the user is away, so "say" must be empty
  * than starting one that it would only supersede.
  */
 const QUIET_GRACE_MS = 3_000
-/** Typed into a cold agent before a side question to it: see `warmUp`. */
-export const WARM_UP_MESSAGE = 'Control is about to ask you a side question and is warming your prompt cache first. Nothing needs doing: reply with just the word ok.'
+/**
+ * Typed into a cold agent before a side question to it: see `warmUp`. Just
+ * this: the agent keeps it in its context, so anything more — an explanation,
+ * a reply to coax — is tokens it carries, and words it may act on, from then on.
+ */
+export const WARM_UP_MESSAGE = 'stand by'
 /** How long a side question waits for a cold agent to answer its wake-up. Rebuilding a big cache takes a while. */
 export const WARM_UP_TIMEOUT_MS = 90_000
 
@@ -579,7 +583,7 @@ export class Receptionist {
     if (waking) {
       if (!isSettled(state)) waking.worked = true
       else if (waking.worked) waking.done()
-      // The wake-up's "ok" is not news: a monitor waits for a real stop.
+      // The reply to the wake-up is not news: a monitor waits for a real stop.
       return
     }
     const waiting = this.monitors.get(nodeId)
