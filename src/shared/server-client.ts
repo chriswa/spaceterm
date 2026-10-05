@@ -330,6 +330,7 @@ export class ServerClient {
       case 'dictation-started':
       case 'dictation-result':
       case 'wake-word-result':
+      case 'dictation-turn-result':
       case 'agent-memory-result': {
         const pending = this.pending.get(msg.seq)
         if (!pending) return
@@ -781,6 +782,13 @@ export class ServerClient {
 
   dictationCancel(id: string): void {
     this.fireAndForget({ type: 'dictation-cancel', id })
+  }
+
+  /** Whether the speaker sounds finished, 0..1; null without a turn model. */
+  async dictationTurnCheck(id: string): Promise<number | null> {
+    const resp = await this.request({ type: 'dictation-turn-check', id })
+    if (resp.type === 'dictation-turn-result') return resp.probability
+    return unexpected(resp)
   }
 
   // ─── hands-free ───────────────────────────────────────────────────────────

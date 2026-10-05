@@ -39,6 +39,7 @@ import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
 import { checkWakeWord, parseHandsFreeTuning } from './hands-free'
+import { TurnDetector, realTurnDetectorDeps } from './turn-detector'
 import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
 import { RemoteSpeech } from './remote-speech'
@@ -331,15 +332,21 @@ const directSpeech = new DirectSpeech({
   onActiveChanged: (active) => broadcastToAll({ type: 'speech-active', active }),
 })
 
+/**
+ * Has the speaker finished? Smart Turn, loaded on first use; see
+ * turn-detector.ts. Hands-free dictations ask at each pause.
+ */
+const turnDetector = new TurnDetector(realTurnDetectorDeps(path.join(SOCKET_DIR, 'models'), (message) => serverLog(`[turn] ${message}`)))
+
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
-const remoteDictation = new RemoteDictation(
-  new VoiceOperator(),
-  (speaking) => receptionist?.userSpeaking(speaking),
-  (owner, id) => {
+const remoteDictation = new RemoteDictation(new VoiceOperator(), {
+  onSpeaking: (speaking) => receptionist?.userSpeaking(speaking),
+  onEndPhrase: (owner, id) => {
     const client = [...clients].find((c) => c.id === owner)
     if (client) send(client.link, { type: 'dictation-end-phrase', id })
   },
-)
+  turnProbability: (audio) => turnDetector.probability(audio),
+})
 
 /**
  * Hands-free: the wake-word checks a listening phone asks for, and the
@@ -1764,6 +1771,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-start': {
       const seq = msg.seq
+      // Hands-free: it will ask whether the speaker has finished at its first pause.
+      if (msg.endPhrase) turnDetector.warm()
       void remoteDictation.start(client.id, msg.sampleRate, msg.endPhrase).then((outcome) => {
         send(client.link, outcome.ok
           ? { type: 'dictation-started', seq, id: outcome.value }
@@ -1790,6 +1799,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-cancel': {
       remoteDictation.cancel(client.id, msg.id)
+      break
+    }
+
+    case 'dictation-turn-check': {
+      const seq = msg.seq
+      const asked = performance.now()
+      void remoteDictation.turnComplete(client.id, msg.id).then((outcome) => {
+        if (outcome.ok && outcome.value !== null) serverLog(`[turn] p(finished)=${outcome.value.toFixed(2)} in ${Math.round(performance.now() - asked)}ms`)
+        send(client.link, outcome.ok
+          ? { type: 'dictation-turn-result', seq, probability: outcome.value }
+          : { type: 'server-error', seq, message: outcome.error })
+      })
       break
     }
 

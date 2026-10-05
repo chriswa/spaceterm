@@ -13,7 +13,7 @@ const speech = (ms: number) => Float32Array.from({ length: (ms / 1000) * RATE },
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
-function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing? Over and out.' } = {}) {
+function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing? Over and out.', turn = null as number | null } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
     sampleRate: RATE,
@@ -29,7 +29,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
   const checked: number[] = []
   const cues: string[] = []
   let haptics = 0
-  const dictations: Array<{ backlogSeconds: number; endPhrase?: string; finished: boolean; cancelled: boolean; sayEndPhrase: () => void }> = []
+  const dictations: Array<{ backlogSeconds: number; endPhrase?: string; finished: boolean; cancelled: boolean; turnChecks: number; sayEndPhrase: () => void }> = []
   let quietFor = 10_000
   const deps: HandsFreeDeps = {
     api: {
@@ -38,7 +38,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
         say: (text) => said.push(text),
         onTuning: (cb) => { tuningListener = cb; return () => {} },
       },
-      dictation: { start: async () => 'id', audio: () => {}, finish: async () => '', cancel: () => {}, onEndPhrase: () => () => {} },
+      dictation: { start: async () => 'id', audio: () => {}, finish: async () => '', cancel: () => {}, turnCheck: async () => null, onEndPhrase: () => () => {} },
     },
     log: () => {},
     heldCapture: () => held,
@@ -52,10 +52,15 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
         endPhrase: options.endPhrase,
         finished: false,
         cancelled: false,
+        turnChecks: 0,
         sayEndPhrase: () => options.onEndPhrase?.(),
       }
       dictations.push(d)
-      return { finish: async () => { d.finished = true; return transcript }, cancel: () => { d.cancelled = true } }
+      return {
+        finish: async () => { d.finished = true; return transcript },
+        cancel: () => { d.cancelled = true },
+        checkTurn: async () => { d.turnChecks++; return turn },
+      }
     },
     othersDictating: () => false,
     // The stuck-dictation backstop never fires in a test.
@@ -87,7 +92,6 @@ afterEach(() => { h?.uninstall(); h = undefined })
 describe('hands-free mode', () => {
   it('"Control, …" said straight through: dictated from its first syllable, ended by quiet', async () => {
     h = harness({ transcript: 'Control, what is Kevin doing?' })
-    h.tune({ endSilenceMs: 1500 })
     expect(useHandsFree.getState().phase).toBe('listening')
     await h.hear(quiet(1500), speech(1500))
     expect(h.checked).toHaveLength(1)
@@ -113,11 +117,22 @@ describe('hands-free mode', () => {
     expect(h.dictations[0].finished).toBe(true)
   })
 
-  it('waits through pauses shorter than endSilenceMs — five seconds by default', async () => {
-    h = harness()
-    await h.hear(quiet(1500), speech(1500), quiet(3000), speech(1000), quiet(3000))
+  it('ends at the first pause where the turn model is sure the speaker has finished', async () => {
+    h = harness({ turn: 0.93 })
+    await h.hear(quiet(1500), speech(2500), quiet(500))
+    expect(h.dictations[0].turnChecks).toBe(1)
+    expect(h.said).toEqual(['what is Kevin doing?'])
+  })
+
+  it('waits through a pause the turn model hears as unfinished, until patience runs out', async () => {
+    h = harness({ turn: 0.08 })
+    await h.hear(quiet(1500), speech(2500), quiet(1000), speech(1500), quiet(1000))
+    expect(h.dictations[0].turnChecks).toBe(2)
     expect(h.said).toEqual([])
     expect(useHandsFree.getState().phase).toBe('hearing')
+    // Still unsure, but a short request's patience is a second and a half.
+    await h.hear(quiet(1000))
+    expect(h.said).toEqual(['what is Kevin doing?'])
   })
 
   it('stays quiet when the Mac says the speech did not start with "control"', async () => {
@@ -149,7 +164,6 @@ describe('hands-free mode', () => {
 
   it('sends nothing when only the wake word was said', async () => {
     h = harness({ transcript: 'Control.' })
-    h.tune({ endSilenceMs: 1500 })
     await h.hear(quiet(1500), speech(500), quiet(2500))
     expect(h.dictations[0].finished).toBe(true)
     expect(h.said).toEqual([])

@@ -438,6 +438,7 @@ export class FakeBridge implements Api {
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
     cancel: (id) => this.record('dictation.cancel', id),
+    turnCheck: (id) => this.reply('dictation.turnCheck', null as number | null, id),
     onEndPhrase: (cb) => subscribe(this.dictationEndPhrase, cb)
   }
 

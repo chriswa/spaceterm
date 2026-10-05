@@ -22,6 +22,27 @@ interface Session {
   failure?: string
   /** Its end phrase has been heard, and the client told. */
   ended?: boolean
+  /** The last few seconds, as floats, for the turn model — only for 16 kHz sessions, and only with one. */
+  recent?: { blocks: Float32Array[]; samples: number }
+}
+
+/** What the turn model hears: Smart Turn's eight-second window. */
+const TURN_WINDOW_SAMPLES = 8 * 16_000
+
+/** What else a relay can be asked to do, beyond relaying. */
+export interface RemoteDictationHooks {
+  /**
+   * Whether anyone is dictating now, on every change: what the receptionist
+   * waits on, so it never talks over the user.
+   */
+  onSpeaking?: (speaking: boolean) => void
+  /** Once per dictation: the phrase it was started with has been said — the client's cue to finish it. */
+  onEndPhrase?: (owner: string, id: string) => void
+  /**
+   * The turn model (turn-detector.ts): the probability, from 16 kHz audio
+   * ending now, that the speaker has finished. Undefined when there is none.
+   */
+  turnProbability?: (audio: Float32Array) => Promise<number | undefined>
 }
 
 type Voice = Pick<VoiceOperator, 'startTranscription' | 'sendTranscriptionAudio' | 'finishTranscription' | 'cancelTranscription'>
@@ -39,17 +60,7 @@ export class RemoteDictation {
   /** Sessions still taking the user's voice: from start until finish is asked for, or a cancel. */
   private readonly listening = new Set<string>()
 
-  /**
-   * `onSpeaking` hears whether anyone is dictating now, on every change: what
-   * the receptionist waits on, so it never talks over the user. `onEndPhrase`
-   * hears, once per dictation, that the phrase it was started with has been
-   * said — the client's cue to finish it.
-   */
-  constructor(
-    private readonly voice: Voice,
-    private readonly onSpeaking: (speaking: boolean) => void = () => {},
-    private readonly onEndPhrase: (owner: string, id: string) => void = () => {},
-  ) {}
+  constructor(private readonly voice: Voice, private readonly hooks: RemoteDictationHooks = {}) {}
 
   /** Whether some client is dictating now. */
   get speaking(): boolean {
@@ -60,7 +71,7 @@ export class RemoteDictation {
     const before = this.speaking
     if (on) this.listening.add(id)
     else this.listening.delete(id)
-    if (this.speaking !== before) this.onSpeaking(this.speaking)
+    if (this.speaking !== before) this.hooks.onSpeaking?.(this.speaking)
   }
 
   /** `endPhrase`: listen for it alongside (hands-free's "over and out"); see `onEndPhrase`. */
@@ -70,7 +81,11 @@ export class RemoteDictation {
     if (response?.status !== 201 || typeof id !== 'string') {
       return { ok: false, error: describe(response, 'start transcribing') }
     }
-    this.sessions.set(id, { owner, chain: Promise.resolve() })
+    this.sessions.set(id, {
+      owner,
+      chain: Promise.resolve(),
+      ...(this.hooks.turnProbability && sampleRate === 16_000 ? { recent: { blocks: [], samples: 0 } } : {}),
+    })
     this.setListening(id, true)
     return { ok: true, value: id }
   }
@@ -79,13 +94,15 @@ export class RemoteDictation {
   audio(owner: string, id: string, pcm: Uint8Array): void {
     const session = this.owned(owner, id)
     if (!session) return
+    // Kept here as it arrives, so a turn check asked for after it hears it.
+    if (session.recent) remember(session.recent, pcm)
     session.chain = session.chain.then(async () => {
       if (session.failure) return
       const response = await this.voice.sendTranscriptionAudio(id, pcm)
       if (response?.status === 200 && (response.body as { heard?: unknown } | undefined)?.heard === true) {
         if (!session.ended) {
           session.ended = true
-          this.onEndPhrase(owner, id)
+          this.hooks.onEndPhrase?.(owner, id)
         }
       } else if (response?.status !== 204) {
         session.failure = describe(response, 'take the audio')
@@ -119,6 +136,28 @@ export class RemoteDictation {
     void this.voice.cancelTranscription(id)
   }
 
+  /**
+   * Whether the speaker sounds finished: the turn model's probability for this
+   * dictation's last eight seconds, as received so far. `null` when there is
+   * no turn model, so the client falls back on silence alone.
+   */
+  async turnComplete(owner: string, id: string): Promise<DictationOutcome<number | null>> {
+    const session = this.owned(owner, id)
+    if (!session) return { ok: false, error: 'That dictation has already ended' }
+    if (!session.recent || !this.hooks.turnProbability) return { ok: true, value: null }
+    const audio = new Float32Array(session.recent.samples)
+    let offset = 0
+    for (const block of session.recent.blocks) {
+      audio.set(block, offset)
+      offset += block.length
+    }
+    try {
+      return { ok: true, value: (await this.hooks.turnProbability(audio)) ?? null }
+    } catch (err) {
+      return { ok: false, error: `The turn model failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  }
+
   /** The client went away mid-dictation. */
   cancelAllFor(owner: string): void {
     for (const [id, session] of this.sessions) {
@@ -129,5 +168,18 @@ export class RemoteDictation {
   private owned(owner: string, id: string): Session | undefined {
     const session = this.sessions.get(id)
     return session?.owner === owner ? session : undefined
+  }
+}
+
+/** Append s16le PCM as floats, keeping only the turn model's window. */
+function remember(recent: { blocks: Float32Array[]; samples: number }, pcm: Uint8Array): void {
+  const count = pcm.length >> 1
+  const view = new DataView(pcm.buffer, pcm.byteOffset, count * 2)
+  const block = new Float32Array(count)
+  for (let i = 0; i < count; i++) block[i] = view.getInt16(i * 2, true) / 32768
+  recent.blocks.push(block)
+  recent.samples += count
+  while (recent.blocks.length > 1 && recent.samples - recent.blocks[0].length >= TURN_WINDOW_SAMPLES) {
+    recent.samples -= recent.blocks.shift()!.length
   }
 }

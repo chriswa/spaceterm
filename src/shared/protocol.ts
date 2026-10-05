@@ -400,6 +400,18 @@ export interface DictationCancelMessage {
 }
 
 /**
+ * At a pause: does the speaker sound finished? The server runs the turn model
+ * (src/server/turn-detector.ts) over the dictation's last eight seconds as
+ * received. Send it after the audio up to the pause. Replies
+ * `dictation-turn-result`, or a correlated `server-error`.
+ */
+export interface DictationTurnCheckMessage {
+  type: 'dictation-turn-check'
+  seq: number
+  id: string
+}
+
+/**
  * Hands-free: is this short clip the wake word ("control") said on its own?
  * The client cut it out of what its held-open microphone heard; the server
  * asks Voice Operator, which checks it on the Mac with Apple's on-device
@@ -1101,6 +1113,7 @@ export type ClientMessage =
   | DictationAudioMessage
   | DictationFinishMessage
   | DictationCancelMessage
+  | DictationTurnCheckMessage
   | WakeWordCheckMessage
   | ReceptionistHandsFreeMessage
   | AgentSearchMessage
@@ -1819,6 +1832,13 @@ export interface DictationResultMessage {
  * running, too old) is no match plus `error`, not a `server-error`: a broadcast
  * error would toast on every short word said near the phone.
  */
+/** Probability, 0..1, that the speaker has finished; null when the server has no turn model. */
+export interface DictationTurnResultMessage {
+  type: 'dictation-turn-result'
+  seq: number
+  probability: number | null
+}
+
 /** The end phrase a `dictation-start` asked for has been said. */
 export interface DictationEndPhraseMessage {
   type: 'dictation-end-phrase'
@@ -1833,7 +1853,7 @@ export interface WakeWordResultMessage {
 }
 
 /**
- * Hands-free mode's thresholds, every one in milliseconds. Defaults live with
+ * Hands-free mode's thresholds, in milliseconds but for `turnThreshold`. Defaults live with
  * the listener (`src/mobile/wake-listener.ts`); the operator overrides any of
  * them in `~/.spaceterm/hands-free.json`, read again whenever it changes.
  */
@@ -1844,8 +1864,21 @@ export interface HandsFreeTuning {
   onsetWindowMs: number
   /** Shorter bursts of speech (a click, a cough) are not checked at all. */
   wordMinMs: number
-  /** After the wake word: quiet that ends what is being said to Control, when "over and out" is not said. */
-  endSilenceMs: number
+  /**
+   * After the wake word, at each pause this long: ask the turn model whether
+   * the speaker sounds finished (src/server/turn-detector.ts).
+   */
+  pauseCheckMs: number
+  /** Its probability at or above this — 0 to 1, not ms — ends the dictation there and then. */
+  turnThreshold: number
+  /**
+   * Otherwise — the model unsure, or unavailable — quiet this long ends it: from
+   * `endSilenceMinMs` for a short request, growing with how long the speaker has
+   * been going to `endSilenceMaxMs` at `endSilenceRampMs`, room for a next thought.
+   */
+  endSilenceMinMs: number
+  endSilenceMaxMs: number
+  endSilenceRampMs: number
   /** The longest anything said hands-free may run. */
   maxUtteranceMs: number
   /** After this device stops playing sound, how long before listening resumes (echo). */
@@ -1915,6 +1948,7 @@ export type ServerMessage =
   | WakeWordResultMessage
   | HandsFreeTuningMessage
   | DictationEndPhraseMessage
+  | DictationTurnResultMessage
   | AgentNamesMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage

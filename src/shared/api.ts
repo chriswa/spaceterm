@@ -287,6 +287,11 @@ export interface DictationApi {
   /** No more audio; resolves to the transcript exactly as Wispr returned it. */
   finish(id: string): Promise<string>
   cancel(id: string): void
+  /**
+   * At a pause: the probability, 0..1, that the speaker has finished — the
+   * server's turn model on the audio sent so far. Null when it has none.
+   */
+  turnCheck(id: string): Promise<number | null>
   /** The `endPhrase` a session was started with has been said; finishing it is the caller's to do. */
   onEndPhrase(callback: (id: string) => void): () => void
 }

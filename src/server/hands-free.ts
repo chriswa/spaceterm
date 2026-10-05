@@ -27,7 +27,8 @@ export async function checkWakeWord(voice: Voice, pcm: Uint8Array): Promise<Wake
 }
 
 const TUNING_KEYS: ReadonlyArray<keyof HandsFreeTuning> = [
-  'silenceBeforeMs', 'onsetWindowMs', 'wordMinMs', 'endSilenceMs', 'maxUtteranceMs', 'playbackTailMs',
+  'silenceBeforeMs', 'onsetWindowMs', 'wordMinMs', 'pauseCheckMs', 'turnThreshold',
+  'endSilenceMinMs', 'endSilenceMaxMs', 'endSilenceRampMs', 'maxUtteranceMs', 'playbackTailMs',
 ]
 
 /**
@@ -50,7 +51,7 @@ export function parseHandsFreeTuning(text: string | undefined): { tuning: Partia
     if (!(TUNING_KEYS as readonly string[]).includes(key)) {
       problems.push(`unknown key "${key}" (known: ${TUNING_KEYS.join(', ')})`)
     } else if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-      problems.push(`"${key}" must be a number of milliseconds`)
+      problems.push(`"${key}" must be a non-negative number`)
     } else {
       tuning[key as keyof HandsFreeTuning] = value
     }

@@ -6,7 +6,7 @@ import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, onHoldStateChange, type Capture } from './held-microphone'
 import { nativeHaptic } from './native-microphone'
 import { Downsampler, pcmToBase64 } from './pcm'
-import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener, type UtteranceEnd } from './wake-listener'
+import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener } from './wake-listener'
 
 /**
  * Hands-free mode: start talking with "Control" and just keep going — "Control,
@@ -28,7 +28,11 @@ import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener, type UtteranceEnd } 
  * tone is the confirmation that it was heard and sent.
  *
  * It ends when Voice Operator hears "over and out" (watched for on-device,
- * alongside Wispr), or after `endSilenceMs` of quiet. "Control" is stripped
+ * alongside Wispr); or at a pause, when the server's turn model (Smart Turn,
+ * src/server/turn-detector.ts) says the speaker sounds finished; or when a
+ * pause outlasts a patience that grows with how long they have been talking
+ * — a second and a half for a quick request, up to twenty seconds into a
+ * monologue — for when the model is unsure or unavailable. "Control" is stripped
  * off the front of the transcript, "over and out" and anything after it off
  * the end, and the rest goes to Control, which comes to this device.
  *
@@ -65,6 +69,8 @@ export function cleanHandsFreeText(text: string): string {
 export interface HandsFreeDictation {
   finish(): Promise<string>
   cancel(): void
+  /** At a pause: probability 0..1 that the speaker has finished; null when it cannot say. */
+  checkTurn(): Promise<number | null>
 }
 
 /** Everything outside this module it touches, so a test can supply its own. */
@@ -102,8 +108,11 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
 /** While the page is hidden, how often to note that audio is still arriving. */
 const BACKGROUND_REPORT_MS = 60_000
 
-/** Why a dictation ended: the endpointer's reasons, the end phrase, or the microphone going away. */
-type EndReason = UtteranceEnd | 'over and out' | 'lost'
+/**
+ * Why a dictation ended: the end phrase, the turn model, the endpointer's
+ * silence or cap, or the microphone going away.
+ */
+type EndReason = 'over and out' | 'finished' | 'silence' | 'too-long' | 'lost'
 
 export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps = REAL_DEPS(api)): () => void {
   const { log } = deps
@@ -120,7 +129,10 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let stoodAside = false
   /** The dictation after the wake word, fed to its endpointer, and how to say it has ended. */
   let utterance: UtteranceEndpointer | undefined
+  let utteranceDictation: HandsFreeDictation | undefined
   let endUtterance: ((reason: EndReason) => void) | undefined
+  /** Bumped at every pause and every resumption: a turn verdict counts only for the pause it was asked about. */
+  let pauseNumber = 0
   let checkError: string | undefined
   let heardSamples = 0
   let lastReport = 0
@@ -151,16 +163,23 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       // Ends on the end phrase, on what the endpointer hears — or, if audio stops coming, on the clock.
       let ended: (reason: EndReason) => void = () => undefined
       const end = new Promise<EndReason>((resolve) => { ended = resolve })
+      let backlogMs = 0
       dictation = await deps.beginDictation({
-        backlog: () => listener.audioSince(start),
+        backlog: () => {
+          const audio = listener.audioSince(start)
+          backlogMs = (audio.length / 16_000) * 1000
+          return audio
+        },
         endPhrase: END_PHRASE,
         onEndPhrase: () => ended('over and out'),
       })
-      utterance = new UtteranceEndpointer(tuning)
+      utterance = new UtteranceEndpointer(tuning, backlogMs)
+      utteranceDictation = dictation
       endUtterance = ended
       void deps.sleep(tuning.maxUtteranceMs + 10_000).then(() => ended('lost'))
       const reason = await end
       utterance = undefined
+      utteranceDictation = undefined
       endUtterance = undefined
       deps.playCue('listeningFinished')
       if (reason === 'lost') {
@@ -183,10 +202,22 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       deps.playCue('transcriptionFailed')
     } finally {
       utterance = undefined
+      utteranceDictation = undefined
       endUtterance = undefined
       setPhase(capture ? 'listening' : 'off')
       listener.resume()
     }
+  }
+
+  /** A pause: if the turn model is sure enough they have finished, and they have not started again, end here. */
+  const askAboutPause = async (talkMs: number) => {
+    const asked = ++pauseNumber
+    const dictation = utteranceDictation
+    if (!dictation) return
+    const p = await dictation.checkTurn()
+    const current = asked === pauseNumber && dictation === utteranceDictation
+    log(`pause after ${(talkMs / 1000).toFixed(1)}s: ${p === null ? 'no turn verdict' : `p(finished)=${p.toFixed(2)}`}${current ? '' : ', but they carried on'}`)
+    if (current && p !== null && p >= tuning.turnThreshold) endUtterance?.('finished')
   }
 
   const onBlock = (block: Float32Array) => {
@@ -200,8 +231,11 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     }
     const phase = useHandsFree.getState().phase
     if (phase === 'hearing') {
-      const reason = utterance?.push(pcm)
-      if (reason) endUtterance?.(reason)
+      for (const event of utterance?.push(pcm) ?? []) {
+        if (event.kind === 'ended') endUtterance?.(event.reason)
+        else if (event.kind === 'resumed') pauseNumber++
+        else void askAboutPause(event.talkMs)
+      }
       return
     }
     if (phase !== 'listening') return

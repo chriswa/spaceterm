@@ -13,7 +13,9 @@ import { TARGET_SAMPLE_RATE } from './pcm'
  * Everything else is forgotten as it scrolls out of the buffer; nothing is
  * kept, transcribed or sent.
  *
- * After the wake word (`UtteranceEndpointer`): has the user stopped talking?
+ * After the wake word (`UtteranceEndpointer`): has the user paused — time to
+ * ask the turn model whether they sound finished — and has the pause gone on
+ * long enough to end it regardless?
  *
  * Pure: audio in, events out, time measured in samples. No clock, no
  * microphone, no network — so every threshold is testable with synthetic tones.
@@ -24,8 +26,12 @@ export const DEFAULT_TUNING: HandsFreeTuning = {
   silenceBeforeMs: 700,
   onsetWindowMs: 1000,
   wordMinMs: 250,
-  endSilenceMs: 5000,
-  maxUtteranceMs: 120_000,
+  pauseCheckMs: 300,
+  turnThreshold: 0.5,
+  endSilenceMinMs: 1500,
+  endSilenceMaxMs: 20_000,
+  endSilenceRampMs: 300_000,
+  maxUtteranceMs: 600_000,
   playbackTailMs: 400,
 }
 
@@ -242,38 +248,68 @@ export class WakeListener {
 }
 
 /**
- * After the wake word, while the user is talking: have they stopped? Ends,
- * exactly once, after `endSilenceMs` of quiet or at `maxUtteranceMs`. It
- * starts mid-speech — the wake word began it — so quiet counts from now.
+ * How long a pause ends a dictation by itself: `endSilenceMinMs` for a short
+ * request, growing linearly with how long the speaker has been going, to
+ * `endSilenceMaxMs` at `endSilenceRampMs` — the longer the monologue, the
+ * more room for the next thought.
  */
-export type UtteranceEnd = 'silence' | 'too-long'
+export function endSilenceFor(talkMs: number, tuning: HandsFreeTuning): number {
+  const ramp = Math.min(1, talkMs / Math.max(1, tuning.endSilenceRampMs))
+  return tuning.endSilenceMinMs + (tuning.endSilenceMaxMs - tuning.endSilenceMinMs) * ramp
+}
 
+export type UtteranceEvent =
+  /** Quiet for `pauseCheckMs`: ask whether they sound finished. Once per pause. */
+  | { kind: 'pause'; talkMs: number }
+  /** Speech again, after a pause was reported: whatever was asked about it no longer holds. */
+  | { kind: 'resumed' }
+  /** The quiet outlasted `endSilenceFor`, or the whole thing reached `maxUtteranceMs`. Once. */
+  | { kind: 'ended'; reason: 'silence' | 'too-long' }
+
+/**
+ * After the wake word, while the user is talking. It starts mid-speech — the
+ * wake word began it — so quiet counts from now, and `alreadyMs` of talk (what
+ * was said before it started, out of the listener's buffer) counts towards
+ * the speaker's patience.
+ */
 export class UtteranceEndpointer {
   private readonly gate = new SpeechGate()
   private readonly framer = new Framer()
   private at = 0
   private lastSpeech = 0
+  private pauseReported = false
   private done = false
 
-  constructor(private readonly tuning: HandsFreeTuning = DEFAULT_TUNING) {}
+  constructor(private readonly tuning: HandsFreeTuning = DEFAULT_TUNING, private readonly alreadyMs = 0) {}
 
-  /** The reason it ended, the first time it does; otherwise null. */
-  push(block: Int16Array): UtteranceEnd | null {
-    if (this.done) return null
+  push(block: Int16Array): UtteranceEvent[] {
+    const events: UtteranceEvent[] = []
+    if (this.done) return events
     for (const frame of this.framer.frames(block)) {
       this.at += frame.length
-      this.gate.push(frame)
+      if (this.gate.push(frame) === 'start' && this.pauseReported) {
+        this.pauseReported = false
+        events.push({ kind: 'resumed' })
+      }
       if (this.gate.speaking) this.lastSpeech = this.at
-      const reason: UtteranceEnd | null = ms(this.at) >= this.tuning.maxUtteranceMs
-        ? 'too-long'
-        : !this.gate.speaking && ms(this.at - this.lastSpeech) + SpeechGate.HANGOVER_FRAMES * FRAME_MS >= this.tuning.endSilenceMs
-          ? 'silence'
-          : null
-      if (reason) {
+      const talkMs = this.alreadyMs + ms(this.at)
+      if (talkMs >= this.tuning.maxUtteranceMs) {
         this.done = true
-        return reason
+        events.push({ kind: 'ended', reason: 'too-long' })
+        break
+      }
+      if (this.gate.speaking) continue
+      const quietMs = ms(this.at - this.lastSpeech) + SpeechGate.HANGOVER_FRAMES * FRAME_MS
+      if (!this.pauseReported && quietMs >= this.tuning.pauseCheckMs) {
+        this.pauseReported = true
+        events.push({ kind: 'pause', talkMs: Math.round(talkMs) })
+      }
+      if (quietMs >= endSilenceFor(talkMs, this.tuning)) {
+        this.done = true
+        events.push({ kind: 'ended', reason: 'silence' })
+        break
       }
     }
-    return null
+    return events
   }
 }

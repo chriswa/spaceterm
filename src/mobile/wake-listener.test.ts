@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_TUNING, LEAD_MS, UtteranceEndpointer, WakeListener, type UtteranceEnd } from './wake-listener'
+import { DEFAULT_TUNING, LEAD_MS, UtteranceEndpointer, WakeListener, endSilenceFor, type UtteranceEvent } from './wake-listener'
 
 /**
  * Synthetic audio: "speech" is a 200 Hz tone at about −20 dBFS, "quiet" is a
@@ -100,20 +100,43 @@ describe('WakeListener', () => {
 })
 
 describe('UtteranceEndpointer', () => {
-  const run = (endpointer: UtteranceEndpointer, ...parts: Int16Array[]): UtteranceEnd[] =>
-    feed((b) => { const end = endpointer.push(b); return end ? [end] : [] }, ...parts)
+  const run = (endpointer: UtteranceEndpointer, ...parts: Int16Array[]): UtteranceEvent[] => feed((b) => endpointer.push(b), ...parts)
+  const kinds = (events: UtteranceEvent[]) => events.map((e) => e.kind === 'ended' ? `ended:${e.reason}` : e.kind)
 
-  it('ends after the user stops talking for endSilenceMs — five seconds by default', () => {
-    expect(run(new UtteranceEndpointer(), speech(2000), quiet(3000), speech(1000), quiet(4000))).toEqual([])
-    expect(run(new UtteranceEndpointer(), speech(2000), quiet(5500))).toEqual(['silence'])
+  it('reports each pause once, as soon as it reaches pauseCheckMs, and speech resuming after it', () => {
+    const events = run(new UtteranceEndpointer(), speech(2000), quiet(600), speech(1000), quiet(600))
+    expect(kinds(events)).toEqual(['pause', 'resumed', 'pause'])
+    const first = events[0] as Extract<UtteranceEvent, { kind: 'pause' }>
+    expect(first.talkMs).toBeGreaterThan(2000)
+    expect(first.talkMs).toBeLessThan(2500)
   })
 
-  it('takes its silence from tuning', () => {
-    expect(run(new UtteranceEndpointer({ ...DEFAULT_TUNING, endSilenceMs: 1500 }), speech(1000), quiet(2000))).toEqual(['silence'])
+  it('counts talk from before it started towards the speaker\'s patience', () => {
+    const [pause] = run(new UtteranceEndpointer(DEFAULT_TUNING, 4000), speech(1000), quiet(600))
+    expect((pause as Extract<UtteranceEvent, { kind: 'pause' }>).talkMs).toBeGreaterThan(5000)
+  })
+
+  it('ends a short request after endSilenceMinMs of quiet, but not on a shorter pause', () => {
+    expect(kinds(run(new UtteranceEndpointer(), speech(2000), quiet(1000), speech(1000), quiet(1000)))).not.toContain('ended:silence')
+    expect(kinds(run(new UtteranceEndpointer(), speech(2000), quiet(2000)))).toContain('ended:silence')
+  })
+
+  it('waits far longer for the next thought deep into a monologue', () => {
+    const endpointer = new UtteranceEndpointer(DEFAULT_TUNING, 300_000)
+    expect(kinds(run(endpointer, speech(1000), quiet(10_000)))).toEqual(['pause'])
   })
 
   it('stops at the cap, and only ends once', () => {
     const endpointer = new UtteranceEndpointer({ ...DEFAULT_TUNING, maxUtteranceMs: 3000 })
-    expect(run(endpointer, speech(5000), quiet(6000))).toEqual(['too-long'])
+    expect(kinds(run(endpointer, speech(5000), quiet(6000)))).toEqual(['ended:too-long'])
+  })
+})
+
+describe('endSilenceFor', () => {
+  it('grows from the minimum for a quick request to the maximum at the ramp, and no further', () => {
+    expect(endSilenceFor(0, DEFAULT_TUNING)).toBe(1500)
+    expect(endSilenceFor(150_000, DEFAULT_TUNING)).toBe(10_750)
+    expect(endSilenceFor(300_000, DEFAULT_TUNING)).toBe(20_000)
+    expect(endSilenceFor(900_000, DEFAULT_TUNING)).toBe(20_000)
   })
 })

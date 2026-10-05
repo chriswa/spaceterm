@@ -73,8 +73,13 @@ the always-listen switch. While it holds the microphone, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
 phone taps (a haptic) and the button turns green; nothing waits on that, since
 the dictation is fed everything from your first syllable out of the
-listener's buffer. End with **"over and out"**, or by going quiet for five
-seconds. The end tone means it was heard and sent: "Control" comes off the
+listener's buffer. End with **"over and out"**, or just stop: at each pause
+the Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from
+your words and intonation whether you sound finished, and if it is sure, the
+dictation ends there. If it is not, a pause still ends it once it outlasts a
+patience that grows with how long you have been talking — a second and a half
+for a quick request, up to twenty seconds five minutes into a monologue. The
+end tone means it was heard and sent: "Control" comes off the
 front, "over and out" off the end, and the rest goes to Control, which comes
 to this phone. The dictation itself is ordinary Wispr, as the talk button's.
 
@@ -95,11 +100,18 @@ to this phone. The dictation itself is ordinary Wispr, as the talk button's.
 - It does not listen while the phone is playing anything, or for a moment
   after, so Control never wakes itself; nor during a dictation it did not
   start.
+- **The turn model** is fetched once (8 MB, pinned and hash-checked) into
+  `~/.spaceterm/models`, loaded when the first hands-free dictation starts, and
+  kept: about 130 MB of the server's memory, about 45 ms a check. Without it,
+  pauses end dictations on silence alone.
 - **Thresholds** are in `~/.spaceterm/hands-free.json` on the Mac, read again
   whenever it changes — any of `silenceBeforeMs` (700), `onsetWindowMs`
-  (1000), `wordMinMs` (250), `endSilenceMs` (5000), `maxUtteranceMs` (120000),
-  `playbackTailMs` (400). The server log's `[hands-free]` lines say what each
-  candidate measured and whether it was the word, never what was said.
+  (1000), `wordMinMs` (250), `pauseCheckMs` (300), `turnThreshold` (0.5, a
+  probability), `endSilenceMinMs` (1500), `endSilenceMaxMs` (20000),
+  `endSilenceRampMs` (300000), `maxUtteranceMs` (600000), `playbackTailMs`
+  (400). The server log's `[hands-free]` lines say what each candidate
+  measured and whether it was the word, and `[turn]` lines each pause's
+  verdict — never what was said.
 
 ## Running it
 

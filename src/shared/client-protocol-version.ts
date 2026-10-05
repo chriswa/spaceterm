@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 8
+export const CLIENT_PROTOCOL_VERSION = 9
 
 /**
  * Oldest client protocol this build still serves.
@@ -47,5 +47,8 @@ export const CLIENT_PROTOCOL_VERSION = 8
  * v7 asks whether a clip is "control" alone rather than whether it starts
  * with it, so this build's wake-word check ("starts with") triggers it on more
  * than it expects; and it never asks for an end phrase. Nothing else differs.
+ *
+ * v8 never asks whether the speaker has finished (`dictation-turn-check`), so
+ * its hands-free dictations end on silence alone; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

@@ -187,6 +187,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       audio: (id, pcm) => client.dictationAudio(id, pcm),
       finish: (id) => client.dictationFinish(id),
       cancel: (id) => client.dictationCancel(id),
+      turnCheck: (id) => client.dictationTurnCheck(id),
       onEndPhrase: (cb) => on('dictation-end-phrase', (m) => cb(m.id))
     },
     handsFree: {
