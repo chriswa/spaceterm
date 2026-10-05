@@ -9,12 +9,15 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     /// The app's own microphone, which the page asks for: hands-free mode.
     private let microphone = NativeMicrophone()
 
-    /// `SpacetermURL` from Info.plist, written at build time by install.sh.
-    private let startURL: URL? = {
-        guard let raw = Bundle.main.object(forInfoDictionaryKey: "SpacetermURL") as? String,
-              !raw.isEmpty else { return nil }
-        return URL(string: raw)
+    /// `SpacetermURLs` from Info.plist, written at build time by install.sh:
+    /// one pairing URL per Mac, for a phone that is on one tailnet at a time.
+    private let candidates: [URL] = {
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "SpacetermURLs") as? String else { return [] }
+        return raw.split(whereSeparator: \.isWhitespace).compactMap { URL(string: String($0)) }
     }()
+    /// The candidate that answered first, and so the page this view holds.
+    private var activeURL: URL?
+    private var race: AddressRace?
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -77,12 +80,33 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         load()
     }
 
+    /// Ask every Mac at once; the page comes from whichever answers first.
     private func load() {
-        guard let url = startURL else {
+        guard !candidates.isEmpty else {
             showProblem("This build has no Spaceterm address. Rebuild it with <code>src/mobile/ios/install.sh</code> on your Mac.")
             return
         }
-        webView.load(URLRequest(url: url))
+        race?.cancel()
+        race = AddressRace(candidates) { [weak self] winner in
+            guard let self else { return }
+            self.race = nil
+            guard let winner else {
+                self.showProblem(self.unreachableMessage())
+                return
+            }
+            self.activeURL = winner
+            self.webView.load(URLRequest(url: winner))
+        }
+    }
+
+    private func isSpaceterm(_ host: String?) -> Bool {
+        guard let host else { return false }
+        return candidates.contains { $0.host == host }
+    }
+
+    private func unreachableMessage() -> String {
+        let hosts = candidates.compactMap(\.host).map { "<code>\($0)</code>" }.joined(separator: "<br>")
+        return "Could not connect to any of these:<br>\(hosts)<br><br>Is the Mac awake, and Tailscale connected on both and on the same tailnet?"
     }
 
     // MARK: - Microphone
@@ -92,16 +116,20 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        decisionHandler(origin.host == startURL?.host ? .grant : .deny)
+        decisionHandler(isSpaceterm(origin.host) ? .grant : .deny)
     }
 
     // MARK: - Navigation
 
     /// Spaceterm's own pages stay here; anything else opens in the browser.
+    /// `spaceterm://retry` is the problem page's way back: another race.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { return decisionHandler(.cancel) }
-        if url.scheme == "about" || url.host == startURL?.host {
+        if url.scheme == Self.retryScheme {
+            decisionHandler(.cancel)
+            load()
+        } else if url.scheme == "about" || isSpaceterm(url.host) {
             decisionHandler(.allow)
         } else {
             UIApplication.shared.open(url)
@@ -110,7 +138,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        showProblem("Could not reach Spaceterm: \(error.localizedDescription).<br>Is the Mac awake, and Tailscale connected on both?")
+        let host = activeURL?.host.map { "<code>\($0)</code>" } ?? "Spaceterm"
+        showProblem("Could not reach \(host): \(error.localizedDescription).<br>Is the Mac awake, and Tailscale connected on both?")
     }
 
     /// iOS kills a page's process when it uses too much memory; without this
@@ -124,9 +153,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         load()
     }
 
+    private static let retryScheme = "spaceterm"
+
     /// No browser to show an error page, so a minimal one with a way back.
     private func showProblem(_ message: String) {
-        let retry = startURL.map { "<p><a href=\"\($0.absoluteString)\" style=\"color:#cba6f7\">Try again</a></p>" } ?? ""
+        let retry = candidates.isEmpty ? "" :
+            "<p><a href=\"\(Self.retryScheme)://retry\" style=\"color:#cba6f7\">Try again</a></p>"
         let html = """
         <!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
         <body style="margin:0;padding:calc(48px + env(safe-area-inset-top)) 24px;background:#11111b;color:#cdd6f4;
@@ -134,5 +166,59 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         <h2 style="margin-top:0">Spaceterm</h2><p>\(message)</p>\(retry)
         """
         webView.loadHTMLString(html, baseURL: nil)
+    }
+}
+
+/// Fetch every address's page at once. The first to answer wins and the rest
+/// are cancelled; once all have failed, the answer is nil. One shot: the
+/// completion runs once, on the main queue.
+private final class AddressRace {
+    private let session: URLSession
+    private let completion: (URL?) -> Void
+    private var pending: Int
+    private var settled = false
+
+    init(_ urls: [URL], completion: @escaping (URL?) -> Void) {
+        let config = URLSessionConfiguration.ephemeral
+        // A Mac whose name resolves but which is asleep or on the other tailnet
+        // answers nothing; this is how long the other one has to win.
+        config.timeoutIntervalForRequest = 15
+        config.waitsForConnectivity = false
+        session = URLSession(configuration: config)
+        self.completion = completion
+        pending = urls.count
+        for url in urls {
+            session.dataTask(with: Self.probe(url)) { [weak self] _, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let reached = error == nil && (200..<400).contains(status)
+                DispatchQueue.main.async { self?.settle(url, reached: reached) }
+            }.resume()
+        }
+    }
+
+    func cancel() {
+        settled = true
+        session.invalidateAndCancel()
+    }
+
+    private func settle(_ url: URL, reached: Bool) {
+        guard !settled else { return }
+        pending -= 1
+        if reached {
+            settled = true
+            session.invalidateAndCancel()
+            completion(url)
+        } else if pending == 0 {
+            settled = true
+            session.invalidateAndCancel()
+            completion(nil)
+        }
+    }
+
+    /// The page without its fragment: the token never travels, as in a browser.
+    private static func probe(_ url: URL) -> URL {
+        var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        parts?.fragment = nil
+        return parts?.url ?? url
     }
 }

@@ -64,6 +64,21 @@ export function loadOrCreateWebToken(dir: string): string {
   return token
 }
 
+/**
+ * Pairing URLs of other Macs the phone should also try, from `other-macs`
+ * beside the token: one per line, each the output of `npm run mobile:link --
+ * --url` on that Mac. Blank lines and `#` comments are skipped. Missing means none.
+ */
+export function readOtherMacUrls(dir: string): string[] {
+  let text: string
+  try {
+    text = fs.readFileSync(path.join(dir, 'other-macs'), 'utf8')
+  } catch {
+    return []
+  }
+  return text.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'))
+}
+
 function tokenMatches(given: string | null, expected: string): boolean {
   if (!given) return false
   const a = Buffer.from(given)

@@ -168,6 +168,14 @@ rebuild of this.
 npm run mobile:ios        # build, sign, install on the paired iPhone, launch
 ```
 
+A phone that moves between tailnets — home and work, say — needs every Mac's
+address, and the app tries them all at launch and keeps whichever answers
+first. `ios/macs` (committed) names each Mac by tailnet host name;
+`~/.spaceterm/other-macs` (private, since it carries tokens) holds the other
+Macs' pairing URLs, one `npm run mobile:link -- --url` line each. The build
+refuses, saying what to fill in, when this Mac is not in `ios/macs` or a listed
+Mac has no line in `other-macs` (`src/cli/mobile-macs.ts`).
+
 Once only: accept Apple's latest Program License Agreement at
 developer.apple.com (signing fails until you do); pair the phone in Xcode →
 Devices and Simulators by cable and tick "Connect via network"; on the phone,

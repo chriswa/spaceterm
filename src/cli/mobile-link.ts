@@ -2,16 +2,22 @@
  * Print the link that pairs a phone with this Mac's Spaceterm.
  *
  *   npm run mobile:link
- *   npm run mobile:link -- --url    # just the URL, for scripts (src/mobile/ios/install.sh)
+ *   npm run mobile:link -- --url    # just the URL, for scripts
+ *   npm run mobile:link -- --urls   # this URL and every other Mac's, from ~/.spaceterm/other-macs,
+ *                                   # space-separated on one line (src/mobile/ios/install.sh)
  *
  * The token rides in the URL fragment, which a browser never sends anywhere;
  * the app stores it on first load. Treat the link like a password — it opens a
  * shell on this machine to anyone who has it and can reach your tailnet.
  */
 import { execFileSync } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
 import { SOCKET_DIR } from '../shared/protocol'
-import { DEFAULT_WEB_PORT, loadOrCreateWebToken } from '../server/web-gateway'
+import { DEFAULT_WEB_PORT, loadOrCreateWebToken, readOtherMacUrls } from '../server/web-gateway'
+import { parseMacs, macsProblems, pairingHost } from './mobile-macs'
+
+const MACS_FILE = join(__dirname, '..', 'mobile', 'ios', 'macs')
 
 const TAILSCALE_CANDIDATES = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']
 
@@ -28,18 +34,31 @@ function tailscale(args: string[]): string | null {
 }
 
 const urlOnly = process.argv.includes('--url')
+const allUrls = process.argv.includes('--urls')
 const port = Number(process.env.SPACETERM_WEB_PORT ?? DEFAULT_WEB_PORT)
 const token = loadOrCreateWebToken(SOCKET_DIR)
 
 const status = tailscale(['status', '--json'])
 const dnsName = status ? (JSON.parse(status) as { Self?: { DNSName?: string } }).Self?.DNSName?.replace(/\.$/, '') : undefined
 
-if (!dnsName && urlOnly) {
+if (!dnsName && (urlOnly || allUrls)) {
   console.error('Tailscale is not installed or not logged in on this Mac; run `npm run mobile:link` for setup steps.')
   process.exit(1)
 }
 if (urlOnly) {
   console.log(`https://${dnsName}/#token=${token}`)
+  process.exit(0)
+}
+if (allUrls) {
+  const own = `https://${dnsName}/#token=${token}`
+  const others = readOtherMacUrls(SOCKET_DIR)
+  const problems = macsProblems({ required: parseMacs(readFileSync(MACS_FILE, 'utf8')), own: dnsName!, others })
+  if (problems.length) {
+    console.error(problems.join('\n'))
+    process.exit(1)
+  }
+  // This Mac first; another line for it in other-macs would only repeat it.
+  console.log([own, ...others.filter((url) => pairingHost(url) !== dnsName)].join(' '))
   process.exit(0)
 }
 

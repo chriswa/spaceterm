@@ -5,7 +5,7 @@ import * as path from 'path'
 import type { AddressInfo } from 'net'
 import type { Server } from 'http'
 import { WebSocket } from 'ws'
-import { startWebGateway, resolveStatic, loadOrCreateWebToken } from './web-gateway'
+import { startWebGateway, resolveStatic, loadOrCreateWebToken, readOtherMacUrls } from './web-gateway'
 import type { ClientLink } from './client-link'
 
 const TOKEN = 'a'.repeat(32)
@@ -105,6 +105,25 @@ describe('loadOrCreateWebToken', () => {
     expect(first.length).toBeGreaterThanOrEqual(32)
     expect(fs.statSync(path.join(dir, 'web-token')).mode & 0o777).toBe(0o600)
     expect(loadOrCreateWebToken(dir)).toBe(first)
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('readOtherMacUrls', () => {
+  it('reads one pairing URL per line, skipping blanks and comments; none without the file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'other-macs-'))
+    expect(readOtherMacUrls(dir)).toEqual([])
+    fs.writeFileSync(path.join(dir, 'other-macs'), [
+      '# the laptop at home',
+      '  https://home.tailnet.ts.net/#token=aaa  ',
+      '',
+      'https://studio.tailnet.ts.net/#token=bbb',
+      ''
+    ].join('\n'))
+    expect(readOtherMacUrls(dir)).toEqual([
+      'https://home.tailnet.ts.net/#token=aaa',
+      'https://studio.tailnet.ts.net/#token=bbb'
+    ])
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })

@@ -14,7 +14,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
 bundle_id=com.chriswaddell.spaceterm
 
-url="$(cd "$repo" && npx tsx src/cli/mobile-link.ts --url)"
+# This Mac's pairing URL, then any other Mac's from ~/.spaceterm/other-macs:
+# the app tries them all and keeps whichever answers first.
+urls="$(cd "$repo" && npx tsx src/cli/mobile-link.ts --urls)"
 
 devices_json="$(mktemp)"
 trap 'rm -f "$devices_json"' EXIT
@@ -73,7 +75,7 @@ xcodebuild \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
   SYMROOT="$here/build" \
-  SPACETERM_URL="$url" \
+  SPACETERM_URLS="$urls" \
   SPACETERM_NATIVE_VERSION="$native_version" \
   build | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
 
