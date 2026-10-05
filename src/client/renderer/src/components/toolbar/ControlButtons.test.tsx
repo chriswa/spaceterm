@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, act } from '@testing-library/react'
 import { ControlButton } from './ControlButtons'
 import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '../../testing/fake-bridge'
 import { useReceptionistStore } from '../../stores/receptionistStore'
+import { useControlTranscriptStore } from '../../stores/controlTranscriptStore'
+import { LONG_PRESS_MS } from '../../hooks/useLongPress'
 import type { ReceptionistStatus } from '../../../../../shared/api'
 
 /**
@@ -36,6 +38,34 @@ describe('ControlButton', () => {
     status({ phase: 'speaking', target: true })
     fireEvent.click(button)
     expect(bridge.callsTo('receptionist.select')).toHaveLength(2)
+  })
+
+  it('opens the transcript on a long press, without selecting', () => {
+    vi.useFakeTimers()
+    try {
+      useControlTranscriptStore.setState({ open: false })
+      const { container } = render(<ControlButton />)
+      const button = container.querySelector('button')!
+      fireEvent.pointerDown(button, { button: 0 })
+      act(() => { vi.advanceTimersByTime(LONG_PRESS_MS) })
+      fireEvent.pointerUp(button)
+      fireEvent.click(button)
+      expect(useControlTranscriptStore.getState().open).toBe(true)
+      expect(bridge.callsTo('receptionist.select')).toHaveLength(0)
+
+      // While it is open, a click closes it rather than selecting.
+      fireEvent.click(button)
+      expect(useControlTranscriptStore.getState().open).toBe(false)
+      expect(bridge.callsTo('receptionist.select')).toHaveLength(0)
+
+      // Then a short press is an ordinary tap again.
+      fireEvent.pointerDown(button, { button: 0 })
+      fireEvent.pointerUp(button)
+      fireEvent.click(button)
+      expect(bridge.callsTo('receptionist.select')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('is black elsewhere, white here and talked to, magenta here with the voice on Summary Chat', () => {
@@ -88,6 +118,6 @@ describe('ControlButton', () => {
   it('says why it failed', () => {
     const { container } = render(<ControlButton />)
     status({ phase: 'ready', target: false, message: 'no API key' })
-    expect(container.querySelector('button')!.dataset.tooltip).toBe('Control — no API key')
+    expect(container.querySelector('button')!.dataset.tooltip).toMatch(/^Control — no API key\./)
   })
 })

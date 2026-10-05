@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, screen, act } from '@testing-library/react'
 import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '@/testing/fake-bridge'
 import { useReceptionistStore } from '@/stores/receptionistStore'
+import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { ControlButton } from './ControlButton'
 import { SummarizerButton } from './SummarizerButton'
 
@@ -50,5 +51,25 @@ describe('the talk button while Control holds the voice', () => {
     expect(bridge.callsTo('receptionist.stop')).toHaveLength(1)
     expect(bridge.callsTo('receptionist.select')).toHaveLength(0)
     expect(bridge.callsTo('toggleSummaryChat')).toHaveLength(0)
+  })
+})
+
+describe('the talk button over Control’s transcript', () => {
+  it('sends what it hears straight to Control, and shows it at the bottom of the transcript', async () => {
+    act(() => useControlTranscriptStore.getState().setOpen(true))
+    const finish = vi.fn(async () => 'what is Kevin doing?')
+    const dictation = await import('./dictation')
+    vi.spyOn(dictation.Dictation, 'begin').mockReturnValue({} as never)
+    vi.spyOn(dictation, 'whenHearing').mockResolvedValue({ finish, cancel: vi.fn() } as never)
+    render(<SummarizerButton nodeId={null} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Control' }))
+    await screen.findByRole('button', { name: 'Listening — tap to send' })
+    fireEvent.click(screen.getByRole('button', { name: 'Listening — tap to send' }))
+    await screen.findByRole('button', { name: 'Talk to Control' })
+    expect(bridge.lastCall('receptionist.say')).toEqual(['what is Kevin doing?'])
+    expect(bridge.callsTo('summaryChatFollowUp')).toHaveLength(0)
+    expect(useControlTranscriptStore.getState().pending).toEqual(['what is Kevin doing?'])
+    act(() => useControlTranscriptStore.getState().setOpen(false))
+    vi.restoreAllMocks()
   })
 })

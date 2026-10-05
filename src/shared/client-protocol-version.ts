@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 9
+export const CLIENT_PROTOCOL_VERSION = 10
 
 /**
  * Oldest client protocol this build still serves.
@@ -50,5 +50,8 @@ export const CLIENT_PROTOCOL_VERSION = 9
  *
  * v8 never asks whether the speaker has finished (`dictation-turn-check`), so
  * its hands-free dictations end on silence alone; it loses nothing else.
+ *
+ * v9 has no Control transcript (`receptionist-transcript`, `receptionist-say`,
+ * `receptionist-transcript-appended`); it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

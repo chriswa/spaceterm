@@ -3,6 +3,9 @@ import type { ServerClient, ServerEvent, ServerEventType } from './server-client
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeData } from './state'
 
+/** Entries per page of Control's transcript: a few screens' worth, so a scroll up rarely waits. */
+const TRANSCRIPT_PAGE = 60
+
 /**
  * Assemble `window.api` from a server connection and a host platform.
  *
@@ -203,6 +206,9 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     receptionist: {
       select: () => client.selectReceptionist(),
       stop: () => client.stopReceptionist(),
+      say: (text) => client.sayToReceptionist(text),
+      transcript: (before) => client.receptionistTranscript(before, TRANSCRIPT_PAGE),
+      onTranscriptAppended: (cb) => on('receptionist-transcript-appended', (m) => cb(m.entries)),
       onStatus: (cb) => onReceptionistStatus(({ phase, target, message }) => cb({ phase, target, message })),
       deviceId: client.device.id,
       onHolder: (cb) => onReceptionistHolder((m) => cb(m.holder)),

@@ -179,6 +179,12 @@ function renderReturn(news: ReturnNews, spoke: boolean): string {
  */
 export const QUIET_OVER = 'YOU ARE NO LONGER QUIET: the user has reconnected you since you went quiet, so they hear you again. Speak as usual from this message on.'
 
+const USER_SAYS = 'THE USER SAYS: '
+const SECTION_BREAK = '\n\n'
+
+/** `renderBacklog`'s section, last in the body. */
+const BACKLOG_TRAILER = /\n\nBACKLOG: \d+ items? set aside for later\.$/
+
 /**
  * One turn's message: any events, and then what the user said — or nothing, when the turn is the receptionist
  * deciding whether events are worth speaking up about. `listener` is `away` when nobody can hear the reply, or
@@ -191,11 +197,29 @@ export function renderTurnBody(
   if (unquieted) sections.push(QUIET_OVER)
   if (listener && listener !== 'away') sections.push(renderReturn(listener, heard !== undefined))
   if (events.length) sections.push(`EVENTS:\n${events.map(renderEvent).join('\n')}`)
-  if (heard !== undefined) sections.push(`THE USER SAYS: ${heard}`)
+  if (heard !== undefined) sections.push(`${USER_SAYS}${heard}`)
   if (listener === 'away') sections.push(AWAY)
   else if (heard === undefined && events.length && !listener) sections.push('The user has not said anything. Decide whether the events are worth speaking up about.')
   if (backlog > 0 && listener !== 'away') sections.push(renderBacklog(backlog))
-  return sections.join('\n\n')
+  return sections.join(SECTION_BREAK)
+}
+
+/**
+ * A recorded turn body taken apart again, for the transcript view: the user's
+ * words, and whatever came before them (events, news on their return). The
+ * inverse of `renderTurnBody` for a turn the user spoke in; undefined for one
+ * they did not. Only `AWAY` and the backlog count ever follow the words.
+ */
+export function splitTurnBody(body: string): { heard: string; context?: string } | undefined {
+  const later = body.indexOf(SECTION_BREAK + USER_SAYS)
+  const marker = body.startsWith(USER_SAYS) ? 0 : later < 0 ? -1 : later + SECTION_BREAK.length
+  if (marker < 0) return undefined
+  let heard = body.slice(marker + USER_SAYS.length)
+  const away = SECTION_BREAK + AWAY
+  if (heard.endsWith(away)) heard = heard.slice(0, -away.length)
+  heard = heard.replace(BACKLOG_TRAILER, '')
+  const context = body.slice(0, marker).trim()
+  return { heard, ...(context ? { context } : {}) }
 }
 
 /**

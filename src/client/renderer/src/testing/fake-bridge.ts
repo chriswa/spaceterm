@@ -2,11 +2,11 @@ import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
-  ReceptionistApi, ReceptionistStatus, HandsFreeApi
+  ReceptionistApi, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
-import type { HandsFreeTuning, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
+import type { ControlTranscriptEntry, HandsFreeTuning, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
 import type { NodeData, ReceptionistHolder, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
@@ -102,6 +102,8 @@ export interface FakeBridgeResponses {
   agentSearch: AgentSearchResponse
   /** Bytes reported by the toolbar's agent-memory poll; `null` = no daemon. */
   agentMemoryBytes: number | null
+  /** The page `receptionist.transcript(before)` resolves to. */
+  controlTranscript: (before?: number) => ControlTranscriptPage
 }
 
 /** The device the fake bridge says it runs on: emit a holder with this id to make it this client's. */
@@ -139,7 +141,8 @@ export class FakeBridge implements Api {
     agentSearch: { ok: true, pass: 'titles', hits: [], noneProbability: 1, costUsd: 0 },
     restartFlag: { required: false, reason: '' },
     usageReport: null,
-    agentMemoryBytes: null
+    agentMemoryBytes: null,
+    controlTranscript: () => ({ entries: [], more: false })
   }
 
   /**
@@ -179,6 +182,7 @@ export class FakeBridge implements Api {
   private readonly agentNames = new Set<(names: Record<string, string>) => void>()
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
+  private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
   private readonly handsFreeTuning = new Set<(tuning: Partial<HandsFreeTuning>) => void>()
   private readonly dictationEndPhrase = new Set<(id: string) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
@@ -290,6 +294,7 @@ export class FakeBridge implements Api {
     },
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
+    transcriptAppended: (entries: ControlTranscriptEntry[]): void => { for (const fn of this.transcriptAppended) fn(entries) },
     handsFreeTuning: (tuning: Partial<HandsFreeTuning>): void => { for (const fn of this.handsFreeTuning) fn(tuning) },
     dictationEndPhrase: (id: string): void => { for (const fn of this.dictationEndPhrase) fn(id) },
     systemMetrics: (sample: SystemMetricsSample): void => {
@@ -463,6 +468,9 @@ export class FakeBridge implements Api {
   readonly receptionist: ReceptionistApi = {
     select: () => this.record('receptionist.select'),
     stop: () => this.record('receptionist.stop'),
+    say: (text) => this.record('receptionist.say', text),
+    transcript: (before) => this.reply('receptionist.transcript', this.responses.controlTranscript(before), before),
+    onTranscriptAppended: (cb) => subscribe(this.transcriptAppended, cb),
     deviceId: FAKE_DEVICE_ID,
     onStatus: (cb) => subscribe(this.receptionistStatus, cb),
     onHolder: (cb) => subscribe(this.receptionistHolder, cb),

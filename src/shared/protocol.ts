@@ -867,6 +867,27 @@ export interface ReceptionistStopMessage {
   type: 'receptionist-stop'
 }
 
+/**
+ * Words typed to Control in its transcript view: for Control, whatever the
+ * voice target, and — as speaking to it does — it brings Control here.
+ */
+export interface ReceptionistSayMessage {
+  type: 'receptionist-say'
+  text: string
+}
+
+/**
+ * A page of Control's full record, for its transcript view: up to `count`
+ * entries ending before byte `before`, or the newest when it is left out.
+ * Replies `receptionist-transcript-result`.
+ */
+export interface ReceptionistTranscriptMessage {
+  type: 'receptionist-transcript'
+  seq: number
+  before?: number
+  count: number
+}
+
 /** Abandon every Summary Chat conversation: stop speaking and forget them. */
 export interface SummaryChatEndMessage {
   type: 'summary-chat-end'
@@ -1191,6 +1212,8 @@ export type ClientMessage =
   | SetRootCwdMessage
   | SetAutoStampsEnabledMessage
   | ReceptionistSelectMessage
+  | ReceptionistSayMessage
+  | ReceptionistTranscriptMessage
   | ReceptionistStopMessage
 
 // --- Server → Client messages ---
@@ -1573,6 +1596,47 @@ export interface ReceptionistHolderMessage {
 }
 
 /**
+ * One entry of Control's full record (`~/.spaceterm/receptionist/conversation.jsonl`),
+ * which compaction never touches: what the user said, what Control said —
+ * each part in the voice it was spoken in — or something Control did.
+ */
+export type ControlTranscriptEntry = {
+  /** Where it starts in the record, in bytes: its id, and the cursor for the page before it. */
+  offset: number
+  /** When it was recorded, ISO. */
+  timestamp: string
+} & (
+  /** `context` is what came with the user's words: events, news on their return. */
+  | { kind: 'user'; text: string; context?: string }
+  /** `from` is "Control", or the agent Control quoted in its voice. */
+  | { kind: 'reply'; parts: Array<{ from: string; text: string }> }
+  /**
+   * Something Control did: sent to an agent, started, archived, renamed one.
+   * `notDone` when it never ran, because the user cut off the words it waited on.
+   */
+  | { kind: 'log'; text: string; notDone?: true }
+  /**
+   * Not shown itself: the reply at offset `of` was cut off, and `parts[i]` is
+   * how many characters of its part `i` were heard. The rest is struck out.
+   */
+  | { kind: 'heard'; of: number; parts: number[] }
+)
+
+/** A page of the record, oldest first; `more` when the record goes back further. */
+export interface ReceptionistTranscriptResultMessage {
+  type: 'receptionist-transcript-result'
+  seq: number
+  entries: ControlTranscriptEntry[]
+  more: boolean
+}
+
+/** Entries just added to Control's record. Broadcast; not replayed — a page request catches up. */
+export interface ReceptionistTranscriptAppendedMessage {
+  type: 'receptionist-transcript-appended'
+  entries: ControlTranscriptEntry[]
+}
+
+/**
  * Move the camera to a surface because the conversation is about it — the
  * receptionist naming or quoting an agent. Unlike `focus-surface` it never
  * raises a window or takes focus: it follows talk, it does not answer a request.
@@ -1945,6 +2009,8 @@ export type ServerMessage =
   | ReceptionistHolderMessage
   | CameraFollowMessage
   | ReceptionistNoticeMessage
+  | ReceptionistTranscriptResultMessage
+  | ReceptionistTranscriptAppendedMessage
   | WakeWordResultMessage
   | HandsFreeTuningMessage
   | DictationEndPhraseMessage

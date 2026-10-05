@@ -18,6 +18,8 @@ import { FloatingToolbar } from './components/FloatingToolbar'
 import { EdgeSplitMenu } from './components/EdgeSplitMenu'
 import { SearchModal } from './components/SearchModal'
 import { AgentSearchModal } from './components/AgentSearchModal'
+import { ControlTranscript } from './components/ControlTranscript'
+import { useControlTranscriptStore } from './stores/controlTranscriptStore'
 import { HelpModal } from './components/HelpModal'
 import { KeycastOverlay } from './components/KeycastOverlay'
 import { PeerCameraOverlay } from './components/PeerCameraOverlay'
@@ -1515,6 +1517,8 @@ export function App() {
   // which one that is, and give up focus when it says the view has closed.
   // See surfacePresenterStore.
   const presentTerminalsExternally = useSurfacePresenterStore((s) => s.external)
+  /** Control's transcript, opened by a long press on its button. The phone draws its own (MobileApp). */
+  const controlTranscriptOpen = useControlTranscriptStore((s) => s.open)
   const toolbarSheet = useSurfacePresenterStore((s) => s.toolbarSheet)
   const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
   useEffect(() => {
@@ -2494,6 +2498,10 @@ export function App() {
 
       // Escape: close search/help modal, close terminal search, cancel reparent mode, or stop TTS
       if (e.key === 'Escape') {
+        if (useControlTranscriptStore.getState().open) {
+          useControlTranscriptStore.getState().setOpen(false)
+          return
+        }
         if (searchVisibleRef.current || agentSearchVisibleRef.current) {
           setSearchVisible(false)
           setAgentSearchVisible(false)
@@ -2552,8 +2560,8 @@ export function App() {
   }, [flyTo, cameraRef])
 
   const handleCanvasWheel = useCallback((e: WheelEvent) => {
-    // Search/help modals handle their own wheel events
-    if ((e.target as HTMLElement).closest('.search-modal') || (e.target as HTMLElement).closest('.help-modal')) return
+    // Search/help modals and Control's transcript handle their own wheel events
+    if ((e.target as HTMLElement).closest('.search-modal, .help-modal, .control-transcript')) return
     setSearchVisible(false)
     setAgentSearchVisible(false)
     setHelpVisible(false)
@@ -2779,7 +2787,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><AgentSearchModal visible={agentSearchVisible} resolvedPresets={resolvedPresets} onDismiss={() => setAgentSearchVisible(false)} onNavigateToNode={(id) => { setAgentSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} /></>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><AgentSearchModal visible={agentSearchVisible} resolvedPresets={resolvedPresets} onDismiss={() => setAgentSearchVisible(false)} onNavigateToNode={(id) => { setAgentSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} />{controlTranscriptOpen && !presentTerminalsExternally && <ControlTranscript variant="modal" onDismiss={() => useControlTranscriptStore.getState().setOpen(false)} />}</>}>
         <PeerCameraOverlay />
         <ResizeGhost />
         <NodeLabels

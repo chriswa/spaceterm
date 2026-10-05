@@ -66,6 +66,34 @@ mini-stats writes what its menu-bar item draws, colours and sizes decided, to
 `~/.mini-stats/menubar.json`; the server reads it every 2 s, but only while a
 phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
 
+## Control's transcript
+
+A long press on Control — the headset on the bottom bar, or its button in the
+toolbar sheet — opens the whole conversation with Control above the bottom
+bar, with a box to type to it (`ControlTranscript.tsx`, shared with the
+desktop, where it is a dialog). It reads Control's full record
+(`~/.spaceterm/receptionist/conversation.jsonl`), not its session, so
+compaction never shortens it: it opens at the newest and loads older pages as
+you scroll up. A tap on Control still brings it here or lets it go.
+
+While it is open the bar stays up: the headset is a down arrow that closes it,
+and the talk button talks to Control, whatever the voice target, with what it
+heard appearing at the bottom. It and the toolbar sheet are screens, not
+layers — opening one closes the other — and a one-finger sideways drag
+dismisses either, as it leaves the terminal view (`swipe-dismiss.ts`), except
+from the sheet's button strip, which scrolls sideways, a row's reorder handle,
+or the transcript's text box. Agents Control quoted by handle alone
+are named from the record and log (`transcript-names.ts`), since the name
+registry forgets archived agents; one never named shows its title.
+
+What you cut Control off in the middle of is struck out once you interrupt:
+the words you never heard, and — as dashed pills, "not done, cut off" — the
+actions that were waiting on them and so never ran. Both are recorded as
+transcript-only lines the model never sees (`amendHeard`, `notDone` in
+`real-deps.ts`). The view follows new content while you are near the bottom,
+including the circle that turns while Control thinks; a button takes you back
+down when you are not.
+
 ## Hands-free: "Control … over and out"
 
 The hold-mic button (the microphone with a lock, right of the talk button) is

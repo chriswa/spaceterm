@@ -7,7 +7,7 @@
  * keeps a turn near the API's own latency; the price is that the shape is
  * checked here instead of by the API.
  */
-import { redactUnheard } from '../summary-chat'
+import { interruptedWordStart, redactUnheard } from '../summary-chat'
 import { AGENT_TOKEN, stripBraces } from './agent-token'
 import type { VoiceGender } from './name-voice-table'
 
@@ -91,6 +91,28 @@ export function isAction(call: ToolCall): boolean {
  */
 export function isBlocking(call: ToolCall): boolean {
   return isLookup(call) || call.tool === 'unarchive_agent'
+}
+
+/**
+ * An action as the record's own lines put it once done — "SENT TO {Kevin}: …"
+ * — for the transcript to show, struck out, when it never ran. Agents stay
+ * tokens, which the transcript reads as names.
+ */
+export function actionHeadline(call: ToolCall): string {
+  const who = (ref: string) => `{${stripBraces(ref)}}`
+  switch (call.tool) {
+    case 'send': return `SENT TO ${who(call.agent)}: ${call.message}`
+    case 'ask_agent': return `ASKED ${who(call.agent)}: ${call.question}`
+    case 'monitor': return `WATCHED ${who(call.agent)}`
+    case 'interrupt': return `INTERRUPTED ${who(call.agent)}`
+    case 'archive_agent': return `ARCHIVED ${who(call.agent)}`
+    case 'unarchive_agent': return `UNARCHIVED ${who(call.agent)}`
+    case 'spawn': return `STARTED AN AGENT in ${call.directory}: ${call.prompt}`
+    case 'rename_agent': return `RENAMED ${who(call.agent)}: ${[call.name?.name, call.title && `"${call.title}"`].filter(Boolean).join(' ')}`
+    case 'force_user_camera': return `TOOK YOU TO ${call.target}`
+    case 'go_quiet': return 'WENT QUIET'
+    default: return showToolCall(call)
+  }
 }
 
 /** A tool call as the model wrote it, to show the model again: without where it stood. */
@@ -366,4 +388,20 @@ export function redactSpoken<P extends SpokenPart>(parts: readonly P[], heard: n
     start = end + 1
   }
   return kept
+}
+
+/**
+ * How much of each part of a cut-off reply was heard, as the record stores
+ * the part (its spoken intro left off): what the transcript view leaves
+ * standing, striking out the rest. `heard` is as for `redactSpoken`, and the
+ * word the voice was cut off in counts as unheard, as there.
+ */
+export function heardLengths(parts: readonly RenderedPart[], heard: number): number[] {
+  let start = 0
+  return parts.map(part => {
+    const at = Math.min(Math.max(0, heard - start), part.text.length)
+    start += part.text.length + 1
+    const cut = at >= part.text.length ? at : interruptedWordStart(part.text, at)
+    return Math.max(0, cut - part.introLength)
+  })
 }

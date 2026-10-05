@@ -116,6 +116,8 @@ function harness(opts: {
   const notices: string[] = []
   let session: SavedSession | undefined = opts.saved
   const record: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  const heardMarks: Array<{ replyAt: number; parts: number[] }> = []
+  const notDone: string[] = []
   let backlogJson: string | undefined
   const backlog = new Backlog({ store: { load: () => backlogJson, save: (json) => { backlogJson = json } } })
   // Set aside a minute apart, the last a minute ago.
@@ -174,7 +176,9 @@ function harness(opts: {
     readWholeTranscript: (path) => [...(EARLY[path] ?? []), ...(TRANSCRIPTS[path] ?? [])],
     session: { load: () => session, save: (next) => { session = next } },
     record: {
-      append: (messages) => { record.push(...messages) },
+      append: (messages) => messages.map(message => record.push(message) - 1),
+      amendHeard: (replyAt, parts) => { heardMarks.push({ replyAt, parts }) },
+      notDone: (actions) => { notDone.push(...actions) },
       search: (query) => record.filter(message => message.content.includes(query)).map(message => message.content).join('\n') || 'nothing',
       recent: (count) => record.slice(-count),
     },
@@ -233,7 +237,7 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, spoken, focused, sideQuestions, assigned, wire, notices, record,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, notDone,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -543,6 +547,9 @@ describe('Receptionist', () => {
     await h.receptionist.hear('wait, what?')
     await flush()
     expect(h.turns).toHaveLength(2)
+    // And marks it in the record, for the transcript: all of Control's part, "The " of Kevin's.
+    const replyAt = h.record.findIndex(message => message.content.includes('The solver works'))
+    expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length] }])
   })
 
   it('never overlaps two messages to the session, and says when a reply was talked over', async () => {
@@ -1902,6 +1909,8 @@ describe('Receptionist actions wait for the words before them', () => {
     await flush()
     expect(h.wire).toEqual([toKevin])
     expect(h.turns).toHaveLength(2)
+    // And into the record for the transcript, as its line would read had it run.
+    expect(h.notDone).toEqual([`SENT TO {${SALLY}}: Push it.`])
   })
 
   it('does not run what was still waiting when the user speaks over the reply, or stops Control', async () => {

@@ -26,7 +26,7 @@ import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirst
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { LoginShellEnv } from './login-env'
-import { agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
+import { UNTITLED_AGENT, agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
 import { isAgentSurface } from '../shared/node-utils'
 import { serverLog, sanitizeForLog } from './server-log'
 import { expandTilde } from './cwd'
@@ -77,7 +77,9 @@ import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
-import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import { HandleNames, isHandleOf } from './receptionist/transcript-names'
+import { parseRecordLine, type NameOf } from './receptionist/transcript'
 import { SideQuestions, serveSideQuestions } from './side-questions'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
@@ -479,6 +481,43 @@ function spawnClaudeSurface(parentNodeId: NodeId, cwd: string | undefined, promp
   return stateManager.createTerminal({
     sessionId, parentId: parentNodeId, x: position.x, y: position.y, cols, rows, cwd, name: title,
   })
+}
+
+const transcriptHandleNames = new HandleNames()
+const transcriptNameScanner = new RecordNameScanner(transcriptHandleNames)
+
+/**
+ * Who each handle in Control's record is, for its transcript: the name the
+ * registry holds now, else one the record or log tied to it, else — for an
+ * agent never named — its title, archived or not.
+ */
+function transcriptNameOf(): NameOf {
+  transcriptNameScanner.update()
+  for (const name of agentNames.assignedNames()) {
+    const nodeId = agentNames.byName(name)
+    if (nodeId) transcriptHandleNames.learnNode(nodeId, name)
+  }
+  let agents: TerminalNodeData[] | undefined
+  return (handle) => {
+    const name = transcriptHandleNames.resolve(handle)
+    if (name) return name
+    agents ??= stateManager.getNodesIncludingArchived().filter(isAgentSurface)
+    const key = handle.trim().toLowerCase()
+    const agent = agents.find(node => isHandleOf(node.id, key))
+    const title = agent && agentSurfaceTitle(agent)
+    // Nothing to call it by: its handle says more than "(untitled)".
+    return title === UNTITLED_AGENT ? undefined : title
+  }
+}
+
+/** Lines just added to Control's record, sent to every open transcript view. Returns where each starts. */
+function announceRecorded(appended: Array<{ line: string; offset: number }>): number[] {
+  if (appended.length) {
+    const nameOf = transcriptNameOf()
+    const entries = appended.flatMap(({ line, offset }) => parseRecordLine(line, offset, nameOf) ?? [])
+    if (entries.length) broadcastToAll({ type: 'receptionist-transcript-appended', entries })
+  }
+  return appended.map(({ offset }) => offset)
 }
 
 /** Live Claude Code surfaces: everything the receptionist knows about. */
@@ -1629,6 +1668,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'receptionist-transcript': {
+      const count = Math.max(1, Math.min(200, Math.floor(msg.count)))
+      const page = REAL_RECEPTIONIST_RECORD.page(msg.before, count, transcriptNameOf())
+      send(client.link, { type: 'receptionist-transcript-result', seq: msg.seq, ...page })
+      break
+    }
+
     case 'mobile-app-install': {
       void mobileAppInstaller.install().then((outcome) => send(client.link, {
         type: 'mobile-app-install-result',
@@ -1826,11 +1872,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'receptionist-hands-free': {
+    case 'receptionist-hands-free':
+    case 'receptionist-say': {
       const text = msg.text.trim()
       if (!text || !receptionist) break
-      // The wake word names Control: whatever the voice target was, this is
-      // for it, and — as speaking to it does — it brings Control here.
+      // The wake word names Control, and typing in its transcript is writing
+      // to it: whatever the voice target was, this is for Control, and — as
+      // speaking to it does — it brings Control here.
       if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
       setVoiceTarget('receptionist')
       void receptionist.hear(text)
@@ -3206,7 +3254,13 @@ async function startServer(): Promise<void> {
     readTranscript,
     readWholeTranscript,
     session: REAL_RECEPTIONIST_SESSION,
-    record: REAL_RECEPTIONIST_RECORD,
+    record: {
+      ...REAL_RECEPTIONIST_RECORD,
+      // Every addition goes straight to any open transcript view.
+      append: (messages) => announceRecorded(REAL_RECEPTIONIST_RECORD.append(messages)),
+      amendHeard: (replyAt, heard) => { announceRecorded(REAL_RECEPTIONIST_RECORD.amendHeard(replyAt, heard)) },
+      notDone: (actions) => { announceRecorded(REAL_RECEPTIONIST_RECORD.notDone(actions)) },
+    },
     // Jev over titles and recent transcripts: the same chooser as the agent
     // search box, asked with the receptionist's description instead.
     // Jev weighs whether news that arrives mid-reply should cut it short: see self-interruption.ts.

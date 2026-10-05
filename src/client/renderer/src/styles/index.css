@@ -3832,6 +3832,214 @@ html, body, #root {
 }
 
 /* ── Help Modal ────────────────────────────────────────────────── */
+/* ─── Control transcript (ControlTranscript.tsx) ─────────────────────────
+   The whole conversation with Control: a dialog over the canvas, sized like
+   the search modal; on the phone, the whole screen (mobile.css). */
+
+.control-transcript {
+  --ct-bg: #1e1e2e;
+  --ct-border: #313244;
+  --ct-text: #cdd6f4;
+  --ct-dim: #7f849c;
+  --ct-you: #313244;
+  --ct-control: #181825;
+  --ct-accent: #4d9eff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ct-bg);
+  color: var(--ct-text);
+}
+
+.control-transcript--modal {
+  position: absolute;
+  inset: 2.5% max(2.5%, calc(50% - 480px));
+  z-index: 9000;
+  border: 1px solid var(--ct-border);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+/* The list and the button over its foot that goes back to the newest. */
+.control-transcript__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.control-transcript__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 20px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.control-transcript__content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-transcript__to-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--ct-border);
+  background: var(--ct-control);
+  color: var(--ct-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+/* Goes round while Control's thinking cue plays. */
+.control-transcript__thinking { align-self: flex-start; padding: 4px 6px; }
+.control-transcript__spinner {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--ct-border);
+  border-top-color: #f9e2af;
+  animation: control-transcript-spin 0.9s linear infinite;
+}
+@keyframes control-transcript-spin { to { transform: rotate(360deg); } }
+
+
+
+.control-transcript__edge,
+.control-transcript__day {
+  align-self: center;
+  font-size: 12px;
+  color: var(--ct-dim);
+  padding: 4px 0;
+}
+.control-transcript__day { font-weight: 600; padding-top: 10px; }
+
+.control-transcript__entry { display: flex; flex-direction: column; gap: 4px; max-width: 85%; }
+.control-transcript__entry--user { align-self: flex-end; align-items: flex-end; }
+.control-transcript__entry--reply { align-self: flex-start; align-items: flex-start; }
+.control-transcript__entry--pending { opacity: 0.55; }
+
+.control-transcript__part { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+
+.control-transcript__bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.control-transcript__entry--user .control-transcript__bubble { background: var(--ct-you); }
+.control-transcript__entry--reply .control-transcript__bubble { background: var(--ct-control); border: 1px solid var(--ct-border); }
+
+/* What the user never heard of a reply they cut off. */
+.control-transcript__unheard { color: var(--ct-dim); text-decoration-thickness: 1px; }
+
+.control-transcript__meta { font-size: 11px; color: var(--ct-dim); padding: 0 4px; }
+.control-transcript__silent { font-size: 12px; font-style: italic; color: var(--ct-dim); }
+
+.control-transcript__entry--log {
+  /* What Control did, as a pill on Control's side, coloured by what it did. */
+  --ct-pill: #6c7086;
+  display: block;
+  align-self: flex-start;
+  max-width: 85%;
+  padding: 4px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--ct-pill) 55%, transparent);
+  background: color-mix(in srgb, var(--ct-pill) 18%, transparent);
+  color: var(--ct-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.control-transcript__entry--log[data-action="sent"],
+.control-transcript__entry--log[data-action="asked"] { --ct-pill: #89b4fa; }
+.control-transcript__entry--log[data-action="started"],
+.control-transcript__entry--log[data-action="unarchived"] { --ct-pill: #a6e3a1; }
+.control-transcript__entry--log[data-action="archived"],
+.control-transcript__entry--log[data-action="interrupted"] { --ct-pill: #fab387; }
+.control-transcript__entry--log[data-action="renamed"] { --ct-pill: #cba6f7; }
+.control-transcript__entry--log[data-action="watched"],
+.control-transcript__entry--log[data-action="took"] { --ct-pill: #94e2d5; }
+
+.control-transcript__entry--log summary {
+  cursor: pointer;
+  list-style: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.control-transcript__entry--log summary::-webkit-details-marker { display: none; }
+.control-transcript__entry--log summary::before { content: '▸ '; opacity: 0.7; }
+.control-transcript__entry--log[open] summary::before { content: '▾ '; }
+.control-transcript__log-body { padding: 4px 0 2px; color: var(--ct-dim); }
+
+/* Never ran: muted, its colour only in a dashed outline. */
+.control-transcript__entry--not-done {
+  background: transparent;
+  border-style: dashed;
+  color: var(--ct-dim);
+}
+
+.control-transcript__context { font-size: 12px; color: var(--ct-dim); max-width: 100%; }
+.control-transcript__context summary { cursor: pointer; }
+.control-transcript__context div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 4px 0; }
+
+.control-transcript__error { padding: 6px 20px; font-size: 12px; color: #f38ba8; flex-shrink: 0; }
+
+.control-transcript__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--ct-border);
+  flex-shrink: 0;
+}
+
+.control-transcript__input {
+  flex: 1;
+  resize: none;
+  background: #181825;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  color: var(--ct-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  padding: 8px 12px;
+  outline: none;
+}
+.control-transcript__input:focus { border-color: var(--ct-accent); }
+.control-transcript__input::placeholder { color: #585b70; }
+
+.control-transcript__send {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--ct-accent);
+  color: #11111b;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.control-transcript__send:disabled { opacity: 0.4; cursor: default; }
+
 .help-modal {
   position: absolute;
   inset: 2.5%;

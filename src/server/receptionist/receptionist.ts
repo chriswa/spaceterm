@@ -20,7 +20,7 @@ import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext,
 } from './self-interruption'
 import {
-  CONTROL, isAction, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet,
+  actionHeadline, CONTROL, heardLengths, isAction, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet,
   type RenderedPart, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { HeardActions } from './heard-actions'
@@ -140,7 +140,20 @@ export interface ReceptionistDeps {
    * this is where the detail still is. Best-effort.
    */
   record: {
-    append(messages: readonly RecordMessage[]): void
+    /** Returns where each message starts in the record: its id, for `amendHeard`. */
+    append(messages: readonly RecordMessage[]): number[]
+    /**
+     * The reply at `replyAt` was cut off: `heard[i]` is how many characters
+     * of its part `i` were heard. For the transcript view, which strikes out
+     * the rest; never shown to the model, which is told with a note instead.
+     */
+    amendHeard(replyAt: number, heard: number[]): void
+    /**
+     * Actions that never ran, because the words they waited on were never
+     * heard: each as its line would read had it run. For the transcript view,
+     * which strikes them out; never shown to the model, told with a note instead.
+     */
+    notDone(actions: string[]): void
     search(query: string): string
     /** The last `count` messages, oldest first. */
     recent(count: number): RecordMessage[]
@@ -353,6 +366,8 @@ export class Receptionist {
   private handover: string | undefined
   /** The last reply spoken, so an interruption can say how much of it was heard. */
   private lastSpoken?: RenderedPart[]
+  /** Where `lastSpoken` is in the record, so an interruption can mark it there too. */
+  private lastSpokenAt?: number
   private events: ReceptionistEvent[] = []
   /** A self-interruption check is under way; see `maybeInterruptSelf`. */
   private judging = false
@@ -1641,7 +1656,7 @@ export class Receptionist {
     this.lastSpoken = spoken
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
     taken.splice(0)
-    this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])
+    this.lastSpokenAt = this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])[0]
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))
     const actions = this.holdActions(parts, reply.tools)
@@ -1692,6 +1707,7 @@ export class Receptionist {
     if (skipped.length) {
       this.deps.log({ event: 'actions-skipped', why, tools: skipped })
       this.notes.push(notDoneNote(skipped, why))
+      this.deps.record.notDone(skipped.map(actionHeadline))
     }
   }
 
@@ -1703,8 +1719,11 @@ export class Receptionist {
   private async noteInterruption(selfInterrupted = false): Promise<void> {
     const heard = await this.channel.heardPrefix()
     const spoken = this.lastSpoken
+    const spokenAt = this.lastSpokenAt
     this.lastSpoken = undefined
+    this.lastSpokenAt = undefined
     if (heard === undefined || !spoken) return
+    if (spokenAt !== undefined) this.deps.record.amendHeard(spokenAt, heardLengths(spoken, heard))
     const kept = redactSpoken(spoken, heard)
     const audible = kept.map(part => part.text).join(' ')
     if (selfInterrupted) {

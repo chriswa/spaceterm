@@ -31,7 +31,7 @@ import type {
   SummaryChatMode,
   SummaryChatPhase,
   SummaryChatToggleOutcome,
-  SummaryChatUiState, SpeechProgressEvent, HandsFreeTuning
+  SummaryChatUiState, SpeechProgressEvent, HandsFreeTuning, ControlTranscriptEntry
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { NodeData, NodeStamp, ReceptionistHolder, ServerState } from './state'
@@ -324,6 +324,12 @@ export interface RemoteSpeechApi {
   progress(id: string, index: number, event: SpeechProgressEvent): void
 }
 
+/** A page of Control's record; `more` when it goes back further. */
+export interface ControlTranscriptPage {
+  entries: ControlTranscriptEntry[]
+  more: boolean
+}
+
 /** What `receptionist-status` says, minus the envelope. */
 export interface ReceptionistStatus {
   phase: SummaryChatPhase
@@ -351,6 +357,15 @@ export interface ReceptionistApi {
   select(): void
   /** Stop Control mid-answer without letting go of it, as a talk button pressed over it does. */
   stop(): void
+  /** Words typed to Control: for it whatever the voice target, and they bring it here, as speaking to it does. */
+  say(text: string): void
+  /**
+   * A page of Control's full record, oldest first: the newest entries, or
+   * those before `before` (an entry's `offset`). Never what compaction left.
+   */
+  transcript(before?: number): Promise<ControlTranscriptPage>
+  /** Entries as they join the record. Not replayed. */
+  onTranscriptAppended(callback: (entries: ControlTranscriptEntry[]) => void): () => void
   /** This client's device, to tell whether it is the one holding Control. */
   readonly deviceId: string
   onStatus(callback: (status: ReceptionistStatus) => void): () => void

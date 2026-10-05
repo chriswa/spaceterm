@@ -2,6 +2,8 @@ import { controlLook, useReceptionistStore, type ControlLook, type ReceptionistH
 import { useSummaryBubble, BUBBLE_STATE } from '../../mods/summary-chat/bubble-facet'
 import type { SummaryChatPhase } from '../../../../../shared/api'
 import { HeadsetIcon } from './icons'
+import { useLongPress } from '../../hooks/useLongPress'
+import { useControlTranscriptStore } from '../../stores/controlTranscriptStore'
 
 /**
  * The receptionist's toolbar button. Standalone: its state is the server's,
@@ -28,7 +30,8 @@ export function controlTooltip(look: ControlLook, holder: ReceptionistHolding | 
  * or — when white — lets go of it, which silences it; the server decides
  * which. Going black on its own means another device took it. The Summary Chat
  * bubble rides on it while it is here, so "thinking" and "speaking" read the
- * same as on a crab.
+ * same as on a crab. A long press opens the transcript instead (ControlTranscript.tsx),
+ * and a click while it is open closes it.
  */
 export function ControlButton() {
   const target = useReceptionistStore(s => s.target)
@@ -39,16 +42,22 @@ export function ControlButton() {
   const { Component: Bubble } = useSummaryBubble()
   // Busy elsewhere is that device's to show.
   const showBubble = look !== 'away' && (look === 'here' || phase !== 'ready')
+  // While the transcript is open, a click closes it, as the phone's down arrow does.
+  const transcriptOpen = useControlTranscriptStore((s) => s.open)
+  const press = useLongPress(
+    () => transcriptOpen ? useControlTranscriptStore.getState().setOpen(false) : window.api.receptionist.select(),
+    () => useControlTranscriptStore.getState().setOpen(true),
+  )
   return (
     <button
       className={`toolbar__btn toolbar__control toolbar__control--${look}`
         + (look === 'here' ? ' toolbar__btn--active' : '')
         + (error ? ' toolbar__btn--recording' : '')}
-      onClick={() => window.api.receptionist.select()}
+      {...press}
       aria-pressed={look === 'here'}
       aria-label="Control"
       data-phase={phase}
-      data-tooltip={controlTooltip(look, holder, phase, error)}
+      data-tooltip={transcriptOpen ? 'Control — Click to close the transcript' : `${controlTooltip(look, holder, phase, error)}. Hold for the transcript`}
       data-tooltip-no-flip
     >
       <HeadsetIcon />

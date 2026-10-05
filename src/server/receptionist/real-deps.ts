@@ -4,6 +4,9 @@ import { SOCKET_DIR } from '../../shared/protocol'
 import { askClaudePrint, ClaudePrintBusy } from '../claude-print'
 import { serverLog } from '../server-log'
 import { SessionBusy, type SavedSession, type SessionAnswer, type SessionTurn } from './receptionist'
+import { transcriptPage, type NameOf, type RecordFile } from './transcript'
+import type { HandleNames } from './transcript-names'
+import type { ControlTranscriptEntry } from '../../shared/protocol'
 
 /**
  * The receptionist's real collaborators that are not the server's own state:
@@ -102,13 +105,52 @@ export const REAL_RECEPTIONIST_SESSION = {
 const RECENT_BYTES = 64 * 1024
 
 export const REAL_RECEPTIONIST_RECORD = {
-  append(messages: readonly RecordMessage[]): void {
+  /** Returns the lines appended and where each starts, for the transcript view's live updates. */
+  append(messages: readonly RecordMessage[]): Array<{ line: string; offset: number }> {
     try {
       fs.mkdirSync(RECEPTIONIST_DIR, { recursive: true })
       const timestamp = new Date().toISOString()
-      fs.appendFileSync(RECEPTIONIST_CONVERSATION, messages.map(message => JSON.stringify({ timestamp, ...message }) + '\n').join(''))
+      const lines = messages.map(message => JSON.stringify({ timestamp, ...message }))
+      let offset = recordSize()
+      fs.appendFileSync(RECEPTIONIST_CONVERSATION, lines.map(line => line + '\n').join(''))
+      return lines.map(line => {
+        const at = offset
+        offset += Buffer.byteLength(line) + 1
+        return { line, offset: at }
+      })
     } catch (err) {
       serverLog(`[receptionist] failed to append conversation: ${err instanceof Error ? err.message : String(err)}`)
+      return []
+    }
+  },
+  /**
+   * Marks a cut-off reply with how much of it was heard, for the transcript
+   * view. A line with no role or content, so `recent` and `search` — what the
+   * model sees of the record — pass over it. Returns it as `append` does.
+   */
+  amendHeard(replyAt: number, heard: number[]): Array<{ line: string; offset: number }> {
+    return appendTranscriptOnly([{ heard: { of: replyAt, parts: heard } }])
+  },
+  /** Actions that never ran, for the transcript view: lines `recent` and `search` pass over, as `amendHeard`'s. */
+  notDone(actions: string[]): Array<{ line: string; offset: number }> {
+    return appendTranscriptOnly(actions.map(notDone => ({ notDone })))
+  },
+  /** A page of the transcript view: see `transcriptPage`. */
+  page(before: number | undefined, count: number, nameOf: NameOf): { entries: ControlTranscriptEntry[]; more: boolean } {
+    let fd: number
+    try { fd = fs.openSync(RECEPTIONIST_CONVERSATION, 'r') } catch { return { entries: [], more: false } }
+    try {
+      const file: RecordFile = {
+        size: () => fs.fstatSync(fd).size,
+        read: (start, length) => {
+          const buffer = Buffer.alloc(length)
+          fs.readSync(fd, buffer, 0, length, start)
+          return buffer
+        },
+      }
+      return transcriptPage(file, before, count, nameOf)
+    } finally {
+      fs.closeSync(fd)
     }
   },
   search(query: string): string {
@@ -121,6 +163,64 @@ export const REAL_RECEPTIONIST_RECORD = {
     try { raw = readTail(RECEPTIONIST_CONVERSATION, RECENT_BYTES) } catch { return [] }
     return recentMessages(raw, count)
   },
+}
+
+/**
+ * Feeds `names` whatever Control's record and log have gained since the last
+ * call, so a transcript page costs only what is new. A file that shrank was
+ * replaced, and is read again from the start.
+ */
+export class RecordNameScanner {
+  private readonly scanned = new Map<string, number>()
+
+  constructor(private readonly names: HandleNames) {}
+
+  update(): void {
+    for (const file of [RECEPTIONIST_CONVERSATION, RECEPTIONIST_LOG]) {
+      try {
+        const size = fs.statSync(file).size
+        let from = this.scanned.get(file) ?? 0
+        if (size < from) from = 0
+        if (size === from) continue
+        const fd = fs.openSync(file, 'r')
+        try {
+          const buffer = Buffer.alloc(size - from)
+          fs.readSync(fd, buffer, 0, buffer.length, from)
+          // Up to the last whole line: one being written is read next time.
+          const end = buffer.lastIndexOf(0x0a) + 1
+          this.names.learn(buffer.toString('utf8', 0, end))
+          this.scanned.set(file, from + end)
+        } finally {
+          fs.closeSync(fd)
+        }
+      } catch { /* not there yet */ }
+    }
+  }
+}
+
+/**
+ * Lines for the transcript view alone: no role or content, so what the model
+ * sees of the record (`recent`, `search`) passes over them.
+ */
+function appendTranscriptOnly(fields: ReadonlyArray<Record<string, unknown>>): Array<{ line: string; offset: number }> {
+  try {
+    const timestamp = new Date().toISOString()
+    const lines = fields.map(field => JSON.stringify({ timestamp, ...field }))
+    let offset = recordSize()
+    fs.appendFileSync(RECEPTIONIST_CONVERSATION, lines.map(line => line + '\n').join(''))
+    return lines.map(line => {
+      const at = offset
+      offset += Buffer.byteLength(line) + 1
+      return { line, offset: at }
+    })
+  } catch (err) {
+    serverLog(`[receptionist] failed to append to the transcript: ${err instanceof Error ? err.message : String(err)}`)
+    return []
+  }
+}
+
+function recordSize(): number {
+  try { return fs.statSync(RECEPTIONIST_CONVERSATION).size } catch { return 0 }
 }
 
 function readTail(file: string, bytes: number): string {

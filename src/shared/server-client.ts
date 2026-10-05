@@ -1,6 +1,6 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
-import type { AgentSearchMode, ClientDevice, SpeechProgressEvent } from './protocol'
+import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, SpeechProgressEvent } from './protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -73,6 +73,7 @@ export type ServerEventType =
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
+  | 'receptionist-transcript-appended'
   | 'hands-free-tuning' | 'dictation-end-phrase'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -289,6 +290,7 @@ export class ServerClient {
       case 'camera-follow':
       case 'agent-names':
       case 'receptionist-notice':
+      case 'receptionist-transcript-appended':
       case 'hands-free-tuning':
       case 'dictation-end-phrase':
         this.emit(msg)
@@ -331,7 +333,8 @@ export class ServerClient {
       case 'dictation-result':
       case 'wake-word-result':
       case 'dictation-turn-result':
-      case 'agent-memory-result': {
+      case 'agent-memory-result':
+      case 'receptionist-transcript-result': {
         const pending = this.pending.get(msg.seq)
         if (!pending) return
         this.pending.delete(msg.seq)
@@ -868,5 +871,17 @@ export class ServerClient {
 
   stopReceptionist(): void {
     this.fireAndForget({ type: 'receptionist-stop' })
+  }
+
+  /** Typed in Control's transcript view. */
+  sayToReceptionist(text: string): void {
+    this.log(`[receptionist] ${text.length} chars typed to Control`)
+    this.fireAndForget({ type: 'receptionist-say', text })
+  }
+
+  async receptionistTranscript(before: number | undefined, count: number): Promise<{ entries: ControlTranscriptEntry[]; more: boolean }> {
+    const resp = await this.request({ type: 'receptionist-transcript', count, ...(before === undefined ? {} : { before }) })
+    if (resp.type === 'receptionist-transcript-result') return { entries: resp.entries, more: resp.more }
+    return unexpected(resp)
   }
 }

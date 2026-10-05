@@ -830,3 +830,28 @@ textarea, input, [contenteditable="true"], .cm-content {
 .canvas-surface {
   will-change: auto;
 }
+
+/* ─── Control transcript ────────────────────────────────────────────────────
+   The desktop's dialog (ControlTranscript.tsx, index.css) as the whole screen
+   above the bottom bar, which stays up to talk and to close it — or above the
+   keyboard while that is up, with the bar behind it (viewport.ts). */
+
+.control-transcript--screen {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--m-vv-top, 0px);
+  height: calc(var(--m-vv-height, 100dvh) - var(--m-bar-height));
+  z-index: 2147483200;
+  --ct-bg: var(--m-bg);
+  --ct-border: var(--m-border);
+  --ct-text: var(--m-text);
+  --ct-accent: var(--m-accent);
+  padding: var(--m-safe-top) var(--m-safe-right) 0 var(--m-safe-left);
+}
+.control-transcript--screen .control-transcript__list { padding: 12px; }
+.control-transcript--screen .control-transcript__bubble { font-size: 16px; }
+/* 16px or iOS zooms the page in on focus. */
+.control-transcript--screen .control-transcript__input { font-size: 16px; }
+:root[data-keyboard="up"] .control-transcript--screen { height: var(--m-vv-height, 100dvh); }
+.control-transcript--screen .control-transcript__composer { padding: 8px 12px; }

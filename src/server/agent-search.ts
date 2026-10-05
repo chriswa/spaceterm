@@ -63,10 +63,13 @@ export interface AgentSearchDeps {
   transcriptTail(path: string): string
 }
 
+/** What `agentSurfaceTitle` calls an agent with neither a name nor a shell title. */
+export const UNTITLED_AGENT = '(untitled)'
+
 /** Name first, then shell titles most recent first. */
 export function agentSurfaceTitle(data: TerminalNodeData): string {
   const parts = [data.name, ...data.shellTitleHistory.slice(0, 3)].filter((p): p is string => !!p)
-  return parts.join(' / ') || '(untitled)'
+  return parts.join(' / ') || UNTITLED_AGENT
 }
 
 /**

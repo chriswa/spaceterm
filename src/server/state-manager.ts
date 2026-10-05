@@ -674,6 +674,11 @@ export class StateManager {
     return undefined
   }
 
+  /** Every node there is: live, and archived at any depth. */
+  getNodesIncludingArchived(): NodeData[] {
+    return [...this.getNodes(), ...this.archivedNodesWithLocation().map(({ node }) => node)]
+  }
+
   /**
    * Every archived node in the forest, paired with where it sits.
    *

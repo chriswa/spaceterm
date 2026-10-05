@@ -889,7 +889,7 @@ export function redactUnheard(text: string, heard: number): string {
  * Anything else is inside or just past a word, and that word is the one the
  * marker replaces.
  */
-function interruptedWordStart(text: string, at: number): number {
+export function interruptedWordStart(text: string, at: number): number {
   if (at === 0 || /\s/.test(text[at - 1])) return at
   let start = at
   while (start > 0 && !/\s/.test(text[start - 1])) start--

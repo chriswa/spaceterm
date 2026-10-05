@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { App } from '@/App'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { useNodeStore } from '@/stores/nodeStore'
@@ -21,6 +21,9 @@ import { useReceptionistStore } from '@/stores/receptionistStore'
 import { ControlButton } from './ControlButton'
 import { HoldMicButton } from './HoldMicButton'
 import { BottomBar } from './BottomBar'
+import { ControlTranscript } from '@/components/ControlTranscript'
+import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
+import { SWIPE_SCREENS, useSwipeToDismiss, type SwipeScreen } from './swipe-dismiss'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -69,6 +72,23 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   const controlTarget = useReceptionistStore((s) => s.target)
   /** A conversation to talk into: the talk button and its neighbours are up. */
   const voice = summaryTarget !== null || controlTarget
+  /** Control's transcript: the screen above the bottom bar, which stays up to talk and to close it. */
+  const transcriptOpen = useControlTranscriptStore((s) => s.open)
+  // The transcript and the toolbar sheet are screens, not layers: opening one closes the other.
+  useEffect(() => {
+    if (transcriptOpen) useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+  }, [transcriptOpen])
+  useEffect(() => {
+    if (toolbarSheetOpen) useControlTranscriptStore.getState().setOpen(false)
+  }, [toolbarSheetOpen])
+  // A sideways drag dismisses either, as it leaves the terminal view.
+  const swipeScreens = useMemo<SwipeScreen[]>(() => [
+    ...(transcriptOpen ? [{ ...SWIPE_SCREENS.transcript, dismiss: () => useControlTranscriptStore.getState().setOpen(false) }] : []),
+    ...(toolbarSheetOpen ? [{ ...SWIPE_SCREENS.sheet, dismiss: () => useSurfacePresenterStore.getState().setToolbarSheetOpen(false) }] : []),
+  ], [transcriptOpen, toolbarSheetOpen])
+  useSwipeToDismiss(swipeScreens)
+  /** The talk button and its neighbours are up: there is a conversation, or the transcript to talk into. */
+  const talk = voice || transcriptOpen
   useVisualViewportVars()
 
   /**
@@ -161,9 +181,16 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           onExitToCanvas={() => closeTerminal('the composer (swipe)', SWIPE_EXIT_ZOOM_OUT)}
         />
       )}
-      {/* On the canvas and over the surface list, never over a terminal, which
-          keeps the whole screen. The composer has its own microphone. */}
-      {!focusedTerminal && !composerFor && (
+      {transcriptOpen && (
+        <ControlTranscript
+          variant="screen"
+          onDismiss={() => useControlTranscriptStore.getState().setOpen(false)}
+        />
+      )}
+      {/* On the canvas, over the surface list and under the transcript, never
+          over a terminal, which keeps the whole screen. The composer has its
+          own microphone. */}
+      {((!focusedTerminal && !composerFor) || transcriptOpen) && (
         <BottomBar
           start={
             // The Mac's two readouts stacked against Control: its system
@@ -176,10 +203,14 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           middle={
             <>
               <ControlButton />
-              {voice && (
-                <SummarizerButton key={childKey('talk', controlTarget ? 'control' : summaryTarget ?? '')} nodeId={controlTarget ? null : summaryTarget} />
+              {talk && (
+                // Over the transcript, it talks to Control, whatever the voice target.
+                <SummarizerButton
+                  key={childKey('talk', controlTarget || transcriptOpen ? 'control' : summaryTarget ?? '')}
+                  nodeId={controlTarget || transcriptOpen ? null : summaryTarget}
+                />
               )}
-              {voice && <HoldMicButton />}
+              {talk && <HoldMicButton />}
             </>
           }
           end={

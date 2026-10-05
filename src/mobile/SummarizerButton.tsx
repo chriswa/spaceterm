@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
+import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { useNodeStore } from '@/stores/nodeStore'
 import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
@@ -21,9 +22,10 @@ import { listensOnEarpiece, onEarpieceChange, setListenOnEarpiece } from './audi
  * A long press offers to abandon the conversation, which takes this away.
  *
  * While Control (the receptionist) holds the voice target, the same button
- * talks to it instead: the server sends `summaryChatFollowUp` to whichever was
- * selected last, so only the label, the phase shown and how an answer is cut
- * off change here. `nodeId` is then the Summary Chat surface, if any.
+ * talks to it instead, and what it hears goes to Control directly; the label,
+ * the phase shown and how an answer is cut off change to match. `nodeId` is
+ * then the Summary Chat surface, if any. It also talks to Control while
+ * Control's transcript is open (`nodeId` null), where what it heard shows up.
  */
 
 const LONG_PRESS_MS = 450
@@ -95,7 +97,14 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId | null }) {
         fail('transcriptionFailed', new Error("Didn't catch that — tap to try again."))
         return
       }
-      window.api.summaryChatFollowUp(text)
+      if (toControl) {
+        // Straight to Control, whatever the voice target has become since the
+        // tap; and into its transcript, if that is open, as typing there would.
+        window.api.receptionist.say(text)
+        useControlTranscriptStore.getState().addPending(text)
+      } else {
+        window.api.summaryChatFollowUp(text)
+      }
       playCue('pasted')
       setMic({ kind: 'idle' })
     } catch (err) {

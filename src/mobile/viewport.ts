@@ -33,6 +33,8 @@ function rememberKeyboard(px: number): void {
  *   whether or not it is up: the visible area while it is, and the full height
  *   less its remembered size while it is not. A panel sized to this keeps its
  *   bottom edge still as the keyboard comes and goes (the composer's buttons).
+ * - `data-keyboard="up"` on the root while it is up: the bottom bar is behind
+ *   it then, so a panel that stops above the bar can come down to it.
  *
  * The keyboard is measured as the shortfall from the tallest the visible area
  * has been since the last rotation — not from `innerHeight`, which an embedded
@@ -65,6 +67,8 @@ export function useVisualViewportVars(): void {
       }
       root.style.setProperty('--m-vv-height', `${vv.height}px`)
       root.style.setProperty('--m-vv-top', `${vv.offsetTop}px`)
+      if (keyboardUp) root.dataset.keyboard = 'up'
+      else delete root.dataset.keyboard
       root.style.setProperty('--m-above-keyboard', `${keyboardUp ? vv.height : full - rememberedKeyboard()}px`)
     }
     update()
