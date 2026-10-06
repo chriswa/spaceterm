@@ -21,8 +21,10 @@ import type { NodeId } from '../shared/ids'
  * (`native-approvals.ts`): this page arms it with the chosen options, and it
  * hands back the signed reply once slid across. Changing an option re-arms it.
  *
- * When the request goes — answered on the Mac, or timed out — the screen says
- * why and offers only Close.
+ * Answered here, the screen goes as soon as the provider accepts it — back
+ * to the list if anything else is waiting. When the request goes some other
+ * way — answered on the Mac, or timed out — the screen says why and offers
+ * only Close.
  */
 
 type Sending = { kind: 'idle' } | { kind: 'sending' } | { kind: 'failed'; error: string }
@@ -132,7 +134,11 @@ export function ApprovalView() {
     setSending({ kind: 'sending' })
     window.api.log(`[approvals] answering ${live.source} ${live.id}`)
     window.api.node.answerApproval(live.source, live.id, reply).then(
-      (outcome) => setSending(outcome.ok ? { kind: 'idle' } : { kind: 'failed', error: outcome.error ?? 'It was not accepted.' }),
+      (outcome) => {
+        // Answered from here: nothing left to read, so straight back.
+        if (outcome.ok) useApprovalsStore.getState().answered(approvalKey(live))
+        else setSending({ kind: 'failed', error: outcome.error ?? 'It was not accepted.' })
+      },
       (err) => setSending({ kind: 'failed', error: String(err) })
     )
   }

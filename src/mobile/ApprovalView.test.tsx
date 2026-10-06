@@ -148,6 +148,40 @@ describe('ApprovalView', () => {
     expect(bridge.calls.find((c) => c.method === 'node.answerApproval')?.args).toEqual(['opProxy', 'a1', SIGNED])
   })
 
+  it('goes straight back once the answer is accepted', async () => {
+    const { arms } = installNative()
+    open(item())
+    await waitFor(() => expect(arms).toHaveLength(1))
+    await act(async () => arms[0].resolve(SIGNED))
+    await waitFor(() => expect(useApprovalsStore.getState().openKey).toBeNull())
+    expect(useApprovalsStore.getState().listOpen).toBe(false)
+  })
+
+  it('goes back to the list when something else is waiting', async () => {
+    const { posted } = installNative()
+    const other = item({ id: 'a2' })
+    act(() => {
+      useApprovalsStore.getState().setSnapshot(snapshot([item(), other]))
+      useApprovalsStore.getState().openItem(approvalKey(item()))
+    })
+    render(<ApprovalView />)
+    await waitFor(() => expect((screen.getByText('Deny') as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByText('Deny'))
+    await waitFor(() => expect(useApprovalsStore.getState().openKey).toBeNull())
+    expect(useApprovalsStore.getState().listOpen).toBe(true)
+    expect(posted.some((m) => m.op === 'sign')).toBe(true)
+  })
+
+  it('stays, with the reason, when the answer is refused', async () => {
+    const { arms } = installNative()
+    bridge.responses.approvalOutcome = { ok: false, error: 'That request timed out.' }
+    open(item())
+    await waitFor(() => expect(arms).toHaveLength(1))
+    await act(async () => arms[0].resolve(SIGNED))
+    expect(await screen.findByText('That request timed out.')).toBeTruthy()
+    expect(useApprovalsStore.getState().openKey).toBe(approvalKey(item()))
+  })
+
   it('denies at a tap, signed without the panel', async () => {
     const { posted } = installNative()
     open(item())

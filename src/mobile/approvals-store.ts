@@ -23,6 +23,8 @@ interface ApprovalsState {
   setListOpen(open: boolean): void
   openItem(key: string): void
   closeItem(): void
+  /** The open request was answered from this phone: close it, back to the list if more are waiting. */
+  answered(key: string): void
 }
 
 function loadSeen(): Set<string> {
@@ -63,6 +65,12 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
   setListOpen: (listOpen) => set(listOpen ? { listOpen, seen: markRead(get().snapshot.items) } : { listOpen }),
   openItem: (openKey) => set({ openKey, listOpen: false }),
   closeItem: () => set({ openKey: null }),
+  answered: (key) => {
+    if (get().openKey !== key) return
+    const others = get().snapshot.items.some((item) => approvalKey(item) !== key)
+    set({ openKey: null })
+    if (others) get().setListOpen(true)
+  },
 }))
 
 export function unreadCount(snapshot: ApprovalsSnapshot, seen: ReadonlySet<string>): number {
