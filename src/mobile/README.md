@@ -143,8 +143,11 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   down at once (the cancelled microphone hears the room, not Control), and it
   comes back up if it was not "Control". "Control, …" cuts it off and is
   dictated as ever; if nothing is caught after "Control", Control says it had
-  not finished and carries on. In a browser, or with an app too old to play
-  speech, the page plays it and hands-free stops listening while it does.
+  not finished and carries on. In a browser, with an app too old to play
+  speech, or when the app has had to run without echo cancellation (it gives
+  it up for the rest of its run if turning it on keeps reconfiguring the
+  audio: `voice-processing-abandoned`), the page plays it and hands-free stops
+  listening while it does.
 - It does not listen while the page plays anything — a cue, or speech in a
   browser — or for a moment after, so it never hears itself; nor during a
   dictation it did not start.

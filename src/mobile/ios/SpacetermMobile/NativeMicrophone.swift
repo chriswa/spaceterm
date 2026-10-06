@@ -56,6 +56,22 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private var speechGeneration = 0
     /// Whether this bring-up got voice processing (echo cancellation); false where it would not turn on.
     private var voiceProcessing = false
+    /**
+     * Whether to ask for voice processing at all. Turning it on reconfigures
+     * the audio hardware, and iOS announces that as a configuration change;
+     * answered with a new engine, that is a loop (October 2026: a restart
+     * every 1.5 s, and no audio ever reached the page). Changes are answered
+     * in place now; if they loop anyway, this goes false for the rest of the
+     * app's run, and the microphone carries on without echo cancellation.
+     */
+    private var voiceProcessingAllowed = true
+    /// Recent configuration changes, for telling a loop from a one-off.
+    private var configChanges: [Date] = []
+    private static let configLoopWindow: TimeInterval = 10
+    private static let configLoopLimit = 3
+    /// When the engine last started, and which start that was, for the audio check after it.
+    private var lastStart = Date.distantPast
+    private var startNumber = 0
 
     private static let sendInterval: TimeInterval = 0.1
     private static let maxUnanswered = 50
@@ -138,16 +154,18 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             engine = AVAudioEngine()
             let input = engine.inputNode
             // Echo cancellation, against what `player` plays. Set before anything is connected.
-            do {
-                try input.setVoiceProcessingEnabled(true)
-                voiceProcessing = true
-                // Its default turns every other app's audio — and the page's cues — right down.
-                if #available(iOS 17.0, *) {
-                    input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+            voiceProcessing = false
+            if voiceProcessingAllowed {
+                do {
+                    try input.setVoiceProcessingEnabled(true)
+                    voiceProcessing = true
+                    // Its default turns every other app's audio — and the page's cues — right down.
+                    if #available(iOS 17.0, *) {
+                        input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+                    }
+                } catch {
+                    events.record("voice-processing-failed", ["error": error.localizedDescription])
                 }
-            } catch {
-                voiceProcessing = false
-                events.record("voice-processing-failed", ["error": error.localizedDescription])
             }
             let player = AVAudioPlayerNode()
             engine.attach(player)
@@ -163,6 +181,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             try engine.start()
             running = true
             lastError = nil
+            expectAudio(why)
             log("running on \(inputName()) at \(Int(format.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
             events.record("native-mic-running", ["why": why, "sampleRate": format.sampleRate, "voiceProcessing": voiceProcessing, "route": NativeEvents.describeRoute(session.currentRoute)])
             // A new engine: anything still to be said starts again on it, from the sentence it was in.
@@ -178,15 +197,93 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         }
     }
 
+    /**
+     * The same engine, started again after a configuration change stopped it:
+     * the tap put back at whatever the input's format is now, the player and
+     * whatever it was saying kept. Unlike a new engine, it does not set up
+     * voice processing again — which is what announced the next change. A new
+     * engine is still the answer when this will not start, and for a headset
+     * coming or going (`bringUp`), which needed one.
+     */
+    private func restartInPlace(why: String) {
+        guard wanted else { return }
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0 else {
+            events.record("native-mic-restart-in-place-failed", ["why": why, "error": "the input has no format"])
+            bringUp(why: "\(why), and the input had no format")
+            return
+        }
+        capture.reset(converter: AVAudioConverter(from: format, to: Converter.outFormat))
+        let sink = capture
+        input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in sink.handle(buffer) }
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            engine.prepare()
+            try engine.start()
+            running = true
+            expectAudio(why)
+            events.record("native-mic-restarted-in-place", ["why": why, "sampleRate": format.sampleRate, "voiceProcessing": voiceProcessing])
+            rescheduleSpeech()
+            sendState()
+        } catch {
+            events.record("native-mic-restart-in-place-failed", ["why": why, "error": error.localizedDescription])
+            bringUp(why: "\(why), and it would not start in place")
+        }
+    }
+
+    /// A second after each start: did audio arrive? A start that delivers nothing is otherwise silent until the page gives up on it.
+    private func expectAudio(_ why: String) {
+        startNumber += 1
+        lastStart = Date()
+        let start = startNumber
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, start == self.startNumber, self.running else { return }
+                let firstAudioMs = self.capture.firstAudioMs()
+                self.events.record("native-mic-audio", [
+                    "arrived": firstAudioMs != nil, "firstAudioMs": firstAudioMs ?? -1,
+                    "engineRunning": self.engine.isRunning, "voiceProcessing": self.voiceProcessing, "why": why,
+                ])
+                if firstAudioMs == nil { self.log("no audio a second after starting (\(why))") }
+            }
+        }
+    }
+
+    /**
+     * iOS changed the audio configuration, which stops the engine. Once:
+     * start it again in place. Over and over with echo cancellation on: give
+     * up on echo cancellation (see `voiceProcessingAllowed`).
+     */
+    private func configurationChanged() {
+        let now = Date()
+        configChanges = configChanges.filter { now.timeIntervalSince($0) < Self.configLoopWindow } + [now]
+        events.record("audio-engine-config-change", [
+            "engineRunning": engine.isRunning, "sinceStartMs": Int(now.timeIntervalSince(lastStart) * 1000),
+            "voiceProcessing": voiceProcessing, "recentChanges": configChanges.count,
+        ])
+        if voiceProcessing, configChanges.count > Self.configLoopLimit {
+            voiceProcessingAllowed = false
+            configChanges = []
+            events.record("voice-processing-abandoned", ["why": "configuration changes looped", "within": Self.configLoopWindow])
+            log("the audio configuration keeps changing with echo cancellation on — carrying on without it until the app restarts")
+            scheduleRestart("echo cancellation abandoned", after: 0.3)
+            return
+        }
+        scheduleRestart("the audio configuration changed", after: 0.3, inPlace: true)
+    }
+
     /// Route changes come in bursts — AirPods flap between themselves and the
     /// speaker for a second or two — so start again once, after it settles.
-    private func scheduleRestart(_ why: String, after delay: TimeInterval = 0.8) {
+    /// `inPlace`: the same engine (`restartInPlace`), rather than a new one.
+    private func scheduleRestart(_ why: String, after delay: TimeInterval = 0.8, inPlace: Bool = false) {
         guard wanted else { return }
         pendingRestart?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 self?.pendingRestart = nil
-                self?.bringUp(why: why)
+                if inPlace { self?.restartInPlace(why: why) } else { self?.bringUp(why: why) }
             }
         }
         pendingRestart = work
@@ -417,8 +514,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { note in
             MainActor.assumeIsolated {
                 guard (note.object as AnyObject?) === self.engine else { return }
-                self.events.record("audio-engine-config-change")
-                self.scheduleRestart("the audio configuration changed")
+                self.configurationChanged()
             }
         })
     }
@@ -452,6 +548,10 @@ private final class Converter: @unchecked Sendable {
     private var statSamples = 0
     private var statPeak: Float = 0
 
+    /// When it was last reset, and the first tap after that.
+    private var resetAt: CFTimeInterval = 0
+    private var firstTap: CFTimeInterval?
+
     func reset(converter: AVAudioConverter?) {
         lock.lock(); defer { lock.unlock() }
         self.converter = converter
@@ -459,6 +559,14 @@ private final class Converter: @unchecked Sendable {
         let now = CACurrentMediaTime()
         lastTap = now
         lastSound = now
+        resetAt = now
+        firstTap = nil
+    }
+
+    /// How long after the last reset audio first arrived; nil if it has not.
+    func firstAudioMs() -> Int? {
+        lock.lock(); defer { lock.unlock() }
+        return firstTap.map { Int(($0 - resetAt) * 1000) }
     }
 
     func handle(_ buffer: AVAudioPCMBuffer) {
@@ -493,6 +601,7 @@ private final class Converter: @unchecked Sendable {
         }
         let now = CACurrentMediaTime()
         lock.lock()
+        if firstTap == nil { firstTap = now }
         lastTap = now
         if !silent { lastSound = now }
         pcm.append(contentsOf: out)

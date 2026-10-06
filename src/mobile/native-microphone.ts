@@ -118,8 +118,14 @@ function install(): void {
  * an app that says it can.
  */
 export const nativeSpeech = {
+  /**
+   * Only with echo cancellation on: played by the app without it, Control's
+   * voice would be heard as someone talking — turning itself down, and
+   * keeping "Control" from ever counting. Then the page plays it, and
+   * hands-free stands aside, as before.
+   */
   available(): boolean {
-    return handler() !== undefined && state.running && state.speech === true
+    return handler() !== undefined && state.running && state.speech === true && state.voiceProcessing === true
   },
   voiceProcessing(): boolean {
     return state.voiceProcessing === true

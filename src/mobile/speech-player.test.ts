@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteSpeechApi } from '../shared/api'
 
 /** The app's bridge, faked: what the page posts to it, and a way to answer as it does. */
-function fakeApp({ speech }: { speech: boolean }) {
+function fakeApp({ speech, voiceProcessing = speech }: { speech: boolean; voiceProcessing?: boolean }) {
   const posted: Array<Record<string, unknown>> = []
   ;(window as unknown as { webkit: unknown }).webkit = { messageHandlers: { nativeMicrophone: { postMessage: (m: Record<string, unknown>) => posted.push(m) } } }
   return {
     posted,
     /** The app's microphone is up, and says whether it can play speech. */
-    running: () => window.spacetermNativeMicrophone?.state({ running: true, input: 'iPhone Microphone', speech, voiceProcessing: speech }),
+    running: () => window.spacetermNativeMicrophone?.state({ running: true, input: 'iPhone Microphone', speech, voiceProcessing }),
     event: (id: string, index: number, event: 'started' | 'finished' | 'failed') => window.spacetermNativeMicrophone?.speech({ id, index, event, outputDb: -18 }),
   }
 }
@@ -70,6 +70,16 @@ describe('speech in the app', () => {
     remote.stop('rs_2')
     expect(app.posted.at(-1)).toEqual({ action: 'speech-stop', id: 'rs_2' })
     expect(nativePlayback.playing()).toBe(false)
+  })
+
+  it('stays in the page when the app is running without echo cancellation', async () => {
+    const app = fakeApp({ speech: true, voiceProcessing: false })
+    const { startSpeechPlayer } = await load()
+    const remote = fakeApi()
+    stopPlayer = startSpeechPlayer(remote.api, () => {})
+    app.running()
+    remote.sentence('rs_4', 0, 1)
+    expect(app.posted.some((m) => m.action === 'speech-play')).toBe(false)
   })
 
   it('stays in the page with an app too old to play it', async () => {
