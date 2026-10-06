@@ -1993,8 +1993,12 @@ export interface WakeWordResultMessage {
  * them in `~/.spaceterm/hands-free.json`, read again whenever it changes.
  */
 export interface HandsFreeTuning {
-  /** Quiet before speech for its start to be checked for the wake word: no other words were just spoken. */
-  silenceBeforeMs: number
+  /**
+   * No speech for this long before speech for its start to be checked for the
+   * wake word — speech as a voice-activity model hears it, so music or a noisy
+   * room does not count, only someone talking.
+   */
+  noSpeechBeforeMs: number
   /** How much of the start of what is said is sent to be checked. */
   onsetWindowMs: number
   /** Shorter bursts of speech (a click, a cough) are not checked at all. */
@@ -2006,6 +2010,13 @@ export interface HandsFreeTuning {
   pauseCheckMs: number
   /** Its probability at or above this — 0 to 1, not ms — ends the dictation there and then. */
   turnThreshold: number
+  /**
+   * A first pause this soon after the start is the one after "Control." said
+   * on its own: the turn model is not asked about it, and it waits at least
+   * `afterWakeWordMs` for the speaker to go on.
+   */
+  wakeWordOnlyMs: number
+  afterWakeWordMs: number
   /**
    * Otherwise — the model unsure, or unavailable — quiet this long ends it: from
    * `endSilenceMinMs` for a short request, growing with how long the speaker has

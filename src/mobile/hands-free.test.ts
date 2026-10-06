@@ -3,13 +3,36 @@ import type { HandsFreeTuning } from '../shared/protocol'
 import type { DictationOptions } from './dictation'
 import type { Capture } from './held-microphone'
 import { cleanHandsFreeText, installHandsFree, useHandsFree, type HandsFreeDeps } from './hands-free'
+import type { FrameScorer } from './speech-detector'
 
-/** "Speech" is a tone at about −20 dBFS, "quiet" a room's hiss: see wake-listener.test.ts. */
+/**
+ * "Speech" is a 200 Hz tone at about −20 dBFS, "quiet" a room's hiss, and
+ * "roar" loud white noise — a busy room, a fan. The fake speech detector
+ * below tells them apart as the real one does: loud and tonal is speech,
+ * loud and hissing is not.
+ */
 const RATE = 16_000
 let seed = 7
 const noise = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1
 const quiet = (ms: number) => Float32Array.from({ length: (ms / 1000) * RATE }, () => (noise() * 10) / 32768)
+const roar = (ms: number) => Float32Array.from({ length: (ms / 1000) * RATE }, () => (noise() * 8000) / 32768)
 const speech = (ms: number) => Float32Array.from({ length: (ms / 1000) * RATE }, (_, i) => (Math.sin((2 * Math.PI * 200 * i) / RATE) * 4000) / 32768)
+
+/** Speech is loud with few zero crossings; hiss and roar cross zero constantly. */
+const fakeDetector: FrameScorer = {
+  name: 'fake',
+  score(frame) {
+    let crossings = 0
+    let energy = 0
+    for (let i = 0; i < frame.length; i++) {
+      energy += frame[i] * frame[i]
+      if (i > 0 && (frame[i] >= 0) !== (frame[i - 1] >= 0)) crossings++
+    }
+    const loud = Math.sqrt(energy / frame.length) > 500
+    return loud && crossings / frame.length < 0.15 ? 0.95 : 0.03
+  },
+  reset() {},
+}
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
@@ -31,6 +54,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
   let haptics = 0
   const dictations: Array<{ backlogSeconds: number; endPhrase?: string; finished: boolean; cancelled: boolean; turnChecks: number; sayEndPhrase: () => void }> = []
   let quietFor = 10_000
+  const records: Array<{ kind: string; detail?: Record<string, unknown> }> = []
   const deps: HandsFreeDeps = {
     api: {
       handsFree: {
@@ -65,10 +89,14 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
     othersDictating: () => false,
     // The stuck-dictation backstop never fires in a test.
     sleep: () => new Promise(() => {}),
+    loadScorer: async () => fakeDetector,
+    record: (kind, detail) => { records.push({ kind, detail }) },
   }
   const uninstall = installHandsFree(deps.api, deps)
+  const ready = settle()
   /** Feed audio in microphone-sized blocks, letting promises run between them. */
   const hear = async (...parts: Float32Array[]) => {
+    await ready
     for (const part of parts) {
       for (let i = 0; i < part.length; i += 1600) {
         for (const fn of listeners) fn(part.subarray(i, i + 1600))
@@ -77,7 +105,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
     }
   }
   return {
-    hear, said, checked, cues, dictations, uninstall,
+    hear, said, checked, cues, dictations, records, uninstall,
     haptics: () => haptics,
     setQuietFor: (ms: number) => { quietFor = ms },
     dropHold: () => { held = undefined; holdChanged() },
@@ -162,12 +190,42 @@ describe('hands-free mode', () => {
     expect(h.checked).toHaveLength(1)
   })
 
-  it('sends nothing when only the wake word was said', async () => {
+  it('sends nothing when only the wake word was said, once it has waited afterWakeWordMs for more', async () => {
     h = harness({ transcript: 'Control.' })
     await h.hear(quiet(1500), speech(500), quiet(2500))
+    expect(h.dictations[0].finished).toBe(false)
+    await h.hear(quiet(3000))
     expect(h.dictations[0].finished).toBe(true)
     expect(h.said).toEqual([])
     expect(h.cues).toEqual(['listeningFinished'])
+  })
+
+  it('hears "Control" in a loud room: noise is not speech, so it does not count as talk before it', async () => {
+    h = harness()
+    await h.hear(roar(1500), speech(600), roar(800))
+    expect(h.checked).toHaveLength(1)
+    expect(h.dictations).toHaveLength(1)
+  })
+
+  it('after "Control." alone, does not ask the turn model about the pause, and waits for the rest', async () => {
+    h = harness({ turn: 0.93, transcript: 'Control. What is Kevin doing?' })
+    await h.hear(quiet(1500), speech(600), quiet(3000))
+    expect(h.dictations).toHaveLength(1)
+    expect(h.dictations[0].turnChecks).toBe(0)
+    expect(useHandsFree.getState().phase).toBe('hearing')
+    // Then the request itself, and a pause the turn model hears as finished.
+    await h.hear(speech(1500), quiet(600))
+    expect(h.dictations[0].turnChecks).toBe(1)
+    expect(h.said).toEqual(['What is Kevin doing?'])
+  })
+
+  it('records what it heard and decided — timings, levels and verdicts, never words', async () => {
+    h = harness({ isWakeWord: false })
+    await h.hear(quiet(1500), speech(1500), quiet(300), speech(800), quiet(800))
+    const sightings = h.records.filter((r) => r.kind === 'hands-free-speech').map((r) => r.detail?.verdict)
+    expect(sightings).toEqual(['checked', 'after-speech'])
+    expect(h.records.find((r) => r.kind === 'wake-word')?.detail).toMatchObject({ match: false })
+    expect(h.records.find((r) => r.kind === 'hands-free-detector')?.detail).toEqual({ name: 'fake' })
   })
 
   it('stops listening when the microphone is no longer held', async () => {

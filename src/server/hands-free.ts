@@ -27,7 +27,7 @@ export async function checkWakeWord(voice: Voice, pcm: Uint8Array): Promise<Wake
 }
 
 const TUNING_KEYS: ReadonlyArray<keyof HandsFreeTuning> = [
-  'silenceBeforeMs', 'onsetWindowMs', 'wordMinMs', 'pauseCheckMs', 'turnThreshold',
+  'noSpeechBeforeMs', 'onsetWindowMs', 'wordMinMs', 'pauseCheckMs', 'turnThreshold', 'wakeWordOnlyMs', 'afterWakeWordMs',
   'endSilenceMinMs', 'endSilenceMaxMs', 'endSilenceRampMs', 'maxUtteranceMs', 'playbackTailMs',
 ]
 

@@ -118,15 +118,22 @@ end tone means it was heard and sent: "Control" comes off the
 front, "over and out" off the end, and the rest goes to Control, which comes
 to this phone. The dictation itself is ordinary Wispr, as the talk button's.
 
-- **Only "Control" said first counts**, after a quiet spell; the word anywhere
-  else in a sentence never triggers.
+- **Only "Control" said first counts**, with nobody talking just before it;
+  the word anywhere else in a sentence never triggers. "Talking" is judged by
+  a voice-activity model on the phone (Silero VAD, `speech-detector.ts`,
+  1.3 MB, run in ONNX Runtime web at about 0.3 ms per 32 ms frame), so music,
+  a fan or a noisy room never count as talk and never block it; without the
+  model, loudness stands in.
+- **"Control." on its own, then a breath** is fine: that first pause is not
+  put to the turn model (which would call "Control." finished), and it waits
+  five seconds (`afterWakeWordMs`) for the rest.
 - **In the app** the microphone is the app's own (`NativeMicrophone.swift`,
   `native-microphone.ts`), so no AirPods are needed: it plays through the
   speaker, keeps listening with the screen locked, and comes back by itself
   after Siri, a call, a relaunch, or AirPods coming and going. In a browser
   the page holds it, and only with a headset (`held-microphone.ts`).
-- **Nothing leaves the phone** until you start talking after a quiet spell
-  (`wake-listener.ts`). Only the first second of that goes to the Mac, where
+- **Nothing leaves the phone** until you start talking with nobody talking
+  just before (`wake-listener.ts`). Only the first second of that goes to the Mac, where
   Voice Operator checks whether it starts with "control", with Apple's
   on-device model (`POST /v1/wake-word?match=start`) — never Wispr. Audio is
   otherwise only ever in an eight-second buffer in memory. "Over and out" is
@@ -140,13 +147,19 @@ to this phone. The dictation itself is ordinary Wispr, as the talk button's.
   kept: about 130 MB of the server's memory, about 45 ms a check. Without it,
   pauses end dictations on silence alone.
 - **Thresholds** are in `~/.spaceterm/hands-free.json` on the Mac, read again
-  whenever it changes — any of `silenceBeforeMs` (700), `onsetWindowMs`
+  whenever it changes — any of `noSpeechBeforeMs` (700), `onsetWindowMs`
   (1000), `wordMinMs` (250), `pauseCheckMs` (300), `turnThreshold` (0.5, a
-  probability), `endSilenceMinMs` (1500), `endSilenceMaxMs` (20000),
-  `endSilenceRampMs` (300000), `maxUtteranceMs` (600000), `playbackTailMs`
-  (400). The server log's `[hands-free]` lines say what each candidate
-  measured and whether it was the word, and `[turn]` lines each pause's
-  verdict — never what was said.
+  probability), `wakeWordOnlyMs` (1500), `afterWakeWordMs` (5000),
+  `endSilenceMinMs` (1500), `endSilenceMaxMs` (20000), `endSilenceRampMs`
+  (300000), `maxUtteranceMs` (600000), `playbackTailMs` (400).
+- **Why it did or did not trigger** is in `~/.spaceterm/mobile-events.jsonl`:
+  a `hands-free-speech` event for every burst of speech the listener noticed —
+  how long, how long without speech before it, how loud, and its verdict
+  (`checked`, `after-speech`, `too-short`) — then `wake-word` with the Mac's
+  answer; `hands-free-levels` every 30 s with the room's level and how much of
+  it was speech; `hands-free-detector` with which speech detector is in use;
+  `hands-free-pause` for the pause after the wake word alone. Never what was
+  said. The server log's `[turn]` lines give each pause's verdict.
 
 ## Notifications: approving opProxy from the phone
 

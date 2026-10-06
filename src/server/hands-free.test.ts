@@ -9,9 +9,9 @@ describe('parseHandsFreeTuning', () => {
 
   it('keeps known keys and names what it dropped', () => {
     const { tuning, problems } = parseHandsFreeTuning(JSON.stringify({
-      silenceBeforeMs: 900, silenceAftrMs: 300, endSilenceMs: 'long', wordMinMs: -1,
+      noSpeechBeforeMs: 900, silenceAftrMs: 300, endSilenceMs: 'long', wordMinMs: -1,
     }))
-    expect(tuning).toEqual({ silenceBeforeMs: 900 })
+    expect(tuning).toEqual({ noSpeechBeforeMs: 900 })
     expect(problems).toHaveLength(3)
     expect(problems[0]).toContain('silenceAftrMs')
   })
