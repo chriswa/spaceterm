@@ -13,6 +13,9 @@
   --m-dim: #a6adc8;
   --m-accent: #cba6f7;
   --m-danger: #f38ba8;
+  /* The orange of the phone's own mic-in-use dot, for anything of ours that
+     says the mic is open. */
+  --m-listening: #ff9f0a;
   --m-safe-top: env(safe-area-inset-top, 0px);
   --m-safe-bottom: env(safe-area-inset-bottom, 0px);
   --m-safe-left: env(safe-area-inset-left, 0px);
@@ -68,7 +71,6 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 .mobile-btn:disabled { opacity: 0.4; }
 .mobile-btn--accent { background: var(--m-accent); border-color: var(--m-accent); color: #11111b; }
-.mobile-btn--recording { background: var(--m-danger); border-color: var(--m-danger); color: #11111b; }
 
 /* ─── bottom bar ────────────────────────────────────────────────────────── */
 
@@ -231,10 +233,7 @@ textarea, input, [contenteditable="true"], .cm-content {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--m-danger);
-  color: #11111b;
   pointer-events: none;
-  animation: m-summarizer-pulse 1.2s ease-in-out infinite;
 }
 .m-dictating--starting,
 .m-dictating--transcribing { background: var(--m-raised); color: var(--m-text); animation: none; }
@@ -258,15 +257,69 @@ textarea, input, [contenteditable="true"], .cm-content {
   -webkit-touch-callout: none;
 }
 .m-summarizer:disabled { opacity: 0.7; }
-.m-summarizer--listening { background: var(--m-danger); animation: m-summarizer-pulse 1.2s ease-in-out infinite; }
+/* Ready to talk: hollow, in the listening orange. Orange is the microphone and
+   nothing else on the phone; hollow is waiting, and filled and turning (below)
+   is open. Purple would say nothing — it is also everything else that is on. */
+.m-summarizer--ready {
+  background: #000;
+  color: var(--m-listening);
+  box-shadow: inset 0 0 0 3px var(--m-listening);
+}
 .m-summarizer--starting,
 .m-summarizer--sending { background: var(--m-raised); color: var(--m-text); }
 .m-summarizer--thinking { background: #f9e2af; }
 .m-summarizer--synthesizing,
 .m-summarizer--speaking { background: #a6e3a1; }
-@keyframes m-summarizer-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.6); }
-  50% { box-shadow: 0 0 0 10px rgba(243, 139, 168, 0); }
+
+/* Listening: the mic is open and what is said is being transcribed — the
+   composer's mic button, the dictation mark, and the talk button. It has to be
+   unmissable, so: the phone's own mic-in-use orange, and two white arcs
+   chasing round a dark ring at its edge. The ring sits inside the element
+   because the composer's mic button clips its overflow.
+   The arcs turn by animating a registered angle, which repaints the ring each
+   frame; it is a few dozen pixels, and only while the mic is open. */
+@property --m-listen-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.mobile-btn--recording,
+.m-dictating--listening,
+.m-summarizer--listening,
+.m-hold-mic--hearing {
+  position: relative;
+  background: var(--m-listening);
+  border-color: var(--m-listening);
+  color: #11111b;
+}
+.mobile-btn--recording::before,
+.m-dictating--listening::before,
+.m-summarizer--listening::before,
+.m-hold-mic--hearing::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 3px;
+  background: conic-gradient(
+    from var(--m-listen-angle),
+    #11111b 0deg,
+    #fff 110deg,
+    #11111b 120deg,
+    #11111b 180deg,
+    #fff 290deg,
+    #11111b 300deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: m-listening-spin 1s linear infinite;
+}
+@keyframes m-listening-spin {
+  to { --m-listen-angle: 360deg; }
 }
 /* Control's button (ControlButton.tsx): left of the talk button, or the
    bar's middle alone when there is no conversation. Its fill is where Control
@@ -581,6 +634,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 .mobile-composer__actions .mobile-btn--mic,
 .mobile-composer__actions .mobile-btn--ship { min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; }
 .mobile-btn--icon { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; }
+.mobile-btn--mic:not(.mobile-btn--recording) { border-color: var(--m-listening); color: var(--m-listening); }
 .mobile-btn--mic { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .mobile-btn--ship { flex: 1; }
 .mobile-recording-dot {
@@ -767,12 +821,14 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 
 /* Hold the microphone open (held-microphone.ts): right of the talk button,
-   mirroring the Control button on its left. Lit while on. */
-.m-hold-mic--on { background: var(--m-accent); color: #11111b; }
-/* On, but not holding the microphone yet: outlined in the accent, pulsing. */
+   mirroring the Control button on its left. White while on, as Control is
+   while it is here: an on switch, not the microphone's orange — that is kept
+   for when what you say is actually being taken down. */
+.m-hold-mic--on { background: #fff; color: #11111b; }
+/* On, but not holding the microphone yet: outlined in white, pulsing. */
 .m-hold-mic--preparing {
-  box-shadow: inset 0 0 0 2px var(--m-accent);
-  color: var(--m-accent);
+  box-shadow: inset 0 0 0 2px #fff;
+  color: #fff;
   animation: m-hold-mic-preparing 1.2s ease-in-out infinite;
 }
 @keyframes m-hold-mic-preparing {
@@ -780,8 +836,9 @@ textarea, input, [contenteditable="true"], .cm-content {
   50% { opacity: 0.45; }
 }
 /* Hands-free (hands-free.ts): it heard "Control" and is taking down what you
-   say, or sending it. Green, as a talk button that is listening. */
-.m-hold-mic--hearing { background: #a6e3a1; color: #11111b; }
+   say — the listening look, with the talk button's (above) — then sending it,
+   neutral as the talk button is while it sends. */
+.m-hold-mic--sending { background: var(--m-raised); color: var(--m-text); }
 
 /* Nothing on the canvas animates on the phone: no dancing crab, no pulsing
    glow or unread badge. An animation of transform or opacity gives its element

@@ -22,7 +22,8 @@ const APP_LABELS: Record<HoldState, string> = {
  * with it hands-free mode (hands-free.ts): start talking with "Control", stop
  * when you are done, and Control gets it without a press.
  * Outlined and pulsing while it is on but not holding the microphone yet;
- * lit once it is; green while hands-free is taking down what you say.
+ * white once it is; orange and turning while hands-free is taking down what
+ * you say.
  * In a browser it only takes effect with a headset — see held-microphone.ts.
  * Remembered on this phone.
  */
@@ -32,12 +33,13 @@ export function HoldMicButton() {
   const phase = useHandsFree((s) => s.phase)
   const on = state !== 'off'
   const hearing = phase === 'hearing' || phase === 'sending'
+  const look = phase === 'hearing' ? ' m-hold-mic--hearing' : phase === 'sending' ? ' m-hold-mic--sending' : state === 'held' ? ' m-hold-mic--on' : state === 'preparing' ? ' m-hold-mic--preparing' : ''
   const label = hearing
     ? phase === 'hearing' ? 'Heard "Control" — listening; stop talking to send' : 'Sending what you said to Control'
     : (nativeMicrophoneAvailable() ? APP_LABELS : BROWSER_LABELS)[state]
   return (
     <button
-      className={`m-hold-mic${hearing ? ' m-hold-mic--hearing' : state === 'held' ? ' m-hold-mic--on' : state === 'preparing' ? ' m-hold-mic--preparing' : ''}`}
+      className={`m-hold-mic${look}`}
       aria-pressed={on}
       aria-label={label}
       onClick={() => setHoldMicrophone(!on)}
