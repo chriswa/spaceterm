@@ -24,6 +24,7 @@ import {
   type RenderedPart, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
+import { decidePause, PAUSE_MS, type PauseJudgement } from './backlog-pause'
 import {
   cacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
@@ -118,6 +119,8 @@ export interface ReceptionistDeps {
   backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore'>
   /** Jev's probability for each backlog item, in order: that it should come next, or that it is about `ctx.about`. See backlog.ts. */
   judgeBacklog(ctx: BacklogContext): Promise<number[]>
+  /** Jev's probabilities that the user could switch topics now, and after a pause: see backlog-pause.ts. */
+  judgePause(conversation: string): Promise<PauseJudgement>
   /** One message to Control's Claude Code session. Rejects on failure or abort. */
   askModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer>
   /** Rank the live agents against a description, with Jev. */
@@ -226,6 +229,12 @@ export interface ReceptionistDeps {
   voiceOperatorDiscovered(): boolean
 }
 
+/** Backlog items taken off for one turn, and how the model is told of them. */
+interface TakenItems {
+  items: BacklogItem[]
+  described: string
+}
+
 /** An agent that is no longer live, as it was last seen, with the handle it had then. */
 interface EndedAgent {
   agent: RosterAgent
@@ -319,6 +328,14 @@ export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMP
  * has left the turn it was in before the next prompt is typed.
  */
 const INTERRUPT_SETTLE_MS = 800
+/**
+ * How long a watched agent must stay stopped before its stop is reported. A
+ * message sent to an agent at work waits in Claude Code's queue, and the turn
+ * it was sent during ends in a stop that the queued message follows within
+ * milliseconds. Reported, that stop was taken for the answer: the watch was
+ * used up, and the real answer went untold.
+ */
+export const STOP_HOLD_MS = 2_000
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
 /** Said to a model that talked when told the user is away: see `renderTurnBody`'s `away`. */
 const AWAY_REFUSAL = 'NOTHING WAS DONE: the user is away, so "say" must be empty. Reply again with the same tools and an empty "say".'
@@ -382,6 +399,8 @@ export class Receptionist {
    * with nothing said, and the real answer then went unreported.
    */
   private readonly monitors = new Map<NodeId, 'next-stop' | 'after-work'>()
+  /** Watched agents whose stop is being held before it is reported, each with its own hold: see `holdStop`. */
+  private readonly holding = new Map<NodeId, object>()
   /**
    * Agents no longer live — their session ended, or Control archived them —
    * as they were last seen, newest last. Their transcripts outlive them, so
@@ -428,6 +447,14 @@ export class Receptionist {
   private quieted = false
   /** What backlog_next gave the latest turn, until its reply is said; see `putBack`. */
   private taken: { attempt: Attempt; items: BacklogItem[] } | undefined
+  /**
+   * Bumped whenever the quiet after a reply is broken: a turn starts, the user
+   * starts talking, or nobody is listening any more. A pause that waited for a
+   * backlog item comes to nothing if this has moved on. See `maybePull`.
+   */
+  private pauses = 0
+  /** The pause last put to Jev, so that each is judged once. */
+  private pauseJudged = -1
 
   private readonly onError: (message: string) => void
 
@@ -451,6 +478,8 @@ export class Receptionist {
         // Background results that arrived while the receptionist was busy wait
         // for it to go quiet, then get their turn.
         this.maybeSpeakUp()
+        // Nothing else wants a turn: perhaps the backlog's next item does.
+        void this.maybePull()
       },
       onFailure: (failure) => opts.onError(speechFailureMessage(failure, 'the answer')),
       deps: {
@@ -486,6 +515,7 @@ export class Receptionist {
     this.dictating = speaking
     if (speaking) {
       this.held = true
+      this.pauses++
       if (this.unprompted?.isCurrent) {
         serverLog('[receptionist] the user started talking: dropping an unprompted turn until they finish')
         void this.channel.cancel()
@@ -533,6 +563,7 @@ export class Receptionist {
     if (!listener) {
       if (!this.listening) return
       this.listening = false
+      this.pauses++
       this.listenerId = undefined
       this.channel.speech = NO_LISTENER
       this.missed = emptyNews()
@@ -591,11 +622,42 @@ export class Receptionist {
     const waiting = this.monitors.get(nodeId)
     if (!waiting) return
     if (!isSettled(state)) {
+      // Back at work while its stop was held: that was no stop. See `STOP_HOLD_MS`.
+      this.holding.delete(nodeId)
       if (waiting === 'after-work') this.monitors.set(nodeId, 'next-stop')
       return
     }
     if (waiting === 'after-work') return
-    this.fireMonitor(nodeId, state)
+    void this.holdStop(nodeId)
+  }
+
+  /** Report a watched agent's stop once it has held for `STOP_HOLD_MS`, if it is still watched and still stopped. */
+  private async holdStop(nodeId: NodeId): Promise<void> {
+    const hold = {}
+    this.holding.set(nodeId, hold)
+    await this.deps.sleep(STOP_HOLD_MS)
+    if (this.holding.get(nodeId) !== hold) return
+    this.holding.delete(nodeId)
+    const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
+    if (this.monitors.get(nodeId) !== 'next-stop' || !agent || !isSettled(agent.state)) return
+    this.fireMonitor(nodeId, agent.state)
+  }
+
+  /**
+   * The user typed into an agent themselves, or shipped it something: they
+   * have it in hand, and hear from it directly, so Control stops watching it.
+   * Without this, a watch kept through silence (see `keepWatchingUntold`)
+   * would wake Control at every stop of a session the user is working in.
+   */
+  userTookOver(nodeId: NodeId): void {
+    this.dropSettled(nodeId)
+    this.holding.delete(nodeId)
+    if (!this.monitors.delete(nodeId)) return
+    const agents = this.deps.agents()
+    if (agents.some(agent => agent.nodeId === nodeId)) {
+      this.notes.push(`The user typed into ${this.token(nodeId, this.handles(agents))} themselves, so you are no longer watching it.`)
+    }
+    this.deps.log({ event: 'taken-over', nodeId })
   }
 
   /**
@@ -610,6 +672,7 @@ export class Receptionist {
   agentEnded(agent: RosterAgent, archived: boolean): void {
     const nodeId = agent.nodeId
     const monitored = this.monitors.delete(nodeId)
+    this.holding.delete(nodeId)
     this.reportedStops.delete(nodeId)
     const handle = this.handles([...this.deps.agents().filter(live => live.nodeId !== nodeId), agent]).of(nodeId)!
     this.remember(agent, handle)
@@ -641,16 +704,60 @@ export class Receptionist {
     this.monitors.set(nodeId, kind === 'after-work' && state && !isSettled(state) ? 'next-stop' : kind)
   }
 
+  /**
+   * Watch an agent for its next stop, from now. One already stopped at a stop
+   * not yet reported — it may have answered a moment before — is reported at
+   * once, not at a stop that may never come; the stop last reported is not
+   * reported again.
+   */
+  private watchFromNow(agent: RosterAgent): 'reported' | 'watching' {
+    const reported = this.reportedStops.has(agent.nodeId) && this.reportedStops.get(agent.nodeId) === agent.stateSince
+    if (isSettled(agent.state) && !reported) {
+      this.fireMonitor(agent.nodeId, agent.state)
+      return 'reported'
+    }
+    this.watch(agent.nodeId, 'next-stop')
+    return 'watching'
+  }
+
+  /**
+   * A watch is used up only by telling the user. A stop this turn said nothing
+   * about, in its words or on its backlog, is news the user has not had, so its
+   * agent is watched again, as though the stop had not come. Left to the model,
+   * it was not: Control stayed silent on a stop, the agent's real answer came
+   * later, and nobody was watching for it. A watch kept this way ends when the
+   * user takes the agent over (`userTookOver`), as any other does.
+   */
+  private keepWatchingUntold(events: readonly ReceptionistEvent[], reply: Reply): void {
+    const stops = events.filter(event => event.kind === 'agent-stopped')
+    if (!stops.length) return
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    const tokensIn = (text: string) => [...text.matchAll(AGENT_TOKEN)].map(([, ref]) => ref)
+    const refs = [
+      ...reply.say.flatMap(part => [...(part.from === CONTROL ? [] : [part.from]), ...tokensIn(part.text)]),
+      ...reply.tools.flatMap(call => call.tool === 'backlog_add' ? tokensIn(call.item) : []),
+    ]
+    const told = new Set(refs.flatMap(ref => this.resolve(ref, handles, agents) ?? []))
+    for (const { nodeId } of stops) {
+      const agent = agents.find(candidate => candidate.nodeId === nodeId)
+      // Gone, or watched again already: by a send, or by monitor.
+      if (!agent || told.has(nodeId) || this.monitors.has(nodeId)) continue
+      this.deps.log({ event: 'kept-watching', nodeId, outcome: this.watchFromNow(agent) })
+    }
+  }
+
   /** The agent has stopped: tell the model what it last said. */
   private fireMonitor(nodeId: NodeId, state: ClaudeState): void {
     const agents = this.deps.agents()
     const agent = agents.find(candidate => candidate.nodeId === nodeId)
     this.monitors.delete(nodeId)
+    this.holding.delete(nodeId)
     if (!agent) return
     this.reportedStops.set(nodeId, agent.stateSince)
     const lastSaid = agent.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
     this.events.push({
-      kind: 'agent-stopped', agent: this.token(nodeId, this.handles(agents)), state: STATE_WORDS[state],
+      kind: 'agent-stopped', agent: this.token(nodeId, this.handles(agents)), nodeId, state: STATE_WORDS[state],
       lastSaid: lastSaid.slice(-LAST_SAID_EVENT_CHARS),
     })
     this.maybeSpeakUp()
@@ -707,7 +814,8 @@ export class Receptionist {
    * One turn: the user's words (or, with none, pending events), as many model
    * steps as its `read` calls need, and then speech.
    */
-  private async runTurn(heard: string | undefined): Promise<void> {
+  private async runTurn(heard: string | undefined, pulled?: TakenItems): Promise<void> {
+    this.pauses++
     const attempt = this.channel.begin('thinking')
     this.unprompted = heard === undefined ? attempt : undefined
     // The reply this turn supersedes will never be heard: what backlog_next
@@ -725,9 +833,9 @@ export class Receptionist {
     if (!away) this.returnNews = undefined
     const unquieted = !away && this.quieted
     if (unquieted) this.quieted = false
-    const body = renderTurnBody(events, heard, away ? 'away' : news, unquieted, this.deps.backlog.size)
-    // Backlog items backlog_next hands this turn: put back if its reply is never heard.
-    const taken: BacklogItem[] = []
+    const body = renderTurnBody(events, heard, away ? 'away' : news, unquieted, this.deps.backlog.size, this.watching(), pulled?.described)
+    // Backlog items this turn brings up, pulled for it or by backlog_next: put back if its reply is never heard.
+    const taken: BacklogItem[] = [...pulled?.items ?? []]
     this.taken = { attempt, items: taken }
     // Taken before this message joins the record, for a session that has forgotten what led up to it.
     const earlier = this.deps.record.recent(RECAP_MESSAGES)
@@ -743,7 +851,7 @@ export class Receptionist {
       if (!reply) return
       // Acted on where the user could not hear: theirs to be told of when they are back.
       if (away) this.missed?.events.push(...events)
-      monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply), taken)
+      monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply), taken, events)
     } catch (err) {
       this.putBack(taken)
       if (!attempt.isCurrent) { this.requeue(events, news, unquieted); return }
@@ -1045,19 +1153,9 @@ export class Receptionist {
           results.push(this.read(agent, this.token(agent.nodeId, handles), call.search, false))
           break
         case 'monitor':
-          // Already stopped at a stop not yet reported — it may have answered
-          // a moment before the monitor was set — so it is reported now, not
-          // at a stop that may never come.
-          // Unless it is the very stop just reported: watching again for a
-          // later one is what monitor means then.
-          if (isSettled(agent.state) && !(this.reportedStops.has(agent.nodeId) && this.reportedStops.get(agent.nodeId) === agent.stateSince)) {
-            this.monitors.set(agent.nodeId, 'next-stop')
-            this.fireMonitor(agent.nodeId, agent.state)
-            done.push(`monitor found ${who} already stopped; what it last said comes as an event`)
-          } else {
-            this.watch(agent.nodeId, 'next-stop')
-            done.push(`monitor is watching ${who}`)
-          }
+          done.push(this.watchFromNow(agent) === 'reported'
+            ? `monitor found ${who} already stopped; what it last said comes as an event`
+            : `monitor is watching ${who}`)
           break
         case 'ask_agent':
           void this.askAgent(agent, call.question, handles)
@@ -1098,14 +1196,24 @@ export class Receptionist {
    * is read the same way, but without a cache to weigh: it cannot be asked.
    */
   /**
-   * The backlog item that matters most now, or every item about what `about`
-   * describes, as Jev judges it, taken off the backlog. `taken` collects them,
-   * so that a reply nobody hears puts them back. Every pick is logged, for
-   * checking Jev's judgement.
+   * The backlog_next tool: the backlog item that matters most now, or every
+   * item about what `about` describes. `taken` collects them, so that a reply
+   * nobody hears puts them back.
    */
   private async backlogNext(taken: BacklogItem[], about: string | undefined): Promise<string> {
+    const took = await this.takeFromBacklog(about)
+    taken.push(...took.items)
+    return `backlog_next: ${took.described}`
+  }
+
+  /**
+   * The backlog item that matters most now, or every item about what `about`
+   * describes, as Jev judges it, taken off the backlog and described for the
+   * model. Every pick is logged, for checking Jev's judgement.
+   */
+  private async takeFromBacklog(about: string | undefined): Promise<TakenItems> {
     const items = this.deps.backlog.all()
-    if (!items.length) return 'backlog_next: the backlog is empty.'
+    if (!items.length) return { items: [], described: 'the backlog is empty.' }
     const now = Date.now()
     const agents = this.deps.agents()
     const handles = this.handles(agents)
@@ -1130,17 +1238,65 @@ export class Receptionist {
     const waiting = (count: number): string => `${count} ${count === 1 ? 'item is' : 'items are'} still waiting`
     if (!pick.indices.length) {
       const why = pick.reason === 'judge-failed' ? 'the backlog could not be searched just now' : `nothing on the backlog is about ${about}`
-      return `backlog_next: ${why}, so nothing was taken off it; ${waiting(items.length)}.`
+      return { items: [], described: `${why}, so nothing was taken off it; ${waiting(items.length)}.` }
     }
     const took = this.deps.backlog.take(pick.indices)
-    if (!took.length) return 'backlog_next: the backlog is empty.'
-    taken.push(...took)
+    if (!took.length) return { items: [], described: 'the backlog is empty.' }
     const left = this.deps.backlog.size
     const described = pick.indices.map(i => `${ctx.items[i].text} (set aside ${ctx.items[i].age})`)
     const them = took.length === 1 ? 'it' : 'any of them'
-    return `backlog_next: ${took.length === 1 ? `${described[0]}.` : `${took.length} items:\n${described.map(text => `- ${text}`).join('\n')}\n`} ` +
-      `${took.length === 1 ? 'It is' : 'They are'} off the backlog now; ${left ? waiting(left) : 'nothing else is waiting'}. ` +
-      `If the user does not want ${them} now, add ${them === 'it' ? 'it' : 'those'} back with backlog_add.`
+    return {
+      items: took,
+      described: `${took.length === 1 ? `${described[0]}.` : `${took.length} items:\n${described.map(text => `- ${text}`).join('\n')}\n`} ` +
+        `${took.length === 1 ? 'It is' : 'They are'} off the backlog now; ${left ? waiting(left) : 'nothing else is waiting'}. ` +
+        `If the user does not want ${them} now, add ${them === 'it' ? 'it' : 'those'} back with backlog_add.`,
+    }
+  }
+
+  /** Whether the quiet after a reply is unbroken, so that a backlog item could come up: see `maybePull`. */
+  private quietSince(pause: number): boolean {
+    return pause === this.pauses && this.listening && !this.held && !this.channel.isProducing() && !this.events.length && !this.returnNews
+  }
+
+  /**
+   * A reply has finished and Control is idle with something on its backlog:
+   * ask Jev whether the user is ready for it (backlog-pause.ts), and bring it
+   * up at once, after `PAUSE_MS` of quiet, or not this pause. Anything that
+   * breaks the quiet meanwhile — the user talking, an event, any other turn —
+   * moves `pauses` on, and the item stays put. Every verdict is logged, for tuning.
+   */
+  private async maybePull(): Promise<void> {
+    const pause = this.pauses
+    if (!this.deps.backlog.size || !this.quietSince(pause) || this.pauseJudged === pause) return
+    this.pauseJudged = pause
+    const verdict = await decidePause(this.recentConversation(), (c) => this.deps.judgePause(c))
+    serverLog(`[receptionist] backlog pause: ${verdict.reason}` +
+      `${verdict.reason === 'judged' ? ` now ${verdict.probabilities.now.toFixed(2)}, after pause ${verdict.probabilities.afterPause.toFixed(2)}` : ''} → ${verdict.when}`)
+    this.deps.log({ event: 'backlog-pause', ...verdict })
+    if (verdict.when === 'not-yet') return
+    if (verdict.when === 'after-pause') await this.deps.sleep(PAUSE_MS)
+    if (!this.quietSince(pause)) return
+    const pulled = await this.takeFromBacklog(undefined)
+    if (!pulled.items.length) return
+    // Choosing the item took a moment too.
+    if (!this.quietSince(pause)) {
+      this.deps.backlog.restore(pulled.items)
+      return
+    }
+    await this.runTurn(undefined, pulled)
+  }
+
+  /**
+   * The user has taken an agent in hand themselves: whatever Control set aside
+   * about it, they now have first-hand, so it never comes up stale — asking
+   * them decisions they have already made with the agent.
+   */
+  private dropSettled(nodeId: NodeId): void {
+    const indices = this.deps.backlog.all().flatMap((item, i) => item.agents?.includes(nodeId) ? [i] : [])
+    if (!indices.length) return
+    const dropped = this.deps.backlog.take(indices)
+    this.deps.log({ event: 'backlog-settled', nodeId, dropped })
+    this.notes.push(`The user is working with ${this.token(nodeId, this.handles(this.deps.agents()))} themselves, so what you set aside about it is off your backlog: ${dropped.map(item => item.text).join('; ')}.`)
   }
 
   /** Set an item aside, with the surfaces of the live agents its tokens name, so that their caches can be weighed later. */
@@ -1602,7 +1758,14 @@ export class Receptionist {
     return { spoken, mentioned }
   }
 
-  private async speak(attempt: Attempt, body: string, reply: Reply, taken: BacklogItem[]): Promise<boolean> {
+  /** The tokens of the agents being watched, for the turn's WATCHING line. */
+  private watching(): string[] {
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    return agents.filter(agent => this.monitors.has(agent.nodeId)).map(agent => this.token(agent.nodeId, handles))
+  }
+
+  private async speak(attempt: Attempt, body: string, reply: Reply, taken: BacklogItem[], events: readonly ReceptionistEvent[]): Promise<boolean> {
     // Never over the user. Talked over while it waited, the reply is never said.
     await this.untilUserDone()
     if (!attempt.isCurrent) {
@@ -1636,6 +1799,7 @@ export class Receptionist {
     // waits through "Sent to Kevin" for the send. Talking over the words
     // undoes nothing, which is why Control asks first when it is unsure.
     await this.runActions(reply.tools)
+    this.keepWatchingUntold(events, reply)
     this.lastSpokenAt = this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])[0]
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))

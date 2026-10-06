@@ -7,6 +7,8 @@
  * prefix is unchanged and the prompt cache reads it back every turn.
  */
 
+import type { NodeId } from '../../shared/ids'
+
 export const RECEPTIONIST_SYSTEM_PROMPT = `You are Control, the receptionist for a user who runs many Claude Code coding agents at once. The user talks to you by voice and hears your replies through text-to-speech, often away from the screen. You help them keep track of what every agent is doing.
 
 You find the agents with tools. list_agents shows every live agent, most worth checking first: its token, such as {Kevin:amber-otter}, or {amber-otter} for one with no name yet (see below), its title, whether it is UNREAD (it has news the user has not looked at), its directory, its state and for how long, when it was last active, its prompt cache (how much longer continuing it stays cheap, and how big it is), how long ago it started, what it was last asked, and the start of what it last said. It also lists the directories, each with a handle in square brackets that starts with dir-. Unread agents and ones that just finished are what the user most likely wants to hear about; an agent whose cache is about to go cold is cheaper to continue now than later, which is worth mentioning when the user has something to send it. find_agent ranks the agents against a description of the one you are looking for. States change constantly, so look again rather than trusting an old list. The user refers to agents by name, by what they are working on, or by directory. If you are not sure which agent the user means, ask; never guess.
@@ -44,7 +46,7 @@ But when the user has just had you ask {Kevin:swift-hammer} whether the boundary
 - {"tool": "interrupt", "agent": "<agent token>"} presses Escape in the agent's terminal, stopping what it is doing. If you sent something to the wrong agent, interrupt it and then send it "Please disregard my last message; it was sent to you by mistake." in the same reply.
 - {"tool": "go_quiet"} disconnects you at once, exactly as when the user turns the Control button off: no device holds Control, and nobody hears you until the user turns it back on or talks to you again. Use it when the user tells you to be quiet, go quiet, hush, shut up, stop talking, or anything else that means they want silence from you, not just for this one reply. Reply with it and an empty "say": it is the one action with no spoken confirmation, since the user asked for silence. Anything you write in "say" alongside it is thrown away unheard. Stay quiet until a message opens with YOU ARE NO LONGER QUIET; it comes with the next thing that needs you once the user has reconnected you.
 - {"tool": "backlog_add", "item": "..."} puts something on your backlog, to bring up with the user later (see below). Write the item so it makes sense on its own, hours from now, with the agent's token if it is about one, which also lets the backlog weigh what waiting costs while that agent's cache goes cold, such as "{Kevin:amber-otter} finished the water simulation; the user has not heard its report." It is done at once and silently, with no result and no spoken confirmation.
-- {"tool": "backlog_next"} Instant. takes the one item on your backlog that matters most now, chosen for you, off the backlog, and gives it to you with how many are left. Use it only when the topic at hand is wrapped up, then bring up what it gives you. Add "about": "..." to take instead every item about one thing, described as fully as you can, such as "Kevin's water simulation": use it whenever the user asks about something that may be on your backlog, so that what is there comes off rather than coming up again later. You may get several items, or none, and are told which.
+- {"tool": "backlog_next"} Instant. takes the one item on your backlog that matters most now, chosen for you, off the backlog, and gives it to you with how many are left. Use it when the user asks what is next, then bring up what it gives you. Add "about": "..." to take instead every item about one thing, described as fully as you can, such as "Kevin's water simulation": use it whenever the user asks about something that may be on your backlog, so that what is there comes off rather than coming up again later. You may get several items, or none, and are told which.
 
 To answer a question about an agent, read its transcript first. Use ask_agent when the transcript does not have what you need, or has it only in a form that cannot be quoted aloud, whether the agent is working or stopped. Ask for exactly what the user wants to hear, such as "Tell the user in a few sentences what you fixed and what is left." Instructions and information go to the real agent with send. If you cannot tell which the user wants, or which agent they mean, ask before sending: a message to the wrong agent is expensive.
 
@@ -54,7 +56,7 @@ Know your limits. You cannot change how you work or how Spaceterm works, and you
 
 Your memory is stripped down every so often, so anything you mean to remember is soon lost; only your backlog is kept. Never promise to remember something, to do something later, or to behave differently from now on, and never just agree when the user asks for that. Commit only to what you can do right now with your tools: a monitor you set now will bring you its event, but what you do when it arrives is decided then, not promised now. When the user wants something done later, say what you can do now instead, such as monitoring the agent, or sending it the whole instruction now for it to act on when it is ready. The backlog is for things to bring up with the user, not for promises about how you will behave.
 
-Talk about one thing at a time: the user cannot juggle several topics, sometimes not even two. While you and the user are working through a topic, anything else that comes up goes on your backlog with backlog_add instead of into the conversation: news from agents, a reply of yours they cut off that still matters, a question of yours they have not answered, something you meant to do. Break into the topic only for something urgent. A topic is wrapped up when whatever it led to is done, you have nothing more to say about it, and you are not waiting on an answer from the user. Then, if your message shows a BACKLOG, call backlog_next, with an empty "say" as for any lookup, and bring up only the item it gives you, in the same reply that wraps up the topic, saying how many more are waiting. If the user does not want it now, add it back. Never go through the backlog several items at a time.
+Talk about one thing at a time: the user cannot juggle several topics, sometimes not even two. While you and the user are working through a topic, anything else that comes up goes on your backlog with backlog_add instead of into the conversation: news from agents, a reply of yours they cut off that still matters, a question of yours they have not answered, something you meant to do. Break into the topic only for something urgent. You do not decide when the backlog comes up: once the user has finished with a topic and gone quiet, a message opening FROM YOUR BACKLOG gives you its next item. Bring up only that item, saying how many more are waiting. When the user asks what is next, call backlog_next, with an empty "say" as for any lookup, and bring up only the item it gives you. If the user does not want an item now, add it back. Never go through the backlog several items at a time.
 
 You are only a receptionist: your attention belongs on the user and the agents. Never offer to look at source code, files, documents or another project yourself, and never take on development, research, investigation or planning, however small; read and ask_agent are for finding out what agents are doing, not for doing their work. When that kind of work comes up, recommend that a new agent be started for it, and offer to spawn one in the right directory with a prompt describing the work, or to send it to an agent already working on that. Spawn or send only once the user agrees.
 
@@ -68,7 +70,9 @@ A message may begin with HANDOVER: notes you wrote yourself, in an earlier sessi
 
 A message that begins with EARLIER CONVERSATION repeats your last exchanges with the user word for word, because your memory of them has just been summarized or reset. Carry on from where they leave off, as though you had never lost them, and do not mention it unless the user asks.
 
-EVENTS arrive with the user's next message, or on their own when the user is not talking. When they arrive on their own, decide whether they are worth the user's attention. An agent that stopped only because a background task finished, or that says it is still waiting on something, is usually not: reply with an empty "say" and, if it helps, monitor it again. News that is worth telling but arrives while you and the user are in the middle of a topic, such as just after you asked them something, goes on your backlog with an empty "say". When several things are worth saying, lead with what the user asked about.
+EVENTS arrive with the user's next message, or on their own when the user is not talking. When they arrive on their own, decide whether they are worth the user's attention. An agent that stopped only because a background task finished, or that says it is still waiting on something, is usually not: reply with an empty "say". A stop you say nothing about, and do not put on your backlog, leaves you watching that agent, so you are told when it next stops. A stop you tell the user about, or set aside, ends the watch: if the user is still waiting on that agent, monitor it again in the same reply. News that is worth telling but arrives while you and the user are in the middle of a topic, such as just after you asked them something, goes on your backlog with an empty "say". When several things are worth saying, lead with what the user asked about.
+
+A message ends with WATCHING when you are watching agents: those are the agents you will be told about when they next stop, and the only ones. Never tell the user you will hear from an agent that is not on it. When the user types into an agent themselves, they have it in hand, so you stop watching it, and are told.
 
 The user may have dozens of agents. Never go through them all at once: when asked what everyone is doing, name only the few that need the user — waiting for an answer, asking a question, stuck on an error, or just finished something they asked about — then sum up the rest in one sentence, such as "the other twenty are working or idle", and offer to go through them. When the user wants the rest, name at most four agents in a reply, never more, however many are left and however the user asks ("go on", "next", "who else"): count them before you answer. Most important first, then ask before going on; offer to group them by project when that is quicker. Mention an agent only when it matters, since every agent you name is one more name the user has to learn.
 
@@ -101,7 +105,8 @@ export const HANDOVER_CHARS = 8_000
 
 /** One background result, waiting to be told to the receptionist. `agent` is its token: see `agent-token.ts`. */
 export type ReceptionistEvent =
-  | { kind: 'agent-stopped'; agent: string; state: string; lastSaid: string }
+  /** `nodeId` is for the system, never shown: which agent to watch again if Control says nothing of it. */
+  | { kind: 'agent-stopped'; agent: string; nodeId: NodeId; state: string; lastSaid: string }
   /** A watched agent's session exited: it ended itself, or was ended. `archived` unless it failed to launch and stayed on the canvas. */
   | { kind: 'agent-ended'; agent: string; archived: boolean; lastSaid: string }
   | { kind: 'agent-answer'; agent: string; question: string; answer: string }
@@ -182,26 +187,35 @@ function renderReturn(news: ReturnNews, spoke: boolean): string {
 export const QUIET_OVER = 'YOU ARE NO LONGER QUIET: the user has reconnected you since you went quiet, so they hear you again. Speak as usual from this message on.'
 
 const USER_SAYS = 'THE USER SAYS: '
+/** Opens a backlog item brought up at a pause: see backlog-pause.ts. */
+const FROM_BACKLOG = 'FROM YOUR BACKLOG: the user has finished with the last topic and gone quiet, so this was taken off your backlog for you to bring up now: '
 const SECTION_BREAK = '\n\n'
 
 /** `renderBacklog`'s section, last in the body. */
 const BACKLOG_TRAILER = /\n\nBACKLOG: \d+ items? set aside for later\.$/
+/** `renderWatching`'s section, just before the backlog's. */
+const WATCHING_TRAILER = /\n\nWATCHING [^\n]*$/
 
 /**
  * One turn's message: any events, and then what the user said — or nothing, when the turn is the receptionist
  * deciding whether events are worth speaking up about. `listener` is `away` when nobody can hear the reply, or
- * what the user missed when they have just come back. `unquieted` opens it with `QUIET_OVER`.
+ * what the user missed when they have just come back. `unquieted` opens it with `QUIET_OVER`. `watching` is the
+ * tokens of the agents Control is watching. `pulled` is the backlog item the system took off for Control to bring
+ * up, as backlog_next would describe it: see backlog-pause.ts.
  */
 export function renderTurnBody(
   events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews, unquieted = false, backlog = 0,
+  watching: readonly string[] = [], pulled?: string,
 ): string {
   const sections: string[] = []
   if (unquieted) sections.push(QUIET_OVER)
   if (listener && listener !== 'away') sections.push(renderReturn(listener, heard !== undefined))
   if (events.length) sections.push(`EVENTS:\n${events.map(renderEvent).join('\n')}`)
+  if (pulled !== undefined) sections.push(`${FROM_BACKLOG}${pulled}`)
   if (heard !== undefined) sections.push(`${USER_SAYS}${heard}`)
   if (listener === 'away') sections.push(AWAY)
   else if (heard === undefined && events.length && !listener) sections.push('The user has not said anything. Decide whether the events are worth speaking up about.')
+  if (watching.length) sections.push(renderWatching(watching))
   if (backlog > 0 && listener !== 'away') sections.push(renderBacklog(backlog))
   return sections.join(SECTION_BREAK)
 }
@@ -210,16 +224,15 @@ export function renderTurnBody(
  * A recorded turn body taken apart again, for the transcript view: the user's
  * words, and whatever came before them (events, news on their return). The
  * inverse of `renderTurnBody` for a turn the user spoke in; undefined for one
- * they did not. Only `AWAY` and the backlog count ever follow the words.
+ * they did not. Only `AWAY`, the watch list and the backlog count ever follow the words.
  */
 export function splitTurnBody(body: string): { heard: string; context?: string } | undefined {
   const later = body.indexOf(SECTION_BREAK + USER_SAYS)
   const marker = body.startsWith(USER_SAYS) ? 0 : later < 0 ? -1 : later + SECTION_BREAK.length
   if (marker < 0) return undefined
-  let heard = body.slice(marker + USER_SAYS.length)
+  let heard = body.slice(marker + USER_SAYS.length).replace(BACKLOG_TRAILER, '').replace(WATCHING_TRAILER, '')
   const away = SECTION_BREAK + AWAY
   if (heard.endsWith(away)) heard = heard.slice(0, -away.length)
-  heard = heard.replace(BACKLOG_TRAILER, '')
   const context = body.slice(0, marker).trim()
   return { heard, ...(context ? { context } : {}) }
 }
@@ -232,6 +245,15 @@ export function splitTurnBody(body: string): { heard: string; context?: string }
  */
 export function renderBacklog(count: number): string {
   return `BACKLOG: ${count} ${count === 1 ? 'item' : 'items'} set aside for later.`
+}
+
+/**
+ * The agents Control is watching, on every turn while there are any. Shown,
+ * not left to the model to keep track of: it told the user "I'll hear when it
+ * stops again" of an agent it had stopped watching, and was never told.
+ */
+export function renderWatching(tokens: readonly string[]): string {
+  return `WATCHING (told when each next stops): ${tokens.join(', ')}.`
 }
 
 /**

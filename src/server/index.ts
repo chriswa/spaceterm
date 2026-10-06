@@ -78,6 +78,7 @@ import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat
 import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
+import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
 import { HandleNames, isHandleOf } from './receptionist/transcript-names'
@@ -1852,6 +1853,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Interacting with the terminal only marks it read — state is derived from
       // hooks + transcript, not keystrokes.
       claudeStateMachine.handleClientInteract(msg.sessionId)
+      // Enter: the user is working the agent themselves, so Control stops
+      // watching it. Not any write: focus reports and the like are not typing.
+      if (msg.data.includes('\r')) {
+        const typedInto = stateManager.getNodeIdForSession(msg.sessionId)
+        if (typedInto) receptionist?.userTookOver(typedInto)
+      }
       break
     }
 
@@ -1969,6 +1976,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         break
       }
       shipToSession(target.sessionId, msg.text, true)
+      // The user's own Ship it, never Control's (that calls shipToSession itself).
+      receptionist?.userTookOver(target.id)
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -3314,6 +3323,7 @@ async function startServer(): Promise<void> {
     // Kept on disk: what Control set aside outlasts its compacted memory. Jev picks what comes next: see backlog.ts.
     backlog: new Backlog(),
     judgeBacklog: jevBacklogJudge(agentSearchDeps.runJev),
+    judgePause: jevPauseJudge(agentSearchDeps.runJev),
     findAgents: (query, agents) => searchAgentSurfaces(query, agents.map((agent) => ({
       nodeId: agent.nodeId, title: agent.title, cwd: agent.cwd, archived: false, transcriptPath: agent.transcriptPath,
     })), agentSearchDeps, 'transcripts'),

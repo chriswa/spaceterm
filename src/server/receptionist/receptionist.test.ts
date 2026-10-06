@@ -8,11 +8,12 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, QUIET_OVER, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
+  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
+import { PAUSE_MS } from './backlog-pause'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
@@ -78,6 +79,7 @@ function harness(opts: {
   judgeInterruption?: ReceptionistDeps['judgeInterruption']
   /** Jev's probabilities for the backlog's items; by default it cannot say. */
   judgeBacklog?: ReceptionistDeps['judgeBacklog']
+  judgePause?: ReceptionistDeps['judgePause']
   /** What Control set aside before this server started. */
   backlog?: string[]
   /** How an unarchived agent comes back; by default up and ready. */
@@ -216,6 +218,7 @@ function harness(opts: {
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     backlog,
     judgeBacklog: opts.judgeBacklog ?? (async () => { throw new Error('no judge') }),
+    judgePause: opts.judgePause ?? (async () => { throw new Error('no judge') }),
     archive: (nodeId) => { wire.push(`archive ${nodeId}`); gone.add(nodeId); return nodeId === KEVIN_ID ? 3 : 1 },
     unarchive: async (nodeId) => {
       wire.push(`unarchive ${nodeId}`)
@@ -1634,6 +1637,124 @@ describe('Receptionist', () => {
   })
 })
 
+describe('Receptionist: watching an agent until the user is told', () => {
+  /** Waits that end at once, except a stop's hold, which ends when `release` is called. */
+  function heldStops() {
+    const holds: Array<() => void> = []
+    return {
+      sleep: (ms: number) => ms === STOP_HOLD_MS ? new Promise<void>((resolve) => { holds.push(resolve) }) : Promise.resolve(),
+      release: () => { for (const resolve of holds.splice(0)) resolve() },
+    }
+  }
+
+  it('does not take the end of the turn a send was queued behind for the answer to it', async () => {
+    // Logan, as it happened: sent a second message while still at work on the
+    // first, it stopped for 48 ms between the two, and that stop was reported
+    // as its answer. Control said nothing of it, and the real answer went untold.
+    const stops = heldStops()
+    const h = harness({
+      sleep: stops.sleep,
+      replies: [
+        reply([{ from: 'control', text: `Sent to {${SALLY}}.` }], [{ tool: 'send', agent: SALLY, message: 'Also the buttons.' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+          return reply([{ from: 'control', text: `{${SALLY}} is done.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell Sally to do the buttons too')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    h.setState(SALLY_ID, 'working')
+    stops.release()
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    // Its real answer holds, and is told.
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    stops.release()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('keeps watching an agent whose stop it said nothing about, and says so every turn', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        // Not worth saying: still waiting on something.
+        reply([], []),
+        (turn) => {
+          expect(turn.prompt).toMatch(new RegExp(`WATCHING \\(told when each next stops\\): \\{\\w+:${SALLY}\\}\\.`))
+          return reply([{ from: 'control', text: 'Nothing new.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+          return reply([{ from: 'control', text: `{${SALLY}} has finished.` }])
+        },
+        (turn) => {
+          // Told, the watch is over.
+          expect(turn.prompt).not.toContain('WATCHING')
+          return reply([{ from: 'control', text: 'Nothing new.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    await h.receptionist.hear('anything new?')
+    await flush()
+    h.setState(SALLY_ID, 'working')
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(4)
+    await h.receptionist.hear('anything new?')
+    await flush()
+    expect(h.turns).toHaveLength(5)
+  })
+
+  it('stops watching an agent whose stop it set aside on the backlog', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        reply([], [{ tool: 'backlog_add', item: `{${SALLY}} finished the login form.` }]),
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    h.setState(SALLY_ID, 'working')
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('stops watching an agent the user takes over, and tells the model', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' themselves, so you are no longer watching it.'))
+          expect(turn.prompt).not.toContain('WATCHING')
+          return reply([{ from: 'control', text: 'Nothing new.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done')
+    await flush()
+    h.receptionist.userTookOver(SALLY_ID)
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    await h.receptionist.hear('anything new?')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+})
+
 describe('Receptionist: agents it started, and agents that end', () => {
   it('hears from an agent it started at its next stop only, as after a send', async () => {
     const h = harness({
@@ -1644,7 +1765,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
         (turn) => {
           expect(turn.prompt).toContain('which is now watched for its next stop')
           expect(turn.prompt).toContain('is now stopped')
-          return reply([], [])
+          return reply([{ from: 'control', text: `{${SALLY}} tidied them.` }])
         },
       ],
     })
@@ -1659,7 +1780,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
     h.setState(SALLY_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(2)
-    // The monitor was used up: neither a later stop nor its end is told.
+    // Told, the monitor was used up: neither a later stop nor its end is told.
     h.setState(SALLY_ID, 'working')
     h.setState(SALLY_ID, 'stopped')
     h.end(SALLY_ID)
@@ -2225,5 +2346,197 @@ describe('Receptionist backlog', () => {
     await flush()
     expect(said(h).some(text => text.includes('Meanwhile'))).toBe(true)
     expect(h.backlog.size).toBe(0)
+  })
+})
+
+describe('Receptionist backlog at a pause', () => {
+  const READY_NOW = { now: 0.9, afterPause: 0.95 }
+  const READY_AFTER = { now: 0.1, afterPause: 0.9 }
+  const NOT_READY = { now: 0.1, afterPause: 0.2 }
+
+  /** A sleep that holds each pause until `wake` ends the oldest still held, and lets every other wait through. */
+  function heldPause() {
+    const pauses: number[] = []
+    const held: Array<() => void> = []
+    return {
+      pauses,
+      wake: () => held.shift()?.(),
+      sleep: (ms: number) => {
+        if (ms !== PAUSE_MS) return Promise.resolve()
+        pauses.push(ms)
+        return new Promise<void>((resolve) => { held.push(resolve) })
+      },
+    }
+  }
+
+  it('brings up the next item at once when Jev says the user could switch now', async () => {
+    const pause = heldPause()
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async (conversation) => {
+        expect(conversation).toContain('that settles it')
+        return READY_NOW
+      },
+      sleep: pause.sleep,
+      replies: [
+        reply([{ from: 'control', text: 'Good.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG: the user has finished with the last topic and gone quiet, so this was taken off your backlog for you to bring up now: Leon finished. (set aside 1 minute ago). It is off the backlog now; nothing else is waiting.')
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('thanks, that settles it')
+    await flush()
+    expect(pause.pauses).toEqual([])
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('brings it up after a quiet pause when Jev says the user will be ready then', async () => {
+    const pause = heldPause()
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => READY_AFTER,
+      sleep: pause.sleep,
+      replies: [
+        reply([{ from: 'control', text: 'Sent to Sally.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG')
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell Sally to carry on')
+    await flush()
+    expect(pause.pauses).toEqual([PAUSE_MS])
+    expect(h.turns).toHaveLength(1)
+    pause.wake()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('leaves the item when the user talks during the pause', async () => {
+    const pause = heldPause()
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => READY_AFTER,
+      sleep: pause.sleep,
+      replies: [reply([{ from: 'control', text: 'Sent.' }])],
+    })
+    await h.receptionist.hear('tell Sally to carry on')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    pause.wake()
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    expect(h.backlog.size).toBe(1)
+  })
+
+  it('leaves the item when an event comes in during the pause, and judges the next pause afresh', async () => {
+    const pause = heldPause()
+    let judged = 0
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => { judged++; return READY_AFTER },
+      sleep: pause.sleep,
+      replies: [
+        reply([{ from: 'control', text: `Watching {${SALLY}}.` }], [{ tool: 'monitor', agent: SALLY }]),
+        (turn) => {
+          expect(turn.prompt).toContain('EVENTS:')
+          expect(turn.prompt).not.toContain('FROM YOUR BACKLOG')
+          return reply([])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG')
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done')
+    await flush()
+    expect(judged).toBe(1)
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    // The first pause's wait ends, but the quiet it waited on was broken.
+    pause.wake()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(1)
+    // The quiet after the event's turn was judged afresh, and its wait is unbroken.
+    expect(judged).toBe(2)
+    pause.wake()
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('brings up nothing when Jev says the user is not ready, or cannot say', async () => {
+    for (const judgePause of [async () => NOT_READY, async () => { throw new Error('no jev') }]) {
+      const pause = heldPause()
+      const h = harness({
+        backlog: ['Leon finished.'],
+        judgePause,
+        sleep: pause.sleep,
+        replies: [reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }])],
+      })
+      await h.receptionist.hear('check on the agent')
+      await flush()
+      expect(pause.pauses).toEqual([])
+      expect(h.turns).toHaveLength(1)
+      expect(h.backlog.size).toBe(1)
+    }
+  })
+
+  it('asks nothing when the backlog is empty', async () => {
+    let judged = 0
+    const h = harness({
+      judgePause: async () => { judged++; return READY_NOW },
+      replies: [reply([{ from: 'control', text: 'Good.' }])],
+    })
+    await h.receptionist.hear('thanks')
+    await flush()
+    expect(judged).toBe(0)
+  })
+
+  it('puts the item back when the user talks over the turn that brings it up', async () => {
+    let h: ReturnType<typeof harness> | undefined
+    h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => READY_NOW,
+      replies: [
+        reply([{ from: 'control', text: 'Good.' }]),
+        () => {
+          h!.receptionist.userSpeaking(true)
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('thanks')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.all().map(item => item.text)).toEqual(['Leon finished.'])
+  })
+
+  it('drops what was set aside about an agent once the user types into it themselves', async () => {
+    const h = harness({
+      backlog: ['Dean asked two questions.'],
+      replies: [
+        reply([], [{ tool: 'backlog_add', item: `{${KEVIN}} wants two decisions from the user.` }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/NOTE: The user is working with \{(\w+:)?\w+-\w+\} themselves, so what you set aside about it is off your backlog: \{(\w+:)?\w+-\w+\} wants two decisions from the user\./)
+          return reply([{ from: 'control', text: 'Okay.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('anyway')
+    await flush()
+    expect(h.backlog.size).toBe(2)
+    h.receptionist.userTookOver(KEVIN_ID)
+    expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.'])
+    await h.receptionist.hear('what now')
+    await flush()
   })
 })

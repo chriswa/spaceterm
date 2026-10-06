@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { asNodeId } from '../../shared/ids'
 import { renderTurnBody, splitTurnBody } from './prompt'
 import { parseRecordLine, transcriptPage, type RecordFile } from './transcript'
 
@@ -59,7 +60,10 @@ describe('transcriptPage', () => {
 
 describe('parseRecordLine', () => {
   it("shows the user's words without what was sent along with them", () => {
-    const body = renderTurnBody([{ kind: 'agent-stopped', agent: '{Kevin:amber-otter}', state: 'stopped', lastSaid: 'done' }], 'what is Kevin doing?', undefined, false, 2)
+    const body = renderTurnBody(
+      [{ kind: 'agent-stopped', agent: '{Kevin:amber-otter}', nodeId: asNodeId('kevin'), state: 'stopped', lastSaid: 'done' }],
+      'what is Kevin doing?', undefined, false, 2, ['{Kevin:amber-otter}'],
+    )
     const entry = parseRecordLine(line('user', body), 0)
     expect(entry).toMatchObject({ kind: 'user', text: 'what is Kevin doing?' })
     expect(entry?.kind === 'user' && entry.context).toMatch(/^EVENTS:/)
