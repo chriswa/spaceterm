@@ -20,6 +20,7 @@ import { SearchModal } from './components/SearchModal'
 import { AgentSearchModal } from './components/AgentSearchModal'
 import { ControlTranscript } from './components/ControlTranscript'
 import { useControlTranscriptStore } from './stores/controlTranscriptStore'
+import { useReceptionistStore } from './stores/receptionistStore'
 import { HelpModal } from './components/HelpModal'
 import { KeycastOverlay } from './components/KeycastOverlay'
 import { PeerCameraOverlay } from './components/PeerCameraOverlay'
@@ -76,7 +77,7 @@ import type { CrabEntry } from './lib/crab-nav'
 import { deriveCrabs } from './lib/crab-entries'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
 import { pressSummaryChatChord, REAL_CHORD_CUES } from './lib/summary-chat-chord'
-import { summaryChatChordFor, shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
+import { summaryChatChordFor, shouldYieldToFocusedEditor, strayPasteText, viewportSlotFor } from './lib/keyboard'
 import { tieredZIndex } from '../../../shared/card-types'
 import type { NodeData } from '../../../shared/state'
 import type { AgentType } from '../../../shared/agent-type'
@@ -2537,6 +2538,23 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
   }, [archiveConfirm, archiveNodeNow, agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, stepOut, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, handleForkSession, toggleAgentSelector])
+
+  // A paste with nowhere to land is dictation: Voice Operator's Fn-alone paste
+  // into a window with nothing focused. Send it where a Fn+Control command goes
+  // — the server routes it exactly as it routes `voice-command`. See
+  // `strayPasteText`. Bubble phase, so a focused editor has already had it.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented) return
+      const text = strayPasteText(document.activeElement, e.clipboardData)
+      if (!text) return
+      e.preventDefault()
+      window.api.summaryChatFollowUp(text)
+      showToast(useReceptionistStore.getState().target ? 'Pasted to Control' : 'Pasted to Summary Chat')
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.

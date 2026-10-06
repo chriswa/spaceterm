@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { isTextEditingSurface, shouldYieldToFocusedEditor, viewportSlotFor } from './keyboard'
+import { isTextEditingSurface, shouldYieldToFocusedEditor, strayPasteText, viewportSlotFor } from './keyboard'
 
 // These predicates decide whether a global shortcut fires or the focused
 // control keeps the keystroke. Too broad and Spaceterm steals characters out of
@@ -140,5 +140,39 @@ describe('viewportSlotFor', () => {
     // as "save silently does nothing".
     expect(viewportSlotFor({ code: 'Digit3', metaKey: true, shiftKey: false, altKey: true }))
       .toEqual({ slot: '3', action: 'save' })
+  })
+})
+
+describe('strayPasteText', () => {
+  const clipboard = (text: string) => ({ getData: (type: string) => (type === 'text/plain' ? text : '') })
+
+  it('catches a paste with nothing focused', () => {
+    expect(strayPasteText(document.body, clipboard('open the logs'))).toBe('open the logs')
+    expect(strayPasteText(null, clipboard('open the logs'))).toBe('open the logs')
+  })
+
+  it('catches a paste onto something focusable that does not take text', () => {
+    expect(strayPasteText(element('<button>Go</button>'), clipboard('hello'))).toBe('hello')
+  })
+
+  it('leaves a focused terminal its paste', () => {
+    // isTextEditingSurface says xterm is not an editor; it still takes pastes.
+    const textarea = element('<div class="xterm"><textarea class="xterm-helper-textarea"></textarea></div>')
+      .querySelector('textarea')
+    expect(strayPasteText(textarea, clipboard('ls'))).toBeNull()
+  })
+
+  it('leaves text fields and editors their paste', () => {
+    expect(strayPasteText(element('<input />'), clipboard('x'))).toBeNull()
+    expect(strayPasteText(element('<textarea></textarea>'), clipboard('x'))).toBeNull()
+    const editor = element('<div></div>') as HTMLElement
+    Object.defineProperty(editor, 'isContentEditable', { value: true })
+    expect(strayPasteText(editor, clipboard('x'))).toBeNull()
+  })
+
+  it('ignores a paste with no text in it, such as an image', () => {
+    expect(strayPasteText(document.body, clipboard(''))).toBeNull()
+    expect(strayPasteText(document.body, clipboard('  \n '))).toBeNull()
+    expect(strayPasteText(document.body, null)).toBeNull()
   })
 })

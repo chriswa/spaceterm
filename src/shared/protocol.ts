@@ -905,7 +905,7 @@ export type SummaryChatMode = 'summary' | 'verbatim'
 
 /**
  * Something the listener said to Summary Chat from a client — the phone's talk
- * button — rather than through Voice Operator's command mode on the Mac. Goes
+ * button, or dictation the desktop caught pasting into nothing — rather than through Voice Operator's command mode on the Mac. Goes
  * to the same conversation a voice command would.
  */
 export interface SummaryChatFollowUpMessage {

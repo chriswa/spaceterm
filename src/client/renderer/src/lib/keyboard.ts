@@ -108,3 +108,25 @@ export function viewportSlotFor(
     action: event.altKey ? 'save' : 'restore'
   }
 }
+
+/**
+ * The text of a paste that has nowhere to land, or null when something will
+ * take it.
+ *
+ * Voice Operator's plain dictation (Fn alone) pastes into whatever has focus.
+ * When that is nothing in Spaceterm — no terminal, no title or directory field,
+ * no markdown editor — the paste would vanish, so it is treated as the
+ * dictation it almost certainly was and sent where a Fn+Control command goes.
+ *
+ * "Nowhere" is read from the DOM, not from the canvas's idea of which node is
+ * focused, because the DOM is what the keystrokes actually follow: a terminal
+ * that is selected on the canvas but whose xterm textarea is not focused
+ * receives nothing, and one whose textarea is focused receives the paste
+ * whatever the canvas thinks. Hence the explicit xterm check —
+ * `isTextEditingSurface` deliberately does not count xterm as an editor.
+ */
+export function strayPasteText(active: Element | null, data: Pick<DataTransfer, 'getData'> | null): string | null {
+  if (active?.closest('.xterm') || isTextEditingSurface(active)) return null
+  const text = data?.getData('text/plain').trim()
+  return text ? text : null
+}
