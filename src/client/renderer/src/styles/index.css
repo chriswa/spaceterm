@@ -473,16 +473,17 @@ html, body, #root {
   cursor: default;
 }
 
-/* Restart-pending: marching ants around the ↻ button, raised when an agent
-   flags that on-disk changes need a server restart (npm run flag-restart). The
+/* Pending: marching ants around a button whose action is waiting to be taken —
+   the ↻ button when an agent flags that on-disk changes need a server restart
+   (npm run flag-restart), and on the phone the reload and install buttons. The
    dashes are a repeating gradient masked to a ring and scrolled by animating
    background-position — the gradient and mask compose on the GPU, so no layer
    repaints each frame. The horizontal travel is one gradient period along the
    45° axis (8px / cos45° ≈ 11.31px), which keeps the loop seamless. */
-.toolbar__btn--restart-pending {
+.toolbar__btn--pending {
   position: relative;
 }
-.toolbar__btn--restart-pending::after {
+.toolbar__btn--pending::after {
   content: '';
   position: absolute;
   inset: -1px;
@@ -507,7 +508,7 @@ html, body, #root {
   to { background-position: 11.314px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .toolbar__btn--restart-pending::after { animation: none; }
+  .toolbar__btn--pending::after { animation: none; }
 }
 
 .toolbar__btn:disabled:hover {

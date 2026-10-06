@@ -26,9 +26,10 @@ import {
   type ActiveHoursId,
 } from '../../lib/dim-stale'
 import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
+import { usePendingUpdates } from '../../stores/clientStalenessStore'
 import { useNodeStore } from '../../stores/nodeStore'
 import { restartableAgentSurfaces, rollingRestart } from '../../lib/rolling-restart'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon, RollingRestartIcon } from './icons'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon, RollingRestartIcon, ReloadClientIcon, InstallAppIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -486,7 +487,7 @@ export function RestartButton({ restarting, onRestart }: { restarting: boolean; 
       className={
         'toolbar__btn' +
         (restarting ? ' toolbar__btn--active' : '') +
-        (pending ? ' toolbar__btn--restart-pending' : '')
+        (pending ? ' toolbar__btn--pending' : '')
       }
       onClick={onRestart}
       disabled={restarting}
@@ -494,6 +495,72 @@ export function RestartButton({ restarting, onRestart }: { restarting: boolean; 
       data-tooltip-no-flip
     >
       ↻
+    </button>
+  )
+}
+
+
+// --- The phone's update buttons ---
+//
+// Beside the restart, where the desktop has fit-to-monitor. Each marches its
+// ants while what it does is waiting to be done (clientStalenessStore), as the
+// restart does for a flagged restart.
+
+/**
+ * Reload this page. Asked for when the Mac has rebuilt it since it loaded —
+ * unless a server restart is also waiting, which reloads it anyway.
+ */
+export function ReloadClientButton() {
+  const pending = usePendingUpdates().reload
+  const [reloading, setReloading] = useState(false)
+  return (
+    <button
+      className={'toolbar__btn' + (reloading ? ' toolbar__btn--active' : '') + (pending && !reloading ? ' toolbar__btn--pending' : '')}
+      onClick={() => {
+        setReloading(true)
+        // Two frames: the pressed state is painted before the page goes.
+        requestAnimationFrame(() => requestAnimationFrame(() => window.location.reload()))
+      }}
+      disabled={reloading}
+      aria-label="Reload client"
+      data-tooltip={pending ? 'Reload client — a newer page is waiting' : 'Reload client'}
+      data-tooltip-no-flip
+    >
+      <ReloadClientIcon />
+    </button>
+  )
+}
+
+/**
+ * Have the Mac build and install the phone app (src/server/mobile-install.ts).
+ * Success replaces this app and relaunches it, so it stays busy until the page
+ * goes; only a failure comes back, as a toast.
+ */
+export function InstallAppButton() {
+  const pending = usePendingUpdates().install
+  const [installing, setInstalling] = useState(false)
+  const install = async () => {
+    setInstalling(true)
+    showToast('Installing the app…')
+    try {
+      const outcome = await window.api.installMobileApp()
+      if (outcome.ok) return
+      showToast(outcome.message ?? 'The install failed.')
+    } catch (err) {
+      showToast(`The install failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    setInstalling(false)
+  }
+  return (
+    <button
+      className={'toolbar__btn' + (installing ? ' toolbar__btn--active' : '') + (pending && !installing ? ' toolbar__btn--pending' : '')}
+      onClick={() => { void install() }}
+      disabled={installing}
+      aria-label="Install the app"
+      data-tooltip={pending ? 'Install the app — the Mac has a newer one' : 'Install the app'}
+      data-tooltip-no-flip
+    >
+      <InstallAppIcon />
     </button>
   )
 }

@@ -10,7 +10,8 @@ import { Dictation } from './dictation'
 import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
 import { UsageReadout } from './UsageReadout'
-import { UpdatesButton } from './UpdatesButton'
+import { RocketButton } from './RocketButton'
+import { useStalenessWatch } from './update-check'
 import { SystemStatsReadout } from './SystemStatsReadout'
 import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
 import { SummarizerButton } from './SummarizerButton'
@@ -65,6 +66,7 @@ const childKey = (kind: 'terminal' | 'composer' | 'talk', id: string) => `${kind
 export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
   const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
+  useStalenessWatch()
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
   /** The surface Summary Chat is talking about, while a conversation is open. */
   const summaryTarget = useSummaryChatStore((s) => s.targetNodeId)
@@ -215,21 +217,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           end={
             <>
               {dictating && <DictationIndicator />}
-              <UpdatesButton />
-              {/* Opens the toolbar, which on the phone is a sheet with the
-                  surfaces in it, and closes it again: the bar stays over it. */}
-              <button
-                className={`m-bar__button${toolbarSheetOpen ? ' m-bar__button--on' : ''}`}
-                onClick={() => useSurfacePresenterStore.getState().setToolbarSheetOpen(!toolbarSheetOpen)}
-                aria-label={toolbarSheetOpen ? 'Back to the canvas' : 'Toolbar and surfaces'}
-                aria-expanded={toolbarSheetOpen}
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  {/* A rocket climbing to the upper right. */}
-                  <path d="M20.6 3.4c-3.9-.3-7.6 1.3-10.2 4.3L8.9 9.4l-3.6.4L3 12.1l3.7 1.2 4 4 1.2 3.7 2.3-2.3.4-3.6 1.7-1.5c3-2.6 4.6-6.3 4.3-10.2zM15.5 10.4a1.9 1.9 0 1 1 0-3.8 1.9 1.9 0 0 1 0 3.8z" />
-                  <path d="M6.2 15.9c-1.3.4-2.2 1.9-2.6 4.5 2.6-.4 4.1-1.3 4.5-2.6z" opacity="0.7" />
-                </svg>
-              </button>
+              <RocketButton />
             </>
           }
         />

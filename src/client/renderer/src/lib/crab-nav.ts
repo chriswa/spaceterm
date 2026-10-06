@@ -284,14 +284,12 @@ function crabTier(crab: CrabEntry): number {
 
 /**
  * A reorder made in the phone's surface list, as the toolbar order to store.
- *
- * The list shows the toolbar's order reversed — newest, the row's rightmost,
- * at the top — so a row moved from `fromRow` to `toRow` there is a move in the
- * other direction in the stored order.
+ * The list shows the toolbar's order top to bottom — newest, the row's
+ * rightmost, at the bottom — so it is the same move in the stored order.
  */
 export function reorderFromList(toolbarOrder: NodeId[], fromRow: number, toRow: number): NodeId[] {
-  const list = [...toolbarOrder].reverse()
+  const list = [...toolbarOrder]
   const [moved] = list.splice(fromRow, 1)
   list.splice(toRow, 0, moved)
-  return list.reverse()
+  return list
 }

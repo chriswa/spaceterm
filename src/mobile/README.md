@@ -45,13 +45,17 @@ On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
 The server rebuilds the bundle a couple of seconds after its sources stop
 changing (`MobileBuildKeeper` in `src/server/mobile-build.ts`) and tells the
-phone. A yellow chip on the bottom bar, beside the rocket (`UpdatesButton.tsx`),
-then lists what is waiting — a server restart an agent flagged, a newer native
-app, a newer page — each with its own button: **Restart**, **Install** (the Mac
-builds and installs the app: `src/server/mobile-install.ts`, the same
-`install.sh`), **Reload**. The build writes `build.json` (its id and the native
-fingerprint from `ios/native-version.mjs`), which `install.sh` also stamps into
-the app — see `update-check.ts`.
+phone. While anything is waiting — a server restart an agent flagged, a newer
+native app, a newer page — sparks run round the rocket (`RocketButton.tsx`),
+and in the toolbar sheet the button for each marches its ants: **↻** (restart
+the server), **Install the app** (the Mac builds and installs it:
+`src/server/mobile-install.ts`, the same `install.sh`) and **Reload client**.
+These two sit after Help, where the desktop has fit-to-monitor, and only on the
+phone (`mobileOnly` in `toolbar/registry.tsx`). A reload is not asked for while
+a restart is, which reloads the page anyway, or while the app is behind, whose
+replacement loads the new page (`clientStalenessStore.ts`). The build writes
+`build.json` (its id and the native fingerprint from `ios/native-version.mjs`),
+which `install.sh` also stamps into the app — see `update-check.ts`.
 
 The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control and the talk buttons in the middle, the toolbar's rocket on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI

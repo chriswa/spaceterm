@@ -13,9 +13,11 @@ import {
   FitToMonitorButton,
   FpsMetric,
   HelpButton,
+  InstallAppButton,
   KeycastToggle,
   NotificationSoundToggle,
   AutoStampToggle,
+  ReloadClientButton,
   RestartButton,
   RollingRestartButton,
   StepOutButton,
@@ -94,6 +96,8 @@ interface ToolbarWidgetBase {
   readonly slot: ToolbarSlot
   /** Left out of the phone's toolbar sheet, where the bottom bar does the same job its own way. */
   readonly desktopOnly?: true
+  /** Only in the phone's toolbar sheet: things a desktop window never needs. */
+  readonly mobileOnly?: true
 }
 
 /**
@@ -125,7 +129,10 @@ export type ToolbarWidget = StandaloneToolbarWidget | HostToolbarWidget
  */
 export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   { id: 'help', slot: 'buttons', kind: 'host', render: (h) => <HelpButton onClick={h.onHelpClick} /> },
-  { id: 'fit-to-monitor', slot: 'buttons', kind: 'standalone', render: () => <FitToMonitorButton /> },
+  { id: 'fit-to-monitor', slot: 'buttons', kind: 'standalone', desktopOnly: true, render: () => <FitToMonitorButton /> },
+  // The phone's, in the same place: bringing it up to date with the Mac.
+  { id: 'reload-client', slot: 'buttons', kind: 'standalone', mobileOnly: true, render: () => <ReloadClientButton /> },
+  { id: 'install-app', slot: 'buttons', kind: 'standalone', mobileOnly: true, render: () => <InstallAppButton /> },
   {
     id: 'restart',
     slot: 'buttons',

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
+import { useClientStalenessStore } from '@/stores/clientStalenessStore'
 
 /**
  * Whether this phone is running older code than the Mac has: the page (a
@@ -55,16 +56,20 @@ async function published(): Promise<Versions | null> {
   }
 }
 
-/** Checked on load, on coming back to the app, and every so often. */
-export function useStaleness(): Staleness {
-  const [stale, setStale] = useState<Staleness>({ web: false, native: false })
+/**
+ * Keeps `clientStalenessStore` current, which the toolbar's update buttons and
+ * the rocket's sparks read. Mounted once, by MobileApp. Checked on load, on
+ * coming back to the app, and every so often.
+ */
+export function useStalenessWatch(): void {
   useEffect(() => {
     let live = true
     const check = async () => {
       const latest = await published()
       if (!live || !latest) return
       const next = staleness(running(), latest)
-      setStale((current) => current.web === next.web && current.native === next.native ? current : next)
+      const current = useClientStalenessStore.getState()
+      if (current.web !== next.web || current.native !== next.native) current.set(next)
     }
     const onVisible = () => { if (document.visibilityState === 'visible') void check() }
     // The server says the moment it serves a new build.
@@ -79,5 +84,4 @@ export function useStaleness(): Staleness {
       offBuilt?.()
     }
   }, [])
-  return stale
 }

@@ -70,6 +70,12 @@ export function StampMark({ stamp, autoStamp, autoStampColor, onRegenerateAutoSt
   )
 }
 
+/** An auto-stamp's SVG as a CSS mask image. */
+export function autoStampMask(svg: string): string {
+  // Quoted: WebKit drops an unquoted data URL in a mask (see the hat masks).
+  return `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}")`
+}
+
 /**
  * A generated icon, drawn as a mask over a flat fill: whatever colours or
  * markup the model put in the SVG, only its shape shows and nothing in it runs.
@@ -81,8 +87,7 @@ function AutoStampMark({ autoStamp, color, onRegenerate }: {
   onRegenerate?: () => void
 }) {
   const { svg, status } = autoStamp
-  // Quoted: WebKit drops an unquoted data URL in a mask (see the hat masks).
-  const mask = svg ? `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}")` : undefined
+  const mask = svg ? autoStampMask(svg) : undefined
   // Every icon drawn for this node, regenerations included. A failure leads
   // with its reason, since an empty ring otherwise looks like one in progress.
   const spent = `$${autoStamp.costUsd.toFixed(3)} spent`

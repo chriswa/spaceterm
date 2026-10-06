@@ -229,20 +229,19 @@ describe('ccStatusLabel', () => {
 })
 
 describe('reorderFromList', () => {
-  // Toolbar order a, b, c, d shows in the list as d, c, b, a.
+  // Toolbar order a, b, c, d shows in the list top to bottom as a, b, c, d.
   const order = ['a', 'b', 'c', 'd'].map(asNodeId)
 
-  it('moving the top row to the bottom makes it first in the toolbar', () => {
-    expect(reorderFromList(order, 0, 3)).toEqual(['d', 'a', 'b', 'c'])
+  it('moving the top row to the bottom makes it last in the toolbar', () => {
+    expect(reorderFromList(order, 0, 3)).toEqual(['b', 'c', 'd', 'a'])
   })
 
-  it('moving the bottom row to the top makes it last in the toolbar', () => {
-    expect(reorderFromList(order, 3, 0)).toEqual(['b', 'c', 'd', 'a'])
+  it('moving the bottom row to the top makes it first in the toolbar', () => {
+    expect(reorderFromList(order, 3, 0)).toEqual(['d', 'a', 'b', 'c'])
   })
 
   it('a move by one swaps neighbours in the stored order too', () => {
-    // list d,c,b,a → move c (row 1) up to row 0 → c,d,b,a → toolbar a,b,d,c
-    expect(reorderFromList(order, 1, 0)).toEqual(['a', 'b', 'd', 'c'])
+    expect(reorderFromList(order, 1, 0)).toEqual(['b', 'a', 'c', 'd'])
   })
 
   it('does not change the order it was given', () => {

@@ -1,5 +1,5 @@
 import { cssUrl } from '../../lib/css-url'
-import { useRef, useEffect, useLayoutEffect } from 'react'
+import { useRef, useEffect, useLayoutEffect, type CSSProperties } from 'react'
 import crabIcon from '../../assets/crab.png'
 import cursorAgentIcon from '../../assets/cursor-agent.png'
 import codexAgentIcon from '../../assets/codex-agent.png'
@@ -12,6 +12,8 @@ import { CrabEffortSigns } from '../CrabEffortSigns'
 import { FrameLimiter } from '../../lib/frame-policy'
 import { isWindowVisible, onWindowVisibleChange } from '../../hooks/useWindowVisible'
 import { useHoveredCardStore } from '../../stores/hoveredCardStore'
+import { useNodeStore } from '../../stores/nodeStore'
+import { StampGlyph, STAMP_LABELS, autoStampMask } from '../StampGlyph'
 import { usePowerMonitorStore } from '../../stores/powerMonitorStore'
 import { useSummaryChatStore } from '../../stores/summaryChatStore'
 import { useReceptionistStore } from '../../stores/receptionistStore'
@@ -57,8 +59,9 @@ function indicatorKindClass(kind: AgentIndicatorKind): string {
 export interface CrabGroupProps {
   /**
    * `row`, the desktop toolbar's: icons side by side in the operator's order.
-   * `list`, the phone's surface sheet: one row per surface with its title,
-   * newest (the row's rightmost) first, reordered by a drag handle. The icons,
+   * `list`, the phone's surface sheet: one row per surface with its
+   * auto-stamp and title, newest (the row's rightmost) at the bottom and
+   * scrolled to on opening, reordered by a drag handle. The icons,
    * hats, effort signs, timers and dance are the same either way.
    */
   layout?: 'row' | 'list'
@@ -198,6 +201,12 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
     positionsRef.current = newPositions
     prevCrabsRef.current = crabs
   }, [crabs, layout])
+
+  // The list opens at its foot, on the newest surfaces.
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (el && layout === 'list') el.scrollTop = el.scrollHeight
+  }, [layout])
 
   // Beat-synced glow/bounce/rock animation loop
   useEffect(() => {
@@ -481,8 +490,8 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
   )
 
   if (layout === 'list') {
-    // Newest first: the row's rightmost crab heads the list.
-    const rows = [...crabs].reverse()
+    // The toolbar's order, top to bottom: the row's rightmost, the newest, last.
+    const rows = crabs
 
     /**
      * Drag a row by its handle to reorder. Pointer events, so a finger and a
@@ -545,7 +554,11 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
                 )}
                 {countdown !== null && <span className="toolbar__crab-timer">{countdown}</span>}
               </div>
-              <button className="toolbar__crab-row-title" onClick={open}>{crab.title}</button>
+              <SurfaceAutoStamp nodeId={crab.nodeId} />
+              <button className="toolbar__crab-row-title" onClick={open}>
+                <SurfaceManualStamp nodeId={crab.nodeId} />
+                <span className="toolbar__crab-row-title-text">{crab.title}</span>
+              </button>
               <span
                 className="toolbar__crab-row-handle"
                 aria-label="Drag to reorder"
@@ -614,5 +627,33 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
       })}
       <div ref={triangleRef} className="toolbar__crab-nav-triangle" />
     </div>
+  )
+}
+
+/**
+ * The surface's auto-stamp, in its own column of the list so the titles line
+ * up whether or not one has been drawn yet. Only the drawn icon shows here;
+ * regenerating one is the canvas's business.
+ */
+function SurfaceAutoStamp({ nodeId }: { nodeId: NodeId }) {
+  const svg = useNodeStore(s => s.nodes[nodeId]?.autoStamp?.svg)
+  const mask = svg ? autoStampMask(svg) : undefined
+  return (
+    <span
+      className="toolbar__crab-row-stamp"
+      style={mask ? { maskImage: mask, WebkitMaskImage: mask } as CSSProperties : { background: 'none' }}
+      aria-hidden="true"
+    />
+  )
+}
+
+/** The surface's manual stamp, if it has one, at the head of its title. */
+function SurfaceManualStamp({ nodeId }: { nodeId: NodeId }) {
+  const stamp = useNodeStore(s => s.nodes[nodeId]?.stamp)
+  if (!stamp || stamp === 'none') return null
+  return (
+    <span className={`node-stamp node-stamp--${stamp} toolbar__crab-row-manual-stamp`} aria-label={STAMP_LABELS[stamp]}>
+      <StampGlyph stamp={stamp} />
+    </span>
   )
 }

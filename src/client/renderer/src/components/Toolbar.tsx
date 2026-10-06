@@ -22,9 +22,11 @@ const CRAB_GROUP = 'crab-group'
 
 export type ToolbarProps = ToolbarHost & {
   /**
-   * `bar`, along the bottom of the desktop window. `sheet`, the phone's: every
-   * button and readout not marked `desktopOnly` in one strip that scrolls sideways, the readouts last,
-   * then the surfaces as a list rather than a row of icons.
+   * `bar`, along the bottom of the desktop window, without the `mobileOnly`
+   * widgets. `sheet`, the phone's: the surfaces as a list rather than a row of
+   * icons, newest at the bottom, then — under them, nearest the thumb — every
+   * button and readout not marked `desktopOnly` in one strip that scrolls
+   * sideways, the readouts last.
    */
   variant?: 'bar' | 'sheet'
 }
@@ -49,19 +51,20 @@ export function Toolbar({ variant = 'bar', ...host }: ToolbarProps) {
     const crabs = TOOLBAR_WIDGETS.find((w) => w.id === CRAB_GROUP)
     return (
       <div className="toolbar toolbar--sheet">
+        {crabs && render(crabs)}
         <div className="toolbar__strip">
           {strip.map(render)}
         </div>
-        {crabs && render(crabs)}
       </div>
     )
   }
 
+  const desktop = TOOLBAR_WIDGETS.filter((w) => !w.mobileOnly)
   return (
     <div className="toolbar">
-      {widgetsInSlot('buttons', TOOLBAR_WIDGETS).map(render)}
-      <span className="toolbar__zoom">{widgetsInSlot('status', TOOLBAR_WIDGETS).map(render)}</span>
-      {widgetsInSlot('surfaces', TOOLBAR_WIDGETS).map(render)}
+      {widgetsInSlot('buttons', desktop).map(render)}
+      <span className="toolbar__zoom">{widgetsInSlot('status', desktop).map(render)}</span>
+      {widgetsInSlot('surfaces', desktop).map(render)}
     </div>
   )
 }

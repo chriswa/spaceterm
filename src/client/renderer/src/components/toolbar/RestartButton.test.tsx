@@ -24,14 +24,14 @@ function renderButton(restarting = false) {
 describe('RestartButton', () => {
   it('is plain when no restart is flagged', () => {
     const btn = renderButton()
-    expect(btn.className).not.toContain('toolbar__btn--restart-pending')
+    expect(btn.className).not.toContain('toolbar__btn--pending')
     expect(btn.getAttribute('data-tooltip')).toBe('Restart Spaceterm server')
   })
 
   it('marches and shows the reason when a restart is flagged', () => {
     useRestartRequiredStore.getState().set(true, 'CLAUDE.md changed')
     const btn = renderButton()
-    expect(btn.className).toContain('toolbar__btn--restart-pending')
+    expect(btn.className).toContain('toolbar__btn--pending')
     expect(btn.getAttribute('data-tooltip')).toBe('Restart needed — CLAUDE.md changed')
   })
 
@@ -44,7 +44,7 @@ describe('RestartButton', () => {
   it('drops the pending cue once the restart is in progress', () => {
     useRestartRequiredStore.getState().set(true, 'CLAUDE.md changed')
     const btn = renderButton(true)
-    expect(btn.className).not.toContain('toolbar__btn--restart-pending')
+    expect(btn.className).not.toContain('toolbar__btn--pending')
     expect(btn.className).toContain('toolbar__btn--active')
     expect(btn.getAttribute('data-tooltip')).toBe('Restarting Spaceterm…')
     expect(btn.disabled).toBe(true)

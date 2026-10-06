@@ -232,3 +232,25 @@ export function RollingRestartIcon() {
     </svg>
   )
 }
+
+export function ReloadClientIcon() {
+  // Round again: the page, reloaded.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+      <path d="M13.5 2.5v3h-3" />
+    </svg>
+  )
+}
+
+export function InstallAppIcon() {
+  // A phone with an arrow down into it: the app, installed again.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <rect x="3.5" y="1.5" width="9" height="13" rx="1.75" />
+      <path d="M8 4.5v5" />
+      <path d="M5.75 7.5 8 9.75 10.25 7.5" />
+      <path d="M7 12.25h2" />
+    </svg>
+  )
+}

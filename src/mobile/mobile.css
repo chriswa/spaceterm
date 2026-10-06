@@ -157,108 +157,30 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 .m-stats svg { display: block; max-width: 100%; height: auto; }
 
-/* Waiting updates (UpdatesButton.tsx): beside the rocket, in the colour of
-   something to do rather than something wrong. Pops in when one arrives. */
-.m-updates {
-  position: relative;
-  background: #f9e2af;
-  color: #11111b;
-  animation: m-updates-in 260ms cubic-bezier(0.3, 1.5, 0.6, 1);
-}
-.m-updates--busy svg { animation: m-update-spin 0.9s linear infinite; }
-@keyframes m-update-spin { to { transform: rotate(360deg); } }
-@keyframes m-updates-in { from { transform: scale(0.4); opacity: 0; } }
-.m-updates__count {
+/* Sparks round the rocket while an update is waiting (RocketButton.tsx): the
+   directory card's badge spark (index.css), two of them, opposite. */
+.m-rocket { position: relative; }
+.m-rocket__sparks {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: #000;
-  color: #f9e2af;
-  box-shadow: 0 0 0 1.5px #f9e2af;
-  font: 700 11px/17px -apple-system, system-ui, sans-serif;
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke: #fff4c2;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 14 36;
+  filter: drop-shadow(0 0 1.5px #ffd84a) drop-shadow(0 0 3px #ffb300);
+  animation: m-rocket-sparks 1.6s linear infinite;
 }
-.m-updates__scrim {
-  position: fixed;
-  inset: 0;
-  bottom: var(--m-bar-height);
+@keyframes m-rocket-sparks {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
 }
-.m-updates__panel {
-  position: fixed;
-  right: calc(var(--m-corner-radius) * 0.3);
-  bottom: calc(var(--m-bar-height) + 8px);
-  width: min(320px, calc(100vw - 24px));
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
-  border-radius: 14px;
-  border: 1px solid var(--m-border);
-  background: var(--m-surface);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
-  animation: m-radial-in 140ms ease-out;
-  transform-origin: bottom right;
-}
-.m-updates__row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 52px;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--m-text);
-  text-align: left;
-  font: 15px/1.25 -apple-system, system-ui, sans-serif;
-  -webkit-tap-highlight-color: transparent;
-}
-.m-updates__row:active { background: var(--m-raised); }
-.m-updates__row:disabled { opacity: 0.6; }
-.m-updates__icon {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(249, 226, 175, 0.15);
-  color: #f9e2af;
-}
-.m-updates__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.m-updates__title { font-weight: 600; }
-.m-updates__detail {
-  color: var(--m-dim);
-  font-size: 13px;
-  /* The restart's reason is worth reading: two lines, then cut. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-.m-updates__action { flex: none; color: #f9e2af; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-/* The row being acted on stays bright while the others dim. */
-.m-updates__row--busy:disabled { opacity: 1; }
-.m-updates__spinner {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  animation: m-update-spin 0.9s linear infinite;
-}
-.m-updates__failure {
-  margin: 4px 4px 2px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--m-danger);
-  color: var(--m-text);
-  font-size: 13px;
-  line-height: 1.4;
-  white-space: pre-wrap;
+@media (prefers-reduced-motion: reduce) {
+  .m-rocket__sparks { animation: none; }
 }
 
 /* AI usage, the bar's left — the menu-bar tray's bars (see UsageReadout.tsx). */
@@ -635,8 +557,8 @@ textarea, input, [contenteditable="true"], .cm-content {
 
 /* ─── toolbar sheet ─────────────────────────────────────────────────────── */
 
-/* App's toolbar, opened as a sheet (Toolbar variant="sheet"): every button and
-   readout in a strip, then the surfaces as rows. */
+/* App's toolbar, opened as a sheet (Toolbar variant="sheet"): the surfaces as
+   rows, then every button and readout in a strip under them, over the bar. */
 .toolbar-sheet {
   position: fixed;
   inset: 0;
@@ -668,16 +590,16 @@ textarea, input, [contenteditable="true"], .cm-content {
   padding: 10px 12px;
   overflow-x: auto;
   flex: none;
-  border-bottom: 1px solid var(--m-border);
+  border-top: 1px solid var(--m-border);
   background: #000;
 }
 .toolbar__strip > * { flex: none; }
-/* Menus open upward from the desktop's bottom bar; here they would leave the
-   screen, and the sideways scroll would clip them. Pinned below the strip. */
+/* Menus open upward, as from the desktop's bottom bar, but the sideways
+   scroll would clip them. Pinned above the strip. */
 .toolbar--sheet .toolbar__menu {
   position: fixed;
-  top: calc(var(--m-safe-top) + 60px);
-  bottom: auto;
+  top: auto;
+  bottom: calc(var(--m-bar-height) + 60px);
   left: 12px;
   right: auto;
   transform: none;
@@ -690,10 +612,16 @@ textarea, input, [contenteditable="true"], .cm-content {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  display: block;
+  display: flex;
+  flex-direction: column;
   position: relative;
 }
+/* A short list sits at the foot, by the thumb, rather than under the notch.
+   An auto margin rather than justify-content: flex-end, which would push an
+   overflowing list's top out of reach of the scroll. */
+.toolbar__crabs--list > :first-child { margin-top: auto; }
 .toolbar__crab-row {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -729,18 +657,43 @@ textarea, input, [contenteditable="true"], .cm-content {
 .toolbar__crab-row-icon .toolbar__crab {
   scale: 1.3;
 }
+/* The surface's auto-stamp, a column of its own (CrabGroup.tsx); empty
+   until one is drawn, so the titles stay aligned. */
+.toolbar__crab-row-stamp {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  background-color: var(--m-text);
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+}
 .toolbar__crab-row-title {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: none;
   background: transparent;
   color: var(--m-text);
   text-align: left;
   padding: 6px 0;
   font: 16px/1.3 -apple-system, system-ui, sans-serif;
+}
+.toolbar__crab-row-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A manual stamp takes its room from the title rather than a column. */
+.toolbar__crab-row-title .toolbar__crab-row-manual-stamp {
+  flex: none;
+  height: 18px;
 }
 .toolbar__crab-row-handle {
   flex: none;
