@@ -6,8 +6,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private var webView: WKWebView!
     /// Times iOS has ended the page's process since launch; see below.
     private var processRestarts = 0
+    /// The app's life and its audio session, for the page's audio and lifecycle record.
+    private let events = NativeEvents()
     /// The app's own microphone, which the page asks for: hands-free mode.
-    private let microphone = NativeMicrophone()
+    private lazy var microphone = NativeMicrophone(events: events)
 
     /// `SpacetermURLs` from Info.plist, written at build time by install.sh:
     /// one pairing URL per Mac, for a phone that is on one tailnet at a time.
@@ -48,9 +50,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         // `window.webkit.messageHandlers.nativeMicrophone` is also how the
         // page knows it can hold a microphone without AirPods.
         config.userContentController.add(microphone, name: "nativeMicrophone")
+        // The page's word that the server has the app's events, so it can forget them.
+        config.userContentController.add(events, name: "nativeEvents")
 
         webView = WKWebView(frame: .zero, configuration: config)
         microphone.webView = webView
+        events.webView = webView
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.isOpaque = false
@@ -137,7 +142,18 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         }
     }
 
+    /// A page that has just loaded can take what the app kept for it.
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        events.record("page-loaded", ["host": webView.url?.host ?? ""])
+        events.pageChanged()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        events.record("page-load-failed", ["error": error.localizedDescription])
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        events.record("page-load-failed", ["error": error.localizedDescription, "host": activeURL?.host ?? ""])
         let host = activeURL?.host.map { "<code>\($0)</code>" } ?? "Spaceterm"
         showProblem("Could not reach \(host): \(error.localizedDescription).<br>Is the Mac awake, and Tailscale connected on both?")
     }
@@ -147,6 +163,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     /// The reloaded page is told how many times, so its log says why it reloaded.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         processRestarts += 1
+        events.record("page-process-terminated", ["restarts": processRestarts])
         webView.configuration.userContentController.addUserScript(WKUserScript(
             source: "window.spacetermProcessRestarts = \(processRestarts)",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))

@@ -1,6 +1,6 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
-import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, SpeechProgressEvent } from './protocol'
+import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, SpeechProgressEvent } from './protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -752,6 +752,11 @@ export class ServerClient {
   /** Put a line in the server's log, for a client that has nowhere else to write. */
   clientLog(message: string): void {
     this.fireAndForget({ type: 'client-log', message })
+  }
+
+  /** The phone's audio and lifecycle events, for the server to append to its record. */
+  mobileEvents(events: MobileEventRecord[]): Promise<void> {
+    return this.ack({ type: 'mobile-events', events })
   }
 
   /** Memory of every process under the PTY daemon, measured on the server. */

@@ -49,8 +49,8 @@ export interface TouchCameraControls {
    * to drag) makes it an ordinary pan.
    */
   onLongPressDrag?(dx: number, dy: number): boolean
-  /** The finger lifted from a long-press drag. */
-  onLongPressDragEnd?(): void
+  /** The finger lifted after a long press, whether or not it moved on. */
+  onLongPressEnd?(): void
 }
 
 type Point = { x: number; y: number }
@@ -174,7 +174,7 @@ export function useTouchCamera(selector: string, controls: TouchCameraControls):
         cancelPress()
         // The press already did something; it must not also become a click.
         if (longPressed && e.cancelable) e.preventDefault()
-        if (pressDragging) controlsRef.current.onLongPressDragEnd?.()
+        if (longPressed) controlsRef.current.onLongPressEnd?.()
         pressDragging = false
         if (panning && !pinch && !longPressed) {
           const { vx, vy } = tracker.velocity(e.timeStamp)

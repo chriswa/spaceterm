@@ -12,6 +12,8 @@ import { initAudioSession } from './audio-session'
 import { installHeldMicrophone } from './held-microphone'
 import { installHandsFree } from './hands-free'
 import { phoneDevice } from './device'
+import { mobileEvents, recordMobileEvent } from './mobile-events'
+import { installLifecycleEvents, installNativeEventBridge } from './lifecycle-events'
 import '@/styles/index.css'
 import './mobile.css'
 
@@ -57,9 +59,20 @@ if (!token) {
   deferCameraScaleWhileMoving(true)
   // No bar along the bottom; the corner button opens the toolbar as a sheet.
   useSurfacePresenterStore.getState().setToolbarSheet(true)
+  // The audio and lifecycle record keeps what happens before the server is
+  // reached, and sends it once it is; the app may send its own from now on.
+  installNativeEventBridge()
+  installLifecycleEvents()
   // `window.api` must exist before App's modules run, as on the desktop.
   void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
     forwardLogs((message) => client.clientLog(message))
+    mobileEvents.setSender((events) => client.mobileEvents(events))
+    recordMobileEvent('server', { connected: true })
+    client.onLifecycle('disconnect', () => recordMobileEvent('server', { connected: false }))
+    client.onLifecycle('connect', () => {
+      recordMobileEvent('server', { connected: true })
+      mobileEvents.flush()
+    })
     // Switching apps is when the phone's microphone and socket misbehave, so
     // the log marks each one.
     document.addEventListener('visibilitychange', () => window.api.log(`[lifecycle] page ${document.visibilityState}`))

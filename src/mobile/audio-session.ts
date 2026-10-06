@@ -15,6 +15,8 @@
  * simply staying in it. Remembered on this phone.
  */
 
+import { recordMobileEvent } from './mobile-events'
+
 type SessionType = 'playback' | 'play-and-record'
 
 interface AudioSessionLike { type: string }
@@ -43,10 +45,13 @@ function apply(type: SessionType): void {
   }
   if (s.type === type) return
   try {
+    const was = s.type
     s.type = type
     window.api?.log(`[audio-session] ${type}`)
+    recordMobileEvent('audio-session', { type, was })
   } catch (err) {
     window.api?.log(`[audio-session] could not set ${type}: ${err instanceof Error ? err.message : String(err)}`)
+    recordMobileEvent('audio-session-failed', { type, error: err instanceof Error ? err.message : String(err) })
   }
 }
 

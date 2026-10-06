@@ -688,6 +688,29 @@ html, body, #root {
   cursor: crosshair;
 }
 
+/* A zoom drag's fixed point and the line out to the pointer; see useZoomDrag.
+   Its colour is the canvas tint at the anchor, set inline. */
+.zoom-drag-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 999999;
+}
+
+.zoom-drag-overlay line {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+.zoom-drag-overlay circle {
+  fill: currentColor;
+}
+
 /* Moves the surface while the camera does, on the phone; see useCamera's
    deferCameraScaleWhileMoving. The desktop does not render it. */
 .canvas-zoom-layer {

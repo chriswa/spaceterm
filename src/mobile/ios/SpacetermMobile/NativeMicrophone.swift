@@ -21,6 +21,8 @@ import WebKit
 @MainActor
 final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     weak var webView: WKWebView?
+    /// The audio and lifecycle record, which outlives a suspended page.
+    private let events: NativeEvents
 
     /// A new engine for every bring-up: one kept across an AirPods route change
     /// kept its old format and delivered nothing.
@@ -45,9 +47,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private static let stallSeconds: Double = 2
     private static let minSecondsBetweenRebuilds: TimeInterval = 3
 
-    override init() {
+    init(events: NativeEvents) {
+        self.events = events
         super.init()
         observe()
+        events.microphoneStatus = { [weak self] in self?.status() ?? [:] }
     }
 
     // MARK: - From the page
@@ -90,6 +94,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         engine.inputNode.removeTap(onBus: 0)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         if running { log("stopped") }
+        events.record("native-mic-stopped")
         running = false
         sendState()
     }
@@ -119,10 +124,13 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             running = true
             lastError = nil
             log("running on \(inputName()) at \(Int(format.sampleRate)) Hz (\(why))")
+            events.record("native-mic-running", ["why": why, "sampleRate": format.sampleRate, "route": NativeEvents.describeRoute(session.currentRoute)])
             sendState()
             startTimer()
         } catch {
             running = false
+            let nsError = error as NSError
+            events.record("native-mic-failed", ["why": why, "error": error.localizedDescription, "domain": nsError.domain, "code": nsError.code, "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground"])
             fail("could not start (\(why)): \(error.localizedDescription)")
         }
     }
@@ -154,19 +162,24 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let (pcm, stalled) = capture.drain(stallSeconds: Self.stallSeconds)
         if stalled, pendingRestart == nil, Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds {
             log("no sound for \(Int(Self.stallSeconds)) s (nothing, or only digital silence) — starting again")
+            events.record("native-mic-stalled", ["seconds": Self.stallSeconds])
             scheduleRestart("a stalled microphone", after: 0)
         }
         // Every 2 s, in case the page reloaded and missed the last change.
         if tick % 20 == 0 { sendState() }
         guard !pcm.isEmpty, let webView else { return }
         if unanswered >= Self.maxUnanswered {
-            if !dropping { log("the page is not taking audio (suspended?) — dropping it until it does") }
+            if !dropping {
+                log("the page is not taking audio (suspended?) — dropping it until it does")
+                events.record("native-mic-page-not-taking-audio")
+            }
             dropping = true
             return
         }
         if dropping {
             dropping = false
             log("the page is taking audio again")
+            events.record("native-mic-page-taking-audio")
         }
         let b64 = pcm.withUnsafeBufferPointer { Data(buffer: $0) }.base64EncodedString()
         unanswered += 1
@@ -199,6 +212,18 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         webView?.evaluateJavaScript("window.api && window.api.log(\(array)[0]), 0", completionHandler: nil)
     }
 
+    /// For the heartbeat: whether it is meant to run and does, and what it has heard since the last.
+    private func status() -> [String: Any] {
+        let heard = capture.takeStats()
+        return [
+            "wanted": wanted, "running": running, "engineRunning": engine.isRunning,
+            "secondsHeard": Double(heard.samples) / 16_000,
+            "peakDbfs": heard.peak > 0 ? Int(20 * log10(heard.peak)) : -999,
+            "pageTakingAudio": !dropping,
+            "input": inputName(),
+        ]
+    }
+
     private func inputName() -> String {
         AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "no input"
     }
@@ -209,8 +234,16 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { note in
             let raw = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) ?? 0
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt) ?? 0
+            let reason = (note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt) ?? 0
             MainActor.assumeIsolated {
-                if AVAudioSession.InterruptionType(rawValue: raw) == .began {
+                let began = AVAudioSession.InterruptionType(rawValue: raw) == .began
+                self.events.record(began ? "audio-interruption-began" : "audio-interruption-ended", [
+                    "reason": Self.describe(AVAudioSession.InterruptionReason(rawValue: reason)),
+                    "shouldResume": AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume),
+                    "running": self.running, "wanted": self.wanted,
+                ])
+                if began {
                     self.log("interrupted (a call, Siri, another app)")
                 } else {
                     self.scheduleRestart("an interruption ended", after: 0.3)
@@ -219,22 +252,47 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         })
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { note in
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
+            let previous = note.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
             MainActor.assumeIsolated {
                 let why = AVAudioSession.RouteChangeReason(rawValue: reason)
+                // AirPods coming and going, among other things.
+                var detail: [String: Any] = [
+                    "reason": NativeEvents.describe(why),
+                    "route": NativeEvents.describeRoute(AVAudioSession.sharedInstance().currentRoute),
+                    "running": self.running,
+                ]
+                if let previous { detail["previous"] = NativeEvents.describeRoute(previous) }
+                self.events.record("audio-route-change", detail)
                 if self.running, why == .newDeviceAvailable || why == .oldDeviceUnavailable {
                     self.scheduleRestart("a headset came or went")
                 }
             }
         })
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereLostNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { self.events.record("audio-media-services-lost") }
+        })
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { self.scheduleRestart("media services were reset") }
+            MainActor.assumeIsolated {
+                self.events.record("audio-media-services-reset")
+                self.scheduleRestart("media services were reset")
+            }
         })
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { note in
             MainActor.assumeIsolated {
                 guard (note.object as AnyObject?) === self.engine else { return }
+                self.events.record("audio-engine-config-change")
                 self.scheduleRestart("the audio configuration changed")
             }
         })
+    }
+
+    private static func describe(_ reason: AVAudioSession.InterruptionReason?) -> String {
+        switch reason {
+        case .default: "default"
+        case .builtInMicMuted: "built-in mic muted"
+        case .routeDisconnected: "route disconnected"
+        default: "raw \(reason?.rawValue ?? 0)"
+        }
     }
 
     private struct Failure: LocalizedError {
@@ -253,6 +311,9 @@ private final class Converter: @unchecked Sendable {
     private var lastTap: CFTimeInterval = 0
     /// When the input last held anything but exact zeros.
     private var lastSound: CFTimeInterval = 0
+    /// Since the last `takeStats`: samples out, and the loudest input sample.
+    private var statSamples = 0
+    private var statPeak: Float = 0
 
     func reset(converter: AVAudioConverter?) {
         lock.lock(); defer { lock.unlock() }
@@ -268,8 +329,13 @@ private final class Converter: @unchecked Sendable {
         let converter = self.converter
         lock.unlock()
         var silent = true
+        var peak: Float = 0
         if let channel = buffer.floatChannelData?[0] {
-            for i in 0..<Int(buffer.frameLength) where channel[i] != 0 { silent = false; break }
+            for i in 0..<Int(buffer.frameLength) {
+                let v = abs(channel[i])
+                if v > peak { peak = v }
+            }
+            silent = peak == 0
         }
         var out: [Int16] = []
         if let converter {
@@ -293,7 +359,18 @@ private final class Converter: @unchecked Sendable {
         lastTap = now
         if !silent { lastSound = now }
         pcm.append(contentsOf: out)
+        statSamples += out.count
+        statPeak = max(statPeak, peak)
         lock.unlock()
+    }
+
+    /// What has come through since the last call, and start counting again.
+    func takeStats() -> (samples: Int, peak: Float) {
+        lock.lock(); defer { lock.unlock() }
+        let result = (statSamples, statPeak)
+        statSamples = 0
+        statPeak = 0
+        return result
     }
 
     /// The audio since the last drain, and whether the input has stalled.

@@ -22,6 +22,7 @@ import { useReceptionistStore } from '@/stores/receptionistStore'
 import { ControlButton } from './ControlButton'
 import { HoldMicButton } from './HoldMicButton'
 import { BottomBar } from './BottomBar'
+import { MicIndicator } from './MicIndicator'
 import { ControlTranscript } from '@/components/ControlTranscript'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { SWIPE_SCREENS, useSwipeToDismiss, type SwipeScreen } from './swipe-dismiss'
@@ -183,6 +184,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           onExitToCanvas={() => closeTerminal('the composer (swipe)', SWIPE_EXIT_ZOOM_OUT)}
         />
       )}
+      <MicIndicator />
       {transcriptOpen && (
         <ControlTranscript
           variant="screen"

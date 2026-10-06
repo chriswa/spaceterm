@@ -1,6 +1,8 @@
+import { create } from 'zustand'
 import type { DictationApi } from '../shared/api'
 import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
 import { acquire, type Capture } from './held-microphone'
+import { recordMobileEvent } from './mobile-events'
 
 /**
  * One dictation: the microphone, streamed to the server as it is spoken.
@@ -23,6 +25,17 @@ const SEND_INTERVAL_MS = 200
 
 const log = (message: string) => window.api?.log(`[dictation] ${message}`)
 
+/**
+ * What every dictation on the page is doing, for the mark around the
+ * Dynamic Island (MicIndicator.tsx): `capturing` while audio is going to the
+ * transcriber, `transcribing` while the words are being waited for. A
+ * microphone merely held open — hands-free mode listening for "Control" —
+ * is neither.
+ */
+export const useMicActivity = create<{ capturing: number; transcribing: number }>(() => ({ capturing: 0, transcribing: 0 }))
+const bump = (key: 'capturing' | 'transcribing', by: number) =>
+  useMicActivity.setState((s) => ({ [key]: Math.max(0, s[key] + by) }))
+
 /** A turn check slower than this is no use to a pause: silence decides instead. */
 const TURN_CHECK_TIMEOUT_MS = 2000
 
@@ -43,6 +56,7 @@ export async function whenHearing(pending: Promise<Dictation>): Promise<Dictatio
   ])
   if (heard) return dictation
   log(`no sound within ${NO_AUDIO_TIMEOUT_MS}ms: ${dictation.describe()}`)
+  recordMobileEvent('dictation-no-audio', { withinMs: NO_AUDIO_TIMEOUT_MS, capture: dictation.describe() })
   // A held microphone that has gone silent is closed, so the next dictation opens a fresh one.
   dictation.cancel({ broken: true })
   throw new Error('The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
@@ -117,6 +131,7 @@ export class Dictation {
     let arrived: () => void = () => undefined
     this.audioArrived = new Promise((resolve) => { arrived = resolve })
     Dictation.live++
+    bump('capturing', 1)
     const backlog = options.backlog?.()
     if (backlog && backlog.length > 0) {
       this.queued.push(backlog)
@@ -129,6 +144,7 @@ export class Dictation {
     this.unlisten = capture.listen((block) => {
       if (this.stats.blocks === 0) {
         log(`first audio after ${Math.round(performance.now() - this.began)}ms (${capture.describe()})`)
+        recordMobileEvent('dictation-audio', { afterMs: Math.round(performance.now() - this.began) })
         arrived()
       }
       this.stats.push(block)
@@ -168,9 +184,11 @@ export class Dictation {
       capture = await capturing
     } catch (err) {
       void started.then((id) => api.cancel(id), () => undefined)
+      recordMobileEvent('dictation-begin-failed', { error: err instanceof Error ? err.message : String(err) })
       throw err
     }
     log(`capture open: ${capture.describe()}, page ${document.visibilityState}`)
+    recordMobileEvent('dictation-begin', { capture: capture.describe(), backlog: options.backlog !== undefined })
     return new Dictation(api, capture, started, options)
   }
 
@@ -182,10 +200,23 @@ export class Dictation {
   /** Stop listening and return the transcript, or throw with the server's reason. */
   async finish(): Promise<string> {
     log(`finish: ${this.describe()}`)
+    recordMobileEvent('dictation-finish', { audio: this.stats.describe(this.capture.sampleRate) })
     this.stopCapture()
-    const id = await this.started
-    this.flush()
-    return this.api.finish(id)
+    const asked = performance.now()
+    bump('transcribing', 1)
+    try {
+      const id = await this.started
+      this.flush()
+      const text = await this.api.finish(id)
+      // Only how much: nothing said is recorded.
+      recordMobileEvent('dictation-transcribed', { chars: text.length, ms: Math.round(performance.now() - asked) })
+      return text
+    } catch (err) {
+      recordMobileEvent('dictation-failed', { error: err instanceof Error ? err.message : String(err), ms: Math.round(performance.now() - asked) })
+      throw err
+    } finally {
+      bump('transcribing', -1)
+    }
   }
 
   /**
@@ -210,7 +241,10 @@ export class Dictation {
 
   /** Abandon the dictation. `broken`: its microphone went silent, so a held one is closed too. */
   cancel({ broken = false }: { broken?: boolean } = {}): void {
-    if (!this.stopped) log(`cancel: ${this.describe()}`)
+    if (!this.stopped) {
+      log(`cancel: ${this.describe()}`)
+      recordMobileEvent('dictation-cancel', { broken, audio: this.stats.describe(this.capture.sampleRate) })
+    }
     this.cancelled = true
     this.stopCapture(broken)
     if (this.id) this.api.cancel(this.id)
@@ -233,6 +267,7 @@ export class Dictation {
     if (this.stopped) return
     this.stopped = true
     Dictation.live--
+    bump('capturing', -1)
     this.offEndPhrase()
     window.clearInterval(this.timer)
     this.unlisten()

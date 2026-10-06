@@ -466,6 +466,41 @@ export interface ClientLogMessage {
   message: string
 }
 
+/**
+ * One entry in the phone's audio and lifecycle record (src/mobile/mobile-events.ts):
+ * the microphone, dictation, playback, and the app coming and going.
+ */
+export interface MobileEventRecord {
+  /** When it happened, ISO — on the phone's clock, which for the app's own events is the app's. */
+  t: string
+  /** The page load that recorded it; with `n`, what makes a resent batch harmless. */
+  page: string
+  /** Its place in that page load's sequence. */
+  n: number
+  kind: string
+  /**
+   * `native`: what the iPhone app saw (NativeEvents.swift); `server`: what the
+   * server saw of the phone, written by the server itself; `page` otherwise.
+   */
+  src: 'page' | 'native' | 'server'
+  /** The app's own number for a `native` event, which the app keeps it under until the server has it. */
+  nativeSeq?: number
+  detail?: Record<string, unknown>
+  /** The audio state of the page as it was recorded: hold, dictation, playback, visibility. */
+  ctx?: Record<string, unknown>
+}
+
+/**
+ * The phone's audio and lifecycle events, appended to
+ * ~/.spaceterm/mobile-events.jsonl. Replies `mutation-ack` once written, so
+ * the phone keeps a batch until the server has it.
+ */
+export interface MobileEventsMessage {
+  type: 'mobile-events'
+  seq: number
+  events: MobileEventRecord[]
+}
+
 export interface AgentMemoryQueryMessage {
   type: 'agent-memory-query'
   seq: number
@@ -1127,6 +1162,7 @@ export type AgentSearchResult =
 export type ClientMessage =
   | ShipItMessage
   | ClientLogMessage
+  | MobileEventsMessage
   | AgentMemoryQueryMessage
   | TerminalBorrowSizeMessage
   | TerminalReturnSizeMessage

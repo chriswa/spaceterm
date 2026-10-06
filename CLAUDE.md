@@ -10,6 +10,7 @@
   and client in place of `npm run dev` (Swift, separate from the npm build).
   `menubar/README.md` covers its restart policy and how to verify it headless.
 - `src/mobile/README.md` — the phone web app: what it shares with the desktop client, and how it reaches the server.
+- `~/.spaceterm/mobile-events.jsonl` — start here for any phone bug involving the microphone, dictation, hands-free, audio playback, AirPods, or the app being backgrounded or put to sleep. One JSON event per line, each carrying the audio state at that moment; see "The audio and lifecycle record" in `src/mobile/README.md`. The phone's free-text log lines are in `~/.spaceterm/electron.log`, tagged `[spaceterm-mobile …]`.
 
 ## After making changes
 

@@ -31,6 +31,7 @@ import { useCamera } from './hooks/useCamera'
 import { useTTS } from './hooks/useTTS'
 import { useEdgeHover, findClosestEdge } from './hooks/useEdgeHover'
 import { useRtsSelect } from './hooks/useRtsSelect'
+import { useZoomDrag, type ZoomDrag } from './hooks/useZoomDrag'
 import { useInertiaBlock, dumpInertiaLog } from './hooks/useInertiaBlock'
 import { useCardChromeVars, useFacet } from './hooks/useFacet'
 import { useDimStaleController } from './hooks/useDimStaleController'
@@ -194,8 +195,15 @@ export function App() {
   const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: NodeId | null; toNodeId: NodeId; ts: number } | null>(null)
   const focusRestoredRef = useRef(false)
   const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number; byTouch?: boolean } | null>(null)
-  /** The node a finger long-pressed, and once it moves on, the drag of it. */
-  const touchPressRef = useRef<{ nodeId: NodeId; drag: { startX: number; startY: number; zoom: number } | null } | null>(null)
+  /**
+   * What a finger's long press took hold of: a node, and once the finger moves
+   * on, the drag of it; or the bare background, which zooms about the press.
+   */
+  const touchPressRef = useRef<
+    | { kind: 'node'; nodeId: NodeId; drag: { startX: number; startY: number; zoom: number } | null }
+    | { kind: 'zoom'; at: { x: number; y: number }; drag: ZoomDrag }
+    | null
+  >(null)
   const [edgeSplit, setEdgeSplit] = useState<{ parentId: NodeId; childId: NodeId; worldPoint: { x: number; y: number }; screenX: number; screenY: number; byTouch?: boolean } | null>(null)
   const cmdClickPendingRef = useRef<{ nodeId: NodeId; screenX: number; screenY: number } | null>(null)
   const shiftClickPendingRef = useRef(false)
@@ -217,6 +225,8 @@ export function App() {
       height: bottomRight.y - topLeft.y,
     })
   }, [camera])
+
+  const { begin: beginZoomDrag, overlayElement: zoomDragOverlay } = useZoomDrag(cameraRef, userZoom)
 
   const { startDrag: startRtsSelect, overlayElement: rtsSelectOverlay } = useRtsSelect(cameraRef, (selectedNodeIds) => {
     const allNodes = useNodeStore.getState().nodes
@@ -2611,7 +2621,7 @@ export function App() {
     // The touch version of ⌘-click: the quick-actions toolbar for that node.
     onLongPress: ({ x, y }) => {
       const nodeId = document.elementFromPoint(x, y)?.closest('[data-node-id]')?.getAttribute('data-node-id')
-      touchPressRef.current = nodeId ? { nodeId: nodeId as NodeId, drag: null } : null
+      touchPressRef.current = nodeId ? { kind: 'node', nodeId: nodeId as NodeId, drag: null } : null
       if (nodeId) {
         setQuickActions({ nodeId: nodeId as NodeId, screenX: x, screenY: y, byTouch: true })
         return
@@ -2621,7 +2631,13 @@ export function App() {
       const edge = viewport && !focusRef.current
         ? findClosestEdge(x, y, viewport.getBoundingClientRect(), cameraRef.current, edgesRef.current, EDGE_TOUCH_THRESHOLD_PX)
         : null
-      if (edge) setEdgeSplit({ parentId: edge.parentId, childId: edge.childId, worldPoint: edge.point, screenX: x, screenY: y, byTouch: true })
+      if (edge) {
+        setEdgeSplit({ parentId: edge.parentId, childId: edge.childId, worldPoint: edge.point, screenX: x, screenY: y, byTouch: true })
+        return
+      }
+      // The bare background: the desktop's right-button drag, zooming about
+      // the press as the finger moves away from it.
+      touchPressRef.current = { kind: 'zoom', at: { x, y }, drag: beginZoomDrag({ x, y }) }
     },
     // Moving on from the long press drags that node instead: the menu goes,
     // and the drag runs through the same start/move/end as a mouse drag by
@@ -2629,6 +2645,10 @@ export function App() {
     onLongPressDrag: (dx, dy) => {
       const press = touchPressRef.current
       if (!press) return false
+      if (press.kind === 'zoom') {
+        press.drag.move({ x: press.at.x + dx, y: press.at.y + dy })
+        return true
+      }
       if (!press.drag) {
         const node = useNodeStore.getState().nodes[press.nodeId]
         if (!node || press.nodeId === ROOT_NODE_ID) return false
@@ -2639,40 +2659,29 @@ export function App() {
       handleMove(press.nodeId, press.drag.startX + dx / press.drag.zoom, press.drag.startY + dy / press.drag.zoom)
       return true
     },
-    onLongPressDragEnd: () => {
+    onLongPressEnd: () => {
       const press = touchPressRef.current
       touchPressRef.current = null
-      if (press?.drag) handleDragEnd(press.nodeId)
+      if (press?.kind === 'zoom') press.drag.end()
+      else if (press?.drag) handleDragEnd(press.nodeId)
     }
   })
 
-  // Right-button drag on the canvas background → zoom out. Logarithmic, like
-  // cmd+scroll: radial distance from the drag-start point maps to a zoom
-  // *ratio*, so equal drag distances produce equal zoom multiples regardless
-  // of current zoom. Any direction zooms out; dragging back toward the start
-  // point returns to the original zoom. Anchored at the drag-start point so
-  // it stays fixed under the cursor. Owns its own move/up listeners like
-  // handlePanStart.
+  // Right-button drag on the canvas background → zoom about where it began
+  // (useZoomDrag). Owns its own move/up listeners like handlePanStart.
   const handleZoomDragStart = useCallback((e: MouseEvent) => {
-    const anchor = { x: e.clientX, y: e.clientY }
-    const startZ = cameraRef.current.z
-
-    const onMouseMove = (ev: MouseEvent) => {
-      // Distance is always >= 0, so this only ever zooms out from startZ:
-      // z = startZ * e^(-dist * sensitivity).
-      const dragDist = Math.hypot(ev.clientX - anchor.x, ev.clientY - anchor.y)
-      userZoom(anchor, startZ * Math.exp(-dragDist * ZOOM_DRAG_SENSITIVITY))
-    }
-
+    const drag = beginZoomDrag({ x: e.clientX, y: e.clientY })
+    const onMouseMove = (ev: MouseEvent) => drag.move({ x: ev.clientX, y: ev.clientY })
     const onMouseUp = (ev: MouseEvent) => {
       if (ev.button !== 2) return
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
+      drag.end()
     }
 
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
-  }, [userZoom, cameraRef])
+  }, [beginZoomDrag])
 
   const handleRtsSelectStart = useCallback((e: MouseEvent) => {
     setSearchVisible(false)
@@ -2787,7 +2796,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><AgentSearchModal visible={agentSearchVisible} resolvedPresets={resolvedPresets} onDismiss={() => setAgentSearchVisible(false)} onNavigateToNode={(id) => { setAgentSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} />{controlTranscriptOpen && !presentTerminalsExternally && <ControlTranscript variant="modal" onDismiss={() => useControlTranscriptStore.getState().setOpen(false)} />}</>}>
+      <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{zoomDragOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><AgentSearchModal visible={agentSearchVisible} resolvedPresets={resolvedPresets} onDismiss={() => setAgentSearchVisible(false)} onNavigateToNode={(id) => { setAgentSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} />{controlTranscriptOpen && !presentTerminalsExternally && <ControlTranscript variant="modal" onDismiss={() => useControlTranscriptStore.getState().setOpen(false)} />}</>}>
         <PeerCameraOverlay />
         <ResizeGhost />
         <NodeLabels

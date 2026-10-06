@@ -29,6 +29,7 @@ import { LoginShellEnv } from './login-env'
 import { UNTITLED_AGENT, agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
 import { isAgentSurface } from '../shared/node-utils'
 import { serverLog, sanitizeForLog } from './server-log'
+import { MobileEventsLog } from './mobile-events'
 import { expandTilde } from './cwd'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
@@ -356,6 +357,11 @@ const remoteDictation = new RemoteDictation(new VoiceOperator(), {
  * client whenever the file changes. See hands-free.ts.
  */
 const wakeWordVoiceOperator = new VoiceOperator()
+/** The phone's audio and lifecycle record, ~/.spaceterm/mobile-events.jsonl. */
+const mobileEventsLog = new MobileEventsLog()
+/** What the phone calls itself in `client-hello` (src/mobile/main.tsx). */
+const MOBILE_CLIENT_NAME = 'spaceterm-mobile'
+const clientLabel = (client: { name?: string; id: string }) => `${client.name ?? 'client'} ${client.id.slice(0, 8)}`
 const HANDS_FREE_TUNING_PATH = path.join(SOCKET_DIR, 'hands-free.json')
 let handsFreeTuning: Partial<HandsFreeTuning> = {}
 function readHandsFreeTuning(): void {
@@ -386,6 +392,10 @@ const remoteSpeech = new RemoteSpeech({
     return client !== undefined
   },
   isConnected: (clientId) => findClient(clientId) !== undefined,
+  record: (clientId, kind, detail) => {
+    const client = findClient(clientId)
+    if (client?.name === MOBILE_CLIENT_NAME) mobileEventsLog.server(kind, clientLabel(client), detail)
+  },
 })
 
 /**
@@ -1009,6 +1019,8 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
     // Idempotent: a socket error is followed by a close, and both end here.
     close() {
       if (!clients.delete(client)) return
+      // The phone's socket dropping, which the phone itself — asleep, or killed — often cannot record.
+      if (client.name === MOBILE_CLIENT_NAME) mobileEventsLog.server('client-disconnected', clientLabel(client))
       updateSystemStatsWatched()
       remoteDictation.cancelAllFor(client.id)
       remoteSpeech.clientGone(client.id)
@@ -1573,6 +1585,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const { compatible, error } = checkProtocolVersion(msg.protocolVersion, CLIENT_PROTOCOL_RANGE)
       const who = msg.client ?? 'unknown client'
       client.name = msg.client
+      if (client.name === MOBILE_CLIENT_NAME) mobileEventsLog.server('client-connected', clientLabel(client), { protocol: msg.protocolVersion })
       if (isClientDevice(msg.device)) {
         client.device = { id: msg.device.id, label: msg.device.label }
         updateReceptionistListener()
@@ -1907,6 +1920,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'client-log': {
       serverLog(`[${client.name ?? 'client'} ${client.id.slice(0, 8)}] ${String(msg.message).slice(0, 2000)}`)
+      break
+    }
+
+    case 'mobile-events': {
+      mobileEventsLog.write(msg.events, clientLabel(client))
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
 

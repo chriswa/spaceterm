@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 10
+export const CLIENT_PROTOCOL_VERSION = 11
 
 /**
  * Oldest client protocol this build still serves.
@@ -53,5 +53,8 @@ export const CLIENT_PROTOCOL_VERSION = 10
  *
  * v9 has no Control transcript (`receptionist-transcript`, `receptionist-say`,
  * `receptionist-transcript-appended`); it loses nothing else.
+ *
+ * v10 never sends the phone's audio and lifecycle record (`mobile-events`); it
+ * loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

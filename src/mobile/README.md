@@ -43,6 +43,9 @@ Touches never reach xterm (`terminal-gesture.ts`):
 
 On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
+A long press on the bare background is the desktop's right-button drag: a
+dot marks the press, and moving the finger away from it zooms out about it
+(`useZoomDrag`), back toward it zooms back in.
 The server rebuilds the bundle a couple of seconds after its sources stop
 changing (`MobileBuildKeeper` in `src/server/mobile-build.ts`) and tells the
 phone. While anything is waiting — a server restart an agent flagged, a newer
@@ -144,6 +147,51 @@ to this phone. The dictation itself is ordinary Wispr, as the talk button's.
   (400). The server log's `[hands-free]` lines say what each candidate
   measured and whether it was the word, and `[turn]` lines each pause's
   verdict — never what was said.
+
+## The audio and lifecycle record
+
+Every microphone, dictation, playback and app-switching event the phone sees
+is appended, one JSON object per line, to `~/.spaceterm/mobile-events.jsonl`
+on the Mac — forever, outside git — for tracing a microphone that did not come
+back, or an answer that talked over a dictation. `mobile-events.ts` keeps
+events in the page's storage until the server acknowledges them, so a dropped
+socket, a suspended page or one iOS killed loses nothing; the server
+(`src/server/mobile-events.ts`) skips a resent batch's duplicates.
+
+Each line has `kind`, `t` (the phone's clock), `detail`, and `ctx` — the
+hold, hands-free phase, dictation, audio session and whether anything was
+playing at that moment. `src: "native"` lines come from the iPhone app
+(`NativeEvents.swift`), which keeps running in the background while iOS
+suspends the page: launches (and whether the last run ended in the
+background — killed — or terminated), background and foreground, screen lock,
+calls, audio interruptions, route changes with the inputs and outputs before
+and after (AirPods coming and going), the input muted from the AirPods stem,
+another app wanting quiet, WebKit taking the microphone, Low Power Mode and
+heat, page loads, and a `native-heartbeat` every minute with the audio
+session, the microphone's seconds heard and peak level, how long an
+interruption has gone unended, and whether the page answers a ping.
+`src: "server"` lines are what the server saw: the phone connecting and
+disconnecting, and speech jobs sent to it and how each ended.
+
+Nothing is fired into the void. The app numbers its events (`nativeSeq`) and
+keeps them in a file until the server has written them: the page records
+them, the server acknowledges the batch, and only then does the page tell the
+app it may forget them. Every new page is handed all the app still holds; the
+page skips what it already has, and the server skips any `nativeSeq` it has
+written, across restarts too.
+
+A page has no event for being put to sleep; a `woke` line with `asleepMs`
+says it was, and `heartbeat` lines say it was still running while hidden.
+Nothing said is recorded — only lengths.
+
+    jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
+
+While a dictation is sending your voice to be transcribed, an orange **MIC**
+sits above the Dynamic Island (`MicIndicator.tsx`); it pulses while the words
+are waited for. The microphone merely held open for hands-free shows nothing
+there. It uses only the strip above the island — iOS widens the island for Now
+Playing and the like, and a page cannot see that — so the island's top (an
+iPhone 17's) is the one measurement, in `mobile.css`.
 
 ## Running it
 

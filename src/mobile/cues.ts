@@ -12,6 +12,8 @@
  * so they never sound like a dictation starting or stopping.
  */
 
+import { recordMobileEvent } from './mobile-events'
+
 export type Cue = 'listeningStarted' | 'listeningFinished' | 'pasted' | 'transcriptionFailed' | 'captureFailed'
   | 'holdEngaged' | 'holdReleased'
 
@@ -48,6 +50,16 @@ export function cueSamples(cue: Cue): Float32Array<ArrayBuffer> {
 
 let context: AudioContext | null = null
 
+/** The shared context, made on first use; throws where there is no Web Audio. */
+function ensureContext(): AudioContext {
+  if (context) return context
+  const made = new AudioContext()
+  // Suspended or interrupted is when an answer plays to nobody.
+  made.onstatechange = () => recordMobileEvent('playback-context', { state: made.state })
+  context = made
+  return made
+}
+
 /**
  * The page's one audio context — cues and spoken answers both play through it,
  * so a tap that wakes it for one has woken it for the other. Null when the
@@ -55,8 +67,7 @@ let context: AudioContext | null = null
  */
 export function audioContext(): AudioContext | null {
   try {
-    context ??= new AudioContext()
-    return context
+    return ensureContext()
   } catch {
     return null
   }
@@ -95,20 +106,21 @@ export function cueMs(cue: Cue): number {
  */
 export function playCue(cue: Cue): void {
   try {
-    context ??= new AudioContext()
-    if (context.state === 'suspended') void context.resume()
+    const ctx = ensureContext()
+    if (ctx.state === 'suspended') void ctx.resume()
     const samples = cueSamples(cue)
-    const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE)
+    const buffer = ctx.createBuffer(1, samples.length, SAMPLE_RATE)
     buffer.copyToChannel(samples, 0)
-    const source = context.createBufferSource()
-    const gain = context.createGain()
+    const source = ctx.createBufferSource()
+    const gain = ctx.createGain()
     gain.gain.value = OUTPUT_GAIN
     source.buffer = buffer
-    source.connect(gain).connect(context.destination)
+    source.connect(gain).connect(ctx.destination)
     source.start()
-    noteSounding(context, context.currentTime + buffer.duration)
+    noteSounding(ctx, ctx.currentTime + buffer.duration)
     // In the server log, so a cue that seems quiet or missing can be traced.
-    window.api?.log(`[cue] ${cue} (audio ${context.state})`)
+    window.api?.log(`[cue] ${cue} (audio ${ctx.state})`)
+    recordMobileEvent('cue', { cue, audio: ctx.state })
   } catch {
     // No audio device, or a policy refusal: the cue is skipped.
   }
@@ -120,7 +132,6 @@ export function playCue(cue: Cue): void {
  */
 export function primeCues(): void {
   try {
-    context ??= new AudioContext()
-    void context.resume()
+    void ensureContext().resume()
   } catch { /* as above */ }
 }

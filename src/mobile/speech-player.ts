@@ -1,6 +1,7 @@
 import type { RemoteSpeechApi } from '../shared/api'
 import { audioContext, noteSilenced, noteSounding } from './cues'
 import { describeAudioSession } from './audio-session'
+import { recordMobileEvent } from './mobile-events'
 
 /**
  * Plays speech sent to this phone (src/server/remote-speech.ts): Summary
@@ -50,6 +51,8 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
   const stop = (id: string) => {
     const job = jobs.get(id)
     if (!job) return
+    // Cut off by the server: interrupted, or superseded.
+    recordMobileEvent('speech-stopped', { id: id.slice(0, 11) })
     jobs.delete(id)
     for (const timer of job.timers) clearTimeout(timer)
     for (const source of job.sources) {
@@ -71,6 +74,8 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     if (!job) {
       job = { sources: [], timers: [], endsAt: 0 }
       jobs.set(id, job)
+      // The ctx says whether a dictation or hands-free was under way: an answer talking over the speaker.
+      recordMobileEvent('speech-start', { id: id.slice(0, 11), sentences: count, audio: ctx.state })
     }
     const playing = job
     const buffer = toBuffer(ctx, pcm, sampleRate)
@@ -81,7 +86,10 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     playing.endsAt = at + buffer.duration
     source.onended = () => {
       api.progress(id, index, 'finished')
-      if (index === count - 1) jobs.delete(id)
+      if (index === count - 1) {
+        jobs.delete(id)
+        recordMobileEvent('speech-end', { id: id.slice(0, 11) })
+      }
     }
     source.start(at)
     noteSounding(ctx, playing.endsAt)

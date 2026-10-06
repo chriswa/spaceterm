@@ -299,6 +299,43 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-summarizer-sheet .mobile-confirm__panel { padding-bottom: calc(12px + var(--m-safe-bottom)); }
 .m-summarizer__about { color: var(--m-dim); font-size: 14px; text-align: center; }
 
+/* ─── microphone label ─────────────────────────────────────────────────── */
+
+/*
+ * "MIC" over the Dynamic Island while speech is being transcribed
+ * (MicIndicator.tsx), in the strip between the island and the top of the
+ * screen. The island is not something a page can measure, and iOS widens it
+ * for Now Playing and the like, so this keeps clear of its sides altogether:
+ * only its top is used — an iPhone 17's, 11 pt down, centred. The orange is
+ * the one iOS uses for its own microphone dot.
+ */
+:root {
+  --m-island-top: 11px;
+  --m-mic-orange: #ff9f0a;
+}
+.m-mic-label {
+  position: fixed;
+  left: 50%;
+  top: 0;
+  height: var(--m-island-top);
+  transform: translateX(-50%);
+  color: var(--m-mic-orange);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: var(--m-island-top);
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  /* Over everything, and touches go through. */
+  z-index: 2147483600;
+  pointer-events: none;
+  animation: m-mic-label-in 180ms ease-out;
+}
+.m-mic-label--waiting { animation: m-mic-label-wait 1s ease-in-out infinite; }
+@keyframes m-mic-label-in { from { opacity: 0; } }
+@keyframes m-mic-label-wait { 50% { opacity: 0.25; } }
+/* Sideways, the island is at the side, and there is no strip above it. */
+@media (orientation: landscape) { .m-mic-label { display: none; } }
+
 /* ─── terminal view ─────────────────────────────────────────────────────── */
 
 .mobile-term,

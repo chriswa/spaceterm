@@ -5,6 +5,7 @@ import { playCue, quietForMs, type Cue } from './cues'
 import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, onHoldStateChange, type Capture } from './held-microphone'
 import { nativeHaptic } from './native-microphone'
+import { recordMobileEvent } from './mobile-events'
 import { Downsampler, pcmToBase64 } from './pcm'
 import { DEFAULT_TUNING, UtteranceEndpointer, WakeListener } from './wake-listener'
 
@@ -119,7 +120,10 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let tuning: HandsFreeTuning = DEFAULT_TUNING
   const listener = new WakeListener(tuning)
   const setPhase = (phase: HandsFreePhase) => {
-    if (useHandsFree.getState().phase !== phase) useHandsFree.setState({ phase })
+    const was = useHandsFree.getState().phase
+    if (was === phase) return
+    useHandsFree.setState({ phase })
+    recordMobileEvent('hands-free-phase', { from: was, to: phase })
   }
 
   let capture: Capture | undefined
@@ -182,6 +186,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       utteranceDictation = undefined
       endUtterance = undefined
       deps.playCue('listeningFinished')
+      recordMobileEvent('hands-free-ended', { reason })
       if (reason === 'lost') {
         log('the microphone stopped mid-dictation')
         dictation.cancel()
@@ -240,17 +245,21 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     }
     if (phase !== 'listening') return
     if (deps.quietForMs() < tuning.playbackTailMs || deps.othersDictating()) {
+      // Deaf to "Control" until this ends: the phone is talking, or another dictation has the floor.
+      if (!stoodAside) recordMobileEvent('hands-free-stood-aside', { why: deps.othersDictating() ? 'another dictation' : 'this phone is playing' })
       stoodAside = true
       return
     }
     if (stoodAside) {
       stoodAside = false
+      recordMobileEvent('hands-free-listening-again')
       listener.resume()
     }
     for (const candidate of listener.push(pcm)) {
       log(`speech after ${candidate.quietBeforeMs}ms of quiet — checking its start for "${WAKE_WORD}"`)
       void check(candidate.clip).then((match) => {
         log(match ? 'it starts with the wake word: dictating from its start' : 'not the wake word')
+        recordMobileEvent('wake-word', { match, quietBeforeMs: candidate.quietBeforeMs })
         if (match && useHandsFree.getState().phase === 'listening' && capture) void respond(candidate.start)
       })
     }
@@ -268,6 +277,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       endUtterance?.('lost')
       if (useHandsFree.getState().phase === 'listening') setPhase('off')
       log('not listening: the microphone is not held')
+      recordMobileEvent('hands-free-mic', { listening: false })
       return
     }
     downsampler = new Downsampler(next.sampleRate)
@@ -275,6 +285,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     unlisten = next.listen(onBlock)
     if (useHandsFree.getState().phase === 'off') setPhase('listening')
     log(`listening for "${WAKE_WORD}" (${next.describe()})`)
+    recordMobileEvent('hands-free-mic', { listening: true, capture: next.describe() })
   }
   follow()
   const offHold = deps.onHoldStateChange(follow)

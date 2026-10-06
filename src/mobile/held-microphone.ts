@@ -1,6 +1,7 @@
 import { beginRecordingSession } from './audio-session'
 import { playCue } from './cues'
 import { nativeMicrophoneAvailable, openNativeMicrophone } from './native-microphone'
+import { recordMobileEvent } from './mobile-events'
 
 /**
  * The microphone, held open between dictations — as Voice Operator does on the
@@ -84,6 +85,7 @@ export async function openCapture(): Promise<{
   } catch (err) {
     releaseSession()
     void context.close()
+    recordMobileEvent('mic-open-failed', { source: 'web', error: err instanceof Error ? `${err.name} ${err.message}` : String(err) })
     log(`getUserMedia refused: ${err instanceof Error ? `${err.name} ${err.message}` : String(err)} (secure ${window.isSecureContext}, page ${document.visibilityState})`)
     throw new Error(
       window.isSecureContext
@@ -98,9 +100,11 @@ export async function openCapture(): Promise<{
     const node = new AudioWorkletNode(context, 'spaceterm-tap')
     source.connect(node)
     let closed = false
+    recordMobileEvent('mic-opened', { source: 'web', input: stream.getAudioTracks()[0]?.label ?? '' })
     const close = () => {
       if (closed) return
       closed = true
+      recordMobileEvent('mic-closed', { source: 'web', input: stream.getAudioTracks()[0]?.label ?? '' })
       node.port.onmessage = null
       node.disconnect()
       stream.getTracks().forEach((t) => t.stop())
@@ -131,11 +135,18 @@ function captureOf(opened: Awaited<ReturnType<typeof openCapture>>, release: (br
     for (const fn of listeners) fn(event.data)
   }
   const { context, stream } = opened
-  context.onstatechange = () => log(`context now ${context.state}`)
+  context.onstatechange = () => {
+    log(`context now ${context.state}`)
+    recordMobileEvent('mic-context', { state: context.state })
+  }
   for (const track of stream.getAudioTracks?.() ?? []) {
-    track.onmute = () => log('track muted')
-    track.onunmute = () => log('track unmuted')
-    track.onended = () => log('track ended')
+    const noted = (event: string) => () => {
+      log(`track ${event}`)
+      recordMobileEvent('mic-track', { event, input: track.label })
+    }
+    track.onmute = noted('muted')
+    track.onunmute = noted('unmuted')
+    track.onended = noted('ended')
   }
   return {
     sampleRate: context.sampleRate,
@@ -189,6 +200,7 @@ function announce(): void {
   const before = lastState
   lastState = state
   if (state === before) return
+  recordMobileEvent('hold-state', { from: before, to: state })
   if (state === 'held') playCue('holdEngaged')
   else if (before === 'held') playCue('holdReleased')
   for (const fn of stateListeners) fn(state)
@@ -212,6 +224,7 @@ export function setHoldMicrophone(on: boolean): void {
   wanted = on
   try { localStorage.setItem(KEY, on ? '1' : '0') } catch { /* private mode: this session only */ }
   log(on ? 'turned on' : 'turned off')
+  recordMobileEvent('hold-wanted', { on })
   if (on) void acquire().then((capture) => capture.release(), () => undefined)
   else closeHeld('turned off')
   announce()
@@ -220,6 +233,7 @@ export function setHoldMicrophone(on: boolean): void {
 function closeHeld(why: string): void {
   if (!held) return
   log(`closing: ${why}`)
+  recordMobileEvent('hold-closed', { why })
   held.close()
   held = undefined
   announce()
@@ -250,6 +264,7 @@ export function acquire(): Promise<Capture> {
       }
       held = { capture, close: () => native.close() }
       log('holding the app\'s own microphone open')
+      recordMobileEvent('hold-opened', { source: 'native', input: native.describe() })
       announce()
       return capture
     }
@@ -259,10 +274,14 @@ export function acquire(): Promise<Capture> {
       const capture = captureOf(opened, (broken) => { if (broken) closeHeld('it went silent') })
       held = { capture, close: opened.close, headset: label }
       log(`holding "${label}" open`)
+      recordMobileEvent('hold-opened', { source: 'web', input: label })
       announce()
       return capture
     }
-    if (wanted) log(`not holding "${label}": not a headset, and held open it would play through the earpiece`)
+    if (wanted) {
+      log(`not holding "${label}": not a headset, and held open it would play through the earpiece`)
+      recordMobileEvent('hold-skipped', { input: label, why: 'not a headset' })
+    }
     return captureOf(opened, () => opened.close())
   })().finally(() => { opening = undefined })
   return opening
@@ -284,7 +303,9 @@ function installNativeHold(): () => void {
     if (!wanted || held?.capture.healthy() || opening) return
     if (held) closeHeld('it stopped delivering')
     void acquire().then((capture) => capture.release(), (err) => {
-      log(`could not open the app's microphone: ${err instanceof Error ? err.message : String(err)}`)
+      const error = err instanceof Error ? err.message : String(err)
+      log(`could not open the app's microphone: ${error}`)
+      recordMobileEvent('mic-open-failed', { source: 'native', error })
     })
   }
   check()

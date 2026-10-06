@@ -93,8 +93,8 @@ describe('useTouchCamera', () => {
       vi.useFakeTimers()
       const { viewport, controls } = setup()
       const onLongPressDrag = vi.fn(() => true)
-      const onLongPressDragEnd = vi.fn()
-      Object.assign(controls, { onLongPressDrag, onLongPressDragEnd })
+      const onLongPressEnd = vi.fn()
+      Object.assign(controls, { onLongPressDrag, onLongPressEnd })
       pressAndHold(viewport)
       // Within the slop it is still only a long press.
       touch(viewport, 'touchmove', [[123, 141]])
@@ -103,22 +103,29 @@ describe('useTouchCamera', () => {
       touch(viewport, 'touchmove', [[170, 100]])
       expect(onLongPressDrag).toHaveBeenLastCalledWith(50, -40)
       expect(controls.pan).not.toHaveBeenCalled()
-      expect(onLongPressDragEnd).not.toHaveBeenCalled()
+      expect(onLongPressEnd).not.toHaveBeenCalled()
       expect(touch(viewport, 'touchend', [])).toBe(true)
-      expect(onLongPressDragEnd).toHaveBeenCalledTimes(1)
+      expect(onLongPressEnd).toHaveBeenCalledTimes(1)
     })
 
-    it('pans when there is nothing to drag, and ends no drag', () => {
+    it('ends the press when the finger lifts without moving on', () => {
       vi.useFakeTimers()
       const { viewport, controls } = setup()
-      const onLongPressDragEnd = vi.fn()
-      Object.assign(controls, { onLongPressDrag: vi.fn(() => false), onLongPressDragEnd })
+      const onLongPressEnd = vi.fn()
+      Object.assign(controls, { onLongPressDrag: vi.fn(() => true), onLongPressEnd })
+      pressAndHold(viewport)
+      touch(viewport, 'touchend', [])
+      expect(onLongPressEnd).toHaveBeenCalledTimes(1)
+    })
+
+    it('pans when there is nothing to drag', () => {
+      vi.useFakeTimers()
+      const { viewport, controls } = setup()
+      Object.assign(controls, { onLongPressDrag: vi.fn(() => false) })
       pressAndHold(viewport)
       touch(viewport, 'touchmove', [[150, 140]])
       touch(viewport, 'touchmove', [[160, 140]])
       expect(controls.pan).toHaveBeenLastCalledWith(-10, 0)
-      touch(viewport, 'touchend', [])
-      expect(onLongPressDragEnd).not.toHaveBeenCalled()
     })
   })
 

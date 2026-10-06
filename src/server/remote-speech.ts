@@ -23,6 +23,8 @@ export interface RemoteSpeechDeps {
   isConnected(clientId: string): boolean
   /** Job ids; random unless a test wants them predictable. */
   newId?(): string
+  /** A job starting and ending, for the phone's audio record (mobile-events.ts). */
+  record?(clientId: string, kind: string, detail: Record<string, unknown>): void
 }
 
 /** A sentence to speak. `start`/`end` index the job's whole text — see `joinSpeechParts`. */
@@ -140,6 +142,7 @@ export class RemoteSpeech {
         job.offset = Math.max(job.offset, heardThrough(job.sentences, index))
         if (index === job.sentences.length - 1) job.state = 'completed'
       })
+      if (index === job.sentences.length - 1) this.deps.record?.(job.clientId, 'speech-job-ended', { id: job.id.slice(0, 11), state: 'completed' })
     } else {
       serverLog(`[remote-speech] ${id} could not be played on ${clientId.slice(0, 8)}`)
       this.end(job, 'synthesis_failed')
@@ -173,6 +176,7 @@ export class RemoteSpeech {
       changed: new Set(),
     }
     this.jobs.set(job.id, job)
+    this.deps.record?.(clientId, 'speech-job', { id: job.id.slice(0, 11), sentences: sentences.length, chars: sentences.reduce((n, s) => n + s.text.length, 0) })
     this.prune()
     const lane = (this.lanes.get(clientId) ?? Promise.resolve()).then(() => this.pump(job))
     this.lanes.set(clientId, lane.catch(() => undefined))
@@ -280,6 +284,7 @@ export class RemoteSpeech {
   }
 
   private end(job: Job, state: Exclude<SpeechStatus['state'], 'in_progress'>): void {
+    this.deps.record?.(job.clientId, 'speech-job-ended', { id: job.id.slice(0, 11), state, heardChars: job.offset })
     this.change(job, () => { job.state = state })
     job.abort.abort()
     // Stop the client too, unless it is the one that finished.

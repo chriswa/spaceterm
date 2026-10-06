@@ -44,6 +44,8 @@ declare global {
   }
 }
 
+import { recordMobileEvent } from './mobile-events'
+
 const log = (message: string) => window.api?.log(`[native-mic] ${message}`)
 
 function handler() {
@@ -82,6 +84,8 @@ function install(): void {
     state(next) {
       if (next.running !== state.running || next.input !== state.input || next.error !== state.error) {
         log(`${next.running ? 'running' : 'stopped'}${next.input ? ` on "${next.input}"` : ''}${next.error ? `: ${next.error}` : ''}`)
+        // The input changing is AirPods coming or going.
+        recordMobileEvent('native-mic-state', { running: next.running, input: next.input ?? null, error: next.error ?? null, was: { running: state.running, input: state.input ?? null } })
       }
       state = next
       for (const fn of [...stateWaiters]) fn(next)
@@ -146,6 +150,7 @@ export async function openNativeMicrophone(): Promise<NativeCaptureHandle> {
       if (closed) return
       closed = true
       listeners.clear()
+      recordMobileEvent('mic-closed', { source: 'native' })
       post.postMessage({ action: 'stop' })
     },
   }
