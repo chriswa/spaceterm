@@ -614,6 +614,8 @@ textarea, input, [contenteditable="true"], .cm-content {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  /* The desktop row's `.toolbar__crabs` centres its icons; rows span the width. */
+  align-items: stretch;
   position: relative;
 }
 /* A short list sits at the foot, by the thumb, rather than under the notch.
