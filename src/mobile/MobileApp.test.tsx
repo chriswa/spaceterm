@@ -74,12 +74,19 @@ describe('the phone’s bottom bar', () => {
     expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(false)
   })
 
-  it('never shows over a terminal, even with a conversation open', () => {
+  it('stays up over the terminal view, and goes for the composer, which has its own microphone', () => {
     useSummaryChatStore.setState({ targetNodeId: SURFACE })
     const { container } = render(<MobileApp Canvas={() => null} />)
     expect(container.querySelector('.m-bar')).not.toBeNull()
     act(() => useSurfacePresenterStore.getState().publishFocusedTerminal(SURFACE))
+    expect(container.querySelector('.m-bar')).not.toBeNull()
+
+    tap(container.querySelector('.mobile-term__area')!)
+    expect(container.querySelector('.mobile-composer')).not.toBeNull()
     expect(container.querySelector('.m-bar')).toBeNull()
+
+    fireEvent.click(container.querySelector('.mobile-btn--back')!)
+    expect(container.querySelector('.m-bar')).not.toBeNull()
   })
 })
 

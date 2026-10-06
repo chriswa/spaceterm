@@ -13,7 +13,7 @@ import { RadialMenu } from './RadialMenu'
 import { pressSummaryChatChord, REAL_CHORD_CUES } from '@/lib/summary-chat-chord'
 
 /**
- * One terminal surface, filling the screen and nothing else.
+ * One terminal surface, filling the screen above the bottom bar and nothing else.
  *
  * It is the desktop's own `TerminalCard` — the same xterm, attach, replay and
  * input handling — without its title bar and footer, and with the surface

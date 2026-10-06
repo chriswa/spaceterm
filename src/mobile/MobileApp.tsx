@@ -187,10 +187,9 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           onDismiss={() => useControlTranscriptStore.getState().setOpen(false)}
         />
       )}
-      {/* On the canvas, over the surface list and under the transcript, never
-          over a terminal, which keeps the whole screen. The composer has its
-          own microphone. */}
-      {((!focusedTerminal && !composerFor) || transcriptOpen) && (
+      {/* On the canvas and the terminal view, over the surface list and under
+          the transcript. Never over the composer, which has its own microphone. */}
+      {(!composerFor || transcriptOpen) && (
         <BottomBar
           start={
             // The Mac's two readouts stacked against Control: its system

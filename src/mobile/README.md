@@ -26,7 +26,7 @@ the surface list, dictation capture, and hands-free mode (below).
 
 ## The terminal view
 
-Just the terminal, at a grid that fits the screen. That grid is *borrowed*
+Just the terminal, at a grid that fits the screen above the bottom bar. That grid is *borrowed*
 (`terminal-borrow-size`): the server keeps the surface's own size as a
 persisted `homeSize` and gives it back when the view closes, when the phone
 disconnects, or — if the server died mid-borrow — at its next start. A
@@ -53,7 +53,7 @@ builds and installs the app: `src/server/mobile-install.ts`, the same
 fingerprint from `ios/native-version.mjs`), which `install.sh` also stamps into
 the app — see `update-check.ts`.
 
-The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control and the talk buttons in the middle, the toolbar's rocket on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and never shows over a terminal. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
+The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control and the talk buttons in the middle, the toolbar's rocket on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only

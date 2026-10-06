@@ -457,16 +457,18 @@ textarea, input, [contenteditable="true"], .cm-content {
   font: 600 15px/1.2 -apple-system, system-ui, sans-serif;
 }
 
-/* The full-screen terminal: sized to the visible area, so the keyboard and key
-   row push it up rather than covering it (see useVisualViewportVars). */
+/* The full-screen terminal: sized to the visible area above the bottom bar, so
+   the bar, the keyboard and the key row push it up rather than covering it
+   (see useVisualViewportVars). TerminalView borrows a grid to fit, so the bar
+   costs rows, not a clipped screen. */
 .mobile-term:not(.mobile-term--gone) {
   top: var(--m-vv-top, 0px);
   bottom: auto;
-  height: var(--m-vv-height, 100%);
-  /* All the way down, under the home indicator and the rounded corners: the
-     bottom rows of most TUIs are the ones least needed, and every row counts. */
+  height: calc(var(--m-vv-height, 100dvh) - var(--m-bar-height));
   padding-bottom: 0;
 }
+/* The bar is behind the keyboard while it is up: the terminal comes down to it. */
+:root[data-keyboard="up"] .mobile-term:not(.mobile-term--gone) { height: var(--m-vv-height, 100dvh); }
 .mobile-term--gone {
   align-items: center;
   justify-content: center;
@@ -493,11 +495,12 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 /* The hover actions a hidden-head card keeps for the desktop. */
 .mobile-term .card-shell__hidden-head-actions { display: none; }
-/* The long-press menu around the thumb (RadialMenu.tsx, radial-menu.ts). */
+/* The long-press menu around the thumb (RadialMenu.tsx, radial-menu.ts):
+   over the bottom bar, which a press low on the terminal puts it beside. */
 .m-radial {
   position: fixed;
   inset: 0;
-  z-index: 2147483150;
+  z-index: 2147483170;
   pointer-events: none;
   animation: m-radial-in 120ms ease-out;
 }
