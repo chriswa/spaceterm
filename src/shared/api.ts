@@ -249,8 +249,7 @@ export interface SummaryChatToggleResult {
 }
 
 /**
- * Speech for text the app already has in hand — a terminal selection, or an
- * utterance pushed in by the MCP `TTS` tool or `spaceterm-speak`.
+ * Speech for text the app already has in hand: a terminal selection.
  *
  * Every member routes to the server, which owns the Voice Operator job. The
  * renderer deliberately keeps no "am I speaking" flag of its own: it used to,

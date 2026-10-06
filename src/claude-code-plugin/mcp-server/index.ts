@@ -5,7 +5,6 @@ import { spawnClaudeSurfaceTool } from './spawn-claude-surface.js'
 import { forkClaudeSurfaceTool } from './fork-claude-surface.js'
 import { spacetermBroadcastTool } from './spaceterm-broadcast.js'
 import { playSoundTool } from './play-sound.js'
-import { ttsTool } from './tts.js'
 import { selfTerminateTool } from './self-terminate.js'
 import { startStdioServer } from './stdio-mcp.js'
 import { recoverSpacetermEnvFromAncestors } from './surface-env.js'
@@ -15,7 +14,7 @@ recoverSpacetermEnvFromAncestors()
 startStdioServer({
   name: 'spaceterm-mcp',
   version: '0.1.0',
-  tools: [emitMarkdownTool, emitMarkdownOnParentTool, resolveHandoffContextTool, spawnClaudeSurfaceTool, forkClaudeSurfaceTool, spacetermBroadcastTool, playSoundTool, ttsTool, selfTerminateTool],
+  tools: [emitMarkdownTool, emitMarkdownOnParentTool, resolveHandoffContextTool, spawnClaudeSurfaceTool, forkClaudeSurfaceTool, spacetermBroadcastTool, playSoundTool, selfTerminateTool],
 }).catch((error: unknown) => {
   console.error('Fatal error:', error)
   process.exit(1)

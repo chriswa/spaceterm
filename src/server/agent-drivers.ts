@@ -207,7 +207,6 @@ function codexDriver(provisioning: AgentProvisioning): AgentDriver {
         // feature as stage `removed` with effective state `true` as of 0.153.4,
         // so the flag is accepted and ignored: MCP tools are always deferred,
         // and a model asked to use one answers "no such tool" without searching.
-        // `CODEX_SKILLS` in agent-provisioning.ts is what actually surfaces them.
         '--disable', 'tool_search_always_defer_mcp_tools',
         '-p', 'spaceterm',
       ]

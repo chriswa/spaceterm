@@ -1,10 +1,7 @@
 /**
  * The two short tones that bracket spoken text.
  *
- * Rising when speech starts, falling when it stops. They exist because speech
- * can start without anyone pressing a key — an agent's MCP `TTS` call, or
- * `spaceterm-speak` — and a voice arriving out of nowhere is startling in a way
- * that a voice arriving after a chirp is not.
+ * Rising when speech starts, falling when it stops.
  *
  * Driven by the server's `speech-active` broadcast rather than by the gesture
  * that asked for speech, so the cue follows what the engine is actually doing.

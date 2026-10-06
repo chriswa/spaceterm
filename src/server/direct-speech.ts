@@ -3,8 +3,8 @@ import { VoiceOperator, speechStatus, type SpeechStatus } from './voice-operator
 import { cleanTerminalCopy } from '../shared/cleanTerminalCopy'
 
 /**
- * Speech for text that is handed to us already written: the MCP `TTS` tool, the
- * `spaceterm-speak` CLI, and the speak-the-selection chord.
+ * Speech for text that is handed to us already written: the speak-the-selection
+ * chord. Agents do not speak on their own; Control relays them.
  *
  * Distinct from Summary Chat, which runs a model to *produce* what it speaks
  * and keeps a per-surface conversation around it. This path has no
@@ -44,7 +44,7 @@ export class DirectSpeech {
   /**
    * Jobs Voice Operator has accepted and not yet finished.
    *
-   * A set rather than one id because the service queues: two MCP calls in quick
+   * A set rather than one id because the service queues: two presses in quick
    * succession are two live jobs, and a stop gesture means both. Tracked at all
    * — rather than asking the service what is playing — because only these are
    * *ours*; Summary Chat's jobs are on the same service and must survive a

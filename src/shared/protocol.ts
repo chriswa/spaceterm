@@ -950,7 +950,6 @@ export type IngestMessage =
   | ForkClaudeSurfaceMessage
   | SpacetermBroadcastMessage
   | PlaySoundMessage
-  | SpeakMessage
   | VoiceCommandMessage
 
 /**
@@ -1473,12 +1472,6 @@ export interface PlaySoundServerMessage {
   sound: SoundName
 }
 
-export interface SpeakMessage {
-  type: 'speak'
-  surfaceId: PtySessionId
-  text: string
-}
-
 /** What a speak request did, as far as the listener is concerned. */
 export type SpeakOutcome = 'started' | 'stopped' | 'unavailable' | 'muted' | 'empty'
 
@@ -1495,10 +1488,6 @@ export interface SpeakToggleResultMessage {
 /**
  * Whether the direct speech path is saying anything, broadcast so every client
  * can play its start and stop cues.
- *
- * Broadcast rather than answered per-press because an MCP `TTS` call and the
- * `spaceterm-speak` CLI start speech nobody pressed a key for, and those
- * deserve the same cue as a selection read aloud.
  */
 export interface SpeechActiveMessage {
   type: 'speech-active'

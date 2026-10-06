@@ -326,9 +326,8 @@ let voiceTarget: 'summary' | 'receptionist' = 'receptionist'
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
 /**
- * Speech for text nobody had to generate: the MCP `TTS` tool, `spaceterm-speak`,
- * and the speak-the-selection chord. Constructed eagerly — unlike SummaryChat,
- * it needs nothing from startup recovery, and an MCP call can arrive before it.
+ * Speech for text nobody had to generate: the speak-the-selection chord.
+ * Constructed eagerly — unlike SummaryChat, it needs nothing from startup recovery.
  */
 const directSpeech = new DirectSpeech({
   vo: new VoiceOperator(),
@@ -1431,11 +1430,6 @@ function handleIngestMessage(msg: IngestMessage): void {
 
     case 'play-sound': {
       broadcastToAll({ type: 'play-sound', sound: msg.sound })
-      break
-    }
-
-    case 'speak': {
-      void directSpeech.speak(msg.text)
       break
     }
 

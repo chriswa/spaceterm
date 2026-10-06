@@ -7,8 +7,7 @@ import { homedir } from 'os'
  *
  * Two features speak: Summary Chat, which runs a whole conversation and needs
  * the job lifecycle (poll, interrupt offsets, voices), and the direct path —
- * the MCP `TTS` tool, `spaceterm-speak`, and the speak-the-selection chord —
- * which only needs "say this, stop that". Both used to own their own transport;
+ * the speak-the-selection chord — which only needs "say this, stop that". Both used to own their own transport;
  * the direct one spawned a `cartesia-read` binary that no longer exists, and
  * failed silently for exactly as long as nobody pressed the chord.
  *
