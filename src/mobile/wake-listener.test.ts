@@ -98,7 +98,7 @@ describe('UtteranceEndpointer', () => {
     e.kind === 'ended' ? `ended:${e.reason}` : e.kind === 'pause' && e.wakeWordOnly ? 'pause:wake-word-only' : e.kind)
 
   it('reports each pause once, and speech resuming after it', () => {
-    const events = run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 1000), speech(2000), silence(600), speech(1000), silence(600))
+    const events = run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 1000), speech(2000), silence(1000), speech(1000), silence(1000))
     expect(kinds(events)).toEqual(['pause', 'resumed', 'pause'])
   })
 
@@ -106,8 +106,8 @@ describe('UtteranceEndpointer', () => {
     // The wake word, 0.6 s of it, was said before the dictation began; the Mac's check took a second.
     const endpointer = new UtteranceEndpointer(DEFAULT_TUNING, 1800, 600)
     expect(kinds(run(endpointer, silence(3000)))).toEqual(['pause:wake-word-only'])
-    // Still waiting at three seconds — a short request's patience is a second and a half.
-    expect(kinds(run(endpointer, speech(2000), silence(600)))).toEqual(['resumed', 'pause'])
+    // Still waiting at three seconds — a short request's patience would be up by now.
+    expect(kinds(run(endpointer, speech(2000), silence(1000)))).toEqual(['resumed', 'pause'])
   })
 
   it('gives up on a wake word left alone after afterWakeWordMs', () => {
@@ -117,11 +117,11 @@ describe('UtteranceEndpointer', () => {
 
   it('ends a short request after endSilenceMinMs, but not on a shorter pause', () => {
     expect(kinds(run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000), speech(2000), silence(1000), speech(1000), silence(1000)))).not.toContain('ended:silence')
-    expect(kinds(run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000), speech(2000), silence(2000)))).toContain('ended:silence')
+    expect(kinds(run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000), speech(2000), silence(3500)))).toContain('ended:silence')
   })
 
   it('does not hear loud sound that is not speech as talking', () => {
-    expect(kinds(run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000), speech(2000), noise(2000)))).toContain('ended:silence')
+    expect(kinds(run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000), speech(2000), noise(3500)))).toContain('ended:silence')
   })
 
   it('waits far longer for the next thought deep into a monologue', () => {
@@ -136,8 +136,8 @@ describe('UtteranceEndpointer', () => {
 
 describe('endSilenceFor', () => {
   it('grows from the minimum for a quick request to the maximum at the ramp, and no further', () => {
-    expect(endSilenceFor(0, DEFAULT_TUNING)).toBe(1500)
-    expect(endSilenceFor(150_000, DEFAULT_TUNING)).toBe(10_750)
+    expect(endSilenceFor(0, DEFAULT_TUNING)).toBe(3000)
+    expect(endSilenceFor(150_000, DEFAULT_TUNING)).toBe(11_500)
     expect(endSilenceFor(300_000, DEFAULT_TUNING)).toBe(20_000)
     expect(endSilenceFor(900_000, DEFAULT_TUNING)).toBe(20_000)
   })

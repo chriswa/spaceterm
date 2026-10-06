@@ -12,7 +12,7 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, UtteranceEndpointer, WakeListener
 
 /**
  * Hands-free mode: start talking with "Control" and just keep going — "Control,
- * what's Kevin doing?" — and end with "over and out", or by going quiet.
+ * what's Kevin doing?" — and stop when you are done.
  *
  * Runs whenever this phone holds its microphone open (held-microphone.ts) —
  * the hold button *is* the always-listen switch. What the microphone hears
@@ -31,14 +31,13 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, UtteranceEndpointer, WakeListener
  * retroactive. A start tone would land mid-sentence, in the recording; the end
  * tone is the confirmation that it was heard and sent.
  *
- * It ends when Voice Operator hears "over and out" (watched for on-device,
- * alongside Wispr); or at a pause, when the server's turn model (Smart Turn,
+ * It ends at a pause, when the server's turn model (Smart Turn,
  * src/server/turn-detector.ts) says the speaker sounds finished; or when a
  * pause outlasts a patience that grows with how long they have been talking
- * — a second and a half for a quick request, up to twenty seconds into a
- * monologue — for when the model is unsure or unavailable. "Control" is stripped
- * off the front of the transcript, "over and out" and anything after it off
- * the end, and the rest goes to Control, which comes to this device.
+ * — three seconds for a quick request, up to twenty seconds into a monologue
+ * — for when the model is unsure or unavailable. "Control" is stripped off the
+ * front of the transcript, and the rest goes to Control, which comes to this
+ * device.
  *
  * It does not listen while this phone is playing anything (Control's voice, a
  * cue) or for `playbackTailMs` after, so it never hears itself; nor while a
@@ -49,7 +48,6 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, UtteranceEndpointer, WakeListener
  */
 
 export const WAKE_WORD = 'control'
-export const END_PHRASE = 'over and out'
 
 export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
 
@@ -57,16 +55,10 @@ export const useHandsFree = create<{ phase: HandsFreePhase }>(() => ({ phase: 'o
 
 /**
  * What Wispr wrote, as Control should get it: the wake word off the front,
- * the end phrase and anything after it off the end. Punctuation and case
- * around either are ignored. Empty when nothing else was said.
+ * punctuation and case around it ignored. Empty when nothing else was said.
  */
 export function cleanHandsFreeText(text: string): string {
-  let out = text.trim().replace(/^control\b[\s,.!?:;…—–-]*/i, '')
-  const end = /\bover[\s,.!?…—–-]+(?:and|&)[\s,.!?…—–-]+out\b/gi
-  let last: RegExpExecArray | null = null
-  for (let match = end.exec(out); match; match = end.exec(out)) last = match
-  if (last) out = out.slice(0, last.index)
-  return out.replace(/[\s,;:…—–-]+$/, '').trim()
+  return text.trim().replace(/^control\b[\s,.!?:;…—–-]*/i, '').trim()
 }
 
 /** A dictation as hands-free mode drives it. */
@@ -122,11 +114,8 @@ const LEVELS_REPORT_MS = 30_000
 /** Frames waiting on a slow speech detector beyond this (about 3 s) are dropped, and listening starts afresh. */
 const MAX_QUEUED_FRAMES = 100
 
-/**
- * Why a dictation ended: the end phrase, the turn model, the endpointer's
- * silence or cap, or the microphone going away.
- */
-type EndReason = 'over and out' | 'finished' | 'silence' | 'too-long' | 'lost'
+/** Why a dictation ended: the turn model, the endpointer's silence or cap, or the microphone going away. */
+type EndReason = 'finished' | 'silence' | 'too-long' | 'lost'
 
 export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps = REAL_DEPS(api)): () => void {
   const { log } = deps
@@ -186,14 +175,14 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       return false
     })
 
-  /** The wake word heard: dictate from where the user started, until the end phrase or quiet; send to Control. */
+  /** The wake word heard: dictate from where the user started until they finish; send to Control. */
   const respond = async ({ start, spokeMs }: WakeCandidate) => {
     setPhase('hearing')
     deps.haptic()
     let dictation: HandsFreeDictation | undefined
     try {
       if (!capture) throw new Error('the microphone went away')
-      // Ends on the end phrase, on what the endpointer hears — or, if audio stops coming, on the clock.
+      // Ends on what the turn model and the endpointer hear — or, if audio stops coming, on the clock.
       let ended: (reason: EndReason) => void = () => undefined
       const end = new Promise<EndReason>((resolve) => { ended = resolve })
       let backlogMs = 0
@@ -203,8 +192,6 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
           backlogMs = (audio.length / 16_000) * 1000
           return audio
         },
-        endPhrase: END_PHRASE,
-        onEndPhrase: () => ended('over and out'),
       })
       utterance = new UtteranceEndpointer(tuning, backlogMs, spokeMs)
       utteranceDictation = dictation

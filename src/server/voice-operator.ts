@@ -214,16 +214,12 @@ export class VoiceOperator {
   // one process may hold them) and the streaming connection. These relay audio
   // captured elsewhere — the phone — through it. See RemoteDictation.
 
-  /**
-   * Open a transcription; Voice Operator starts streaming to Wispr at once.
-   * `watch`: a phrase it listens for alongside, on-device; the audio post
-   * that follows its being heard answers 200 `{ heard: true }`.
-   */
-  startTranscription(sampleRate: number, watch?: string): Promise<SpeechResponse> {
-    return this.request('/v1/transcriptions', { method: 'POST', body: JSON.stringify({ sample_rate: sampleRate, ...(watch ? { watch } : {}) }) })
+  /** Open a transcription; Voice Operator starts streaming to Wispr at once. */
+  startTranscription(sampleRate: number): Promise<SpeechResponse> {
+    return this.request('/v1/transcriptions', { method: 'POST', body: JSON.stringify({ sample_rate: sampleRate }) })
   }
 
-  /** Raw PCM, signed 16-bit little-endian mono, at the session's rate. 204, or 200 once a watched-for phrase is heard. */
+  /** Raw PCM, signed 16-bit little-endian mono, at the session's rate. */
   sendTranscriptionAudio(id: string, pcm: Uint8Array): Promise<SpeechResponse> {
     return this.request(`/v1/transcriptions/${encodeURIComponent(id)}/audio`, {
       method: 'POST', body: new Uint8Array(pcm), headers: { 'content-type': 'application/octet-stream' },

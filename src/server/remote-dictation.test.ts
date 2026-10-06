@@ -7,8 +7,8 @@ function fakeVoice(overrides: Partial<Record<'start' | 'audio' | 'finish', Speec
   const calls: string[] = []
   const voice = {
     calls,
-    async startTranscription(rate: number, watch?: string) {
-      calls.push(`start ${rate}${watch ? ` watching "${watch}"` : ''}`)
+    async startTranscription(rate: number) {
+      calls.push(`start ${rate}`)
       return 'start' in overrides ? overrides.start : { status: 201, body: { id: 't1' } }
     },
     async sendTranscriptionAudio(id: string, pcm: Uint8Array) {
@@ -75,20 +75,6 @@ describe('RemoteDictation', () => {
     d.cancelAllFor('phone')
     expect(voice.calls).toEqual(['start 16000', 'cancel t1'])
     expect((await d.finish('phone', 't1')).ok).toBe(false)
-  })
-})
-
-describe('RemoteDictation, an end phrase', () => {
-  it('tells the client once when Voice Operator hears it, and still finishes normally', async () => {
-    const ended: string[] = []
-    const voice = fakeVoice({ audio: { status: 200, body: { heard: true } } })
-    const d = new RemoteDictation(voice, { onEndPhrase: (owner, id) => ended.push(`${owner} ${id}`) })
-    await d.start('phone', 16000, 'over and out')
-    d.audio('phone', 't1', new Uint8Array(2))
-    d.audio('phone', 't1', new Uint8Array(2))
-    await expect(d.finish('phone', 't1')).resolves.toEqual({ ok: true, value: 'hello there' })
-    expect(ended).toEqual(['phone t1'])
-    expect(voice.calls[0]).toBe('start 16000 watching "over and out"')
   })
 })
 

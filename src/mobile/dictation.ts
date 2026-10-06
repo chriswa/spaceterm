@@ -93,9 +93,6 @@ export interface DictationOptions {
    * gap: hands-free mode hands over everything said since the wake word.
    */
   backlog?: () => Int16Array
-  /** A phrase that ends the dictation wherever it is said; `onEndPhrase` hears it. */
-  endPhrase?: string
-  onEndPhrase?: () => void
 }
 
 export class Dictation {
@@ -137,10 +134,6 @@ export class Dictation {
       this.queued.push(backlog)
       log(`starting with ${(backlog.length / TARGET_SAMPLE_RATE).toFixed(1)}s already heard`)
     }
-    const onEndPhrase = options.onEndPhrase
-    this.offEndPhrase = onEndPhrase
-      ? api.onEndPhrase((id) => { if (id === this.id && !this.stopped) onEndPhrase() })
-      : () => undefined
     this.unlisten = capture.listen((block) => {
       if (this.stats.blocks === 0) {
         log(`first audio after ${Math.round(performance.now() - this.began)}ms (${capture.describe()})`)
@@ -167,7 +160,6 @@ export class Dictation {
   }
 
   private readonly started: Promise<string>
-  private readonly offEndPhrase: () => void
 
   /**
    * Take the microphone and open a server session, in parallel. Call inside a
@@ -177,7 +169,7 @@ export class Dictation {
     // Asked for before the first await, so a microphone that must be opened
     // is opened inside the tap, as iOS requires.
     const capturing = acquire()
-    const started = api.start(TARGET_SAMPLE_RATE, options.endPhrase)
+    const started = api.start(TARGET_SAMPLE_RATE)
     started.catch(() => undefined)
     let capture: Capture
     try {
@@ -268,7 +260,6 @@ export class Dictation {
     this.stopped = true
     Dictation.live--
     bump('capturing', -1)
-    this.offEndPhrase()
     window.clearInterval(this.timer)
     this.unlisten()
     this.capture.release(broken)

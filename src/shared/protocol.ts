@@ -400,13 +400,6 @@ export interface DictationStartMessage {
   seq: number
   /** Hz. PCM is signed 16-bit little-endian mono at this rate. */
   sampleRate: number
-  /**
-   * A phrase that ends this dictation wherever it is said (hands-free's "over
-   * and out"), listened for on the Mac alongside Wispr, on-device. When it is
-   * heard the server sends `dictation-end-phrase`; finishing is still the
-   * client's to do.
-   */
-  endPhrase?: string
 }
 
 /** One chunk of audio, base64. Fire-and-forget: failures surface at finish. */
@@ -1974,12 +1967,6 @@ export interface DictationTurnResultMessage {
   probability: number | null
 }
 
-/** The end phrase a `dictation-start` asked for has been said. */
-export interface DictationEndPhraseMessage {
-  type: 'dictation-end-phrase'
-  id: string
-}
-
 export interface WakeWordResultMessage {
   type: 'wake-word-result'
   seq: number
@@ -2095,7 +2082,6 @@ export type ServerMessage =
   | ReceptionistTranscriptAppendedMessage
   | WakeWordResultMessage
   | HandsFreeTuningMessage
-  | DictationEndPhraseMessage
   | DictationTurnResultMessage
   | AgentNamesMessage
   | RestartFlagResultMessage

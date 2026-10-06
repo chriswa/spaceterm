@@ -101,22 +101,21 @@ transcript-only lines the model never sees (`amendHeard`, `notDone` in
 including the circle that turns while Control thinks; a button takes you back
 down when you are not.
 
-## Hands-free: "Control … over and out"
+## Hands-free: "Control, …"
 
 The hold-mic button (the microphone with a lock, right of the talk button) is
 the always-listen switch. While it holds the microphone, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
 phone taps (a haptic) and the button turns green; nothing waits on that, since
 the dictation is fed everything from your first syllable out of the
-listener's buffer. End with **"over and out"**, or just stop: at each pause
-the Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from
-your words and intonation whether you sound finished, and if it is sure, the
-dictation ends there. If it is not, a pause still ends it once it outlasts a
-patience that grows with how long you have been talking — a second and a half
-for a quick request, up to twenty seconds five minutes into a monologue. The
-end tone means it was heard and sent: "Control" comes off the
-front, "over and out" off the end, and the rest goes to Control, which comes
-to this phone. The dictation itself is ordinary Wispr, as the talk button's.
+listener's buffer. When you are done, just stop: at each pause of 0.8 s the
+Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from your
+words and intonation whether you sound finished, and if it is at least 85%
+sure, the dictation ends there. If it is not, a pause still ends it once it
+outlasts a patience that grows with how long you have been talking — three
+seconds for a quick request, up to twenty seconds five minutes into a
+monologue. The end tone means it was heard and sent: "Control" comes off the
+front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as the talk button's.
 
 - **Only "Control" said first counts**, with nobody talking just before it;
   the word anywhere else in a sentence never triggers. "Talking" is judged by
@@ -136,9 +135,7 @@ to this phone. The dictation itself is ordinary Wispr, as the talk button's.
   just before (`wake-listener.ts`). Only the first second of that goes to the Mac, where
   Voice Operator checks whether it starts with "control", with Apple's
   on-device model (`POST /v1/wake-word?match=start`) — never Wispr. Audio is
-  otherwise only ever in an eight-second buffer in memory. "Over and out" is
-  listened for by the same on-device model on the Mac, alongside Wispr, only
-  during a dictation.
+  otherwise only ever in an eight-second buffer in memory.
 - It does not listen while the phone is playing anything, or for a moment
   after, so Control never wakes itself; nor during a dictation it did not
   start.
@@ -148,9 +145,9 @@ to this phone. The dictation itself is ordinary Wispr, as the talk button's.
   pauses end dictations on silence alone.
 - **Thresholds** are in `~/.spaceterm/hands-free.json` on the Mac, read again
   whenever it changes — any of `noSpeechBeforeMs` (700), `onsetWindowMs`
-  (1000), `wordMinMs` (250), `pauseCheckMs` (300), `turnThreshold` (0.5, a
+  (1000), `wordMinMs` (250), `pauseCheckMs` (800), `turnThreshold` (0.85, a
   probability), `wakeWordOnlyMs` (1500), `afterWakeWordMs` (5000),
-  `endSilenceMinMs` (1500), `endSilenceMaxMs` (20000), `endSilenceRampMs`
+  `endSilenceMinMs` (3000), `endSilenceMaxMs` (20000), `endSilenceRampMs`
   (300000), `maxUtteranceMs` (600000), `playbackTailMs` (400).
 - **Why it did or did not trigger** is in `~/.spaceterm/mobile-events.jsonl`:
   a `hands-free-speech` event for every burst of speech the listener noticed —

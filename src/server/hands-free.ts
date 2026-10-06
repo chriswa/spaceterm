@@ -10,8 +10,6 @@ import type { SpeechResponse, VoiceOperator } from './voice-operator'
 
 /** The word that starts a hands-free dictation: the first word of what is said. */
 export const WAKE_WORD = 'control'
-/** The phrase that ends one, wherever it is said; watched for on-device. */
-export const END_PHRASE = 'over and out'
 
 export type WakeWordOutcome = { ok: true; match: boolean } | { ok: false; error: string }
 

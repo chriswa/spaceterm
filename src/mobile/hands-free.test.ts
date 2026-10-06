@@ -36,7 +36,7 @@ const fakeDetector: FrameScorer = {
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
-function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing? Over and out.', turn = null as number | null } = {}) {
+function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
     sampleRate: RATE,
@@ -52,7 +52,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
   const checked: number[] = []
   const cues: string[] = []
   let haptics = 0
-  const dictations: Array<{ backlogSeconds: number; endPhrase?: string; finished: boolean; cancelled: boolean; turnChecks: number; sayEndPhrase: () => void }> = []
+  const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
   let quietFor = 10_000
   const records: Array<{ kind: string; detail?: Record<string, unknown> }> = []
   const deps: HandsFreeDeps = {
@@ -62,7 +62,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
         say: (text) => said.push(text),
         onTuning: (cb) => { tuningListener = cb; return () => {} },
       },
-      dictation: { start: async () => 'id', audio: () => {}, finish: async () => '', cancel: () => {}, turnCheck: async () => null, onEndPhrase: () => () => {} },
+      dictation: { start: async () => 'id', audio: () => {}, finish: async () => '', cancel: () => {}, turnCheck: async () => null },
     },
     log: () => {},
     heldCapture: () => held,
@@ -73,11 +73,9 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
     beginDictation: async (options: DictationOptions) => {
       const d = {
         backlogSeconds: (options.backlog?.().length ?? 0) / RATE,
-        endPhrase: options.endPhrase,
         finished: false,
         cancelled: false,
         turnChecks: 0,
-        sayEndPhrase: () => options.onEndPhrase?.(),
       }
       dictations.push(d)
       return {
@@ -129,25 +127,15 @@ describe('hands-free mode', () => {
     expect(useHandsFree.getState().phase).toBe('hearing')
     // Wispr gets everything since the user started, not just what came after the check.
     expect(h.dictations[0].backlogSeconds).toBeGreaterThan(1)
-    expect(h.dictations[0].endPhrase).toBe('over and out')
-    await h.hear(speech(1500), quiet(2000))
+    await h.hear(speech(1500), quiet(3500))
     expect(h.said).toEqual(['what is Kevin doing?'])
     expect(h.cues).toEqual(['listeningFinished', 'pasted'])
     expect(useHandsFree.getState().phase).toBe('listening')
   })
 
-  it('ends the moment "over and out" is heard, without waiting for quiet', async () => {
-    h = harness()
-    await h.hear(quiet(1500), speech(1500))
-    h.dictations[0].sayEndPhrase()
-    await settle()
-    expect(h.said).toEqual(['what is Kevin doing?'])
-    expect(h.dictations[0].finished).toBe(true)
-  })
-
   it('ends at the first pause where the turn model is sure the speaker has finished', async () => {
     h = harness({ turn: 0.93 })
-    await h.hear(quiet(1500), speech(2500), quiet(500))
+    await h.hear(quiet(1500), speech(2500), quiet(1000))
     expect(h.dictations[0].turnChecks).toBe(1)
     expect(h.said).toEqual(['what is Kevin doing?'])
   })
@@ -158,8 +146,8 @@ describe('hands-free mode', () => {
     expect(h.dictations[0].turnChecks).toBe(2)
     expect(h.said).toEqual([])
     expect(useHandsFree.getState().phase).toBe('hearing')
-    // Still unsure, but a short request's patience is a second and a half.
-    await h.hear(quiet(1000))
+    // Still unsure, but a short request's patience is three seconds.
+    await h.hear(quiet(2500))
     expect(h.said).toEqual(['what is Kevin doing?'])
   })
 
@@ -214,7 +202,7 @@ describe('hands-free mode', () => {
     expect(h.dictations[0].turnChecks).toBe(0)
     expect(useHandsFree.getState().phase).toBe('hearing')
     // Then the request itself, and a pause the turn model hears as finished.
-    await h.hear(speech(1500), quiet(600))
+    await h.hear(speech(1500), quiet(1000))
     expect(h.dictations[0].turnChecks).toBe(1)
     expect(h.said).toEqual(['What is Kevin doing?'])
   })
@@ -236,19 +224,14 @@ describe('hands-free mode', () => {
 })
 
 describe('cleanHandsFreeText', () => {
-  it('takes the wake word off the front and the end phrase off the end', () => {
-    expect(cleanHandsFreeText('Control, what is Kevin doing? Over and out.')).toBe('what is Kevin doing?')
-    expect(cleanHandsFreeText('control what is Kevin doing over and out')).toBe('what is Kevin doing')
-    expect(cleanHandsFreeText('Control. Tell Evan to stop, over & out')).toBe('Tell Evan to stop')
-  })
-
-  it('cuts at the last "over and out", dropping whatever came after it', () => {
-    expect(cleanHandsFreeText('Control, ask if it is over and outside. Over and out. Thanks')).toBe('ask if it is over and outside.')
+  it('takes the wake word off the front', () => {
+    expect(cleanHandsFreeText('Control, what is Kevin doing?')).toBe('what is Kevin doing?')
+    expect(cleanHandsFreeText('control what is Kevin doing')).toBe('what is Kevin doing')
+    expect(cleanHandsFreeText('Control. Tell Evan to stop.')).toBe('Tell Evan to stop.')
   })
 
   it('leaves "control" alone anywhere but first, and is empty when nothing else was said', () => {
     expect(cleanHandsFreeText('Take control of the build.')).toBe('Take control of the build.')
     expect(cleanHandsFreeText('Control.')).toBe('')
-    expect(cleanHandsFreeText('Control, over and out.')).toBe('')
   })
 })

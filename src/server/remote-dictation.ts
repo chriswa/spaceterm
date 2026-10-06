@@ -20,8 +20,6 @@ interface Session {
   chain: Promise<void>
   /** The first audio failure, reported at finish rather than dropped. */
   failure?: string
-  /** Its end phrase has been heard, and the client told. */
-  ended?: boolean
   /** The last few seconds, as floats, for the turn model — only for 16 kHz sessions, and only with one. */
   recent?: { blocks: Float32Array[]; samples: number }
 }
@@ -36,8 +34,6 @@ export interface RemoteDictationHooks {
    * waits on, so it never talks over the user.
    */
   onSpeaking?: (speaking: boolean) => void
-  /** Once per dictation: the phrase it was started with has been said — the client's cue to finish it. */
-  onEndPhrase?: (owner: string, id: string) => void
   /**
    * The turn model (turn-detector.ts): the probability, from 16 kHz audio
    * ending now, that the speaker has finished. Undefined when there is none.
@@ -74,9 +70,8 @@ export class RemoteDictation {
     if (this.speaking !== before) this.hooks.onSpeaking?.(this.speaking)
   }
 
-  /** `endPhrase`: listen for it alongside (hands-free's "over and out"); see `onEndPhrase`. */
-  async start(owner: string, sampleRate: number, endPhrase?: string): Promise<DictationOutcome<string>> {
-    const response = await this.voice.startTranscription(sampleRate, endPhrase)
+  async start(owner: string, sampleRate: number): Promise<DictationOutcome<string>> {
+    const response = await this.voice.startTranscription(sampleRate)
     const id = (response?.body as { id?: unknown } | undefined)?.id
     if (response?.status !== 201 || typeof id !== 'string') {
       return { ok: false, error: describe(response, 'start transcribing') }
@@ -99,14 +94,7 @@ export class RemoteDictation {
     session.chain = session.chain.then(async () => {
       if (session.failure) return
       const response = await this.voice.sendTranscriptionAudio(id, pcm)
-      if (response?.status === 200 && (response.body as { heard?: unknown } | undefined)?.heard === true) {
-        if (!session.ended) {
-          session.ended = true
-          this.hooks.onEndPhrase?.(owner, id)
-        }
-      } else if (response?.status !== 204) {
-        session.failure = describe(response, 'take the audio')
-      }
+      if (response?.status !== 204) session.failure = describe(response, 'take the audio')
     })
   }
 

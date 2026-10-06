@@ -189,7 +189,6 @@ export class FakeBridge implements Api {
   private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
   private readonly handsFreeTuning = new Set<(tuning: Partial<HandsFreeTuning>) => void>()
-  private readonly dictationEndPhrase = new Set<(id: string) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -305,7 +304,6 @@ export class FakeBridge implements Api {
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     transcriptAppended: (entries: ControlTranscriptEntry[]): void => { for (const fn of this.transcriptAppended) fn(entries) },
     handsFreeTuning: (tuning: Partial<HandsFreeTuning>): void => { for (const fn of this.handsFreeTuning) fn(tuning) },
-    dictationEndPhrase: (id: string): void => { for (const fn of this.dictationEndPhrase) fn(id) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
@@ -453,12 +451,11 @@ export class FakeBridge implements Api {
   }
 
   readonly dictation: DictationApi = {
-    start: (sampleRate, endPhrase) => this.reply('dictation.start', 'fake-dictation', sampleRate, endPhrase),
+    start: (sampleRate) => this.reply('dictation.start', 'fake-dictation', sampleRate),
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
     cancel: (id) => this.record('dictation.cancel', id),
-    turnCheck: (id) => this.reply('dictation.turnCheck', null as number | null, id),
-    onEndPhrase: (cb) => subscribe(this.dictationEndPhrase, cb)
+    turnCheck: (id) => this.reply('dictation.turnCheck', null as number | null, id)
   }
 
   readonly handsFree: HandsFreeApi = {

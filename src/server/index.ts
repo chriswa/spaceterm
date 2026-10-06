@@ -355,10 +355,6 @@ const turnDetector = new TurnDetector(realTurnDetectorDeps(path.join(SOCKET_DIR,
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator(), {
   onSpeaking: (speaking) => receptionist?.userSpeaking(speaking),
-  onEndPhrase: (owner, id) => {
-    const client = [...clients].find((c) => c.id === owner)
-    if (client) send(client.link, { type: 'dictation-end-phrase', id })
-  },
   turnProbability: (audio) => turnDetector.probability(audio),
 })
 
@@ -1861,9 +1857,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-start': {
       const seq = msg.seq
-      // Hands-free: it will ask whether the speaker has finished at its first pause.
-      if (msg.endPhrase) turnDetector.warm()
-      void remoteDictation.start(client.id, msg.sampleRate, msg.endPhrase).then((outcome) => {
+      void remoteDictation.start(client.id, msg.sampleRate).then((outcome) => {
         send(client.link, outcome.ok
           ? { type: 'dictation-started', seq, id: outcome.value }
           : { type: 'server-error', seq, message: outcome.error })
@@ -1906,6 +1900,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'wake-word-check': {
       const seq = msg.seq
+      // A hands-free dictation may be moments away, and will ask the turn model at its first pause.
+      turnDetector.warm()
       void checkWakeWord(wakeWordVoiceOperator, Buffer.from(msg.pcm, 'base64')).then((outcome) => {
         if (!outcome.ok) serverLog(`[hands-free] ${outcome.error}`)
         else if (outcome.match) serverLog(`[hands-free] wake word heard on ${client.device?.label ?? client.id.slice(0, 8)}`)
