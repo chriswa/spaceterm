@@ -44,7 +44,7 @@ function harness(seed?: unknown): Harness {
 }
 
 function createTerminal(sm: StateManager, sessionId: string, parentId = ROOT_NODE_ID): TerminalNodeData {
-  return sm.createTerminal({ sessionId: pid(sessionId), parentId, x: 0, y: 0, cols: 80, rows: 24 })
+  return sm.createTerminal({ sessionId: pid(sessionId), parentId, x: 0, y: 0, cols: 80, rows: 24, agentType: undefined })
 }
 
 /**
@@ -232,7 +232,7 @@ describe('createTerminal', () => {
     const a = createTerminal(sm, 't1')
     const cSortOrderBefore = createTerminal(sm, 't3').sortOrder
 
-    const b = sm.createTerminal({ sessionId: pid('t2'), parentId: nid('root'), x: 0, y: 0, cols: 80, rows: 24, insertAfterNodeId: nid('t1') })
+    const b = sm.createTerminal({ sessionId: pid('t2'), parentId: nid('root'), x: 0, y: 0, cols: 80, rows: 24, insertAfterNodeId: nid('t1'), agentType: undefined })
 
     const after = sm.getNode(nid('t3')) as TerminalNodeData
     expect(b.sortOrder).toBe(a.sortOrder + 1)

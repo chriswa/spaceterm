@@ -203,7 +203,13 @@ export interface NewTerminalSpec {
    * than at the end. Set when forking, so the fork lands beside its source.
    */
   insertAfterNodeId?: NodeId
-  agentType?: AgentType
+  /**
+   * The agent CLI this surface launches, or undefined for a plain shell.
+   * Required so every creation path has to decide: a surface left undefined
+   * cannot tell its own agent's hooks from those of an agent CLI started
+   * inside it (see `isForeignAgentHook`), and adopts that child's session.
+   */
+  agentType: AgentType | undefined
   /** Marks a fork to be named by its first prompt; see `ForkTitler`. */
   pendingForkTitle?: { parentTitle: string | null }
 }

@@ -324,3 +324,31 @@ describe('migration 5 → 6: shell title history normalization', () => {
     expect(archived.shellTitleHistory).toEqual(['Archived | spaceterm'])
   })
 })
+
+describe('migration 6 → 7: agentType backfill', () => {
+  const session = [{ claudeSessionId: 'a1', reason: 'startup', timestamp: '2026-10-06T20:48:27.351Z' }]
+
+  it('marks live and archived agent surfaces with no agentType as Claude', () => {
+    const result = migrate({
+      version: 6,
+      nodes: { spawned: { type: 'terminal', claudeSessionHistory: session } },
+      rootArchivedChildren: [{ data: { type: 'terminal', claudeSessionHistory: session } }]
+    })
+    if (result.status !== 'ok') throw new Error('expected migrated state')
+    expect(result.state.nodes.spawned).toMatchObject({ agentType: 'claude' })
+    expect(result.state.rootArchivedChildren[0].data).toMatchObject({ agentType: 'claude' })
+  })
+
+  it('leaves plain shells and recorded agent types alone', () => {
+    const result = migrate({
+      version: 6,
+      nodes: {
+        shell: { type: 'terminal', claudeSessionHistory: [] },
+        cursor: { type: 'terminal', agentType: 'cursor', claudeSessionHistory: session }
+      }
+    })
+    if (result.status !== 'ok') throw new Error('expected migrated state')
+    expect(result.state.nodes.shell).not.toHaveProperty('agentType')
+    expect(result.state.nodes.cursor).toMatchObject({ agentType: 'cursor' })
+  })
+})

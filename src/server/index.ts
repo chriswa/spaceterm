@@ -498,7 +498,7 @@ function spawnClaudeSurface(parentNodeId: NodeId, cwd: string | undefined, promp
   snapshotManager.addSession(sessionId, cols, rows)
   const position = computePlacement(stateManager.getState().nodes, parentNodeId, agentSurfaceFootprint(cols, rows))
   return stateManager.createTerminal({
-    sessionId, parentId: parentNodeId, x: position.x, y: position.y, cols, rows, cwd, name: title,
+    sessionId, parentId: parentNodeId, x: position.x, y: position.y, cols, rows, cwd, name: title, agentType: 'claude',
   })
 }
 
@@ -1174,7 +1174,7 @@ const scriptApi = new ScriptApi({
       stateManager.createTerminal({
         sessionId: forkPtyId, parentId, x: forkPos.x, y: forkPos.y, cols: forkCols, rows: forkRows,
         cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory, insertAfterNodeId: sourceNodeId,
-        name: FORK_LABEL, pendingForkTitle: { parentTitle: surfaceTitle(forkNode) }
+        name: FORK_LABEL, pendingForkTitle: { parentTitle: surfaceTitle(forkNode) }, agentType: 'claude',
       })
       if (forkNode.shellTitleHistory?.length) {
         sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
@@ -1412,7 +1412,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         stateManager.createTerminal({
           sessionId: forkPtyId, parentId: forkSrcNodeId, x: forkPos.x, y: forkPos.y,
           cols: forkCols, rows: forkRows, cwd: forkCwd,
-          initialTitleHistory: forkSrcNode.shellTitleHistory, name: forkName(msg.title)
+          initialTitleHistory: forkSrcNode.shellTitleHistory, name: forkName(msg.title), agentType: 'claude',
         })
         if (forkSrcNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkSrcNode.shellTitleHistory)
@@ -1527,7 +1527,7 @@ function handleIngestMessage(msg: IngestMessage): void {
 function spawnTerminalNode(
   parentId: NodeId,
   options: CreateOptions | undefined,
-  extra: { x?: number; y?: number; initialTitleHistory?: string[]; name?: string; agentType?: AgentType },
+  extra: { x?: number; y?: number; initialTitleHistory?: string[]; name?: string; agentType: AgentType | undefined },
 ): { sessionId: PtySessionId; cols: number; rows: number } {
   const { sessionId, cols, rows } = sessionManager.create(options)
   snapshotManager.addSession(sessionId, cols, rows)
@@ -2307,7 +2307,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const reply = (ok: boolean, error?: string) =>
         send(client.link, { type: 'directory-command-result', seq: msg.seq, ok, error })
       try {
-        const { sessionId } = spawnTerminalNode(msg.nodeId, { cwd: resolveFilePath(dirNode.cwd) }, { name: label })
+        const { sessionId } = spawnTerminalNode(msg.nodeId, { cwd: resolveFilePath(dirNode.cwd) }, { name: label, agentType: undefined })
         promptedCommands.run(sessionId, `${label} && exit`, (outcome) => {
           gitStatusPoller.pollNode(msg.nodeId)
           if (outcome.kind === 'exited' && outcome.exitCode === 0) reply(true)
@@ -2632,7 +2632,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           stateManager.createTerminal({
             sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
             cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,
-            name: FORK_LABEL, pendingForkTitle, insertAfterNodeId: msg.nodeId, agentType: 'codex'
+            name: FORK_LABEL, pendingForkTitle, insertAfterNodeId: msg.nodeId, agentType: forkDriver.type,
           })
           if (forkNode.shellTitleHistory?.length) {
             sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)
@@ -2664,7 +2664,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         stateManager.createTerminal({
           sessionId: forkPtyId, parentId: forkParentId, x: forkPos.x, y: forkPos.y,
           cols: forkCols, rows: forkRows, cwd: forkCwd, initialTitleHistory: forkNode.shellTitleHistory,
-          name: FORK_LABEL, pendingForkTitle, insertAfterNodeId: msg.nodeId
+          name: FORK_LABEL, pendingForkTitle, insertAfterNodeId: msg.nodeId, agentType: 'claude',
         })
         if (forkNode.shellTitleHistory?.length) {
           sessionManager.seedTitleHistory(forkPtyId, forkNode.shellTitleHistory)

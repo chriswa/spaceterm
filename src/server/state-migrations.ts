@@ -11,7 +11,7 @@ import { normalizeShellTitleHistory } from './shell-title-history'
  * 1 → 2 therefore normalises defensively instead of assuming a known shape. From
  * version 2 on, the number means what it says.
  */
-export const CURRENT_STATE_VERSION = 6
+export const CURRENT_STATE_VERSION = 7
 
 /** A persisted document as it comes off disk: shape unknown until migrated. */
 export type PersistedDoc = Record<string, unknown>
@@ -71,7 +71,35 @@ function normalizeTitleHistories(value: unknown): void {
   for (const child of Object.values(value)) normalizeTitleHistories(child)
 }
 
+/**
+ * Record `agentType: 'claude'` on every terminal, archived ones included, that
+ * has run an agent session but never recorded which agent. Surfaces spawned by
+ * Control, `spawn_claude_surface` and forks were created without it, and every
+ * agent surface in such a state file was launched as Claude.
+ */
+function backfillClaudeAgentType(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) backfillClaudeAgentType(item)
+    return
+  }
+  if (!isRecord(value)) return
+  if (
+    value.type === 'terminal' && value.agentType === undefined
+    && Array.isArray(value.claudeSessionHistory) && value.claudeSessionHistory.length > 0
+  ) {
+    value.agentType = 'claude'
+  }
+  for (const child of Object.values(value)) backfillClaudeAgentType(child)
+}
+
 export const MIGRATIONS: Migration[] = [
+  {
+    to: 7,
+    description: 'record agentType on Claude surfaces created without one',
+    migrate(doc) {
+      backfillClaudeAgentType(doc)
+    }
+  },
   {
     to: 6,
     description: 'remove Codex title-spinner frames, renaming placeholders, and duplicate shell titles',
