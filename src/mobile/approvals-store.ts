@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import { approvalKey, parseApprovalDocument, type ApprovalItem, type ApprovalsSnapshot, type ApprovalTone } from '../shared/approvals'
 import { pendingUpdateKeys } from './update-notices'
+import { playCue } from './cues'
 
 /**
  * The phone's notifications: approval requests waiting on the Mac (opProxy's,
@@ -100,7 +101,27 @@ export function toneOf(tone: string | undefined): ApprovalTone {
   return tone === 'info' || tone === 'danger' ? tone : 'caution'
 }
 
-/** Keeps the store fed from the server for as long as the phone app is up. */
+/**
+ * The keys of requests in `snapshot` not yet announced, adding them to
+ * `announced`. A request is announced once, however often it is re-sent.
+ */
+export function takeArrivals(snapshot: ApprovalsSnapshot, announced: Set<string>): string[] {
+  const arrivals = snapshot.items.map(approvalKey).filter((key) => !announced.has(key))
+  for (const key of arrivals) announced.add(key)
+  return arrivals
+}
+
+/**
+ * Keeps the store fed from the server for as long as the phone app is up, and
+ * chimes when a request arrives — opProxy's own question chime. Requests
+ * already read before a reload stay quiet.
+ */
 export function useApprovalsWatch(): void {
-  useEffect(() => window.api.node.watchApprovals((snapshot) => useApprovalsStore.getState().setSnapshot(snapshot)), [])
+  useEffect(() => {
+    const announced = new Set(useApprovalsStore.getState().seen)
+    return window.api.node.watchApprovals((snapshot) => {
+      useApprovalsStore.getState().setSnapshot(snapshot)
+      if (takeArrivals(snapshot, announced).length > 0) playCue('approvalRequested')
+    })
+  }, [])
 }

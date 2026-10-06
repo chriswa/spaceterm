@@ -202,7 +202,8 @@ The bell left of the rocket (`NotificationsButton.tsx`) is the phone's
 notifications: opProxy's pending 1Password approvals, and the updates above
 (listed first, in the info tone). Dim with
 none; lit in the loudest request's tone with some; pulsing while any is unread,
-which ends when the list has shown it. The list (`NotificationsSheet.tsx`) is a
+which ends when the list has shown it. A new request chimes once
+(`approvalRequested` in `cues.ts`), the same chime opProxy's Mac dialog plays. The list (`NotificationsSheet.tsx`) is a
 screen like Control's transcript; a row opens the request (`ApprovalView.tsx`).
 A request vanishes when it is answered anywhere or times out.
 

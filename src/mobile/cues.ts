@@ -10,15 +10,22 @@
  * Except the two hold cues, which are Spaceterm's own: the microphone held
  * open (held-microphone.ts) taking hold and letting go. Two taps and a leap,
  * so they never sound like a dictation starting or stopping.
+ *
+ * And the chimes, which ring rather than beep: opProxy's question chime, which
+ * its Mac dialog plays too (~/opProxy/Sources/OpProxyCore/Chime.swift — keep
+ * the two tables in step).
  */
 
 import { recordMobileEvent } from './mobile-events'
 
-export type Cue = 'listeningStarted' | 'listeningFinished' | 'pasted' | 'transcriptionFailed' | 'captureFailed'
+type ChirpCue = 'listeningStarted' | 'listeningFinished' | 'pasted' | 'transcriptionFailed' | 'captureFailed'
   | 'holdEngaged' | 'holdReleased' | 'conversationClosed'
+/** A request is waiting for an answer: opProxy's 1Password approvals. */
+type ChimeCue = 'approvalRequested'
+export type Cue = ChirpCue | ChimeCue
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
-const SEGMENTS: Record<Cue, Array<[number, number]>> = {
+const SEGMENTS: Record<ChirpCue, Array<[number, number]>> = {
   listeningStarted: [[660, 0.09], [990, 0.11]],
   listeningFinished: [[990, 0.09], [660, 0.11]],
   pasted: [[523, 0.09], [659, 0.09], [784, 0.09], [1047, 0.14]],
@@ -36,8 +43,60 @@ const FADE_S = 0.005
 /** SoundBank's player volume. */
 const OUTPUT_GAIN = 0.35
 
-/** The cue's samples, exactly as Voice Operator's `chirp` computes them. */
+interface Chime {
+  /** [start s, frequency Hz, decay time constant s] */
+  notes: Array<[number, number, number]>
+  /** Each note's bell partials: [frequency ratio, amplitude, decay scale]. */
+  partials: Array<[number, number, number]>
+  length: number
+  attack: number
+  release: number
+  /** Loudest sample, before OUTPUT_GAIN. */
+  peak: number
+}
+
+const CHIMES: Record<ChimeCue, Chime> = {
+  // Two bell notes rising a major sixth, the second held, like a question.
+  approvalRequested: {
+    notes: [[0.00, 587.33, 0.16], [0.12, 987.77, 0.42]],
+    partials: [[1, 1, 1], [2.76, 0.22, 0.45], [5.40, 0.07, 0.25]],
+    length: 1.1, attack: 0.004, release: 0.06, peak: 0.8
+  }
+}
+
+function isChime(cue: Cue): cue is ChimeCue {
+  return cue in CHIMES
+}
+
+/** The cue's samples. */
 export function cueSamples(cue: Cue): Float32Array<ArrayBuffer> {
+  return isChime(cue) ? chimeSamples(CHIMES[cue]) : chirpSamples(cue)
+}
+
+/** Decaying bell notes, exactly as opProxy's `Chime.samples` computes them. */
+function chimeSamples({ notes, partials, length, attack, release, peak }: Chime): Float32Array<ArrayBuffer> {
+  const n = Math.floor(length * SAMPLE_RATE)
+  const out = new Float64Array(n)
+  for (const [start, freq, decay] of notes) {
+    const first = Math.floor(start * SAMPLE_RATE)
+    for (let i = 0; i < n - first; i++) {
+      const t = i / SAMPLE_RATE
+      let v = 0
+      for (const [ratio, amp, scale] of partials) v += amp * Math.exp(-t / (decay * scale)) * Math.sin(2 * Math.PI * freq * ratio * t)
+      out[first + i] += Math.min(1, t / attack) * v
+    }
+  }
+  let loudest = 0
+  for (let i = 0; i < n; i++) {
+    const left = (n - i) / SAMPLE_RATE
+    if (left < release) out[i] *= left / release
+    loudest = Math.max(loudest, Math.abs(out[i]))
+  }
+  return Float32Array.from(out, (v) => (v * peak) / loudest)
+}
+
+/** The cue's samples, exactly as Voice Operator's `chirp` computes them. */
+function chirpSamples(cue: ChirpCue): Float32Array<ArrayBuffer> {
   const out: number[] = []
   const fade = Math.max(1, Math.floor(FADE_S * SAMPLE_RATE))
   for (const [freq, dur] of SEGMENTS[cue]) {
