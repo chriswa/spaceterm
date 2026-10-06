@@ -165,6 +165,20 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
           client.watchSystemStats(false)
         }
       },
+      watchApprovals: (cb) => {
+        // As watchSystemStats: the server forgets a watch with its connection.
+        const watch = () => client.watchApprovals(true)
+        const offApprovals = on('approvals', (m) => cb(m.snapshot))
+        const offConnect = client.onLifecycle('connect', watch)
+        watch()
+        return () => {
+          offApprovals()
+          offConnect()
+          client.watchApprovals(false)
+        }
+      },
+      answerApproval: (source, id, reply) => client.approvalReply(source, id, reply),
+      pairApprovalSource: (source, publicKey, name) => client.approvalPair(source, publicKey, name),
       onMobileBuildChanged: (cb) => on('mobile-build-changed', () => cb())
     },
     log: (message) => platform.log(message),

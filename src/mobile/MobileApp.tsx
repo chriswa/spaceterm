@@ -26,6 +26,10 @@ import { MicIndicator } from './MicIndicator'
 import { ControlTranscript } from '@/components/ControlTranscript'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { SWIPE_SCREENS, useSwipeToDismiss, type SwipeScreen } from './swipe-dismiss'
+import { useApprovalsStore, useApprovalsWatch } from './approvals-store'
+import { NotificationsButton } from './NotificationsButton'
+import { NotificationsSheet } from './NotificationsSheet'
+import { ApprovalView } from './ApprovalView'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -77,18 +81,34 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   const voice = summaryTarget !== null || controlTarget
   /** Control's transcript: the screen above the bottom bar, which stays up to talk and to close it. */
   const transcriptOpen = useControlTranscriptStore((s) => s.open)
-  // The transcript and the toolbar sheet are screens, not layers: opening one closes the other.
+  /** The bell's list, and the approval request opened from it (approvals-store.ts). */
+  useApprovalsWatch()
+  const noticesOpen = useApprovalsStore((s) => s.listOpen)
+  const approvalOpen = useApprovalsStore((s) => s.openKey)
+  // The transcript, the toolbar sheet and the bell's list are screens, not
+  // layers: opening one closes the others.
   useEffect(() => {
-    if (transcriptOpen) useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+    if (!transcriptOpen) return
+    useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+    useApprovalsStore.getState().setListOpen(false)
   }, [transcriptOpen])
   useEffect(() => {
-    if (toolbarSheetOpen) useControlTranscriptStore.getState().setOpen(false)
+    if (!toolbarSheetOpen) return
+    useControlTranscriptStore.getState().setOpen(false)
+    useApprovalsStore.getState().setListOpen(false)
   }, [toolbarSheetOpen])
-  // A sideways drag dismisses either, as it leaves the terminal view.
+  useEffect(() => {
+    if (!noticesOpen) return
+    useControlTranscriptStore.getState().setOpen(false)
+    useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+  }, [noticesOpen])
+  // A sideways drag dismisses any of them, as it leaves the terminal view.
   const swipeScreens = useMemo<SwipeScreen[]>(() => [
     ...(transcriptOpen ? [{ ...SWIPE_SCREENS.transcript, dismiss: () => useControlTranscriptStore.getState().setOpen(false) }] : []),
     ...(toolbarSheetOpen ? [{ ...SWIPE_SCREENS.sheet, dismiss: () => useSurfacePresenterStore.getState().setToolbarSheetOpen(false) }] : []),
-  ], [transcriptOpen, toolbarSheetOpen])
+    ...(noticesOpen ? [{ ...SWIPE_SCREENS.notices, dismiss: () => useApprovalsStore.getState().setListOpen(false) }] : []),
+    ...(approvalOpen ? [{ ...SWIPE_SCREENS.approval, dismiss: () => useApprovalsStore.getState().closeItem() }] : []),
+  ], [transcriptOpen, toolbarSheetOpen, noticesOpen, approvalOpen])
   useSwipeToDismiss(swipeScreens)
   /** The talk button and its neighbours are up: there is a conversation, or the transcript to talk into. */
   const talk = voice || transcriptOpen
@@ -191,9 +211,13 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           onDismiss={() => useControlTranscriptStore.getState().setOpen(false)}
         />
       )}
+      {noticesOpen && <NotificationsSheet />}
+      {/* Over everything, bottom bar included: the app's slide panel docks
+          where the bar would be. Keyed, so another request starts fresh. */}
+      {approvalOpen && <ApprovalView key={approvalOpen} />}
       {/* On the canvas and the terminal view, over the surface list and under
           the transcript. Never over the composer, which has its own microphone. */}
-      {(!composerFor || transcriptOpen) && (
+      {(!composerFor || transcriptOpen) && !approvalOpen && (
         <BottomBar
           start={
             // The Mac's two readouts stacked against Control: its system
@@ -219,6 +243,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           end={
             <>
               {dictating && <DictationIndicator />}
+              <NotificationsButton />
               <RocketButton />
             </>
           }

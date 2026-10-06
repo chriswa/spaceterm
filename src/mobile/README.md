@@ -148,6 +148,30 @@ to this phone. The dictation itself is ordinary Wispr, as the talk button's.
   measured and whether it was the word, and `[turn]` lines each pause's
   verdict — never what was said.
 
+## Notifications: approving opProxy from the phone
+
+The bell left of the rocket (`NotificationsButton.tsx`) is the phone's
+notifications, which today are opProxy's pending 1Password approvals. Dim with
+none; lit in the loudest request's tone with some; pulsing while any is unread,
+which ends when the list has shown it. The list (`NotificationsSheet.tsx`) is a
+screen like Control's transcript; a row opens the request (`ApprovalView.tsx`).
+A request vanishes when it is answered anywhere or times out.
+
+Spaceterm does not know what it is approving. The server only relays
+opProxy's feed (`src/server/approval-feed.ts`), and the phone draws the
+provider's document from a few generic blocks — see `APPROVAL_FEED.md` at the
+repo root, which is the contract. New options, colours or buttons are
+opProxy's to add.
+
+Answers are signed by a Secure Enclave key in the iPhone app
+(`ios/SpacetermMobile/NativeApprovals.swift`, `native-approvals.ts`), which
+opProxy pairs once, confirmed with Touch ID at the Mac. Deny is signed at a tap.
+Approve is the app's own slide panel, docked where the bottom bar would be: the
+page arms it with the chosen options, and it shows the document's confirm line
+and those options itself, and signs only once slid all the way across. That
+panel is the part a modified web page cannot fake. No Face ID, by choice. In
+Safari the phone can look but not answer.
+
 ## The audio and lifecycle record
 
 Every microphone, dictation, playback and app-switching event the phone sees

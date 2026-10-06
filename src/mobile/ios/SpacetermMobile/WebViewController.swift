@@ -10,6 +10,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private let events = NativeEvents()
     /// The app's own microphone, which the page asks for: hands-free mode.
     private lazy var microphone = NativeMicrophone(events: events)
+    /// Signed answers to approval requests, and the native slide that approves.
+    private lazy var approvals = NativeApprovals(events: events)
 
     /// `SpacetermURLs` from Info.plist, written at build time by install.sh:
     /// one pairing URL per Mac, for a phone that is on one tailnet at a time.
@@ -52,6 +54,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.userContentController.add(microphone, name: "nativeMicrophone")
         // The page's word that the server has the app's events, so it can forget them.
         config.userContentController.add(events, name: "nativeEvents")
+        // Answered with a reply, so the page can await a signature.
+        config.userContentController.addScriptMessageHandler(approvals, contentWorld: .page, name: "approvals")
 
         webView = WKWebView(frame: .zero, configuration: config)
         microphone.webView = webView
@@ -71,7 +75,15 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         // Safari's Web Inspector can attach over USB/Wi-Fi: this is a personal tool.
         webView.isInspectable = true
         webView.removeFormAccessoryBar()
-        view = webView
+        // The web view fills a plain view, so native panels (NativeApprovals)
+        // can sit above it without the page knowing how they are drawn.
+        let container = UIView()
+        container.backgroundColor = webView.backgroundColor
+        webView.frame = container.bounds
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(webView)
+        approvals.host = container
+        view = container
     }
 
     /// UIKit knows it but does not publish it; a personal app may ask anyway.
@@ -146,6 +158,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         events.record("page-loaded", ["host": webView.url?.host ?? ""])
         events.pageChanged()
+        approvals.pageChanged()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -163,6 +176,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     /// The reloaded page is told how many times, so its log says why it reloaded.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         processRestarts += 1
+        approvals.pageChanged()
         events.record("page-process-terminated", ["restarts": processRestarts])
         webView.configuration.userContentController.addUserScript(WKUserScript(
             source: "window.spacetermProcessRestarts = \(processRestarts)",

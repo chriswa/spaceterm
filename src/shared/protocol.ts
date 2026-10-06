@@ -146,6 +146,35 @@ export interface SystemStatsWatchMessage {
   watching: boolean
 }
 
+/**
+ * Start or stop receiving approval requests (opProxy's, for now). While
+ * watching, the client gets an {@link ApprovalsMessage} at once and on every
+ * change. Not remembered across a reconnect. See `src/server/approval-feed.ts`
+ * and APPROVAL_FEED.md.
+ */
+export interface ApprovalsWatchMessage {
+  type: 'approvals-watch'
+  watching: boolean
+}
+
+/** Answer an approval request with a reply the phone's native code signed. */
+export interface ApprovalReplyMessage {
+  type: 'approval-reply'
+  seq: number
+  source: string
+  id: string
+  reply: SignedApprovalReply
+}
+
+/** Ask an approval source to trust this phone's key; confirmed by someone at the Mac. */
+export interface ApprovalPairMessage {
+  type: 'approval-pair'
+  seq: number
+  source: string
+  publicKey: string
+  name: string
+}
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -1186,6 +1215,9 @@ export type ClientMessage =
   | RestartFlagQueryMessage
   | UsageReportQueryMessage
   | SystemStatsWatchMessage
+  | ApprovalsWatchMessage
+  | ApprovalReplyMessage
+  | ApprovalPairMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage
@@ -1341,6 +1373,19 @@ export interface SystemStatsMessage {
   snapshot: SystemStatsSnapshot | null
 }
 
+/** To watching clients only: every pending approval request (PUSH). */
+export interface ApprovalsMessage {
+  type: 'approvals'
+  snapshot: ApprovalsSnapshot
+}
+
+/** Reply to {@link ApprovalReplyMessage} or {@link ApprovalPairMessage}: the source's verdict. */
+export interface ApprovalResultMessage {
+  type: 'approval-result'
+  seq: number
+  outcome: ApprovalOutcome
+}
+
 /** Unsolicited broadcast: a new AI usage reading (PUSH). */
 export interface UsageReportMessage {
   type: 'usage-report'
@@ -1395,6 +1440,7 @@ import type { ServerState, NodeData, NodeStamp, ReceptionistHolder } from './sta
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
+import type { ApprovalOutcome, ApprovalsSnapshot, SignedApprovalReply } from './approvals'
 
 export interface SyncStateMessage {
   type: 'sync-state'
@@ -2047,6 +2093,8 @@ export type ServerMessage =
   | UsageReportMessage
   | SystemStatsMessage
   | SpeechAudioMessage
+  | ApprovalsMessage
+  | ApprovalResultMessage
   | SpeechStopMessage
   | MobileAppInstallResultMessage
   | MobileBuildChangedMessage

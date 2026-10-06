@@ -1,0 +1,185 @@
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+import { render, cleanup, screen, act, fireEvent, waitFor } from '@testing-library/react'
+import { installFakeBridge, type FakeBridge } from '@/testing/fake-bridge'
+import type { ApprovalDocument, ApprovalItem, ApprovalsSnapshot } from '../shared/approvals'
+import { approvalKey } from '../shared/approvals'
+import { EMPTY_APPROVALS, useApprovalsStore } from './approvals-store'
+import { NotificationsButton } from './NotificationsButton'
+import { NotificationsSheet } from './NotificationsSheet'
+import { ApprovalView } from './ApprovalView'
+
+const DOC: ApprovalDocument = {
+  tone: 'caution',
+  kicker: '1Password security approval',
+  title: 'GitHub token',
+  subtitle: 'Claude Code · “fix tests”',
+  sections: [
+    { kind: 'fields', label: 'Request', rows: [{ label: 'Vault', value: 'Private' }] },
+    { kind: 'text', label: 'Command', text: 'op read op://Private/GitHub/token', mono: true },
+    { kind: 'chart', label: 'From the future' }
+  ],
+  pickers: [{ id: 'duration', label: 'Allow', default: '7d', options: [
+    { id: 'once', label: 'Once', hint: 'Just this request.' },
+    { id: '7d', label: '7 Days', hint: 'This command for a week.' }
+  ] }],
+  actions: [{ id: 'deny', label: 'Deny', role: 'deny' }, { id: 'approve', label: 'Approve', role: 'approve' }],
+  confirm: 'Let Claude Code read GitHub token'
+}
+
+const item = (over: Partial<ApprovalItem> = {}, doc: ApprovalDocument = DOC): ApprovalItem => ({
+  source: 'opProxy', id: 'a1', revision: 1, createdAt: 1, expiresAt: null, challenge: 'ch', document: JSON.stringify(doc), ...over
+})
+
+const KEY = { keyId: 'k1', publicKey: 'cHVi', fingerprint: 'ab12 cd34 ef56 7890', name: 'iPhone' }
+const SIGNED = { keyId: 'k1', statement: '{"v":1}', signature: 'c2ln' }
+
+function snapshot(items: ApprovalItem[], pairedKeys = ['k1'], closed: ApprovalsSnapshot['closed'] = []): ApprovalsSnapshot {
+  return { sources: [{ name: 'opProxy', connected: true, pairedKeys }], items, closed }
+}
+
+/** The iPhone app's `approvals` handler, as the page sees it. */
+function installNative() {
+  const arms: Array<{ msg: Record<string, unknown>; resolve(v: unknown): void }> = []
+  const posted: Array<Record<string, unknown>> = []
+  const postMessage = vi.fn((msg: Record<string, unknown>) => {
+    posted.push(msg)
+    switch (msg.op) {
+      case 'identity': return Promise.resolve(KEY)
+      case 'arm': return new Promise((resolve) => arms.push({ msg, resolve }))
+      case 'sign': return Promise.resolve(SIGNED)
+      default: return Promise.resolve(null)
+    }
+  })
+  window.webkit = { messageHandlers: { approvals: { postMessage } } }
+  return { arms, posted }
+}
+
+let bridge: FakeBridge
+
+beforeEach(() => {
+  bridge = installFakeBridge()
+})
+
+afterEach(() => {
+  cleanup()
+  delete window.webkit
+  act(() => useApprovalsStore.setState({ snapshot: EMPTY_APPROVALS, seen: new Set(), listOpen: false, openKey: null }))
+})
+
+describe('NotificationsButton', () => {
+  it('is dim with nothing pending, lit in the tone with something, and pulses until the list is opened', () => {
+    render(<NotificationsButton />)
+    const bell = () => document.querySelector('.m-bell')!
+    expect(bell().className).toContain('m-bell--idle')
+
+    act(() => useApprovalsStore.getState().setSnapshot(snapshot([item()])))
+    expect(bell().className).toContain('m-bell--caution')
+    expect(bell().className).toContain('m-bell--unread')
+
+    fireEvent.click(bell())
+    expect(useApprovalsStore.getState().listOpen).toBe(true)
+    expect(bell().className).not.toContain('m-bell--unread')
+    expect(bell().className).toContain('m-bell--caution')
+  })
+
+  it('takes the loudest tone among what is pending', () => {
+    render(<NotificationsButton />)
+    act(() => useApprovalsStore.getState().setSnapshot(snapshot([item(), item({ id: 'a2' }, { ...DOC, tone: 'danger' })])))
+    expect(document.querySelector('.m-bell')!.className).toContain('m-bell--danger')
+  })
+})
+
+describe('NotificationsSheet', () => {
+  it('lists what is waiting and opens one with a tap', () => {
+    act(() => useApprovalsStore.getState().setSnapshot(snapshot([item()])))
+    render(<NotificationsSheet />)
+    fireEvent.click(screen.getByText('GitHub token'))
+    expect(useApprovalsStore.getState().openKey).toBe(approvalKey(item()))
+    expect(useApprovalsStore.getState().listOpen).toBe(false)
+  })
+
+  it('offers to pair a phone the source does not trust yet', async () => {
+    const { posted } = installNative()
+    act(() => useApprovalsStore.getState().setSnapshot(snapshot([], [])))
+    render(<NotificationsSheet />)
+    fireEvent.click(await screen.findByText('Pair with opProxy'))
+    expect(await screen.findByText('ab12 cd34 ef56 7890')).toBeTruthy()
+    expect(bridge.calls.find((c) => c.method === 'node.pairApprovalSource')?.args).toEqual(['opProxy', 'cHVi', 'iPhone'])
+    expect(posted[0]).toEqual({ op: 'identity' })
+  })
+})
+
+describe('ApprovalView', () => {
+  function open(i: ApprovalItem, paired = ['k1']) {
+    act(() => {
+      useApprovalsStore.getState().setSnapshot(snapshot([i], paired))
+      useApprovalsStore.getState().openItem(approvalKey(i))
+    })
+    return render(<ApprovalView />)
+  }
+
+  it('draws the document, and an unknown section by its label', () => {
+    installNative()
+    open(item())
+    expect(screen.getByText('GitHub token')).toBeTruthy()
+    expect(screen.getByText('Private')).toBeTruthy()
+    expect(screen.getByText('op read op://Private/GitHub/token')).toBeTruthy()
+    expect(screen.getByText('From the future')).toBeTruthy()
+    expect(screen.getByText('This command for a week.')).toBeTruthy()
+  })
+
+  it('arms the slide panel with the default picks, and re-arms when an option changes', async () => {
+    const { arms } = installNative()
+    open(item())
+    await waitFor(() => expect(arms).toHaveLength(1))
+    expect(arms[0].msg).toMatchObject({ op: 'arm', action: 'approve', picks: { duration: '7d' },
+      item: { provider: 'opProxy', id: 'a1', revision: 1, challenge: 'ch', document: JSON.stringify(DOC) } })
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Once' }))
+    await waitFor(() => expect(arms).toHaveLength(2))
+    expect(arms[1].msg).toMatchObject({ picks: { duration: 'once' } })
+  })
+
+  it('sends what the panel signed once it is slid across', async () => {
+    const { arms } = installNative()
+    open(item())
+    await waitFor(() => expect(arms).toHaveLength(1))
+    await act(async () => arms[0].resolve(SIGNED))
+    expect(bridge.calls.find((c) => c.method === 'node.answerApproval')?.args).toEqual(['opProxy', 'a1', SIGNED])
+  })
+
+  it('denies at a tap, signed without the panel', async () => {
+    const { posted } = installNative()
+    open(item())
+    await screen.findByText('Deny')
+    await waitFor(() => expect((screen.getByText('Deny') as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByText('Deny'))
+    await waitFor(() => expect(bridge.calls.some((c) => c.method === 'node.answerApproval')).toBe(true))
+    expect(posted.find((m) => m.op === 'sign')).toMatchObject({ action: 'deny', picks: { duration: '7d' } })
+  })
+
+  it('says why it went when answered elsewhere, and disarms', async () => {
+    const { arms, posted } = installNative()
+    open(item())
+    await waitFor(() => expect(arms).toHaveLength(1))
+    act(() => useApprovalsStore.getState().setSnapshot(snapshot([], ['k1'],
+      [{ source: 'opProxy', id: 'a1', note: 'Approved on the Mac', at: 2 }])))
+    expect(screen.getByText('Approved on the Mac')).toBeTruthy()
+    expect(screen.queryByText('Deny')).toBeNull()
+    await waitFor(() => expect(posted.some((m) => m.op === 'disarm')).toBe(true))
+  })
+
+  it('asks to pair instead of offering answers when the phone is not trusted', async () => {
+    const { arms } = installNative()
+    open(item(), [])
+    expect(await screen.findByText('Pair with opProxy')).toBeTruthy()
+    expect(screen.queryByText('Deny')).toBeNull()
+    expect(arms).toHaveLength(0)
+  })
+
+  it('in Safari, shows the request but says where to answer it', () => {
+    open(item())
+    expect(screen.getByText('GitHub token')).toBeTruthy()
+    expect(screen.getByText('Answering needs the Spaceterm iPhone app.')).toBeTruthy()
+  })
+})

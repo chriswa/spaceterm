@@ -12,6 +12,7 @@ import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
 import type { UsageSnapshot } from '../../../../shared/usage-report'
 import type { SystemStatsSnapshot } from '../../../../shared/system-stats'
+import type { ApprovalOutcome, ApprovalsSnapshot } from '../../../../shared/approvals'
 
 /**
  * A stand-in for `window.api`, the preload bridge.
@@ -94,6 +95,8 @@ export interface FakeBridgeResponses {
   restartFlag: { required: boolean; reason: string }
   /** What `usageReportStatus` returns (the PULL). */
   usageReport: UsageSnapshot | null
+  /** What `answerApproval` and `pairApprovalSource` resolve with. */
+  approvalOutcome: ApprovalOutcome
   /** What `agentMetaToggle` reports the branch state as, afterwards. */
   agentMetaOpen: boolean
   /** What the availability PULL reports. */
@@ -141,6 +144,7 @@ export class FakeBridge implements Api {
     agentSearch: { ok: true, pass: 'titles', hits: [], noneProbability: 1, costUsd: 0 },
     restartFlag: { required: false, reason: '' },
     usageReport: null,
+    approvalOutcome: { ok: true },
     agentMemoryBytes: null,
     controlTranscript: () => ({ entries: [], more: false })
   }
@@ -173,6 +177,7 @@ export class FakeBridge implements Api {
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
   private readonly usageReport = new Set<(snapshot: UsageSnapshot) => void>()
   private readonly systemStats = new Set<(snapshot: SystemStatsSnapshot | null) => void>()
+  private readonly approvals = new Set<(snapshot: ApprovalsSnapshot) => void>()
   private readonly agentMetaAvailability = new Set<(nodeId: NodeId, available: boolean) => void>()
   private readonly visibilityChanged = new Set<(visible: boolean) => void>()
   private readonly focusChanged = new Set<(focused: boolean) => void>()
@@ -274,6 +279,10 @@ export class FakeBridge implements Api {
     /** To each `watchSystemStats` watcher, as the server would. */
     systemStats: (snapshot: SystemStatsSnapshot | null): void => {
       for (const fn of this.systemStats) fn(snapshot)
+    },
+    /** To each `watchApprovals` watcher, as the server would. */
+    approvals: (snapshot: ApprovalsSnapshot): void => {
+      for (const fn of this.approvals) fn(snapshot)
     },
     visibilityChanged: (visible: boolean): void => {
       for (const fn of this.visibilityChanged) fn(visible)
@@ -429,7 +438,12 @@ export class FakeBridge implements Api {
     onUsageReport: (cb) => subscribe(this.usageReport, cb),
     onMobileBuildChanged: () => () => undefined,
     usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport),
-    watchSystemStats: (cb) => subscribe(this.systemStats, cb)
+    watchSystemStats: (cb) => subscribe(this.systemStats, cb),
+    watchApprovals: (cb) => subscribe(this.approvals, cb),
+    answerApproval: (source, id, reply) =>
+      this.reply('node.answerApproval', this.responses.approvalOutcome, source, id, reply),
+    pairApprovalSource: (source, publicKey, name) =>
+      this.reply('node.pairApprovalSource', this.responses.approvalOutcome, source, publicKey, name)
   }
 
   readonly tts: TtsApi = {
