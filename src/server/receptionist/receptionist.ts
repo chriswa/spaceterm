@@ -25,6 +25,7 @@ import {
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, PAUSE_MS, type PauseJudgement } from './backlog-pause'
+import type { Watches, WatchKind } from './watches'
 import {
   cacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
@@ -117,6 +118,8 @@ export interface ReceptionistDeps {
   judgeInterruption(ctx: InterruptionContext): Promise<number>
   /** Things Control set aside to bring up with the user later: see backlog.ts. */
   backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore'>
+  /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
+  watches: Watches
   /** Jev's probability for each backlog item, in order: that it should come next, or that it is about `ctx.about`. See backlog.ts. */
   judgeBacklog(ctx: BacklogContext): Promise<number[]>
   /** Jev's probabilities that the user could switch topics now, and after a pause: see backlog-pause.ts. */
@@ -394,14 +397,8 @@ export class Receptionist {
   private judgedFor: { spoken: RenderedPart[]; events: number } | undefined
   /** Control cut its own reply short for news: the next turn opens with "Hang on." and tells the model so. */
   private selfInterrupted = false
-  /**
-   * Agents being watched for their next stop. `after-work` is a send's or a
-   * spawn's: only a stop after the agent has started working on the message
-   * counts. A stop on the way in — the Escape that declines a pending
-   * question, before the message is even pasted — used to fire it at once,
-   * with nothing said, and the real answer then went unreported.
-   */
-  private readonly monitors = new Map<NodeId, 'next-stop' | 'after-work'>()
+  /** Agents being watched for their next stop: `deps.watches`, which outlives the server. See `WatchKind`. */
+  private readonly monitors: Watches
   /** Watched agents whose stop is being held before it is reported, each with its own hold: see `holdStop`. */
   private readonly holding = new Map<NodeId, object>()
   /**
@@ -463,6 +460,7 @@ export class Receptionist {
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
+    this.monitors = deps.watches
     const saved = deps.session.load()
     // Instructions are fixed when a session starts, so a session begun on an
     // older prompt would quietly keep following it. It hands over to a new
@@ -639,10 +637,10 @@ export class Receptionist {
     if (!isSettled(state)) {
       // Back at work while its stop was held: that was no stop. See `STOP_HOLD_MS`.
       this.holding.delete(nodeId)
-      if (waiting === 'after-work') this.monitors.set(nodeId, 'next-stop')
+      if (waiting.kind === 'after-work') this.monitors.set(nodeId, { ...waiting, kind: 'next-stop' })
       return
     }
-    if (waiting === 'after-work') return
+    if (waiting.kind === 'after-work') return
     void this.holdStop(nodeId)
   }
 
@@ -654,7 +652,7 @@ export class Receptionist {
     if (this.holding.get(nodeId) !== hold) return
     this.holding.delete(nodeId)
     const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
-    if (this.monitors.get(nodeId) !== 'next-stop' || !agent || !isSettled(agent.state)) return
+    if (this.monitors.get(nodeId)?.kind !== 'next-stop' || !agent || !isSettled(agent.state)) return
     this.fireMonitor(nodeId, agent.state)
   }
 
@@ -712,10 +710,36 @@ export class Receptionist {
   }
 
   /** Watch an agent until its next stop; see `monitors`. */
-  private watch(nodeId: NodeId, kind: 'next-stop' | 'after-work'): void {
+  private watch(nodeId: NodeId, kind: WatchKind): void {
+    const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
     // Already at work on it: its next stop is the one.
-    const state = this.deps.agents().find(candidate => candidate.nodeId === nodeId)?.state
-    this.monitors.set(nodeId, kind === 'after-work' && state && !isSettled(state) ? 'next-stop' : kind)
+    const atWork = agent !== undefined && !isSettled(agent.state)
+    this.monitors.set(nodeId, { kind: atWork ? 'next-stop' : kind, ...(agent?.stateSince !== undefined && { since: agent.stateSince }) })
+  }
+
+  /**
+   * Pick up the watches the last server left, once this one knows which agents
+   * are live and how they stand. An agent that stopped while no server was
+   * looking — or in the hold before the last one went — is reported now: its
+   * state will not change again, so nothing else would ever report it. One
+   * that ended meanwhile is dropped; there is nothing left of it to watch.
+   */
+  resumeWatches(): void {
+    const agents = this.deps.agents()
+    for (const [nodeId, watch] of this.monitors.entries()) {
+      const agent = agents.find(candidate => candidate.nodeId === nodeId)
+      if (!agent) {
+        this.monitors.delete(nodeId)
+        this.deps.log({ event: 'watch-dropped', nodeId })
+        continue
+      }
+      const settled = isSettled(agent.state)
+      const stoppedSince = settled && agent.stateSince !== watch.since
+      this.deps.log({ event: 'watch-resumed', nodeId, kind: watch.kind, stoppedSince })
+      // At work, its next stop is the one, as `watch` has it; stopped since, that stop was it.
+      if (!settled || stoppedSince) this.monitors.set(nodeId, { ...watch, kind: 'next-stop' })
+      if (stoppedSince) void this.holdStop(nodeId)
+    }
   }
 
   /**

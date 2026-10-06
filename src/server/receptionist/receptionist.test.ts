@@ -14,6 +14,8 @@ import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
 import { PAUSE_MS } from './backlog-pause'
+import { Watches } from './watches'
+import type { NameRegistryStore } from './name-registry'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
@@ -55,6 +57,26 @@ afterEach(() => { expect(scriptFailures.splice(0)).toEqual([]) })
 
 type Script = string | ((turn: SessionTurn) => string | Promise<string>)
 
+/** The agents' states, and when each was reached: what a server restart leaves as it was. */
+interface AgentWorld {
+  states: Map<NodeId, ClaudeState>
+  since: Map<NodeId, number>
+}
+function agentWorld(): AgentWorld {
+  return { states: new Map([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']]), since: new Map() }
+}
+let clock = Date.now()
+/** An agent's state changes. Alone, no server sees it: as while the server is down. */
+function changeState(world: AgentWorld, nodeId: NodeId, state: ClaudeState): void {
+  world.states.set(nodeId, state)
+  world.since.set(nodeId, ++clock)
+}
+/** A file kept in memory, for what the receptionist keeps on disk across restarts. */
+function memoryStore(): NameRegistryStore {
+  let json: string | undefined
+  return { load: () => json, save: (next) => { json = next } }
+}
+
 /** Everything a receptionist touches, faked, with the calls it made recorded. */
 function harness(opts: {
   replies: Script[]
@@ -88,16 +110,21 @@ function harness(opts: {
   kevinCacheWarmUntil?: number
   /** How waiting goes; by default every wait is over at once. */
   sleep?: (ms: number) => Promise<void>
+  /** The agents as an earlier server left them; by default Kevin stopped and Sally at work. */
+  world?: AgentWorld
+  /** Where watches are kept, from an earlier server; by default nothing is watched. */
+  watchStore?: NameRegistryStore
 }) {
-  const states = new Map<NodeId, ClaudeState>([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']])
+  const world = opts.world ?? agentWorld()
+  const states = world.states
   /** Agents off the live roster: ended, or archived. */
   const gone = new Set<NodeId>()
   const agents = (): RosterAgent[] => [
     {
-      nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session',
+      nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, stateSince: world.since.get(KEVIN_ID), transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session',
       ...(opts.kevinCacheWarmUntil !== undefined ? { cacheWarmUntil: opts.kevinCacheWarmUntil, cacheWarmTokens: 38_000 } : {}),
     },
-    { nodeId: SALLY_ID, title: 'login page', cwd: '/src/web', state: states.get(SALLY_ID)!, transcriptPath: '/t/sally.jsonl', claudeSessionId: 'sally-session' },
+    { nodeId: SALLY_ID, title: 'login page', cwd: '/src/web', state: states.get(SALLY_ID)!, stateSince: world.since.get(SALLY_ID), transcriptPath: '/t/sally.jsonl', claudeSessionId: 'sally-session' },
   ].filter(agent => !gone.has(agent.nodeId))
   /** Every message sent, in order, with the session it went to. */
   const turns: SessionTurn[] = []
@@ -217,6 +244,7 @@ function harness(opts: {
     nodeIds: () => NODE_IDS,
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     backlog,
+    watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
     judgeBacklog: opts.judgeBacklog ?? (async () => { throw new Error('no judge') }),
     judgePause: opts.judgePause ?? (async () => { throw new Error('no judge') }),
     archive: (nodeId) => { wire.push(`archive ${nodeId}`); gone.add(nodeId); return nodeId === KEVIN_ID ? 3 : 1 },
@@ -244,7 +272,7 @@ function harness(opts: {
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
-      states.set(nodeId, state)
+      changeState(world, nodeId, state)
       receptionist.agentStateChanged(nodeId, state)
     },
     /** The agent's session exits and its surface goes into the archive, as a self-terminate does. */
@@ -1751,6 +1779,78 @@ describe('Receptionist: watching an agent until the user is told', () => {
     h.setState(SALLY_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  describe('across a server restart', () => {
+    const sendTo = (agent: string) => reply([{ from: 'control', text: `Sent to {${agent}}.` }], [{ tool: 'send', agent, message: 'Commit it.' }])
+    // Names are the registry's, on disk; each fake server here starts without them.
+    const toldOf = (agent: string): Script => (turn) => {
+      expect(turn.prompt).toMatch(new RegExp(`\\{(\\w+:)?${agent}\\} is now stopped`))
+      return reply([{ from: 'control', text: `{${agent}} is done.` }])
+    }
+
+    it('still tells of the stop of an agent sent a message before it', async () => {
+      // Dean, as it happened: sent a message at work, the server restarted
+      // a minute later, and when Dean stopped nothing was watching for it.
+      const world = agentWorld()
+      const watchStore = memoryStore()
+      const before = harness({ world, watchStore, replies: [sendTo(SALLY)] })
+      await before.receptionist.hear('tell Sally to commit')
+      await flush()
+      const after = harness({ world, watchStore, replies: [toldOf(SALLY)] })
+      after.receptionist.resumeWatches()
+      await flush()
+      expect(after.turns).toHaveLength(0)
+      after.setState(SALLY_ID, 'stopped')
+      await flush()
+      expect(after.turns).toHaveLength(1)
+    })
+
+    it('tells of a stop that came while the server was down', async () => {
+      const world = agentWorld()
+      const watchStore = memoryStore()
+      const before = harness({ world, watchStore, replies: [sendTo(KEVIN)] })
+      await before.receptionist.hear('tell Kevin to commit')
+      await flush()
+      changeState(world, KEVIN_ID, 'working')
+      changeState(world, KEVIN_ID, 'stopped')
+      const after = harness({ world, watchStore, replies: [toldOf(KEVIN)] })
+      after.receptionist.resumeWatches()
+      await flush()
+      expect(after.turns).toHaveLength(1)
+    })
+
+    it('does not take a stopped agent that has not started on the message yet for one that answered', async () => {
+      const world = agentWorld()
+      const watchStore = memoryStore()
+      const before = harness({ world, watchStore, replies: [sendTo(KEVIN)] })
+      await before.receptionist.hear('tell Kevin to commit')
+      await flush()
+      const after = harness({ world, watchStore, replies: [toldOf(KEVIN)] })
+      after.receptionist.resumeWatches()
+      await flush()
+      expect(after.turns).toHaveLength(0)
+      after.setState(KEVIN_ID, 'working')
+      after.setState(KEVIN_ID, 'stopped')
+      await flush()
+      expect(after.turns).toHaveLength(1)
+    })
+
+    it('forgets a watch once the user has been told', async () => {
+      const world = agentWorld()
+      const watchStore = memoryStore()
+      const before = harness({ world, watchStore, replies: [sendTo(SALLY), toldOf(SALLY)] })
+      await before.receptionist.hear('tell Sally to commit')
+      await flush()
+      before.setState(SALLY_ID, 'stopped')
+      await flush()
+      changeState(world, SALLY_ID, 'working')
+      changeState(world, SALLY_ID, 'stopped')
+      const after = harness({ world, watchStore, replies: [] })
+      after.receptionist.resumeWatches()
+      await flush()
+      expect(after.turns).toHaveLength(0)
+    })
   })
 
   it('stops watching an agent the user takes over, and tells the model', async () => {

@@ -78,6 +78,7 @@ import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat
 import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
+import { Watches } from './receptionist/watches'
 import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
@@ -3328,6 +3329,8 @@ async function startServer(): Promise<void> {
     judgeInterruption: jevJudge(agentSearchDeps.runJev),
     // Kept on disk: what Control set aside outlasts its compacted memory. Jev picks what comes next: see backlog.ts.
     backlog: new Backlog(),
+    // Kept on disk too: a restart must not cost the user an answer Control promised them.
+    watches: new Watches(),
     judgeBacklog: jevBacklogJudge(agentSearchDeps.runJev),
     judgePause: jevPauseJudge(agentSearchDeps.runJev),
     findAgents: (query, agents) => searchAgentSurfaces(query, agents.map((agent) => ({
@@ -3521,6 +3524,10 @@ async function startServer(): Promise<void> {
   // give its size back before any client sees it. Reattach adopted the pty's
   // (borrowed) size above, which is exactly what this undoes.
   for (const nodeId of stateManager.borrowedTerminals()) returnBorrowedSize(nodeId, 'startup')
+
+  // Only now are the live agents known: what Control was watching before the
+  // restart is picked up, and any stop it missed while down is reported.
+  receptionist?.resumeWatches()
 
   // --- Claude Code's own session status, paired with ours ---
   // Reads ~/.claude/sessions/<pid>.json, logs how its busy/waiting/idle status
