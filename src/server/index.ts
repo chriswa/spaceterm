@@ -1106,6 +1106,8 @@ for (const { modId, capability } of modRegistry.unprovidedCapabilities()) {
  */
 const scriptApi = new ScriptApi({
   getNode: (nodeId) => stateManager.getNode(nodeId),
+  // Undefined until startup builds the registry; scripts can connect before then.
+  getAgentName: (nodeId) => agentNames?.get(nodeId)?.name,
   getNodeIdForSession: (surfaceId) => stateManager.getNodeIdForSession(surfaceId),
   getNearestTerminalAncestor: (nodeId) => stateManager.getNearestTerminalAncestor(nodeId),
   log: (line) => serverLog(line),

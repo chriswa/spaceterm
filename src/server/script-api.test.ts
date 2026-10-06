@@ -83,7 +83,10 @@ class FakeHost implements ScriptHost {
     return this
   }
 
+  readonly agentNames = new Map<NodeId, string>()
+
   getNode(nodeId: NodeId): NodeData | undefined { return this.nodes.get(nodeId) }
+  getAgentName(nodeId: NodeId): string | undefined { return this.agentNames.get(nodeId) }
   getNodeIdForSession(surfaceId: PtySessionId): NodeId | undefined { return this.sessionToNode.get(surfaceId) }
   getNearestTerminalAncestor(): NodeId | undefined { return this.nearestAncestor }
   shipIt(sessionId: PtySessionId, text: string, submit: boolean): void { this.shipped.push({ sessionId, text, submit }) }
@@ -202,6 +205,16 @@ describe('script-get-node', () => {
     const h = harness((host) => host.add(terminal({ id: 'a', name: 'work' })))
     h.send({ type: 'script-get-node', seq: 1, nodeId: nid('a') })
     expect(h.conn.only.node).toMatchObject({ id: 'a', name: 'work' })
+    expect(h.conn.only).not.toHaveProperty('agentName')
+  })
+
+  it("includes the agent's name when it has one", () => {
+    const h = harness((host) => {
+      host.add(terminal({ id: 'a' }))
+      host.agentNames.set(nid('a'), 'Kevin')
+    })
+    h.send({ type: 'script-get-node', seq: 1, nodeId: nid('a') })
+    expect(h.conn.only).toMatchObject({ agentName: 'Kevin', node: { id: 'a' } })
   })
 
   it('strips archived children, which can be unboundedly large', () => {

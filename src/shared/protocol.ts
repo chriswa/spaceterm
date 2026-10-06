@@ -1905,6 +1905,8 @@ export interface ScriptGetNodeResult {
   type: 'script-get-node-result'
   seq: number
   node?: Omit<NodeData, 'archivedChildren'> & { archivedChildren: [] }
+  /** The name the receptionist gave this surface's agent ("Kevin"), if it has one. */
+  agentName?: string
   error?: string
 }
 

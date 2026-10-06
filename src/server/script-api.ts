@@ -80,6 +80,8 @@ interface ConnectionIdentity {
 
 export interface ScriptHost {
   getNode(nodeId: NodeId): NodeData | undefined
+  /** The surface's agent name, if it has one. Must never assign one. */
+  getAgentName(nodeId: NodeId): string | undefined
   /** Resolve a pty-level SPACETERM_SURFACE_ID to the stable node id. */
   getNodeIdForSession(surfaceId: PtySessionId): NodeId | undefined
   /** Nearest ancestor that is a terminal, skipping title/markdown cards. */
@@ -260,7 +262,13 @@ export class ScriptApi {
         }
         // Archived children can be arbitrarily large and are of no use to a
         // script; the protocol types the field as [] so this is not lossy.
-        reply({ type: 'script-get-node-result', seq: msg.seq, node: { ...node, archivedChildren: [] } })
+        const agentName = this.host.getAgentName(node.id)
+        reply({
+          type: 'script-get-node-result',
+          seq: msg.seq,
+          node: { ...node, archivedChildren: [] },
+          ...(agentName ? { agentName } : {}),
+        })
         return
       }
 

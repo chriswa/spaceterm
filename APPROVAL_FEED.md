@@ -76,8 +76,8 @@ sent. **Relays must pass it through untouched.**
   "tone": "caution",                 // "info" | "caution" | "danger"
   "kicker": "1Password security approval",
   "title": "GitHub token",           // the headline, and the list row's
-  "subtitle": "Claude Code · “fix flaky tests”",
-  "surfaceId": "…",                  // optional: the Spaceterm surface it concerns
+  "subtitle": "Kevin (Claude Code) · “fix flaky tests”",
+  "surfaceId": "…",                  // optional: the node ID of the Spaceterm surface it concerns
   "sections": [
     { "kind": "fields", "label": "Request", "rows": [ { "label": "Vault", "value": "Private" },
                                                       { "label": "Field", "value": "token", "mono": true } ] },
