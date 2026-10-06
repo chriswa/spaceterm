@@ -2520,23 +2520,13 @@ describe('Receptionist backlog at a pause', () => {
     expect(h.backlog.all().map(item => item.text)).toEqual(['Leon finished.'])
   })
 
-  it('drops what was set aside about an agent once the user types into it themselves', async () => {
+  it('keeps what was set aside about an agent when the user types into it themselves', async () => {
     const h = harness({
-      backlog: ['Dean asked two questions.'],
-      replies: [
-        reply([], [{ tool: 'backlog_add', item: `{${KEVIN}} wants two decisions from the user.` }]),
-        (turn) => {
-          expect(turn.prompt).toMatch(/NOTE: The user is working with \{(\w+:)?\w+-\w+\} themselves, so what you set aside about it is off your backlog: \{(\w+:)?\w+-\w+\} wants two decisions from the user\./)
-          return reply([{ from: 'control', text: 'Okay.' }])
-        },
-      ],
+      replies: [reply([], [{ tool: 'backlog_add', item: `{${KEVIN}} wants two decisions from the user.` }])],
     })
     await h.receptionist.hear('anyway')
     await flush()
-    expect(h.backlog.size).toBe(2)
     h.receptionist.userTookOver(KEVIN_ID)
-    expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.'])
-    await h.receptionist.hear('what now')
-    await flush()
+    expect(h.backlog.size).toBe(1)
   })
 })

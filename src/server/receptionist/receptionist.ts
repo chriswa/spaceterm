@@ -650,7 +650,6 @@ export class Receptionist {
    * would wake Control at every stop of a session the user is working in.
    */
   userTookOver(nodeId: NodeId): void {
-    this.dropSettled(nodeId)
     this.holding.delete(nodeId)
     if (!this.monitors.delete(nodeId)) return
     const agents = this.deps.agents()
@@ -1284,19 +1283,6 @@ export class Receptionist {
       return
     }
     await this.runTurn(undefined, pulled)
-  }
-
-  /**
-   * The user has taken an agent in hand themselves: whatever Control set aside
-   * about it, they now have first-hand, so it never comes up stale — asking
-   * them decisions they have already made with the agent.
-   */
-  private dropSettled(nodeId: NodeId): void {
-    const indices = this.deps.backlog.all().flatMap((item, i) => item.agents?.includes(nodeId) ? [i] : [])
-    if (!indices.length) return
-    const dropped = this.deps.backlog.take(indices)
-    this.deps.log({ event: 'backlog-settled', nodeId, dropped })
-    this.notes.push(`The user is working with ${this.token(nodeId, this.handles(this.deps.agents()))} themselves, so what you set aside about it is off your backlog: ${dropped.map(item => item.text).join('; ')}.`)
   }
 
   /** Set an item aside, with the surfaces of the live agents its tokens name, so that their caches can be weighed later. */
