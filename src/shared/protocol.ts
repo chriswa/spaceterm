@@ -445,6 +445,12 @@ export interface WakeWordCheckMessage {
   seq: number
   /** 16 kHz signed 16-bit little-endian mono, base64. */
   pcm: string
+  /**
+   * `wake-word` (the default): does it start with "control"? `speech`: in the
+   * conversation window, is it words at all — not a cough, not filler (the
+   * tuning's `ignoredWords`)? An older server asks the wake-word question.
+   */
+  mode?: 'wake-word' | 'speech'
 }
 
 /**
@@ -2022,6 +2028,14 @@ export interface HandsFreeTuning {
   maxUtteranceMs: number
   /** After this device stops playing sound, how long before listening resumes (echo). */
   playbackTailMs: number
+  /**
+   * The conversation window: after "Control", anything said starts a
+   * dictation without it, until neither side has spoken for this long. Paused
+   * while either is speaking.
+   */
+  conversationMs: number
+  /** Words that do not count as speech in the conversation window (server-side; see hands-free.ts). */
+  ignoredWords?: string[]
 }
 
 /** The operator's overrides from `~/.spaceterm/hands-free.json`. Sent on connect and on every change. */

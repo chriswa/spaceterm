@@ -49,6 +49,12 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * after it Control says it had not finished and carries on. What survives of
  * Control's voice in the microphone is recorded per reply (`hands-free-echo`).
  *
+ * After "Control", a conversation window opens: speech starts a dictation
+ * without the wake word — the Mac checks only that it was words, not a cough
+ * or filler — and so can cut Control off, echo cancellation permitting. It
+ * stays open while either side is speaking and closes, with a tone, once
+ * neither has for `conversationMs`; Control thinking does not hold it open.
+ *
  * Nothing heard is logged: only that a candidate was or was not the word, and
  * its timings.
  */
@@ -57,7 +63,12 @@ export const WAKE_WORD = 'control'
 
 export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
 
-export const useHandsFree = create<{ phase: HandsFreePhase }>(() => ({ phase: 'off' }))
+/**
+ * `conversation`: the window after "Control" in which anything said starts a
+ * dictation without it — open until neither side has spoken for
+ * `conversationMs`.
+ */
+export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean }>(() => ({ phase: 'off', conversation: false }))
 
 /**
  * What Wispr wrote, as Control should get it: the wake word off the front,
@@ -178,6 +189,9 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let quietRun = 0
   /** Wake-word checks under way: Control stays turned down until each has its answer. */
   let checking = 0
+  /** The conversation window, and how many frames neither side has spoken for. */
+  let conversation = false
+  let silentFrames = 0
   /** Set while not listening — this device playing, another dictation — so listening starts afresh after. */
   let stoodAside = false
   /** The dictation after the wake word, fed to its endpointer, and how to say it has ended. */
@@ -202,8 +216,40 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     log(`tuning ${JSON.stringify(tuning)}`)
   })
 
-  const check = (clip: Int16Array): Promise<boolean> =>
-    api.handsFree.checkWakeWord(pcmToBase64(clip)).then(({ match, error }) => {
+  const openConversation = () => {
+    silentFrames = 0
+    if (conversation) return
+    conversation = true
+    useHandsFree.setState({ conversation: true })
+    log('conversation window open: no need to say "Control" until we have both been quiet a while')
+    record('hands-free-conversation', { open: true })
+  }
+
+  /** `silence`: the window ran out, and says so with a tone. Anything else — the microphone going — closes it quietly. */
+  const closeConversation = (why: 'silence' | 'microphone') => {
+    if (!conversation) return
+    conversation = false
+    silentFrames = 0
+    useHandsFree.setState({ conversation: false })
+    log(`conversation window closed (${why}): "Control" again from here`)
+    record('hands-free-conversation', { open: false, why })
+    if (why === 'silence') deps.playCue('conversationClosed')
+  }
+
+  /**
+   * Each frame, while the window is open: anyone speaking — the user (heard,
+   * or being taken down) or Control's voice — holds it open; once both are
+   * quiet, `conversationMs` of that closes it.
+   */
+  const tickConversation = (phase: HandsFreePhase) => {
+    if (!conversation) return
+    const someoneSpeaking = phase !== 'listening' || listener.speaking || deps.nativeSpeech().playing || deps.quietForMs() < tuning.playbackTailMs
+    silentFrames = someoneSpeaking ? 0 : silentFrames + 1
+    if (silentFrames * FRAME_SECONDS * 1000 >= tuning.conversationMs) closeConversation('silence')
+  }
+
+  const check = (clip: Int16Array, mode: 'wake-word' | 'speech'): Promise<boolean> =>
+    api.handsFree.checkWakeWord(pcmToBase64(clip), mode).then(({ match, error }) => {
       if (error && error !== checkError) log(`cannot check the wake word: ${error}`)
       checkError = error
       return match
@@ -281,13 +327,15 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   }
 
   /**
-   * The wake word heard: dictate from where the user started until they
-   * finish; send to Control. `interrupted`: it cut Control's reply off, so
-   * even nothing caught is worth telling it — it then carries on.
+   * The wake word heard — or, in the conversation window, words: dictate
+   * from where the user started until they finish; send to Control.
+   * `interrupted`: it cut Control's reply off, so even nothing caught is
+   * worth telling it — it then carries on.
    */
-  const respond = async ({ start, spokeMs }: WakeCandidate, interrupted = false) => {
+  const respond = async ({ start, spokeMs }: WakeCandidate, interrupted = false, wakeWordStart = true) => {
     setPhase('hearing')
     deps.haptic()
+    openConversation()
     let dictation: HandsFreeDictation | undefined
     try {
       if (!capture) throw new Error('the microphone went away')
@@ -302,7 +350,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
           return audio
         },
       })
-      utterance = new UtteranceEndpointer(tuning, backlogMs, spokeMs)
+      utterance = new UtteranceEndpointer(tuning, backlogMs, spokeMs, wakeWordStart)
       utteranceDictation = dictation
       endUtterance = ended
       void deps.sleep(tuning.maxUtteranceMs + 10_000).then(() => ended('lost'))
@@ -373,6 +421,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     }
     const phase = useHandsFree.getState().phase
     trackPlayback(frame, phase === 'listening')
+    tickConversation(phase)
     if (phase === 'hearing') {
       for (const event of utterance?.push([frame]) ?? []) {
         if (event.kind === 'ended') endUtterance?.(event.reason)
@@ -398,13 +447,17 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       listener.resume()
     }
     for (const candidate of listener.push([frame])) {
-      log(`speech after ${candidate.noSpeechBeforeMs}ms without speech — checking its start for "${WAKE_WORD}"`)
+      // In the conversation window any words will do; otherwise they must start with "Control".
+      const mode = conversation ? 'speech' : 'wake-word'
+      log(`speech after ${candidate.noSpeechBeforeMs}ms without speech — checking its start ${mode === 'speech' ? 'for words' : `for "${WAKE_WORD}"`}`)
       const overControl = deps.nativeSpeech().playing
       checking++
-      void check(candidate.clip).then((match) => {
+      void check(candidate.clip, mode).then((match) => {
         checking--
-        log(match ? 'it starts with the wake word: dictating from its start' : 'not the wake word')
-        record('wake-word', { match, noSpeechBeforeMs: candidate.noSpeechBeforeMs, spokeMs: candidate.spokeMs, overControl })
+        log(match
+          ? mode === 'speech' ? 'words, in the conversation window: dictating from its start' : 'it starts with the wake word: dictating from its start'
+          : mode === 'speech' ? 'not words (a cough, filler, nothing)' : 'not the wake word')
+        record('wake-word', { match, mode, noSpeechBeforeMs: candidate.noSpeechBeforeMs, spokeMs: candidate.spokeMs, overControl })
         if (!match || useHandsFree.getState().phase !== 'listening' || !capture) {
           // Not for Control: back up, unless they are still talking.
           if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
@@ -413,11 +466,11 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
         // Said over Control's reply: cut it off — its record keeps how much was heard.
         const interrupting = deps.nativeSpeech().playing
         if (interrupting) {
-          log('"Control" over its own reply: cutting it off')
-          record('hands-free-interrupt')
+          log(mode === 'speech' ? 'words over its own reply: cutting it off' : '"Control" over its own reply: cutting it off')
+          record('hands-free-interrupt', { mode })
           deps.interruptControl()
         }
-        void respond(candidate, interrupting)
+        void respond(candidate, interrupting, mode === 'wake-word')
       })
     }
   }
@@ -474,6 +527,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     if (!next) {
       downsampler = undefined
       endUtterance?.('lost')
+      closeConversation('microphone')
       if (useHandsFree.getState().phase === 'listening') setPhase('off')
       log('not listening: the microphone is not held')
       record('hands-free-mic', { listening: false })
@@ -497,6 +551,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     offTuning()
     unlisten?.()
     capture = undefined
+    closeConversation('microphone')
     setPhase('off')
   }
 }

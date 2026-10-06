@@ -311,7 +311,7 @@ export interface HandsFreeApi {
    * Is this clip (16 kHz s16le mono, base64) the wake word alone? Checked on
    * the Mac, on-device. `error` says why it could not be checked at all.
    */
-  checkWakeWord(pcmBase64: string): Promise<{ match: boolean; error?: string }>
+  checkWakeWord(pcmBase64: string, mode?: 'wake-word' | 'speech'): Promise<{ match: boolean; error?: string }>
   /**
    * Words said after the wake word: to Control, which comes to this device.
    * `interrupted`: the wake word cut Control's reply off — with no words, it

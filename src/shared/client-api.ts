@@ -207,7 +207,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       turnCheck: (id) => client.dictationTurnCheck(id)
     },
     handsFree: {
-      checkWakeWord: (pcm) => client.checkWakeWord(pcm),
+      checkWakeWord: (pcm, mode) => client.checkWakeWord(pcm, mode),
       say: (text, interrupted) => client.receptionistHandsFree(text, interrupted),
       onTuning: (cb) => onHandsFreeTuning((m) => cb(m.tuning))
     },

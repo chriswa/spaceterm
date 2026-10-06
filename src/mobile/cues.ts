@@ -15,7 +15,7 @@
 import { recordMobileEvent } from './mobile-events'
 
 export type Cue = 'listeningStarted' | 'listeningFinished' | 'pasted' | 'transcriptionFailed' | 'captureFailed'
-  | 'holdEngaged' | 'holdReleased'
+  | 'holdEngaged' | 'holdReleased' | 'conversationClosed'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
@@ -25,7 +25,9 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   transcriptionFailed: [[523, 0.10], [392, 0.10], [262, 0.22]],
   captureFailed: [[196, 0.20], [0, 0.07], [196, 0.30]],
   holdEngaged: [[392, 0.06], [0, 0.04], [392, 0.06], [0, 0.04], [784, 0.18]],
-  holdReleased: [[587, 0.06], [0, 0.04], [587, 0.06], [0, 0.04], [294, 0.18]]
+  holdReleased: [[587, 0.06], [0, 0.04], [587, 0.06], [0, 0.04], [294, 0.18]],
+  // Spaceterm's own too: hands-free's conversation window has closed, and "Control" is needed again. Three steps down, softly.
+  conversationClosed: [[880, 0.08], [0, 0.03], [659, 0.08], [0, 0.03], [440, 0.18]]
 }
 
 const SPEEDUP = 2

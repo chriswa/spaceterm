@@ -36,7 +36,7 @@ const fakeDetector: FrameScorer = {
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
-function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
+function harness({ isWakeWord = true, isWords = true, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
     sampleRate: RATE,
@@ -50,6 +50,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
   let tuningListener: (t: Partial<HandsFreeTuning>) => void = () => {}
   const said: string[] = []
   const checked: number[] = []
+  const modes: string[] = []
   const cues: string[] = []
   let haptics = 0
   const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
@@ -63,7 +64,11 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
   const deps: HandsFreeDeps = {
     api: {
       handsFree: {
-        checkWakeWord: async (pcm) => { checked.push(pcm.length); return { match: isWakeWord } },
+        checkWakeWord: async (pcm, mode = 'wake-word') => {
+          checked.push(pcm.length)
+          modes.push(mode)
+          return { match: mode === 'speech' ? isWords : isWakeWord }
+        },
         say: (text, interrupted) => { sayCalls.push({ text, interrupted }); if (text) said.push(text) },
         onTuning: (cb) => { tuningListener = cb; return () => {} },
       },
@@ -111,7 +116,8 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
     }
   }
   return {
-    hear, said, checked, cues, dictations, records, uninstall, ducks, sayCalls,
+    hear, said, checked, modes, cues, dictations, records, uninstall, ducks, sayCalls,
+    setTranscript: (text: string) => { transcript = text },
     interrupts: () => interrupts,
     setControlSpeaking: (on: boolean) => { controlSpeaking = on },
     haptics: () => haptics,
@@ -122,7 +128,7 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
 }
 
 let h: ReturnType<typeof harness> | undefined
-beforeEach(() => useHandsFree.setState({ phase: 'off' }))
+beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false }))
 afterEach(() => { h?.uninstall(); h = undefined })
 
 describe('hands-free mode', () => {
@@ -264,6 +270,83 @@ describe('hands-free mode', () => {
     const echo = h.records.find((r) => r.kind === 'hands-free-echo')?.detail
     expect(echo).toMatchObject({ speechPercent: 0, longestSpeechMs: 0, outputDb: -18, voiceProcessing: true, ducks: 0 })
     expect(echo?.seconds).toBeGreaterThan(2.5)
+  })
+
+  describe('the conversation window', () => {
+    /** "Control, …" sent: the window is open. */
+    async function inConversation(h: ReturnType<typeof harness>) {
+      await h.hear(quiet(1500), speech(1500), quiet(3500))
+      expect(h.said).toHaveLength(1)
+      expect(useHandsFree.getState().conversation).toBe(true)
+    }
+
+    it('after "Control", any words start a dictation — checked only for being words — and nothing is cropped', async () => {
+      h = harness()
+      await inConversation(h)
+      h.setTranscript('Yes, and tell Evan too.')
+      await h.hear(quiet(1000), speech(1500), quiet(3500))
+      expect(h.modes).toEqual(['wake-word', 'speech'])
+      expect(h.said).toEqual(['what is Kevin doing?', 'Yes, and tell Evan too.'])
+    })
+
+    it('ignores a cough or filler in the window, as not words', async () => {
+      h = harness({ isWords: false })
+      await inConversation(h)
+      await h.hear(quiet(1000), speech(400), quiet(2000))
+      expect(h.modes).toEqual(['wake-word', 'speech'])
+      expect(h.dictations).toHaveLength(1)
+    })
+
+    it('a short "yes" is the whole answer: no waiting, as after "Control." alone', async () => {
+      h = harness({ turn: 0.93 })
+      await inConversation(h)
+      h.setTranscript('Yes.')
+      await h.hear(quiet(1000), speech(500), quiet(1000))
+      expect(h.dictations[1].turnChecks).toBe(1)
+      expect(h.said).toEqual(['what is Kevin doing?', 'Yes.'])
+    })
+
+    it('closes with a tone once both sides have been quiet for conversationMs, and then needs "Control" again', async () => {
+      h = harness()
+      await inConversation(h)
+      await h.hear(quiet(10_000))
+      expect(useHandsFree.getState().conversation).toBe(true)
+      await h.hear(quiet(5500))
+      expect(useHandsFree.getState().conversation).toBe(false)
+      expect(h.cues.at(-1)).toBe('conversationClosed')
+      await h.hear(quiet(1000), speech(1500), quiet(500))
+      expect(h.modes.at(-1)).toBe('wake-word')
+    })
+
+    it('holds open while the user talks for longer than the window, words or not', async () => {
+      h = harness({ isWords: false })
+      await inConversation(h)
+      await h.hear(speech(20_000), quiet(10_000))
+      expect(useHandsFree.getState().conversation).toBe(true)
+    })
+
+    it('holds open while Control speaks for longer than the window, and counts from when it stops', async () => {
+      h = harness()
+      await inConversation(h)
+      h.setControlSpeaking(true)
+      await h.hear(quiet(20_000))
+      expect(useHandsFree.getState().conversation).toBe(true)
+      h.setControlSpeaking(false)
+      await h.hear(quiet(10_000))
+      expect(useHandsFree.getState().conversation).toBe(true)
+      await h.hear(quiet(5500))
+      expect(useHandsFree.getState().conversation).toBe(false)
+    })
+
+    it('lets words cut Control off without "Control", when it speaks through echo cancellation', async () => {
+      h = harness()
+      await inConversation(h)
+      h.setControlSpeaking(true)
+      h.setTranscript('No, stop.')
+      await h.hear(quiet(1000), speech(1500), quiet(3500))
+      expect(h.interrupts()).toBe(1)
+      expect(h.sayCalls.at(-1)).toEqual({ text: 'No, stop.', interrupted: true })
+    })
   })
 
   it('stops listening when the microphone is no longer held', async () => {

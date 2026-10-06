@@ -22,8 +22,9 @@ const APP_LABELS: Record<HoldState, string> = {
  * with it hands-free mode (hands-free.ts): start talking with "Control", stop
  * when you are done, and Control gets it without a press.
  * Outlined and pulsing while it is on but not holding the microphone yet;
- * white once it is; orange and turning while hands-free is taking down what
- * you say.
+ * white once it is; blue while the conversation window is open (no need to
+ * say "Control"); orange and turning while hands-free is taking down what you
+ * say.
  * In a browser it only takes effect with a headset — see held-microphone.ts.
  * Remembered on this phone.
  */
@@ -31,12 +32,16 @@ export function HoldMicButton() {
   const [state, setState] = useState(holdState)
   useEffect(() => onHoldStateChange(setState), [])
   const phase = useHandsFree((s) => s.phase)
+  const conversation = useHandsFree((s) => s.conversation)
   const on = state !== 'off'
   const hearing = phase === 'hearing' || phase === 'sending'
-  const look = phase === 'hearing' ? ' m-hold-mic--hearing' : phase === 'sending' ? ' m-hold-mic--sending' : state === 'held' ? ' m-hold-mic--on' : state === 'preparing' ? ' m-hold-mic--preparing' : ''
+  const look = phase === 'hearing' ? ' m-hold-mic--hearing' : phase === 'sending' ? ' m-hold-mic--sending'
+    : state === 'held' ? (conversation ? ' m-hold-mic--conversation' : ' m-hold-mic--on') : state === 'preparing' ? ' m-hold-mic--preparing' : ''
   const label = hearing
-    ? phase === 'hearing' ? 'Heard "Control" — listening; stop talking to send' : 'Sending what you said to Control'
-    : (nativeMicrophoneAvailable() ? APP_LABELS : BROWSER_LABELS)[state]
+    ? phase === 'hearing' ? 'Listening to you — stop talking to send' : 'Sending what you said to Control'
+    : state === 'held' && conversation
+      ? 'In conversation with Control: just talk, no need to say "Control" — until you have both been quiet a while'
+      : (nativeMicrophoneAvailable() ? APP_LABELS : BROWSER_LABELS)[state]
   return (
     <button
       className={`m-hold-mic${look}`}

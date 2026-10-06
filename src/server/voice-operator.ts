@@ -240,7 +240,7 @@ export class VoiceOperator {
    * the word alone (`only`)? Raw s16le mono PCM at 16 kHz. Checked by Apple's on-device model, never Wispr. The first check
    * after Voice Operator starts loads the model, about a second.
    */
-  checkWakeWord(pcm: Uint8Array, word: string, match: 'start' | 'only'): Promise<SpeechResponse> {
+  checkWakeWord(pcm: Uint8Array, word: string, match: 'start' | 'only' | 'speech'): Promise<SpeechResponse> {
     return this.request(`/v1/wake-word?word=${encodeURIComponent(word)}&match=${match}&sample_rate=16000`, {
       method: 'POST', body: new Uint8Array(pcm), headers: { 'content-type': 'application/octet-stream' },
     }, 5_000)

@@ -820,8 +820,8 @@ export class ServerClient {
   // ─── hands-free ───────────────────────────────────────────────────────────
 
   /** Whether a clip (16 kHz s16le mono, base64) is the wake word alone; `error` when it could not be checked. */
-  async checkWakeWord(pcmBase64: string): Promise<{ match: boolean; error?: string }> {
-    const resp = await this.request({ type: 'wake-word-check', pcm: pcmBase64 })
+  async checkWakeWord(pcmBase64: string, mode: 'wake-word' | 'speech' = 'wake-word'): Promise<{ match: boolean; error?: string }> {
+    const resp = await this.request({ type: 'wake-word-check', pcm: pcmBase64, ...(mode === 'speech' ? { mode } : {}) })
     if (resp.type === 'wake-word-result') return { match: resp.match, error: resp.error }
     return unexpected(resp)
   }

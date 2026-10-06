@@ -41,6 +41,7 @@ export const DEFAULT_TUNING: HandsFreeTuning = {
   endSilenceRampMs: 300_000,
   maxUtteranceMs: 600_000,
   playbackTailMs: 400,
+  conversationMs: 15_000,
 }
 
 /** One analysis frame: 32 ms, what Silero VAD takes at 16 kHz. */
@@ -223,6 +224,9 @@ export class WakeListener {
 
   setTuning(tuning: HandsFreeTuning): void { this.tuning = tuning }
 
+  /** Whether someone is speaking now, as far as it has heard. */
+  get speaking(): boolean { return this.gate.speaking }
+
   /**
    * Start over, as if everything before now were speech: a candidate needs a
    * full `noSpeechBeforeMs` from here. For after Control's voice or a cue,
@@ -321,7 +325,9 @@ export type UtteranceEvent =
  * `alreadySpokeMs` from before it started — is the pause after "Control." on
  * its own: until speech resumes, it waits at least `afterWakeWordMs`, and the
  * pause is not one to ask the turn model about. Speech, not time: the Mac's
- * check may have taken a second, which is not the speaker talking.
+ * check may have taken a second, which is not the speaker talking. Only when
+ * the utterance began with the wake word (`wakeWordStart`): in the
+ * conversation window, a short "yes" and a pause is the whole answer.
  */
 export class UtteranceEndpointer {
   private readonly gate = new SpeechGate()
@@ -334,7 +340,10 @@ export class UtteranceEndpointer {
   private wakeWordOnly = false
   private done = false
 
-  constructor(private readonly tuning: HandsFreeTuning = DEFAULT_TUNING, private readonly alreadyMs = 0, alreadySpokeMs = 0) {
+  constructor(
+    private readonly tuning: HandsFreeTuning = DEFAULT_TUNING, private readonly alreadyMs = 0, alreadySpokeMs = 0,
+    private readonly wakeWordStart = true,
+  ) {
     this.spokeMs = alreadySpokeMs
   }
 
@@ -361,7 +370,7 @@ export class UtteranceEndpointer {
       if (!this.pauseReported && quietMs >= this.tuning.pauseCheckMs) {
         this.pauseReported = true
         this.pauses++
-        this.wakeWordOnly = this.pauses === 1 && this.spokeMs < this.tuning.wakeWordOnlyMs
+        this.wakeWordOnly = this.wakeWordStart && this.pauses === 1 && this.spokeMs < this.tuning.wakeWordOnlyMs
         events.push({ kind: 'pause', talkMs: Math.round(talkMs), wakeWordOnly: this.wakeWordOnly })
       }
       const patience = this.wakeWordOnly ? Math.max(this.tuning.afterWakeWordMs, endSilenceFor(talkMs, this.tuning)) : endSilenceFor(talkMs, this.tuning)

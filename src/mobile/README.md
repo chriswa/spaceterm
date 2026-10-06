@@ -123,6 +123,17 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   1.3 MB, run in ONNX Runtime web at about 0.3 ms per 32 ms frame), so music,
   a fan or a noisy room never count as talk and never block it; without the
   model, loudness stands in.
+- **The conversation window.** "Control" opens it, and the hold-mic button
+  turns blue: from then on anything you say starts a dictation without
+  "Control" — your first word kept — including cutting Control off mid-reply
+  (when it speaks through echo cancellation). The Mac checks only that it was
+  words: not a cough, not filler (`ignoredWords`, server-side, defaults
+  "hmm", "uh", "um" and the like). It stays open while either of you is
+  speaking, however long, and closes with a tone (three soft steps down)
+  once neither has spoken for `conversationMs` (15 s) — Control thinking does
+  not hold it open. Speech checks of two words or fewer are logged
+  (`[hands-free] speech check heard …`), to find what the model hears in
+  nothing at all.
 - **"Control." on its own, then a breath** is fine: that first pause is not
   put to the turn model (which would call "Control." finished), and it waits
   five seconds (`afterWakeWordMs`) for the rest.
@@ -160,7 +171,8 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   (1000), `wordMinMs` (250), `pauseCheckMs` (800), `turnThreshold` (0.85, a
   probability), `wakeWordOnlyMs` (1500), `afterWakeWordMs` (5000),
   `endSilenceMinMs` (3000), `endSilenceMaxMs` (20000), `endSilenceRampMs`
-  (300000), `maxUtteranceMs` (600000), `playbackTailMs` (400).
+  (300000), `maxUtteranceMs` (600000), `playbackTailMs` (400),
+  `conversationMs` (15000), and `ignoredWords` (a list of words or phrases).
 - **Why it did or did not trigger** is in `~/.spaceterm/mobile-events.jsonl`:
   a `hands-free-speech` event for every burst of speech the listener noticed —
   how long, how long without speech before it, how loud, and its verdict
