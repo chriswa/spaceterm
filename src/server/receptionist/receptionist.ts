@@ -4,7 +4,7 @@ import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
 import { finalAgentMessage, type TranscriptMessage } from '../summary-chat'
 import { joinSpeechParts, type SpeechBackend } from '../voice-operator'
-import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase, type SpeechProgress } from '../speech-channel'
+import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice, VoiceGender } from './name-voice-table'
 import { RECEPTIONIST_NAME, RECEPTIONIST_VOICE } from './name-voice-table'
 import type { NameProblem } from './name-registry'
@@ -23,7 +23,6 @@ import {
   actionHeadline, CONTROL, heardLengths, isAction, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet,
   type RenderedPart, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
-import { HeardActions } from './heard-actions'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import {
   cacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
@@ -427,13 +426,6 @@ export class Receptionist {
    * reconnection with nothing missed starts none.
    */
   private quieted = false
-  /**
-   * The actions of the reply being spoken, each waiting for the words before
-   * it: see `HeardActions`. Whatever stops that speech says what becomes of
-   * them — skipped when the user talks over it or stops Control, run at once
-   * when nobody can hear it any more.
-   */
-  private actions: HeardActions<ToolCall> | undefined
   /** What backlog_next gave the latest turn, until its reply is said; see `putBack`. */
   private taken: { attempt: Attempt; items: BacklogItem[] } | undefined
 
@@ -496,7 +488,6 @@ export class Receptionist {
       this.held = true
       if (this.unprompted?.isCurrent) {
         serverLog('[receptionist] the user started talking: dropping an unprompted turn until they finish')
-        this.skipActions('the user started talking before the words that lead up to them were said')
         void this.channel.cancel()
       }
       return
@@ -521,9 +512,8 @@ export class Receptionist {
     return new Promise((resolve) => this.heldWaiters.add(resolve))
   }
 
-  /** Stop whatever the receptionist is saying or about to say, and the actions still waiting on its words. */
+  /** Stop whatever the receptionist is saying or about to say. Its actions have already run. */
   cancel(): Promise<boolean> {
-    this.skipActions('the user stopped you before the words that lead up to them were said')
     return this.channel.cancel()
   }
 
@@ -546,8 +536,6 @@ export class Receptionist {
       this.listenerId = undefined
       this.channel.speech = NO_LISTENER
       this.missed = emptyNews()
-      // Leaving is not talking over it: what they asked for still gets done.
-      this.actions?.all()
       // What was heard of the reply they left in the middle of, if they did:
       // news for when they are back.
       void this.channel.silence().then(() => this.noteInterruption())
@@ -561,7 +549,6 @@ export class Receptionist {
       // Moved. The job being cut off keeps the backend it started on, so
       // silencing reaches the old device; anything said next goes to the new.
       this.missed = { ...emptyNews(), moved: true }
-      this.actions?.all()
       void this.channel.silence().then(() => this.noteInterruption()).then(() => this.arrive())
       return
     }
@@ -710,8 +697,6 @@ export class Receptionist {
       if (!verdict.interrupt || this.lastSpoken !== spoken || !this.events.length || !this.listening || this.held) return
       if (this.channel.phase !== 'speaking') return
       this.selfInterrupted = true
-      // Cut short by Control, not by the user: its actions still run.
-      this.actions?.all()
       await this.channel.silence()
     } finally {
       this.judging = false
@@ -723,11 +708,6 @@ export class Receptionist {
    * steps as its `read` calls need, and then speech.
    */
   private async runTurn(heard: string | undefined): Promise<void> {
-    // A new turn ends whatever reply came before it. The user's own words came
-    // over it, so what still waits on its words is not done; anything else
-    // starting a turn leaves nothing to wait for, so it is.
-    if (heard !== undefined) this.skipActions('the user spoke before hearing the words that lead up to them')
-    else this.actions?.all()
     const attempt = this.channel.begin('thinking')
     this.unprompted = heard === undefined ? attempt : undefined
     // The reply this turn supersedes will never be heard: what backlog_next
@@ -843,11 +823,11 @@ export class Receptionist {
         this.deps.log({ event: 'stale-names', step, stale })
         this.notes.push(`The handle decided, so the agent's real name was used: ${stale.join('; ')}.`)
       }
-      // The last step's actions wait for its words, which `speak` says.
+      // The last step's actions, and its words, are `speak`'s.
       if (!reply.tools.some(isBlocking) || step === MAX_STEPS) return reply
       // Words that came with a blocking tool are spoken now, while it runs:
-      // the listener hears "let me check" instead of silence. Lookups run at
-      // once; actions wait for the words before them, as in any reply.
+      // the listener hears "let me check" instead of silence. As in any
+      // reply, its actions run first, and the words report them.
       const done: string[] = []
       let spoken: SpokenPart[] = []
       if (reply.say.length && this.listening) {
@@ -855,13 +835,9 @@ export class Receptionist {
         if (!attempt.isCurrent) return undefined
         spoken = this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
       }
-      const actions = this.holdActions(spoken, reply.tools, lines => done.push(...lines))
-      if (spoken.length && !await this.channel.deliverInterim(attempt, spoken, this.following(actions))) {
-        if (!attempt.isCurrent) return undefined
-        actions.all()
-      }
+      await this.runActions(reply.tools, lines => done.push(...lines))
+      if (spoken.length && !await this.channel.deliverInterim(attempt, spoken) && !attempt.isCurrent) return undefined
       const { results } = await this.runTools(reply.tools.filter(isLookup), agents, handles, undefined, taken)
-      await actions.whenDone()
       if (!attempt.isCurrent) return undefined
       message = `TOOL RESULTS:\n${[...results, ...done.map(line => `done: ${line}`)].join('\n\n')}`
     }
@@ -917,7 +893,7 @@ export class Receptionist {
         // turn — which only finds out after that message has already left.
         if (!attempt.isCurrent) {
           // Its tools never ran either: the turn is gone, so nothing will run them.
-          this.notes.push(unspokenNote(toolsOf(answer.text)))
+          this.noteUnspoken(toolsOf(answer.text))
         }
         return answer
       } catch (err) {
@@ -1630,15 +1606,14 @@ export class Receptionist {
     // Never over the user. Talked over while it waited, the reply is never said.
     await this.untilUserDone()
     if (!attempt.isCurrent) {
-      this.notes.push(unspokenNote(reply.tools))
+      this.noteUnspoken(reply.tools)
       this.putBack(taken)
       return false
     }
     if (!this.listening) {
-      // Gone while the reply was being written. Nobody is left to hear the
-      // words its actions wait for, so they run now; its words are dropped,
-      // and the model told, as when it is talked over.
-      this.holdActions([], reply.tools)
+      // Gone while the reply was being written: its actions still run, and
+      // its words are dropped, with the model told, as when it is talked over.
+      await this.runActions(reply.tools)
       this.putBack(taken)
       if (reply.say.length) {
         this.notes.push('Your previous reply was never spoken: the user was away, so they heard none of it.')
@@ -1648,67 +1623,54 @@ export class Receptionist {
       return false
     }
     const agents = this.deps.agents()
-    const handles = this.handles(agents)
     // The camera stays where the user put it: an agent being spoken of is no
-    // reason to move it. Only force_user_camera does, when they ask.
+    // reason to move it. Only force_user_camera does, when they ask. Rendered
+    // before the actions run, since the words name agents as the model saw
+    // them: "{Kevin} is now Ruth." says Kevin.
     const { spoken } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
     this.lastSpoken = spoken
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
     taken.splice(0)
+    // Done before a word is said, and reported by the words: the user never
+    // waits through "Sent to Kevin" for the send. Talking over the words
+    // undoes nothing, which is why Control asks first when it is unsure.
+    await this.runActions(reply.tools)
     this.lastSpokenAt = this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])[0]
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))
-    const actions = this.holdActions(parts, reply.tools)
-    const monitoring = parts.length > 0 && await this.channel.deliver(attempt, parts, undefined, this.following(actions))
-    // Nothing to follow — nothing to say, or no speech to say it with — so
-    // nothing to wait for. Superseded instead, whatever did it has decided.
-    if (!monitoring && attempt.isCurrent) actions.all()
-    return monitoring
+    return parts.length > 0 && await this.channel.deliver(attempt, parts)
   }
 
   /**
-   * Hold a reply's actions until the words before each are heard (see
-   * `HeardActions`), as the actions of the reply being spoken. `parts` is
-   * what is being said, or nothing when nothing will be heard, which runs
-   * them all at once. `done` takes what each batch reached; by default the
-   * model is told with its next message, enough to notice a wrong agent and
-   * retract, since the action itself has already happened.
+   * Run a reply's actions, in the order written, before any of its words are
+   * said. `done` takes what they reached; by default the model is told with
+   * its next message, enough to notice a wrong agent and retract.
    */
-  private holdActions(
-    parts: readonly SpokenPart[], calls: readonly ToolCall[],
+  private async runActions(
+    calls: readonly ToolCall[],
     done: (lines: string[]) => void = (lines) => { this.notes.push(`Your last actions: ${lines.join('; ')}.`) },
-  ): HeardActions<ToolCall> {
-    // Shared by every batch: a send waits out an interrupt earlier in the same reply.
-    const interrupted = new Set<NodeId>()
-    const held = calls.filter(isAction).map(call => ({ action: call, after: call.after ?? parts.length }))
-    this.actions = new HeardActions(parts, held, async (batch) => {
-      // Looked up now, not when the reply was checked: it may be seconds later.
-      const agents = this.deps.agents()
-      const { done: lines } = await this.runTools(batch, agents, this.handles(agents), interrupted)
+  ): Promise<void> {
+    const actions = calls.filter(isAction)
+    if (!actions.length) return
+    // Looked up now, not when the reply was checked: the user may have talked on for seconds since.
+    const agents = this.deps.agents()
+    try {
+      const { done: lines } = await this.runTools(actions, agents, this.handles(agents))
       if (lines.length) done(lines)
-    })
-    return this.actions
-  }
-
-  /** Follow speech for the actions waiting on it: run each as its words are heard, and skip the rest if the user talks over them. */
-  private following(actions: HeardActions<ToolCall>): (progress: SpeechProgress) => void {
-    return (progress) => {
-      if (progress.kind === 'playing' || progress.heard !== undefined) actions.heard(progress.heard ?? 0)
-      if (progress.kind === 'playing') return
-      if (progress.state === 'interrupted_by_user') this.skipActions('the user talked over the words that lead up to them', actions)
-      else actions.all()
+    } catch (err) {
+      serverLog(`[receptionist] actions failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-  /** The words the waiting actions wait for will never be heard: drop the actions, and tell the model which. */
-  private skipActions(why: string, actions = this.actions): void {
-    const skipped = actions?.skip() ?? []
-    if (skipped.length) {
-      this.deps.log({ event: 'actions-skipped', why, tools: skipped })
-      this.notes.push(notDoneNote(skipped, why))
-      this.deps.record.notDone(skipped.map(actionHeadline))
-    }
+  /**
+   * A reply superseded before any of it was said: the model is told none of
+   * it was heard or done, and the transcript shows each action struck out.
+   */
+  private noteUnspoken(calls: readonly ToolCall[]): void {
+    this.notes.push(unspokenNote(calls))
+    const actions = calls.filter(isAction)
+    if (actions.length) this.deps.record.notDone(actions.map(actionHeadline))
   }
 
   /**

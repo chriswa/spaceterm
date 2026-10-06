@@ -20,9 +20,17 @@ describe('parseReply', () => {
     expect(parseReply('{"say":[{"from":"control","text":"Going quiet."}],"tools":[{"tool":"go_quiet"}]}').tools).toEqual([{ tool: 'go_quiet' }])
   })
 
-  it('drops every word of a reply that goes quiet, and frees its calls from them', () => {
+  it('reads a call written among the parts as one in "tools", in the order written', () => {
+    const parsed = parseReply('{"say":[{"from":"control","text":"Sent."},{"tool":"send","agent":"a1","message":"m"}],"tools":[{"tool":"monitor","agent":"a2"}]}')
+    expect(parsed).toEqual({
+      say: [{ from: CONTROL, text: 'Sent.' }],
+      tools: [{ tool: 'send', agent: 'a1', message: 'm' }, { tool: 'monitor', agent: 'a2' }],
+    })
+  })
+
+  it('drops every word of a reply that goes quiet', () => {
     const quiet = silencedIfQuiet(parseReply('{"say":[{"from":"control","text":"Going quiet."},{"tool":"go_quiet"},{"from":"control","text":"Bye."}],"tools":[{"tool":"interrupt","agent":"a1"}]}'))
-    expect(quiet).toEqual({ say: [], tools: [{ tool: 'go_quiet', after: 0 }, { tool: 'interrupt', agent: 'a1', after: 0 }] })
+    expect(quiet).toEqual({ say: [], tools: [{ tool: 'go_quiet' }, { tool: 'interrupt', agent: 'a1' }] })
     const loud = parseReply('{"say":[{"from":"control","text":"Sent."}],"tools":[{"tool":"send","agent":"a1","message":"m"}]}')
     expect(silencedIfQuiet(loud)).toBe(loud)
   })

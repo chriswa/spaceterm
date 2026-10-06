@@ -104,8 +104,7 @@ export interface SpeechChannelOptions {
  * How far the listener has got through something delivered: where the voice
  * is while it plays, as each status reports it, and then how it ended, with
  * where it stopped if it was cut off. `lost` is a job Voice Operator stopped
- * answering about. For timing something to the words — see the receptionist,
- * whose actions wait for the words that come before them.
+ * answering about. For timing something to the words.
  */
 export type SpeechProgress =
   | { kind: 'playing'; heard: number }

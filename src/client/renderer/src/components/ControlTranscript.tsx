@@ -307,7 +307,7 @@ function EntryRow({ entry, previous, heard }: { entry: ControlTranscriptEntry; p
     // What Control did, in full, is detail: one line until opened.
     const colon = entry.text.indexOf(': ')
     const head = colon < 0 ? entry.text : entry.text.slice(0, colon)
-    // Never ran: the user cut off the words it waited on. Struck out, as those words are.
+    // Never ran: the user spoke before Control's reply was said. Struck out, as unheard words are.
     const notDone = entry.notDone === true
     return (
       <>
@@ -316,7 +316,7 @@ function EntryRow({ entry, previous, heard }: { entry: ControlTranscriptEntry; p
           className={`control-transcript__entry control-transcript__entry--log${notDone ? ' control-transcript__entry--not-done' : ''}`}
           // The verb picks the pill's colour: SENT, STARTED, ARCHIVED, …
           data-action={entry.text.split(' ')[0].toLowerCase()}
-          title={notDone ? `Not done: you cut Control off before it said so · ${at}` : at}
+          title={notDone ? `Not done: you spoke before Control replied · ${at}` : at}
         >
           <summary>{notDone ? <><s>{head}</s> · not done, cut off</> : head}</summary>
           {colon >= 0 && <div className="control-transcript__log-body">{entry.text.slice(colon + 2)}</div>}

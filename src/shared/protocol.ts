@@ -1648,7 +1648,7 @@ export type ControlTranscriptEntry = {
   | { kind: 'reply'; parts: Array<{ from: string; text: string }> }
   /**
    * Something Control did: sent to an agent, started, archived, renamed one.
-   * `notDone` when it never ran, because the user cut off the words it waited on.
+   * `notDone` when it never ran, because the user spoke before Control's reply was said.
    */
   | { kind: 'log'; text: string; notDone?: true }
   /**

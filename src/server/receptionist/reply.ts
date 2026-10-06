@@ -20,11 +20,10 @@ export type SayPart = { from: string; text: string }
 export type GivenName = { name: string; gender: VoiceGender }
 
 /**
- * A tool call. `after` is how many "say" parts come before it, for a call the
- * model put among them: an action waits for those words to be heard (see
- * `HeardActions`). A call in "tools" has none, and waits for them all.
+ * A tool call. Actions run before any of the reply's words are said, which
+ * report them afterwards: see `Receptionist.speak`.
  */
-export type ToolCall = { after?: number } & (
+export type ToolCall = (
   | { tool: 'read'; agent: string; search?: string }
   | { tool: 'ask_agent'; agent: string; question: string }
   | { tool: 'monitor'; agent: string }
@@ -53,12 +52,11 @@ export interface Reply {
 
 /**
  * A reply that calls go_quiet, with nothing said: the user asked for silence,
- * so not one more word is spoken, whatever the model wrote. Its calls lose
- * their place among the words that are gone, and run at once.
+ * so not one more word is spoken, whatever the model wrote.
  */
 export function silencedIfQuiet(reply: Reply): Reply {
   if (!reply.tools.some(call => call.tool === 'go_quiet')) return reply
-  return { say: [], tools: reply.tools.map(call => ({ ...call, after: 0 })) }
+  return { say: [], tools: reply.tools }
 }
 
 /**
@@ -79,7 +77,7 @@ export function isBookkeeping(call: ToolCall): boolean {
   return call.tool === 'backlog_add'
 }
 
-/** Tools that do something for the user, and so wait for the words that announce them. */
+/** Tools that do something for the user, and so get a spoken confirmation, said once they have run. */
 export function isAction(call: ToolCall): boolean {
   return !isLookup(call) && !isBookkeeping(call)
 }
@@ -115,8 +113,8 @@ export function actionHeadline(call: ToolCall): string {
   }
 }
 
-/** A tool call as the model wrote it, to show the model again: without where it stood. */
-export function showToolCall({ after: _after, ...call }: ToolCall): string {
+/** A tool call as the model wrote it, to show the model again. */
+export function showToolCall(call: ToolCall): string {
   return JSON.stringify(call)
 }
 
@@ -136,12 +134,13 @@ export function parseReply(raw: string): Reply {
   const tools = value.tools ?? []
   if (!Array.isArray(say)) throw new Error('"say" must be an array')
   if (!Array.isArray(tools)) throw new Error('"tools" must be an array')
-  // An action may stand among the parts, after the words that announce it.
+  // A call the model put among the parts is taken as one in "tools": it
+  // runs before any words are said, wherever it was written.
   const parts: SayPart[] = []
   const placed: ToolCall[] = []
   for (const item of say) {
     if (isRecord(item) && 'tool' in item) {
-      placed.push({ ...parseToolCall(item), after: parts.length })
+      placed.push(parseToolCall(item))
       continue
     }
     const part = parseSayPart(item)

@@ -1170,8 +1170,9 @@ describe('Receptionist', () => {
     await h.receptionist.hear('archive Kevin')
     await flush()
     expect(h.wire).toEqual([`archive ${KEVIN_ID}`])
-    // Archived once "Archived Kevin." had been said, so recorded after it.
-    expect(h.record.at(-1)?.content).toMatch(/^ARCHIVED \{Kevin:/)
+    // Archived before "Archived Kevin." was said, so recorded before it.
+    expect(h.record.at(-2)?.content).toMatch(/^ARCHIVED \{Kevin:/)
+    expect(h.record.at(-1)?.content).toContain('Archived Kevin.')
     // No longer watched: its stopping says nothing.
     h.setState(KEVIN_ID, 'working')
     h.setState(KEVIN_ID, 'stopped')
@@ -1855,8 +1856,8 @@ function handPlayed() {
   }
 }
 
-describe('Receptionist actions wait for the words before them', () => {
-  /** "Sent to Kevin." with a send to Kevin after it, then more words, then a send to Sally after all of them. */
+describe('Receptionist actions run before the words that report them', () => {
+  /** "Sent to Kevin." with a send to Kevin written after it, then more words, then a send to Sally in "tools". */
   const sendBoth = JSON.stringify({
     say: [
       { from: 'control', text: `Sent to {${KEVIN}}.` },
@@ -1868,83 +1869,41 @@ describe('Receptionist actions wait for the words before them', () => {
   const toKevin = `send ${KEVIN_ID} Run the tests.`
   const toSally = `send ${SALLY_ID} Push it.`
 
-  it('runs each action the moment its words are heard', async () => {
+  it('runs every action, wherever it was written, before a word is spoken', async () => {
     const speech = handPlayed()
     const h = harness({ speech: speech.backend, replies: [sendBoth] })
+    let sentWhenSpoken: string[] | undefined
+    const deliver = speech.backend.speak.bind(speech.backend)
+    speech.backend.speak = (...args) => {
+      sentWhenSpoken ??= [...h.wire]
+      return deliver(...args)
+    }
     await h.receptionist.hear('tell Kevin to run the tests and Sally to push')
     await flush()
-    expect(h.wire).toEqual([])
-    speech.heard('Sent to Kev'.length)
-    await flush()
-    expect(h.wire).toEqual([])
-    speech.heard('Sent to Kevin'.length)
-    await flush()
-    expect(h.wire).toEqual([toKevin])
-    speech.end('completed', 'Sent to Kevin. And Sally is still on the login page.'.length)
-    await flush()
-    expect(h.wire).toEqual([toKevin, toSally])
+    expect(sentWhenSpoken).toEqual([toKevin, toSally])
   })
 
-  it('does not run an action whose words the user talked over, and tells the model exactly which', async () => {
+  it('does not undo or report as not done what the user talked over', async () => {
     const speech = handPlayed()
     const h = harness({
       speech: speech.backend,
       replies: [
         sendBoth,
         (turn) => {
-          expect(turn.prompt).toContain(
-            `NOT DONE: the user talked over the words that lead up to them, so this action was not carried out: {"tool":"send","agent":"${SALLY}","message":"Push it."}.`,
-          )
-          return reply([{ from: 'control', text: 'Holding off.' }])
+          expect(turn.prompt).not.toContain('NOT DONE')
+          expect(turn.prompt).toContain('Your last actions:')
+          return reply([{ from: 'control', text: 'Both went.' }])
         },
       ],
     })
     await h.receptionist.hear('tell Kevin to run the tests and Sally to push')
     await flush()
-    speech.heard('Sent to Kevin'.length)
-    speech.end('interrupted_by_user', 'Sent to Kevin. And Sally'.length)
+    speech.end('interrupted_by_user', 'Sent to Kev'.length)
     await flush()
-    expect(h.wire).toEqual([toKevin])
-    await h.receptionist.hear('wait, not Sally')
-    await flush()
-    expect(h.wire).toEqual([toKevin])
-    expect(h.turns).toHaveLength(2)
-    // And into the record for the transcript, as its line would read had it run.
-    expect(h.notDone).toEqual([`SENT TO {${SALLY}}: Push it.`])
-  })
-
-  it('does not run what was still waiting when the user speaks over the reply, or stops Control', async () => {
-    const speech = handPlayed()
-    const h = harness({
-      speech: speech.backend,
-      replies: [
-        sendBoth,
-        (turn) => {
-          expect(turn.prompt).toContain('NOT DONE: the user stopped you before the words that lead up to them were said, so these actions were not carried out:')
-          expect(turn.prompt).toContain(`{"tool":"send","agent":"${KEVIN}","message":"Run the tests."}; {"tool":"send","agent":"${SALLY}","message":"Push it."}`)
-          return reply([{ from: 'control', text: 'Stopped.' }])
-        },
-      ],
-    })
-    await h.receptionist.hear('tell Kevin to run the tests and Sally to push')
-    await flush()
-    await h.receptionist.cancel()
-    await flush()
-    expect(h.wire).toEqual([])
-    await h.receptionist.hear('what did you do?')
-    await flush()
-    expect(h.wire).toEqual([])
-  })
-
-  it('runs everything still waiting when nobody is left to hear it', async () => {
-    const speech = handPlayed()
-    const h = harness({ speech: speech.backend, replies: [sendBoth] })
-    await h.receptionist.hear('tell Kevin to run the tests and Sally to push')
-    await flush()
-    expect(h.wire).toEqual([])
-    h.receptionist.setListener(undefined)
+    await h.receptionist.hear('did they both go?')
     await flush()
     expect(h.wire).toEqual([toKevin, toSally])
+    expect(h.notDone).toEqual([])
   })
 
   it('acts on a monitor with nobody listening, without waiting for speech', async () => {
@@ -1991,11 +1950,13 @@ describe('Receptionist actions wait for the words before them', () => {
     h.receptionist.userSpeaking(false)
     await flush()
     expect(h.wire).toEqual([`send ${KEVIN_ID} Restart the daemon.`])
+    // And into the record for the transcript, struck out, as its line would read had it run.
+    expect(h.notDone).toEqual([`SENT TO {${KEVIN}}: Restart the daemon.`])
   })
 })
 
 describe('Receptionist unarchive_agent', () => {
-  it('brings the agent back after its words are heard, waits until it is ready, and lets the next step send to it', async () => {
+  it('brings the agent back before its words are said, waits until it is ready, and lets the next step send to it', async () => {
     const speech = handPlayed()
     const h = harness({
       speech: speech.backend,
@@ -2009,16 +1970,11 @@ describe('Receptionist unarchive_agent', () => {
       ],
     })
     h.end(KEVIN_ID)
-    // Not awaited: the turn waits for its words to be heard.
+    // Not awaited: the turn's speech is played by hand.
     void h.receptionist.hear('bring Kevin back and have him restart the daemon')
     await flush()
-    expect(h.wire).toEqual([])
-    speech.end('completed', 'Bringing Kevin back.'.length)
-    await flush()
-    expect(h.wire).toEqual([`unarchive ${KEVIN_ID}`])
+    // Neither step waited for its words.
     expect(h.turns).toHaveLength(2)
-    speech.end('completed')
-    await flush()
     expect(h.wire).toEqual([`unarchive ${KEVIN_ID}`, `send ${KEVIN_ID} Restart the daemon.`])
   })
 
