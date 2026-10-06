@@ -828,6 +828,11 @@ textarea, input, [contenteditable="true"], .cm-content {
 /* The conversation window (hands-free.ts): just talk, no "Control" needed —
    until both sides have been quiet a while. */
 .m-hold-mic--conversation { background: #89b4fa; color: #11111b; }
+/* Its countdown, in place of the icon: seconds of quiet left. */
+.m-hold-mic__countdown {
+  font: 700 17px/1 -apple-system, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
 /* On, but not holding the microphone yet: outlined in white, pulsing. */
 .m-hold-mic--preparing {
   box-shadow: inset 0 0 0 2px #fff;

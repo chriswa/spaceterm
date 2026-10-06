@@ -1984,6 +1984,15 @@ export interface WakeWordResultMessage {
   seq: number
   match: boolean
   error?: string
+  /**
+   * Which question was answered. A server too old for `speech` answers the
+   * wake-word question instead and leaves this out — which is how the phone
+   * tells it is talking to a server that needs restarting, rather than going
+   * quietly deaf in the conversation window.
+   */
+  mode?: 'wake-word' | 'speech'
+  /** For `speech`: the words began with the wake word ("Control." alone, in the window). */
+  wakeWord?: boolean
 }
 
 /**

@@ -33,6 +33,8 @@ export function HoldMicButton() {
   useEffect(() => onHoldStateChange(setState), [])
   const phase = useHandsFree((s) => s.phase)
   const conversation = useHandsFree((s) => s.conversation)
+  const secondsLeft = useHandsFree((s) => s.secondsLeft)
+  const counting = state === 'held' && conversation && phase === 'listening' && secondsLeft !== null
   const on = state !== 'off'
   const hearing = phase === 'hearing' || phase === 'sending'
   const look = phase === 'hearing' ? ' m-hold-mic--hearing' : phase === 'sending' ? ' m-hold-mic--sending'
@@ -40,7 +42,7 @@ export function HoldMicButton() {
   const label = hearing
     ? phase === 'hearing' ? 'Listening to you — stop talking to send' : 'Sending what you said to Control'
     : state === 'held' && conversation
-      ? 'In conversation with Control: just talk, no need to say "Control" — until you have both been quiet a while'
+      ? `In conversation with Control: just talk, no need to say "Control"${secondsLeft !== null ? ` — ${secondsLeft} seconds of quiet left` : ''}`
       : (nativeMicrophoneAvailable() ? APP_LABELS : BROWSER_LABELS)[state]
   return (
     <button
@@ -49,14 +51,15 @@ export function HoldMicButton() {
       aria-label={label}
       onClick={() => setHoldMicrophone(!on)}
     >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {/* The conversation window's countdown, in place of the icon: seconds of quiet left before "Control" is needed again. */}
+      {counting ? <span className="m-hold-mic__countdown">{secondsLeft}</span> : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <rect x="7" y="3" width="6" height="10" rx="3" />
         <path d="M3.5 10a6.5 6.5 0 0 0 13 0" />
         <path d="M10 16.5V20" />
         {/* A small lock: held. */}
         <rect x="15" y="15" width="7" height="6" rx="1" fill="currentColor" stroke="none" />
         <path d="M16.5 15v-1.5a2 2 0 0 1 4 0V15" strokeWidth="1.6" />
-      </svg>
+      </svg>}
     </button>
   )
 }

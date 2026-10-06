@@ -302,6 +302,18 @@ export interface DictationApi {
 }
 
 /**
+ * A wake-word or speech check's answer. `answered`: which question the server
+ * answered — absent from one too old to know `speech`. `wakeWord`: a `speech`
+ * check's words began with "control".
+ */
+export interface WakeWordCheckResult {
+  match: boolean
+  error?: string
+  answered?: 'wake-word' | 'speech'
+  wakeWord?: boolean
+}
+
+/**
  * Hands-free mode: a client holding its microphone open listens for the wake
  * word on its own, and talks to Control without a press. See
  * `src/mobile/hands-free.ts`.
@@ -311,7 +323,7 @@ export interface HandsFreeApi {
    * Is this clip (16 kHz s16le mono, base64) the wake word alone? Checked on
    * the Mac, on-device. `error` says why it could not be checked at all.
    */
-  checkWakeWord(pcmBase64: string, mode?: 'wake-word' | 'speech'): Promise<{ match: boolean; error?: string }>
+  checkWakeWord(pcmBase64: string, mode?: 'wake-word' | 'speech'): Promise<WakeWordCheckResult>
   /**
    * Words said after the wake word: to Control, which comes to this device.
    * `interrupted`: the wake word cut Control's reply off — with no words, it

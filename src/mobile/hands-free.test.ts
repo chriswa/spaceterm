@@ -36,7 +36,7 @@ const fakeDetector: FrameScorer = {
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
-function harness({ isWakeWord = true, isWords = true, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
+function harness({ isWakeWord = true, isWords = true, saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
     sampleRate: RATE,
@@ -67,7 +67,11 @@ function harness({ isWakeWord = true, isWords = true, transcript = 'Control, wha
         checkWakeWord: async (pcm, mode = 'wake-word') => {
           checked.push(pcm.length)
           modes.push(mode)
-          return { match: mode === 'speech' ? isWords : isWakeWord }
+          // An old server answers every check as the wake-word question, and does not say so.
+          if (oldServer) return { match: isWakeWord }
+          return mode === 'speech'
+            ? { match: isWords, answered: 'speech' as const, wakeWord: saidWakeWord }
+            : { match: isWakeWord, answered: 'wake-word' as const }
         },
         say: (text, interrupted) => { sayCalls.push({ text, interrupted }); if (text) said.push(text) },
         onTuning: (cb) => { tuningListener = cb; return () => {} },
@@ -128,7 +132,7 @@ function harness({ isWakeWord = true, isWords = true, transcript = 'Control, wha
 }
 
 let h: ReturnType<typeof harness> | undefined
-beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false }))
+beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null }))
 afterEach(() => { h?.uninstall(); h = undefined })
 
 describe('hands-free mode', () => {
@@ -335,6 +339,39 @@ describe('hands-free mode', () => {
       await h.hear(quiet(10_000))
       expect(useHandsFree.getState().conversation).toBe(true)
       await h.hear(quiet(5500))
+      expect(useHandsFree.getState().conversation).toBe(false)
+    })
+
+    it('counts down the seconds of quiet left, full again whenever anyone speaks', async () => {
+      h = harness({ isWords: false })
+      await inConversation(h)
+      await h.hear(quiet(5000))
+      expect(useHandsFree.getState().secondsLeft).toBeGreaterThanOrEqual(9)
+      expect(useHandsFree.getState().secondsLeft).toBeLessThanOrEqual(10)
+      await h.hear(speech(300))
+      expect(useHandsFree.getState().secondsLeft).toBe(15)
+      await h.hear(quiet(15_500))
+      expect(useHandsFree.getState().secondsLeft).toBeNull()
+    })
+
+    it('"Control." alone in the window waits for the rest, as outside it', async () => {
+      h = harness({ turn: 0.93, saidWakeWord: true })
+      await inConversation(h)
+      h.setTranscript('Control. What is Evan doing?')
+      await h.hear(quiet(1000), speech(600), quiet(3000))
+      expect(h.dictations[1].turnChecks).toBe(0)
+      expect(useHandsFree.getState().phase).toBe('hearing')
+    })
+
+    it('closes, with the tone, and stays closed, when the server is too old to know the window', async () => {
+      // An old server answers "does it start with Control?" to everything — fine for opening the window.
+      h = harness({ oldServer: true })
+      await inConversation(h)
+      await h.hear(quiet(1000), speech(1500), quiet(3500))
+      expect(h.records.some((r) => r.kind === 'hands-free-server-too-old')).toBe(true)
+      expect(h.cues).toContain('conversationClosed')
+      // "Control" still works, as before the window; it just does not open one any more.
+      expect(h.dictations).toHaveLength(2)
       expect(useHandsFree.getState().conversation).toBe(false)
     })
 

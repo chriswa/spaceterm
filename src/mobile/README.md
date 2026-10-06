@@ -131,7 +131,11 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   "hmm", "uh", "um" and the like). It stays open while either of you is
   speaking, however long, and closes with a tone (three soft steps down)
   once neither has spoken for `conversationMs` (15 s) — Control thinking does
-  not hold it open. Speech checks of two words or fewer are logged
+  not hold it open. The blue button counts down the seconds of quiet left, in
+  place of its icon. The window needs a server that knows it: an older one
+  answers the wake-word question instead, which the phone notices
+  (`hands-free-server-too-old`), closing the window with its tone and logging
+  that the server needs restarting; "Control" works as before meanwhile. Speech checks of two words or fewer are logged
   (`[hands-free] speech check heard …`), to find what the model hears in
   nothing at all.
 - **"Control." on its own, then a breath** is fine: that first pause is not

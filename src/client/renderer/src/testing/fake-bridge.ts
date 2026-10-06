@@ -2,7 +2,7 @@ import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
-  ReceptionistApi, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
+  ReceptionistApi, ReceptionistStatus, HandsFreeApi, WakeWordCheckResult, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
@@ -459,7 +459,7 @@ export class FakeBridge implements Api {
   }
 
   readonly handsFree: HandsFreeApi = {
-    checkWakeWord: (pcm, mode) => this.reply('handsFree.checkWakeWord', { match: false } as { match: boolean; error?: string }, pcm, mode),
+    checkWakeWord: (pcm, mode) => this.reply('handsFree.checkWakeWord', { match: false, answered: mode ?? 'wake-word' } as WakeWordCheckResult, pcm, mode),
     say: (text, interrupted) => this.record('handsFree.say', text, interrupted),
     onTuning: (cb) => subscribe(this.handsFreeTuning, cb)
   }

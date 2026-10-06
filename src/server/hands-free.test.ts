@@ -54,22 +54,23 @@ describe('checkWakeWord, in the conversation window', () => {
     },
   })
 
-  it('counts any real words as speech', async () => {
-    expect(await checkWakeWord(heard('Yes.'), pcm, 'speech')).toEqual({ ok: true, match: true })
-    expect(await checkWakeWord(heard('No, tell Evan.'), pcm, 'speech')).toEqual({ ok: true, match: true })
+  it('counts any real words as speech, and says when they began with the wake word', async () => {
+    expect(await checkWakeWord(heard('Yes.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: false })
+    expect(await checkWakeWord(heard('No, tell Evan.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: false })
+    expect(await checkWakeWord(heard('Control.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: true })
   })
 
   it('does not count filler, or nothing at all', async () => {
-    expect(await checkWakeWord(heard('Hmm.'), pcm, 'speech')).toEqual({ ok: true, match: false })
-    expect(await checkWakeWord(heard('Uh, um'), pcm, 'speech')).toEqual({ ok: true, match: false })
-    expect(await checkWakeWord(heard(''), pcm, 'speech')).toEqual({ ok: true, match: false })
+    expect(await checkWakeWord(heard('Hmm.'), pcm, 'speech')).toMatchObject({ ok: true, match: false })
+    expect(await checkWakeWord(heard('Uh, um'), pcm, 'speech')).toMatchObject({ ok: true, match: false })
+    expect(await checkWakeWord(heard(''), pcm, 'speech')).toMatchObject({ ok: true, match: false })
   })
 
   it('takes the ignored words from tuning, and logs only short clips, to find what is heard in nothing', async () => {
     const logged: string[] = []
-    expect(await checkWakeWord(heard('Thank you.'), pcm, 'speech', ['thank you'], (m) => logged.push(m))).toEqual({ ok: true, match: false })
+    expect(await checkWakeWord(heard('Thank you.'), pcm, 'speech', ['thank you'], (m) => logged.push(m))).toMatchObject({ ok: true, match: false })
     // A phrase is taken out whole; its words alone still count.
-    expect(await checkWakeWord(heard('Thank Kevin.'), pcm, 'speech', ['thank you'])).toEqual({ ok: true, match: true })
+    expect(await checkWakeWord(heard('Thank Kevin.'), pcm, 'speech', ['thank you'])).toMatchObject({ ok: true, match: true })
     await checkWakeWord(heard('Tell Kevin to run the tests again.'), pcm, 'speech', [], (m) => logged.push(m))
     expect(logged).toEqual(['speech check heard "thank you" — ignored'])
   })

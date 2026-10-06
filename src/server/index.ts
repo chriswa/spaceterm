@@ -1914,8 +1914,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         if (!outcome.ok) serverLog(`[hands-free] ${outcome.error}`)
         else if (outcome.match) serverLog(`[hands-free] wake word heard on ${client.device?.label ?? client.id.slice(0, 8)}`)
         send(client.link, outcome.ok
-          ? { type: 'wake-word-result', seq, match: outcome.match }
-          : { type: 'wake-word-result', seq, match: false, error: outcome.error })
+          ? { type: 'wake-word-result', seq, match: outcome.match, mode, ...(outcome.wakeWord !== undefined ? { wakeWord: outcome.wakeWord } : {}) }
+          : { type: 'wake-word-result', seq, match: false, error: outcome.error, mode })
       })
       break
     }
