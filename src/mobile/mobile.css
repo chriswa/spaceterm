@@ -138,8 +138,8 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-control:active,
 .m-hold-mic:active { filter: brightness(1.25); }
 
-/* The Mac's two readouts, the bar's left (MobileApp.tsx): its system monitor
-   over the AI usage, both right-aligned against Control. */
+/* The Mac's two readouts, the bar's left (MacReadouts.tsx): the AI usage over
+   its system monitor, both right-aligned against Control. */
 .m-bar__zone--start { justify-content: flex-end; }
 .m-bar__readouts {
   display: flex;
@@ -148,51 +148,25 @@ textarea, input, [contenteditable="true"], .cm-content {
   gap: 4px;
   min-width: 0;
   max-width: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 /* The system monitor (SystemStatsReadout.tsx). Shrinks rather than overflow
-   into the screen's corner when the talk buttons crowd it. Touches go
-   through. */
+   into the screen's corner when the talk buttons crowd it. */
 .m-stats {
   display: flex;
   max-width: 100%;
-  pointer-events: none;
 }
 .m-stats svg { display: block; max-width: 100%; height: auto; }
 
-/* Sparks round the rocket while an update is waiting (RocketButton.tsx): the
-   directory card's badge spark (index.css), two of them, opposite. */
-.m-rocket { position: relative; }
-.m-rocket__sparks {
-  position: absolute;
-  inset: -3px;
-  width: calc(100% + 6px);
-  height: calc(100% + 6px);
-  overflow: visible;
-  pointer-events: none;
-  fill: none;
-  stroke: #fff4c2;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-dasharray: 14 36;
-  filter: drop-shadow(0 0 1.5px #ffd84a) drop-shadow(0 0 3px #ffb300);
-  animation: m-rocket-sparks 1.6s linear infinite;
-}
-@keyframes m-rocket-sparks {
-  from { stroke-dashoffset: 0; }
-  to { stroke-dashoffset: -100; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .m-rocket__sparks { animation: none; }
-}
-
 /* AI usage, the bar's left — the menu-bar tray's bars (see UsageReadout.tsx). */
 .m-usage {
-  position: relative;
   display: flex;
   align-items: flex-end;
-  -webkit-tap-highlight-color: transparent;
+  /* When scaled down (UsageReadout.tsx), the bars overflow their box up and
+     to the left, and the transform pulls them back in about this corner. */
+  justify-content: flex-end;
 }
-.m-usage__bars { display: flex; align-items: flex-end; }
+.m-usage__bars { flex: none; display: flex; align-items: flex-end; transform-origin: bottom right; }
 .m-usage__bar {
   position: relative;
   display: block;
@@ -210,19 +184,40 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-usage__time { left: 0; right: 0; }
 .m-usage__used { right: 0; width: 3px; box-shadow: 0 0 1px rgba(0, 0, 0, 0.6); }
 .m-usage__error { margin-left: 5px; font-size: 18px; line-height: 24px; }
-.m-usage__detail {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 6px);
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--m-border);
-  background: var(--m-surface);
+
+/* Both readouts' figures (MacReadouts.tsx), just above the bar from the
+   screen's left edge: a box for the system monitor, and one for AI usage
+   below it, each as wide as its own table. */
+.m-detail {
+  position: fixed;
+  left: 8px;
+  bottom: calc(var(--m-bar-height) + 6px);
+  max-width: calc(100vw - 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   font-size: 13px;
   line-height: 1.5;
   white-space: nowrap;
 }
-.m-usage__when { color: var(--m-dim); }
+.m-detail__set {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--m-border);
+  background: var(--m-surface);
+}
+.m-detail__table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.m-detail__table th {
+  font-weight: normal;
+  color: var(--m-dim);
+  text-align: right;
+}
+.m-detail__table td { text-align: right; }
+.m-detail__table th + th,
+.m-detail__table td + td { padding-left: 10px; }
+.m-detail__table .m-detail__name { text-align: left; }
+.m-detail__when { color: var(--m-dim); }
 
 /* Dictation still listening with no composer open (DictationIndicator.tsx):
    the bar's right, beside the rocket. Not a button. */
@@ -1032,6 +1027,17 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-notices__subtitle { color: var(--m-dim); font-size: 13px; overflow-wrap: anywhere; }
 .m-notices__meta { flex: none; color: var(--m-dim); font: 13px ui-monospace, Menlo, monospace; }
 .m-notices__source { margin-top: 12px; }
+.m-notices__action {
+  flex: none;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #89b4fa;
+  color: #11111b;
+  font: 600 14px -apple-system, system-ui, sans-serif;
+}
+.m-notices__action:active { filter: brightness(1.15); }
+.m-notices__action:disabled { opacity: 0.6; }
 
 .m-pairing { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .m-pairing__note, .m-pairing__waiting { margin: 0; color: var(--m-dim); font-size: 13px; line-height: 1.4; }

@@ -9,7 +9,7 @@ const REPORT = {
     name: 'Claude',
     updatedAt: '2026-10-02T17:21:08-07:00',
     windows: [
-      { caption: '5-Hour', elapsedPercent: 40.4, modelScoped: false, usagePercent: 6 },
+      { caption: '5-Hour', elapsedPercent: 40.4, modelScoped: false, usagePercent: 6, resetsAt: '2026-10-02T20:09:59-07:00' },
       { caption: '7-Day', elapsedPercent: 40.7, modelScoped: false, usagePercent: 24 },
       { caption: 'Fable 7-Day', elapsedPercent: 40.7, modelScoped: true, usagePercent: 29 }
     ]
@@ -30,6 +30,8 @@ describe('usageSnapshotFrom', () => {
     ])
     expect(bars[1].usage).toBeCloseTo(0.24)
     expect(bars[1].time).toBeCloseTo(0.407)
+    expect(bars[0].resetsAt).toBe(Date.parse('2026-10-02T20:09:59-07:00'))
+    expect(bars[1].resetsAt).toBeUndefined()
   })
 
   it('a failed provider is one warning, not its stale windows', () => {

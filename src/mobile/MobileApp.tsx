@@ -9,10 +9,9 @@ import { useVisualViewportVars } from './viewport'
 import { Dictation } from './dictation'
 import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
-import { UsageReadout } from './UsageReadout'
+import { MacReadouts } from './MacReadouts'
 import { RocketButton } from './RocketButton'
 import { useStalenessWatch } from './update-check'
-import { SystemStatsReadout } from './SystemStatsReadout'
 import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
 import { SummarizerButton } from './SummarizerButton'
 import { useDictationSession } from './dictation-session'
@@ -219,14 +218,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           the transcript. Never over the composer, which has its own microphone. */}
       {(!composerFor || transcriptOpen) && !approvalOpen && (
         <BottomBar
-          start={
-            // The Mac's two readouts stacked against Control: its system
-            // monitor over the AI usage.
-            <div className="m-bar__readouts">
-              <SystemStatsReadout />
-              <UsageReadout />
-            </div>
-          }
+          start={<MacReadouts />}
           middle={
             <>
               <ControlButton />

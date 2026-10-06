@@ -1,13 +1,15 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import { approvalKey, parseApprovalDocument, type ApprovalItem, type ApprovalsSnapshot, type ApprovalTone } from '../shared/approvals'
+import { pendingUpdateKeys } from './update-notices'
 
 /**
  * The phone's notifications: approval requests waiting on the Mac (opProxy's,
- * for now), which ones it has looked at, and which one is open.
+ * for now) and updates waiting to be done (update-notices.ts), which ones it
+ * has looked at, and which request is open.
  *
  * "Unread" is per phone and only for this page's life (plus a reload): a
- * request is read once the list has shown it. The bell pulses while anything
+ * notice is read once the list has shown it. The bell pulses while anything
  * is unread, and stays lit while anything is pending.
  */
 
@@ -21,6 +23,8 @@ interface ApprovalsState {
   openKey: string | null
   setSnapshot(snapshot: ApprovalsSnapshot): void
   setListOpen(open: boolean): void
+  /** Everything pending now has been shown. */
+  markAllRead(): void
   openItem(key: string): void
   closeItem(): void
   /** The open request was answered from this phone: close it, back to the list if more are waiting. */
@@ -45,7 +49,7 @@ function saveSeen(seen: ReadonlySet<string>): void {
 
 /** Everything pending is read now, and what is no longer pending is forgotten. */
 function markRead(items: readonly ApprovalItem[]): Set<string> {
-  const seen = new Set(items.map(approvalKey))
+  const seen = new Set([...items.map(approvalKey), ...pendingUpdateKeys()])
   saveSeen(seen)
   return seen
 }
@@ -63,6 +67,7 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
     set({ snapshot, seen: listOpen ? markRead(snapshot.items) : seen })
   },
   setListOpen: (listOpen) => set(listOpen ? { listOpen, seen: markRead(get().snapshot.items) } : { listOpen }),
+  markAllRead: () => set({ seen: markRead(get().snapshot.items) }),
   openItem: (openKey) => set({ openKey, listOpen: false }),
   closeItem: () => set({ openKey: null }),
   answered: (key) => {
@@ -73,8 +78,9 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
   },
 }))
 
-export function unreadCount(snapshot: ApprovalsSnapshot, seen: ReadonlySet<string>): number {
-  return snapshot.items.filter((item) => !seen.has(approvalKey(item))).length
+/** `updateKeys`: the update notices waiting (update-notices.ts), which count like requests. */
+export function unreadCount(snapshot: ApprovalsSnapshot, updateKeys: readonly string[], seen: ReadonlySet<string>): number {
+  return [...snapshot.items.map(approvalKey), ...updateKeys].filter((key) => !seen.has(key)).length
 }
 
 const TONE_RANK: Record<string, number> = { info: 0, caution: 1, danger: 2 }

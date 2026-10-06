@@ -20,6 +20,8 @@ export interface UsageBar {
   usage: number
   /** Fraction of the window elapsed, as of the reading. */
   time: number
+  /** When the window starts over (ms since epoch). Absent when the tracker does not say, or from a server older than the field. */
+  resetsAt?: number
   /** First bar of a provider (or the spend bar): a wider gap before it. */
   startsGroup: boolean
 }

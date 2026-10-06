@@ -56,6 +56,7 @@ import { useTouchCamera } from './hooks/useTouchCamera'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
+import { useUpdateActionsStore } from './stores/updateActionsStore'
 import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetStamp, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendCacheTimerMute, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
@@ -177,7 +178,7 @@ export function App() {
   const coarseNow = useCoarseClock()
   // Fallback colour for nodes the user has not coloured — see the nodeTint facet.
   const nodeTint = useFacet('nodeTint')
-  const [restartingSpaceterm, setRestartingSpaceterm] = useState(false)
+  const restartingSpaceterm = useUpdateActionsStore(s => s.running.restart)
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
   const toastIdRef = useRef(0)
   const focusRef = useRef<NodeId | null>(focusedId)
@@ -1099,19 +1100,6 @@ export function App() {
       () => showToast('Failed to write inertia log')
     )
   }, [])
-
-  const handleRestartSpaceterm = useCallback(async () => {
-    if (restartingSpaceterm) return
-    setRestartingSpaceterm(true)
-    showToast('Restarting server…')
-    try {
-      await window.api.restartSpaceterm()
-    } catch (err) {
-      setRestartingSpaceterm(false)
-      const message = err instanceof Error ? err.message : String(err)
-      showToast(`Could not restart Spaceterm: ${message}`)
-    }
-  }, [restartingSpaceterm])
 
   const handleReparentTarget = useCallback((targetId: NodeId) => {
     const srcId = useReparentStore.getState().reparentingNodeId
@@ -3040,7 +3028,7 @@ export function App() {
           onDebugCapture: handleDebugCapture,
           onInertiaLogDump: handleInertiaLogDump,
           restartingSpaceterm,
-          onRestartSpaceterm: handleRestartSpaceterm,
+          onRestartSpaceterm: () => { void useUpdateActionsStore.getState().restart() },
           onStepOut: stepOut
         }
         if (!toolbarSheet) return <Toolbar {...toolbarProps} />

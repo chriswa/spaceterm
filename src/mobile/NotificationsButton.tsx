@@ -1,20 +1,24 @@
 import { loudestTone, unreadCount, useApprovalsStore } from './approvals-store'
+import { updateNoticeKey, useUpdateNotices } from './update-notices'
 
 /**
- * The bottom bar's bell, left of the rocket: the phone's notifications, which
- * for now are approval requests waiting on the Mac (opProxy's).
+ * The bottom bar's bell, left of the rocket: the phone's notifications —
+ * approval requests waiting on the Mac (opProxy's), and updates waiting to be
+ * done (a flagged server restart, a newer app, a newer page).
  *
  * Dim with nothing pending — still a button, since the list it opens is also
  * where this phone is paired. Lit in the most urgent request's tone while
- * anything is pending, and pulsing while any of it is unread.
+ * anything is pending, and pulsing while any of it is unread. Updates alone
+ * light it in the info tone.
  */
 export function NotificationsButton() {
   const snapshot = useApprovalsStore((s) => s.snapshot)
   const seen = useApprovalsStore((s) => s.seen)
   const open = useApprovalsStore((s) => s.listOpen)
-  const pending = snapshot.items.length
-  const unread = unreadCount(snapshot, seen)
-  const tone = loudestTone(snapshot.items)
+  const updates = useUpdateNotices()
+  const pending = snapshot.items.length + updates.length
+  const unread = unreadCount(snapshot, updates.map((u) => updateNoticeKey(u.kind)), seen)
+  const tone = loudestTone(snapshot.items) ?? (updates.length ? 'info' : null)
   const state = tone ? ` m-bell--${tone}` : ' m-bell--idle'
   return (
     <button

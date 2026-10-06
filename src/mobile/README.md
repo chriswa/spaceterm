@@ -48,11 +48,14 @@ dot marks the press, and moving the finger away from it zooms out about it
 (`useZoomDrag`), back toward it zooms back in.
 The server rebuilds the bundle a couple of seconds after its sources stop
 changing (`MobileBuildKeeper` in `src/server/mobile-build.ts`) and tells the
-phone. While anything is waiting — a server restart an agent flagged, a newer
-native app, a newer page — sparks run round the rocket (`RocketButton.tsx`),
-and in the toolbar sheet the button for each marches its ants: **↻** (restart
+phone. Anything waiting — a server restart an agent flagged, a newer native
+app, a newer page — is a notification on the bell (`update-notices.ts`), whose
+row has the button that does it, and in the toolbar sheet the button for each
+marches its ants: **↻** (restart
 the server), **Install the app** (the Mac builds and installs it:
 `src/server/mobile-install.ts`, the same `install.sh`) and **Reload client**.
+Both places start the same actions (`updateActionsStore.ts`), so either shows
+the other's in progress.
 These two sit after Help, where the desktop has fit-to-monitor, and only on the
 phone (`mobileOnly` in `toolbar/registry.tsx`). A reload is not asked for while
 a restart is, which reloads the page anyway, or while the app is behind, whose
@@ -66,12 +69,15 @@ with the reading's age; the server reads the tracker's `--json` CLI
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
 process that may hold Wispr's rotating tokens.
 
-Stacked over the AI usage on the bottom bar, against Control, is the Mac's
+Stacked under the AI usage on the bottom bar, against Control, is the Mac's
 system monitor as mini-stats (`~/mini-stats`) draws it in the menu bar
 (`SystemStatsReadout.tsx`), shrunk to fit and without the bars' letters.
 mini-stats writes what its menu-bar item draws, colours and sizes decided, to
 `~/.mini-stats/menubar.json`; the server reads it every 2 s, but only while a
 phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
+Tapping either readout opens one panel with both sets of figures, system over
+usage (`MacReadouts.tsx`): each usage window's used, elapsed and time-to-reset, and
+each mini-stats module's reading.
 
 ## Control's transcript
 
@@ -193,7 +199,8 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
 ## Notifications: approving opProxy from the phone
 
 The bell left of the rocket (`NotificationsButton.tsx`) is the phone's
-notifications, which today are opProxy's pending 1Password approvals. Dim with
+notifications: opProxy's pending 1Password approvals, and the updates above
+(listed first, in the info tone). Dim with
 none; lit in the loudest request's tone with some; pulsing while any is unread,
 which ends when the list has shown it. The list (`NotificationsSheet.tsx`) is a
 screen like Control's transcript; a row opens the request (`ApprovalView.tsx`).

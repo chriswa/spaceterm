@@ -2,7 +2,7 @@ import { useEffect, useId, useState, type ReactNode } from 'react'
 import type { SystemStatsBars, SystemStatsBattery, SystemStatsSnapshot, SystemStatsWidget } from '../shared/system-stats'
 
 /**
- * The Mac's system monitor on the bottom bar, over the AI usage, drawn as
+ * The Mac's system monitor on the bottom bar, under the AI usage, drawn as
  * mini-stats draws it in the menu bar: a black box per module with its bar,
  * then the battery. Not the bars' stacked labels: too small to read at this
  * size, and a clip path and a text node per letter on every 2 s update. mini-stats decides every size and colour (see
@@ -11,8 +11,8 @@ import type { SystemStatsBars, SystemStatsBattery, SystemStatsSnapshot, SystemSt
  * and `Battery.swift`.
  */
 
-/** Phone pixels per menu-bar point: a little over the menu bar's, to share the bottom bar's height with the usage bars. */
-const SCALE = 1.2
+/** Phone pixels per menu-bar point: a little under the menu bar's, to sit small beneath the usage bars. */
+const SCALE = 0.9
 /** Behind the readout, and the cut-out round the charger icon. */
 const BACKDROP = '#11111b'
 /** The menu bar's text colour, resolved for a dark bar, as mini-stats resolves its colours. */
@@ -25,13 +25,34 @@ function widgetWidth(w: SystemStatsWidget): number {
   return w.kind === 'battery' ? w.width + 4 : w.width
 }
 
-function describe(w: SystemStatsWidget): string {
+/** A module's reading in words: each bar's height, or the battery's level and charger. */
+function reading(w: SystemStatsWidget): string {
   if (w.kind === 'battery') {
     const level = w.level === undefined ? 'unknown' : pct(w.level)
-    return `Battery ${level}${w.charger === 'charging' ? ', charging' : w.charger === 'plugged' ? ', plugged in' : ''}`
+    return `${level}${w.charger === 'charging' ? ', charging' : w.charger === 'plugged' ? ', plugged in' : ''}`
   }
-  return `${w.module} ${w.bars.map((bar) => pct(bar.reduce((sum, s) => sum + s.value, 0))).join(' ')}`
+  return w.bars.map((bar) => pct(bar.reduce((sum, s) => sum + s.value, 0))).join(' ')
 }
+
+/** What the details call a module, where mini-stats' name says less than it could. */
+const DETAIL_NAMES: Record<string, string> = { Sensors: 'Heat' }
+
+interface DetailRow { name: string; value: string; colour: string }
+
+/** A module's rows in the details: each bar's height, or the battery's level and then whether it is charging. */
+function detailRows(w: SystemStatsWidget): DetailRow[] {
+  if (w.kind === 'battery') {
+    const colour = w.fill ?? TEXT
+    return [
+      { name: DETAIL_NAMES[w.module] ?? w.module, value: w.level === undefined ? '?' : pct(w.level), colour },
+      { name: 'Charging', value: w.charger === 'charging' ? 'yes' : 'no', colour }
+    ]
+  }
+  const value = w.bars.map((bar) => pct(bar.reduce((sum, s) => sum + s.value, 0))).join(' ')
+  return [{ name: DETAIL_NAMES[w.module] ?? w.module, value, colour: w.bars[0]?.[0]?.color ?? TEXT }]
+}
+
+const describe = (w: SystemStatsWidget): string => `${w.module} ${reading(w)}`
 
 function Bars({ w, x, top }: { w: SystemStatsBars; x: number; top: number }) {
   const n = w.bars.length
@@ -110,11 +131,29 @@ function Battery({ w, x, top, id }: { w: SystemStatsBattery; x: number; top: num
   )
 }
 
-export function SystemStatsReadout() {
+/** mini-stats' latest export while this is mounted (the server reads it only while a phone watches); null when it is not running. */
+export function useSystemStats(): SystemStatsSnapshot | null {
   const [snapshot, setSnapshot] = useState<SystemStatsSnapshot | null>(null)
   useEffect(() => window.api.node.watchSystemStats(setSnapshot), [])
-  if (!snapshot || snapshot.widgets.length === 0) return null
-  return <SystemStatsPicture snapshot={snapshot} />
+  return snapshot
+}
+
+/** Each module's reading, one row apiece. */
+export function SystemStatsDetail({ snapshot }: { snapshot: SystemStatsSnapshot }) {
+  return (
+    <div className="m-detail__set">
+      <table className="m-detail__table">
+        <tbody>
+          {snapshot.widgets.flatMap(detailRows).map((row, i) => (
+            <tr key={i} style={{ color: row.colour }}>
+              <td className="m-detail__name">{row.name}</td>
+              <td>{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 export function SystemStatsPicture({ snapshot }: { snapshot: SystemStatsSnapshot }) {

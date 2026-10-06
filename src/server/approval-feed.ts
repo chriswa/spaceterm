@@ -116,10 +116,18 @@ export class ApprovalFeed {
     return { sources: [source], items: [...this.items.values()], closed: this.closed }
   }
 
+  /**
+   * All a failed connect tells us: the socket isn't there to answer. The
+   * provider may be down, or running a build that predates the feed.
+   */
+  private unreachable(): string {
+    return `Can't reach ${this.name}'s approval feed on the Mac.`
+  }
+
   /** Hands a signed reply to the provider and waits for its verdict. */
   reply(source: string, id: string, reply: SignedApprovalReply): Promise<ApprovalOutcome> {
     if (source !== this.name) return Promise.resolve({ ok: false, error: `No approval source named ${source}.` })
-    if (!this.connected) return Promise.resolve({ ok: false, error: `${this.name} isn't running.` })
+    if (!this.connected) return Promise.resolve({ ok: false, error: this.unreachable() })
     // A second reply to the same request supersedes the first's wait; the provider answers both.
     this.replyWaiters.get(id)?.resolve({ ok: false, error: 'Superseded by another answer.' })
     return new Promise((resolve) => {
@@ -139,7 +147,7 @@ export class ApprovalFeed {
   /** Asks the provider to trust a phone's key; someone at the Mac has to confirm it. */
   pair(source: string, publicKey: string, name: string): Promise<ApprovalOutcome> {
     if (source !== this.name) return Promise.resolve({ ok: false, error: `No approval source named ${source}.` })
-    if (!this.connected) return Promise.resolve({ ok: false, error: `${this.name} isn't running.` })
+    if (!this.connected) return Promise.resolve({ ok: false, error: this.unreachable() })
     return new Promise((resolve) => {
       const waiter: Waiter = {
         resolve: (outcome) => {

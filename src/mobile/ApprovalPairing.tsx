@@ -37,7 +37,7 @@ export function ApprovalPairing({ source, identity }: { source: ApprovalSource; 
     return <p className="m-pairing__note">This phone is paired with {source.name} · <span className="m-pairing__fp">{identity.fingerprint}</span></p>
   }
   if (!source.connected) {
-    return <p className="m-pairing__note">{source.name} isn&rsquo;t running on the Mac.</p>
+    return <p className="m-pairing__note">Can&rsquo;t reach {source.name}&rsquo;s approval feed on the Mac. Is it running, and new enough to have one?</p>
   }
   const pair = () => {
     setState({ kind: 'waiting' })

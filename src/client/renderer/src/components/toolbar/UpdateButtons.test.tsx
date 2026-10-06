@@ -4,6 +4,7 @@ import { installFakeBridge } from '../../testing/fake-bridge'
 import { InstallAppButton, ReloadClientButton } from './buttons'
 import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
 import { useClientStalenessStore, pendingUpdates } from '../../stores/clientStalenessStore'
+import { resetUpdateActions } from '../../stores/updateActionsStore'
 
 /**
  * The phone's update buttons in the toolbar sheet: always there, and marching
@@ -16,6 +17,7 @@ afterEach(() => {
   act(() => {
     useRestartRequiredStore.getState().set(false, '')
     useClientStalenessStore.getState().set({ web: false, native: false })
+    resetUpdateActions()
   })
 })
 

@@ -28,7 +28,7 @@ export const STALE_RETRY_MS = 60_000
 export const FAILED_RETRY_MS = 10 * 60_000
 
 const APP_BINARY = 'Contents/MacOS/AISpendTracker'
-/** Where the app lives: installed, or built from source — the order `scripts/ai-spend` tries. */
+/** Where the app usually lives, for when it is not running: installed, or built from source. */
 const APP_CANDIDATES = [
   join('/Applications', 'AI Spend Tracker.app', APP_BINARY),
   join(homedir(), 'claude-usage-tracker', 'build', 'AI Spend Tracker.app', APP_BINARY)
@@ -36,11 +36,17 @@ const APP_CANDIDATES = [
 
 // ─── the tracker's report (src: UsageReport.swift), as far as the bars need it ───
 
-interface TrackerWindow { caption: string; usagePercent: number; elapsedPercent: number; modelScoped: boolean }
+interface TrackerWindow { caption: string; usagePercent: number; elapsedPercent: number; modelScoped: boolean; resetsAt?: string }
 interface TrackerProvider { id: string; name: string; updatedAt?: string; error?: string; windows: TrackerWindow[] }
 interface TrackerReport {
   providers: TrackerProvider[]
-  spend?: { monthToDateUSD: number; budgetUSD?: number; percentOfBudget?: number; monthElapsedPercent: number }
+  spend?: { monthToDateUSD: number; budgetUSD?: number; percentOfBudget?: number; monthElapsedPercent: number; resetsAt?: string }
+}
+
+/** An ISO time as ms since epoch, or undefined if absent or unreadable. */
+function epoch(iso: string | undefined): number | undefined {
+  const at = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(at) ? at : undefined
 }
 
 const PROVIDER_PALETTES: Record<string, UsagePalette> = { claude: 'claude', codex: 'codex', cursor: 'cursor', devin: 'devin', jev: 'jev' }
@@ -54,8 +60,8 @@ export function usageSnapshotFrom(report: TrackerReport): UsageSnapshot {
   let updatedAt: number | null = null
   for (const p of report.providers) {
     const palette = PROVIDER_PALETTES[p.id] ?? 'claude'
-    const at = p.updatedAt ? Date.parse(p.updatedAt) : NaN
-    if (Number.isFinite(at)) updatedAt = Math.max(updatedAt ?? at, at)
+    const at = epoch(p.updatedAt)
+    if (at !== undefined) updatedAt = Math.max(updatedAt ?? at, at)
     if (p.error) {
       bars.push({ label: `${p.name} unavailable`, palette, error: true, usage: 0, time: 0, startsGroup: true })
       continue
@@ -65,6 +71,7 @@ export function usageSnapshotFrom(report: TrackerReport): UsageSnapshot {
       palette: w.modelScoped ? 'scoped' : palette,
       usage: Math.max(0, w.usagePercent / 100),
       time: Math.min(1, Math.max(0, w.elapsedPercent / 100)),
+      resetsAt: epoch(w.resetsAt),
       startsGroup: i === 0
     }))
   }
@@ -72,7 +79,7 @@ export function usageSnapshotFrom(report: TrackerReport): UsageSnapshot {
   if (spend) {
     // With no budget, any spend fills the bar (UsageMath.spendFraction).
     const usage = spend.percentOfBudget !== undefined ? spend.percentOfBudget / 100 : spend.monthToDateUSD > 0 ? 1 : 0
-    bars.push({ label: `Spend $${spend.monthToDateUSD.toFixed(0)}`, palette: 'spend', usage, time: spend.monthElapsedPercent / 100, startsGroup: true })
+    bars.push({ label: `Spend $${spend.monthToDateUSD.toFixed(0)}`, palette: 'spend', usage, time: spend.monthElapsedPercent / 100, resetsAt: epoch(spend.resetsAt), startsGroup: true })
   }
   return { bars, updatedAt }
 }
@@ -91,9 +98,32 @@ export interface UsageTrackerDeps {
   schedule(fn: () => void, ms: number): () => void
 }
 
+/**
+ * The running tracker's binary, wherever its checkout is. `--json` reads what
+ * the running app saved, so its own binary is the one to ask.
+ */
+async function runningTrackerBinary(): Promise<string | null> {
+  try {
+    const { stdout: pids } = await execFileAsync('pgrep', ['-x', 'AISpendTracker'], { timeout: 5_000 })
+    const pid = pids.split('\n')[0]?.trim()
+    if (!pid) return null
+    const { stdout: path } = await execFileAsync('ps', ['-p', pid, '-o', 'comm='], { timeout: 5_000 })
+    return path.trim() || null
+  } catch {
+    return null // pgrep exits 1 when nothing matches
+  }
+}
+
+let reportedMissing = false
+
 async function readTracker(): Promise<string | null> {
-  const binary = process.env.SPACETERM_AI_SPEND ?? APP_CANDIDATES.find((p) => existsSync(p))
-  if (!binary) return null
+  const binary = process.env.SPACETERM_AI_SPEND ?? await runningTrackerBinary() ?? APP_CANDIDATES.find((p) => existsSync(p))
+  if (!binary) {
+    if (!reportedMissing) serverLog('[usage] AI Spend Tracker is not running and not at any known path')
+    reportedMissing = true
+    return null
+  }
+  reportedMissing = false
   try {
     const { stdout } = await execFileAsync(binary, ['--json'], { timeout: 15_000, maxBuffer: 1024 * 1024 })
     return stdout
