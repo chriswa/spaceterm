@@ -4,11 +4,12 @@ import type { HandsFreeTuning } from '../shared/protocol'
 import { playCue, quietForMs, type Cue } from './cues'
 import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, onHoldStateChange, type Capture } from './held-microphone'
-import { nativeHaptic } from './native-microphone'
+import { nativeHaptic, nativeSpeech } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
+import { nativePlayback } from './speech-player'
 import { Downsampler, pcmToBase64 } from './pcm'
 import { loadFrameScorer, type FrameScorer } from './speech-detector'
-import { DEFAULT_TUNING, EnergyScorer, Framer, UtteranceEndpointer, WakeListener, levelDb, type ScoredFrame, type WakeCandidate } from './wake-listener'
+import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, WakeListener, levelDb, type ScoredFrame, type WakeCandidate } from './wake-listener'
 
 /**
  * Hands-free mode: start talking with "Control" and just keep going — "Control,
@@ -39,9 +40,14 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, UtteranceEndpointer, WakeListener
  * front of the transcript, and the rest goes to Control, which comes to this
  * device.
  *
- * It does not listen while this phone is playing anything (Control's voice, a
- * cue) or for `playbackTailMs` after, so it never hears itself; nor while a
- * dictation it did not start is under way.
+ * It does not listen while the page is playing anything (a cue, or Control's
+ * voice in a browser) or for `playbackTailMs` after, so it never hears itself;
+ * nor while a dictation it did not start is under way. In the app, Control's
+ * voice is played by the app with echo cancellation (native-microphone.ts), so
+ * it listens straight through it: anyone speaking turns Control down at once,
+ * "Control" cuts it off and is dictated as ever, and if nothing is caught
+ * after it Control says it had not finished and carries on. What survives of
+ * Control's voice in the microphone is recorded per reply (`hands-free-echo`).
  *
  * Nothing heard is logged: only that a candidate was or was not the word, and
  * its timings.
@@ -89,6 +95,12 @@ export interface HandsFreeDeps {
   loadScorer(): Promise<FrameScorer>
   /** For the record (mobile-events.ts): what was heard and decided, never what was said. */
   record(kind: string, detail?: Record<string, unknown>): void
+  /** Control's voice as the app plays it, with echo cancellation — or not playing. */
+  nativeSpeech(): { playing: boolean; outputDb?: number; voiceProcessing: boolean }
+  /** Turn Control's voice down while someone may be talking over it, and back up. */
+  duckSpeech(on: boolean): void
+  /** Stop Control mid-reply: the user cut in with "Control". */
+  interruptControl(): void
 }
 
 const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
@@ -105,6 +117,9 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   loadScorer: () => loadFrameScorer((message) => window.api?.log(`[hands-free] ${message}`)),
   record: (kind, detail) => recordMobileEvent(kind, detail),
+  nativeSpeech: () => ({ playing: nativePlayback.playing(), outputDb: nativePlayback.outputDb(), voiceProcessing: nativeSpeech.voiceProcessing() }),
+  duckSpeech: (on) => nativeSpeech.duck(on),
+  interruptControl: () => window.api.receptionist.stop(),
 })
 
 /** While the page is hidden, how often to note that audio is still arriving. */
@@ -113,6 +128,21 @@ const BACKGROUND_REPORT_MS = 60_000
 const LEVELS_REPORT_MS = 30_000
 /** Frames waiting on a slow speech detector beyond this (about 3 s) are dropped, and listening starts afresh. */
 const MAX_QUEUED_FRAMES = 100
+/** Frames without speech (about half a second) before Control, turned down for someone talking, comes back up. */
+const UNDUCK_FRAMES = 16
+const FRAME_SECONDS = 512 / 16_000
+
+/** What the microphone heard while Control's voice played through the app: how much of it got past echo cancellation. */
+interface Echo {
+  frames: number
+  speechFrames: number
+  run: number
+  longestRun: number
+  sumDb: number
+  maxDb: number
+  ducks: number
+  outputDb?: number
+}
 
 /** Why a dictation ended: the turn model, the endpointer's silence or cap, or the microphone going away. */
 type EndReason = 'finished' | 'silence' | 'too-long' | 'lost'
@@ -141,6 +171,13 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let draining = false
   /** The room since the last levels report. */
   let levels = { frames: 0, speechFrames: 0, sumDb: 0, maxDb: -120, since: performance.now() }
+  /** Control's voice playing through the app: what survived of it, and whether it is turned down for someone talking. */
+  let echo: Echo | undefined
+  let ducked = false
+  let speechRun = 0
+  let quietRun = 0
+  /** Wake-word checks under way: Control stays turned down until each has its answer. */
+  let checking = 0
   /** Set while not listening — this device playing, another dictation — so listening starts afresh after. */
   let stoodAside = false
   /** The dictation after the wake word, fed to its endpointer, and how to say it has ended. */
@@ -175,8 +212,80 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       return false
     })
 
-  /** The wake word heard: dictate from where the user started until they finish; send to Control. */
-  const respond = async ({ start, spokeMs }: WakeCandidate) => {
+  const setDuck = (on: boolean) => {
+    if (ducked === on) return
+    ducked = on
+    deps.duckSpeech(on)
+    if (on && echo) echo.ducks++
+    record('hands-free-duck', { on })
+  }
+
+  /**
+   * Every frame while Control's voice plays through the app: anyone speaking
+   * turns it down at once — echo cancellation means that is not Control
+   * itself — and quiet brings it back once no check is pending. While
+   * listening, what the microphone hears is counted, and when the reply ends
+   * it is recorded: how much of Control's voice got past cancellation.
+   */
+  const trackPlayback = (frame: ScoredFrame, listening: boolean) => {
+    const speech = deps.nativeSpeech()
+    if (!speech.playing) {
+      if (echo) {
+        record('hands-free-echo', {
+          seconds: Math.round(echo.frames * FRAME_SECONDS * 10) / 10,
+          speechPercent: Math.round((100 * echo.speechFrames) / Math.max(1, echo.frames)),
+          longestSpeechMs: Math.round(echo.longestRun * FRAME_SECONDS * 1000),
+          micMeanDb: Math.round(echo.sumDb / Math.max(1, echo.frames)),
+          micMaxDb: Math.round(echo.maxDb),
+          outputDb: echo.outputDb ?? null,
+          ducks: echo.ducks,
+          voiceProcessing: speech.voiceProcessing,
+        })
+        echo = undefined
+      }
+      setDuck(false)
+      speechRun = 0
+      quietRun = 0
+      return
+    }
+    if (frame.p >= SpeechGate.START) {
+      speechRun++
+      quietRun = 0
+    } else {
+      speechRun = 0
+      if (frame.p < SpeechGate.STOP) quietRun++
+    }
+    if (!ducked && speechRun >= SpeechGate.START_FRAMES) setDuck(true)
+    if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
+    if (!listening) return
+    echo ??= { frames: 0, speechFrames: 0, run: 0, longestRun: 0, sumDb: 0, maxDb: -120, ducks: ducked ? 1 : 0 }
+    const db = levelDb(frame.pcm)
+    echo.frames++
+    echo.sumDb += db
+    echo.maxDb = Math.max(echo.maxDb, db)
+    echo.outputDb = speech.outputDb ?? echo.outputDb
+    if (frame.p >= SpeechGate.START) {
+      echo.speechFrames++
+      echo.run++
+      echo.longestRun = Math.max(echo.longestRun, echo.run)
+    } else {
+      echo.run = 0
+    }
+  }
+
+  /** Control was cut off and nothing was caught after "Control": it says it had not finished, and carries on. */
+  const carryOn = () => {
+    log('cut Control off, then caught nothing: it carries on')
+    record('hands-free-empty-interruption')
+    api.handsFree.say('', true)
+  }
+
+  /**
+   * The wake word heard: dictate from where the user started until they
+   * finish; send to Control. `interrupted`: it cut Control's reply off, so
+   * even nothing caught is worth telling it — it then carries on.
+   */
+  const respond = async ({ start, spokeMs }: WakeCandidate, interrupted = false) => {
     setPhase('hearing')
     deps.haptic()
     let dictation: HandsFreeDictation | undefined
@@ -206,21 +315,24 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       if (reason === 'lost') {
         log('the microphone stopped mid-dictation')
         dictation.cancel()
+        if (interrupted) carryOn()
         return
       }
       setPhase('sending')
       const text = cleanHandsFreeText(await dictation.finish())
       if (!text) {
         log(`nothing to send besides the wake word (ended on ${reason})`)
+        if (interrupted) carryOn()
         return
       }
-      log(`${text.length} chars to Control (ended on ${reason})`)
-      api.handsFree.say(text)
+      log(`${text.length} chars to Control (ended on ${reason}${interrupted ? ', having cut it off' : ''})`)
+      api.handsFree.say(text, interrupted)
       deps.playCue('pasted')
     } catch (err) {
       log(`dictation failed: ${err instanceof Error ? err.message : String(err)}`)
       dictation?.cancel()
       deps.playCue('transcriptionFailed')
+      if (interrupted) carryOn()
     } finally {
       utterance = undefined
       utteranceDictation = undefined
@@ -260,6 +372,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       levels = { frames: 0, speechFrames: 0, sumDb: 0, maxDb: -120, since: performance.now() }
     }
     const phase = useHandsFree.getState().phase
+    trackPlayback(frame, phase === 'listening')
     if (phase === 'hearing') {
       for (const event of utterance?.push([frame]) ?? []) {
         if (event.kind === 'ended') endUtterance?.(event.reason)
@@ -286,10 +399,25 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     }
     for (const candidate of listener.push([frame])) {
       log(`speech after ${candidate.noSpeechBeforeMs}ms without speech — checking its start for "${WAKE_WORD}"`)
+      const overControl = deps.nativeSpeech().playing
+      checking++
       void check(candidate.clip).then((match) => {
+        checking--
         log(match ? 'it starts with the wake word: dictating from its start' : 'not the wake word')
-        record('wake-word', { match, noSpeechBeforeMs: candidate.noSpeechBeforeMs, spokeMs: candidate.spokeMs })
-        if (match && useHandsFree.getState().phase === 'listening' && capture) void respond(candidate)
+        record('wake-word', { match, noSpeechBeforeMs: candidate.noSpeechBeforeMs, spokeMs: candidate.spokeMs, overControl })
+        if (!match || useHandsFree.getState().phase !== 'listening' || !capture) {
+          // Not for Control: back up, unless they are still talking.
+          if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
+          return
+        }
+        // Said over Control's reply: cut it off — its record keeps how much was heard.
+        const interrupting = deps.nativeSpeech().playing
+        if (interrupting) {
+          log('"Control" over its own reply: cutting it off')
+          record('hands-free-interrupt')
+          deps.interruptControl()
+        }
+        void respond(candidate, interrupting)
       })
     }
   }

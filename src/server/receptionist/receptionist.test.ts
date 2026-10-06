@@ -555,6 +555,27 @@ describe('Receptionist', () => {
     expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length] }])
   })
 
+  it('after an interruption nothing was caught in, says it had not finished and carries on', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('They heard only: "Kevin is done. Kevin here. The *INTERRUPTED*')
+          expect(turn.prompt).toContain("nothing they said was caught. Say in a few words that you hadn't finished, then carry on")
+          expect(turn.prompt).not.toContain('THE USER SAYS')
+          return reply([{ from: 'control', text: "Sorry, I hadn't finished: the solver works." }])
+        },
+      ],
+      speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is done. Kevin here. The sol'.length },
+    })
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    h.receptionist.carryOnAfterEmptyInterruption()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.spoken).toHaveLength(2)
+  })
+
   it('never overlaps two messages to the session, and says when a reply was talked over', async () => {
     let releaseStale: ((text: string) => void) | undefined
     const h = harness({

@@ -136,9 +136,18 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   Voice Operator checks whether it starts with "control", with Apple's
   on-device model (`POST /v1/wake-word?match=start`) — never Wispr. Audio is
   otherwise only ever in an eight-second buffer in memory.
-- It does not listen while the phone is playing anything, or for a moment
-  after, so Control never wakes itself; nor during a dictation it did not
-  start.
+- **Interrupting Control.** In the app, Control's voice is played by the app
+  itself (`NativeMicrophone.swift`), through the microphone's own engine with
+  Apple's voice processing — the echo cancellation a speakerphone call uses —
+  so hands-free listens straight through it. Anyone speaking turns Control
+  down at once (the cancelled microphone hears the room, not Control), and it
+  comes back up if it was not "Control". "Control, …" cuts it off and is
+  dictated as ever; if nothing is caught after "Control", Control says it had
+  not finished and carries on. In a browser, or with an app too old to play
+  speech, the page plays it and hands-free stops listening while it does.
+- It does not listen while the page plays anything — a cue, or speech in a
+  browser — or for a moment after, so it never hears itself; nor during a
+  dictation it did not start.
 - **The turn model** is fetched once (8 MB, pinned and hash-checked) into
   `~/.spaceterm/models`, loaded when the first hands-free dictation starts, and
   kept: about 130 MB of the server's memory, about 45 ms a check. Without it,
@@ -155,8 +164,12 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   (`checked`, `after-speech`, `too-short`) — then `wake-word` with the Mac's
   answer; `hands-free-levels` every 30 s with the room's level and how much of
   it was speech; `hands-free-detector` with which speech detector is in use;
-  `hands-free-pause` for the pause after the wake word alone. Never what was
-  said. The server log's `[turn]` lines give each pause's verdict.
+  `hands-free-pause` for the pause after the wake word alone; and
+  `hands-free-echo` after each reply Control spoke through the app — how much
+  of the microphone the speech detector still heard as speech while it
+  played (`speechPercent`, `longestSpeechMs`), the microphone's level, the
+  voice's own level (`outputDb`), and whether echo cancellation was on — which
+  says whether interrupting can work. Never what was said. The server log's `[turn]` lines give each pause's verdict.
 
 ## Notifications: approving opProxy from the phone
 

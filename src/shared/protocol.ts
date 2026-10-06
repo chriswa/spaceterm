@@ -454,6 +454,12 @@ export interface WakeWordCheckMessage {
 export interface ReceptionistHandsFreeMessage {
   type: 'receptionist-hands-free'
   text: string
+  /**
+   * The wake word cut off Control's reply. With no `text` — nothing was caught
+   * after it — Control says it had not finished and carries on, rather than
+   * falling silent mid-answer. An older server ignores it, and stays silent.
+   */
+  interrupted?: boolean
 }
 
 /**

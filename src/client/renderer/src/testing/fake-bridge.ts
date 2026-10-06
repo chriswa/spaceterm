@@ -460,7 +460,7 @@ export class FakeBridge implements Api {
 
   readonly handsFree: HandsFreeApi = {
     checkWakeWord: (pcm) => this.reply('handsFree.checkWakeWord', { match: false } as { match: boolean; error?: string }, pcm),
-    say: (text) => this.record('handsFree.say', text),
+    say: (text, interrupted) => this.record('handsFree.say', text, interrupted),
     onTuning: (cb) => subscribe(this.handsFreeTuning, cb)
   }
 

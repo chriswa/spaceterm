@@ -357,6 +357,9 @@ export const WARM_UP_TIMEOUT_MS = 90_000
 /** A cold agent answering its wake-up: `worked` once it started the turn, `answered` once it stopped again. */
 interface Waking { worked: boolean; done(): void; answered: Promise<void> }
 
+/** The note for `carryOnAfterEmptyInterruption`. */
+const EMPTY_INTERRUPTION = "The user cut you off, but nothing they said was caught. Say in a few words that you hadn't finished, then carry on from where you were cut off."
+
 /**
  * The question an agent is actually given. Unframed, an agent answering a bare
  * question out of nowhere is suspicious and long-winded — and writes for a
@@ -545,6 +548,18 @@ export class Receptionist {
   /** Stop whatever the receptionist is saying or about to say. Its actions have already run. */
   cancel(): Promise<boolean> {
     return this.channel.cancel()
+  }
+
+  /**
+   * The user cut a reply off and then nothing they said was caught — hands-free
+   * heard "Control" over the reply, and Wispr heard no words after it. Rather
+   * than leave the answer hanging until they next speak, a turn of its own:
+   * the interruption is noted as for any cut (how much was heard), and Control
+   * says it had not finished and carries on.
+   */
+  carryOnAfterEmptyInterruption(): void {
+    this.notes.push(EMPTY_INTERRUPTION)
+    void this.runTurn(undefined)
   }
 
   /**

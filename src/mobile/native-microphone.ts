@@ -29,12 +29,26 @@ interface NativeState {
   /** The input in use, e.g. "iPhone Microphone" or "AirPods Pro". */
   input?: string
   error?: string
+  /** The app plays Control's voice itself while running (`speech-play`); an older app does not say so. */
+  speech?: boolean
+  /** Its engine has Apple's voice processing — echo cancellation — on. */
+  voiceProcessing?: boolean
+}
+
+/** A sentence of Control's voice, as the app plays it: begun, heard to its end, or not playable. */
+export interface NativeSpeechEvent {
+  id: string
+  index: number
+  event: 'started' | 'finished' | 'failed'
+  /** The sentence's own loudness, RMS dBFS: what the microphone would hear of it uncancelled. */
+  outputDb?: number
 }
 
 /** What the app calls on the page. Installed on `window` before the app sends anything. */
 interface NativeMicrophoneHost {
   audio(pcmBase64: string): void
   state(state: NativeState): void
+  speech(event: NativeSpeechEvent): void
 }
 
 declare global {
@@ -62,6 +76,7 @@ let lastAudio = 0
 let startedAt = 0
 let receivedSamples = 0
 const listeners = new Set<(block: Float32Array) => void>()
+const speechListeners = new Set<(event: NativeSpeechEvent) => void>()
 const stateWaiters = new Set<(state: NativeState) => void>()
 
 function decode(pcmBase64: string): Float32Array {
@@ -90,7 +105,40 @@ function install(): void {
       state = next
       for (const fn of [...stateWaiters]) fn(next)
     },
+    speech(event) {
+      for (const fn of speechListeners) fn(event)
+    },
   }
+}
+
+/**
+ * Control's voice, played by the app — through the same engine as its
+ * microphone, with echo cancellation, so hands-free can hear the user through
+ * it (NativeMicrophone.swift). Only while the app's microphone runs, and only
+ * an app that says it can.
+ */
+export const nativeSpeech = {
+  available(): boolean {
+    return handler() !== undefined && state.running && state.speech === true
+  },
+  voiceProcessing(): boolean {
+    return state.voiceProcessing === true
+  },
+  play(id: string, index: number, count: number, sampleRate: number, pcm: string): void {
+    handler()?.postMessage({ action: 'speech-play', id, index, count, sampleRate, pcm })
+  },
+  stop(id: string): void {
+    handler()?.postMessage({ action: 'speech-stop', id })
+  },
+  /** Turn Control down while the user may be talking over it; back up with `false`. */
+  duck(on: boolean): void {
+    handler()?.postMessage({ action: 'speech-duck', on })
+  },
+  onEvent(fn: (event: NativeSpeechEvent) => void): () => void {
+    install()
+    speechListeners.add(fn)
+    return () => { speechListeners.delete(fn) }
+  },
 }
 
 /** A tap the user can feel, from the app; nothing in a browser. */

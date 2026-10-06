@@ -18,6 +18,15 @@ import WebKit
 ///
 /// Audio goes to the page as 16 kHz signed 16-bit mono, base64, a tenth of a
 /// second at a time. Nothing is kept here.
+///
+/// It also plays Control's voice, while it runs (`speech-play`), through the
+/// same engine with Apple's voice processing on — the echo cancellation a
+/// speakerphone call uses. Echo cancellation can only take out what it knows
+/// is being played, and audio the page plays goes through WebKit's own
+/// process, out of its sight; played here, Control's voice is subtracted from
+/// what the microphone hears, so hands-free can listen through it and the
+/// user can interrupt with "Control". Each sentence's start and end go back
+/// to the page, which tells the server how far the listener got.
 @MainActor
 final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     weak var webView: WKWebView?
@@ -40,6 +49,13 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private var unanswered = 0
     private var dropping = false
     private var tick = 0
+    /// Control's voice, playing through the engine: see `SpeechQueue`.
+    private var player: AVAudioPlayerNode?
+    private var speech = SpeechQueue()
+    /// Bumped whenever scheduled buffers are thrown away, so their late completions are ignored.
+    private var speechGeneration = 0
+    /// Whether this bring-up got voice processing (echo cancellation); false where it would not turn on.
+    private var voiceProcessing = false
 
     private static let sendInterval: TimeInterval = 0.1
     private static let maxUnanswered = 50
@@ -64,6 +80,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             case "stop": stop()
             // Hands-free heard "Control": a tap the user feels, since a tone would land mid-sentence.
             case "haptic": UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            case "speech-play": playSpeech(message.body as? [String: Any] ?? [:])
+            case "speech-stop": stopSpeech(id: (message.body as? [String: Any])?["id"] as? String ?? "")
+            // Someone started talking over Control: quieter until it is known whether they said "Control".
+            case "speech-duck": duckSpeech((message.body as? [String: Any])?["on"] as? Bool ?? false)
             default: log("unknown action \(action ?? "nil")")
             }
         }
@@ -92,6 +112,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         timer = nil
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
+        // No engine, no voice: whatever was still to be said will not be.
+        failSpeech(why: "the microphone was turned off")
+        player = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         if running { log("stopped") }
         events.record("native-mic-stopped")
@@ -114,6 +137,23 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             try session.setActive(true)
             engine = AVAudioEngine()
             let input = engine.inputNode
+            // Echo cancellation, against what `player` plays. Set before anything is connected.
+            do {
+                try input.setVoiceProcessingEnabled(true)
+                voiceProcessing = true
+                // Its default turns every other app's audio — and the page's cues — right down.
+                if #available(iOS 17.0, *) {
+                    input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+                }
+            } catch {
+                voiceProcessing = false
+                events.record("voice-processing-failed", ["error": error.localizedDescription])
+            }
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: SpeechQueue.format)
+            self.player = player
+            player.volume = ducked ? Self.duckedVolume : 1
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0 else { throw Failure("the input has no format (sample rate 0)") }
             capture.reset(converter: AVAudioConverter(from: format, to: Converter.outFormat))
@@ -123,12 +163,15 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             try engine.start()
             running = true
             lastError = nil
-            log("running on \(inputName()) at \(Int(format.sampleRate)) Hz (\(why))")
-            events.record("native-mic-running", ["why": why, "sampleRate": format.sampleRate, "route": NativeEvents.describeRoute(session.currentRoute)])
+            log("running on \(inputName()) at \(Int(format.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
+            events.record("native-mic-running", ["why": why, "sampleRate": format.sampleRate, "voiceProcessing": voiceProcessing, "route": NativeEvents.describeRoute(session.currentRoute)])
+            // A new engine: anything still to be said starts again on it, from the sentence it was in.
+            rescheduleSpeech()
             sendState()
             startTimer()
         } catch {
             running = false
+            failSpeech(why: "the audio engine would not start")
             let nsError = error as NSError
             events.record("native-mic-failed", ["why": why, "error": error.localizedDescription, "domain": nsError.domain, "code": nsError.code, "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground"])
             fail("could not start (\(why)): \(error.localizedDescription)")
@@ -191,7 +234,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     // MARK: - To the page
 
     private func sendState() {
-        var state: [String: Any] = ["running": running]
+        // `speech`: this app plays Control's voice itself, while running — an older one does not.
+        var state: [String: Any] = ["running": running, "speech": true, "voiceProcessing": voiceProcessing]
         if running { state["input"] = inputName() }
         if let lastError, !running { state["error"] = lastError }
         guard let json = try? JSONSerialization.data(withJSONObject: state), let text = String(data: json, encoding: .utf8) else { return }
@@ -202,6 +246,99 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         lastError = message
         log(message)
         sendState()
+    }
+
+    // MARK: - Control's voice
+
+    /// One sentence from the page: s16le mono PCM at its own rate, base64.
+    private func playSpeech(_ body: [String: Any]) {
+        guard let id = body["id"] as? String, let index = body["index"] as? Int, let count = body["count"] as? Int,
+              let rate = body["sampleRate"] as? Double, let pcm = (body["pcm"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
+            log("speech-play without id, index, count, sampleRate and pcm")
+            return
+        }
+        guard running, let player else {
+            sendSpeech(id: id, index: index, event: "failed")
+            return
+        }
+        guard let sentence = SpeechQueue.Sentence(id: id, index: index, count: count, pcm: pcm, sampleRate: rate) else {
+            sendSpeech(id: id, index: index, event: "failed")
+            return
+        }
+        let idle = speech.current == nil
+        speech.append(sentence)
+        schedule(sentence, on: player)
+        if !player.isPlaying { player.play() }
+        if idle { begin(sentence) }
+    }
+
+    /// Control's voice turned down while the user may be talking over it, and back up.
+    private static let duckedVolume: Float = 0.25
+    private var ducked = false
+
+    private func duckSpeech(_ on: Bool) {
+        guard on != ducked else { return }
+        ducked = on
+        player?.volume = on ? Self.duckedVolume : 1
+        events.record("native-speech-duck", ["on": on])
+    }
+
+    /// The server cut this job off: drop its sentences, and carry on with any queued behind it.
+    private func stopSpeech(id: String) {
+        guard speech.contains(id: id) else { return }
+        speech.remove(id: id)
+        events.record("native-speech-stopped", ["id": String(id.prefix(11))])
+        if speech.isEmpty { duckSpeech(false) }
+        rescheduleSpeech()
+    }
+
+    private func schedule(_ sentence: SpeechQueue.Sentence, on player: AVAudioPlayerNode) {
+        let generation = speechGeneration
+        let key = sentence.key
+        player.scheduleBuffer(sentence.buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.finished(key, generation: generation) }
+            }
+        }
+    }
+
+    /// A sentence has been heard to its end: say so, and the next has begun.
+    private func finished(_ key: String, generation: Int) {
+        guard generation == speechGeneration, let sentence = speech.current, sentence.key == key else { return }
+        speech.removeCurrent()
+        sendSpeech(id: sentence.id, index: sentence.index, event: "finished", outputDb: sentence.levelDb)
+        if let next = speech.current { begin(next) } else { duckSpeech(false) }
+    }
+
+    private func begin(_ sentence: SpeechQueue.Sentence) {
+        sendSpeech(id: sentence.id, index: sentence.index, event: "started", outputDb: sentence.levelDb)
+    }
+
+    /// Throw away what is scheduled and schedule what is left again — after a stop, or on a new engine.
+    private func rescheduleSpeech() {
+        speechGeneration += 1
+        player?.stop()
+        guard running, let player, !speech.isEmpty else { return }
+        for sentence in speech.sentences { schedule(sentence, on: player) }
+        player.play()
+        if let current = speech.current { begin(current) }
+    }
+
+    /// Nothing more can be played: every sentence still to come fails.
+    private func failSpeech(why: String) {
+        guard !speech.isEmpty else { return }
+        speechGeneration += 1
+        player?.stop()
+        events.record("native-speech-failed", ["why": why, "sentences": speech.sentences.count])
+        for sentence in speech.sentences { sendSpeech(id: sentence.id, index: sentence.index, event: "failed") }
+        speech = SpeechQueue()
+    }
+
+    private func sendSpeech(id: String, index: Int, event: String, outputDb: Double? = nil) {
+        var detail: [String: Any] = ["id": id, "index": index, "event": event]
+        if let outputDb { detail["outputDb"] = outputDb }
+        guard let json = try? JSONSerialization.data(withJSONObject: detail), let text = String(data: json, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript("window.spacetermNativeMicrophone && window.spacetermNativeMicrophone.speech && window.spacetermNativeMicrophone.speech(\(text)), 0", completionHandler: nil)
     }
 
     /// To the server's log through the page, as the page's own lines go.
@@ -381,4 +518,64 @@ private final class Converter: @unchecked Sendable {
         let now = CACurrentMediaTime()
         return (result, now - lastTap > stallSeconds || now - lastSound > stallSeconds)
     }
+}
+
+/// Control's sentences waiting to be heard, in order, the first one playing.
+/// Buffers are kept until heard, so a new engine can play them again.
+private struct SpeechQueue {
+    /// What the player is connected with; every sentence is converted to it.
+    static let format = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+
+    struct Sentence {
+        let id: String
+        let index: Int
+        let count: Int
+        let buffer: AVAudioPCMBuffer
+        /// Its loudness, RMS dBFS: what the microphone would hear of it without cancellation.
+        let levelDb: Double
+        var key: String { "\(id)#\(index)" }
+
+        init?(id: String, index: Int, count: Int, pcm: Data, sampleRate: Double) {
+            let frames = pcm.count / 2
+            guard frames > 0, sampleRate > 0,
+                  let source = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true),
+                  let input = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(frames)),
+                  let samples = input.int16ChannelData?[0] else { return nil }
+            input.frameLength = AVAudioFrameCount(frames)
+            var sum = 0.0
+            pcm.withUnsafeBytes { raw in
+                for i in 0..<frames {
+                    let v = raw.loadUnaligned(fromByteOffset: i * 2, as: Int16.self)
+                    samples[i] = v
+                    sum += Double(v) * Double(v)
+                }
+            }
+            let rms = (sum / Double(frames)).squareRoot() / 32768
+            levelDb = rms > 0 ? (20 * log10(rms)).rounded() : -120
+            guard let converter = AVAudioConverter(from: source, to: SpeechQueue.format),
+                  let output = AVAudioPCMBuffer(pcmFormat: SpeechQueue.format,
+                                                frameCapacity: AVAudioFrameCount(Double(frames) * SpeechQueue.format.sampleRate / sampleRate) + 64) else { return nil }
+            var fed = false
+            var error: NSError?
+            converter.convert(to: output, error: &error) { _, status in
+                if fed { status.pointee = .endOfStream; return nil }
+                fed = true
+                status.pointee = .haveData
+                return input
+            }
+            guard error == nil, output.frameLength > 0 else { return nil }
+            self.id = id
+            self.index = index
+            self.count = count
+            self.buffer = output
+        }
+    }
+
+    private(set) var sentences: [Sentence] = []
+    var current: Sentence? { sentences.first }
+    var isEmpty: Bool { sentences.isEmpty }
+    mutating func append(_ sentence: Sentence) { sentences.append(sentence) }
+    mutating func removeCurrent() { if !sentences.isEmpty { sentences.removeFirst() } }
+    func contains(id: String) -> Bool { sentences.contains { $0.id == id } }
+    mutating func remove(id: String) { sentences.removeAll { $0.id == id } }
 }

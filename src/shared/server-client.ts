@@ -826,10 +826,10 @@ export class ServerClient {
     return unexpected(resp)
   }
 
-  /** Words said hands-free, for Control. */
-  receptionistHandsFree(text: string): void {
-    this.log(`[hands-free] ${text.length} chars to Control`)
-    this.fireAndForget({ type: 'receptionist-hands-free', text })
+  /** Words said hands-free, for Control; `interrupted` when they cut its reply off. */
+  receptionistHandsFree(text: string, interrupted = false): void {
+    this.log(`[hands-free] ${text.length} chars to Control${interrupted ? ', having cut it off' : ''}`)
+    this.fireAndForget({ type: 'receptionist-hands-free', text, ...(interrupted ? { interrupted } : {}) })
   }
 
   /** Build and install the iPhone app from the Mac. Resolves when it fails, or — rarely seen — succeeds. */

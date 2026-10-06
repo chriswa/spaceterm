@@ -1922,7 +1922,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'receptionist-hands-free':
     case 'receptionist-say': {
       const text = msg.text.trim()
-      if (!text || !receptionist) break
+      if (!receptionist) break
+      // Hands-free cut Control off, then caught nothing: it says it had not finished, and carries on.
+      if (!text) {
+        if (msg.type === 'receptionist-hands-free' && msg.interrupted) receptionist.carryOnAfterEmptyInterruption()
+        break
+      }
       // The wake word names Control, and typing in its transcript is writing
       // to it: whatever the voice target was, this is for Control, and — as
       // speaking to it does — it brings Control here.

@@ -55,11 +55,16 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
   const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
   let quietFor = 10_000
   const records: Array<{ kind: string; detail?: Record<string, unknown> }> = []
+  /** Control's voice playing through the app, with echo cancellation. */
+  let controlSpeaking = false
+  const ducks: boolean[] = []
+  let interrupts = 0
+  const sayCalls: Array<{ text: string; interrupted?: boolean }> = []
   const deps: HandsFreeDeps = {
     api: {
       handsFree: {
         checkWakeWord: async (pcm) => { checked.push(pcm.length); return { match: isWakeWord } },
-        say: (text) => said.push(text),
+        say: (text, interrupted) => { sayCalls.push({ text, interrupted }); if (text) said.push(text) },
         onTuning: (cb) => { tuningListener = cb; return () => {} },
       },
       dictation: { start: async () => 'id', audio: () => {}, finish: async () => '', cancel: () => {}, turnCheck: async () => null },
@@ -89,6 +94,9 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
     sleep: () => new Promise(() => {}),
     loadScorer: async () => fakeDetector,
     record: (kind, detail) => { records.push({ kind, detail }) },
+    nativeSpeech: () => ({ playing: controlSpeaking, outputDb: -18, voiceProcessing: true }),
+    duckSpeech: (on) => { ducks.push(on) },
+    interruptControl: () => { interrupts++; controlSpeaking = false },
   }
   const uninstall = installHandsFree(deps.api, deps)
   const ready = settle()
@@ -103,7 +111,9 @@ function harness({ isWakeWord = true, transcript = 'Control, what is Kevin doing
     }
   }
   return {
-    hear, said, checked, cues, dictations, records, uninstall,
+    hear, said, checked, cues, dictations, records, uninstall, ducks, sayCalls,
+    interrupts: () => interrupts,
+    setControlSpeaking: (on: boolean) => { controlSpeaking = on },
     haptics: () => haptics,
     setQuietFor: (ms: number) => { quietFor = ms },
     dropHold: () => { held = undefined; holdChanged() },
@@ -214,6 +224,46 @@ describe('hands-free mode', () => {
     expect(sightings).toEqual(['checked', 'after-speech'])
     expect(h.records.find((r) => r.kind === 'wake-word')?.detail).toMatchObject({ match: false })
     expect(h.records.find((r) => r.kind === 'hands-free-detector')?.detail).toEqual({ name: 'fake' })
+  })
+
+  it('listens through Control\'s voice when the app plays it: "Control" cuts it off and is dictated', async () => {
+    h = harness()
+    h.setControlSpeaking(true)
+    await h.hear(quiet(1500), speech(1500))
+    // Turned down the moment someone spoke, cut off once it was "Control".
+    expect(h.ducks[0]).toBe(true)
+    expect(h.interrupts()).toBe(1)
+    expect(h.dictations).toHaveLength(1)
+    await h.hear(speech(1000), quiet(3500))
+    expect(h.sayCalls).toEqual([{ text: 'what is Kevin doing?', interrupted: true }])
+  })
+
+  it('turns Control down for anyone speaking, and back up once it was not "Control" and they stopped', async () => {
+    h = harness({ isWakeWord: false })
+    h.setControlSpeaking(true)
+    await h.hear(quiet(1500), speech(1500), quiet(1000))
+    expect(h.ducks).toEqual([true, false])
+    expect(h.interrupts()).toBe(0)
+  })
+
+  it('cut off, then nothing caught: Control is told, and carries on', async () => {
+    h = harness({ transcript: 'Control.' })
+    h.setControlSpeaking(true)
+    await h.hear(quiet(1500), speech(600), quiet(6000))
+    expect(h.interrupts()).toBe(1)
+    expect(h.sayCalls).toEqual([{ text: '', interrupted: true }])
+    expect(h.records.some((r) => r.kind === 'hands-free-empty-interruption')).toBe(true)
+  })
+
+  it('records, per reply, how much of Control\'s voice got past echo cancellation', async () => {
+    h = harness()
+    h.setControlSpeaking(true)
+    await h.hear(quiet(3000))
+    h.setControlSpeaking(false)
+    await h.hear(quiet(100))
+    const echo = h.records.find((r) => r.kind === 'hands-free-echo')?.detail
+    expect(echo).toMatchObject({ speechPercent: 0, longestSpeechMs: 0, outputDb: -18, voiceProcessing: true, ducks: 0 })
+    expect(echo?.seconds).toBeGreaterThan(2.5)
   })
 
   it('stops listening when the microphone is no longer held', async () => {

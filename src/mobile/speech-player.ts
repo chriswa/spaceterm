@@ -2,6 +2,7 @@ import type { RemoteSpeechApi } from '../shared/api'
 import { audioContext, noteSilenced, noteSounding } from './cues'
 import { describeAudioSession } from './audio-session'
 import { recordMobileEvent } from './mobile-events'
+import { nativeSpeech } from './native-microphone'
 
 /**
  * Plays speech sent to this phone (src/server/remote-speech.ts): Summary
@@ -18,7 +19,24 @@ import { recordMobileEvent } from './mobile-events'
  * iOS lets a page start audio only from a tap, and an answer arrives seconds
  * after the tap that asked for it. So every tap anywhere wakes the shared
  * audio context; by the time the first sentence lands it is running.
+ *
+ * In the app, while it holds the microphone, an answer is played by the app
+ * instead (native-microphone.ts `nativeSpeech`): through the microphone's own
+ * engine, with echo cancellation, so hands-free can hear the user say
+ * "Control" over it. The app reports each sentence's start and end, which go
+ * to the server just the same. A job stays wherever its first sentence went.
  */
+
+/** Jobs the app is playing, by id, with how many sentences each has. */
+const nativeJobs = new Map<string, { count: number }>()
+let lastOutputDb: number | undefined
+
+/** What hands-free needs of the app's playback: whether it is playing, and how loud. */
+export const nativePlayback = {
+  playing: (): boolean => nativeJobs.size > 0,
+  /** The loudness of the last sentence it began, RMS dBFS. */
+  outputDb: (): number | undefined => lastOutputDb,
+}
 
 interface Playing {
   sources: AudioBufferSourceNode[]
@@ -49,6 +67,11 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
   document.addEventListener('touchend', wake, { capture: true, passive: true })
 
   const stop = (id: string) => {
+    if (nativeJobs.delete(id)) {
+      recordMobileEvent('speech-stopped', { id: id.slice(0, 11), native: true })
+      nativeSpeech.stop(id)
+      return
+    }
     const job = jobs.get(id)
     if (!job) return
     // Cut off by the server: interrupted, or superseded.
@@ -63,7 +86,27 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     if (jobs.size === 0) noteSilenced()
   }
 
+  const offNative = nativeSpeech.onEvent(({ id, index, event, outputDb }) => {
+    const job = nativeJobs.get(id)
+    if (!job) return
+    if (outputDb !== undefined && event === 'started') lastOutputDb = outputDb
+    api.progress(id, index, event)
+    if (event !== 'started' && index === job.count - 1) {
+      nativeJobs.delete(id)
+      recordMobileEvent('speech-end', { id: id.slice(0, 11), native: true })
+    }
+  })
+
   const offAudio = api.onAudio(({ id, index, count, sampleRate, pcm }) => {
+    if (nativeJobs.has(id) || (!jobs.has(id) && nativeSpeech.available())) {
+      if (!nativeJobs.has(id)) {
+        nativeJobs.set(id, { count })
+        recordMobileEvent('speech-start', { id: id.slice(0, 11), sentences: count, native: true, voiceProcessing: nativeSpeech.voiceProcessing() })
+      }
+      nativeSpeech.play(id, index, count, sampleRate, pcm)
+      log(`[speech] ${id.slice(0, 11)} sentence ${index + 1}/${count} to the app (echo cancellation ${nativeSpeech.voiceProcessing() ? 'on' : 'off'})`)
+      return
+    }
     const ctx = audioContext()
     if (!ctx) {
       api.progress(id, index, 'failed')
@@ -105,6 +148,7 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     document.removeEventListener('touchend', wake, { capture: true })
     offAudio()
     offStop()
-    for (const id of [...jobs.keys()]) stop(id)
+    offNative()
+    for (const id of [...jobs.keys(), ...nativeJobs.keys()]) stop(id)
   }
 }
