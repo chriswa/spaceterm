@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { measure } from './memory-probe'
+import { measure } from './page-memory'
 
 describe('measure', () => {
   it('adds up every canvas\'s backing store and names the largest', () => {

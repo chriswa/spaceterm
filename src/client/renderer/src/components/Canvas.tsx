@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { getCameraTransform, type Camera } from '../lib/camera'
-import { isDeferringCameraScale } from '../hooks/useCamera'
+import { DEFERRED_SCALE_LIMIT, isDeferringCameraScale } from '../hooks/useCamera'
 
 interface CanvasProps {
   camera: Camera
@@ -16,8 +16,43 @@ interface CanvasProps {
   children: React.ReactNode
 }
 
+/**
+ * Have Chromium redraw the desktop's surface at the settled zoom once the zoom
+ * has moved a factor of DEFERRED_SCALE_LIMIT from where it was last drawn.
+ *
+ * `.canvas-surface` is `will-change: transform`, so the camera moves it on the
+ * compositor without repainting the cards. The cost is that Chromium keeps the
+ * layer at the raster scale it was first drawn at: a surface first drawn at
+ * zoom 1 and then zoomed out to 0.05 is still tiled at zoom 1, which is 400
+ * screens of tiles for one screen of view. GPU tile memory runs out, every pan
+ * re-rasterizes what was evicted, and cards draw with missing tiles until the
+ * page is reloaded at the new zoom. Dropping `will-change` for a frame drops the
+ * layer, and restoring it makes a new one at the current scale.
+ */
+function useRasterScaleRelock(surfaceRef: React.RefObject<HTMLDivElement> | undefined, zoom: number, enabled: boolean): void {
+  const drawnAtRef = useRef(zoom)
+  useEffect(() => {
+    const surface = surfaceRef?.current
+    if (!enabled || !surface) return
+    const ratio = zoom / drawnAtRef.current
+    if (ratio < DEFERRED_SCALE_LIMIT && ratio > 1 / DEFERRED_SCALE_LIMIT) return
+    drawnAtRef.current = zoom
+    surface.style.willChange = 'auto'
+    // Two frames: one committed without the layer, then the layer back.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => { surface.style.willChange = '' })
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+      surface.style.willChange = ''
+    }
+  }, [surfaceRef, zoom, enabled])
+}
+
 export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectStart, onZoomDragStart, onCanvasClick, onDoubleClick, background, overlay, children }: CanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
+  // The phone scales a drawing it redraws itself; see deferCameraScaleWhileMoving.
+  useRasterScaleRelock(surfaceRef, camera.z, !isDeferringCameraScale())
 
   useEffect(() => {
     const viewport = viewportRef.current

@@ -1,3 +1,5 @@
+import { measure } from '@/lib/page-memory'
+
 /**
  * What the page is holding in memory, as far as a page can see — for the
  * zoomed-out kills: iOS ends the page's process (zoom about 0.05–0.11, a
@@ -17,30 +19,6 @@
 const KEY = 'spaceterm:memory-breadcrumb'
 const TICK_MS = 250
 const MB = 1024 * 1024
-
-interface Measure { canvasBytes: number; summary: string }
-
-/** The page's canvases, DOM and on-screen cards, in one line. */
-export function measure(doc: Document = document, viewport = { width: window.innerWidth, height: window.innerHeight }): Measure {
-  const canvases = [...doc.querySelectorAll('canvas')]
-  let canvasBytes = 0
-  let largest: HTMLCanvasElement | undefined
-  for (const canvas of canvases) {
-    const bytes = canvas.width * canvas.height * 4
-    canvasBytes += bytes
-    if (!largest || bytes > largest.width * largest.height * 4) largest = canvas
-  }
-  let onScreen = 0
-  for (const card of doc.querySelectorAll('.card-shell')) {
-    const r = card.getBoundingClientRect()
-    if (r.right > 0 && r.bottom > 0 && r.left < viewport.width && r.top < viewport.height) onScreen++
-  }
-  const where = largest ? ` in ${largest.className || largest.parentElement?.className || 'canvas'}`.slice(0, 60) : ''
-  const summary = `canvases ${canvases.length} = ${(canvasBytes / MB).toFixed(1)}MB`
-    + (largest ? `, largest ${largest.width}x${largest.height}${where}` : '')
-    + `; ${doc.getElementsByTagName('*').length} elements; ${onScreen} cards on screen`
-  return { canvasBytes, summary }
-}
 
 export function installMemoryProbe(log: (message: string) => void, killed: boolean): void {
   if (killed) {
