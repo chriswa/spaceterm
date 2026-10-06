@@ -124,6 +124,10 @@ export function Canvas({ camera, surfaceRef, onWheel, onPanStart, onRtsSelectSta
             // re-rasterized every glow's blur on every frame of a zoom, and the
             // desktop's zooming stuttered and its labels flickered.
             '--glow-scale': String(Math.max(1, 1 / camera.z)),
+            // The settled zoom, for the peer outlines' border, on the same
+            // grounds: their border is redrawn wherever it changes, and an
+            // outline the size of the phone's view spans most of the labels.
+            '--settled-camera-zoom': String(camera.z),
           } as React.CSSProperties}
         >
           {children}
