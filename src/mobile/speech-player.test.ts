@@ -9,6 +9,8 @@ function fakeApp({ speech, voiceProcessing = speech }: { speech: boolean; voiceP
     posted,
     /** The app's microphone is up, and says whether it can play speech. */
     running: () => window.spacetermNativeMicrophone?.state({ running: true, input: 'iPhone Microphone', speech, voiceProcessing }),
+    /** Up without the microphone, keeping the app awake: no echo cancellation, and none needed. */
+    awake: () => window.spacetermNativeMicrophone?.state({ running: false, awake: true, speech, voiceProcessing: false }),
     event: (id: string, index: number, event: 'started' | 'finished' | 'failed') => window.spacetermNativeMicrophone?.speech({ id, index, event, outputDb: -18 }),
   }
 }
@@ -80,6 +82,19 @@ describe('speech in the app', () => {
     app.running()
     remote.sentence('rs_4', 0, 1)
     expect(app.posted.some((m) => m.action === 'speech-play')).toBe(false)
+  })
+
+  it('goes to the app while it only keeps itself awake, with nobody listening to hear it', async () => {
+    const app = fakeApp({ speech: true })
+    const { startSpeechPlayer } = await load()
+    const remote = fakeApi()
+    stopPlayer = startSpeechPlayer(remote.api, () => {})
+    app.awake()
+    remote.sentence('rs_5', 0, 1)
+    expect(app.posted.filter((m) => m.action === 'speech-play').map((m) => m.id)).toEqual(['rs_5'])
+    app.event('rs_5', 0, 'started')
+    app.event('rs_5', 0, 'finished')
+    expect(remote.progress).toEqual(['rs_5 0 started', 'rs_5 0 finished'])
   })
 
   it('stays in the page with an app too old to play it', async () => {

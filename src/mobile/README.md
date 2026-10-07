@@ -107,6 +107,26 @@ transcript-only lines the model never sees (`amendHeard`, `notDone` in
 including the circle that turns while Control thinks; a button takes you back
 down when you are not.
 
+## Hearing Control with the phone locked
+
+While this phone holds Control, the app keeps itself running in the
+background — locked, or with another app in front — so Control's reports and
+answers are still heard. iOS suspends an app whose audio is not running, and
+the page and its connection to the server go with it: the server then had
+nobody to speak to, and saved it all for when the app came back. Now the page
+asks the app to stay awake while it holds Control (`stay-awake.ts`), and the
+app runs its audio engine without the microphone (`NativeMicrophone.swift`,
+`Mode.speaker`): playback only, mixing with other apps' audio, playing
+silence, and Control's voice through the speaker or AirPods. Hands-free's
+microphone does the same job when it is on. Handing Control to the Mac, or to
+nobody, lets the app be suspended again.
+
+It costs the battery a running audio engine, and does nothing once the app
+has been swiped away; a call or Siri stops it until the interruption ends.
+`native-stay-awake` and `native-awake-running` in the event record show it
+coming and going, and the `native-heartbeat` while in the background says
+whether the page still answers (`pageAnsweredMs`).
+
 ## Hands-free: "Control, …"
 
 The hold-mic button (the microphone with a lock, right of the talk button) is
@@ -313,6 +333,6 @@ download is not needed.
 
 - Text size is a hard-coded constant (`SCALE` in TerminalView.tsx, 0.94 —
   about 50 columns on a 393-pt phone); there is no control for it yet.
-- No TTS on the phone and no push notifications.
+- No push notifications: an app swiped away hears nothing from Control until it is opened.
 - A reconnect reloads the page (as the desktop does); drafts and the open
   surface survive it.

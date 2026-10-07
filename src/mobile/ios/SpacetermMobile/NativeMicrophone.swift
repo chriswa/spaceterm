@@ -27,6 +27,13 @@ import WebKit
 /// what the microphone hears, so hands-free can listen through it and the
 /// user can interrupt with "Control". Each sentence's start and end go back
 /// to the page, which tells the server how far the listener got.
+///
+/// And it keeps the app awake while this phone holds Control (`stay-awake`).
+/// iOS suspends an app in the background unless its audio is running, and
+/// with the app goes the page and its connection to the server, so Control
+/// fell silent the moment the phone was locked or put away. Without the
+/// microphone the engine runs to play alone (`Mode.speaker`): silence, and
+/// Control's voice when it has something to say.
 @MainActor
 final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     weak var webView: WKWebView?
@@ -37,8 +44,18 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     /// kept its old format and delivered nothing.
     private var engine = AVAudioEngine()
     private let capture = Converter()
+    /// The page wants the microphone: hands-free.
     private var wanted = false
-    private var running = false
+    /// The page wants the app kept running in the background: this phone holds Control.
+    private var stayAwake = false
+    /// What the engine is up for: listening (and playing), only playing, or nothing.
+    private enum Mode: String { case off, speaker, microphone }
+    /// What the engine should be up for. The microphone, when wanted, plays Control's voice too.
+    private var mode: Mode { wanted ? .microphone : stayAwake ? .speaker : .off }
+    /// What the engine is up for now.
+    private var up = Mode.off
+    /// The microphone is running — what the page means by `running`.
+    private var running: Bool { up == .microphone }
     private var timer: Timer?
     private var pendingRestart: DispatchWorkItem?
     private var lastBringUp = Date.distantPast
@@ -94,6 +111,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             switch action {
             case "start": start()
             case "stop": stop()
+            case "stay-awake": setStayAwake((message.body as? [String: Any])?["on"] as? Bool ?? false)
             // Hands-free heard "Control": a tap the user feels, since a tone would land mid-sentence.
             case "haptic": UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             case "speech-play": playSpeech(message.body as? [String: Any] ?? [:])
@@ -107,6 +125,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     private func start() {
         wanted = true
+        // A new attempt: the page waits for running or an error, and an old error would answer it.
+        lastError = nil
         if running {
             // A reloaded page asking again: it needs to hear the state.
             sendState()
@@ -122,31 +142,73 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     private func stop() {
         wanted = false
+        let was = up
+        events.record("native-mic-stopped")
+        if was == .microphone { log("stopped") }
+        // Still holding Control: on without the microphone, so the app stays awake.
+        if mode == .speaker {
+            if was != .speaker { bringUp(why: "the microphone was turned off") }
+        } else {
+            tearDown(why: "the microphone was turned off")
+        }
+    }
+
+    private func setStayAwake(_ on: Bool) {
+        guard on != stayAwake else { return }
+        stayAwake = on
+        events.record("native-stay-awake", ["on": on, "mode": mode.rawValue])
+        log(on ? "this phone holds Control: staying awake in the background" : "this phone no longer holds Control")
+        // The microphone keeps the app awake already; only a bare engine comes and goes.
+        if wanted { return }
+        if on { bringUp(why: "this phone holds Control") } else { tearDown(why: "this phone no longer holds Control") }
+    }
+
+    /// Everything off, the audio session given back.
+    private func tearDown(why: String) {
         pendingRestart?.cancel()
         pendingRestart = nil
         timer?.invalidate()
         timer = nil
         engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
+        if up == .microphone { engine.inputNode.removeTap(onBus: 0) }
         // No engine, no voice: whatever was still to be said will not be.
-        failSpeech(why: "the microphone was turned off")
+        failSpeech(why: why)
         player = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        if running { log("stopped") }
-        events.record("native-mic-stopped")
-        running = false
+        up = .off
         sendState()
     }
 
     // MARK: - Engine
 
     private func bringUp(why: String) {
-        guard wanted else { return }
+        let mode = self.mode
+        guard mode != .off else { return }
         lastBringUp = Date()
         do {
             engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
+            // The input node is made on first use: touched on an engine that never recorded, it would make one.
+            if up == .microphone { engine.inputNode.removeTap(onBus: 0) }
+            up = .off
             let session = AVAudioSession.sharedInstance()
+            if mode == .speaker {
+                // Playback alone, which records nothing and so shows no microphone in use.
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
+                engine = AVAudioEngine()
+                voiceProcessing = false
+                attachPlayer()
+                engine.prepare()
+                try engine.start()
+                up = .speaker
+                lastError = nil
+                log("awake, playing to \(outputName()) (\(why))")
+                events.record("native-awake-running", ["why": why, "route": NativeEvents.describeRoute(session.currentRoute)])
+                rescheduleSpeech()
+                sendState()
+                startTimer()
+                return
+            }
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
             // iOS silences haptics while recording unless told otherwise; hands-free's cue is one.
             try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
@@ -167,11 +229,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                     events.record("voice-processing-failed", ["error": error.localizedDescription])
                 }
             }
-            let player = AVAudioPlayerNode()
-            engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: SpeechQueue.format)
-            self.player = player
-            player.volume = ducked ? Self.duckedVolume : 1
+            attachPlayer()
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0 else { throw Failure("the input has no format (sample rate 0)") }
             capture.reset(converter: AVAudioConverter(from: format, to: Converter.outFormat))
@@ -179,7 +237,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in sink.handle(buffer) }
             engine.prepare()
             try engine.start()
-            running = true
+            up = .microphone
             lastError = nil
             expectAudio(why)
             log("running on \(inputName()) at \(Int(format.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
@@ -189,12 +247,23 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             sendState()
             startTimer()
         } catch {
-            running = false
+            up = .off
             failSpeech(why: "the audio engine would not start")
             let nsError = error as NSError
-            events.record("native-mic-failed", ["why": why, "error": error.localizedDescription, "domain": nsError.domain, "code": nsError.code, "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground"])
+            events.record("native-mic-failed", ["mode": mode.rawValue, "why": why, "error": error.localizedDescription, "domain": nsError.domain, "code": nsError.code, "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground"])
             fail("could not start (\(why)): \(error.localizedDescription)")
+            // The page retries the microphone itself; nothing asks again for the bare engine.
+            if mode == .speaker { scheduleRestart("staying awake would not start", after: 5) }
         }
+    }
+
+    /// The player Control's voice goes through, on a new engine.
+    private func attachPlayer() {
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: SpeechQueue.format)
+        self.player = player
+        player.volume = ducked ? Self.duckedVolume : 1
     }
 
     /**
@@ -206,25 +275,33 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * coming or going (`bringUp`), which needed one.
      */
     private func restartInPlace(why: String) {
-        guard wanted else { return }
-        let input = engine.inputNode
-        input.removeTap(onBus: 0)
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0 else {
-            events.record("native-mic-restart-in-place-failed", ["why": why, "error": "the input has no format"])
-            bringUp(why: "\(why), and the input had no format")
+        guard mode != .off else { return }
+        // Up for something else since — or not up at all: a new engine, for what is wanted now.
+        guard up == mode else {
+            bringUp(why: why)
             return
         }
-        capture.reset(converter: AVAudioConverter(from: format, to: Converter.outFormat))
-        let sink = capture
-        input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in sink.handle(buffer) }
+        var sampleRate: Double = 0
+        if up == .microphone {
+            let input = engine.inputNode
+            input.removeTap(onBus: 0)
+            let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0 else {
+                events.record("native-mic-restart-in-place-failed", ["why": why, "error": "the input has no format"])
+                bringUp(why: "\(why), and the input had no format")
+                return
+            }
+            sampleRate = format.sampleRate
+            capture.reset(converter: AVAudioConverter(from: format, to: Converter.outFormat))
+            let sink = capture
+            input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in sink.handle(buffer) }
+        }
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             engine.prepare()
             try engine.start()
-            running = true
-            expectAudio(why)
-            events.record("native-mic-restarted-in-place", ["why": why, "sampleRate": format.sampleRate, "voiceProcessing": voiceProcessing])
+            if up == .microphone { expectAudio(why) }
+            events.record("native-mic-restarted-in-place", ["mode": up.rawValue, "why": why, "sampleRate": sampleRate, "voiceProcessing": voiceProcessing])
             rescheduleSpeech()
             sendState()
         } catch {
@@ -278,7 +355,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     /// speaker for a second or two — so start again once, after it settles.
     /// `inPlace`: the same engine (`restartInPlace`), rather than a new one.
     private func scheduleRestart(_ why: String, after delay: TimeInterval = 0.8, inPlace: Bool = false) {
-        guard wanted else { return }
+        guard mode != .off else { return }
         pendingRestart?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
@@ -299,14 +376,15 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     private func onTick() {
         tick += 1
+        // Every 2 s, in case the page reloaded and missed the last change.
+        if tick % 20 == 0 { sendState() }
+        guard running else { return }
         let (pcm, stalled) = capture.drain(stallSeconds: Self.stallSeconds)
         if stalled, pendingRestart == nil, Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds {
             log("no sound for \(Int(Self.stallSeconds)) s (nothing, or only digital silence) — starting again")
             events.record("native-mic-stalled", ["seconds": Self.stallSeconds])
             scheduleRestart("a stalled microphone", after: 0)
         }
-        // Every 2 s, in case the page reloaded and missed the last change.
-        if tick % 20 == 0 { sendState() }
         guard !pcm.isEmpty, let webView else { return }
         if unanswered >= Self.maxUnanswered {
             if !dropping {
@@ -332,7 +410,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     private func sendState() {
         // `speech`: this app plays Control's voice itself, while running — an older one does not.
-        var state: [String: Any] = ["running": running, "speech": true, "voiceProcessing": voiceProcessing]
+        // `awake`: the engine is up without the microphone, and plays it all the same.
+        var state: [String: Any] = ["running": running, "awake": up == .speaker, "speech": true, "voiceProcessing": voiceProcessing]
         if running { state["input"] = inputName() }
         if let lastError, !running { state["error"] = lastError }
         guard let json = try? JSONSerialization.data(withJSONObject: state), let text = String(data: json, encoding: .utf8) else { return }
@@ -354,7 +433,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             log("speech-play without id, index, count, sampleRate and pcm")
             return
         }
-        guard running, let player else {
+        guard up != .off, let player else {
             sendSpeech(id: id, index: index, event: "failed")
             return
         }
@@ -415,7 +494,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func rescheduleSpeech() {
         speechGeneration += 1
         player?.stop()
-        guard running, let player, !speech.isEmpty else { return }
+        guard up != .off, let player, !speech.isEmpty else { return }
         for sentence in speech.sentences { schedule(sentence, on: player) }
         player.play()
         if let current = speech.current { begin(current) }
@@ -450,7 +529,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func status() -> [String: Any] {
         let heard = capture.takeStats()
         return [
-            "wanted": wanted, "running": running, "engineRunning": engine.isRunning,
+            "wanted": wanted, "running": running, "stayAwake": stayAwake, "mode": up.rawValue, "engineRunning": engine.isRunning,
             "secondsHeard": Double(heard.samples) / 16_000,
             "peakDbfs": heard.peak > 0 ? Int(20 * log10(heard.peak)) : -999,
             "pageTakingAudio": !dropping,
@@ -460,6 +539,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     private func inputName() -> String {
         AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "no input"
+    }
+
+    private func outputName() -> String {
+        AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "no output"
     }
 
     // MARK: - The system
@@ -475,7 +558,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                 self.events.record(began ? "audio-interruption-began" : "audio-interruption-ended", [
                     "reason": Self.describe(AVAudioSession.InterruptionReason(rawValue: reason)),
                     "shouldResume": AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume),
-                    "running": self.running, "wanted": self.wanted,
+                    "running": self.running, "wanted": self.wanted, "stayAwake": self.stayAwake,
                 ])
                 if began {
                     self.log("interrupted (a call, Siri, another app)")

@@ -11,8 +11,9 @@
 	<string>$(SPACETERM_NATIVE_VERSION)</string>
 	<!-- Plain PNGs rather than an asset catalog: compiling a catalog needs an
 	     iOS simulator runtime installed, an 8 GB download for one icon. -->
-	<!-- Hands-free mode keeps listening for "Control" with the screen locked
-	     (NativeMicrophone.swift). -->
+	<!-- Hands-free mode keeps listening for "Control" with the screen locked,
+	     and while this phone holds Control the app stays awake to play its
+	     voice, microphone or not (NativeMicrophone.swift). -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

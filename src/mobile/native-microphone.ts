@@ -33,6 +33,12 @@ interface NativeState {
   speech?: boolean
   /** Its engine has Apple's voice processing — echo cancellation — on. */
   voiceProcessing?: boolean
+  /**
+   * Its engine is up without the microphone, keeping the app awake while this
+   * phone holds Control (`keepAppAwake`), and plays Control's voice all the
+   * same. An older app does not say so.
+   */
+  awake?: boolean
 }
 
 /** A sentence of Control's voice, as the app plays it: begun, heard to its end, or not playable. */
@@ -114,18 +120,22 @@ function install(): void {
 /**
  * Control's voice, played by the app — through the same engine as its
  * microphone, with echo cancellation, so hands-free can hear the user through
- * it (NativeMicrophone.swift). Only while the app's microphone runs, and only
- * an app that says it can.
+ * it (NativeMicrophone.swift); or, with the microphone off, through the engine
+ * that keeps the app awake. Only while that engine runs, and only an app that
+ * says it can.
  */
 export const nativeSpeech = {
   /**
-   * Only with echo cancellation on: played by the app without it, Control's
-   * voice would be heard as someone talking — turning itself down, and
-   * keeping "Control" from ever counting. Then the page plays it, and
-   * hands-free stands aside, as before.
+   * With the microphone on, only with echo cancellation on: played by the app
+   * without it, Control's voice would be heard as someone talking — turning
+   * itself down, and keeping "Control" from ever counting. Then the page
+   * plays it, and hands-free stands aside, as before. With it off there is
+   * nobody listening to hear it, and the app plays it: a page in the
+   * background may not be able to.
    */
   available(): boolean {
-    return handler() !== undefined && state.running && state.speech === true && state.voiceProcessing === true
+    if (handler() === undefined || state.speech !== true) return false
+    return state.running ? state.voiceProcessing === true : state.awake === true
   },
   voiceProcessing(): boolean {
     return state.voiceProcessing === true
@@ -145,6 +155,20 @@ export const nativeSpeech = {
     speechListeners.add(fn)
     return () => { speechListeners.delete(fn) }
   },
+}
+
+/**
+ * Keep the app running in the background, or let it be suspended again.
+ *
+ * iOS suspends an app whose audio is not running, and the page and its
+ * connection with it, so Control could not be heard with the phone locked
+ * unless hands-free held the microphone. Asked for while this phone holds
+ * Control (`stay-awake.ts`); the app runs its audio engine without the
+ * microphone to stay awake. Nothing in a browser.
+ */
+export function keepAppAwake(on: boolean): void {
+  install()
+  handler()?.postMessage({ action: 'stay-awake', on })
 }
 
 /** A tap the user can feel, from the app; nothing in a browser. */
