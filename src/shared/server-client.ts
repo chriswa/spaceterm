@@ -786,8 +786,8 @@ export class ServerClient {
   // For a client that captures audio but cannot transcribe it: the server
   // relays the PCM through Voice Operator. See src/server/remote-dictation.ts.
 
-  async dictationStart(sampleRate: number): Promise<string> {
-    const resp = await this.request({ type: 'dictation-start', sampleRate })
+  async dictationStart(sampleRate: number, forControl?: boolean): Promise<string> {
+    const resp = await this.request({ type: 'dictation-start', sampleRate, ...(forControl ? { forControl } : {}) })
     if (resp.type === 'dictation-started') return resp.id
     return unexpected(resp)
   }

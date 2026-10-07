@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RemoteDictation } from './remote-dictation'
+import { RemoteDictation, WORDS_FOR_CONTROL_LIMIT_MS } from './remote-dictation'
 import type { SpeechResponse } from './voice-operator'
 
 /** Voice Operator as a script: what it answers, and a log of what it was asked. */
@@ -125,5 +125,48 @@ describe('RemoteDictation, whether the user is speaking', () => {
     await d.start('phone', 16000)
     d.cancelAllFor('phone')
     expect(heard).toEqual([true, false, true, false])
+  })
+
+  it('for Control, goes on until its words are handed over, so Control neither resumes nor speaks without them', async () => {
+    const heard: boolean[] = []
+    const d = new RemoteDictation(fakeVoice(), { onSpeaking: (speaking) => heard.push(speaking), schedule: () => () => {} })
+    await d.start('phone', 16000, true)
+    await d.finish('phone', 't1')
+    expect(d.speaking).toBe(true)
+    d.delivered('someone else')
+    expect(d.speaking).toBe(true)
+    d.delivered('phone')
+    expect(heard).toEqual([true, false])
+  })
+
+  it('for Control, ends with the transcription when it caught no words', async () => {
+    const d = new RemoteDictation(fakeVoice({ finish: { status: 200, body: { text: '  ' } } }), { schedule: () => () => {} })
+    await d.start('phone', 16000, true)
+    await d.finish('phone', 't1')
+    expect(d.speaking).toBe(false)
+  })
+
+  it('for Control, stops waiting on words that never come back', async () => {
+    let limit: (() => void) | undefined
+    const d = new RemoteDictation(fakeVoice(), {
+      schedule: (ms, fn) => {
+        expect(ms).toBe(WORDS_FOR_CONTROL_LIMIT_MS)
+        limit = fn
+        return () => {}
+      },
+    })
+    await d.start('phone', 16000, true)
+    await d.finish('phone', 't1')
+    expect(d.speaking).toBe(true)
+    limit?.()
+    expect(d.speaking).toBe(false)
+  })
+
+  it('for Control, lets go when the phone goes away before handing the words over', async () => {
+    const d = new RemoteDictation(fakeVoice(), { schedule: () => () => {} })
+    await d.start('phone', 16000, true)
+    await d.finish('phone', 't1')
+    d.cancelAllFor('phone')
+    expect(d.speaking).toBe(false)
   })
 })

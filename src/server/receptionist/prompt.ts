@@ -109,8 +109,12 @@ export type ReceptionistEvent =
   | { kind: 'agent-stopped'; agent: string; nodeId: NodeId; state: string; lastSaid: string }
   /** A watched agent's session exited: it ended itself, or was ended. `archived` unless it failed to launch and stayed on the canvas. */
   | { kind: 'agent-ended'; agent: string; archived: boolean; lastSaid: string }
-  | { kind: 'agent-answer'; agent: string; question: string; answer: string }
-  | { kind: 'agent-answer-failed'; agent: string; question: string; reason: string }
+  /** `beforeUserSpoke`: asked before the user's latest words, which may have changed what they want. */
+  | { kind: 'agent-answer'; agent: string; question: string; answer: string; beforeUserSpoke?: true }
+  | { kind: 'agent-answer-failed'; agent: string; question: string; reason: string; beforeUserSpoke?: true }
+
+/** Said of a side question's answer that was asked before the user last spoke. */
+export const ASKED_BEFORE_USER_SPOKE = 'You asked this before the user last spoke: weigh it against what they have said since, and leave it unmentioned if it no longer matters.'
 
 export function renderEvent(event: ReceptionistEvent): string {
   switch (event.kind) {
@@ -121,9 +125,9 @@ export function renderEvent(event: ReceptionistEvent): string {
         `It is no longer live, so speak of it in plain words; read still takes its token${event.archived ? ', and unarchive_agent brings it back' : ''}. ` +
         `It last said: ${event.lastSaid || '(nothing)'}`
     case 'agent-answer':
-      return `${event.agent} was asked "${event.question}" and answered: ${event.answer} ${ASK_AGENT_REMINDER}`
+      return `${event.agent} was asked "${event.question}" and answered: ${event.answer} ${ASK_AGENT_REMINDER}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
     case 'agent-answer-failed':
-      return `Asking ${event.agent} "${event.question}" failed: ${event.reason}`
+      return `Asking ${event.agent} "${event.question}" failed: ${event.reason}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
   }
 }
 

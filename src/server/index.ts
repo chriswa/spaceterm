@@ -1880,7 +1880,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-start': {
       const seq = msg.seq
-      void remoteDictation.start(client.id, msg.sampleRate).then((outcome) => {
+      void remoteDictation.start(client.id, msg.sampleRate, msg.forControl === true).then((outcome) => {
         send(client.link, outcome.ok
           ? { type: 'dictation-started', seq, id: outcome.value }
           : { type: 'server-error', seq, message: outcome.error })
@@ -1939,10 +1939,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'receptionist-hands-free':
     case 'receptionist-say': {
       const text = msg.text.trim()
-      if (!receptionist) break
-      // Hands-free cut Control off, then caught nothing: it says it had not finished, and carries on.
+      if (!receptionist) {
+        remoteDictation.delivered(client.id)
+        break
+      }
+      // A dictation for Control caught nothing for it. Whatever its start
+      // stopped carries on; hands-free having cut Control off itself counts.
       if (!text) {
-        if (msg.type === 'receptionist-hands-free' && msg.interrupted) receptionist.carryOnAfterEmptyInterruption()
+        receptionist.heardNothing(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
+        remoteDictation.delivered(client.id)
         break
       }
       // The wake word names Control, and typing in its transcript is writing
@@ -1950,7 +1955,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // speaking to it does — it brings Control here.
       if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
       setVoiceTarget('receptionist')
+      // Heard before the dictation that carried the words lets go, so that
+      // letting go finds them already taken rather than resuming without them.
       void receptionist.hear(text)
+      remoteDictation.delivered(client.id)
       break
     }
 

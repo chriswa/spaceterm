@@ -440,7 +440,7 @@ export class FakeBridge implements Api {
   }
 
   readonly dictation: DictationApi = {
-    start: (sampleRate) => this.reply('dictation.start', 'fake-dictation', sampleRate),
+    start: (sampleRate, forControl) => this.reply('dictation.start', 'fake-dictation', sampleRate, forControl),
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
     cancel: (id) => this.record('dictation.cancel', id),

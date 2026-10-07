@@ -400,6 +400,12 @@ export interface DictationStartMessage {
   seq: number
   /** Hz. PCM is signed 16-bit little-endian mono at this rate. */
   sampleRate: number
+  /**
+   * The words go to Control. The server then holds Control from the start
+   * until the client hands it the words, or says there were none, with a
+   * `receptionist-say` or `receptionist-hands-free`.
+   */
+  forControl?: boolean
 }
 
 /** One chunk of audio, base64. Fire-and-forget: failures surface at finish. */
@@ -455,15 +461,16 @@ export interface WakeWordCheckMessage {
 
 /**
  * Words dictated hands-free, after the wake word: for Control, whatever the
- * voice target. Takes Control to this device, as speaking to it does.
+ * voice target. Takes Control to this device, as speaking to it does. Sent
+ * with no `text` when nothing was caught for Control, so that it stops
+ * waiting for words and carries on with whatever the dictation stopped.
  */
 export interface ReceptionistHandsFreeMessage {
   type: 'receptionist-hands-free'
   text: string
   /**
-   * The wake word cut off Control's reply. With no `text` — nothing was caught
-   * after it — Control says it had not finished and carries on, rather than
-   * falling silent mid-answer. An older server ignores it, and stays silent.
+   * The wake word cut off Control's reply. With no `text`, Control says it had
+   * not finished and carries on, rather than falling silent mid-answer.
    */
   interrupted?: boolean
 }
@@ -1707,7 +1714,7 @@ export type ControlTraceKind =
   | 'events' | 'requeued'
   | 'backlog-add' | 'backlog-take' | 'backlog-back' | 'backlog-dropped' | 'backlog-wait'
   | 'watch' | 'fired' | 'unwatch'
-  | 'unspoken' | 'cut-in'
+  | 'unspoken' | 'cut-in' | 'stopped' | 'resumed'
 
 /** One reasoning entry: a line, and the detail behind it when there is more to say. */
 export interface ControlTrace {

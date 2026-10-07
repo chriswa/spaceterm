@@ -379,6 +379,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       const end = new Promise<EndReason>((resolve) => { ended = resolve })
       let backlogMs = 0
       dictation = await deps.beginDictation({
+        forControl: true,
         backlog: () => {
           const audio = listener.audioSince(start)
           backlogMs = (audio.length / 16_000) * 1000
@@ -405,7 +406,9 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       const text = cleanHandsFreeText(await dictation.finish())
       if (!text) {
         log(`nothing to send besides the wake word (ended on ${reason})`)
+        // Control waits for this dictation's words, so it is told there are none.
         if (interrupted) carryOn()
+        else api.handsFree.say('', false)
         return
       }
       log(`${text.length} chars to Control (ended on ${reason}${interrupted ? ', having cut it off' : ''})`)

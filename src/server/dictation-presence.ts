@@ -1,10 +1,16 @@
 /**
  * Whether the user is dictating anywhere: on the phone (remote-dictation.ts),
  * or on the Mac with Voice Operator's own push-to-talk, which it reports over
- * hooks.sock as each dictation starts and ends. The receptionist never talks
- * over the user or starts a turn of its own while they do (see
- * `Receptionist.userSpeaking`), so it hears one answer for both: one device
- * finishing never releases it while the other is still talking.
+ * hooks.sock as each dictation starts and ends. The receptionist stops when
+ * they start, and holds until they finish (see `Receptionist.userSpeaking`),
+ * so it hears one answer for both: one device finishing never releases it
+ * while the other is still talking.
+ *
+ * A dictation ends only once its words are where they are going. Voice
+ * Operator reports the end after it has transcribed and sent them; the phone's
+ * for Control ends when the phone hands them over. So an end with no words
+ * for Control means there are none, and Control carries on with what it was
+ * doing.
  */
 
 /** One report from Voice Operator of a Mac dictation starting or ending. */

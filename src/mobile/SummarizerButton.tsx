@@ -80,7 +80,7 @@ export function SummarizerButton({ nodeId }: { nodeId: NodeId | null }) {
     setMic({ kind: 'starting' })
     try {
       // Begun here, inside the tap, or iOS will not let it record.
-      const dictation = await whenHearing(Dictation.begin(window.api.dictation))
+      const dictation = await whenHearing(Dictation.begin(window.api.dictation, { forControl: toControl }))
       setMic({ kind: 'listening', dictation })
       playCue('listeningStarted')
     } catch (err) {

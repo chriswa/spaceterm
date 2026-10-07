@@ -1,4 +1,4 @@
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
@@ -69,6 +69,8 @@ export interface SessionTurn {
    * Nothing keeps it alive or compacts it afterwards.
    */
   retiring?: true
+  /** Names this message, so that it can be aborted: see `ReceptionistDeps.askModel`. */
+  turnId?: string
 }
 
 export interface SessionAnswer {
@@ -84,6 +86,13 @@ export interface SessionAnswer {
    * compaction this turn started; an hour on, for the one it scheduled.
    */
   compactsAt?: number
+  /**
+   * The message was aborted before its answer was finished, and `text` is
+   * empty. An abort is not a rewind: `promptInSession` says whether the
+   * session got the message, and keeps it with its answer marked
+   * interrupted, or never saw it.
+   */
+  aborted?: { promptInSession: boolean }
 }
 
 /**
@@ -127,8 +136,12 @@ export interface ReceptionistDeps {
   judgeBacklog(ctx: BacklogContext): Promise<number[]>
   /** Jev's probabilities that the user could switch topics now, and after a pause: see backlog-pause.ts. */
   judgePause(conversation: string): Promise<PauseJudgement>
-  /** One message to Control's Claude Code session. Rejects on failure or abort. */
-  askModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer>
+  /**
+   * One message to Control's Claude Code session. Rejects on failure, or when
+   * `signal` (the time limit) fires. When `abort` fires, the daemon stops the
+   * turn where it is, and the answer comes back at once with `aborted` set.
+   */
+  askModel(turn: SessionTurn, signal: AbortSignal, abort?: AbortSignal): Promise<SessionAnswer>
   /** Rank the live agents against a description, with Jev. */
   findAgents(query: string, agents: readonly RosterAgent[]): Promise<AgentRanking>
   /** Every live Claude Code surface, freshly read. */
@@ -352,12 +365,6 @@ const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say tha
 /** Said to a model that talked when told the user is away: see `renderTurnBody`'s `away`. */
 const AWAY_REFUSAL = 'NOTHING WAS DONE: the user is away, so "say" must be empty. Reply again with the same tools and an empty "say".'
 /**
- * How long after a dictation ends the receptionist stays held, for its words
- * to arrive as a turn of their own: held, events wait for that turn rather
- * than starting one that it would only supersede.
- */
-const QUIET_GRACE_MS = 3_000
-/**
  * Typed into a cold agent before a side question to it: see `warmUp`. Just
  * this: the agent keeps it in its context, so anything more — an explanation,
  * a reply to coax — is tokens it carries, and words it may act on, from then on.
@@ -369,8 +376,12 @@ export const WARM_UP_TIMEOUT_MS = 90_000
 /** A cold agent answering its wake-up: `worked` once it started the turn, `answered` once it stopped again. */
 interface Waking { worked: boolean; done(): void; answered: Promise<void> }
 
-/** The note for `carryOnAfterEmptyInterruption`. */
+/** The note for a reply the user cut off and then said nothing to Control: see `resumeIfStopped`. */
 const EMPTY_INTERRUPTION = "The user cut you off, but nothing they said was caught. Say in a few words that you hadn't finished, then carry on from where you were cut off."
+/** The note for a turn stopped before it spoke, when the user then said nothing to Control: see `resumeIfStopped`. */
+const STOPPED_FOR_NOTHING = 'The user started talking while you were working on your reply, so you stopped; nothing they said was for you. Carry on from where you stopped.'
+/** Told with the next message when an answer was aborted part-way, its message kept in the session. */
+const ABORTED_MID_ANSWER = 'You were stopped part-way through your last answer, because the user started talking: none of it was said, and none of its actions were done.'
 
 /**
  * The question an agent is actually given. Unframed, an agent answering a bare
@@ -438,16 +449,23 @@ export class Receptionist {
   /** What the user missed, for the first turn they can hear — see `missed`. */
   private returnNews: ReturnNews | undefined
   /**
-   * The user is dictating, or has only just stopped: nothing may be said and
-   * no event may start a turn. See `userSpeaking`.
+   * The user is dictating, or their words have yet to arrive: nothing may be
+   * said, no action taken, and no event may start a turn. See `userSpeaking`.
    */
   private held = false
-  /** Whether the last report was of dictation under way; bumped with every report, so a stale grace period does nothing. */
-  private dictating = false
-  private holdChanges = 0
   private readonly heldWaiters = new Set<() => void>()
-  /** The turn under way that no one asked for, if any: dropped when the user starts talking. */
-  private unprompted: Attempt | undefined
+  /**
+   * What the user's talking stopped, until their words for Control arrive:
+   * a reply being spoken, or a turn still working towards one. Resumed if
+   * none do: see `resumeIfStopped`.
+   */
+  private stoppedForUser: 'speaking' | 'thinking' | undefined
+  /** The user's words from a turn stopped before its message reached the session: said with the next turn. */
+  private carriedWords: string | undefined
+  /** Counts each time the user starts talking, so an answer can tell it was asked before they last spoke. */
+  private onsets = 0
+  /** The words the turn under way said while it looked things up, and how far the listener got: see `noteInterimCut`. */
+  private interim: { attempt: Attempt; text: string; heard: number; ended: boolean } | undefined
   /**
    * Control went quiet with go_quiet and has not yet been told it is heard
    * again. Told with the first turn the user can hear, whatever starts it: a
@@ -512,44 +530,98 @@ export class Receptionist {
    * they said it on the listener first: speaking to Control is holding it.
    */
   async hear(text: string): Promise<void> {
-    // Their words are here, so they have finished: no need to wait out the grace period.
-    if (!this.dictating) this.release()
+    // Words for Control: what they say replaces whatever their talking stopped.
+    this.stoppedForUser = undefined
     await this.runTurn(text)
   }
 
   /**
-   * Whether the user is dictating, on any device. While they are, and for a
-   * moment after, the receptionist never talks over them, as Voice Operator
-   * holds its queue while the user speaks — and goes a step further: it does
-   * not even ask the model, since anything it came up with would be stale by
-   * the time it could be said. Events wait in the queue; an unprompted turn
-   * already under way is dropped, its events back in the queue; a reply the
-   * user asked for waits to be spoken.
+   * The user's dictation ended with nothing for Control. `cutOff`: the device
+   * cut Control's reply short itself before the dictation began, so it counts
+   * as stopped by the user even though nothing was playing when they started.
+   */
+  heardNothing(cutOff: boolean): void {
+    if (cutOff) this.stoppedForUser ??= 'speaking'
+    if (!this.held) this.resumeIfStopped()
+  }
+
+  /**
+   * Whether the user is talking, on any device: from the moment a dictation
+   * starts until its words have been handed on, or are known to be none
+   * (see dictation-presence.ts). The moment they start, whatever Control is
+   * doing stops — the model mid-answer, a reply mid-sentence, actions not yet
+   * taken — since what they say may change it. Until they finish nothing is
+   * said, no action is taken, and no event starts a turn. Words for Control
+   * then start a turn of their own; with none, what was stopped carries on.
    */
   userSpeaking(speaking: boolean): void {
-    const change = ++this.holdChanges
-    this.dictating = speaking
-    if (speaking) {
-      this.held = true
-      this.pauses++
-      if (this.unprompted?.isCurrent) {
-        serverLog('[receptionist] the user started talking: dropping an unprompted turn until they finish')
-        void this.channel.cancel()
-      }
+    if (!speaking) {
+      this.release()
       return
     }
-    void this.deps.sleep(QUIET_GRACE_MS).then(() => {
-      if (change === this.holdChanges) this.release()
-    })
+    this.onsets++
+    this.pauses++
+    this.held = true
+    this.stopForUser()
+  }
+
+  /** The user started talking: stop whatever Control is doing, and remember what it was. */
+  private stopForUser(): void {
+    if (!this.channel.isProducing()) return
+    const stopped = this.lastSpoken ? 'speaking' : 'thinking'
+    this.stoppedForUser ??= stopped
+    serverLog(`[receptionist] the user started talking: stopping a turn that was ${stopped}`)
+    this.deps.log({ event: 'stopped-for-user', stopped })
+    this.trace('stopped', stopped === 'speaking' ? 'Stopped mid-reply: you started talking' : 'Stopped before replying: you started talking')
+    this.noteInterimCut()
+    void this.channel.cancel()
   }
 
   private release(): void {
-    this.holdChanges++
     if (!this.held) return
     this.held = false
     for (const resume of this.heldWaiters) resume()
     this.heldWaiters.clear()
-    this.maybeSpeakUp()
+    if (!this.resumeIfStopped()) this.maybeSpeakUp()
+  }
+
+  /**
+   * The user's talking stopped Control, and then nothing they said was for
+   * it — a dictation into an agent, or one that caught no words: what was
+   * stopped gets a turn to carry on. Returns whether it did.
+   */
+  private resumeIfStopped(): boolean {
+    const stopped = this.stoppedForUser
+    this.stoppedForUser = undefined
+    if (!stopped || this.closing) return false
+    this.notes.push(stopped === 'speaking' ? EMPTY_INTERRUPTION : STOPPED_FOR_NOTHING)
+    this.trace('resumed', 'Carried on: nothing you said was for Control')
+    void this.runTurn(undefined)
+    return true
+  }
+
+  /**
+   * The user started talking over what a turn said while it looked things
+   * up. The model wrote those words, so it is told how much was heard; the
+   * reply's own cut-off is `noteInterruption`'s.
+   */
+  private noteInterimCut(): void {
+    const interim = this.interim
+    this.interim = undefined
+    if (!interim?.attempt.isCurrent || (interim.ended && interim.heard >= interim.text.length)) return
+    const heard = interim.text.slice(0, interim.heard).trim()
+    this.notes.push(heard
+      ? `The user cut off what you said while looking things up. They heard only: "${heard}".`
+      : 'The user started talking before hearing any of what you said while looking things up.')
+  }
+
+  /**
+   * Whether a turn may act: once the user is not talking, and only if the
+   * turn was not stopped meanwhile. The one gate every action passes.
+   */
+  private async mayAct(attempt: Attempt): Promise<boolean> {
+    await this.untilUserDone()
+    return attempt.isCurrent
   }
 
   /** Resolves once the user is no longer dictating. */
@@ -575,18 +647,6 @@ export class Receptionist {
     // Said just ahead of how much was heard, which the note `noteInterruption` adds last says.
     if (await this.noteInterruption()) this.notes.splice(-1, 0, RESTARTED_MID_REPLY)
     this.deps.carryOver.leave(this.notes)
-  }
-
-  /**
-   * The user cut a reply off and then nothing they said was caught — hands-free
-   * heard "Control" over the reply, and Wispr heard no words after it. Rather
-   * than leave the answer hanging until they next speak, a turn of its own:
-   * the interruption is noted as for any cut (how much was heard), and Control
-   * says it had not finished and carries on.
-   */
-  carryOnAfterEmptyInterruption(): void {
-    this.notes.push(EMPTY_INTERRUPTION)
-    void this.runTurn(undefined)
   }
 
   /**
@@ -892,7 +952,11 @@ export class Receptionist {
   private async runTurn(heard: string | undefined, pulled?: TakenItems): Promise<void> {
     this.pauses++
     const attempt = this.channel.begin('thinking')
-    this.unprompted = heard === undefined ? attempt : undefined
+    this.interim = undefined
+    // Words a stopped turn never got to the session are said again, ahead of these.
+    const carried = this.carriedWords
+    this.carriedWords = undefined
+    const words = carried === undefined ? heard : heard === undefined ? carried : `${carried} ${heard}`
     // The reply this turn supersedes will never be heard: what backlog_next
     // gave it goes back now, in time to be counted in this turn's message.
     if (this.taken && !this.taken.attempt.isCurrent) this.putBack(this.taken.items)
@@ -908,9 +972,10 @@ export class Receptionist {
     if (!away) this.returnNews = undefined
     const unquieted = !away && this.quieted
     if (unquieted) this.quieted = false
-    const body = renderTurnBody(events, heard, away ? 'away' : news, unquieted, this.deps.backlog.size, this.watching(), pulled?.described)
+    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, unquieted, this.deps.backlog.size, this.watching(), pulled?.described)
+    const body = render(words)
     // With the user's words, the events are in the transcript already, as what came with them.
-    if (heard === undefined && (events.length || news)) {
+    if (words === undefined && (events.length || news)) {
       this.trace('events', `${events.length ? `News: ${events.map(eventHeadline).join('; ')}` : 'You were back'}${away ? ', with nobody listening' : ''}`,
         [...news ? ['What you missed while away.'] : [], ...events.map(renderEvent)].join('\n\n'))
     }
@@ -919,7 +984,8 @@ export class Receptionist {
     this.taken = { attempt, items: taken }
     // Taken before this message joins the record, for a session that has forgotten what led up to it.
     const earlier = this.deps.record.recent(RECAP_MESSAGES)
-    if (heard !== undefined) this.deps.record.append([{ role: 'user', content: body }])
+    // Carried words are in the record already, from the turn that first heard them.
+    if (heard !== undefined) this.deps.record.append([{ role: 'user', content: carried === undefined ? body : render(heard) }])
     let monitoring = false
     try {
       const reply = await this.converse(attempt, body, earlier, away, taken)
@@ -934,6 +1000,8 @@ export class Receptionist {
       monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply), taken, events)
     } catch (err) {
       this.putBack(taken)
+      // Stopped before the session got the user's words: the next turn says them.
+      if (err instanceof Unsent && err.first && words !== undefined) this.carriedWords = words
       if (!attempt.isCurrent) { this.requeue(events, news, unquieted); return }
       if (err instanceof LostSession) this.forgetSession()
       const message = err instanceof Error ? err.message : String(err)
@@ -972,7 +1040,7 @@ export class Receptionist {
   ): Promise<Reply | undefined> {
     let message = body
     for (let step = 1; step <= MAX_STEPS; step++) {
-      const answer = await this.ask(attempt, `${message}\n\n${FORMAT_REMINDER}`, step === 1 ? earlier : [])
+      const answer = await this.ask(attempt, `${message}\n\n${FORMAT_REMINDER}`, step === 1 ? earlier : [], step === 1)
       if (!attempt.isCurrent) return undefined
       this.deps.log({
         event: 'model-step', step, raw: answer.text, sessionId: answer.sessionId, source: answer.source ?? null,
@@ -1016,22 +1084,23 @@ export class Receptionist {
       }
       // The last step's actions, and its words, are `speak`'s.
       if (!reply.tools.some(isBlocking) || step === MAX_STEPS) return reply
+      if (!await this.mayAct(attempt)) {
+        this.noteUnspoken(reply)
+        return undefined
+      }
       // Words that came with a blocking tool are spoken now, while it runs:
       // the listener hears "let me check" instead of silence. As in any
       // reply, its actions run first, and the words report them.
       const done: string[] = []
-      let spoken: SpokenPart[] = []
-      if (reply.say.length && this.listening) {
-        await this.untilUserDone()
-        if (!attempt.isCurrent) return undefined
-        spoken = this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
-      }
+      const spoken: SpokenPart[] = reply.say.length && this.listening
+        ? this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
+        : []
       await this.runActions(reply.tools, lines => done.push(...lines))
       // Taken, the actions are the model's to hear of even if the user talks
       // over this turn before their results go back: noted at once, for
       // whichever message leaves next, and taken back if it is this turn's.
       const note = this.noteDone(done)
-      if (spoken.length && !await this.channel.deliverInterim(attempt, spoken) && !attempt.isCurrent) return undefined
+      if (spoken.length && !await this.speakInterim(attempt, spoken) && !attempt.isCurrent) return undefined
       const { results } = await this.runTools(reply.tools.filter(isLookup), agents, handles, undefined, taken)
       if (!attempt.isCurrent) return undefined
       if (note !== undefined && this.notes.includes(note)) this.notes.splice(this.notes.indexOf(note), 1)
@@ -1050,14 +1119,13 @@ export class Receptionist {
    * session that has forgotten it — a new one, or one compacted to a summary —
    * so it never loses the thread of what was just said.
    */
-  private ask(attempt: Attempt, prompt: string, earlier: readonly RecordMessage[]): Promise<SessionAnswer> {
+  private ask(attempt: Attempt, prompt: string, earlier: readonly RecordMessage[], first: boolean): Promise<SessionAnswer> {
     const run = async (): Promise<SessionAnswer> => {
       // Superseded while queued: never sent, so there is nothing to answer.
-      if (!attempt.isCurrent) throw new Error('superseded before it was sent')
-      // Not the attempt's signal. Being talked over must not cut the call
-      // short: the daemon would go on answering, the queue would move on, and
-      // the next message would find the session busy. The reply is let in and
-      // dropped below instead.
+      if (!attempt.isCurrent) throw new Unsent(first)
+      // The time limit kills the call; the attempt's own signal aborts the
+      // turn in the daemon, which answers at once, so the queue moves on and
+      // the session is never left busy.
       const signal = AbortSignal.timeout(MODEL_TIMEOUT_MS)
       const session = this.session
       const sessionId = session?.sessionId
@@ -1073,8 +1141,13 @@ export class Receptionist {
       ].filter(Boolean).join('\n\n')
       try {
         const answer = await this.askWhenFree(
-          { prompt: message, systemPrompt: RECEPTIONIST_SYSTEM_PROMPT, ...(sessionId ? { sessionId } : {}) }, signal,
+          { prompt: message, systemPrompt: RECEPTIONIST_SYSTEM_PROMPT, turnId: randomUUID(), ...(sessionId ? { sessionId } : {}) }, signal, attempt.signal,
         )
+        if (answer.aborted && !answer.aborted.promptInSession) {
+          // The session never saw this message: what it carried goes with the next.
+          this.notes.unshift(...notes)
+          throw new Unsent(first)
+        }
         if (handover !== undefined) this.handover = undefined
         if (answer.sessionId !== sessionId || answer.compactsAt !== session?.compactsAt) {
           this.session = {
@@ -1087,13 +1160,17 @@ export class Receptionist {
         // hear this reply, and the model has to be told or it builds on it.
         // Noted here, before the next queued message is sent, not by the
         // turn — which only finds out after that message has already left.
-        if (!attempt.isCurrent) {
+        if (answer.aborted) {
+          // Not a rewind: the session keeps the message, its answer cut short.
+          this.notes.push(ABORTED_MID_ANSWER)
+          this.deps.log({ event: 'model-aborted', sessionId: answer.sessionId })
+        } else if (!attempt.isCurrent) {
           // Its tools never ran either: the turn is gone, so nothing will run them.
           this.noteUnspoken(replyOf(answer.text))
         }
         return answer
       } catch (err) {
-        if (sessionId && !signal.aborted && !(err instanceof SessionBusy)) throw new LostSession(err)
+        if (sessionId && !signal.aborted && !(err instanceof SessionBusy) && !(err instanceof Unsent)) throw new LostSession(err)
         throw err
       }
     }
@@ -1107,13 +1184,14 @@ export class Receptionist {
    * timed out, or a restart came in between), so it is waited for, never
    * abandoned: abandoning it is what forgets the conversation.
    */
-  private async askWhenFree(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer> {
+  private async askWhenFree(turn: SessionTurn, signal: AbortSignal, abort?: AbortSignal): Promise<SessionAnswer> {
     for (let attempt = 1; ; attempt++) {
       try {
-        return await this.deps.askModel(turn, signal)
+        return await this.deps.askModel(turn, signal, abort)
       } catch (err) {
         if (!(err instanceof SessionBusy) || signal.aborted || attempt >= BUSY_RETRIES) throw err
         await this.deps.sleep(BUSY_RETRY_MS)
+        if (abort?.aborted) return { text: '', sessionId: turn.sessionId ?? '', aborted: { promptInSession: false } }
       }
     }
   }
@@ -1574,16 +1652,19 @@ export class Receptionist {
     const named = this.named(agent.nodeId, handles)
     const name = named?.name ?? agent.title
     const token = this.token(agent.nodeId, handles)
+    const onsets = this.onsets
     await this.warmUp(agent)
     const result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
     this.deps.log({ event: 'side-question', nodeId: agent.nodeId, question, result })
+    // The user has spoken since: what they said may have made the question moot.
+    const stale = this.onsets !== onsets ? { beforeUserSpoke: true as const } : {}
     if (result.ok) {
       this.deps.notify(`Control asked ${name}: ${usageWords(result.usage)}`)
-      this.events.push({ kind: 'agent-answer', agent: token, question, answer: result.text })
+      this.events.push({ kind: 'agent-answer', agent: token, question, answer: result.text, ...stale })
     } else {
       serverLog(`[receptionist] side question to ${token} failed: ${result.reason}${result.detail ? ` ${result.detail}` : ''}`)
       this.deps.notify(`Control's question to ${name} failed: ${SIDE_QUESTION_TOASTS[result.reason]}`)
-      this.events.push({ kind: 'agent-answer-failed', agent: token, question, reason: SIDE_QUESTION_FAILURES[result.reason] })
+      this.events.push({ kind: 'agent-answer-failed', agent: token, question, reason: SIDE_QUESTION_FAILURES[result.reason], ...stale })
     }
     this.maybeSpeakUp()
   }
@@ -1872,8 +1953,7 @@ export class Receptionist {
 
   private async speak(attempt: Attempt, body: string, reply: Reply, taken: BacklogItem[], events: readonly ReceptionistEvent[]): Promise<boolean> {
     // Never over the user. Talked over while it waited, the reply is never said.
-    await this.untilUserDone()
-    if (!attempt.isCurrent) {
+    if (!await this.mayAct(attempt)) {
       this.noteUnspoken(reply)
       this.putBack(taken)
       return false
@@ -1934,6 +2014,22 @@ export class Receptionist {
     } catch (err) {
       serverLog(`[receptionist] actions failed: ${err instanceof Error ? err.message : String(err)}`)
     }
+  }
+
+  /**
+   * Say what a turn says while it looks things up, following how far the
+   * listener gets, so that talking over it can say how much they heard.
+   */
+  private speakInterim(attempt: Attempt, spoken: SpokenPart[]): Promise<boolean> {
+    const interim = { attempt, text: joinSpeechParts(spoken), heard: 0, ended: false }
+    this.interim = interim
+    return this.channel.deliverInterim(attempt, spoken, (progress) => {
+      if (progress.kind === 'playing') interim.heard = progress.heard
+      else {
+        interim.ended = true
+        interim.heard = progress.state === 'completed' ? interim.text.length : progress.heard ?? interim.heard
+      }
+    })
   }
 
   /** Actions taken whose results the model has not seen, for its next message. Returns the note, if any. */
@@ -2138,6 +2234,17 @@ function renderRecap(earlier: readonly RecordMessage[]): string | undefined {
     return role === 'user' ? text : `YOU: ${text}`
   })
   return `EARLIER CONVERSATION, word for word, oldest first:\n${lines.join('\n\n')}`
+}
+
+/**
+ * A message that never reached the session: its turn was stopped while it
+ * waited, or aborted before the daemon sent it. `first` when it was the
+ * turn's first, which carries the user's words.
+ */
+class Unsent extends Error {
+  constructor(readonly first: boolean) {
+    super('stopped before it was sent')
+  }
 }
 
 /** A session that failed to answer, as against a turn that was cancelled. */
