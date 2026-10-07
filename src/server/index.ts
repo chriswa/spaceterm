@@ -79,6 +79,7 @@ import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { Watches } from './receptionist/watches'
+import { CarryOver } from './receptionist/carry-over'
 import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
@@ -3333,6 +3334,8 @@ async function startServer(): Promise<void> {
     backlog: new Backlog(),
     // Kept on disk too: a restart must not cost the user an answer Control promised them.
     watches: new Watches(),
+    // And what Control has yet to be told, such as a reply a restart cut off.
+    carryOver: new CarryOver(),
     judgeBacklog: jevBacklogJudge(agentSearchDeps.runJev),
     judgePause: jevPauseJudge(agentSearchDeps.runJev),
     findAgents: (query, agents) => searchAgentSurfaces(query, agents.map((agent) => ({
@@ -3723,7 +3726,7 @@ async function startServer(): Promise<void> {
     // without waiting for the cancellation to land leaves it talking on behalf
     // of an app that no longer exists. Bounded by the request timeout.
     await summaryChat.dispose()
-    await receptionist?.cancel()
+    await receptionist?.shutdown()
     sideQuestionServer?.close()
     snapshotManager.dispose()
     stateManager.persistImmediate()

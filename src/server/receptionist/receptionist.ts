@@ -26,6 +26,7 @@ import {
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, PAUSE_MS, type PauseJudgement } from './backlog-pause'
 import type { Watches, WatchKind } from './watches'
+import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import {
   cacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
@@ -120,6 +121,8 @@ export interface ReceptionistDeps {
   backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
   watches: Watches
+  /** Control's notes, and whether it was mid-reply, across server restarts: see carry-over.ts. */
+  carryOver: Pick<CarryOver, 'take' | 'speaking' | 'leave'>
   /** Jev's probability for each backlog item, in order: that it should come next, or that it is about `ctx.about`. See backlog.ts. */
   judgeBacklog(ctx: BacklogContext): Promise<number[]>
   /** Jev's probabilities that the user could switch topics now, and after a pause: see backlog-pause.ts. */
@@ -457,10 +460,14 @@ export class Receptionist {
   private pauseJudged = -1
 
   private readonly onError: (message: string) => void
+  /** The server is shutting down: nothing new starts. See `shutdown`. */
+  private closing = false
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
     this.monitors = deps.watches
+    // What the last server never got to tell the model goes with the first message.
+    this.notes.push(...deps.carryOver.take())
     const saved = deps.session.load()
     // Instructions are fixed when a session starts, so a session begun on an
     // older prompt would quietly keep following it. It hands over to a new
@@ -476,6 +483,8 @@ export class Receptionist {
       onPhase: (phase) => {
         opts.onPhase(phase)
         if (phase !== 'ready') return
+        this.deps.carryOver.speaking(false)
+        if (this.closing) return
         // Background results that arrived while the receptionist was busy wait
         // for it to go quiet, then get their turn.
         this.maybeSpeakUp()
@@ -546,6 +555,20 @@ export class Receptionist {
   /** Stop whatever the receptionist is saying or about to say. Its actions have already run. */
   cancel(): Promise<boolean> {
     return this.channel.cancel()
+  }
+
+  /**
+   * The server is going. A reply being spoken is cut off where the user got
+   * to and marked so in the record, as any interruption is, and what the model
+   * has yet to be told is left for the next server: see carry-over.ts. Nothing
+   * new starts after this, or it would take those notes with it.
+   */
+  async shutdown(): Promise<void> {
+    this.closing = true
+    await this.channel.cancel()
+    // Said just ahead of how much was heard, which the note `noteInterruption` adds last says.
+    if (await this.noteInterruption()) this.notes.splice(-1, 0, RESTARTED_MID_REPLY)
+    this.deps.carryOver.leave(this.notes)
   }
 
   /**
@@ -802,7 +825,7 @@ export class Receptionist {
   }
 
   private maybeSpeakUp(): void {
-    if (this.held) return
+    if (this.held || this.closing) return
     if (this.channel.isProducing()) {
       void this.maybeInterruptSelf()
       return
@@ -1828,7 +1851,9 @@ export class Receptionist {
     this.lastSpokenAt = this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])[0]
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))
-    return parts.length > 0 && await this.channel.deliver(attempt, parts)
+    if (!parts.length) return false
+    this.deps.carryOver.speaking(true)
+    return await this.channel.deliver(attempt, parts)
   }
 
   /**
@@ -1867,25 +1892,26 @@ export class Receptionist {
    * heard: the session keeps the whole reply, and the next answer must not
    * build on words nobody heard.
    */
-  private async noteInterruption(selfInterrupted = false): Promise<void> {
+  private async noteInterruption(selfInterrupted = false): Promise<boolean> {
     const heard = await this.channel.heardPrefix()
     const spoken = this.lastSpoken
     const spokenAt = this.lastSpokenAt
     this.lastSpoken = undefined
     this.lastSpokenAt = undefined
-    if (heard === undefined || !spoken) return
+    if (heard === undefined || !spoken) return false
     if (spokenAt !== undefined) this.deps.record.amendHeard(spokenAt, heardLengths(spoken, heard))
     const kept = redactSpoken(spoken, heard)
     const audible = kept.map(part => part.text).join(' ')
     if (selfInterrupted) {
       this.notes.push(`You stopped your own last reply to bring the news below, and have just said "${HANG_ON}". The user heard only: "${audible}". Give the news first; say again only what of the rest still stands and matters.`)
-      return
+      return true
     }
     // Talked over, or lost with the phone's page: either way, only this much was heard.
     this.notes.push(`Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest; if it still matters, say it again, or add it to your backlog if it would pull them off the topic.`)
     // Cut off by leaving, or by moving: said again when they are back, since
     // the note above may go with a turn they cannot hear.
     if (this.missed) this.missed.cutOff = audible
+    return true
   }
 }
 

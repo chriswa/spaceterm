@@ -15,6 +15,7 @@ import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
 import { PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
+import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
 import type { NameRegistryStore } from './name-registry'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
@@ -114,6 +115,8 @@ function harness(opts: {
   world?: AgentWorld
   /** Where watches are kept, from an earlier server; by default nothing is watched. */
   watchStore?: NameRegistryStore
+  /** Where what Control has yet to be told is kept, from an earlier server; by default nothing. */
+  carryStore?: NameRegistryStore
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
@@ -245,6 +248,7 @@ function harness(opts: {
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     backlog,
     watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
+    carryOver: new CarryOver({ store: opts.carryStore ?? memoryStore() }),
     judgeBacklog: opts.judgeBacklog ?? (async () => { throw new Error('no judge') }),
     judgePause: opts.judgePause ?? (async () => { throw new Error('no judge') }),
     archive: (nodeId) => { wire.push(`archive ${nodeId}`); gone.add(nodeId); return nodeId === KEVIN_ID ? 3 : 1 },
@@ -1873,6 +1877,85 @@ describe('Receptionist: watching an agent until the user is told', () => {
     await h.receptionist.hear('anything new?')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+})
+
+describe('Receptionist across a server restart mid-reply', () => {
+  const HEARD = 'Kevin is done. Kevin here. The sol'.length
+  /** Speech that plays until it is dropped, and is then found to have got `HEARD` characters in. */
+  function playingUntilDropped(): SpeechBackend {
+    let dropped: (() => void) | undefined
+    const stopped = new Promise<void>((resolve) => { dropped = resolve })
+    return {
+      speak: async () => ({ status: 202, body: { id: 'job-1', state: 'in_progress', playback_state: 'speaking', version: 1 } }),
+      status: async (id) => {
+        await stopped
+        return { status: 200, body: { id, state: 'cancelled_by_client', character_offset: HEARD, version: 2 } }
+      },
+      drop: async (id) => {
+        dropped?.()
+        return { status: 200, body: { id, state: 'cancelled_by_client', character_offset: HEARD, version: 2 } }
+      },
+    }
+  }
+  const kevinIsDone = reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }])
+
+  it('marks a reply a restart cut off, and tells the next server how much was heard', async () => {
+    const carryStore = memoryStore()
+    const before = harness({ carryStore, speech: playingUntilDropped(), replies: [kevinIsDone] })
+    await before.receptionist.hear('how is Kevin?')
+    await flush()
+    await before.receptionist.shutdown()
+    const replyAt = before.record.findIndex(message => message.content.includes('The solver works'))
+    expect(before.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length] }])
+    const after = harness({
+      carryStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toContain(`${RESTARTED_MID_REPLY} Your last reply was cut off before the user heard all of it. They heard only: "Kevin is done. Kevin here. The *INTERRUPTED*"`)
+        return reply([{ from: 'control', text: 'Where was I.' }])
+      }],
+    })
+    await after.receptionist.hear('go on')
+    await flush()
+    expect(after.turns).toHaveLength(1)
+  })
+
+  it('tells the next server a reply may have been cut off when the last one crashed mid-reply', async () => {
+    const carryStore = memoryStore()
+    const before = harness({ carryStore, speech: playingUntilDropped(), replies: [kevinIsDone] })
+    await before.receptionist.hear('how is Kevin?')
+    await flush()
+    const after = harness({
+      carryStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toContain(CRASHED_MID_REPLY)
+        return reply([{ from: 'control', text: 'Where was I.' }])
+      }],
+    })
+    await after.receptionist.hear('go on')
+    await flush()
+    expect(after.turns).toHaveLength(1)
+  })
+
+  it('says nothing of a reply that was heard to the end', async () => {
+    const carryStore = memoryStore()
+    const before = harness({ carryStore, replies: [kevinIsDone] })
+    await before.receptionist.hear('how is Kevin?')
+    await flush()
+    await before.receptionist.shutdown()
+    expect(before.heardMarks).toEqual([])
+    const after = harness({
+      carryStore,
+      replies: [(turn) => {
+        expect(turn.prompt).not.toContain(RESTARTED_MID_REPLY)
+        expect(turn.prompt).not.toContain(CRASHED_MID_REPLY)
+        expect(turn.prompt).not.toContain('cut off')
+        return reply([{ from: 'control', text: 'Hi.' }])
+      }],
+    })
+    await after.receptionist.hear('hello')
+    await flush()
+    expect(after.turns).toHaveLength(1)
   })
 })
 
