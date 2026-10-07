@@ -17,6 +17,7 @@ import { PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
 import type { NameRegistryStore } from './name-registry'
+import type { ControlTrace } from '../../shared/protocol'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
@@ -150,6 +151,7 @@ function harness(opts: {
   const record: Array<{ role: 'user' | 'assistant'; content: string }> = []
   const heardMarks: Array<{ replyAt: number; parts: number[] }> = []
   const notDone: string[] = []
+  const traces: ControlTrace[] = []
   let backlogJson: string | undefined
   const backlog = new Backlog({ store: { load: () => backlogJson, save: (json) => { backlogJson = json } } })
   // Set aside a minute apart, the last a minute ago.
@@ -211,6 +213,7 @@ function harness(opts: {
       append: (messages) => messages.map(message => record.push(message) - 1),
       amendHeard: (replyAt, parts) => { heardMarks.push({ replyAt, parts }) },
       notDone: (actions) => { notDone.push(...actions) },
+      trace: (trace) => { traces.push(trace) },
       search: (query) => record.filter(message => message.content.includes(query)).map(message => message.content).join('\n') || 'nothing',
       recent: (count) => record.slice(-count),
     },
@@ -272,7 +275,7 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, notDone,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, notDone, traces,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -2779,5 +2782,99 @@ describe('Receptionist backlog at a pause', () => {
     await flush()
     h.receptionist.userTookOver(KEVIN_ID)
     expect(h.backlog.size).toBe(1)
+  })
+})
+
+describe("Receptionist: the transcript's reasoning", () => {
+  /** What the transcript's reasoning says, in order, each as `what: text`. */
+  const lines = (h: ReturnType<typeof harness>) => h.traces.map(trace => `${trace.what}: ${trace.text}`)
+
+  it('shows news dropped with a turn the user talked over, the words never said, and the silence and watch that followed', async () => {
+    let releaseStale: ((text: string) => void) | undefined
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        () => new Promise<string>((resolve) => { releaseStale = resolve }),
+        // Heard once already, it says nothing the second time: the case this view was made for.
+        reply([]),
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    releaseStale?.(reply([{ from: 'control', text: 'Sally finished the login form.' }]))
+    await flush()
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    const sally = new RegExp(`\\{\\w+:${SALLY}\\}`).source
+    expect(lines(h).map(line => line.replace(new RegExp(sally, 'g'), '{Sally}'))).toEqual([
+      'watch: Watching {Sally} for its next stop: Control called monitor',
+      'fired: Watch fired: {Sally} is now stopped, waiting for the user',
+      'events: News: {Sally} is now stopped, waiting for the user',
+      'unspoken: Never spoken: you spoke over it before a word of it was said',
+      'requeued: Turn dropped before a word of it was said; its news waits for the next: {Sally} is now stopped, waiting for the user',
+      'events: News: {Sally} is now stopped, waiting for the user',
+      'watch: Watching {Sally} for its next stop: its stop was neither told nor set aside, so it is watched again',
+    ])
+    // What was never said is there word for word, and what the agent last said with the news.
+    expect(h.traces.find(trace => trace.what === 'unspoken')?.detail).toBe('Control: Sally finished the login form.')
+    expect(h.traces.find(trace => trace.what === 'events')?.detail).toMatch(/It last said:/)
+    // The silence itself is the reply on record, after the news and before the watch it left.
+    expect(h.record.at(-1)?.content).toBe('{"say":[]}')
+  })
+
+  it('shows what goes on the backlog, what comes off it, and what goes back', async () => {
+    let h: ReturnType<typeof harness> | undefined
+    h = harness({
+      backlog: ['Leon finished.'],
+      judgeBacklog: async () => [0.9, 0.1],
+      replies: [
+        reply([{ from: 'control', text: 'Noted.' }], [{ tool: 'backlog_add', item: `{${SALLY}} finished the login form.` }]),
+        reply([], [{ tool: 'backlog_next' }]),
+        () => {
+          h!.receptionist.userSpeaking(true)
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+        reply([{ from: 'control', text: 'Go ahead.' }]),
+      ],
+    })
+    await h.receptionist.hear('Sally is done, tell me later')
+    await flush()
+    void h.receptionist.hear("what's next?")
+    await flush()
+    const answered = h.receptionist.hear('actually, wait')
+    h.receptionist.userSpeaking(false)
+    await answered
+    await flush()
+    expect(lines(h).filter(line => /^backlog-(add|take|back)/.test(line))).toEqual([
+      `backlog-add: Set aside for later: {${SALLY}} finished the login form.`,
+      'backlog-take: Off the backlog: Leon finished.',
+      'backlog-back: Back on the backlog, since the reply that brought it up was never heard: Leon finished.',
+    ])
+  })
+
+  it('shows the backlog held back while the user is mid-topic, with the odds', async () => {
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => ({ now: 0.44, afterPause: 0.38 }),
+      replies: [reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }])],
+    })
+    await h.receptionist.hear('check on the agent')
+    await flush()
+    expect(h.traces).toEqual([{
+      what: 'backlog-wait', text: 'Backlog held: you seem to be in the middle of a topic',
+      detail: `Ready now 44%, after ${PAUSE_MS / 1000} seconds of quiet 38%.`,
+    }])
+  })
+
+  it('shows a watch ending when the user takes the agent over', async () => {
+    const h = harness({ replies: [reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }])] })
+    await h.receptionist.hear('let me know when Sally is done')
+    await flush()
+    h.receptionist.userTookOver(SALLY_ID)
+    expect(lines(h).at(-1)).toMatch(new RegExp(`^unwatch: Stopped watching \\{\\w+:${SALLY}\\}: you typed into it yourself$`))
   })
 })

@@ -98,6 +98,17 @@ describe('parseRecordLine', () => {
       .toMatchObject({ kind: 'log', text: 'SENT TO Sally: Push it.', notDone: true })
   })
 
+  it("reads a line of Control's reasoning, naming its agents, and skips a kind it does not know", () => {
+    const nameOf = (handle: string) => (handle === 'amber-otter' ? 'Sally' : undefined)
+    const trace = (what: string) => JSON.stringify({
+      timestamp: '2026-10-05T08:00:00Z', trace: { what, text: 'Watch fired: {amber-otter} is now stopped', detail: '{Sally:amber-otter} said done.' },
+    })
+    expect(parseRecordLine(trace('fired'), 40, nameOf)).toEqual({
+      offset: 40, timestamp: '2026-10-05T08:00:00Z', kind: 'trace', what: 'fired', text: 'Watch fired: Sally is now stopped', detail: 'Sally said done.',
+    })
+    expect(parseRecordLine(trace('pondered'), 40, nameOf)).toBeUndefined()
+  })
+
   it("shows Control's actions as log lines", () => {
     expect(parseRecordLine(line('assistant', 'UNARCHIVED {Kevin:amber-otter}'), 0)).toMatchObject({ kind: 'log', text: 'UNARCHIVED Kevin' })
     expect(parseRecordLine(line('assistant', 'SENT TO Kevin: ship it'), 0)).toMatchObject({ kind: 'log', text: 'SENT TO Kevin: ship it' })

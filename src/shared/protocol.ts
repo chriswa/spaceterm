@@ -1696,7 +1696,30 @@ export type ControlTranscriptEntry = {
    * how many characters of its part `i` were heard. The rest is struck out.
    */
   | { kind: 'heard'; of: number; parts: number[] }
+  /** Why Control did or did not speak: see `ControlTrace`. Shown only when the view is asked to show Control's reasoning. */
+  | ({ kind: 'trace' } & ControlTrace)
 )
+
+/**
+ * What Control's reasoning entries are about, which the transcript view
+ * colours by: news arriving (`events`), or a turn on it dropped and its news
+ * kept for the next (`requeued`); the backlog gaining an item, losing one, or
+ * holding back while the user is mid-topic; a watch on an agent set up,
+ * firing, or ending; a reply that was never spoken; Control cutting its own
+ * reply short for news.
+ */
+export type ControlTraceKind =
+  | 'events' | 'requeued'
+  | 'backlog-add' | 'backlog-take' | 'backlog-back' | 'backlog-dropped' | 'backlog-wait'
+  | 'watch' | 'fired' | 'unwatch'
+  | 'unspoken' | 'cut-in'
+
+/** One reasoning entry: a line, and the detail behind it when there is more to say. */
+export interface ControlTrace {
+  what: ControlTraceKind
+  text: string
+  detail?: string
+}
 
 /** A page of the record, oldest first; `more` when the record goes back further. */
 export interface ReceptionistTranscriptResultMessage {

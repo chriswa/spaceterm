@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 12
+export const CLIENT_PROTOCOL_VERSION = 13
 
 /**
  * Oldest client protocol this build still serves.
@@ -60,5 +60,8 @@ export const CLIENT_PROTOCOL_VERSION = 12
  * v11 asks for a hands-free end phrase (`endPhrase`, "over and out") that this
  * build no longer listens for, so its hands-free dictations end only on a
  * pause; it loses nothing else.
+ *
+ * v12 cannot draw Control's reasoning (`trace` transcript entries), so it is
+ * never sent them; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

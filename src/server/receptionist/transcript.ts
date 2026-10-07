@@ -1,4 +1,4 @@
-import type { ControlTranscriptEntry } from '../../shared/protocol'
+import type { ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import { AGENT_TOKEN, parseAgentRef } from './agent-token'
 import { splitTurnBody } from './prompt'
 import { CONTROL } from './reply'
@@ -17,6 +17,12 @@ import { CONTROL } from './reply'
 export type NameOf = (handle: string) => string | undefined
 
 const NO_NAMES: NameOf = () => undefined
+
+/** Every kind of reasoning entry; a line of any other is one this build cannot draw, and is skipped. */
+const TRACE_KINDS: ReadonlySet<ControlTraceKind> = new Set<ControlTraceKind>([
+  'events', 'requeued', 'backlog-add', 'backlog-take', 'backlog-back', 'backlog-dropped', 'backlog-wait',
+  'watch', 'fired', 'unwatch', 'unspoken', 'cut-in',
+])
 
 /** The record, as bytes. A seam so tests need no file. */
 export interface RecordFile {
@@ -68,12 +74,22 @@ export function parseRecordBytes(bytes: Buffer, base: number, nameOf: NameOf = N
 
 /** One line of the record, as the view shows it; undefined for anything it cannot read. */
 export function parseRecordLine(line: string, offset: number, nameOf: NameOf = NO_NAMES): ControlTranscriptEntry | undefined {
-  let raw: { timestamp?: unknown; role?: unknown; content?: unknown; heard?: { of?: unknown; parts?: unknown }; notDone?: unknown }
+  let raw: {
+    timestamp?: unknown; role?: unknown; content?: unknown; heard?: { of?: unknown; parts?: unknown }; notDone?: unknown
+    trace?: { what?: unknown; text?: unknown; detail?: unknown }
+  }
   try { raw = JSON.parse(line) } catch { return undefined }
   const base = { offset, timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : '' }
   const heard = raw.heard
   if (heard && typeof heard.of === 'number' && Array.isArray(heard.parts) && heard.parts.every(n => typeof n === 'number')) {
     return { ...base, kind: 'heard', of: heard.of, parts: heard.parts as number[] }
+  }
+  const trace = raw.trace
+  if (trace && TRACE_KINDS.has(trace.what as ControlTraceKind) && typeof trace.text === 'string') {
+    return {
+      ...base, kind: 'trace', what: trace.what as ControlTraceKind, text: readable(trace.text, nameOf),
+      ...(typeof trace.detail === 'string' && trace.detail ? { detail: readable(trace.detail, nameOf) } : {}),
+    }
   }
   if (typeof raw.notDone === 'string') return { ...base, kind: 'log', text: readable(raw.notDone, nameOf), notDone: true }
   if (typeof raw.content !== 'string' || (raw.role !== 'user' && raw.role !== 'assistant')) return undefined

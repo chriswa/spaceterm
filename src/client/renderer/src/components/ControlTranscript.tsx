@@ -80,6 +80,7 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const pending = useControlTranscriptStore((s) => s.pending)
+  const reasoning = useControlTranscriptStore((s) => s.reasoning)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const loading = useRef(false)
@@ -182,7 +183,8 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   // Marks of how much of a cut-off reply was heard are not entries of their own: they strike out the rest of the reply they name.
   const heard = new Map<number, number[]>()
   for (const entry of entries) if (entry.kind === 'heard') heard.set(entry.of, entry.parts)
-  const shown = entries.filter((entry) => entry.kind !== 'heard')
+  // Control's reasoning only when asked for: most of the time it is the conversation that matters.
+  const shown = entries.filter((entry) => entry.kind !== 'heard' && (reasoning || entry.kind !== 'trace'))
 
   const send = () => {
     const text = draft.trim()
@@ -259,6 +261,17 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
         className="control-transcript__composer"
         onSubmit={(e) => { e.preventDefault(); send() }}
       >
+        <label
+          className="control-transcript__reasoning"
+          title="Show Control's reasoning: news as it arrives, what goes on and off its backlog, which agents it watches, and replies never spoken"
+        >
+          <input
+            type="checkbox"
+            checked={reasoning}
+            onChange={(e) => useControlTranscriptStore.getState().setReasoning(e.target.checked)}
+          />
+          <span>Reasoning</span>
+        </label>
         <textarea
           ref={inputRef}
           className="control-transcript__input"
@@ -311,6 +324,23 @@ function EntryRow({ entry, previous, heard }: { entry: ControlTranscriptEntry; p
     ? <div className="control-transcript__day">{today}</div>
     : null
   const at = time(entry.timestamp)
+  if (entry.kind === 'trace') {
+    // Why Control did or did not speak: quieter than what it said and did, its detail one tap away.
+    const className = 'control-transcript__entry control-transcript__entry--trace'
+    return (
+      <>
+        {divider}
+        {entry.detail
+          ? (
+            <details className={className} data-what={entry.what} title={at}>
+              <summary>{entry.text}</summary>
+              <div className="control-transcript__log-body">{entry.detail}</div>
+            </details>
+          )
+          : <div className={className} data-what={entry.what} title={at}>{entry.text}</div>}
+      </>
+    )
+  }
   if (entry.kind === 'log') {
     // What Control did, in full, is detail: one line until opened.
     const colon = entry.text.indexOf(': ')

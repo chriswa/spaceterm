@@ -197,6 +197,34 @@ describe('ControlTranscript, following along', () => {
     expect(struck.closest('summary')!.textContent).toMatch(/not done, cut off/)
     expect(struck.closest('details')!.dataset.action).toBe('sent')
   })
+
+  it("shows Control's reasoning only while the Reasoning box is ticked, and remembers the choice", async () => {
+    useControlTranscriptStore.getState().setReasoning(false)
+    bridge.responses.controlTranscript = () => ({
+      entries: [
+        { offset: 0, timestamp: '2026-10-05T08:00:00Z', kind: 'trace', what: 'events', text: 'News: Sally is now stopped', detail: 'Sally said: done.' },
+        { offset: 100, timestamp: '2026-10-05T08:00:01Z', kind: 'reply', parts: [] },
+        { offset: 200, timestamp: '2026-10-05T08:00:01Z', kind: 'trace', what: 'watch', text: 'Watching Sally for its next stop' },
+      ],
+      more: false,
+    })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Control said nothing')
+    expect(screen.queryByText('News: Sally is now stopped')).toBeNull()
+
+    fireEvent.click(screen.getByLabelText('Reasoning'))
+    const news = screen.getByText('News: Sally is now stopped')
+    expect(news.closest('details')!.dataset.what).toBe('events')
+    expect(screen.getByText('Watching Sally for its next stop').dataset.what).toBe('watch')
+    expect(localStorage.getItem('controlTranscript.reasoning')).toBe('true')
+
+    // A reasoning line that arrives live waits for the box too.
+    fireEvent.click(screen.getByLabelText('Reasoning'))
+    act(() => bridge.emit.transcriptAppended([{ offset: 300, timestamp: '2026-10-05T08:00:02Z', kind: 'trace', what: 'backlog-add', text: 'Set aside for later: Sally' }]))
+    expect(screen.queryByText('Set aside for later: Sally')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Reasoning'))
+    expect(screen.getByText('Set aside for later: Sally')).toBeTruthy()
+  })
 })
 
 describe('mergeEntries', () => {

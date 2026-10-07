@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import type { ControlTranscriptEntry } from '../../../../shared/protocol'
 
+const REASONING_KEY = 'controlTranscript.reasoning'
+
+function readReasoning(): boolean {
+  try { return localStorage.getItem(REASONING_KEY) === 'true' } catch { return false }
+}
+
 interface ControlTranscriptState {
   open: boolean
   /**
@@ -9,7 +15,13 @@ interface ControlTranscriptState {
    * at the bottom until it does.
    */
   pending: string[]
+  /**
+   * Whether the transcript shows Control's reasoning: news arriving, the
+   * backlog, watches, replies never spoken. Remembered on this device.
+   */
+  reasoning: boolean
   setOpen: (open: boolean) => void
+  setReasoning: (reasoning: boolean) => void
   /** A message just sent to Control. Ignored while the transcript is closed. */
   addPending: (text: string) => void
   /** Entries the record gained: the messages among them are no longer pending. */
@@ -26,7 +38,12 @@ interface ControlTranscriptState {
 export const useControlTranscriptStore = create<ControlTranscriptState>((set) => ({
   open: false,
   pending: [],
+  reasoning: readReasoning(),
   setOpen: (open) => set(open ? { open } : { open, pending: [] }),
+  setReasoning: (reasoning) => {
+    try { localStorage.setItem(REASONING_KEY, String(reasoning)) } catch { /* a private window: this visit only */ }
+    set({ reasoning })
+  },
   addPending: (text) => set((s) => (s.open ? { pending: [...s.pending, text] } : s)),
   settle: (added) => set((s) => ({ pending: settlePending(s.pending, added) })),
 }))

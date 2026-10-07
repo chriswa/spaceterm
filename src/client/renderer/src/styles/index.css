@@ -4037,6 +4037,34 @@ html, body, #root {
   color: var(--ct-dim);
 }
 
+/* Control's reasoning (the Reasoning box): a quiet aside on Control's side, marked by what it is about. */
+.control-transcript__entry--trace {
+  --ct-why: #6c7086;
+  display: block;
+  align-self: flex-start;
+  max-width: 85%;
+  padding: 2px 10px;
+  border-left: 2px solid var(--ct-why);
+  color: var(--ct-dim);
+  font-size: 12px;
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.control-transcript__entry--trace[data-what="events"],
+.control-transcript__entry--trace[data-what="requeued"] { --ct-why: #89b4fa; }
+.control-transcript__entry--trace[data-what^="backlog"] { --ct-why: #f9e2af; }
+.control-transcript__entry--trace[data-what="watch"],
+.control-transcript__entry--trace[data-what="fired"],
+.control-transcript__entry--trace[data-what="unwatch"] { --ct-why: #94e2d5; }
+.control-transcript__entry--trace[data-what="unspoken"],
+.control-transcript__entry--trace[data-what="cut-in"] { --ct-why: #f38ba8; }
+.control-transcript__entry--trace summary { cursor: pointer; list-style: none; }
+.control-transcript__entry--trace summary::-webkit-details-marker { display: none; }
+.control-transcript__entry--trace summary::before { content: '▸ '; font-style: normal; opacity: 0.7; }
+.control-transcript__entry--trace[open] summary::before { content: '▾ '; }
+.control-transcript__entry--trace .control-transcript__log-body { font-style: normal; }
+
 .control-transcript__context { font-size: 12px; color: var(--ct-dim); max-width: 100%; }
 .control-transcript__context summary { cursor: pointer; }
 .control-transcript__context div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 4px 0; }
@@ -4051,6 +4079,20 @@ html, body, #root {
   border-top: 1px solid var(--ct-border);
   flex-shrink: 0;
 }
+
+/* Left of the box: whether Control's reasoning is shown. */
+.control-transcript__reasoning {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: center;
+  font-size: 12px;
+  color: var(--ct-dim);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.control-transcript__reasoning input { margin: 0; accent-color: var(--ct-accent); cursor: pointer; }
 
 .control-transcript__input {
   flex: 1;

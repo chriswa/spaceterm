@@ -4,7 +4,7 @@ import * as path from 'path'
 import { execFile } from 'child_process'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
-import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, HandsFreeTuning } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, ControlTranscriptEntry, HandsFreeTuning } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps, type SpawnedPty } from './terminal-respawn'
@@ -235,6 +235,8 @@ interface ClientConnection {
   name?: string
   /** The device it said it runs on in `client-hello`: what can hold Control. */
   device?: ClientDevice
+  /** The client protocol it said it speaks in `client-hello`. */
+  protocolVersion?: number
   subscriptions: Map<PtySessionId, TerminalSubscription>
   /**
    * Sessions mid-attach: live output is queued here instead of being sent,
@@ -530,12 +532,22 @@ function transcriptNameOf(): NameOf {
   }
 }
 
+/** Control's reasoning entries were new in client protocol v13: an older client would draw one as a broken reply. */
+const TRACE_PROTOCOL_VERSION = 13
+
+function transcriptEntriesFor(client: ClientConnection, entries: ControlTranscriptEntry[]): ControlTranscriptEntry[] {
+  return (client.protocolVersion ?? 0) >= TRACE_PROTOCOL_VERSION ? entries : entries.filter(entry => entry.kind !== 'trace')
+}
+
 /** Lines just added to Control's record, sent to every open transcript view. Returns where each starts. */
 function announceRecorded(appended: Array<{ line: string; offset: number }>): number[] {
   if (appended.length) {
     const nameOf = transcriptNameOf()
     const entries = appended.flatMap(({ line, offset }) => parseRecordLine(line, offset, nameOf) ?? [])
-    if (entries.length) broadcastToAll({ type: 'receptionist-transcript-appended', entries })
+    for (const client of clients) {
+      const theirs = transcriptEntriesFor(client, entries)
+      if (theirs.length) send(client.link, { type: 'receptionist-transcript-appended', entries: theirs })
+    }
   }
   return appended.map(({ offset }) => offset)
 }
@@ -1592,6 +1604,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const { compatible, error } = checkProtocolVersion(msg.protocolVersion, CLIENT_PROTOCOL_RANGE)
       const who = msg.client ?? 'unknown client'
       client.name = msg.client
+      client.protocolVersion = msg.protocolVersion
       if (client.name === MOBILE_CLIENT_NAME) mobileEventsLog.server('client-connected', clientLabel(client), { protocol: msg.protocolVersion })
       if (isClientDevice(msg.device)) {
         client.device = { id: msg.device.id, label: msg.device.label }
@@ -1716,7 +1729,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'receptionist-transcript': {
       const count = Math.max(1, Math.min(200, Math.floor(msg.count)))
       const page = REAL_RECEPTIONIST_RECORD.page(msg.before, count, transcriptNameOf())
-      send(client.link, { type: 'receptionist-transcript-result', seq: msg.seq, ...page })
+      send(client.link, { type: 'receptionist-transcript-result', seq: msg.seq, more: page.more, entries: transcriptEntriesFor(client, page.entries) })
       break
     }
 
@@ -3325,6 +3338,7 @@ async function startServer(): Promise<void> {
       append: (messages) => announceRecorded(REAL_RECEPTIONIST_RECORD.append(messages)),
       amendHeard: (replyAt, heard) => { announceRecorded(REAL_RECEPTIONIST_RECORD.amendHeard(replyAt, heard)) },
       notDone: (actions) => { announceRecorded(REAL_RECEPTIONIST_RECORD.notDone(actions)) },
+      trace: (trace) => { announceRecorded(REAL_RECEPTIONIST_RECORD.trace(trace)) },
     },
     // Jev over titles and recent transcripts: the same chooser as the agent
     // search box, asked with the receptionist's description instead.
