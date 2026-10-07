@@ -39,6 +39,7 @@ import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrow
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
+import { DictationPresence } from './dictation-presence'
 import { checkWakeWord, parseHandsFreeTuning } from './hands-free'
 import { TurnDetector, realTurnDetectorDeps } from './turn-detector'
 import { UsageTracker } from './usage-tracker'
@@ -357,9 +358,12 @@ const directSpeech = new DirectSpeech({
  */
 const turnDetector = new TurnDetector(realTurnDetectorDeps(path.join(SOCKET_DIR, 'models'), (message) => serverLog(`[turn] ${message}`)))
 
+/** Whether the user is dictating, on the phone or the Mac: what Control holds for. See dictation-presence.ts. */
+const dictationPresence = new DictationPresence((speaking) => receptionist?.userSpeaking(speaking))
+
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator(), {
-  onSpeaking: (speaking) => receptionist?.userSpeaking(speaking),
+  onSpeaking: (speaking) => dictationPresence.phone(speaking),
   turnProbability: (audio) => turnDetector.probability(audio),
 })
 
@@ -1307,6 +1311,11 @@ function handleIngestMessage(msg: IngestMessage): void {
         const promptNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
         if (promptNodeId) void forkTitler.onPrompt(promptNodeId, msg.payload.prompt)
       }
+      break
+    }
+
+    case 'voice-dictation': {
+      dictationPresence.mac({ active: msg.active === true, launch: String(msg.launch), seq: Number(msg.seq) })
       break
     }
 

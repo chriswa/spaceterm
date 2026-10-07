@@ -967,6 +967,16 @@ export interface VoiceCommandMessage {
   text: string
 }
 
+/** Voice Operator started or ended a dictation on the Mac: see dictation-presence.ts. */
+export interface VoiceDictationMessage {
+  type: 'voice-dictation'
+  active: boolean
+  /** Names the Voice Operator process: a new one starts `seq` again. */
+  launch: string
+  /** Counts up with each report from one process. */
+  seq: number
+}
+
 /** Store the camera bounds for a numbered viewport slot ('0'..'9'), shared across all clients. */
 export interface SaveViewportMessage {
   type: 'save-viewport'
@@ -985,6 +995,7 @@ export type IngestMessage =
   | SpacetermBroadcastMessage
   | PlaySoundMessage
   | VoiceCommandMessage
+  | VoiceDictationMessage
 
 /**
  * Version handshake, sent by a client immediately on connect.
