@@ -164,6 +164,24 @@ describe('ApprovalFeed', () => {
     await expect(second).resolves.toEqual({ ok: false, error: 'Cancelled' })
   })
 
+  it('relays the provider status, and forgets it when the provider goes', () => {
+    const { feed, connections, latest } = harness()
+    feed.start()
+    connectWithHello(connections[0])
+    expect(latest().sources[0].status).toBeUndefined()
+    const status = { ok: true, label: '1Password', since: 500, until: 43_200_500 }
+    connections[0].send({ type: 'status', status })
+    expect(latest().sources[0].status).toEqual(status)
+
+    const lost = { ok: false, label: '1Password', since: 900, title: 'Lost', detail: 'Ask again' }
+    connections[0].send({ type: 'status', status: lost })
+    expect(latest().sources[0].status).toEqual(lost)
+
+    connections[0].emit('close')
+    expect(latest().sources[0]).toEqual({ name: 'opProxy', connected: false, pairedKeys: [] })
+    feed.stop()
+  })
+
   it('hangs up on a protocol it does not speak', () => {
     const { feed, connections } = harness()
     feed.start()

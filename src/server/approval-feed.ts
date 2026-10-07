@@ -1,7 +1,7 @@
 import * as net from 'net'
 import { homedir } from 'os'
 import { join } from 'path'
-import type { ApprovalItem, ApprovalOutcome, ApprovalSource, ApprovalsSnapshot, ClosedApproval, SignedApprovalReply } from '../shared/approvals'
+import type { ApprovalItem, ApprovalOutcome, ApprovalSource, ApprovalsSnapshot, ClosedApproval, ProviderStatus, SignedApprovalReply } from '../shared/approvals'
 import { LineParser } from './line-parser'
 
 /**
@@ -65,6 +65,7 @@ type FeedMessage =
   | { type: 'snapshot'; items: Omit<ApprovalItem, 'source'>[] }
   | { type: 'upsert'; item: Omit<ApprovalItem, 'source'> }
   | { type: 'remove'; id: string; note?: string }
+  | { type: 'status'; status: ProviderStatus }
   | { type: 'reply-result'; id: string; ok: boolean; error?: string }
   | { type: 'pair-result'; keyId?: string; ok: boolean; error?: string }
 
@@ -78,6 +79,7 @@ export class ApprovalFeed {
   private connection: FeedConnection | null = null
   private connected = false
   private pairedKeys: string[] = []
+  private status: ProviderStatus | null = null
   private items = new Map<string, ApprovalItem>()
   private closed: ClosedApproval[] = []
   private replyWaiters = new Map<string, Waiter>()
@@ -112,7 +114,12 @@ export class ApprovalFeed {
   snapshot(): ApprovalsSnapshot {
     const t = this.now()
     this.closed = this.closed.filter((c) => t - c.at < CLOSED_KEEP_MS)
-    const source: ApprovalSource = { name: this.name, connected: this.connected, pairedKeys: this.pairedKeys }
+    const source: ApprovalSource = {
+      name: this.name,
+      connected: this.connected,
+      pairedKeys: this.pairedKeys,
+      ...(this.status && { status: this.status })
+    }
     return { sources: [source], items: [...this.items.values()], closed: this.closed }
   }
 
@@ -190,6 +197,7 @@ export class ApprovalFeed {
     const had = this.connected || this.items.size > 0
     this.connection = null
     this.connected = false
+    this.status = null
     this.items.clear()
     for (const waiter of [...this.replyWaiters.values(), ...this.pairWaiters]) {
       waiter.resolve({ ok: false, error: `Lost the connection to ${this.name}.` })
@@ -233,6 +241,10 @@ export class ApprovalFeed {
       case 'remove':
         if (!this.items.delete(msg.id)) return
         this.closed.push({ source: this.name, id: msg.id, note: msg.note, at: this.now() })
+        this.changed()
+        return
+      case 'status':
+        this.status = msg.status
         this.changed()
         return
       case 'reply-result':

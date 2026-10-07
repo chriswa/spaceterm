@@ -75,9 +75,14 @@ system monitor as mini-stats (`~/mini-stats`) draws it in the menu bar
 mini-stats writes what its menu-bar item draws, colours and sizes decided, to
 `~/.mini-stats/menubar.json`; the server reads it every 2 s, but only while a
 phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
-Tapping either readout opens one panel with both sets of figures, system over
-usage (`MacReadouts.tsx`): each usage window's used, elapsed and time-to-reset, and
-each mini-stats module's reading.
+Left of the system monitor, and not beside the usage, whose width depends on the
+server, is opProxy's 1Password authorization (`ProviderStatusReadout.tsx`): a key
+and the time left, amber under an hour, struck out and red once it is lost, dim
+while opProxy can't be reached. It is the feed's `status` message
+(`provider-status.ts`; "Provider status" in `APPROVAL_FEED.md`).
+Tapping any readout opens one panel with every set of figures (`MacReadouts.tsx`):
+each mini-stats module's reading, the authorization's time left and clock expiry,
+and each usage window's used, elapsed and time-to-reset.
 
 ## Control's transcript
 
@@ -219,7 +224,8 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
 ## Notifications: approving opProxy from the phone
 
 The bell left of the rocket (`NotificationsButton.tsx`) is the phone's
-notifications: opProxy's pending 1Password approvals, and the updates above
+notifications: opProxy's pending 1Password approvals, its 1Password authorization
+lost (caution; unread again each time it is lost anew), and the updates above
 (listed first, in the info tone). Dim with
 none; lit in the loudest request's tone with some; pulsing while any is unread,
 which ends when the list has shown it. A new request chimes once

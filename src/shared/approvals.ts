@@ -15,6 +15,22 @@ export interface ApprovalSource {
   connected: boolean
   /** Key IDs of the phones the provider trusts. */
   pairedKeys: string[]
+  /** What the provider depends on, as its last `status` said; absent until it sends one. */
+  status?: ProviderStatus
+}
+
+/** APPROVAL_FEED.md, "Provider status": for opProxy, its 1Password authorization. */
+export interface ProviderStatus {
+  ok: boolean
+  /** What it is about ("1Password"). */
+  label: string
+  /** When it became ok, or stopped being ok. */
+  since: number
+  /** Only while ok, if known: when it runs out at the latest. */
+  until?: number
+  /** Only while not ok: the notification's headline and the line under it. */
+  title?: string
+  detail?: string
 }
 
 /** A request waiting for an answer. Fields as APPROVAL_FEED.md's Item, plus its source. */

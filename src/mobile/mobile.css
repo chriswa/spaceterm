@@ -150,6 +150,32 @@ textarea, input, [contenteditable="true"], .cm-content {
   max-width: 100%;
   -webkit-tap-highlight-color: transparent;
 }
+/* The system monitor's row: opProxy's time left, then the monitor. */
+.m-bar__readouts-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+/* opProxy's 1Password authorization (ProviderStatusReadout.tsx). */
+.m-provider {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--m-text);
+}
+.m-provider svg { display: block; }
+.m-provider--low { color: #f9e2af; }
+.m-provider--lost { color: var(--m-danger); }
+.m-provider--unreachable { color: var(--m-dim); opacity: 0.6; }
+
 /* The system monitor (SystemStatsReadout.tsx). Shrinks rather than overflow
    into the screen's corner when the talk buttons crowd it. */
 .m-stats {

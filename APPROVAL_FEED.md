@@ -47,6 +47,12 @@ An item is removed when it is answered anywhere, or times out. `note` is
 optional and only for display ("Approved on the phone", "Timed out").
 
 ```jsonc
+{ "type": "status", "status": Status }
+```
+After the first hello, and whenever it changes. Optional: a provider that never
+sends one just has no indicator. See "Provider status" below.
+
+```jsonc
 { "type": "reply-result", "id": "…", "ok": true }
 { "type": "reply-result", "id": "…", "ok": false, "error": "That request was already answered." }
 { "type": "pair-result", "keyId": "…", "ok": true }
@@ -104,6 +110,26 @@ sent. **Relays must pass it through untouched.**
   phone's native code shows it, with the chosen options, beside the slide
   control. That native panel is the part of the phone a modified web page
   cannot fake.
+
+### Provider status
+
+What the provider depends on to answer at all, so the phone can show it
+without being asked. For opProxy, that is its 1Password authorization.
+
+```jsonc
+{
+  "ok": true,
+  "label": "1Password",          // what the status is about
+  "since": 1760000000000,        // when it became ok, or stopped being ok
+  "until": 1760043200000,        // only while ok, and optional: when it runs out at the latest
+  "title": "1Password authorization lost",   // only while not ok: the notification's headline
+  "detail": "The next agent request will prompt 1Password on the Mac."
+}
+```
+
+The phone shows a small indicator with the time left until `until`, and while
+not ok, a notification made of `title` and `detail`. A new `since` is a new
+notification, so a status that was lost again reads as unread again.
 
 ## Consumer → provider
 

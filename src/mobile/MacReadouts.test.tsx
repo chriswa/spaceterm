@@ -4,8 +4,17 @@ import { installFakeBridge } from '@/testing/fake-bridge'
 import type { SystemStatsSnapshot } from '../shared/system-stats'
 import type { UsageSnapshot } from '../shared/usage-report'
 import { MacReadouts } from './MacReadouts'
+import { EMPTY_APPROVALS, useApprovalsStore } from './approvals-store'
+import type { ApprovalSource } from '../shared/approvals'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  useApprovalsStore.getState().setSnapshot(EMPTY_APPROVALS)
+})
+
+function opProxy(over: Partial<ApprovalSource>) {
+  act(() => useApprovalsStore.getState().setSnapshot({ sources: [{ name: 'opProxy', connected: true, pairedKeys: [], ...over }], items: [], closed: [] }))
+}
 
 const STATS: SystemStatsSnapshot = {
   spacing: 2.5,
@@ -76,5 +85,32 @@ describe('MacReadouts', () => {
 
     fireEvent.pointerDown(screen.getByText('rocket'))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it("shows opProxy's time left beside the system monitor, and its figures in the panel", () => {
+    const bridge = installFakeBridge()
+    render(<MacReadouts />)
+    act(() => bridge.emit.systemStats(STATS))
+    opProxy({ status: { ok: true, label: '1Password', since: 0, until: Date.now() + (11 * 60 + 32) * 60_000 + 5_000 } })
+
+    const chip = screen.getByRole('img', { name: '1Password authorized, 11h 32m left' })
+    expect(chip.textContent).toBe('12h')
+    // On the monitor's row, not the usage's.
+    const monitor = screen.getByRole('img', { name: /^Sensors/ })
+    expect(chip.parentElement).toBe(monitor.parentElement)
+
+    fireEvent.click(chip)
+    const rows = within(screen.getByRole('dialog')).getAllByRole('row').map((r) => r.querySelector('td')?.textContent)
+    expect(rows).toContain('1Password')
+  })
+
+  it('marks the authorization lost, and opProxy unreachable, even with no other readout', () => {
+    installFakeBridge()
+    render(<MacReadouts />)
+    opProxy({ status: { ok: false, label: '1Password', since: 0 } })
+    expect(screen.getByRole('img', { name: '1Password not authorized' }).textContent).toBe('off')
+
+    opProxy({ connected: false })
+    expect(screen.getByRole('img', { name: "opProxy can't be reached" })).toBeTruthy()
   })
 })
