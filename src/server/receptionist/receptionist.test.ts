@@ -1260,9 +1260,10 @@ describe('Receptionist', () => {
   it('starts a new agent in a directory, and watches for its first answer', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: 'Starting one.' }], [
+        reply([], [
           { tool: 'spawn', directory: DIR, title: 'shorter answers', prompt: 'Make Control answer in one sentence.' },
         ]),
+        () => reply([{ from: 'control', text: `Started {${SALLY}}.` }]),
         (turn) => {
           expect(turn.prompt).toContain('EVENTS')
           return reply([{ from: 'control', text: 'The new agent finished.' }])
@@ -1274,28 +1275,70 @@ describe('Receptionist', () => {
     expect(h.wire).toEqual([`spawn ${DIR_ID} shorter answers: Make Control answer in one sentence.`])
     h.setState(SALLY_ID, 'stopped')
     await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
+  it('names an agent it starts at once, and is told the name before it confirms', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.' }]),
+        (turn) => {
+          // Within the same turn: the result comes back before anything is said.
+          // The fake spawns onto Sally's node, so the new handle is hers with a suffix.
+          expect(turn.prompt).toMatch(new RegExp(`spawn started \\{Kevin:${SALLY}[-\\w]*\\} "login page" in /Users/me/spaceterm\\. It is called Kevin\\.`))
+          return reply([{ from: 'control', text: `Started {Kevin:${SALLY}} in the spaceterm directory.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('start one on the login page')
+    await flush()
+    expect(h.assigned.get(SALLY_ID)?.name).toBe('Kevin')
+    expect(h.turns).toHaveLength(2)
+    expect(said(h)).toEqual([JSON.stringify([{ text: 'Started Kevin in the spaceterm directory.', voice: RECEPTIONIST_VOICE }])])
+    // The record says who was started, for recall.
+    expect(h.record.some(message => message.content.startsWith(`STARTED {Kevin:${SALLY}`) && message.content.endsWith(' in /Users/me/spaceterm: Fix the login page.'))).toBe(true)
+  })
+
+  it('is told of an agent it started even when the user talks before its result is sent', async () => {
+    let talkOver: () => void = () => {}
+    const h = harness({
+      replies: [
+        // The lookup beside it runs after the spawn: the user talks while it does.
+        reply([], [
+          { tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.' },
+          { tool: 'find_agent', query: 'the login page' },
+        ]),
+        (turn) => {
+          expect(turn.prompt).toMatch(new RegExp(`Your last actions: spawn started \\{Kevin:${SALLY}[-\\w]*\\}`))
+          return reply([{ from: 'control', text: 'Yes.' }])
+        },
+      ],
+      findAgents: async () => { talkOver(); return { hits: [], noneProbability: 1 } },
+    })
+    talkOver = () => { void h.receptionist.hear('actually, is it running?') }
+    await h.receptionist.hear('start one on the login page')
+    await flush()
     expect(h.turns).toHaveLength(2)
   })
 
   it('starts a new agent with the name it was given, in a voice of that gender', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: 'Starting Bob on the login page.' }], [
+        reply([], [
           { tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.', name: 'Bob', gender: 'masculine' },
         ]),
         (turn) => {
           // The fake spawns onto Sally's node, so the new handle is hers with a suffix.
-          expect(turn.prompt).toMatch(new RegExp(`spawn started \\{Bob:${SALLY}[-\\w]*\\} "login page"`))
-          return reply([{ from: 'control', text: 'Yes.' }])
+          expect(turn.prompt).toMatch(new RegExp(`spawn started \\{Bob:${SALLY}[-\\w]*\\} "login page" in /Users/me/spaceterm\\. It is called Bob\\.`))
+          return reply([{ from: 'control', text: `Started {Bob:${SALLY}} on the login page.` }])
         },
       ],
     })
     await h.receptionist.hear('start an agent called Bob on the login page')
     await flush()
     expect(h.assigned.get(SALLY_ID)).toEqual({ name: 'Bob', voice: 'am_adam', gender: 'masculine' })
-    await h.receptionist.hear('did it start?')
-    await flush()
     expect(h.turns).toHaveLength(2)
+    expect(said(h)[0]).toContain('Started Bob on the login page.')
   })
 
   it('renames an agent of the other gender into a voice to match, and is told its new token', async () => {
@@ -1963,11 +2006,14 @@ describe('Receptionist: agents it started, and agents that end', () => {
   it('hears from an agent it started at its next stop only, as after a send', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: 'Starting one.' }], [
+        reply([], [
           { tool: 'spawn', directory: DIR, title: 'tidy', prompt: 'Tidy the imports.' },
         ]),
         (turn) => {
-          expect(turn.prompt).toContain('which is now watched for its next stop')
+          expect(turn.prompt).toContain('It is now watched for its next stop')
+          return reply([{ from: 'control', text: `Started {${SALLY}}.` }])
+        },
+        (turn) => {
           expect(turn.prompt).toContain('is now stopped')
           return reply([{ from: 'control', text: `{${SALLY}} tidied them.` }])
         },
@@ -1979,32 +2025,33 @@ describe('Receptionist: agents it started, and agents that end', () => {
     // A stop on the way in — before it has worked on its prompt — is not its answer.
     h.setState(SALLY_ID, 'stopped')
     await flush()
-    expect(h.turns).toHaveLength(1)
+    expect(h.turns).toHaveLength(2)
     h.setState(SALLY_ID, 'working')
     h.setState(SALLY_ID, 'stopped')
     await flush()
-    expect(h.turns).toHaveLength(2)
+    expect(h.turns).toHaveLength(3)
     // Told, the monitor was used up: neither a later stop nor its end is told.
     h.setState(SALLY_ID, 'working')
     h.setState(SALLY_ID, 'stopped')
     h.end(SALLY_ID)
     await flush()
-    expect(h.turns).toHaveLength(2)
+    expect(h.turns).toHaveLength(3)
   })
 
   it('is told when an agent it started ends itself, and can still read what it said', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: 'Starting one.' }], [
+        reply([], [
           { tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.' },
         ]),
+        () => reply([{ from: 'control', text: `Started {${SALLY}}.` }]),
         (turn) => {
-          expect(turn.prompt).toContain(`{${SALLY}} has ended: its session closed, and its surface went into the archive`)
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' has ended: its session closed, and its surface went into the archive'))
           expect(turn.prompt).toContain('It last said: Working on the login form validation.')
           return reply([], [{ tool: 'read', agent: SALLY }])
         },
         (turn) => {
-          expect(turn.prompt).toContain(`read {${SALLY}}:`)
+          expect(turn.prompt).toMatch(namedToken(SALLY, ':'))
           expect(turn.prompt).toContain('This agent has ended, so it cannot be asked')
           expect(turn.prompt).toContain('Fix the login page.')
           return reply([{ from: 'control', text: 'The login agent finished and closed itself.' }])
@@ -2015,7 +2062,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
     await flush()
     h.end(SALLY_ID)
     await flush()
-    expect(h.turns).toHaveLength(3)
+    expect(h.turns).toHaveLength(4)
     expect(said(h).some(text => text.includes('closed itself'))).toBe(true)
   })
 

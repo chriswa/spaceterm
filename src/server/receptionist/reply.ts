@@ -83,12 +83,13 @@ export function isAction(call: ToolCall): boolean {
 }
 
 /**
- * Tools whose results the model must see before it can go on: the lookups,
- * and unarchive_agent, which waits for the agent to be ready so that the
- * model's next step can send to it.
+ * Tools whose results the model must see before it can go on: the lookups;
+ * unarchive_agent, which waits for the agent to be ready so that the model's
+ * next step can send to it; and spawn, whose result names the new agent for
+ * the confirmation to introduce.
  */
 export function isBlocking(call: ToolCall): boolean {
-  return isLookup(call) || call.tool === 'unarchive_agent'
+  return isLookup(call) || call.tool === 'unarchive_agent' || call.tool === 'spawn'
 }
 
 /**

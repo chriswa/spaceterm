@@ -1005,9 +1005,14 @@ export class Receptionist {
         spoken = this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
       }
       await this.runActions(reply.tools, lines => done.push(...lines))
+      // Taken, the actions are the model's to hear of even if the user talks
+      // over this turn before their results go back: noted at once, for
+      // whichever message leaves next, and taken back if it is this turn's.
+      const note = this.noteDone(done)
       if (spoken.length && !await this.channel.deliverInterim(attempt, spoken) && !attempt.isCurrent) return undefined
       const { results } = await this.runTools(reply.tools.filter(isLookup), agents, handles, undefined, taken)
       if (!attempt.isCurrent) return undefined
+      if (note !== undefined && this.notes.includes(note)) this.notes.splice(this.notes.indexOf(note), 1)
       message = `TOOL RESULTS:\n${[...results, ...done.map(line => `done: ${line}`)].join('\n\n')}`
     }
     throw new Error(`no usable reply in ${MAX_STEPS} steps`)
@@ -1426,14 +1431,19 @@ export class Receptionist {
     try {
       const nodeId = this.deps.spawn(directory.nodeId, call.title, call.prompt)
       this.watch(nodeId, 'after-work')
-      // checkNames has passed the name; only a name taken since then fails here.
-      const named = call.name && this.deps.names.setName(nodeId, call.name.name, call.name.gender)
-      this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt, name: call.name })
-      this.deps.record.append([{ role: 'assistant', content: `STARTED AN AGENT in ${directory.cwd}: ${call.prompt}` }])
+      // Named now, not lazily as other agents are: the result carries the
+      // name, so the confirmation that follows it can introduce the agent.
+      // checkNames has passed a chosen name; only one taken since then fails
+      // here, and the system names the agent instead.
+      const chosen = call.name && this.deps.names.setName(nodeId, call.name.name, call.name.gender)
+      const named = chosen && chosen.ok ? chosen.named : this.deps.names.assign(nodeId)
       const handle = this.handles([...agents.map(agent => agent.nodeId), nodeId].map(id => ({ nodeId: id }))).of(nodeId)
-      const token = agentToken(handle ?? nodeId, this.deps.names.get(nodeId)?.name)
-      const unnamed = named && !named.ok ? `, but without the name ${call.name!.name}: ${this.nameProblemWords(named.problem)}` : ''
-      return `spawn started ${token} "${call.title}" in ${directory.cwd}${unnamed}, which is now watched for its next stop`
+      const token = agentToken(handle ?? nodeId, named?.name)
+      this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt, name: named?.name ?? null, chosen: call.name ?? null })
+      this.deps.record.append([{ role: 'assistant', content: `STARTED ${token} in ${directory.cwd}: ${call.prompt}` }])
+      const refused = chosen && !chosen.ok ? `, not ${call.name!.name}: ${this.nameProblemWords(chosen.problem)}` : ''
+      const name = named ? `. It is called ${named.name}${refused}` : ''
+      return `spawn started ${token} "${call.title}" in ${directory.cwd}${name}. It is now watched for its next stop`
     } catch (err) {
       return `spawn in ${directory.cwd} failed: ${err instanceof Error ? err.message : String(err)}`
     }
@@ -1863,7 +1873,7 @@ export class Receptionist {
    */
   private async runActions(
     calls: readonly ToolCall[],
-    done: (lines: string[]) => void = (lines) => { this.notes.push(`Your last actions: ${lines.join('; ')}.`) },
+    done: (lines: string[]) => void = (lines) => { this.noteDone(lines) },
   ): Promise<void> {
     const actions = calls.filter(isAction)
     if (!actions.length) return
@@ -1875,6 +1885,14 @@ export class Receptionist {
     } catch (err) {
       serverLog(`[receptionist] actions failed: ${err instanceof Error ? err.message : String(err)}`)
     }
+  }
+
+  /** Actions taken whose results the model has not seen, for its next message. Returns the note, if any. */
+  private noteDone(lines: readonly string[]): string | undefined {
+    if (!lines.length) return undefined
+    const note = `Your last actions: ${lines.join('; ')}.`
+    this.notes.push(note)
+    return note
   }
 
   /**
