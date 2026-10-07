@@ -190,9 +190,6 @@ export interface NodeApi {
   onSummaryChatStatus(
     callback: (nodeId: NodeId, state: SummaryChatUiState, message?: string) => void,
   ): () => void
-  onPeerConnected(callback: (clientId: string) => void): () => void
-  onPeerDisconnected(callback: (clientId: string) => void): () => void
-  onPeerCameraBounds(callback: (clientId: string, bounds: CameraBounds) => void): () => void
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
   /** The root node's working directory, pushed on connect and on every change. */
   onRootCwd(callback: (cwd: string | undefined) => void): () => void

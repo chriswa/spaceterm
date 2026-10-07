@@ -869,19 +869,6 @@ html, body, #root {
   padding: 0 4px;
 }
 
-/* Peer camera viewport rectangles: a dark outline under everything else, so
-   it only shows against the canvas background and never over a card.
-   The desktop sizes the border from the settled zoom Canvas writes, not the
-   per-frame --camera-zoom: a border that changes every frame repaints the whole
-   outline, a box as big as the phone's view, and with it every label inside
-   it, on every frame of a zoom. The phone has no settled value and keeps the
-   per-frame one. */
-.peer-camera-rect {
-  border: calc(2px / var(--settled-camera-zoom, var(--camera-zoom, 1))) solid rgba(0, 0, 0, 0.6);
-  pointer-events: none;
-  z-index: -1;
-}
-
 /* Terminal Card */
 /* Card chrome reads the `cardChrome` theme facet through these custom
    properties, published on :root by useCardChromeVars(). The fallbacks are the

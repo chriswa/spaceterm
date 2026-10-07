@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { CameraBounds } from './peerStore'
+import type { CameraBounds } from '../../../../shared/protocol'
 
 interface SavedViewportState {
   /** slot ('0'..'9') -> canvas-space camera bounds. Mirror of the server's shared set. */

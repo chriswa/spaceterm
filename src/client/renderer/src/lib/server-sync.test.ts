@@ -5,7 +5,6 @@ import {
   sendMove, sendRename, sendArchive, sendTerminalCreate, sendMarkdownContent, sendRootCwd
 } from './server-sync'
 import { useNodeStore } from '../stores/nodeStore'
-import { usePeerStore } from '../stores/peerStore'
 import { useSpeakingStore } from '../stores/speakingStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
@@ -58,7 +57,6 @@ beforeEach(() => {
   bridge = installFakeBridge(globalThis as never)
   resetAudioAvailabilityForTest()
   useNodeStore.setState({ nodes: {} })
-  usePeerStore.setState({ peers: {} } as never)
 })
 
 afterEach(() => {
@@ -145,14 +143,6 @@ describe('server events reach the stores', () => {
     bridge.emit.nodeAdded(terminal('t1'))
     bridge.emit.nodeRemoved(nid('t1'))
     expect(useNodeStore.getState().nodes.t1).toBeUndefined()
-  })
-
-  it('tracks peers connecting and disconnecting', () => {
-    bridge.emit.peerConnected('peer-1')
-    expect(Object.keys(usePeerStore.getState().peers)).toContain('peer-1')
-
-    bridge.emit.peerDisconnected('peer-1')
-    expect(Object.keys(usePeerStore.getState().peers)).not.toContain('peer-1')
   })
 
   it('tracks which surface is speaking', () => {

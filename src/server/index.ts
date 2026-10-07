@@ -1004,15 +1004,6 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   clients.add(client)
   console.log(`Client connected id=${client.id.slice(0, 8)} (${clients.size} total)`)
 
-  // Send existing peers' camera bounds to the new client
-  clients.forEach((existing) => {
-    if (existing !== client && existing.cameraBounds) {
-      send(link, { type: 'peer-camera-bounds', clientId: existing.id, bounds: existing.cameraBounds })
-    }
-  })
-  // Notify other clients about the new peer
-  broadcastToOthers(client, { type: 'peer-connected', clientId: client.id })
-
   // Send the shared saved viewport slots to the new client
   send(link, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
 
@@ -1051,7 +1042,6 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
       }
       console.log(`Client disconnected id=${client.id.slice(0, 8)} (${clients.size} total)`)
-      broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
     }
   }
 }
@@ -2796,11 +2786,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'camera-bounds': {
       client.cameraBounds = msg.bounds
       client.cameraBoundsAt = Date.now()
-      const otherCount = clients.size - 1
-      if (otherCount > 0) {
-        serverLog(`[camera-bounds] client=${client.id.slice(0, 8)} broadcasting to ${otherCount} peers bounds=(${Math.round(msg.bounds.x)},${Math.round(msg.bounds.y)} ${Math.round(msg.bounds.width)}x${Math.round(msg.bounds.height)})`)
-      }
-      broadcastToOthers(client, { type: 'peer-camera-bounds', clientId: client.id, bounds: msg.bounds })
       break
     }
 

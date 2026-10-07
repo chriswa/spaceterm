@@ -272,9 +272,6 @@ export class ServerClient {
       case 'speech-active':
       case 'speaking-changed':
       case 'summary-chat-status':
-      case 'peer-connected':
-      case 'peer-disconnected':
-      case 'peer-camera-bounds':
       case 'focus-surface':
       case 'saved-viewports':
       case 'root-cwd':

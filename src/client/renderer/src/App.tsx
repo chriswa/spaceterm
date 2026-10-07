@@ -23,7 +23,6 @@ import { useControlTranscriptStore } from './stores/controlTranscriptStore'
 import { useReceptionistStore } from './stores/receptionistStore'
 import { HelpModal } from './components/HelpModal'
 import { KeycastOverlay } from './components/KeycastOverlay'
-import { PeerCameraOverlay } from './components/PeerCameraOverlay'
 import { ResizeGhost } from './components/ResizeGhost'
 import { NodeLabels } from './components/NodeLabels'
 import { AgentSelector, AGENT_SELECTOR_OPTIONS } from './components/AgentSelector'
@@ -2803,7 +2802,6 @@ export function App() {
   return (
     <div className="app">
       <Canvas camera={camera} surfaceRef={surfaceRef} onWheel={handleCanvasWheel} onPanStart={handleCanvasPanStart} onRtsSelectStart={handleRtsSelectStart} onZoomDragStart={handleZoomDragStart} onCanvasClick={handleCanvasUnfocus} onDoubleClick={fitAllNodes} background={<CanvasBackground camera={camera} cameraRef={cameraRef} edgesRef={edgesRef} maskRectsRef={maskRectsRef} selectionRef={selectionRef} reparentEdgeRef={reparentEdgeRef} />} overlay={<>{rtsSelectOverlay}{zoomDragOverlay}{agentSelectorParentId && <AgentSelector onSelect={launchSelectedAgent} onDismiss={() => setAgentSelectorParentId(null)} />}{archiveConfirm && <ArchiveConfirm label={archiveConfirm.label} count={archiveConfirm.count} onCancel={() => setArchiveConfirm(null)} onConfirm={() => { const pending = archiveConfirm; setArchiveConfirm(null); void archiveNodeNow(pending.nodeId) }} />}<SearchModal visible={searchVisible} mode={searchMode} resolvedPresets={resolvedPresets} onDismiss={() => setSearchVisible(false)} onNavigateToNode={(id) => { setSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} onArchiveDelete={handleArchiveDelete} /><AgentSearchModal visible={agentSearchVisible} resolvedPresets={resolvedPresets} onDismiss={() => setAgentSearchVisible(false)} onNavigateToNode={(id) => { setAgentSearchVisible(false); handleNodeFocus(id) }} onReviveNode={handleReviveNode} /><HelpModal visible={helpVisible} onDismiss={() => setHelpVisible(false)} />{controlTranscriptOpen && !presentTerminalsExternally && <ControlTranscript variant="modal" onDismiss={() => useControlTranscriptStore.getState().setOpen(false)} />}</>}>
-        <PeerCameraOverlay />
         <ResizeGhost />
         <NodeLabels
           labels={nodeLabels}

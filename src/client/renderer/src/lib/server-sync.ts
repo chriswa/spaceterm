@@ -1,6 +1,5 @@
 import { useNodeStore } from '../stores/nodeStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
-import { usePeerStore } from '../stores/peerStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useAutoStampsEnabledStore } from '../stores/autoStampsEnabledStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
@@ -147,24 +146,6 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
       // is not a phase, so it must not silence a cue that is already running.
       if (state !== 'target') setSummaryChatWaiting(nodeId, state === 'thinking')
       if (state === 'error') showToast(message ?? 'Summary Chat could not start.')
-    })
-  )
-
-  cleanupFns.push(
-    window.api.node.onPeerConnected((clientId: string) => {
-      usePeerStore.getState().addPeer(clientId)
-    })
-  )
-
-  cleanupFns.push(
-    window.api.node.onPeerDisconnected((clientId: string) => {
-      usePeerStore.getState().removePeer(clientId)
-    })
-  )
-
-  cleanupFns.push(
-    window.api.node.onPeerCameraBounds((clientId: string, bounds) => {
-      usePeerStore.getState().updateBounds(clientId, bounds)
     })
   )
 

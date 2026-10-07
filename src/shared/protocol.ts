@@ -1607,22 +1607,6 @@ export interface SummaryChatToggleResultMessage {
   message?: string
 }
 
-export interface PeerConnectedMessage {
-  type: 'peer-connected'
-  clientId: string
-}
-
-export interface PeerDisconnectedMessage {
-  type: 'peer-disconnected'
-  clientId: string
-}
-
-export interface PeerCameraBoundsMessage {
-  type: 'peer-camera-bounds'
-  clientId: string
-  bounds: CameraBounds
-}
-
 /**
  * Sent to exactly one client, instructing it to raise its window and show what
  * a focus request named.
@@ -2121,9 +2105,6 @@ export type ServerMessage =
   | SpeakingChangedMessage
   | SummaryChatStatusMessage
   | SummaryChatToggleResultMessage
-  | PeerConnectedMessage
-  | PeerDisconnectedMessage
-  | PeerCameraBoundsMessage
   | FocusSurfaceMessage
   | SavedViewportsMessage
   | RootCwdMessage
