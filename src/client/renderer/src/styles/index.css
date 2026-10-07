@@ -1253,11 +1253,15 @@ html, body, #root {
   transition: opacity 0.2s ease;
 }
 .node-stamp-auto:hover { filter: brightness(1.25); }
+/* The refresh arrow (StampGlyph.tsx), turning while an icon is drawn. */
 .node-stamp-auto--generating {
   cursor: progress;
-  animation: node-stamp-pulse 1s ease-in-out infinite alternate;
+  animation: node-stamp-spin 1.2s linear infinite;
 }
-/* Before the first icon arrives, or after one fails, a ring holds the place. */
+@keyframes node-stamp-spin {
+  to { rotate: 360deg; }
+}
+/* A failure with no icon to fall back on: a ring holds the place. */
 .node-stamp-auto--empty {
   background: none;
   border: 8px dashed var(--node-stamp-auto-color, #6c7086);

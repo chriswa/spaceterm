@@ -134,8 +134,18 @@ describe('an auto-stamp', () => {
     const { container } = render(<TerminalCard {...props()} />)
     setAutoStamp(undefined, { title: 'Fix the parser', status: 'generating', previousDescriptions: [], costUsd: 0 })
 
-    expect(container.querySelector('.node-stamp-auto--empty')).not.toBeNull()
+    expect(container.querySelector('.node-stamp-auto--generating')).not.toBeNull()
     fireEvent.click(container.querySelector('.node-stamp-auto')!)
     expect(bridge.callsTo('node.regenerateAutoStamp')).toHaveLength(0)
+  })
+
+  it('shows the refresh arrow, not the old icon, while a replacement is drawn', () => {
+    const { container } = render(<TerminalCard {...props()} />)
+    setAutoStamp(undefined, { title: 'Fix the parser', status: 'generating', svg: SVG, description: 'A wrench.', previousDescriptions: ['A wrench.'], costUsd: 0.01 })
+
+    const auto = container.querySelector('.node-stamp-auto--generating') as HTMLElement
+    expect(auto.classList.contains('node-stamp-auto--empty')).toBe(false)
+    expect(auto.style.maskImage).not.toContain(encodeURIComponent(SVG))
+    expect(auto.style.maskImage).toContain(encodeURIComponent('stroke-linecap'))
   })
 })

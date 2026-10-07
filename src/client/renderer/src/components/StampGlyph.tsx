@@ -77,19 +77,30 @@ export function autoStampMask(svg: string): string {
 }
 
 /**
+ * A clockwise refresh arrow, shown in an auto-stamp's place while one is being
+ * drawn, first time or regeneration alike, and spun by the stylesheet.
+ */
+const REFRESH_ARROW_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+  + '<path d="M50 16A34 34 0 1 0 84 50" fill="none" stroke="#000" stroke-width="12" stroke-linecap="round"/>'
+  + '<polygon points="70,16 48,0 48,32" fill="#000"/>'
+  + '</svg>'
+
+/**
  * A generated icon, drawn as a mask over a flat fill: whatever colours or
  * markup the model put in the SVG, only its shape shows and nothing in it runs.
- * Clicking asks for a different one.
+ * Clicking asks for a different one; until it arrives, the refresh arrow
+ * stands in for the old icon, so the click visibly took.
  */
 function AutoStampMark({ autoStamp, color, onRegenerate }: {
   autoStamp: AutoStamp
   color?: string
   onRegenerate?: () => void
 }) {
-  const { svg, status } = autoStamp
+  const { status } = autoStamp
+  const svg = status === 'generating' ? REFRESH_ARROW_SVG : autoStamp.svg
   const mask = svg ? autoStampMask(svg) : undefined
   // Every icon drawn for this node, regenerations included. A failure leads
-  // with its reason, since an empty ring otherwise looks like one in progress.
+  // with its reason, since an empty ring says only that there is no icon.
   const spent = `$${autoStamp.costUsd.toFixed(3)} spent`
   const tooltip = status === 'failed' ? `Failed: ${autoStamp.error ?? 'unknown error'}. Click to retry. ${spent}` : spent
   return (
@@ -101,7 +112,7 @@ function AutoStampMark({ autoStamp, color, onRegenerate }: {
         ...(color ? { '--node-stamp-auto-color': color } : {}),
       } as CSSProperties}
       title={tooltip}
-      aria-label={`Auto stamp: ${autoStamp.description ?? autoStamp.title}. ${tooltip}`}
+      aria-label={`Auto stamp: ${status === 'generating' ? 'drawing' : autoStamp.description ?? autoStamp.title}. ${tooltip}`}
       // Kept off the canvas, which would otherwise start a drag or a focus.
       onMouseDown={(e: MouseEvent) => e.stopPropagation()}
       onClick={(e: MouseEvent) => {
