@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { asNodeId, type NodeId } from '../../shared/ids'
-import { fileStore, NameRegistry, type NameRegistryStore } from './name-registry'
+import { fileStore, MAX_RELEASED, NameRegistry, type NameRegistryStore } from './name-registry'
 import { AGENT_VOICES, NAME_VOICE_TABLE, RECEPTIONIST_VOICE, rosterEntry } from './name-voice-table'
 import { phoneticKey } from './name-phonetics'
 
@@ -107,9 +107,75 @@ describe('NameRegistry', () => {
     expect(reg.byName(a.name)).toBeUndefined()
     expect(reg.get(node('b'))).toBeDefined()
 
-    // Unarchived later: it just gets a name again, not necessarily the same one.
+    // Unarchived later, with nothing in the way: it takes its name and voice back.
     dead.delete(node('a'))
-    expect(reg.assign(node('a'), 5)).toBeDefined()
+    expect(reg.get(node('a'))).toEqual(a)
+    expect(reg.byName(a.name)).toBe(node('a'))
+  })
+
+  it('gives an unarchived surface its name and voice back, across a restart', () => {
+    const store = memoryStore()
+    const { reg, dead } = setup(store)
+    const a = reg.setName(node('a'), 'Claire', 'feminine', 1)
+    dead.add(node('a'))
+    for (let i = 0; i < 5; i++) reg.assign(node(i), 2 + i)
+
+    expect(reg.get(node('a'))).toBeUndefined()
+    expect(JSON.parse(store.json!).assignments['node-a']).toBeUndefined()
+
+    // A fresh registry (a server restart), in which node a is live again.
+    expect(setup(store).reg.get(node('a'))).toEqual(a.ok && a.named)
+  })
+
+  it('does not hand out the name of an archived surface while another is free', () => {
+    const { reg, dead } = setup()
+    const a = reg.setName(node('a'), 'Claire', 'feminine', 1)
+    dead.add(node('a'))
+    for (let i = 0; i < 10; i++) expect(reg.assign(node(i), 2 + i)!.name).not.toBe('Claire')
+  })
+
+  it('gives an unarchived surface a new name when a live surface now has it or a sound-alike', () => {
+    const { reg, dead } = setup()
+    reg.setName(node('a'), 'Dean', 'masculine', 1)
+    dead.add(node('a'))
+    reg.setName(node('b'), 'Dana', 'feminine', 2)
+    dead.delete(node('a'))
+
+    expect(reg.get(node('a'))).toBeUndefined()
+    const fresh = reg.assign(node('a'), 3)!
+    expect(fresh.name).not.toBe('Dean')
+    expect(reg.byName('Dana')).toBe(node('b'))
+  })
+
+  it('keeps the name but changes the voice when a live surface now uses it and another is free', () => {
+    // Two roster names sharing a voice, which sound different.
+    const [x, y] = NAME_VOICE_TABLE.flatMap((e) => NAME_VOICE_TABLE
+      .filter((f) => f.voice === e.voice && f.voice !== RECEPTIONIST_VOICE && phoneticKey(f.name) !== phoneticKey(e.name))
+      .map((f) => [e, f]))[0]
+    const { reg, dead } = setup()
+    expect(reg.setName(node('a'), x.name, x.gender, 1)).toMatchObject({ named: { voice: x.voice } })
+    dead.add(node('a'))
+    expect(reg.setName(node('b'), y.name, y.gender, 2)).toMatchObject({ named: { voice: x.voice } })
+    dead.delete(node('a'))
+
+    const back = reg.get(node('a'))!
+    expect(back.name).toBe(x.name)
+    expect(back.gender).toBe(x.gender)
+    expect(back.voice).not.toBe(x.voice)
+  })
+
+  it('remembers only the most recently released assignments', () => {
+    const { reg, dead } = setup()
+    const first = reg.setName(node('first'), 'Quentin', 'masculine', 1)
+    expect(first.ok).toBe(true)
+    dead.add(node('first'))
+    for (let i = 0; i <= MAX_RELEASED; i++) {
+      reg.setName(node(`r${i}`), `Name${'abcdefghijklmnopqrstuvwxyz'[i % 26]}${'abcdefghijklmnopqrstuvwxyz'[Math.floor(i / 26)]}`, 'masculine', 2)
+      dead.add(node(`r${i}`))
+      reg.nameProblem(undefined, 'Anything')
+    }
+    dead.delete(node('first'))
+    expect(reg.get(node('first'))).toBeUndefined()
   })
 
   it('reuses the name used longest ago, never-used names first', () => {

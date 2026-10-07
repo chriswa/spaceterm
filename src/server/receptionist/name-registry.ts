@@ -7,16 +7,20 @@
  * Rules:
  * - Lazy. A surface gets a name only when the receptionist first needs to
  *   mention it (`assign`). Nothing is assigned up front.
- * - Sticky. Once assigned, a surface keeps its name until it is archived or
- *   deleted. There is no archive handler: whenever a *new* assignment is
- *   needed, every assignment whose node is no longer live is released first.
- *   A surface that is unarchived later just gets a new name.
+ * - Sticky. Once assigned, a surface keeps its name while it is live. There is
+ *   no archive handler: whenever a *new* assignment is needed, every
+ *   assignment whose node is no longer live is released first. A released
+ *   assignment is remembered (the most recent {@link MAX_RELEASED}), and a
+ *   surface that is unarchived takes it back: its name, unless a live surface
+ *   now holds that name or one that sounds like it, and its voice, unless a
+ *   voice of the same gender is used by fewer live surfaces.
  * - Distinct. A name already assigned, or one that sounds like it (same
  *   phonetic key, e.g. Dana while Dean is assigned), is never handed out, so a
  *   heard name always identifies one surface. A voice not used by any current
  *   assignment is preferred; voices double up only once all are in use.
- * - Forgotten before reused. Among eligible names, the one used longest ago
- *   wins, never-used names first. A name's `lastUsedAt` is set when it is
+ * - Forgotten before reused. Among eligible names, one no archived surface
+ *   would take back wins, then the one used longest ago, never-used names
+ *   first. A name's `lastUsedAt` is set when it is
  *   assigned and whenever the receptionist mentions its surface (`touch`), so a
  *   recently heard name is the last to be given to a different surface.
  *
@@ -58,6 +62,9 @@ export interface NameRegistryDeps {
   store?: NameRegistryStore
 }
 
+/** How many released assignments are remembered for surfaces that may be unarchived. */
+export const MAX_RELEASED = 100
+
 export const NAMES_FILE = path.join(SOCKET_DIR, 'receptionist', 'names.json')
 
 /** Atomic write (tmp + rename) so a crash mid-save can't leave a torn file. */
@@ -88,6 +95,8 @@ interface Persisted {
    * stored only a roster name, whose voice was the table's.
    */
   assignments: Record<string, { name: string; voice: string } | string>
+  /** nodeId → assignment released when it stopped being live, oldest first. */
+  released?: Record<string, { name: string; voice: string }>
   /** roster name → epoch ms it was last assigned or mentioned. */
   lastUsedAt: Record<string, number>
 }
@@ -126,7 +135,14 @@ function hash(s: string): number {
 export class NameRegistry {
   private readonly isLive: (nodeId: NodeId) => boolean
   private readonly store: NameRegistryStore
+  /** Live surfaces' assignments: no two sound alike. */
   private readonly assignments = new Map<NodeId, NamedVoice>()
+  /**
+   * Assignments of surfaces that stopped being live, oldest first, kept so an
+   * unarchived surface can take its own back. They hold nothing: a live
+   * surface may be given one of these names.
+   */
+  private readonly released = new Map<NodeId, NamedVoice>()
   private readonly lastUsedAt = new Map<string, number>()
 
   constructor(deps: NameRegistryDeps) {
@@ -135,9 +151,13 @@ export class NameRegistry {
     this.load()
   }
 
-  /** The surface's assignment, or undefined if it has none. Never assigns. */
+  /**
+   * The surface's assignment, or undefined if it has none. Never makes a new
+   * one, but a surface back from the archive takes back the one it had, if it
+   * still can (see `reclaim`).
+   */
   get(nodeId: NodeId): NamedVoice | undefined {
-    return this.assignments.get(nodeId)
+    return this.assignments.get(nodeId) ?? this.reclaim(nodeId)
   }
 
   /**
@@ -148,7 +168,7 @@ export class NameRegistry {
    * sounds like one that is): about seventy concurrent surfaces.
    */
   assign(nodeId: NodeId, now = Date.now()): NamedVoice | undefined {
-    const existing = this.assignments.get(nodeId)
+    const existing = this.get(nodeId)
     if (existing) return existing
 
     this.releaseDead()
@@ -198,9 +218,10 @@ export class NameRegistry {
   ): { ok: true; named: NamedVoice; voiceChanged: boolean } | { ok: false; problem: NameProblem } {
     const problem = this.nameProblem(nodeId, name)
     if (problem) return { ok: false, problem }
-    const previous = this.assignments.get(nodeId)
+    const previous = this.assignments.get(nodeId) ?? this.released.get(nodeId)
     const voice = previous?.gender === gender ? previous.voice : this.voiceFor(nodeId, name, gender)
     const named: NamedVoice = { name: normalizeName(name), voice, gender }
+    this.released.delete(nodeId)
     this.assignments.set(nodeId, named)
     this.markUsed(named.name, now)
     this.save()
@@ -222,9 +243,35 @@ export class NameRegistry {
   }
 
   private releaseDead(): void {
-    for (const id of [...this.assignments.keys()]) {
-      if (!this.isLive(id)) this.assignments.delete(id)
+    for (const [id, entry] of [...this.assignments]) {
+      if (this.isLive(id)) continue
+      this.assignments.delete(id)
+      this.released.delete(id)
+      this.released.set(id, entry)
     }
+    for (const id of [...this.released.keys()].slice(0, Math.max(0, this.released.size - MAX_RELEASED))) {
+      this.released.delete(id)
+    }
+  }
+
+  /**
+   * Give a surface that is live again the assignment it had when it was
+   * released: its name, unless a live surface holds it or a sound-alike, and
+   * its voice, unless another voice of the name's gender is used by fewer live
+   * surfaces. Undefined if it has nothing to take back or its name is taken;
+   * the saved assignment is forgotten either way.
+   */
+  private reclaim(nodeId: NodeId): NamedVoice | undefined {
+    const saved = this.released.get(nodeId)
+    if (!saved || !this.isLive(nodeId)) return undefined
+    this.released.delete(nodeId)
+    this.releaseDead()
+    const key = soundKey(saved.name)
+    const taken = [...this.assignments.values()].some((e) => soundKey(e.name) === key)
+    const named = taken ? undefined : { ...saved, voice: this.voiceFor(nodeId, saved.name, saved.gender, saved.voice) }
+    if (named) this.assignments.set(nodeId, named)
+    this.save()
+    return named
   }
 
   /** Only roster names are chosen by `lastUsedAt`, so only theirs is kept. */
@@ -233,8 +280,12 @@ export class NameRegistry {
     if (entry) this.lastUsedAt.set(entry.name, now)
   }
 
-  /** A voice of `gender` for `nodeId`, which is being given `name`: see `setName`. */
-  private voiceFor(nodeId: NodeId, name: string, gender: VoiceGender): string {
+  /**
+   * A voice of `gender` for `nodeId`, which is being given `name`: the one
+   * fewest other surfaces are using, preferring `keep`, then the name's own
+   * roster voice.
+   */
+  private voiceFor(nodeId: NodeId, name: string, gender: VoiceGender, keep?: string): string {
     const others = [...this.assignments].filter(([id]) => id !== nodeId).map(([, e]) => e.voice)
     const users = (voice: string): number => others.filter((v) => v === voice).length
     const own = rosterEntry(name)?.voice
@@ -242,7 +293,7 @@ export class NameRegistry {
     const offset = hash(nodeId) % voices.length
     const rank = (voice: string): number => (voices.indexOf(voice) - offset + voices.length) % voices.length
     return [...voices].sort((a, b) =>
-      users(a) - users(b) || Number(b === own) - Number(a === own) || rank(a) - rank(b),
+      users(a) - users(b) || Number(b === keep) - Number(a === keep) || Number(b === own) - Number(a === own) || rank(a) - rank(b),
     )[0]
   }
 
@@ -258,7 +309,8 @@ export class NameRegistry {
     const pool = freshVoice.length > 0 ? freshVoice : eligible
     if (pool.length === 0) return undefined
 
-    // Least recently used first; never-used names count as used at -Infinity.
+    // Names an archived surface would take back last, so it more often can.
+    // Then least recently used first; never-used names count as used at -Infinity.
     // Ties (typically the never-used names) are broken by position in the
     // roster, rotated by a hash of the node id so first assignments spread
     // across the roster instead of always starting at its head.
@@ -266,7 +318,9 @@ export class NameRegistry {
     const rank = (e: NamedVoice): number =>
       (NAME_VOICE_TABLE.indexOf(e) - offset + NAME_VOICE_TABLE.length) % NAME_VOICE_TABLE.length
     const used = (e: NamedVoice): number => this.lastUsedAt.get(e.name) ?? -Infinity
-    return [...pool].sort((a, b) => used(a) - used(b) || rank(a) - rank(b))[0]
+    const releasedKeys = new Set([...this.released.values()].map((e) => soundKey(e.name)))
+    const reclaimable = (e: NamedVoice): number => Number(releasedKeys.has(soundKey(e.name)))
+    return [...pool].sort((a, b) => reclaimable(a) - reclaimable(b) || used(a) - used(b) || rank(a) - rank(b))[0]
   }
 
   private load(): void {
@@ -293,6 +347,10 @@ export class NameRegistry {
       taken.add(soundKey(entry.name))
       this.assignments.set(asNodeId(nodeId), entry)
     }
+    for (const [nodeId, saved] of Object.entries(doc.released ?? {})) {
+      const entry = this.restored(saved)
+      if (entry) this.released.set(asNodeId(nodeId), entry)
+    }
     for (const [name, at] of Object.entries(doc.lastUsedAt ?? {})) {
       const entry = rosterEntry(name)
       if (entry && typeof at === 'number') this.lastUsedAt.set(entry.name, at)
@@ -317,6 +375,7 @@ export class NameRegistry {
     const doc: Persisted = {
       version: VERSION,
       assignments: Object.fromEntries([...this.assignments].map(([id, e]) => [id, { name: e.name, voice: e.voice }])),
+      released: Object.fromEntries([...this.released].map(([id, e]) => [id, { name: e.name, voice: e.voice }])),
       lastUsedAt: Object.fromEntries(this.lastUsedAt),
     }
     try {

@@ -3308,7 +3308,8 @@ async function startServer(): Promise<void> {
 
   sideQuestionServer = serveSideQuestions(sideQuestions, path.join(SOCKET_DIR, 'side-questions.sock'))
   agentNames = new NameRegistry({
-    // `getNode` only finds live nodes, so an archived surface's name is released.
+    // `getNode` only finds live nodes, so an archived surface releases its name
+    // (and takes it back on unarchive if no live surface has taken it since).
     isLive: (nodeId) => stateManager.getNode(nodeId) !== undefined,
     store: fileStore(NAMES_FILE),
   })
