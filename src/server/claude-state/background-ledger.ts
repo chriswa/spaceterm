@@ -58,6 +58,12 @@
  * — whichever one — dismisses the rest again. That "first, not all" rule is
  * deliberate: the restored launches are exactly the ones that might never end,
  * so waiting for all of them would re-create the problem dismissal solved.
+ *
+ * The rule only holds if every restored launch was alive when restored.
+ * Dismissed launches are not probed, so a session accumulates dismissed work
+ * that has long since ended; restored as-is, the first sweep would "resolve"
+ * one of those and re-dismiss the live work the user asked to wait on. So
+ * `restoreDismissed` probes first and drops what has already finished.
  */
 
 import { execFile } from 'child_process'
@@ -585,17 +591,49 @@ export class BackgroundLedger {
   }
 
   /**
-   * Take the dismissed work back up: every dismissed launch blocks again, and
-   * the first one to resolve dismisses the rest (see `awaitingAnyResolution`).
+   * Take the dismissed work back up: every dismissed launch that is still alive
+   * blocks again, and the first one to resolve dismisses the rest (see
+   * `awaitingAnyResolution`).
    *
-   * Returns false, changing nothing, when there is nothing dismissed — the
-   * caller has no state to move, and inventing a launch to represent the user's
-   * hunch would create the one thing this file forbids: an outstanding entry no
-   * drain path can reach.
+   * Each dismissed launch is probed first, and one that has already finished is
+   * dropped rather than restored. Without that, the arm's "first resolution"
+   * would be the next sweep noticing work that ended long before the click, and
+   * the surface would flash yellow and fall straight back to white while the
+   * work the user meant (typically a persistent Monitor) was still running.
+   * 'indeterminate' is restored: the staleness bound drains it later, and a
+   * staleness prune does not settle the arm.
+   *
+   * `stillWanted` is re-checked after the probes, which take real time: the
+   * caller's reason to restore may no longer hold by then. Dead launches are
+   * dropped either way, since that is true regardless of what the caller wants.
+   *
+   * Resolves false, restoring nothing, when no live dismissed work remains —
+   * the caller has no state to move, and inventing a launch to represent the
+   * user's hunch would create the one thing this file forbids: an outstanding
+   * entry no drain path can reach.
    */
-  restoreDismissed(surfaceId: PtySessionId): boolean {
+  async restoreDismissed(surfaceId: PtySessionId, stillWanted: () => boolean = () => true): Promise<boolean> {
     const s = this.surfaces.get(surfaceId)
     if (!s) return false
+    const candidates = Array.from(s.launches.values()).filter(l => l.dismissed)
+    if (candidates.length === 0) return false
+
+    const dead: Launch[] = []
+    for (const launch of candidates) {
+      // A queued launch had finished and was waiting on a delivery that has
+      // long since happened or never will; there is nothing left to wait on.
+      if (launch.queuedSinceMs !== undefined || await this.probeLaunch(s, launch) === 'finished') {
+        dead.push(launch)
+      }
+    }
+    // Identity check: the launch may have been resolved, or re-registered
+    // under the same id, while we awaited the probes.
+    for (const launch of dead) {
+      if (s.launches.get(launch.id) === launch && launch.dismissed) s.launches.delete(launch.id)
+    }
+    if (dead.length > 0) this.touch(surfaceId)
+    if (!stillWanted()) return false
+
     let restored = 0
     for (const launch of Array.from(s.launches.values())) {
       if (!launch.dismissed) continue

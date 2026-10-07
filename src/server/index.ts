@@ -2588,7 +2588,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'set-claude-status-background': {
-      claudeStateMachine.handleClientMarkBackground(msg.sessionId, msg.background)
+      // Async: restoring probes the dismissed launches. Probes resolve rather than throw.
+      void claudeStateMachine.handleClientMarkBackground(msg.sessionId, msg.background)
       break
     }
 
