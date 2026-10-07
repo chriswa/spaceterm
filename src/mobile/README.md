@@ -128,7 +128,13 @@ nobody, lets the app be suspended again.
 
 It costs the battery a running audio engine, and does nothing once the app
 has been swiped away; a call or Siri stops it until the interruption ends.
-`native-stay-awake` and `native-awake-running` in the event record show it
+So does the page's own microphone — a held dictation, through WebKit — and
+iOS never says when *that* interruption ends, so the app starts the engine
+again itself once WebKit's capture closes. Until it has, the app reports
+itself not awake and the page plays Control's voice; and a job the app says
+nothing of within a few seconds is taken back and played by the page
+(`native-speech-taken-back`), so a stopped engine can delay a reply but not
+silence it. `native-stay-awake` and `native-awake-running` in the event record show it
 coming and going, and the `native-heartbeat` while in the background says
 whether the page still answers (`pageAnsweredMs`).
 

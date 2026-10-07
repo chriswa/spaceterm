@@ -24,12 +24,32 @@ import { nativeSpeech } from './native-microphone'
  * instead (native-microphone.ts `nativeSpeech`): through the microphone's own
  * engine, with echo cancellation, so hands-free can hear the user say
  * "Control" over it. The app reports each sentence's start and end, which go
- * to the server just the same. A job stays wherever its first sentence went.
+ * to the server just the same. A job stays wherever its first sentence went —
+ * unless the app says nothing of it at all (`NATIVE_SILENT_MS`), and then the
+ * page takes it back and plays it itself.
  */
 
-/** Jobs the app is playing, by id, with how many sentences each has. */
-const nativeJobs = new Map<string, { count: number }>()
+/**
+ * How long the app may take to say it has begun a job sent while it had
+ * nothing else to play. It answers at once when it can; silence means its
+ * engine is not running whatever it last said — iOS stopped it under the
+ * app (October 2026: the page's own dictation interrupted it, and Control
+ * was never heard again until the app was restarted).
+ */
+export const NATIVE_SILENT_MS = 3000
+
+interface NativeJob {
+  count: number
+  /** Until the app says anything of it: its sentences, to play in the page instead. */
+  unheard?: Sentence[]
+  watchdog?: number
+}
+
+/** Jobs the app is playing, by id. */
+const nativeJobs = new Map<string, NativeJob>()
 let lastOutputDb: number | undefined
+/** The app's `engineEpoch` when it last went silent on a job: not trusted again until its engine has changed. */
+let silentAtEpoch: number | undefined
 
 /** What hands-free needs of the app's playback: whether it is playing, and how loud. */
 export const nativePlayback = {
@@ -37,6 +57,8 @@ export const nativePlayback = {
   /** The loudness of the last sentence it began, RMS dBFS. */
   outputDb: (): number | undefined => lastOutputDb,
 }
+
+type Sentence = Parameters<Parameters<RemoteSpeechApi['onAudio']>[0]>[0]
 
 interface Playing {
   sources: AudioBufferSourceNode[]
@@ -67,7 +89,10 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
   document.addEventListener('touchend', wake, { capture: true, passive: true })
 
   const stop = (id: string) => {
-    if (nativeJobs.delete(id)) {
+    const native = nativeJobs.get(id)
+    if (native) {
+      clearTimeout(native.watchdog)
+      nativeJobs.delete(id)
       recordMobileEvent('speech-stopped', { id: id.slice(0, 11), native: true })
       nativeSpeech.stop(id)
       return
@@ -89,6 +114,10 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
   const offNative = nativeSpeech.onEvent(({ id, index, event, outputDb }) => {
     const job = nativeJobs.get(id)
     if (!job) return
+    clearTimeout(job.watchdog)
+    // Could not play the first of it at all: the page can.
+    if (event === 'failed' && job.unheard) return takeBack(id, 'could not play it')
+    job.unheard = undefined
     if (outputDb !== undefined && event === 'started') lastOutputDb = outputDb
     api.progress(id, index, event)
     if (event !== 'started' && index === job.count - 1) {
@@ -97,16 +126,44 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     }
   })
 
-  const offAudio = api.onAudio(({ id, index, count, sampleRate, pcm }) => {
-    if (nativeJobs.has(id) || (!jobs.has(id) && nativeSpeech.available())) {
-      if (!nativeJobs.has(id)) {
-        nativeJobs.set(id, { count })
-        recordMobileEvent('speech-start', { id: id.slice(0, 11), sentences: count, native: true, voiceProcessing: nativeSpeech.voiceProcessing() })
+  /** The app said nothing of a job it should have begun at once: take it back, and play it here. */
+  function takeBack(id: string, why: string): void {
+    const job = nativeJobs.get(id)
+    if (!job?.unheard) return
+    clearTimeout(job.watchdog)
+    nativeJobs.delete(id)
+    nativeSpeech.stop(id)
+    silentAtEpoch = nativeSpeech.engineEpoch()
+    recordMobileEvent('native-speech-taken-back', { id: id.slice(0, 11), why, sentences: job.unheard.length })
+    log(`[speech] ${id.slice(0, 11)}: the app ${why} — playing it here, and not through the app until its engine starts again`)
+    for (const sentence of job.unheard) playInPage(sentence)
+  }
+
+  const appCanPlay = () => nativeSpeech.available() && silentAtEpoch !== nativeSpeech.engineEpoch()
+
+  const offAudio = api.onAudio((sentence) => {
+    const { id, index, count, sampleRate, pcm } = sentence
+    let native = nativeJobs.get(id)
+    if (!native && !jobs.has(id) && appCanPlay()) {
+      native = { count }
+      // With nothing ahead of it, the app begins it at once — and says so.
+      if (nativeJobs.size === 0) {
+        native.unheard = []
+        native.watchdog = window.setTimeout(() => takeBack(id, `said nothing of it in ${NATIVE_SILENT_MS / 1000}s`), NATIVE_SILENT_MS)
       }
+      nativeJobs.set(id, native)
+      recordMobileEvent('speech-start', { id: id.slice(0, 11), sentences: count, native: true, voiceProcessing: nativeSpeech.voiceProcessing() })
+    }
+    if (native) {
+      native.unheard?.push(sentence)
       nativeSpeech.play(id, index, count, sampleRate, pcm)
       log(`[speech] ${id.slice(0, 11)} sentence ${index + 1}/${count} to the app (echo cancellation ${nativeSpeech.voiceProcessing() ? 'on' : 'off'})`)
       return
     }
+    playInPage(sentence)
+  })
+
+  function playInPage({ id, index, count, sampleRate, pcm }: Sentence): void {
     const ctx = audioContext()
     if (!ctx) {
       api.progress(id, index, 'failed')
@@ -140,7 +197,7 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     playing.timers.push(window.setTimeout(() => api.progress(id, index, 'started'), Math.max(0, (at - ctx.currentTime) * 1000)))
     // The session's mode is where it is heard: play-and-record with no microphone open plays at the earpiece.
     log(`[speech] ${id.slice(0, 11)} sentence ${index + 1}/${count}, ${buffer.duration.toFixed(1)}s in ${(at - ctx.currentTime).toFixed(1)}s (audio ${ctx.state}; ${describeAudioSession()})`)
-  })
+  }
 
   const offStop = api.onStop(stop)
 

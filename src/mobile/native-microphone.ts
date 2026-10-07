@@ -78,6 +78,8 @@ export function nativeMicrophoneAvailable(): boolean {
 }
 
 let state: NativeState = { running: false }
+/** Bumped whenever the engine Control's voice would play through comes up or goes down. */
+let engineChanges = 0
 let lastAudio = 0
 let startedAt = 0
 let receivedSamples = 0
@@ -108,6 +110,7 @@ function install(): void {
         // The input changing is AirPods coming or going.
         recordMobileEvent('native-mic-state', { running: next.running, input: next.input ?? null, error: next.error ?? null, was: { running: state.running, input: state.input ?? null } })
       }
+      if (next.running !== state.running || next.awake !== state.awake) engineChanges++
       state = next
       for (const fn of [...stateWaiters]) fn(next)
     },
@@ -139,6 +142,14 @@ export const nativeSpeech = {
   },
   voiceProcessing(): boolean {
     return state.voiceProcessing === true
+  },
+  /**
+   * Changes each time the app's engine comes up or goes down. An app that
+   * went silent on a sentence is trusted again once this has moved on: it
+   * has started its engine again since.
+   */
+  engineEpoch(): number {
+    return engineChanges
   },
   play(id: string, index: number, count: number, sampleRate: number, pcm: string): void {
     handler()?.postMessage({ action: 'speech-play', id, index, count, sampleRate, pcm })

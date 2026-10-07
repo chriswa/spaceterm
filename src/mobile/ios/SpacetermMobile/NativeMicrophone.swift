@@ -36,7 +36,15 @@ import WebKit
 /// Control's voice when it has something to say.
 @MainActor
 final class NativeMicrophone: NSObject, WKScriptMessageHandler {
-    weak var webView: WKWebView?
+    weak var webView: WKWebView? {
+        didSet {
+            captureObservation = webView?.observe(\.microphoneCaptureState, options: [.new]) { [weak self] view, _ in
+                let state = view.microphoneCaptureState
+                MainActor.assumeIsolated { if state == .none { self?.pageMicrophoneClosed() } }
+            }
+        }
+    }
+    private var captureObservation: NSKeyValueObservation?
     /// The audio and lifecycle record, which outlives a suspended page.
     private let events: NativeEvents
 
@@ -406,12 +414,25 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         }
     }
 
+    /**
+     * The page's own microphone (WebKit's, for a held dictation) has closed.
+     * Opening it interrupts the engine kept up to stay awake, and iOS says
+     * nothing when it is done — no interruption end — so the engine is
+     * started again here, or it stays stopped for good.
+     */
+    private func pageMicrophoneClosed() {
+        guard mode != .off, !engine.isRunning else { return }
+        scheduleRestart("the page's microphone closed", after: 0.3, inPlace: true)
+    }
+
     // MARK: - To the page
 
     private func sendState() {
         // `speech`: this app plays Control's voice itself, while running — an older one does not.
         // `awake`: the engine is up without the microphone, and plays it all the same.
-        var state: [String: Any] = ["running": running, "awake": up == .speaker, "speech": true, "voiceProcessing": voiceProcessing]
+        // Whether the engine *is* running, not what it was brought up for: iOS stops it under the app, and
+        // a page told "awake" by an app whose engine had stopped sent it Control's voice to play into nothing.
+        var state: [String: Any] = ["running": running, "awake": up == .speaker && engine.isRunning, "speech": true, "voiceProcessing": voiceProcessing]
         if running { state["input"] = inputName() }
         if let lastError, !running { state["error"] = lastError }
         guard let json = try? JSONSerialization.data(withJSONObject: state), let text = String(data: json, encoding: .utf8) else { return }
@@ -433,7 +454,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             log("speech-play without id, index, count, sampleRate and pcm")
             return
         }
-        guard up != .off, let player else {
+        guard up != .off, engine.isRunning, let player else {
             sendSpeech(id: id, index: index, event: "failed")
             return
         }
@@ -561,7 +582,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                     "running": self.running, "wanted": self.wanted, "stayAwake": self.stayAwake,
                 ])
                 if began {
-                    self.log("interrupted (a call, Siri, another app)")
+                    self.log("interrupted (a call, Siri, another app, or the page's own microphone)")
+                    // The engine has stopped: nothing queued will be heard, and the page should play what comes next.
+                    self.failSpeech(why: "the audio session was interrupted")
+                    self.sendState()
                 } else {
                     self.scheduleRestart("an interruption ended", after: 0.3)
                 }

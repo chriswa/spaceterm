@@ -97,6 +97,45 @@ describe('speech in the app', () => {
     expect(remote.progress).toEqual(['rs_5 0 started', 'rs_5 0 finished'])
   })
 
+  it('is taken back and played in the page when the app says nothing of it', async () => {
+    vi.useFakeTimers()
+    const app = fakeApp({ speech: true })
+    const { startSpeechPlayer, nativePlayback, NATIVE_SILENT_MS } = await load()
+    const remote = fakeApi()
+    stopPlayer = startSpeechPlayer(remote.api, () => {})
+    // Awake, by its own account — but iOS stopped its engine under it, and it plays nothing.
+    app.awake()
+    remote.sentence('rs_6', 0, 2)
+    remote.sentence('rs_6', 1, 2)
+    vi.advanceTimersByTime(NATIVE_SILENT_MS)
+    expect(app.posted.at(-1)).toEqual({ action: 'speech-stop', id: 'rs_6' })
+    expect(nativePlayback.playing()).toBe(false)
+    // No Web Audio in this test: the page's own player reports it could not play — but it was the page that tried.
+    expect(remote.progress).toEqual(['rs_6 0 failed', 'rs_6 1 failed'])
+
+    // The next answer goes straight to the page, until the app's engine has been down and up again.
+    remote.sentence('rs_7', 0, 1)
+    expect(app.posted.some((m) => m.id === 'rs_7')).toBe(false)
+    window.spacetermNativeMicrophone?.state({ running: false, awake: false, speech: true, voiceProcessing: false })
+    app.awake()
+    remote.sentence('rs_8', 0, 1)
+    expect(app.posted.filter((m) => m.action === 'speech-play').map((m) => m.id)).toEqual(['rs_6', 'rs_6', 'rs_8'])
+    vi.useRealTimers()
+  })
+
+  it('is taken back when the app cannot play the first of it', async () => {
+    const app = fakeApp({ speech: true })
+    const { startSpeechPlayer } = await load()
+    const remote = fakeApi()
+    stopPlayer = startSpeechPlayer(remote.api, () => {})
+    app.awake()
+    remote.sentence('rs_9', 0, 1)
+    app.event('rs_9', 0, 'failed')
+    // Reported once, by the page's attempt — not the app's.
+    expect(remote.progress).toEqual(['rs_9 0 failed'])
+    expect(app.posted.at(-1)).toEqual({ action: 'speech-stop', id: 'rs_9' })
+  })
+
   it('stays in the page with an app too old to play it', async () => {
     const app = fakeApp({ speech: false })
     const { startSpeechPlayer } = await load()
