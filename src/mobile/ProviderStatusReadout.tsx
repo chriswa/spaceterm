@@ -3,9 +3,9 @@ import { longTimeLeft, providerState, RUNNING_LOW_MS, shortTimeLeft, type Provid
 
 /**
  * Each approval source's status on the bottom bar, beside the system monitor:
- * a key and the time left on opProxy's 1Password authorization, a struck-out
- * key once it is lost, a dim one while opProxy can't be reached. The figures
- * are in the readouts' panel (MacReadouts.tsx).
+ * just the time left on opProxy's 1Password authorization while it holds, a
+ * struck-out key alone once it is lost, a dim one while opProxy can't be
+ * reached. The figures are in the readouts' panel (MacReadouts.tsx).
  */
 
 function KeyGlyph({ struck }: { struck: boolean }) {
@@ -18,10 +18,9 @@ function KeyGlyph({ struck }: { struck: boolean }) {
   )
 }
 
-function chipText(state: ProviderState, now: number): string {
-  if (state.kind === 'unreachable') return '–'
-  if (state.kind === 'lost') return 'off'
-  return state.status.until === undefined ? 'on' : shortTimeLeft(state.status.until, now)
+/** The time left while authorized; null otherwise, or with no known end, where the key says it. */
+function chipText(state: ProviderState, now: number): string | null {
+  return state.kind === 'ok' && state.status.until !== undefined ? shortTimeLeft(state.status.until, now) : null
 }
 
 function spoken(name: string, state: ProviderState, now: number): string {
@@ -40,6 +39,7 @@ export function ProviderStatusChips({ sources, now }: { sources: readonly Approv
     <>
       {shown.map(({ source, state }) => {
         const low = state.kind === 'ok' && state.status.until !== undefined && state.status.until - now < RUNNING_LOW_MS
+        const text = chipText(state, now)
         return (
           <span
             key={source.name}
@@ -47,8 +47,7 @@ export function ProviderStatusChips({ sources, now }: { sources: readonly Approv
             role="img"
             aria-label={spoken(source.name, state, now)}
           >
-            <KeyGlyph struck={state.kind !== 'ok'} />
-            <span className="m-provider__text">{chipText(state, now)}</span>
+            {text === null ? <KeyGlyph struck={state.kind !== 'ok'} /> : <span className="m-provider__text">{text}</span>}
           </span>
         )
       })}

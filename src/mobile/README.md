@@ -76,9 +76,9 @@ mini-stats writes what its menu-bar item draws, colours and sizes decided, to
 `~/.mini-stats/menubar.json`; the server reads it every 2 s, but only while a
 phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
 Left of the system monitor, and not beside the usage, whose width depends on the
-server, is opProxy's 1Password authorization (`ProviderStatusReadout.tsx`): a key
-and the time left, amber under an hour, struck out and red once it is lost, dim
-while opProxy can't be reached. It is the feed's `status` message
+server, is opProxy's 1Password authorization (`ProviderStatusReadout.tsx`): just
+the time left at its coarsest ("12h", "42m"), amber under an hour; a struck-out
+key alone, red once it is lost, dim while opProxy can't be reached. It is the feed's `status` message
 (`provider-status.ts`; "Provider status" in `APPROVAL_FEED.md`).
 Tapping any readout opens one panel with every set of figures (`MacReadouts.tsx`):
 each mini-stats module's reading, the authorization's time left and clock expiry,

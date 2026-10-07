@@ -95,6 +95,7 @@ describe('MacReadouts', () => {
 
     const chip = screen.getByRole('img', { name: '1Password authorized, 11h 32m left' })
     expect(chip.textContent).toBe('12h')
+    expect(chip.querySelector('svg')).toBeNull()
     // On the monitor's row, not the usage's.
     const monitor = screen.getByRole('img', { name: /^Sensors/ })
     expect(chip.parentElement).toBe(monitor.parentElement)
@@ -108,7 +109,9 @@ describe('MacReadouts', () => {
     installFakeBridge()
     render(<MacReadouts />)
     opProxy({ status: { ok: false, label: '1Password', since: 0 } })
-    expect(screen.getByRole('img', { name: '1Password not authorized' }).textContent).toBe('off')
+    const lost = screen.getByRole('img', { name: '1Password not authorized' })
+    expect(lost.textContent).toBe('')
+    expect(lost.querySelector('svg')).toBeTruthy()
 
     opProxy({ connected: false })
     expect(screen.getByRole('img', { name: "opProxy can't be reached" })).toBeTruthy()
