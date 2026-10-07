@@ -89,7 +89,7 @@ const VERBATIM_SYSTEM_PROMPT = `You are a fast voice companion helping a user un
  * heard the end of would otherwise come back verbatim and be treated as
  * delivered. See `redactUnheard`.
  */
-const INTERRUPTED_MARKER = '*INTERRUPTED*'
+export const INTERRUPTED_MARKER = '*INTERRUPTED*'
 
 /**
  * What the listener is told when the injected turn is all we have.

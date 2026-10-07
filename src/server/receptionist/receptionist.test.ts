@@ -590,6 +590,45 @@ describe('Receptionist', () => {
     expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length] }])
   })
 
+  it('drops a reply still held back when the user\'s words arrive, and tells the model none of it was heard', async () => {
+    // Voice Operator holds a job queued while the user dictates, and plays it once they stop.
+    const wire: string[] = []
+    let dropped: (() => void) | undefined
+    const held: SpeechBackend = {
+      speak: async () => ({ status: 202, body: { id: 'held', state: 'in_progress', playback_state: 'queued', version: 1 } }),
+      status: () => new Promise((resolve) => {
+        dropped = () => resolve({ status: 410, body: { id: 'held', state: 'cancelled_by_client', character_offset: 0, version: 2 } })
+      }),
+      drop: async (id) => {
+        wire.push(`drop ${id}`)
+        dropped?.()
+        return { status: 410, body: { id, state: 'cancelled_by_client', character_offset: 0, version: 2 } }
+      },
+    }
+    const h = harness({
+      speech: held,
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done. Want me to tell him to commit and push?' }]),
+        (turn) => {
+          wire.push('model')
+          expect(turn.prompt).toMatch(/^NOTE: (.* )?Your last reply was never heard: the user started talking before any of it was played\./)
+          expect(turn.prompt).toContain('What they say next does not answer anything in what they did not hear')
+          expect(turn.prompt).toContain('THE USER SAYS: okay, sounds good')
+          return reply([{ from: 'control', text: 'Noted.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    await h.receptionist.hear('okay, sounds good')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    // Gone from the queue before the model is asked, so it can never play after the user's words.
+    expect(wire.slice(0, 2)).toEqual(['drop held', 'model'])
+    const replyAt = h.record.findIndex(message => message.content.includes('commit and push'))
+    expect(h.heardMarks).toEqual([{ replyAt, parts: [0] }])
+  })
+
   it('after an interruption nothing was caught in, says it had not finished and carries on', async () => {
     const h = harness({
       replies: [

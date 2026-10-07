@@ -172,6 +172,45 @@ describe('SpeechChannel', () => {
     expect(await h.channel.heardPrefix()).toBe(0)
   })
 
+  it('a new begin drops the answer the last run left queued, and counts it as cut off where it got to', async () => {
+    const vo = fakeBackend({
+      statuses: [{ state: 'in_progress', playback_state: 'queued', version: 1 }],
+      dropped: { character_offset: 0 },
+    })
+    const h = harness(vo.backend, { stallBetweenPolls: true })
+    await h.channel.deliver(h.channel.begin('thinking'), 'Want me to tell her to commit?')
+    await flush()
+    h.channel.begin('thinking')
+    expect(vo.drops).toEqual(['job-1'])
+    expect(await h.channel.heardPrefix()).toBe(0)
+    expect(await h.channel.heardPrefix()).toBeUndefined()
+  })
+
+  it('heardPrefix stops an answer still playing, since anything it says now comes after the listener\'s words', async () => {
+    const vo = fakeBackend({
+      statuses: [{ state: 'in_progress', playback_state: 'speaking', version: 2 }],
+      dropped: { character_offset: 9 },
+    })
+    const h = harness(vo.backend, { stallBetweenPolls: true })
+    await h.channel.deliver(h.channel.begin('thinking'), 'Claire is done. Want me to tell her to commit?')
+    await flush()
+    expect(await h.channel.heardPrefix()).toBe(9)
+    expect(vo.drops).toEqual(['job-1'])
+    expect(h.channel.phase).toBe('ready')
+  })
+
+  it('an answer that had already finished when dropped was heard in full', async () => {
+    const vo = fakeBackend({
+      statuses: [{ state: 'in_progress', playback_state: 'speaking', version: 2 }],
+      dropped: { state: 'completed', character_offset: 12 },
+    })
+    const h = harness(vo.backend, { stallBetweenPolls: true })
+    await h.channel.deliver(h.channel.begin('thinking'), 'Claire done.')
+    await flush()
+    h.channel.begin('thinking')
+    expect(await h.channel.heardPrefix()).toBeUndefined()
+  })
+
   it('cancel reports nothing to stop on an idle channel', async () => {
     const h = harness(fakeBackend().backend)
     expect(await h.channel.cancel()).toBe(false)

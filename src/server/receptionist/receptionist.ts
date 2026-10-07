@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
-import { finalAgentMessage, type TranscriptMessage } from '../summary-chat'
+import { finalAgentMessage, INTERRUPTED_MARKER, type TranscriptMessage } from '../summary-chat'
 import { joinSpeechParts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import type { NamedVoice, VoiceGender } from './name-voice-table'
@@ -2007,8 +2007,8 @@ export class Receptionist {
       this.notes.push(`You stopped your own last reply to bring the news below, and have just said "${HANG_ON}". The user heard only: "${audible}". Give the news first; say again only what of the rest still stands and matters.`)
       return true
     }
-    // Talked over, or lost with the phone's page: either way, only this much was heard.
-    this.notes.push(`Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest; if it still matters, say it again, or add it to your backlog if it would pull them off the topic.`)
+    // Talked over, held back while they dictated, or lost with the phone's page: either way, only this much was heard.
+    this.notes.push(cutOffNote(audible === INTERRUPTED_MARKER ? undefined : audible))
     // Cut off by leaving, or by moving: said again when they are back, since
     // the note above may go with a turn they cannot hear.
     if (this.missed) this.missed.cutOff = audible
@@ -2091,6 +2091,19 @@ function eventHeadline(event: ReceptionistEvent): string {
 
 function percent(probability: number): string {
   return `${Math.round(probability * 100)}%`
+}
+
+/**
+ * A reply the user did not hear to the end. Their words may have been said
+ * before the part they missed was played — Voice Operator holds a reply back
+ * while they dictate — so nothing they say answers a question in that part.
+ */
+function cutOffNote(audible: string | undefined): string {
+  const heard = audible
+    ? `Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest.`
+    : 'Your last reply was never heard: the user started talking before any of it was played.'
+  return `${heard} What they say next does not answer anything in what they did not hear: a question there is still unasked. ` +
+    'Respond to what they said first; then, if what they missed still matters, tell them, or add it to your backlog if it would pull them off the topic.'
 }
 
 /** A reply the user spoke over before any of it was said: unheard, and none of its actions done. */
