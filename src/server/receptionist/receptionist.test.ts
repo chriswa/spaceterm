@@ -1033,6 +1033,13 @@ describe('Receptionist', () => {
       expect(judged).toEqual(['working|on the solver. |1'])
       expect(speech.spoken.map(c => JSON.stringify(c))).toContainEqual(JSON.stringify([{ text: 'Hang on.', voice: RECEPTIONIST_VOICE }]))
       expect(h.turns).toHaveLength(2)
+      // And the transcript's reasoning says it cut itself off, for what, and what it dropped.
+      const cut = h.traces.filter(trace => trace.what === 'cut-in')
+      expect(cut).toHaveLength(1)
+      expect(cut[0].text).toMatch(new RegExp(`^Cut its own reply short, saying "Hang on\\.", for news: \\{\\w+:${SALLY}\\} is now stopped, waiting for the user$`))
+      expect(cut[0].detail).toContain('Judged 90% worth cutting in for, with ')
+      expect(cut[0].detail).toContain('Never said: "on the solver. He expects')
+      expect(cut[0].detail).toMatch(/It last said:/)
     })
 
     it('finishes without asking when a dozen words or fewer are left', async () => {
@@ -1060,6 +1067,8 @@ describe('Receptionist', () => {
       await flush()
       expect(asked).toBe(1)
       expect(h.turns).toHaveLength(1)
+      // Carrying on is no cut: nothing in the reasoning says it stopped.
+      expect(h.traces.some(trace => trace.what === 'cut-in')).toBe(false)
     })
   })
 

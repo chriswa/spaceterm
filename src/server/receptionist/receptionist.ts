@@ -17,7 +17,7 @@ import {
   FORMAT_REMINDER, HANDOVER_CHARS, HANDOVER_HEADING, HANDOVER_PROMPT, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
 import {
-  CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext,
+  CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
 } from './self-interruption'
 import {
   actionHeadline, CONTROL, heardLengths, isAction, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet,
@@ -862,10 +862,11 @@ export class Receptionist {
     try {
       const offset = await this.channel.liveOffset()
       if (offset === undefined || this.lastSpoken !== spoken) return
+      const news = [...this.events]
       const ctx: InterruptionContext = {
         speech: splitAtOffset(joinSpeechParts(spoken.map(({ text, voice }) => ({ text, voice }))), offset),
         conversation: this.recentConversation(),
-        events: this.events.map(renderEvent),
+        events: news.map(renderEvent),
       }
       const verdict = await decideInterruption(ctx, (c) => this.deps.judgeInterruption(c))
       serverLog(`[receptionist] self-interruption: ${verdict.reason}${'probability' in verdict ? ` ${verdict.probability.toFixed(2)}` : ''}, ${verdict.wordsLeft} words left → ${verdict.interrupt ? 'cut in' : 'carry on'}`)
@@ -876,7 +877,7 @@ export class Receptionist {
       // Still the same reply playing, with the news still waiting, and the user still listening and not talking.
       if (!verdict.interrupt || this.lastSpoken !== spoken || !this.events.length || !this.listening || this.held) return
       if (this.channel.phase !== 'speaking') return
-      this.trace('cut-in', 'Cut its own reply short for news', ctx.events.join('\n\n'))
+      this.traceCutIn(verdict, ctx, news)
       this.selfInterrupted = true
       await this.channel.silence()
     } finally {
@@ -1953,6 +1954,21 @@ export class Receptionist {
     if (reply?.say.length) this.traceUnspoken(reply.say, 'you spoke over it before a word of it was said')
     const actions = calls.filter(isAction)
     if (actions.length) this.deps.record.notDone(actions.map(actionHeadline))
+  }
+
+  /**
+   * Control cut its own reply short for news, for the transcript's reasoning:
+   * the news, Jev's odds, and the words it dropped. What the user heard of the
+   * reply is struck out on the reply itself, as for any cut.
+   */
+  private traceCutIn(verdict: InterruptionVerdict, ctx: InterruptionContext, news: readonly ReceptionistEvent[]): void {
+    const odds = 'probability' in verdict ? `Judged ${percent(verdict.probability)} worth cutting in for` : 'Cut in'
+    this.trace('cut-in', `Cut its own reply short, saying "${HANG_ON}", for news: ${news.map(eventHeadline).join('; ')}`, [
+      `${odds}, with ${verdict.wordsLeft} words of the reply still to say.`,
+      // The word being said when it stopped counts as heard, as `noteInterruption` has it.
+      `Never said: "${ctx.speech.remaining}"`,
+      ...ctx.events,
+    ].join('\n\n'))
   }
 
   /** A reply that was written and never said, word for word, for the transcript's reasoning. */
