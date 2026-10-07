@@ -17,6 +17,7 @@ import { formatBytes } from '../../lib/format-bytes'
 import { useToolbarMenu } from './useToolbarMenu'
 import { showToast } from '../../lib/toast'
 import { useDimStaleStore } from '../../stores/dimStaleStore'
+import { isSupersampleActive, realDevicePixelRatio } from '../../lib/supersample'
 import {
   ACTIVE_HOURS,
   ACTIVE_HOURS_OPTIONS,
@@ -600,6 +601,24 @@ export function FpsMetric() {
   return (
     <span className="toolbar__status-item toolbar__metric">
       <span ref={ref}>0</span> <span className="toolbar__metric-label">fps</span>
+    </span>
+  )
+}
+
+/**
+ * Whether this page is supersampled (lib/supersample.ts), which follows the
+ * display: "2×" on a 1× monitor, "1×" on Retina. Read once, since a display
+ * change that alters it reloads the page.
+ */
+export function SupersampleMetric() {
+  const active = isSupersampleActive()
+  return (
+    <span
+      className="toolbar__status-item toolbar__metric"
+      data-tooltip={`Supersample — ${active ? 'rendering at 2× on' : 'off for'} this ${realDevicePixelRatio()}× display`}
+      data-tooltip-no-flip
+    >
+      {active ? '2×' : '1×'} <span className="toolbar__metric-label">ss</span>
     </span>
   )
 }
