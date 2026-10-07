@@ -147,6 +147,45 @@ describe('ControlTranscript, following along', () => {
     expect(list.scrollTop).toBe(2000)
   })
 
+  it('follows a message that keeps growing, though a scroll event arrives after it grew, but not a reader who scrolled up', async () => {
+    // jsdom never resizes anything: the test says when the content grew.
+    const grown: (() => void)[] = []
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private readonly callback: () => void) {}
+      observe() { grown.push(this.callback) }
+      unobserve() {}
+      disconnect() {}
+    })
+    try {
+      render(<ControlTranscript variant="screen" onDismiss={() => {}} />)
+      await screen.findByText('Nothing said to Control yet')
+      const list = document.querySelector('.control-transcript__list') as HTMLElement
+      const grow = (scrollHeight: number) => {
+        layout(list, scrollHeight, 500)
+        grown.forEach((callback) => callback())
+      }
+      layout(list, 1000, 500)
+      list.scrollTop = 500
+      fireEvent.scroll(list)
+
+      grow(1600)
+      expect(list.scrollTop).toBe(1600)
+      // The event for that scroll lands only once the message has grown again.
+      layout(list, 2400, 500)
+      fireEvent.scroll(list)
+      grow(2400)
+      expect(list.scrollTop).toBe(2400)
+
+      // Scrolled up to read: what arrives next leaves them where they are.
+      list.scrollTop = 1200
+      fireEvent.scroll(list)
+      grow(3000)
+      expect(list.scrollTop).toBe(1200)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('strikes out an action that never ran, and says so', async () => {
     bridge.responses.controlTranscript = () => ({
       entries: [{ offset: 0, timestamp: '2026-10-05T08:00:00Z', kind: 'log', text: 'SENT TO Sally: Push it.', notDone: true }],

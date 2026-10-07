@@ -86,6 +86,8 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   const restore = useRef<Restore | null>(null)
   /** Near enough the bottom to be kept there as content arrives: see the ResizeObserver below. */
   const stick = useRef(true)
+  /** Where the last scroll event found the list, to tell a reader scrolling up from content growing under them. */
+  const lastScrollTop = useRef(0)
   const [atBottom, setAtBottom] = useState(true)
   /** Control's thinking cue is playing: a circle at the bottom goes round with it. */
   const thinking = useReceptionistStore((s) => s.phase === 'thinking')
@@ -213,7 +215,13 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
           onScroll={() => {
             const list = listRef.current!
             const fromBottom = list.scrollHeight - list.scrollTop - list.clientHeight
-            stick.current = fromBottom < STICK_PX
+            // Only the reader scrolling up lets go of the bottom. A scroll event
+            // can land after the content has grown again — iOS dispatches them
+            // late — and would otherwise read a long message still arriving as
+            // the reader having left.
+            if (fromBottom < STICK_PX) stick.current = true
+            else if (list.scrollTop < lastScrollTop.current) stick.current = false
+            lastScrollTop.current = list.scrollTop
             setAtBottom(fromBottom <= AT_BOTTOM_PX)
             loadOlderIfNearTop()
           }}
