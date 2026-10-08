@@ -3,6 +3,7 @@ import type { DictationApi } from '../shared/api'
 import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
 import { acquire, type Capture } from './held-microphone'
 import { recordMobileEvent } from './mobile-events'
+import { noteMicLevel } from './mic-level'
 
 /**
  * One dictation: the microphone, streamed to the server as it is spoken.
@@ -141,6 +142,7 @@ export class Dictation {
         arrived()
       }
       this.stats.push(block)
+      noteMicLevel(block)
       const pcm = resampler.push(block)
       if (pcm.length > 0) this.queued.push(pcm)
     })

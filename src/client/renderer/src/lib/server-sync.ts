@@ -213,6 +213,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(window.api.receptionist.onNotice((text) => showToast(text)))
+  cleanupFns.push(window.api.receptionist.onUnread((unread) => useReceptionistStore.getState().setUnread(unread)))
 
   cleanupFns.push(
     window.api.receptionist.onAgentNames((names) => {

@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { ControlTranscriptEntry } from '../../../../shared/protocol'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { useReceptionistStore } from '../stores/receptionistStore'
 import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
 import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
+import { partViews, runs, type PartView } from '../lib/control-consumption'
+import { useReadReceipts } from '../hooks/useReadReceipts'
 
 /**
  * Control's transcript: the whole conversation with the receptionist, from
  * its full record — never what compaction left of it — and a box to type to
- * it, beside the microphone. Opens at the newest, at the bottom, and loads
- * older entries as you scroll up. A dialog over the canvas on the desktop
- * (`modal`), the whole screen on the phone (`screen`).
+ * it, beside the microphone. Opens at the newest, at the bottom — or at the
+ * first reply not read yet, when Control was muted — and loads older entries
+ * as you scroll up. A dialog over the canvas on the desktop (`modal`), the
+ * whole screen on the phone (`screen`).
+ *
+ * Its header says where Control speaks, and moves it: here, muted here, or
+ * let go. Words the user never heard or has not read yet are shown so, and
+ * count as read once they have been on screen (`useReadReceipts`); any part
+ * can be played again in its own voice.
  */
 
 /** Within this many pixels of the top, the next page loads. */
@@ -70,10 +78,16 @@ function useModalDismiss(enabled: boolean, dialogRef: React.RefObject<HTMLDivEle
   }, [enabled, dialogRef])
 }
 
-/** How to put the scroll back once new entries are drawn. */
-type Restore = 'bottom' | { fromBottom: number }
+/** How to put the scroll back once new entries are drawn: at the bottom, as far from it as before, or with an entry at the top. */
+type Restore = 'bottom' | { fromBottom: number } | { toOffset: number }
 
-export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | 'screen'; onDismiss: () => void }) {
+/** Room left above the first unread entry when the view opens on it. */
+const UNREAD_MARGIN_PX = 8
+
+/**
+ * `headerExtra` goes at the end of the header: the phone's earpiece switch.
+ */
+export function ControlTranscript({ variant, onDismiss, headerExtra }: { variant: 'modal' | 'screen'; onDismiss: () => void; headerExtra?: ReactNode }) {
   const [entries, setEntries] = useState<ControlTranscriptEntry[]>([])
   const [more, setMore] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -95,6 +109,15 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   const contentRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   useModalDismiss(variant === 'modal', dialogRef, onDismiss)
+  /** The oldest reply unread when the view opened: the view opens on it, under a "New" line that stays while it is open. */
+  const [firstUnread] = useState(() => useReceptionistStore.getState().unread.first)
+  /** The part this device is replaying, if any. */
+  const [replaying, setReplaying] = useState<{ of: number; part: number } | null>(null)
+  useEffect(() => window.api.receptionist.onReplaying((playing, refused) => {
+    setReplaying(playing)
+    if (refused) setError(`Could not play that again: ${refused}.`)
+  }), [])
+  useReadReceipts(listRef, (of, part) => window.api.receptionist.read(of, part))
 
   /** The newest page when `before` is undefined, else the page before that offset. */
   const load = useCallback(async (before: number | undefined) => {
@@ -103,8 +126,11 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
     try {
       const page = await window.api.receptionist.transcript(before)
       const list = listRef.current
-      // Older entries go in above: keep what is on screen where it is.
-      restore.current = before === undefined || !list ? 'bottom' : { fromBottom: list.scrollHeight - list.scrollTop }
+      // Older entries go in above: keep what is on screen where it is. Opening
+      // on unread replies starts at the first of them, if this page has it.
+      const opening = before === undefined && firstUnread !== undefined && page.entries.some((entry) => entry.offset === firstUnread)
+      restore.current = opening ? { toOffset: firstUnread } : before === undefined || !list ? 'bottom' : { fromBottom: list.scrollHeight - list.scrollTop }
+      if (opening) stick.current = false
       setEntries((have) => mergeEntries(have, page.entries))
       setMore(page.more)
       setError(null)
@@ -114,7 +140,7 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
       loading.current = false
       setLoaded(true)
     }
-  }, [])
+  }, [firstUnread])
 
   useEffect(() => {
     // Subscribed before the first page is asked for, so nothing recorded in between is missed.
@@ -146,7 +172,12 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
     const how = restore.current
     restore.current = null
     if (!list || !how) return
-    list.scrollTop = how === 'bottom' ? list.scrollHeight : list.scrollHeight - how.fromBottom
+    if (how === 'bottom') list.scrollTop = list.scrollHeight
+    else if ('fromBottom' in how) list.scrollTop = list.scrollHeight - how.fromBottom
+    else {
+      const entry = list.querySelector(`[data-entry-offset="${how.toOffset}"]`)
+      if (entry) list.scrollTop += entry.getBoundingClientRect().top - list.getBoundingClientRect().top - UNREAD_MARGIN_PX
+    }
   }, [entries, pending])
 
   // Whatever grows the content — an entry, a struck-out reply, the thinking
@@ -180,11 +211,10 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   // A page too short to scroll can never be scrolled up: keep loading until it can.
   useEffect(loadOlderIfNearTop, [loadOlderIfNearTop])
 
-  // Marks of how much of a cut-off reply was heard are not entries of their own: they strike out the rest of the reply they name.
-  const heard = new Map<number, number[]>()
-  for (const entry of entries) if (entry.kind === 'heard') heard.set(entry.of, entry.parts)
+  // Marks of what was heard or read of a reply are not entries of their own: they say what of it the user missed.
+  const views = partViews(entries)
   // Control's reasoning only when asked for: most of the time it is the conversation that matters.
-  const shown = entries.filter((entry) => entry.kind !== 'heard' && (reasoning || entry.kind !== 'trace'))
+  const shown = entries.filter((entry) => entry.kind !== 'heard' && entry.kind !== 'consumed' && (reasoning || entry.kind !== 'trace'))
 
   const send = () => {
     const text = draft.trim()
@@ -210,6 +240,7 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
         onDismiss()
       }}
     >
+      <ControlHeader extra={headerExtra} />
       <div className="control-transcript__body">
         <div
           className="control-transcript__list"
@@ -233,7 +264,10 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
               ? <div className="control-transcript__edge">Loading earlier…</div>
               : loaded && <div className="control-transcript__edge">{entries.length ? 'The start of the conversation' : 'Nothing said to Control yet'}</div>}
             {shown.map((entry, i) => (
-              <EntryRow key={entry.offset} entry={entry} previous={shown[i - 1]} heard={heard.get(entry.offset)} />
+              <EntryRow
+                key={entry.offset} entry={entry} previous={shown[i - 1]} parts={views.get(entry.offset)}
+                firstUnread={entry.offset === firstUnread} replaying={replaying?.of === entry.offset ? replaying.part : undefined}
+              />
             ))}
             {pending.map((text, i) => (
               <div key={`pending-${i}`} className="control-transcript__entry control-transcript__entry--user control-transcript__entry--pending">
@@ -316,13 +350,53 @@ function time(timestamp: string): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
-/** `heard`: how much of each part of this reply was heard, when it was cut off. */
-function EntryRow({ entry, previous, heard }: { entry: ControlTranscriptEntry; previous?: ControlTranscriptEntry; heard?: number[] }) {
-  if (entry.kind === 'heard') return null
+/**
+ * Where Control speaks, and the buttons that move it: the header of the
+ * transcript. The same three places the phone's Control button moves between
+ * — here, muted here, nobody — said outright (`receptionist.hold`), and a
+ * catch-up while replies wait unread.
+ */
+function ControlHeader({ extra }: { extra?: ReactNode }) {
+  const holder = useReceptionistStore((s) => s.holder)
+  const unread = useReceptionistStore((s) => s.unread.count)
+  const here = holder?.mine === true
+  const where = !holder ? 'Control is with nobody, and works silently'
+    : !here ? `Control is on your ${holder.label}`
+    : holder.muted ? 'Control writes here, muted'
+    : 'Control speaks here'
+  const hold = window.api.receptionist.hold
+  return (
+    <div className="control-transcript__header">
+      <span className="control-transcript__where">{where}</span>
+      <div className="control-transcript__header-buttons">
+        {unread > 0 && (
+          <button className="control-transcript__header-button" onClick={() => window.api.receptionist.catchUp()}>
+            Catch me up · {unread}
+          </button>
+        )}
+        {here && !holder.muted && <button className="control-transcript__header-button" onClick={() => hold('mute')}>Mute</button>}
+        {(!here || holder.muted) && <button className="control-transcript__header-button" onClick={() => hold('speak-here')}>{here ? 'Unmute' : 'Speak here'}</button>}
+        {here && <button className="control-transcript__header-button" onClick={() => hold('release')}>Release</button>}
+        {extra}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * `parts`: what of each part of this reply the user missed, if anything.
+ * `firstUnread`: the view opened on this entry, under a "New" line.
+ * `replaying`: the part of it this device is playing again.
+ */
+function EntryRow({ entry, previous, parts, firstUnread, replaying }: {
+  entry: ControlTranscriptEntry; previous?: ControlTranscriptEntry; parts?: PartView[]; firstUnread?: boolean; replaying?: number
+}) {
+  if (entry.kind === 'heard' || entry.kind === 'consumed') return null
   const today = day(entry.timestamp)
-  const divider = today && today !== (previous ? day(previous.timestamp) : '')
-    ? <div className="control-transcript__day">{today}</div>
-    : null
+  const divider = <>
+    {today && today !== (previous ? day(previous.timestamp) : '') && <div className="control-transcript__day">{today}</div>}
+    {firstUnread && <div className="control-transcript__new">New</div>}
+  </>
   const at = time(entry.timestamp)
   if (entry.kind === 'trace') {
     // Why Control did or did not speak: quieter than what it said and did, its detail one tap away.
@@ -345,19 +419,28 @@ function EntryRow({ entry, previous, heard }: { entry: ControlTranscriptEntry; p
     // What Control did, in full, is detail: one line until opened.
     const colon = entry.text.indexOf(': ')
     const head = colon < 0 ? entry.text : entry.text.slice(0, colon)
-    // Never ran: the user spoke before Control's reply was said. Struck out, as unheard words are.
+    // Never ran: the user spoke before Control's reply was said. Struck out:
+    // it did not happen, unlike unheard words, which stand. A press asks
+    // Control to do it after all.
     const notDone = entry.notDone === true
+    const doItNow = () => {
+      const text = `Please do this after all: ${entry.text}`
+      window.api.receptionist.say(text)
+      useControlTranscriptStore.getState().addPending(text)
+    }
     return (
       <>
         {divider}
         <details
           className={`control-transcript__entry control-transcript__entry--log${notDone ? ' control-transcript__entry--not-done' : ''}`}
+          data-entry-offset={entry.offset}
           // The verb picks the pill's colour: SENT, STARTED, ARCHIVED, …
           data-action={entry.text.split(' ')[0].toLowerCase()}
           title={notDone ? `Not done: you spoke before Control replied · ${at}` : at}
         >
           <summary>{notDone ? <><s>{head}</s> · not done, cut off</> : head}</summary>
           {colon >= 0 && <div className="control-transcript__log-body">{entry.text.slice(colon + 2)}</div>}
+          {notDone && <button className="control-transcript__do-it" onClick={doItNow}>Do it now</button>}
         </details>
       </>
     )
@@ -382,29 +465,57 @@ function EntryRow({ entry, previous, heard }: { entry: ControlTranscriptEntry; p
   return (
     <>
       {divider}
-      <div className="control-transcript__entry control-transcript__entry--reply">
+      <div className="control-transcript__entry control-transcript__entry--reply" data-entry-offset={entry.offset}>
         {entry.parts.length === 0 && <div className="control-transcript__silent">Control said nothing</div>}
-        {entry.parts.map((part, i) => (
-          <div key={i} className="control-transcript__part">
-            {/* Every change of voice is headed, so each block says who spoke it. */}
-            {(i === 0 || part.from !== entry.parts[i - 1].from) && (
-              <div className="control-transcript__meta">{part.from}{i === 0 ? ` · ${at}` : ''}</div>
-            )}
-            <div className="control-transcript__bubble"><HeardText text={part.text} heard={heard?.[i]} /></div>
-          </div>
-        ))}
+        {entry.parts.map((part, i) => {
+          const view = parts?.[i]
+          const missing = view !== undefined && view.missing.length > 0
+          const playing = replaying === i
+          return (
+            <div key={i} className="control-transcript__part">
+              {/* Every change of voice is headed, so each block says who spoke it. */}
+              {(i === 0 || part.from !== entry.parts[i - 1].from) && (
+                <div className="control-transcript__meta">{part.from}{i === 0 ? ` · ${at}` : ''}</div>
+              )}
+              <div className="control-transcript__bubble-row">
+                <div
+                  className={`control-transcript__bubble${missing && view.why === 'unread' ? ' control-transcript__bubble--unread' : ''}`}
+                  // Watched until it has been on screen long enough to count as read.
+                  {...(missing ? { 'data-read-of': entry.offset, 'data-read-part': i } : {})}
+                >
+                  <PartText text={part.text} view={view} />
+                </div>
+                <button
+                  className={`control-transcript__replay${playing ? ' control-transcript__replay--playing' : ''}`}
+                  aria-label={playing ? 'Stop playing this' : `Play this again, in ${part.from}'s voice`}
+                  onClick={() => playing ? window.api.receptionist.stopReplay() : window.api.receptionist.replay(entry.offset, i)}
+                >
+                  {playing
+                    ? <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1" fill="currentColor" /></svg>
+                    : <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor" /></svg>}
+                </button>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </>
   )
 }
 
-/** A part of a reply, the part the user never heard struck out: they talked over it, or Control cut itself off. */
-function HeardText({ text, heard }: { text: string; heard?: number }) {
-  if (heard === undefined || heard >= text.length) return <>{text}</>
+/**
+ * A part of a reply, with what the user missed of it shown so: dim and
+ * dotted where they never heard it — talked over, or cut off by Control
+ * itself — and marked unread where it was written to them muted. Not struck
+ * out: the words stand, and Control may have acted on them.
+ */
+function PartText({ text, view }: { text: string; view?: PartView }) {
+  if (!view?.missing.length) return <>{text}</>
   return (
     <>
-      {text.slice(0, heard)}
-      <s className="control-transcript__unheard" title="Not heard: cut off">{text.slice(heard)}</s>
+      {runs(text, view.missing).map((run, i) => run.missing
+        ? <span key={i} className={`control-transcript__${view.why}`} title={view.why === 'unheard' ? 'Not heard' : 'Not read yet'}>{run.text}</span>
+        : <span key={i}>{run.text}</span>)}
     </>
   )
 }

@@ -3,15 +3,16 @@ import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
 import { finalAgentMessage, type TranscriptMessage } from '../summary-chat'
-import { joinSpeechParts, type SpeechBackend } from '../voice-operator'
+import { joinSpeechParts, speechPartStarts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
+import { ConsumptionLedger, type ConsumedHow } from './consumption'
 import type { NamedVoice, VoiceGender } from './name-voice-table'
 import { RECEPTIONIST_NAME, RECEPTIONIST_VOICE } from './name-voice-table'
 import type { NameProblem } from './name-registry'
 import { DIRECTORY_PREFIX, editDistance, Handles, NODE_PREFIX } from './handles'
 import { AGENT_TOKEN, agentToken, parseAgentRef, stripBraces } from './agent-token'
 import { whereWords, type NearbyNode } from './nearby'
-import type { CameraBounds, ControlTrace, ControlTraceKind } from '../../shared/protocol'
+import type { CameraBounds, ControlTrace, ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import {
   FORMAT_REMINDER, HANDOVER_CHARS, HANDOVER_HEADING, HANDOVER_PROMPT, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
@@ -110,6 +111,14 @@ export interface AgentRanking {
 
 type RecordMessage = { role: 'user' | 'assistant'; content: string }
 
+/**
+ * A message as it goes into the record. A reply also keeps, beside what the
+ * model sees of it, how it reached the user — `delivery: 'text'` when written
+ * to a muted device — and each part's voice and spoken introduction, so that
+ * it can be replayed as it was said.
+ */
+export type RecordedMessage = RecordMessage & { delivery?: 'text'; voices?: string[]; intros?: string[] }
+
 
 export interface ReceptionistDeps {
   /**
@@ -149,13 +158,20 @@ export interface ReceptionistDeps {
    */
   record: {
     /** Returns where each message starts in the record: its id, for `amendHeard`. */
-    append(messages: readonly RecordMessage[]): number[]
+    append(messages: readonly RecordedMessage[]): number[]
     /**
      * The reply at `replyAt` was cut off: `heard[i]` is how many characters
-     * of its part `i` were heard. For the transcript view, which strikes out
-     * the rest; never shown to the model, which is told with a note instead.
+     * of its part `i` were heard. For the transcript view, which shows the
+     * rest as not heard — or, `unread`, as text still to read; never shown to
+     * the model, which is told with a note instead.
      */
-    amendHeard(replyAt: number, heard: number[]): void
+    amendHeard(replyAt: number, heard: number[], unread?: boolean): void
+    /** Part `part` of the reply at `of` taken in since, `from` to `to`: see `ConsumptionLedger`. Transcript-only, as `amendHeard`. */
+    consumed(of: number, part: number, from: number, to: number, how: ConsumedHow): void
+    /** The record's last few dozen entries, oldest first, as the transcript view reads them: to restore the ledger. */
+    tail(): ControlTranscriptEntry[]
+    /** Part `part` of the reply at `of` as it was said, for a replay; undefined if there is none. See `spokenPart`. */
+    spokenPart(of: number, part: number): { intro: string; text: string; voice: string } | undefined
     /**
      * Actions that never ran, because the words they waited on were never
      * heard: each as its line would read had it run. For the transcript view,
@@ -253,10 +269,15 @@ interface EndedAgent {
   handle: string
 }
 
-/** Who hears Control: a device's speech, and an id telling one device from another. */
+/**
+ * Who hears Control: a device's speech, and an id telling one device from
+ * another. `reading` when that device has muted Control: it is there, but
+ * Control's words are written to it rather than spoken.
+ */
 export interface Listener {
   id: string
   speech: SpeechBackend
+  reading?: boolean
 }
 
 export interface ReceptionistOptions {
@@ -264,6 +285,10 @@ export interface ReceptionistOptions {
   listener: Listener | undefined
   onPhase(phase: SpeechPhase): void
   onError(message: string): void
+  /** Who is being heard as speech plays: "Control", or the agent it quotes; undefined once nothing is. */
+  onSpeaker?(speaker: string | undefined): void
+  /** Replies written to a muted device and not read yet: see `ConsumptionLedger.unread`. */
+  onUnread?(unread: { count: number; first?: number }): void
 }
 
 /** Model calls in one turn, counting retries and each round of blocking tools. */
@@ -369,6 +394,14 @@ export const WARM_UP_TIMEOUT_MS = 90_000
 /** A cold agent answering its wake-up: `worked` once it started the turn, `answered` once it stopped again. */
 interface Waking { worked: boolean; done(): void; answered: Promise<void> }
 
+/** Told with the next message after the user mutes Control: see `setReading`. */
+const MUTED_NOTE = 'The user has muted you: from now on your replies are shown to them as text instead of being spoken, ' +
+  'and they may not read them at once. Write them as before.'
+/** Told with the next message after they unmute it. */
+const UNMUTED_NOTE = 'The user has unmuted you: your replies are spoken again.'
+/** The user's words for a catch-up, as the transcript shows them: see `catchUp`. */
+const CATCH_UP_REQUEST = "Catch me up on what I haven't read."
+
 /** The note for `carryOnAfterEmptyInterruption`. */
 const EMPTY_INTERRUPTION = "The user cut you off, but nothing they said was caught. Say in a few words that you hadn't finished, then carry on from where you were cut off."
 
@@ -429,6 +462,18 @@ export class Receptionist {
   private listening: boolean
   /** Which listener Control's words go to: see `setListener`. */
   private listenerId: string | undefined
+  /** The listener muted Control: its replies are written, not spoken. See `Listener.reading`. */
+  private reading = false
+  /** Muting stopped a reply mid-word: the rest of it went on as text. Consumed by `noteInterruption`. */
+  private mutedMidReply = false
+  /** What the user has taken in of each reply, against what the model believes: see consumption.ts. */
+  private readonly ledger = new ConsumptionLedger()
+  /** A replay is playing: Control holds its tongue, as while the user dictates. See `replay`. */
+  private replaying = false
+  /** Where replays play, apart from Control's own speech, so that neither cuts the other off. Made on the first replay. */
+  private replayChannel: SpeechChannel | undefined
+  private readonly onSpeaker: (speaker: string | undefined) => void
+  private readonly onUnread: (unread: { count: number; first?: number }) => void
   /**
    * What the user has missed since nobody could hear: the events Control acted
    * on silently, how its last words were cut off, whether a reply went unheard.
@@ -471,6 +516,9 @@ export class Receptionist {
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
+    this.onSpeaker = opts.onSpeaker ?? (() => undefined)
+    this.onUnread = opts.onUnread ?? (() => undefined)
+    this.ledger.restore(deps.record.tail())
     this.monitors = deps.watches
     // What the last server never got to tell the model goes with the first message.
     this.notes.push(...deps.carryOver.take())
@@ -482,12 +530,14 @@ export class Receptionist {
     if (saved && !this.session) this.queue = this.handOver(saved)
     this.listening = opts.listener !== undefined
     this.listenerId = opts.listener?.id
+    this.reading = opts.listener?.reading === true
     if (!this.listening) this.missed = emptyNews()
     this.channel = new SpeechChannel({
       speech: opts.listener?.speech ?? NO_LISTENER,
       label: 'receptionist',
       onPhase: (phase) => {
         opts.onPhase(phase)
+        if (phase !== 'speaking') this.onSpeaker(undefined)
         if (phase !== 'ready') return
         this.deps.carryOver.speaking(false)
         if (this.closing) return
@@ -539,7 +589,7 @@ export class Receptionist {
       return
     }
     void this.deps.sleep(QUIET_GRACE_MS).then(() => {
-      if (change === this.holdChanges) this.release()
+      if (change === this.holdChanges && !this.replaying) this.release()
     })
   }
 
@@ -574,6 +624,8 @@ export class Receptionist {
     await this.channel.cancel()
     // Said just ahead of how much was heard, which the note `noteInterruption` adds last says.
     if (await this.noteInterruption()) this.notes.splice(-1, 0, RESTARTED_MID_REPLY)
+    const consumption = this.ledger.note()
+    if (consumption) this.notes.push(consumption)
     this.deps.carryOver.leave(this.notes)
   }
 
@@ -600,8 +652,11 @@ export class Receptionist {
    * they missed, if they missed anything. Moving to another device is both at
    * once: the old one is cut off, and Control picks up on the new one from
    * where it was cut.
+   *
+   * A listener that is `reading` has muted Control (see `setReading`).
    */
   setListener(listener: Listener | undefined): void {
+    if (listener) this.setReading(listener.reading === true)
     if (!listener) {
       if (!this.listening) return
       this.listening = false
@@ -627,6 +682,121 @@ export class Receptionist {
     }
     this.listening = true
     this.arrive(true)
+  }
+
+  /**
+   * Muted, Control's replies are written to the listener rather than spoken:
+   * the user is there, reading. A reply being spoken stops where the voice
+   * got to, and the rest of it goes on as text, unread rather than lost. The
+   * model is told either way, with its next message.
+   */
+  private setReading(reading: boolean): void {
+    if (reading === this.reading) return
+    this.reading = reading
+    if (reading) {
+      this.notes.push(MUTED_NOTE)
+      if (this.channel.phase === 'speaking' || this.channel.phase === 'synthesizing') {
+        this.mutedMidReply = true
+        void this.channel.silence().then(() => this.noteInterruption())
+      }
+    } else {
+      this.notes.push(UNMUTED_NOTE)
+    }
+  }
+
+  /** Replies written to a muted device and not read yet. */
+  unread(): { count: number; first?: number } {
+    return this.ledger.unread()
+  }
+
+  /** The user read part `part` of the reply at `of`, in the transcript view: the whole of it. */
+  readPart(of: number, part: number): void {
+    this.consume(of, part, 0, Infinity, 'read')
+  }
+
+  /** `told` when the model already knows, so the ledger's next note leaves it out. */
+  private consume(of: number, part: number, from: number, to: number, how: ConsumedHow, told = false): void {
+    const before = this.ledger.unread()
+    const range = this.ledger.consume(of, part, from, to, told)
+    if (!range) return
+    this.deps.record.consumed(of, part, range.from, range.to, how)
+    const after = this.ledger.unread()
+    if (after.count !== before.count || after.first !== before.first) this.onUnread(after)
+  }
+
+  /**
+   * The user asked to be caught up on what they have not read: Control sums
+   * it up, spoken, as their turn, and it all counts as taken in — they will
+   * have heard what of it matters from the summary.
+   */
+  async catchUp(): Promise<void> {
+    const parts = this.ledger.unreadParts()
+    if (!parts.length) return
+    this.notes.push(`The user asks to be caught up on what you wrote while they had you muted, which they have not read: ${parts.map(part => `"${part.text.replace(/\s+/g, ' ').trim()}"`).join('; ')}. ` +
+      'Sum it up in a few spoken sentences: what matters, and anything waiting on them.')
+    // Told: the note above is all the model needs to hear of them.
+    for (const part of parts) this.consume(part.at, part.part, part.from, part.to, 'summary', true)
+    await this.hear(CATCH_UP_REQUEST)
+  }
+
+  /**
+   * Play part `part` of the reply at `of` again, as it was said, through
+   * `speech` — the device that asked. Its own channel, not Control's: a
+   * replay is no turn, and talking over it only stops it. While it plays,
+   * Control holds anything it would say, as while the user dictates; and
+   * what the user hears of it counts as taken in. `onPlaying` hears it start
+   * and stop. Refused while Control is speaking, or for a reply with no
+   * voices on record.
+   */
+  async replay(of: number, part: number, speech: SpeechBackend, onPlaying: (playing: boolean) => void): Promise<string | undefined> {
+    if (this.channel.isProducing()) return 'Control is talking'
+    const said = this.deps.record.spokenPart(of, part)
+    if (!said) return 'That reply was recorded before replies kept their voices'
+    const spoken = `${said.intro}${said.text}`
+    const intro = said.intro.length
+    const channel = this.replayChannel ??= new SpeechChannel({
+      speech, label: '[receptionist replay]',
+      onPhase: () => undefined,
+      onFailure: (failure) => this.onError(speechFailureMessage(failure, 'the replay')),
+      deps: { sleep: (ms) => this.deps.sleep(ms), voiceOperatorDiscovered: () => this.deps.voiceOperatorDiscovered() },
+    })
+    channel.speech = speech
+    const attempt = channel.begin('synthesizing')
+    this.setReplaying(true)
+    onPlaying(true)
+    let heard = 0
+    const done = (): void => {
+      if (heard > intro) this.consume(of, part, 0, heard - intro, 'replayed')
+      this.setReplaying(false)
+      onPlaying(false)
+    }
+    const followed = await channel.deliver(attempt, [{ text: spoken, voice: said.voice }], undefined, (progress) => {
+      if (progress.kind === 'playing') heard = Math.max(heard, progress.heard)
+      else {
+        heard = progress.state === 'completed' ? spoken.length : Math.max(heard, progress.heard ?? 0)
+        done()
+      }
+    })
+    if (!followed) {
+      channel.settle(attempt)
+      done()
+    }
+    return undefined
+  }
+
+  /** Stop a replay, if one is playing. What was heard of it counts, as it does when it ends. */
+  stopReplay(): void {
+    void this.replayChannel?.silence()
+  }
+
+  private setReplaying(replaying: boolean): void {
+    this.replaying = replaying
+    if (replaying) {
+      this.held = true
+      this.pauses++
+      return
+    }
+    if (!this.dictating) this.release()
   }
 
   /**
@@ -899,7 +1069,7 @@ export class Receptionist {
     // Cut short for news: say so at once, while the turn that brings it is written.
     const selfInterrupted = this.selfInterrupted
     this.selfInterrupted = false
-    if (selfInterrupted && this.listening) await this.channel.deliverInterim(attempt, [{ text: HANG_ON, voice: RECEPTIONIST_VOICE }])
+    if (selfInterrupted && this.listening && !this.reading) await this.channel.deliverInterim(attempt, [{ text: HANG_ON, voice: RECEPTIONIST_VOICE }])
     await this.noteInterruption(selfInterrupted)
     // Read after that await: the listener may have come or gone during it.
     const away = !this.listening
@@ -940,7 +1110,8 @@ export class Receptionist {
       serverLog(`[receptionist] turn failed: ${message}`)
       this.deps.log({ event: 'turn-failed', heard: heard ?? null, error: message })
       this.onError(`The receptionist could not answer: ${message}`)
-      if (this.listening) monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
+      // Muted, the toast says it.
+      if (this.listening && !this.reading) monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
     } finally {
       if (!monitoring) this.channel.settle(attempt)
     }
@@ -1021,7 +1192,8 @@ export class Receptionist {
       // reply, its actions run first, and the words report them.
       const done: string[] = []
       let spoken: SpokenPart[] = []
-      if (reply.say.length && this.listening) {
+      // Muted, "let me check" is not worth writing down: the answer will be.
+      if (reply.say.length && this.listening && !this.reading) {
         await this.untilUserDone()
         if (!attempt.isCurrent) return undefined
         spoken = this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
@@ -1064,6 +1236,8 @@ export class Receptionist {
       // Notes go on whatever message leaves next, read only now: the message
       // ahead of this one in the queue may have just produced one.
       const notes = this.notes.splice(0)
+      const consumption = this.ledger.note()
+      if (consumption) notes.push(consumption)
       const recap = forgets(session) ? renderRecap(earlier) : undefined
       // The old session's notes go to the first message of the new one.
       const handover = sessionId ? undefined : this.handover
@@ -1844,7 +2018,7 @@ export class Receptionist {
    * of. Returns which agents came up, first mention first.
    */
   private render(say: readonly SayPart[], agents: readonly RosterAgent[]): {
-    spoken: RenderedPart[]; mentioned: NodeId[]
+    spoken: RenderedPart[]; mentioned: NodeId[]; speakers: string[]
   } {
     const handles = this.handles(agents)
     const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
@@ -1859,8 +2033,10 @@ export class Receptionist {
       return { name: named.name, voice: named.voice }
     }
     const spoken = renderSpeech(say, resolve, RECEPTIONIST_VOICE)
+    // Who each part is heard as, for the speaking indicator: as `renderSpeech` decides, Control unless it is an agent's own.
+    const speakers = say.map(part => (part.from === CONTROL ? undefined : resolve(part.from)?.name) ?? RECEPTIONIST_NAME)
     for (const nodeId of mentioned) this.deps.names.touch(nodeId)
-    return { spoken, mentioned }
+    return { spoken, mentioned, speakers }
   }
 
   /** The tokens of the agents being watched, for the turn's WATCHING line. */
@@ -1896,23 +2072,43 @@ export class Receptionist {
     // reason to move it. Only force_user_camera does, when they ask. Rendered
     // before the actions run, since the words name agents as the model saw
     // them: "{Kevin} is now Ruth." says Kevin.
-    const { spoken } = this.render(reply.say, agents)
+    const { spoken, speakers } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
-    this.lastSpoken = spoken
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
     taken.splice(0)
     // Done before a word is said, and reported by the words: the user never
     // waits through "Sent to Kevin" for the send. Talking over the words
     // undoes nothing, which is why Control asks first when it is unsure.
     await this.runActions(reply.tools)
-    this.lastSpokenAt = this.deps.record.append([{ role: 'assistant', content: storedReply(froms, spoken) }])[0]
+    // Read after the actions' awaits: muting while they ran writes this reply.
+    const reading = this.reading
+    const at = this.deps.record.append([{
+      role: 'assistant', content: storedReply(froms, spoken),
+      voices: spoken.map(part => part.voice ?? RECEPTIONIST_VOICE), intros: spoken.map(part => part.text.slice(0, part.introLength)),
+      ...(reading ? { delivery: 'text' as const } : {}),
+    }])[0]
+    if (at !== undefined && spoken.length) {
+      this.ledger.delivered(at, spoken.map(part => part.text.slice(part.introLength)), reading ? 'text' : 'spoken')
+      if (reading) this.onUnread(this.ledger.unread())
+    }
     // After the reply, so the transcript's reasoning reads as it happened: silence, then the watch kept.
     this.keepWatchingUntold(events, reply)
-    this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools })
+    this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools, ...(reading ? { muted: true } : {}) })
+    // Muted, it is written, and that is all: there is nothing to cut off.
+    if (reading) return false
+    this.lastSpoken = spoken
+    this.lastSpokenAt = at
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))
     if (!parts.length) return false
     this.deps.carryOver.speaking(true)
-    return await this.channel.deliver(attempt, parts)
+    const starts = speechPartStarts(parts)
+    let speaker: string | undefined
+    return await this.channel.deliver(attempt, parts, undefined, (progress) => {
+      if (progress.kind !== 'playing') return
+      const index = starts.filter(start => start <= progress.heard).length - 1
+      const now = speakers[Math.max(0, index)]
+      if (now !== speaker) this.onSpeaker(speaker = now)
+    })
   }
 
   /**
@@ -1999,16 +2195,27 @@ export class Receptionist {
     const spokenAt = this.lastSpokenAt
     this.lastSpoken = undefined
     this.lastSpokenAt = undefined
+    const muted = this.mutedMidReply
+    this.mutedMidReply = false
     if (heard === undefined || !spoken) return false
-    if (spokenAt !== undefined) this.deps.record.amendHeard(spokenAt, heardLengths(spoken, heard))
+    if (spokenAt !== undefined) {
+      const lengths = heardLengths(spoken, heard)
+      this.deps.record.amendHeard(spokenAt, lengths, muted)
+      this.ledger.heard(spokenAt, lengths, muted)
+      if (muted) this.onUnread(this.ledger.unread())
+    }
     const kept = redactSpoken(spoken, heard)
     const audible = kept.map(part => part.text).join(' ')
+    if (muted) {
+      this.notes.push(`The user muted you partway through your last reply. They heard only: "${audible}". The rest is shown to them as text, which they may not have read yet; do not assume they know it.`)
+      return true
+    }
     if (selfInterrupted) {
       this.notes.push(`You stopped your own last reply to bring the news below, and have just said "${HANG_ON}". The user heard only: "${audible}". Give the news first; say again only what of the rest still stands and matters.`)
       return true
     }
     // Talked over, or lost with the phone's page: either way, only this much was heard.
-    this.notes.push(`Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest; if it still matters, say it again, or add it to your backlog if it would pull them off the topic.`)
+    this.notes.push(`Your last reply was cut off before the user heard all of it. They heard only: "${audible}". They did not hear the rest; if it still matters, say it again, or add it to your backlog if it would pull them off the topic. If you act on what they did not hear, say so when you report it.`)
     // Cut off by leaving, or by moving: said again when they are back, since
     // the note above may go with a turn they cannot hear.
     if (this.missed) this.missed.cutOff = audible

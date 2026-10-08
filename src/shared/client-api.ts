@@ -62,6 +62,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
   }
   const onReceptionistStatus = latest('receptionist-status')
   const onReceptionistHolder = latest('receptionist-holder')
+  const onReceptionistUnread = latest('receptionist-unread')
   const onAgentNames = latest('agent-names')
   const onHandsFreeTuning = latest('hands-free-tuning')
 
@@ -219,10 +220,17 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     receptionist: {
       select: () => client.selectReceptionist(),
       stop: () => client.stopReceptionist(),
+      hold: (action) => client.holdReceptionist(action),
       say: (text) => client.sayToReceptionist(text),
+      read: (of, part) => client.readReceptionistReply(of, part),
+      replay: (of, part) => client.replayReceptionistReply(of, part),
+      stopReplay: () => client.stopReceptionistReplay(),
+      catchUp: () => client.catchUpWithReceptionist(),
+      onUnread: (cb) => onReceptionistUnread(({ count, first }) => cb({ count, ...(first === undefined ? {} : { first }) })),
+      onReplaying: (cb) => on('receptionist-replaying', ({ playing, refused }) => cb(playing, refused)),
       transcript: (before) => client.receptionistTranscript(before, TRANSCRIPT_PAGE),
       onTranscriptAppended: (cb) => on('receptionist-transcript-appended', (m) => cb(m.entries)),
-      onStatus: (cb) => onReceptionistStatus(({ phase, target, message }) => cb({ phase, target, message })),
+      onStatus: (cb) => onReceptionistStatus(({ phase, target, message, speaker }) => cb({ phase, target, message, speaker })),
       deviceId: client.device.id,
       onHolder: (cb) => onReceptionistHolder((m) => cb(m.holder)),
       onAgentNames: (cb) => onAgentNames((m) => cb(m.names)),

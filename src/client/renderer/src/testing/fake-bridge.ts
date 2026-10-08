@@ -187,6 +187,8 @@ export class FakeBridge implements Api {
   private readonly agentNames = new Set<(names: Record<string, string>) => void>()
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
+  private readonly receptionistUnread = new Set<(unread: { count: number; first?: number }) => void>()
+  private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
   private readonly handsFreeTuning = new Set<(tuning: Partial<HandsFreeTuning>) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
@@ -302,6 +304,10 @@ export class FakeBridge implements Api {
     },
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
+    receptionistUnread: (unread: { count: number; first?: number }): void => { for (const fn of this.receptionistUnread) fn(unread) },
+    receptionistReplaying: (playing: { of: number; part: number } | null, refused?: string): void => {
+      for (const fn of this.receptionistReplaying) fn(playing, refused)
+    },
     transcriptAppended: (entries: ControlTranscriptEntry[]): void => { for (const fn of this.transcriptAppended) fn(entries) },
     handsFreeTuning: (tuning: Partial<HandsFreeTuning>): void => { for (const fn of this.handsFreeTuning) fn(tuning) },
     systemMetrics: (sample: SystemMetricsSample): void => {
@@ -479,7 +485,14 @@ export class FakeBridge implements Api {
   readonly receptionist: ReceptionistApi = {
     select: () => this.record('receptionist.select'),
     stop: () => this.record('receptionist.stop'),
+    hold: (action) => this.record('receptionist.hold', action),
     say: (text) => this.record('receptionist.say', text),
+    read: (of, part) => this.record('receptionist.read', of, part),
+    replay: (of, part) => this.record('receptionist.replay', of, part),
+    stopReplay: () => this.record('receptionist.stopReplay'),
+    catchUp: () => this.record('receptionist.catchUp'),
+    onUnread: (cb) => subscribe(this.receptionistUnread, cb),
+    onReplaying: (cb) => subscribe(this.receptionistReplaying, cb),
     transcript: (before) => this.reply('receptionist.transcript', this.responses.controlTranscript(before), before),
     onTranscriptAppended: (cb) => subscribe(this.transcriptAppended, cb),
     deviceId: FAKE_DEVICE_ID,

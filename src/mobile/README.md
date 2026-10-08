@@ -63,7 +63,7 @@ replacement loads the new page (`clientStalenessStore.ts`). The build writes
 `build.json` (its id and the native fingerprint from `ios/native-version.mjs`),
 which `install.sh` also stamps into the app — see `update-check.ts`.
 
-The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control and the talk buttons in the middle, the toolbar's rocket on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
+The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control, the microphone and Control's transcript in the middle, the bell and the toolbar's rocket on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
@@ -84,19 +84,45 @@ Tapping any readout opens one panel with every set of figures (`MacReadouts.tsx`
 each mini-stats module's reading, the authorization's time left and clock expiry,
 and each usage window's used, elapsed and time-to-reset.
 
+## Control: here, muted, or let go
+
+The headset left of the microphone (`ControlButton.tsx`) means *Control speaks
+here*. Solid white with a halo, it does; a tap mutes it. Muted — a slashed
+speaker on it — Control stays on this phone but writes instead of speaking:
+its replies go into the transcript, unread until read, and the transcript
+button counts them as the bell does. Dim (a tag naming the device that has
+it, if any), it is elsewhere; a tap brings it here, speaking. Magenta, it is
+here but the voice last went to Summary Chat; a tap talks to Control again.
+A ring turns while it thinks; speaking shows on the transcript button. The
+server takes each tap as said outright (`receptionist-hold`: `speak-here`,
+`mute`, `release`), so two devices pressing at once cannot cross.
+
+Being muted is the device's own, and outlasts handing Control away and back
+(`receptionistMuted` in the server state). A muted phone is still Control's
+listener when it is not connected, so it can sleep (`stay-awake.ts` lets it):
+everything is waiting in the transcript when it wakes. Letting go of Control
+altogether — nobody hears it, and it tells you what you missed when you are
+back — is the transcript header's **Release**.
+
 ## Control's transcript
 
-A long press on Control — the headset on the bottom bar, or its button in the
-toolbar sheet — opens the whole conversation with Control above the bottom
-bar, with a box to type to it (`ControlTranscript.tsx`, shared with the
-desktop, where it is a dialog). It reads Control's full record
+The speech bubble right of the microphone (`TranscriptButton.tsx`), or a long
+press on Control's button in the toolbar sheet, opens the whole conversation
+with Control above the bottom bar, with a box to type to it
+(`ControlTranscript.tsx`, shared with the desktop, where it is a dialog).
+While anything is said through Control, bars move on the button in the
+colour of who is speaking — white for Control, a hue of their own for an
+agent it quotes. It reads Control's full record
 (`~/.spaceterm/receptionist/conversation.jsonl`), not its session, so
-compaction never shortens it: it opens at the newest and loads older pages as
-you scroll up. A tap on Control still brings it here or lets it go.
+compaction never shortens it: it opens at the newest — or at the first reply
+not read yet, under a "New" line — and loads older pages as you scroll up.
+Its header says where Control speaks, with Mute or Unmute, Release, the
+earpiece switch, and **Catch me up** while replies wait unread: Control comes
+here unmuted and sums them up aloud.
 
-While it is open the bar stays up: the headset is a down arrow that closes it,
-and the talk button talks to Control, whatever the voice target, with what it
-heard appearing at the bottom. It and the toolbar sheet are screens, not
+While it is open the bar stays up: the transcript button is a down arrow that
+closes it, and the microphone talks to Control, whatever the voice target,
+with what it heard appearing at the bottom. It and the toolbar sheet are screens, not
 layers — opening one closes the other — and a one-finger sideways drag
 dismisses either, as it leaves the terminal view (`swipe-dismiss.ts`), except
 from the sheet's button strip, which scrolls sideways, a row's reorder handle,
@@ -104,13 +130,31 @@ or the transcript's text box. Agents Control quoted by handle alone
 are named from the record and log (`transcript-names.ts`), since the name
 registry forgets archived agents; one never named shows its title.
 
-What you cut Control off in the middle of is struck out once you interrupt:
-the words you never heard, and — as dashed pills, "not done, cut off" — the
-actions that were waiting on them and so never ran. Both are recorded as
-transcript-only lines the model never sees (`amendHeard`, `notDone` in
-`real-deps.ts`). The view follows new content while you are near the bottom,
-including the circle that turns while Control thinks; a button takes you back
-down when you are not.
+What you cut Control off in the middle of shows once you interrupt: the words
+you never heard, dim and dotted rather than struck out — they stand, and
+Control may have acted on them — and, as dashed struck pills, "not done, cut
+off", the actions that were waiting on them and so never ran, each with **Do
+it now** to ask for it after all. Replies written while muted carry an accent
+until read. All of it is recorded as transcript-only lines the model never
+sees (`amendHeard`, `notDone`, `consumed` in `real-deps.ts`). The view follows
+new content while you are near the bottom, including the circle that turns
+while Control thinks; a button takes you back down when you are not.
+
+Every part of a reply has a ▶ that plays it again on this device, in the
+voice it was said in and with its "Kevin here." (replies keep their voices
+and introductions in the record; older ones cannot be replayed). Control
+holds its tongue while a replay plays, and talking over it just stops it.
+
+**Keeping Control in step with what you took in.** Control writes knowing
+everything it says, and assumes it was heard. The server's
+`ConsumptionLedger` (`src/server/receptionist/consumption.ts`) follows what
+you actually took in of each reply — heard, read, replayed or summed up — and
+counts nothing taken in without evidence: a reply spoken through is heard,
+one written while muted is unread until it has been on screen (most of it in
+view for a second, `useReadReceipts`), and a cut-off one is heard only up to
+the cut. What changed is told to Control with the next message it gets —
+never with a turn of its own — so it never builds on a reply you have not
+read, and stops repeating what you have since read or replayed.
 
 ## Hearing Control with the phone locked
 
@@ -124,7 +168,7 @@ app runs its audio engine without the microphone (`NativeMicrophone.swift`,
 `Mode.speaker`): playback only, mixing with other apps' audio, playing
 silence, and Control's voice through the speaker or AirPods. Hands-free's
 microphone does the same job when it is on. Handing Control to the Mac, or to
-nobody, lets the app be suspended again.
+nobody, or muting it, lets the app be suspended again.
 
 It costs the battery a running audio engine, and does nothing once the app
 has been swiped away; a call or Siri stops it until the interruption ends.
@@ -138,12 +182,44 @@ silence it. `native-stay-awake` and `native-awake-running` in the event record s
 coming and going, and the `native-heartbeat` while in the background says
 whether the page still answers (`pageAnsweredMs`).
 
+## The microphone
+
+The big button in the middle of the bottom bar (`MicButton.tsx`) is the
+phone's microphone, and only that; the rules for its gestures and looks are
+pure, in `mic-button.ts`.
+
+| Gesture | Does |
+|---|---|
+| tap | speak, and tap again to send — to Summary Chat, or to Control while it holds the voice target or its transcript is open. Over an answer, cuts it off and listens |
+| drag up | a lock rises above the thumb, as for a voice note in Messages; reaching it (48 px up) turns hands-free (below) on, or off if it was on. In the app it switches as the lock is reached, with a haptic; in a browser on letting go, the only moment a page may open a microphone |
+| long press | with Summary Chat, the sheet to abandon it; with Control, nothing |
+
+It looks the same however the listening started — a tap, "Control", the
+conversation window, or a composer's dictation:
+
+| Look | Means |
+|---|---|
+| grey | the microphone is closed |
+| outlined, pulsing | hands-free is on, waiting for the microphone |
+| white, lock badge, thin white ring | hands-free holds it; nothing leaves the phone until "Control" |
+| blue ring, draining | the conversation window: just talk. The ring is the quiet left before "Control" is needed again |
+| solid orange, level bars | your voice is leaving the phone, whatever started it — the bars are its level (`mic-level.ts`, fed by each dictation) |
+| orange, pulsing | waiting for the words |
+
+Orange is the **MIC** label's (below) and iOS's own dot. What Control or
+Summary Chat is doing never shows here: Control's own buttons say that.
+
+A composer's dictation carries on after its composer closes
+(`dictation-session.ts`). The button stays up while it does, orange, and a tap
+opens the open terminal's composer, which takes it over to stop or ship it; on
+the canvas, with no terminal open, it only says so.
+
 ## Hands-free: "Control, …"
 
-The hold-mic button (the microphone with a lock, right of the talk button) is
-the always-listen switch. While it holds the microphone, start talking with
+Dragging the microphone up onto its lock is the always-listen switch. While it
+holds the microphone, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
-phone taps (a haptic) and the button turns green; nothing waits on that, since
+phone taps (a haptic) and the button turns orange; nothing waits on that, since
 the dictation is fed everything from your first syllable out of the
 listener's buffer. When you are done, just stop: at each pause of 0.8 s the
 Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from your
@@ -152,7 +228,7 @@ sure, the dictation ends there. If it is not, a pause still ends it once it
 outlasts a patience that grows with how long you have been talking — three
 seconds for a quick request, up to twenty seconds five minutes into a
 monologue. The end tone means it was heard and sent: "Control" comes off the
-front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as the talk button's.
+front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as a tap's.
 
 - **Only "Control" said first counts**, with nobody talking just before it;
   the word anywhere else in a sentence never triggers. "Talking" is judged by
@@ -160,16 +236,16 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   1.3 MB, run in ONNX Runtime web at about 0.3 ms per 32 ms frame), so music,
   a fan or a noisy room never count as talk and never block it; without the
   model, loudness stands in.
-- **The conversation window.** "Control" opens it, and the hold-mic button
-  turns blue: from then on anything you say starts a dictation without
+- **The conversation window.** "Control" opens it, and the microphone gets a
+  blue ring: from then on anything you say starts a dictation without
   "Control" — your first word kept — including cutting Control off mid-reply
   (when it speaks through echo cancellation). The Mac checks only that it was
   words: not a cough, not filler (`ignoredWords`, server-side, defaults
   "hmm", "uh", "um" and the like). It stays open while either of you is
   speaking, however long, and closes with a tone (three soft steps down)
   once neither has spoken for `conversationMs` (15 s) — Control thinking does
-  not hold it open. The blue button counts down the seconds of quiet left, in
-  place of its icon. The window needs a server that knows it: an older one
+  not hold it open. The blue ring drains as the quiet runs out, the icon
+  staying put. The window needs a server that knows it: an older one
   answers the wake-word question instead, which the phone notices
   (`hands-free-server-too-old`), closing the window with its tone and logging
   that the server needs restarting; "Control" works as before meanwhile. Speech checks of two words or fewer are logged

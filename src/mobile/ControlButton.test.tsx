@@ -1,75 +1,88 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, fireEvent, screen, act } from '@testing-library/react'
 import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '@/testing/fake-bridge'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { ControlButton } from './ControlButton'
-import { SummarizerButton } from './SummarizerButton'
+import { TranscriptButton } from './TranscriptButton'
 
 let bridge: FakeBridge
 
 beforeEach(() => {
   bridge = installFakeBridge()
-  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null })
+  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null, speaker: null, unread: { count: 0 } })
+  useControlTranscriptStore.setState({ open: false, pending: [] })
 })
 
 afterEach(cleanup)
 
+/** What the Control button asked the server for, in order. */
+const holds = () => bridge.callsTo('receptionist.hold').map(call => call.args[0])
+
+const hold = (muted = false) => act(() => {
+  useReceptionistStore.getState().setHolder({ deviceId: FAKE_DEVICE_ID, label: 'Phone', ...(muted ? { muted: true as const } : {}) }, FAKE_DEVICE_ID)
+})
+
 describe('the phone’s Control button', () => {
-  it('selects the receptionist, and its colour is where Control is', () => {
+  it('has Control speak here when it is elsewhere, and mutes it when it speaks here', () => {
     const { container } = render(<ControlButton />)
     const button = screen.getByRole('button', { name: /^Control/ })
-    fireEvent.click(button)
-    expect(bridge.callsTo('receptionist.select')).toHaveLength(1)
     expect(container.querySelector('.m-control--away')).not.toBeNull()
+    fireEvent.click(button)
+    expect(holds()).toEqual(['speak-here'])
 
-    act(() => useReceptionistStore.getState().setHolder({ deviceId: FAKE_DEVICE_ID, label: 'Phone' }, FAKE_DEVICE_ID))
+    hold()
     act(() => useReceptionistStore.getState().setStatus({ phase: 'ready', target: true }))
     expect(container.querySelector('.m-control--here')).not.toBeNull()
+    fireEvent.click(button)
+    expect(holds().at(-1)).toBe('mute')
 
-    act(() => useReceptionistStore.getState().setStatus({ phase: 'speaking', target: true }))
-    expect(button.dataset.phase).toBe('speaking')
-    expect(button.getAttribute('aria-label')).toMatch(/stop it and let go/)
+    hold(true)
+    expect(container.querySelector('.m-control--muted .m-control__muted')).not.toBeNull()
+    fireEvent.click(button)
+    expect(holds().at(-1)).toBe('speak-here')
+  })
 
+  it('names the device that holds Control, and talks Control back from Summary Chat', () => {
+    const { container } = render(<ControlButton />)
+    act(() => useReceptionistStore.getState().setHolder({ deviceId: 'desktop', label: 'Mac' }, FAKE_DEVICE_ID))
+    expect(container.querySelector('.m-control__where')?.textContent).toBe('Mac')
+
+    hold()
     act(() => useReceptionistStore.getState().setStatus({ phase: 'ready', target: false }))
     expect(container.querySelector('.m-control--summary')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Control/ }))
+    expect(holds()).toEqual(['speak-here'])
+  })
+
+  it('shows thinking, but never speaking: that is the transcript button’s', () => {
+    render(<ControlButton />)
+    hold()
+    act(() => useReceptionistStore.getState().setStatus({ phase: 'thinking', target: true }))
+    const button = screen.getByRole('button', { name: /^Control/ })
+    expect(button.dataset.phase).toBe('thinking')
+    act(() => useReceptionistStore.getState().setStatus({ phase: 'speaking', target: true, speaker: 'Control' }))
+    expect(button.dataset.phase).toBe('ready')
   })
 })
 
-describe('the talk button while Control holds the voice', () => {
-  it('talks to Control even with no Summary Chat surface', () => {
-    useReceptionistStore.setState({ target: true })
-    render(<SummarizerButton nodeId={null} />)
-    expect(screen.getByRole('button', { name: 'Talk to Control' })).toBeTruthy()
+describe('the phone’s transcript button', () => {
+  it('opens and closes the transcript with a tap', () => {
+    render(<TranscriptButton />)
+    fireEvent.click(screen.getByRole('button', { name: /^Control transcript/ }))
+    expect(useControlTranscriptStore.getState().open).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Close the Control transcript' }))
+    expect(useControlTranscriptStore.getState().open).toBe(false)
   })
 
-  it('cuts Control off rather than Summary Chat when tapped over an answer', () => {
-    useReceptionistStore.setState({ target: true, phase: 'speaking' })
-    render(<SummarizerButton nodeId={null} />)
-    fireEvent.click(screen.getByRole('button', { name: /Speaking/ }))
-    // Stopped, not let go of: the select a Control press sends would silence it.
-    expect(bridge.callsTo('receptionist.stop')).toHaveLength(1)
-    expect(bridge.callsTo('receptionist.select')).toHaveLength(0)
-    expect(bridge.callsTo('toggleSummaryChat')).toHaveLength(0)
-  })
-})
-
-describe('the talk button over Control’s transcript', () => {
-  it('sends what it hears straight to Control, and shows it at the bottom of the transcript', async () => {
-    act(() => useControlTranscriptStore.getState().setOpen(true))
-    const finish = vi.fn(async () => 'what is Kevin doing?')
-    const dictation = await import('./dictation')
-    vi.spyOn(dictation.Dictation, 'begin').mockReturnValue({} as never)
-    vi.spyOn(dictation, 'whenHearing').mockResolvedValue({ finish, cancel: vi.fn() } as never)
-    render(<SummarizerButton nodeId={null} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Talk to Control' }))
-    await screen.findByRole('button', { name: 'Listening — tap to send' })
-    fireEvent.click(screen.getByRole('button', { name: 'Listening — tap to send' }))
-    await screen.findByRole('button', { name: 'Talk to Control' })
-    expect(bridge.lastCall('receptionist.say')).toEqual(['what is Kevin doing?'])
-    expect(bridge.callsTo('summaryChatFollowUp')).toHaveLength(0)
-    expect(useControlTranscriptStore.getState().pending).toEqual(['what is Kevin doing?'])
-    act(() => useControlTranscriptStore.getState().setOpen(false))
-    vi.restoreAllMocks()
+  it('says who is speaking, and counts what is unread', () => {
+    const { container } = render(<TranscriptButton />)
+    act(() => useReceptionistStore.getState().setStatus({ phase: 'speaking', target: true, speaker: 'Kevin' }))
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Control transcript — Kevin speaking')
+    expect(container.querySelector('.m-transcript__bars')).not.toBeNull()
+    act(() => useReceptionistStore.getState().setStatus({ phase: 'ready', target: true }))
+    act(() => useReceptionistStore.getState().setUnread({ count: 2, first: 40 }))
+    expect(container.querySelector('.m-transcript__count')?.textContent).toBe('2')
+    expect(container.querySelector('.m-transcript__bars')).toBeNull()
   })
 })

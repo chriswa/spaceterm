@@ -74,7 +74,7 @@ export type ServerEventType =
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
-  | 'receptionist-transcript-appended'
+  | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-replaying'
   | 'hands-free-tuning'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -293,6 +293,8 @@ export class ServerClient {
       case 'agent-names':
       case 'receptionist-notice':
       case 'receptionist-transcript-appended':
+      case 'receptionist-unread':
+      case 'receptionist-replaying':
       case 'hands-free-tuning':
         this.emit(msg)
         return
@@ -894,6 +896,31 @@ export class ServerClient {
 
   stopReceptionist(): void {
     this.fireAndForget({ type: 'receptionist-stop' })
+  }
+
+  /** Where Control speaks: see `ReceptionistHoldMessage`. */
+  holdReceptionist(action: 'speak-here' | 'mute' | 'release'): void {
+    this.log(`[receptionist] ${action} from this client`)
+    this.fireAndForget({ type: 'receptionist-hold', action })
+  }
+
+  /** A part of a reply read in the transcript view. */
+  readReceptionistReply(of: number, part: number): void {
+    this.fireAndForget({ type: 'receptionist-read', of, part })
+  }
+
+  replayReceptionistReply(of: number, part: number): void {
+    this.log(`[receptionist] replay of part ${part} of the reply at ${of}`)
+    this.fireAndForget({ type: 'receptionist-replay', of, part })
+  }
+
+  stopReceptionistReplay(): void {
+    this.fireAndForget({ type: 'receptionist-replay-stop' })
+  }
+
+  catchUpWithReceptionist(): void {
+    this.log('[receptionist] catch-up asked for from this client')
+    this.fireAndForget({ type: 'receptionist-catch-up' })
   }
 
   /** Typed in Control's transcript view. */

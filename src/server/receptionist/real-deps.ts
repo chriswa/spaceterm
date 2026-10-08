@@ -3,8 +3,9 @@ import * as path from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
 import { askClaudePrint, ClaudePrintBusy } from '../claude-print'
 import { serverLog } from '../server-log'
-import { SessionBusy, type SavedSession, type SessionAnswer, type SessionTurn } from './receptionist'
-import { transcriptPage, type NameOf, type RecordFile } from './transcript'
+import { SessionBusy, type RecordedMessage, type SavedSession, type SessionAnswer, type SessionTurn } from './receptionist'
+import { parseRecordBytes, spokenPart, transcriptPage, type NameOf, type RecordFile } from './transcript'
+import type { ConsumedHow } from './consumption'
 import type { HandleNames } from './transcript-names'
 import type { ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
 
@@ -103,10 +104,12 @@ export const REAL_RECEPTIONIST_SESSION = {
 
 /** Enough of the record's end for `recent`: a few dozen messages. */
 const RECENT_BYTES = 64 * 1024
+/** The most of one line `spokenPart` reads. */
+const LINE_BYTES = 256 * 1024
 
 export const REAL_RECEPTIONIST_RECORD = {
   /** Returns the lines appended and where each starts, for the transcript view's live updates. */
-  append(messages: readonly RecordMessage[]): Array<{ line: string; offset: number }> {
+  append(messages: readonly RecordedMessage[]): Array<{ line: string; offset: number }> {
     try {
       fs.mkdirSync(RECEPTIONIST_DIR, { recursive: true })
       const timestamp = new Date().toISOString()
@@ -128,8 +131,42 @@ export const REAL_RECEPTIONIST_RECORD = {
    * view. A line with no role or content, so `recent` and `search` — what the
    * model sees of the record — pass over it. Returns it as `append` does.
    */
-  amendHeard(replyAt: number, heard: number[]): Array<{ line: string; offset: number }> {
-    return appendTranscriptOnly([{ heard: { of: replyAt, parts: heard } }])
+  amendHeard(replyAt: number, heard: number[], unread = false): Array<{ line: string; offset: number }> {
+    return appendTranscriptOnly([{ heard: { of: replyAt, parts: heard, ...(unread ? { unread } : {}) } }])
+  },
+  /** What of a reply was taken in since — read, replayed, summed up — for the ledger and the transcript view: a line `recent` and `search` pass over, as `amendHeard`'s. */
+  consumed(of: number, part: number, from: number, to: number, how: ConsumedHow): Array<{ line: string; offset: number }> {
+    return appendTranscriptOnly([{ consumed: { of, part, from, to, how } }])
+  },
+  /** The record's last entries, as the transcript view reads them, to restore the consumption ledger after a restart. */
+  tail(): ControlTranscriptEntry[] {
+    let fd: number
+    try { fd = fs.openSync(RECEPTIONIST_CONVERSATION, 'r') } catch { return [] }
+    try {
+      const size = fs.fstatSync(fd).size
+      const start = Math.max(0, size - RECENT_BYTES)
+      const buffer = Buffer.alloc(size - start)
+      fs.readSync(fd, buffer, 0, buffer.length, start)
+      return parseRecordBytes(buffer, start)
+    } finally {
+      fs.closeSync(fd)
+    }
+  },
+  /** The reply line at byte `of`, as it was said: see `spokenPart`. */
+  spokenPart(of: number, part: number): { intro: string; text: string; voice: string } | undefined {
+    let fd: number
+    try { fd = fs.openSync(RECEPTIONIST_CONVERSATION, 'r') } catch { return undefined }
+    try {
+      const size = fs.fstatSync(fd).size
+      if (of < 0 || of >= size) return undefined
+      // A reply line is a few kilobytes at most; read until its newline.
+      const buffer = Buffer.alloc(Math.min(size - of, LINE_BYTES))
+      fs.readSync(fd, buffer, 0, buffer.length, of)
+      const end = buffer.indexOf(0x0a)
+      return spokenPart(buffer.toString('utf8', 0, end < 0 ? buffer.length : end), part)
+    } finally {
+      fs.closeSync(fd)
+    }
   },
   /** Actions that never ran, for the transcript view: lines `recent` and `search` pass over, as `amendHeard`'s. */
   notDone(actions: string[]): Array<{ line: string; offset: number }> {

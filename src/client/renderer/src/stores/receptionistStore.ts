@@ -8,6 +8,8 @@ export interface ReceptionistHolding {
   label: string
   /** Whether it is this client's device. */
   mine: boolean
+  /** Control writes to that device rather than speaking. */
+  muted: boolean
 }
 
 /**
@@ -33,7 +35,12 @@ interface ReceptionistState {
   error: string | null
   /** The device Control speaks to, or null when nobody holds it. Mirrors `ServerState.receptionistHolder`. */
   holder: ReceptionistHolding | null
+  /** Who is being heard while it speaks: "Control", or the agent it quotes. */
+  speaker: string | null
+  /** Replies written to a muted device and not read yet, and where the oldest is in the record. */
+  unread: { count: number; first?: number }
   setStatus: (status: ReceptionistStatus) => void
+  setUnread: (unread: { count: number; first?: number }) => void
   /** `deviceId` is this client's own. */
   setHolder: (holder: ReceptionistHolder | null, deviceId: string) => void
 }
@@ -48,6 +55,9 @@ export const useReceptionistStore = create<ReceptionistState>((set) => ({
   target: false,
   error: null,
   holder: null,
-  setStatus: ({ phase, target, message }) => set({ phase, target, error: message ?? null }),
-  setHolder: (holder, deviceId) => set({ holder: holder && { label: holder.label, mine: holder.deviceId === deviceId } }),
+  speaker: null,
+  unread: { count: 0 },
+  setStatus: ({ phase, target, message, speaker }) => set({ phase, target, error: message ?? null, speaker: speaker ?? null }),
+  setUnread: (unread) => set({ unread }),
+  setHolder: (holder, deviceId) => set({ holder: holder && { label: holder.label, mine: holder.deviceId === deviceId, muted: holder.muted === true } }),
 }))

@@ -937,6 +937,45 @@ export interface ReceptionistStopMessage {
 }
 
 /**
+ * Where Control speaks, said outright rather than toggled, so two presses
+ * cannot cross: `speak-here` brings it to this device, unmuted, and makes it
+ * the voice's target; `mute` keeps it here but has it write rather than speak
+ * (taking it here first if need be); `release` lets go of it, if this device
+ * holds it, so that it speaks nowhere. Answered by `receptionist-holder`.
+ */
+export interface ReceptionistHoldMessage {
+  type: 'receptionist-hold'
+  action: 'speak-here' | 'mute' | 'release'
+}
+
+/**
+ * The user has read part `part` of the reply at `of` in the transcript view —
+ * the whole of it: it was on screen long enough. See `ConsumptionLedger`.
+ */
+export interface ReceptionistReadMessage {
+  type: 'receptionist-read'
+  of: number
+  part: number
+}
+
+/** Play part `part` of the reply at `of` again, on this device, in the voice it was said in. */
+export interface ReceptionistReplayMessage {
+  type: 'receptionist-replay'
+  of: number
+  part: number
+}
+
+/** Stop this device's replay, if one is playing. */
+export interface ReceptionistReplayStopMessage {
+  type: 'receptionist-replay-stop'
+}
+
+/** Have Control say, in a few words, what its unread replies said: it comes to this device, unmuted, to say it. */
+export interface ReceptionistCatchUpMessage {
+  type: 'receptionist-catch-up'
+}
+
+/**
  * Words typed to Control in its transcript view: for Control, whatever the
  * voice target, and — as speaking to it does — it brings Control here.
  */
@@ -1287,6 +1326,11 @@ export type ClientMessage =
   | ReceptionistSayMessage
   | ReceptionistTranscriptMessage
   | ReceptionistStopMessage
+  | ReceptionistHoldMessage
+  | ReceptionistReadMessage
+  | ReceptionistReplayMessage
+  | ReceptionistReplayStopMessage
+  | ReceptionistCatchUpMessage
 
 // --- Server → Client messages ---
 
@@ -1663,6 +1707,27 @@ export interface ReceptionistStatusMessage {
   phase: SummaryChatPhase
   target: boolean
   message?: string
+  /** Who is being heard while `phase` is `speaking`: "Control", or the agent it is quoting. */
+  speaker?: string
+}
+
+/**
+ * How many of Control's replies were written to a muted device and are not
+ * read yet, and where the oldest of them is in the record. Sent on connect
+ * and broadcast on every change.
+ */
+export interface ReceptionistUnreadMessage {
+  type: 'receptionist-unread'
+  count: number
+  first?: number
+}
+
+/** This client's replay: the part playing, or null once it has stopped. Sent only to the client that asked. */
+export interface ReceptionistReplayingMessage {
+  type: 'receptionist-replaying'
+  playing: { of: number; part: number } | null
+  /** Why it would not play, when it would not. */
+  refused?: string
 }
 
 /** Which device holds Control, if any. Sent on connect and broadcast on every change. */
@@ -1684,8 +1749,12 @@ export type ControlTranscriptEntry = {
 } & (
   /** `context` is what came with the user's words: events, news on their return. */
   | { kind: 'user'; text: string; context?: string }
-  /** `from` is "Control", or the agent Control quoted in its voice. */
-  | { kind: 'reply'; parts: Array<{ from: string; text: string }> }
+  /**
+   * `from` is "Control", or the agent Control quoted in its voice. `delivery`
+   * is `text` when it was written to a muted device rather than spoken: unread
+   * until it is read (see `consumed`).
+   */
+  | { kind: 'reply'; parts: Array<{ from: string; text: string }>; delivery?: 'text' }
   /**
    * Something Control did: sent to an agent, started, archived, renamed one.
    * `notDone` when it never ran, because the user spoke before Control's reply was said.
@@ -1693,9 +1762,17 @@ export type ControlTranscriptEntry = {
   | { kind: 'log'; text: string; notDone?: true }
   /**
    * Not shown itself: the reply at offset `of` was cut off, and `parts[i]` is
-   * how many characters of its part `i` were heard. The rest is struck out.
+   * how many characters of its part `i` were heard. The rest is shown as not
+   * heard. `unread` when the rest went on as text instead — the user muted
+   * Control partway through it — so it is unread rather than lost.
    */
-  | { kind: 'heard'; of: number; parts: number[] }
+  | { kind: 'heard'; of: number; parts: number[]; unread?: true }
+  /**
+   * Not shown itself: part `part` of the reply at `of` has since been taken
+   * in — characters `from` to `to` of it — by reading it, hearing it replayed,
+   * or hearing Control sum it up.
+   */
+  | { kind: 'consumed'; of: number; part: number; from: number; to: number; how: 'read' | 'replayed' | 'summary' }
   /** Why Control did or did not speak: see `ControlTrace`. Shown only when the view is asked to show Control's reasoning. */
   | ({ kind: 'trace' } & ControlTrace)
 )
@@ -2130,6 +2207,8 @@ export type ServerMessage =
   | AutoStampsEnabledMessage
   | ReceptionistStatusMessage
   | ReceptionistHolderMessage
+  | ReceptionistUnreadMessage
+  | ReceptionistReplayingMessage
   | CameraFollowMessage
   | ReceptionistNoticeMessage
   | ReceptionistTranscriptResultMessage

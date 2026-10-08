@@ -75,14 +75,21 @@ export function parseRecordBytes(bytes: Buffer, base: number, nameOf: NameOf = N
 /** One line of the record, as the view shows it; undefined for anything it cannot read. */
 export function parseRecordLine(line: string, offset: number, nameOf: NameOf = NO_NAMES): ControlTranscriptEntry | undefined {
   let raw: {
-    timestamp?: unknown; role?: unknown; content?: unknown; heard?: { of?: unknown; parts?: unknown }; notDone?: unknown
+    timestamp?: unknown; role?: unknown; content?: unknown; heard?: { of?: unknown; parts?: unknown; unread?: unknown }; notDone?: unknown
     trace?: { what?: unknown; text?: unknown; detail?: unknown }
+    consumed?: { of?: unknown; part?: unknown; from?: unknown; to?: unknown; how?: unknown }
+    delivery?: unknown
   }
   try { raw = JSON.parse(line) } catch { return undefined }
   const base = { offset, timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : '' }
   const heard = raw.heard
   if (heard && typeof heard.of === 'number' && Array.isArray(heard.parts) && heard.parts.every(n => typeof n === 'number')) {
-    return { ...base, kind: 'heard', of: heard.of, parts: heard.parts as number[] }
+    return { ...base, kind: 'heard', of: heard.of, parts: heard.parts as number[], ...(heard.unread === true ? { unread: true as const } : {}) }
+  }
+  const consumed = raw.consumed
+  if (consumed && typeof consumed.of === 'number' && typeof consumed.part === 'number' && typeof consumed.from === 'number' &&
+    typeof consumed.to === 'number' && (consumed.how === 'read' || consumed.how === 'replayed' || consumed.how === 'summary')) {
+    return { ...base, kind: 'consumed', of: consumed.of, part: consumed.part, from: consumed.from, to: consumed.to, how: consumed.how }
   }
   const trace = raw.trace
   if (trace && TRACE_KINDS.has(trace.what as ControlTraceKind) && typeof trace.text === 'string') {
@@ -100,7 +107,26 @@ export function parseRecordLine(line: string, offset: number, nameOf: NameOf = N
       : { ...base, kind: 'user', text: raw.content }
   }
   const parts = replyParts(raw.content, nameOf)
-  return parts ? { ...base, kind: 'reply', parts } : { ...base, kind: 'log', text: readable(raw.content, nameOf) }
+  return parts ? { ...base, kind: 'reply', parts, ...(raw.delivery === 'text' ? { delivery: 'text' as const } : {}) }
+    : { ...base, kind: 'log', text: readable(raw.content, nameOf) }
+}
+
+/**
+ * Part `part` of a reply line as it was said, for a replay: the words, the
+ * "Kevin here." they were spoken with in front of them (or nothing), and the
+ * voice they were spoken in. Undefined for a line that is not a reply, or one recorded
+ * before replies kept their voices.
+ */
+export function spokenPart(line: string, part: number): { intro: string; text: string; voice: string } | undefined {
+  let raw: { role?: unknown; content?: unknown; voices?: unknown; intros?: unknown }
+  try { raw = JSON.parse(line) } catch { return undefined }
+  if (raw.role !== 'assistant' || typeof raw.content !== 'string' || !Array.isArray(raw.voices)) return undefined
+  const voice = raw.voices[part]
+  const intro = Array.isArray(raw.intros) && typeof raw.intros[part] === 'string' ? raw.intros[part] as string : ''
+  let say: unknown
+  try { say = (JSON.parse(raw.content) as { say?: unknown }).say } catch { return undefined }
+  const text = Array.isArray(say) ? (say[part] as { text?: unknown } | undefined)?.text : undefined
+  return typeof voice === 'string' && typeof text === 'string' ? { intro, text, voice } : undefined
 }
 
 /** A stored reply (`{"say":[{from,text}]}`), or undefined when the content is not one — a log line. */

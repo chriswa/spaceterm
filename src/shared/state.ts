@@ -534,12 +534,20 @@ export interface ServerState {
    * nobody holds it. Absent means the Mac, as before devices could hold it.
    */
   receptionistHolder?: ReceptionistHolder | null
+  /**
+   * Devices that muted Control — it writes to them instead of speaking — and
+   * have not unmuted it since, whether or not they hold it now: taking Control
+   * back keeps the mute. Absent means none.
+   */
+  receptionistMuted?: string[]
 }
 
 /** The device Control speaks to: see `ClientDevice`. */
 export interface ReceptionistHolder {
   deviceId: string
   label: string
+  /** Control writes to this device rather than speaking: see `ServerState.receptionistMuted`. */
+  muted?: true
 }
 
 /** The Mac: every Electron window, and Voice Operator's own dictation. */

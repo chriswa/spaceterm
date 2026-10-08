@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, QUIET_OVER, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type SavedSession, type SessionTurn,
+  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
@@ -17,7 +17,8 @@ import { PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
 import type { NameRegistryStore } from './name-registry'
-import type { ControlTrace } from '../../shared/protocol'
+import type { ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
+import { spokenPart } from './transcript'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
@@ -106,6 +107,8 @@ function harness(opts: {
   judgePause?: ReceptionistDeps['judgePause']
   /** What Control set aside before this server started. */
   backlog?: string[]
+  /** The record's last entries as an earlier server left them, for the consumption ledger. */
+  tail?: ControlTranscriptEntry[]
   /** How an unarchived agent comes back; by default up and ready. */
   unarchived?: 'ready' | 'not-ready' | 'failed'
   /** When Kevin's prompt cache goes cold (epoch ms); by default nothing is known of it. */
@@ -148,8 +151,9 @@ function harness(opts: {
   const wire: string[] = []
   const notices: string[] = []
   let session: SavedSession | undefined = opts.saved
-  const record: Array<{ role: 'user' | 'assistant'; content: string }> = []
-  const heardMarks: Array<{ replyAt: number; parts: number[] }> = []
+  const record: RecordedMessage[] = []
+  const heardMarks: Array<{ replyAt: number; parts: number[]; unread?: true }> = []
+  const consumedMarks: Array<{ of: number; part: number; from: number; to: number; how: string }> = []
   const notDone: string[] = []
   const traces: ControlTrace[] = []
   let backlogJson: string | undefined
@@ -211,7 +215,10 @@ function harness(opts: {
     session: { load: () => session, save: (next) => { session = next } },
     record: {
       append: (messages) => messages.map(message => record.push(message) - 1),
-      amendHeard: (replyAt, parts) => { heardMarks.push({ replyAt, parts }) },
+      amendHeard: (replyAt, parts, unread) => { heardMarks.push({ replyAt, parts, ...(unread ? { unread: true as const } : {}) }) },
+      consumed: (of, part, from, to, how) => { consumedMarks.push({ of, part, from, to, how }) },
+      tail: () => opts.tail ?? [],
+      spokenPart: (of, part) => record[of] ? spokenPart(JSON.stringify(record[of]), part) : undefined,
       notDone: (actions) => { notDone.push(...actions) },
       trace: (trace) => { traces.push(trace) },
       search: (query) => record.filter(message => message.content.includes(query)).map(message => message.content).join('\n') || 'nothing',
@@ -275,7 +282,7 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, notDone, traces,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -2885,5 +2892,156 @@ describe("Receptionist: the transcript's reasoning", () => {
     await flush()
     h.receptionist.userTookOver(SALLY_ID)
     expect(lines(h).at(-1)).toMatch(new RegExp(`^unwatch: Stopped watching \\{\\w+:${SALLY}\\}: you typed into it yourself$`))
+  })
+})
+
+describe('Receptionist muted, and what the user has taken in', () => {
+  /** The same device, muted or not, as the server hands it over when the device mutes Control. */
+  const listen = (h: ReturnType<typeof harness>, reading: boolean) => h.receptionist.setListener({ ...h.listener, reading })
+
+  it('writes a reply to a muted device instead of speaking it, and counts it unread', async () => {
+    const h = harness({ replies: [reply([{ from: 'control', text: 'Kevin is done.' }])] })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    expect(h.spoken).toEqual([])
+    const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
+    expect(h.record[at]).toMatchObject({ delivery: 'text', voices: [RECEPTIONIST_VOICE], intros: [''] })
+    expect(h.receptionist.unread()).toEqual({ count: 1, first: at })
+  })
+
+  it('tells the model it was muted, and that a reply was not read by the time the user spoke again', async () => {
+    const h = harness({
+      replies: [
+        (turn) => {
+          expect(turn.prompt).toContain('The user has muted you')
+          return reply([{ from: 'control', text: 'Kevin is done, and asks whether to push.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain('A reply of yours was written to the user rather than spoken, and they have not read it yet: "Kevin is done, and asks whether to push."')
+          return reply([{ from: 'control', text: 'Sally is still going.' }])
+        },
+        (turn) => {
+          // Told once, not with every message after.
+          expect(turn.prompt).not.toContain('asks whether to push')
+          return reply([{ from: 'control', text: 'Fine.' }])
+        },
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    await h.receptionist.hear('and Sally?')
+    await flush()
+    await h.receptionist.hear('ok')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
+  it('says nothing of a muted reply the user read before speaking again', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }]),
+        (turn) => {
+          expect(turn.prompt).not.toContain('have not read')
+          expect(turn.prompt).not.toContain('Since then')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
+    h.receptionist.readPart(at, 0)
+    expect(h.receptionist.unread()).toEqual({ count: 0 })
+    expect(h.consumedMarks).toEqual([{ of: at, part: 0, from: 0, to: 'Kevin is done.'.length, how: 'read' }])
+    await h.receptionist.hear('push it')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('tells the model when the user has since read what they cut off', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
+        reply([{ from: 'control', text: 'Sure.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('Since then, the user has read, or heard replayed, what they had missed of your earlier words: "solver works and the tests pass."')
+          return reply([{ from: 'control', text: 'Good.' }])
+        },
+      ],
+      speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is done. Kevin here. The sol'.length },
+    })
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    await h.receptionist.hear('wait')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('The solver works'))
+    h.receptionist.readPart(at, 1)
+    await h.receptionist.hear('read it')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
+  it('tells the model when it is unmuted', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('The user has unmuted you')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    listen(h, false)
+    await h.receptionist.hear('ok')
+    await flush()
+    expect(h.spoken).toHaveLength(1)
+  })
+
+  it('replays a part in the voice it was said in, with its introduction, and counts what was heard of it', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works.' }]),
+        reply([{ from: 'control', text: 'Sure.' }]),
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('The solver works'))
+    const playing: boolean[] = []
+    expect(await h.receptionist.replay(at, 1, h.listener.speech, (now) => playing.push(now))).toBeUndefined()
+    await flush()
+    expect(h.spoken).toEqual([{ content: [{ text: 'Kevin here. The solver works.', voice: h.assigned.get(KEVIN_ID)!.voice }] }])
+    expect(playing).toEqual([true, false])
+    expect(h.consumedMarks).toEqual([{ of: at, part: 1, from: 0, to: 'The solver works.'.length, how: 'replayed' }])
+  })
+
+  it('catches the user up on what they have not read, and counts it taken in', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('The user asks to be caught up on what you wrote while they had you muted, which they have not read: "Kevin is done."')
+          expect(turn.prompt).not.toContain('have not read it yet')
+          expect(turn.prompt).toContain("THE USER SAYS: Catch me up on what I haven't read.")
+          return reply([{ from: 'control', text: 'Kevin finished.' }])
+        },
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    listen(h, false)
+    await h.receptionist.catchUp()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.receptionist.unread()).toEqual({ count: 0 })
+    expect(h.consumedMarks.map(mark => mark.how)).toEqual(['summary'])
   })
 })

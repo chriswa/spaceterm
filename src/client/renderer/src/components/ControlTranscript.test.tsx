@@ -293,3 +293,61 @@ describe('the desktop dialog closes like a modal', () => {
   })
 })
 
+
+describe('ControlTranscript and what the user took in', () => {
+  const at = '2026-10-05T08:00:01Z'
+
+  it('says where Control speaks, and moves it from its header', async () => {
+    useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, unread: { count: 0 } })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Nothing said to Control yet')
+    expect(screen.getByText('Control speaks here')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Mute' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
+    expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute', 'release'])
+
+    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, unread: { count: 2, first: 0 } }))
+    fireEvent.click(screen.getByRole('button', { name: 'Unmute' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Catch me up · 2' }))
+    expect(bridge.callsTo('receptionist.hold').at(-1)?.args[0]).toBe('speak-here')
+    expect(bridge.callsTo('receptionist.catchUp')).toHaveLength(1)
+  })
+
+  it('shows what was never heard and what is not read yet, and watches those parts to count them read', async () => {
+    bridge.responses.controlTranscript = () => ({
+      entries: [
+        { offset: 0, timestamp: at, kind: 'reply', parts: [{ from: 'Control', text: 'Kevin is done.' }, { from: 'Kevin', text: 'The solver works.' }] },
+        { offset: 80, timestamp: at, kind: 'heard', of: 0, parts: [14, 4] },
+        { offset: 120, timestamp: at, kind: 'reply', parts: [{ from: 'Control', text: 'Sally asks a question.' }], delivery: 'text' },
+      ],
+      more: false,
+    })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Kevin is done.')
+    expect(document.querySelector('.control-transcript__unheard')?.textContent).toBe('solver works.')
+    expect(document.querySelector('.control-transcript__unread')?.textContent).toBe('Sally asks a question.')
+    const watched = [...document.querySelectorAll<HTMLElement>('[data-read-of]')].map((el) => `${el.dataset.readOf}:${el.dataset.readPart}`)
+    expect(watched).toEqual(['0:1', '120:0'])
+
+    // Read: the record says so, and it is drawn whole.
+    act(() => bridge.emit.transcriptAppended([{ offset: 200, timestamp: at, kind: 'consumed', of: 120, part: 0, from: 0, to: 22, how: 'read' }]))
+    expect(document.querySelector('.control-transcript__unread')).toBeNull()
+  })
+
+  it('plays a part again, and stops it', async () => {
+    bridge.responses.controlTranscript = () => ({ entries: [{ offset: 0, timestamp: at, kind: 'reply', parts: [{ from: 'Kevin', text: 'The solver works.' }] }], more: false })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: "Play this again, in Kevin's voice" }))
+    expect(bridge.lastCall('receptionist.replay')).toEqual([0, 0])
+    act(() => bridge.emit.receptionistReplaying({ of: 0, part: 0 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop playing this' }))
+    expect(bridge.callsTo('receptionist.stopReplay')).toHaveLength(1)
+  })
+
+  it('asks Control to do an action that was never done', async () => {
+    bridge.responses.controlTranscript = () => ({ entries: [{ offset: 0, timestamp: at, kind: 'log', text: 'SENT to Kevin: push it', notDone: true }], more: false })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Do it now' }))
+    expect(bridge.lastCall('receptionist.say')).toEqual(['Please do this after all: SENT to Kevin: push it'])
+  })
+})
