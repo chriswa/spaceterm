@@ -16,7 +16,7 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * what's Kevin doing?" — and stop when you are done.
  *
  * Runs whenever this phone holds its microphone open (held-microphone.ts) —
- * the hold button *is* the always-listen switch. What the microphone hears
+ * the microphone button's drag-up lock *is* the always-listen switch. What the microphone hears
  * goes through `WakeListener`, on the phone, scored frame by frame for speech
  * by a voice-activity model (speech-detector.ts) — so music or a noisy room is
  * not speech. Nothing leaves the phone unless the user starts talking with
@@ -25,8 +25,8 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * Wispr), whether its first word is "control". Only "Control" said first
  * counts; the word anywhere else in a sentence does not.
  *
- * On a match the phone taps (a haptic, in the app) and the hold button turns
- * green, and an ordinary Wispr dictation opens on the microphone that is
+ * On a match the phone taps (a haptic, in the app) and the microphone button
+ * turns orange, and an ordinary Wispr dictation opens on the microphone that is
  * already open — fed everything said since the first syllable, out of the
  * listener's buffer, then live. So nothing waits on the check: it is
  * retroactive. A start tone would land mid-sentence, in the recording; the end

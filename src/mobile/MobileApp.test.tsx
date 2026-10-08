@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { installFakeBridge } from '@/testing/fake-bridge'
 import { useNodeStore } from '@/stores/nodeStore'
@@ -6,7 +6,6 @@ import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
-import { LONG_PRESS_MS } from '@/hooks/useLongPress'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../shared/ids'
 import type { TerminalNodeData } from '../shared/state'
 import { MobileApp } from './MobileApp'
@@ -91,39 +90,26 @@ describe('the phone’s bottom bar', () => {
 })
 
 describe('the phone’s Control transcript', () => {
-  function longPress(button: Element): void {
-    vi.useFakeTimers()
-    try {
-      fireEvent.pointerDown(button, { button: 0 })
-      act(() => { vi.advanceTimersByTime(LONG_PRESS_MS) })
-      fireEvent.pointerUp(button)
-      fireEvent.click(button)
-    } finally {
-      vi.useRealTimers()
-    }
-  }
-
   beforeEach(() => {
     useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null })
   })
 
-  it('opens on a long press with the bar still up, Control a down arrow that closes it, and the talk button there', () => {
+  it('opens on a tap of the transcript button with the bar still up, the button a down arrow that closes it, and the microphone there', () => {
     const { container, getByRole } = render(<MobileApp Canvas={() => null} />)
-    longPress(container.querySelector('.m-control')!)
+    fireEvent.click(getByRole('button', { name: /^Control transcript/ }))
     expect(container.querySelector('.control-transcript--screen')).not.toBeNull()
     expect(container.querySelector('.m-bar')).not.toBeNull()
-    // No conversation open, yet the talk button is up, and talks to Control.
-    expect(getByRole('button', { name: 'Talk to Control' })).toBeTruthy()
+    // No conversation open, yet the microphone is up, and talks to Control.
+    expect(getByRole('button', { name: /^Talk to Control/ })).toBeTruthy()
 
     fireEvent.click(getByRole('button', { name: 'Close the Control transcript' }))
     expect(container.querySelector('.control-transcript')).toBeNull()
-    expect(container.querySelector('.m-control')!.getAttribute('aria-label')).toMatch(/^Control/)
   })
 
   it('swaps with the surface list rather than stacking on it, either way round', () => {
     const { container, getByRole } = render(<MobileApp Canvas={() => null} />)
     fireEvent.click(getByRole('button', { name: 'Toolbar and surfaces' }))
-    longPress(container.querySelector('.m-control')!)
+    fireEvent.click(getByRole('button', { name: /^Control transcript/ }))
     expect(useControlTranscriptStore.getState().open).toBe(true)
     expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(false)
 

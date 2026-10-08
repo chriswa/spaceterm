@@ -359,6 +359,8 @@ export interface ReceptionistStatus {
   target: boolean
   /** Why it failed, when it did. */
   message?: string
+  /** Who is being heard while it speaks: "Control", or the agent it is quoting. */
+  speaker?: string
 }
 
 /**
@@ -379,6 +381,22 @@ export interface ReceptionistApi {
   select(): void
   /** Stop Control mid-answer without letting go of it, as a talk button pressed over it does. */
   stop(): void
+  /**
+   * Where Control speaks, said outright: `speak-here` brings it here, unmuted;
+   * `mute` keeps it here, writing rather than speaking; `release` lets go of it.
+   */
+  hold(action: 'speak-here' | 'mute' | 'release'): void
+  /** Part `part` of the reply at `of` was read in the transcript view. */
+  read(of: number, part: number): void
+  /** Play part `part` of the reply at `of` again, here, in the voice it was said in. */
+  replay(of: number, part: number): void
+  stopReplay(): void
+  /** Have Control sum up, aloud, what its unread replies said. */
+  catchUp(): void
+  /** Replies written to a muted device and not read yet, and where the oldest is. */
+  onUnread(callback: (unread: { count: number; first?: number }) => void): () => void
+  /** This client's replay: what is playing, or null; `refused` says why one would not start. Not replayed. */
+  onReplaying(callback: (playing: { of: number; part: number } | null, refused?: string) => void): () => void
   /** Words typed to Control: for it whatever the voice target, and they bring it here, as speaking to it does. */
   say(text: string): void
   /**

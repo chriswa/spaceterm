@@ -3973,8 +3973,69 @@ html, body, #root {
 .control-transcript__entry--user .control-transcript__bubble { background: var(--ct-you); }
 .control-transcript__entry--reply .control-transcript__bubble { background: var(--ct-control); border: 1px solid var(--ct-border); }
 
-/* What the user never heard of a reply they cut off. */
-.control-transcript__unheard { color: var(--ct-dim); text-decoration-thickness: 1px; }
+/* What the user never heard of a reply they cut off: dim and dotted, not struck — the words stand. */
+.control-transcript__unheard {
+  color: var(--ct-dim);
+  text-decoration: underline dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+/* Written to them muted, and not read yet: an accent down the bubble's side, until it has been on screen a moment. */
+.control-transcript__bubble--unread { box-shadow: inset 3px 0 0 var(--ct-accent); }
+.control-transcript__new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ct-accent);
+}
+.control-transcript__new::before,
+.control-transcript__new::after { content: ''; flex: 1; border-top: 1px solid var(--ct-accent); opacity: 0.5; }
+
+/* A part and the button that plays it again, beside it. */
+.control-transcript__bubble-row { display: flex; align-items: flex-end; gap: 4px; max-width: 100%; }
+.control-transcript__replay {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ct-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.control-transcript__replay:hover { opacity: 1; background: var(--ct-you); }
+.control-transcript__replay--playing { opacity: 1; color: var(--ct-accent); }
+
+/* Where Control speaks, and the buttons that move it. */
+.control-transcript__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--ct-border);
+  flex-shrink: 0;
+}
+.control-transcript__where { flex: 1; min-width: 0; font-size: 12px; color: var(--ct-dim); }
+.control-transcript__header-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.control-transcript__header-button {
+  padding: 5px 10px;
+  border: 1px solid var(--ct-border);
+  border-radius: 8px;
+  background: var(--ct-you);
+  color: var(--ct-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.control-transcript__header-button:hover { border-color: var(--ct-accent); }
 
 .control-transcript__meta { font-size: 11px; color: var(--ct-dim); padding: 0 4px; }
 .control-transcript__silent { font-size: 12px; font-style: italic; color: var(--ct-dim); }
@@ -4022,6 +4083,17 @@ html, body, #root {
   background: transparent;
   border-style: dashed;
   color: var(--ct-dim);
+}
+.control-transcript__do-it {
+  margin-top: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--ct-pill, var(--ct-border));
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ct-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 /* Control's reasoning (the Reasoning box): a quiet aside on Control's side, marked by what it is about. */

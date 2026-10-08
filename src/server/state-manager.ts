@@ -495,10 +495,22 @@ export class StateManager {
   /** Returns whether anything changed. */
   setReceptionistHolder(holder: ReceptionistHolder | null): boolean {
     const current = this.getReceptionistHolder()
-    if (current?.deviceId === holder?.deviceId && current?.label === holder?.label) return false
+    if (current?.deviceId === holder?.deviceId && current?.label === holder?.label && current?.muted === holder?.muted) return false
     this.state.receptionistHolder = holder
     this.schedulePersist()
     return true
+  }
+
+  /** Whether `deviceId` has muted Control: see `ServerState.receptionistMuted`. */
+  isReceptionistMuted(deviceId: string): boolean {
+    return this.state.receptionistMuted?.includes(deviceId) ?? false
+  }
+
+  setReceptionistMuted(deviceId: string, muted: boolean): void {
+    if (this.isReceptionistMuted(deviceId) === muted) return
+    const others = (this.state.receptionistMuted ?? []).filter(id => id !== deviceId)
+    this.state.receptionistMuted = muted ? [...others, deviceId] : others
+    this.schedulePersist()
   }
 
   /** Every live node, for sweeps that consider them all. */

@@ -114,10 +114,9 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-bar__zone--middle { justify-content: center; }
 .m-bar__zone--end { justify-content: flex-end; }
 
-/* The bar's round buttons; the talk button is the one bigger than these. */
+/* The bar's round buttons; the microphone is the one bigger than these. */
 .m-bar__button,
-.m-control,
-.m-hold-mic {
+.m-control {
   flex: none;
   width: var(--m-bar-button);
   height: var(--m-bar-button);
@@ -135,8 +134,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 .m-bar__button--on { background: var(--m-accent); color: #11111b; }
 .m-bar__button:active,
-.m-control:active,
-.m-hold-mic:active { filter: brightness(1.25); }
+.m-control:active { filter: brightness(1.25); }
 
 /* The Mac's two readouts, the bar's left (MacReadouts.tsx): the AI usage over
    its system monitor, both right-aligned against Control. */
@@ -245,55 +243,145 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-detail__table .m-detail__name { text-align: left; }
 .m-detail__when { color: var(--m-dim); }
 
-/* Dictation still listening with no composer open (DictationIndicator.tsx):
-   the bar's right, beside the rocket. Not a button. */
-.m-dictating {
-  width: 36px;
-  height: 36px;
-  border-radius: 18px;
+/* The microphone (MicButton.tsx), the middle of the bar. Its look is the
+   microphone's alone, however the listening started — never what Control or
+   Summary Chat is doing. Grey is closed; white is hands-free holding it, with
+   nothing leaving the phone; a blue ring is the conversation window, draining
+   as its quiet runs out; orange is your voice leaving the phone, solid with
+   its level while it goes and pulsing while the words are waited for. The
+   orange is the MIC label's (MicIndicator.tsx) and iOS's own dot. */
+.m-mic-slot {
+  position: relative;
+  flex: none;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
 }
-.m-dictating--starting,
-.m-dictating--transcribing { background: var(--m-raised); color: var(--m-text); animation: none; }
-
-/* Summary Chat's talk button, the middle of the bar while a conversation is
-   open (see SummarizerButton.tsx). Its colour is its state. */
-.m-summarizer {
+.m-mic {
+  position: relative;
   flex: none;
   width: var(--m-bar-talk);
   height: var(--m-bar-talk);
   padding: 0;
   border-radius: 50%;
   border: none;
-  background: var(--m-accent);
-  color: #11111b;
+  background: var(--m-raised);
+  color: var(--m-dim);
   font-size: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
+  /* A drag up is the button's own, not a scroll. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
+  transition: background-color 150ms, color 150ms, box-shadow 150ms;
 }
-.m-summarizer:disabled { opacity: 0.7; }
-/* Ready to talk: hollow, in the listening orange. Orange is the microphone and
-   nothing else on the phone; hollow is waiting, and filled and turning (below)
-   is open. Purple would say nothing — it is also everything else that is on. */
-.m-summarizer--ready {
+.m-mic:active { filter: brightness(1.25); }
+.m-mic--starting { color: var(--m-text); }
+/* Hands-free on, but not holding the microphone yet: outlined, pulsing. */
+.m-mic--preparing {
   background: #000;
-  color: var(--m-listening);
-  box-shadow: inset 0 0 0 3px var(--m-listening);
+  color: #fff;
+  box-shadow: inset 0 0 0 2px #fff;
+  animation: m-mic-pulse 1.2s ease-in-out infinite;
 }
-.m-summarizer--starting,
-.m-summarizer--sending { background: var(--m-raised); color: var(--m-text); }
-.m-summarizer--thinking { background: #f9e2af; }
-.m-summarizer--synthesizing,
-.m-summarizer--speaking { background: #a6e3a1; }
+/* Hands-free holds the microphone; nothing leaves the phone until "Control". */
+.m-mic--armed,
+.m-mic--conversation {
+  background: #000;
+  color: #fff;
+  box-shadow: inset 0 0 0 1.5px #fff;
+}
+/* The conversation window: no "Control" needed until the ring has drained.
+   It moves a second at a time; the transition makes that a steady drain. */
+.m-mic--conversation { box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.25); }
+.m-mic__ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+.m-mic__ring circle {
+  fill: none;
+  stroke: #89b4fa;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+.m-mic--hearing,
+.m-mic--transcribing { background: var(--m-listening); color: #11111b; }
+.m-mic--transcribing { animation: m-mic-pulse 1s ease-in-out infinite; }
+.m-mic--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
+@keyframes m-mic-pulse { 50% { opacity: 0.45; } }
+/* The voice going out, a bar each, from `--m-level` (mic-level.ts) set on the
+   button once a frame. Different heights for the same level, so it reads as a
+   voice and not a meter. */
+.m-mic__bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+}
+.m-mic__bars i {
+  width: 4px;
+  height: 24px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: scaleY(calc(0.18 + var(--m-level, 0) * 0.82 * var(--m-bar-k)));
+  transition: transform 60ms linear;
+}
+.m-mic__bars i:nth-child(1) { --m-bar-k: 0.55; }
+.m-mic__bars i:nth-child(2) { --m-bar-k: 1; }
+.m-mic__bars i:nth-child(3) { --m-bar-k: 0.75; }
+.m-mic__bars i:nth-child(4) { --m-bar-k: 0.4; }
+/* The lock above the thumb while it drags up (as Messages has for a voice
+   note), rising with it; lit once reached. */
+.m-mic-lock {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translate(-50%, calc(var(--m-lock-progress, 0) * -14px));
+  opacity: calc(0.55 + var(--m-lock-progress, 0) * 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 8px 6px;
+  border-radius: 20px;
+  background: var(--m-surface);
+  border: 1px solid var(--m-border);
+  color: var(--m-text);
+  pointer-events: none;
+  z-index: 1;
+}
+.m-mic-lock--reached { background: #fff; border-color: #fff; color: #11111b; }
+.m-mic-lock__text { font-size: 10px; font-weight: 600; white-space: nowrap; }
+.m-mic__error {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--m-bar-height) + 10px);
+  transform: translateX(-50%);
+  z-index: 2147483300;
+  max-width: calc(100% - 32px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--m-surface);
+  border: 1px solid var(--m-danger);
+  color: var(--m-text);
+  font-size: 14px;
+}
+.m-mic-sheet {
+  position: fixed;
+  z-index: 2147483400;
+}
+.m-mic-sheet .mobile-confirm__panel { padding-bottom: calc(12px + var(--m-safe-bottom)); }
+.m-mic__about { color: var(--m-dim); font-size: 14px; text-align: center; }
 
 /* Listening: the mic is open and what is said is being transcribed — the
-   composer's mic button, the dictation mark, and the talk button. It has to be
+   composer's mic button. It has to be
    unmissable, so: the phone's own mic-in-use orange, and two white arcs
    chasing round a dark ring at its edge. The ring sits inside the element
    because the composer's mic button clips its overflow.
@@ -304,19 +392,13 @@ textarea, input, [contenteditable="true"], .cm-content {
   inherits: false;
   initial-value: 0deg;
 }
-.mobile-btn--recording,
-.m-dictating--listening,
-.m-summarizer--listening,
-.m-hold-mic--hearing {
+.mobile-btn--recording {
   position: relative;
   background: var(--m-listening);
   border-color: var(--m-listening);
   color: #11111b;
 }
-.mobile-btn--recording::before,
-.m-dictating--listening::before,
-.m-summarizer--listening::before,
-.m-hold-mic--hearing::before {
+.mobile-btn--recording::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -342,37 +424,80 @@ textarea, input, [contenteditable="true"], .cm-content {
 @keyframes m-listening-spin {
   to { --m-listen-angle: 360deg; }
 }
-/* Control's button (ControlButton.tsx): left of the talk button, or the
-   bar's middle alone when there is no conversation. Its fill is where Control
-   is; a ring is what it is doing, in the talk button's palette. */
-.m-control--away { background: #000; color: var(--m-text); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
-.m-control--here { background: #fff; color: #11111b; }
+/* Control's button (ControlButton.tsx), left of the microphone: whether
+   Control speaks here. Dim away, solid white with a halo here, a slashed
+   speaker muted; a ring only while it thinks. Speaking shows on the
+   transcript button, not here. */
+.m-control { position: relative; }
+.m-control--away { background: #000; color: var(--m-dim); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
+.m-control--here { background: #fff; color: #11111b; box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.35); }
 .m-control--summary { background: #e040fb; color: #11111b; }
+.m-control--muted { box-shadow: none; }
 .m-control[data-phase="thinking"] { box-shadow: 0 0 0 3px #f9e2af; }
-.m-control[data-phase="synthesizing"],
-.m-control[data-phase="speaking"] { box-shadow: 0 0 0 3px #a6e3a1; }
 .m-control.m-control--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
-.m-summarizer__error {
-  position: fixed;
+.m-control__muted {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #f9e2af;
+  color: #11111b;
+  border: 2px solid #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.m-control__where {
+  position: absolute;
+  bottom: -6px;
   left: 50%;
-  bottom: calc(var(--m-bar-height) + 10px);
   transform: translateX(-50%);
-  z-index: 2147483300;
-  max-width: calc(100% - 32px);
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--m-surface);
-  border: 1px solid var(--m-danger);
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--m-raised);
   color: var(--m-text);
-  font-size: 14px;
+  font: 600 9px/13px -apple-system, system-ui, sans-serif;
+  white-space: nowrap;
 }
-.m-summarizer-sheet {
-  position: fixed;
-  z-index: 2147483400;
-}
-.m-summarizer-sheet .mobile-confirm__panel { padding-bottom: calc(12px + var(--m-safe-bottom)); }
-.m-summarizer__about { color: var(--m-dim); font-size: 14px; text-align: center; }
 
+/* Control's words (TranscriptButton.tsx), right of the microphone: bars in
+   the speaker's colour while anything is said, and the unread count. */
+.m-transcript { position: relative; }
+.m-transcript--open { box-shadow: 0 0 0 2px var(--m-text); }
+.m-transcript--speaking { box-shadow: 0 0 0 2px var(--m-speaker); }
+.m-transcript__bars { display: flex; align-items: center; gap: 2px; height: 18px; }
+.m-transcript__bars i {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--m-speaker);
+  animation: m-transcript-bar 0.9s ease-in-out infinite;
+}
+.m-transcript__bars i:nth-child(2) { animation-delay: -0.3s; }
+.m-transcript__bars i:nth-child(3) { animation-delay: -0.6s; }
+.m-transcript__bars i:nth-child(4) { animation-delay: -0.15s; }
+@keyframes m-transcript-bar {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+.m-transcript__count {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--m-accent);
+  color: #11111b;
+  font: 700 11px/18px -apple-system, system-ui, sans-serif;
+  text-align: center;
+  border: 2px solid #000;
+  box-sizing: content-box;
+}
 /* ─── microphone label ─────────────────────────────────────────────────── */
 
 /*
@@ -840,34 +965,6 @@ textarea, input, [contenteditable="true"], .cm-content {
 .floating-toolbar {
   scale: 1.33;
 }
-
-/* Hold the microphone open (held-microphone.ts): right of the talk button,
-   mirroring the Control button on its left. White while on, as Control is
-   while it is here: an on switch, not the microphone's orange — that is kept
-   for when what you say is actually being taken down. */
-.m-hold-mic--on { background: #fff; color: #11111b; }
-/* The conversation window (hands-free.ts): just talk, no "Control" needed —
-   until both sides have been quiet a while. */
-.m-hold-mic--conversation { background: #89b4fa; color: #11111b; }
-/* Its countdown, in place of the icon: seconds of quiet left. */
-.m-hold-mic__countdown {
-  font: 700 17px/1 -apple-system, system-ui, sans-serif;
-  font-variant-numeric: tabular-nums;
-}
-/* On, but not holding the microphone yet: outlined in white, pulsing. */
-.m-hold-mic--preparing {
-  box-shadow: inset 0 0 0 2px #fff;
-  color: #fff;
-  animation: m-hold-mic-preparing 1.2s ease-in-out infinite;
-}
-@keyframes m-hold-mic-preparing {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-/* Hands-free (hands-free.ts): it heard "Control" and is taking down what you
-   say — the listening look, with the talk button's (above) — then sending it,
-   neutral as the talk button is while it sends. */
-.m-hold-mic--sending { background: var(--m-raised); color: var(--m-text); }
 
 /* Nothing on the canvas animates on the phone: no dancing crab, no pulsing
    glow or unread badge. An animation of transform or opacity gives its element

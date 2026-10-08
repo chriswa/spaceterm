@@ -39,10 +39,10 @@ describe('receptionist status', () => {
   it('takes the holder from the pull, and from the push after it, telling this device apart', async () => {
     bridge.responses.syncRequest = { ...bridge.responses.syncRequest, receptionistHolder: { deviceId: 'phone-1', label: 'Phone' } }
     await initServerSync()
-    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Phone', mine: false })
+    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Phone', mine: false, muted: false })
 
     bridge.emit.receptionistHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac' })
-    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Mac', mine: true })
+    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Mac', mine: true, muted: false })
 
     bridge.emit.receptionistHolder(null)
     expect(useReceptionistStore.getState().holder).toBeNull()
@@ -50,7 +50,7 @@ describe('receptionist status', () => {
 
   it('reads an absent holder in the pull as the Mac', async () => {
     await initServerSync()
-    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Mac', mine: false })
+    expect(useReceptionistStore.getState().holder).toEqual({ label: 'Mac', mine: false, muted: false })
   })
 })
 

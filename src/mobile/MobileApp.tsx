@@ -13,13 +13,13 @@ import { MacReadouts } from './MacReadouts'
 import { RocketButton } from './RocketButton'
 import { useStalenessWatch } from './update-check'
 import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
-import { SummarizerButton } from './SummarizerButton'
+import { MicButton } from './MicButton'
 import { useDictationSession } from './dictation-session'
-import { DictationIndicator } from './DictationIndicator'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { ControlButton } from './ControlButton'
-import { HoldMicButton } from './HoldMicButton'
+import { TranscriptButton } from './TranscriptButton'
+import { EarpieceSwitch } from './EarpieceSwitch'
 import { BottomBar } from './BottomBar'
 import { MicIndicator } from './MicIndicator'
 import { ControlTranscript } from '@/components/ControlTranscript'
@@ -120,7 +120,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
    * itself would not raise it.
    */
   const keyboardKeeperRef = useRef<HTMLInputElement>(null)
-  /** Dictating, with no composer open to show it: the bottom bar says so. */
+  /** Dictating, with no composer open to show it: the microphone button says so, and a tap goes back to a composer. */
   const dictating = useDictationSession((s) => s.mic.kind !== 'idle')
 
   // Back to where we were after a reload, once the surface is known again.
@@ -208,6 +208,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
         <ControlTranscript
           variant="screen"
           onDismiss={() => useControlTranscriptStore.getState().setOpen(false)}
+          headerExtra={<EarpieceSwitch />}
         />
       )}
       {noticesOpen && <NotificationsSheet />}
@@ -222,19 +223,24 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           middle={
             <>
               <ControlButton />
-              {talk && (
+              {(talk || dictating) && (
                 // Over the transcript, it talks to Control, whatever the voice target.
-                <SummarizerButton
+                <MicButton
                   key={childKey('talk', controlTarget || transcriptOpen ? 'control' : summaryTarget ?? '')}
                   nodeId={controlTarget || transcriptOpen ? null : summaryTarget}
+                  talk={talk}
+                  // Any composer takes over the dictation: the open terminal's, if there is one.
+                  onReopenComposer={focusedTerminal ? () => {
+                    keyboardKeeperRef.current?.focus()
+                    setComposerFor(focusedTerminal)
+                  } : undefined}
                 />
               )}
-              {talk && <HoldMicButton />}
+              <TranscriptButton />
             </>
           }
           end={
             <>
-              {dictating && <DictationIndicator />}
               <NotificationsButton />
               <RocketButton />
             </>

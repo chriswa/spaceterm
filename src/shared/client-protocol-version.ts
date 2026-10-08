@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 13
+export const CLIENT_PROTOCOL_VERSION = 14
 
 /**
  * Oldest client protocol this build still serves.
@@ -63,5 +63,10 @@ export const CLIENT_PROTOCOL_VERSION = 13
  *
  * v12 cannot draw Control's reasoning (`trace` transcript entries), so it is
  * never sent them; it loses nothing else.
+ *
+ * v13 cannot mute Control or replay its words, and never reports what it has
+ * read (`receptionist-hold`, `-read`, `-replay`, `-catch-up`); it is never sent
+ * `consumed` transcript entries, which it would draw as broken replies. It
+ * loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

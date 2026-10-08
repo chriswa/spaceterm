@@ -93,7 +93,7 @@ import { readPeerNames } from './claude-peer-names'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
 import { DirectSpeech } from './direct-speech'
-import { VoiceOperator } from './voice-operator'
+import { VoiceOperator, type SpeechBackend } from './voice-operator'
 import { PendingTurnCache } from './pending-turn'
 import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
 
@@ -331,6 +331,8 @@ let forkTitler: ForkTitler
 let summaryChat: SummaryChat
 /** Undefined until startup builds it; Claude state changes arrive before then. */
 let receptionist: Receptionist | undefined
+/** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
+let receptionistSpeaker: string | undefined
 let agentNames: NameRegistry
 /** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
 const sideQuestions = new SideQuestions()
@@ -538,9 +540,13 @@ function transcriptNameOf(): NameOf {
 
 /** Control's reasoning entries were new in client protocol v13: an older client would draw one as a broken reply. */
 const TRACE_PROTOCOL_VERSION = 13
+/** And what was taken in of a reply (`consumed`) in v14. */
+const CONSUMED_PROTOCOL_VERSION = 14
 
 function transcriptEntriesFor(client: ClientConnection, entries: ControlTranscriptEntry[]): ControlTranscriptEntry[] {
-  return (client.protocolVersion ?? 0) >= TRACE_PROTOCOL_VERSION ? entries : entries.filter(entry => entry.kind !== 'trace')
+  const version = client.protocolVersion ?? 0
+  return entries.filter(entry =>
+    !(entry.kind === 'trace' && version < TRACE_PROTOCOL_VERSION) && !(entry.kind === 'consumed' && version < CONSUMED_PROTOCOL_VERSION))
 }
 
 /** Lines just added to Control's record, sent to every open transcript view. Returns where each starts. */
@@ -602,19 +608,37 @@ function holderClients(): ClientConnection[] {
  * Point Control at the device holding it, or at nobody when no device does or
  * the one that does is not connected. Called on everything that changes
  * either: a hold, a device naming itself, a disconnect.
+ *
+ * A muted device is listening even when it is not connected: Control writes to
+ * it, and the user reads it when they are back — which is what lets a muted
+ * phone sleep.
  */
 function updateReceptionistListener(): void {
   if (!receptionist) return
   const holder = stateManager.getReceptionistHolder()
   const client = holderClients().at(-1)
+  const reading = holder?.muted === true
+  if (holder && reading && !client) {
+    receptionist.setListener({ id: holder.deviceId, speech: NO_LISTENER, reading })
+    return
+  }
   receptionist.setListener(!holder || !client ? undefined
     // The Mac's voice is Voice Operator, which plays it itself, whichever window is open.
-    : holder.deviceId === DESKTOP_DEVICE.deviceId ? { id: holder.deviceId, speech: speechVoiceOperator }
-    : { id: client.id, speech: remoteSpeech.forClient(client.id, NO_LISTENER) })
+    : holder.deviceId === DESKTOP_DEVICE.deviceId ? { id: holder.deviceId, speech: speechVoiceOperator, reading }
+    : { id: client.id, speech: remoteSpeech.forClient(client.id, NO_LISTENER), reading })
 }
 
-/** Hand Control to a device, or to nobody, and tell every client. */
-function setReceptionistHolder(holder: ReceptionistHolder | null): void {
+/** Where a client hears Control's words, as `updateReceptionistListener` would send them there: for a replay. */
+function speechFor(client: ClientConnection): SpeechBackend {
+  return client.device?.id === DESKTOP_DEVICE.deviceId || !client.device ? speechVoiceOperator : remoteSpeech.forClient(client.id, NO_LISTENER)
+}
+
+/**
+ * Hand Control to a device, or to nobody, and tell every client. Whether it
+ * is muted there is the device's own: see `ServerState.receptionistMuted`.
+ */
+function setReceptionistHolder(to: ReceptionistHolder | null): void {
+  const holder = to && { deviceId: to.deviceId, label: to.label, ...(stateManager.isReceptionistMuted(to.deviceId) ? { muted: true as const } : {}) }
   if (stateManager.setReceptionistHolder(holder)) {
     serverLog(`[receptionist] now held by ${holder?.label ?? 'nobody'}`)
     broadcastToAll({ type: 'receptionist-holder', holder })
@@ -650,6 +674,7 @@ function receptionistStatus(message?: string): ServerMessage {
     phase: receptionist?.phase ?? 'ready',
     target: voiceTarget === 'receptionist',
     ...(message ? { message } : {}),
+    ...(receptionistSpeaker && receptionist?.phase === 'speaking' ? { speaker: receptionistSpeaker } : {}),
   }
 }
 
@@ -1017,6 +1042,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, { type: 'auto-stamps-enabled', enabled: stateManager.getAutoStampsEnabled() })
   send(link, receptionistStatus())
   send(link, { type: 'receptionist-holder', holder: stateManager.getReceptionistHolder() })
+  send(link, { type: 'receptionist-unread', ...receptionist?.unread() ?? { count: 0 } })
   send(link, { type: 'agent-names', names: agentNameMap() })
   send(link, { type: 'hands-free-tuning', tuning: handsFreeTuning })
 
@@ -1724,6 +1750,50 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       void receptionist?.cancel()
       break
     }
+
+    case 'receptionist-hold': {
+      const device = client.device
+      if (!device) break
+      const holder = stateManager.getReceptionistHolder()
+      if (msg.action === 'release') {
+        if (holder?.deviceId === device.id) setReceptionistHolder(null)
+        break
+      }
+      stateManager.setReceptionistMuted(device.id, msg.action === 'mute')
+      setReceptionistHolder({ deviceId: device.id, label: device.label })
+      if (msg.action === 'speak-here') setVoiceTarget('receptionist')
+      break
+    }
+
+    case 'receptionist-read':
+      receptionist?.readPart(msg.of, msg.part)
+      break
+
+    case 'receptionist-replay': {
+      if (!receptionist) break
+      const { of, part } = msg
+      void receptionist.replay(of, part, speechFor(client), (playing) => {
+        send(client.link, { type: 'receptionist-replaying', playing: playing ? { of, part } : null })
+      }).then((refused) => {
+        if (refused) send(client.link, { type: 'receptionist-replaying', playing: null, refused })
+      })
+      break
+    }
+
+    case 'receptionist-replay-stop':
+      receptionist?.stopReplay()
+      break
+
+    case 'receptionist-catch-up':
+      // Asking is talking to Control: it comes here, as for any words to it,
+      // and unmuted, since being told is the point.
+      if (client.device) {
+        stateManager.setReceptionistMuted(client.device.id, false)
+        setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
+      }
+      setVoiceTarget('receptionist')
+      void receptionist?.catchUp()
+      break
 
     case 'receptionist-transcript': {
       const count = Math.max(1, Math.min(200, Math.floor(msg.count)))
@@ -3340,7 +3410,8 @@ async function startServer(): Promise<void> {
       ...REAL_RECEPTIONIST_RECORD,
       // Every addition goes straight to any open transcript view.
       append: (messages) => announceRecorded(REAL_RECEPTIONIST_RECORD.append(messages)),
-      amendHeard: (replyAt, heard) => { announceRecorded(REAL_RECEPTIONIST_RECORD.amendHeard(replyAt, heard)) },
+      amendHeard: (replyAt, heard, unread) => { announceRecorded(REAL_RECEPTIONIST_RECORD.amendHeard(replyAt, heard, unread)) },
+      consumed: (of, part, from, to, how) => { announceRecorded(REAL_RECEPTIONIST_RECORD.consumed(of, part, from, to, how)) },
       notDone: (actions) => { announceRecorded(REAL_RECEPTIONIST_RECORD.notDone(actions)) },
       trace: (trace) => { announceRecorded(REAL_RECEPTIONIST_RECORD.trace(trace)) },
     },
@@ -3432,6 +3503,12 @@ async function startServer(): Promise<void> {
       serverLog(`[receptionist] ${message}`)
       broadcastToAll(receptionistStatus(message))
     },
+    onSpeaker: (speaker) => {
+      if (speaker === receptionistSpeaker) return
+      receptionistSpeaker = speaker
+      broadcastToAll(receptionistStatus())
+    },
+    onUnread: (unread) => broadcastToAll({ type: 'receptionist-unread', ...unread }),
   })
   updateReceptionistListener()
 
