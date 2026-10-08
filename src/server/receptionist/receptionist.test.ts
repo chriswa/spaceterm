@@ -3276,4 +3276,66 @@ describe('Receptionist muted, and what the user has taken in', () => {
     expect(h.receptionist.unread()).toEqual({ count: 0 })
     expect(h.consumedMarks.map(mark => mark.how)).toEqual(['summary'])
   })
+
+  describe('holding its tongue through a replay', () => {
+    /** Speech that plays until `finish` is called. */
+    function playingUntilFinished(): { speech: SpeechBackend; finish: () => void } {
+      let finish = (): void => {}
+      const finished = new Promise<void>((resolve) => { finish = resolve })
+      return {
+        finish: () => finish(),
+        speech: {
+          speak: async () => ({ status: 202, body: { id: 'replay-1', state: 'in_progress', playback_state: 'speaking', version: 1 } }),
+          status: async (id) => {
+            await finished
+            return { status: 200, body: { id, state: 'completed', version: 2 } }
+          },
+          drop: async (id) => ({ status: 200, body: { id, state: 'cancelled_by_client', version: 2 } }),
+        },
+      }
+    }
+    const watching = (): Parameters<typeof harness>[0] => ({
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        reply([{ from: 'control', text: 'Sally finished.' }]),
+      ],
+    })
+
+    async function replaying(h: ReturnType<typeof harness>): Promise<() => void> {
+      await h.receptionist.hear('let me know when Sally is done')
+      await flush()
+      const at = h.record.findIndex(message => message.content.includes('Will do'))
+      const { speech, finish } = playingUntilFinished()
+      void h.receptionist.replay(at, 0, speech, () => {})
+      await flush()
+      h.setState(SALLY_ID, 'stopped')
+      await flush()
+      expect(h.turns).toHaveLength(1)
+      return finish
+    }
+
+    it('says nothing until a replay ends, even once a dictation during it has ended', async () => {
+      const h = harness(watching())
+      const finish = await replaying(h)
+      h.receptionist.userSpeaking(true)
+      h.receptionist.userSpeaking(false)
+      await flush()
+      expect(h.turns).toHaveLength(1)
+      finish()
+      await flush()
+      expect(said(h).at(-1)).toContain('Sally finished.')
+    })
+
+    it('says nothing until a dictation that outlasts the replay ends', async () => {
+      const h = harness(watching())
+      const finish = await replaying(h)
+      h.receptionist.userSpeaking(true)
+      finish()
+      await flush()
+      expect(h.turns).toHaveLength(1)
+      h.receptionist.userSpeaking(false)
+      await flush()
+      expect(said(h).at(-1)).toContain('Sally finished.')
+    })
+  })
 })
