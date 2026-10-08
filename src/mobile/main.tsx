@@ -15,6 +15,7 @@ import { installHandsFree } from './hands-free'
 import { phoneDevice } from './device'
 import { mobileEvents, recordMobileEvent } from './mobile-events'
 import { installLifecycleEvents, installNativeEventBridge } from './lifecycle-events'
+import { recoverCameraAfterKill } from './crash-camera'
 import '@/styles/index.css'
 import './mobile.css'
 
@@ -79,6 +80,9 @@ if (!token) {
     document.addEventListener('visibilitychange', () => window.api.log(`[lifecycle] page ${document.visibilityState}`))
     installDiagnostics((message) => window.api.log(message))
     installMemoryProbe((message) => window.api.log(message), Boolean(window.spacetermProcessRestarts))
+    // Not back where it ran out of memory, or it runs out again: see crash-camera.ts.
+    const recovered = recoverCameraAfterKill(window.spacetermProcessRestarts ?? 0)
+    if (recovered) window.api.log(recovered)
     // Sound to the speaker, not the earpiece, except while recording.
     initAudioSession()
     installHeldMicrophone()
