@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
-import type { TranscriptMessage } from '../summary-chat'
+import { lastAgentProse, parseWholeTranscript, type TranscriptMessage } from '../summary-chat'
 import { ago, readAgent, renderRoster, type RosterAgent } from './roster'
 
 const transcript: TranscriptMessage[] = [
@@ -117,5 +117,24 @@ describe('readAgent', () => {
   it('finds passages for a search, and says when there are none', () => {
     expect(readAgent(transcript, 'Bananas')).toContain('bananas float')
     expect(readAgent(transcript, 'kiwis')).toMatch(/No recent passage/)
+  })
+
+  // An agent that says what it will do, then commits and self-terminates, writes nothing after its last tool call.
+  const selfTerminated = parseWholeTranscript([
+    { type: 'user', message: { content: 'Edit the prompt, then commit, push and self-terminate.' } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'The edit is in; committing and ending now.' }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git commit && git push' } }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'self_terminate', input: {} }] } },
+  ].map(entry => JSON.stringify(entry)).join('\n'))
+
+  it('leaves tool calls out of a plain read, and keeps them searchable', () => {
+    expect(readAgent(selfTerminated)).toBe('USER: Edit the prompt, then commit, push and self-terminate.\n\nAGENT: The edit is in; committing and ending now.')
+    expect(readAgent(selfTerminated, 'git push')).toContain('git commit && git push')
+  })
+
+  it('reports the last words an agent wrote before its final tool calls', () => {
+    expect(lastAgentProse(selfTerminated)).toBe('The edit is in; committing and ending now.')
+    const text = renderRoster([agent('a')], () => 'Wendy', () => selfTerminated, H)
+    expect(text).toContain('last said: The edit is in; committing and ending now.')
   })
 })

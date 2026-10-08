@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
-import { finalAgentMessage, INTERRUPTED_MARKER, type TranscriptMessage } from '../summary-chat'
+import { INTERRUPTED_MARKER, lastAgentProse, type TranscriptMessage } from '../summary-chat'
 import { joinSpeechParts, speechPartStarts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import { ConsumptionLedger, type ConsumedHow } from './consumption'
@@ -958,7 +958,7 @@ export class Receptionist {
     this.events = this.events.filter(event => !isItsStop(event))
     if (!monitored && !stopUntold) return
     const token = agentToken(handle, this.deps.names.get(nodeId)?.name)
-    const lastSaid = agent.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
+    const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
     if (monitored) this.trace('fired', `Watch fired: ${token} ended`, lastSaid)
     this.events.push({ kind: 'agent-ended', agent: token, archived, lastSaid: lastSaid.slice(-LAST_SAID_EVENT_CHARS) })
     this.maybeSpeakUp()
@@ -1060,7 +1060,7 @@ export class Receptionist {
     this.holding.delete(nodeId)
     if (!agent) return
     this.reportedStops.set(nodeId, agent.stateSince)
-    const lastSaid = agent.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
+    const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
     const token = this.token(nodeId, this.handles(agents))
     this.trace('fired', `Watch fired: ${token} is now ${STATE_WORDS[state]}`)
     this.events.push({

@@ -1,7 +1,7 @@
 import * as path from 'path'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
-import { finalAgentMessage, type TranscriptMessage } from '../summary-chat'
+import { isToolActivity, lastAgentProse, type TranscriptMessage } from '../summary-chat'
 import { agentToken } from './agent-token'
 
 /**
@@ -99,7 +99,7 @@ export function renderRoster(
     const messages = agent.transcriptPath ? readTranscript(agent.transcriptPath) : []
     const request = lastUserMessage(messages)
     if (request) lines.push(`  last asked: ${clip(request, ROSTER_LAST_REQUEST_CHARS)}`)
-    const reply = finalAgentMessage(messages)
+    const reply = lastAgentProse(messages)
     if (reply) lines.push(`  last said: ${clip(reply, ROSTER_LAST_MESSAGE_CHARS)}`)
     return lines.join('\n')
   }).join('\n')
@@ -139,17 +139,20 @@ export function ago(ms: number): string {
 
 /**
  * The `read` tool: the agent's recent conversation, or the passages matching a
- * search. Only the window the transcript reader keeps is searchable — the same
+ * search. A plain read leaves out tool calls, so its budget goes to what the
+ * agent and user said; a search covers both. Only the window the transcript reader keeps is searchable — the same
  * window Summary Chat reads — which covers the current piece of work but not a
  * long session's early hours.
  */
 export function readAgent(messages: readonly TranscriptMessage[], search?: string): string {
   if (!messages.length) return 'Nothing readable in this transcript yet.'
   if (search) return searchMessages(messages, search)
+  const said = messages.filter(message => !isToolActivity(message))
+  if (!said.length) return 'Nothing readable in this transcript yet.'
   const rendered: string[] = []
   let budget = READ_CHARS
-  for (let i = messages.length - 1; i >= 0 && budget > 0; i--) {
-    const line = `${speakerLabel(messages[i])}: ${clip(messages[i].text, budget)}`
+  for (let i = said.length - 1; i >= 0 && budget > 0; i--) {
+    const line = `${speakerLabel(said[i])}: ${clip(said[i].text, budget)}`
     rendered.unshift(line)
     budget -= line.length
   }

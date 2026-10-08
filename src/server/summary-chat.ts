@@ -1131,7 +1131,7 @@ function finalAgentRun(all: TranscriptMessage[], after = -1): number[] {
   for (let i = all.length - 1; i > after; i--) {
     const message = all[i]
     if (message.role !== 'assistant') break
-    if (message.text.startsWith(TOOL_ACTIVITY_MARKER)) break
+    if (isToolActivity(message)) break
     run.unshift(i)
   }
   return run
@@ -1146,6 +1146,23 @@ function finalAgentRun(all: TranscriptMessage[], after = -1): number[] {
  */
 export function finalAgentMessage(messages: TranscriptMessage[]): string {
   return finalAgentRun(messages).map(index => messages[index].text).join('\n\n')
+}
+
+/** Whether a message is a record of tool calls rather than words the agent wrote. */
+export function isToolActivity(message: TranscriptMessage): boolean {
+  return message.role === 'assistant' && message.text.startsWith(TOOL_ACTIVITY_MARKER)
+}
+
+/**
+ * The agent's last words, even when tool calls came after them — '' only when
+ * nothing it wrote since the last user turn. An agent that says "committing
+ * and ending now" and then self-terminates leaves no message after its last
+ * tool call, and `finalAgentMessage` would report that as silence.
+ */
+export function lastAgentProse(messages: TranscriptMessage[]): string {
+  let end = messages.length
+  while (end > 0 && isToolActivity(messages[end - 1])) end--
+  return finalAgentMessage(messages.slice(0, end))
 }
 
 /**
