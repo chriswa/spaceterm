@@ -39,6 +39,7 @@ import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrow
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
+import { DictationPresence } from './dictation-presence'
 import { checkWakeWord, parseHandsFreeTuning } from './hands-free'
 import { TurnDetector, realTurnDetectorDeps } from './turn-detector'
 import { UsageTracker } from './usage-tracker'
@@ -359,9 +360,12 @@ const directSpeech = new DirectSpeech({
  */
 const turnDetector = new TurnDetector(realTurnDetectorDeps(path.join(SOCKET_DIR, 'models'), (message) => serverLog(`[turn] ${message}`)))
 
+/** Whether the user is dictating, on the phone or the Mac: what Control holds for. See dictation-presence.ts. */
+const dictationPresence = new DictationPresence((speaking) => receptionist?.userSpeaking(speaking))
+
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator(), {
-  onSpeaking: (speaking) => receptionist?.userSpeaking(speaking),
+  onSpeaking: (speaking) => dictationPresence.phone(speaking),
   turnProbability: (audio) => turnDetector.probability(audio),
 })
 
@@ -1029,15 +1033,6 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   clients.add(client)
   console.log(`Client connected id=${client.id.slice(0, 8)} (${clients.size} total)`)
 
-  // Send existing peers' camera bounds to the new client
-  clients.forEach((existing) => {
-    if (existing !== client && existing.cameraBounds) {
-      send(link, { type: 'peer-camera-bounds', clientId: existing.id, bounds: existing.cameraBounds })
-    }
-  })
-  // Notify other clients about the new peer
-  broadcastToOthers(client, { type: 'peer-connected', clientId: client.id })
-
   // Send the shared saved viewport slots to the new client
   send(link, { type: 'saved-viewports', viewports: stateManager.getSavedViewports() })
 
@@ -1077,7 +1072,6 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
       }
       console.log(`Client disconnected id=${client.id.slice(0, 8)} (${clients.size} total)`)
-      broadcastToAll({ type: 'peer-disconnected', clientId: client.id })
     }
   }
 }
@@ -1343,6 +1337,11 @@ function handleIngestMessage(msg: IngestMessage): void {
         const promptNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
         if (promptNodeId) void forkTitler.onPrompt(promptNodeId, msg.payload.prompt)
       }
+      break
+    }
+
+    case 'voice-dictation': {
+      dictationPresence.mac({ active: msg.active === true, launch: String(msg.launch), seq: Number(msg.seq) })
       break
     }
 
@@ -1951,7 +1950,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-start': {
       const seq = msg.seq
-      void remoteDictation.start(client.id, msg.sampleRate).then((outcome) => {
+      void remoteDictation.start(client.id, msg.sampleRate, msg.forControl === true).then((outcome) => {
         send(client.link, outcome.ok
           ? { type: 'dictation-started', seq, id: outcome.value }
           : { type: 'server-error', seq, message: outcome.error })
@@ -2010,10 +2009,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'receptionist-hands-free':
     case 'receptionist-say': {
       const text = msg.text.trim()
-      if (!receptionist) break
-      // Hands-free cut Control off, then caught nothing: it says it had not finished, and carries on.
+      if (!receptionist) {
+        remoteDictation.delivered(client.id)
+        break
+      }
+      // A dictation for Control caught nothing for it. Whatever its start
+      // stopped carries on; hands-free having cut Control off itself counts.
       if (!text) {
-        if (msg.type === 'receptionist-hands-free' && msg.interrupted) receptionist.carryOnAfterEmptyInterruption()
+        receptionist.heardNothing(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
+        remoteDictation.delivered(client.id)
         break
       }
       // The wake word names Control, and typing in its transcript is writing
@@ -2021,7 +2025,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // speaking to it does — it brings Control here.
       if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
       setVoiceTarget('receptionist')
+      // Heard before the dictation that carried the words lets go, so that
+      // letting go finds them already taken rather than resuming without them.
       void receptionist.hear(text)
+      remoteDictation.delivered(client.id)
       break
     }
 
@@ -2668,7 +2675,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'set-claude-status-background': {
-      claudeStateMachine.handleClientMarkBackground(msg.sessionId, msg.background)
+      // Async: restoring probes the dismissed launches. Probes resolve rather than throw.
+      void claudeStateMachine.handleClientMarkBackground(msg.sessionId, msg.background)
       break
     }
 
@@ -2866,11 +2874,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'camera-bounds': {
       client.cameraBounds = msg.bounds
       client.cameraBoundsAt = Date.now()
-      const otherCount = clients.size - 1
-      if (otherCount > 0) {
-        serverLog(`[camera-bounds] client=${client.id.slice(0, 8)} broadcasting to ${otherCount} peers bounds=(${Math.round(msg.bounds.x)},${Math.round(msg.bounds.y)} ${Math.round(msg.bounds.width)}x${Math.round(msg.bounds.height)})`)
-      }
-      broadcastToOthers(client, { type: 'peer-camera-bounds', clientId: client.id, bounds: msg.bounds })
       break
     }
 
@@ -3392,7 +3395,8 @@ async function startServer(): Promise<void> {
 
   sideQuestionServer = serveSideQuestions(sideQuestions, path.join(SOCKET_DIR, 'side-questions.sock'))
   agentNames = new NameRegistry({
-    // `getNode` only finds live nodes, so an archived surface's name is released.
+    // `getNode` only finds live nodes, so an archived surface releases its name
+    // (and takes it back on unarchive if no live surface has taken it since).
     isLive: (nodeId) => stateManager.getNode(nodeId) !== undefined,
     store: fileStore(NAMES_FILE),
   })

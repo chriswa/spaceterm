@@ -3,6 +3,7 @@ import { Camera, getCameraTransform, cameraToFitBounds, screenToCanvas, zoomCame
 import { MIN_ZOOM, ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_HIGH_UNFOCUSED, UNFOCUS_SNAP_ZOOM, FOCUS_SPEED, UNFOCUS_SPEED, ZOOM_SNAP_BACK_SPEED, ZOOM_SNAP_BACK_DELAY, CAMERA_SETTLE_DELAY, FLY_TO_ZOOM_HALF_RANGE, FLY_TO_ZOOM_MAX_ARC } from '../lib/constants'
 import { isWindowVisible } from './useWindowVisible'
 import { useCameraLockStore } from '../stores/cameraLockStore'
+import { realDevicePixelRatio } from '../lib/supersample'
 
 // PERF: During camera animation and continuous user input (trackpad pan, wheel
 // zoom), we write the CSS transform directly to the DOM via surfaceRef instead
@@ -641,6 +642,7 @@ export function useCamera(
         innerWidth: window.innerWidth,
         innerHeight: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio,
+        realDevicePixelRatio: realDevicePixelRatio(),
         visible: isWindowVisible(),
       },
     }

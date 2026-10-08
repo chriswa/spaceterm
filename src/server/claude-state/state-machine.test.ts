@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest'
 import { ClaudeStateMachine } from './index'
-import { BackgroundLedger } from './background-ledger'
+import { BackgroundLedger, type LivenessProbes } from './background-ledger'
 import type { StateMachineDeps, ClaudeState } from './types'
 import type { SessionFileEntry } from '../session-file-watcher'
 import type { PersistedSurfaceLedger } from '../../shared/state'
@@ -53,7 +53,24 @@ function toolResult(toolUseId: string, text = 'ok'): SessionFileEntry {
   return { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text }] } }
 }
 
-interface Case { name: string; run: (sm: ClaudeStateMachine, deps: FakeDeps) => void }
+interface Case {
+  name: string
+  run: (sm: ClaudeStateMachine, deps: FakeDeps) => void | Promise<void>
+  /** Liveness probes for the case's ledger; every launch reads as running by default. */
+  probes?: LivenessProbes
+}
+
+/**
+ * Every launch reads as still running. The real probes would look for
+ * `/p/sess/subagents/…` on disk, find nothing, and call every subagent
+ * finished the moment a right-click probes it.
+ */
+const ALWAYS_RUNNING: LivenessProbes = {
+  probeBash: async () => 'running',
+  probeMonitor: async () => 'running',
+  probeAgent: async () => 'running',
+  probeWorkflow: async () => 'running',
+}
 
 const cases: Case[] = [
   {
@@ -454,7 +471,7 @@ const cases: Case[] = [
   // ─── The right-click on the agent mark ────────────────────────────────────
   {
     name: 'right-click takes dismissed background work back up (stopped → yellow)',
-    run: (sm, deps) => {
+    run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'SubagentStart', { agent_id: 'a1' })
       hook(sm, 'Stop')
@@ -468,21 +485,21 @@ const cases: Case[] = [
       assertEq(deps.getClaudeState(S), 'stopped')
       assertEq(deps.dismissed.get(S), 1)
 
-      sm.handleClientMarkBackground(S, true)
+      await sm.handleClientMarkBackground(S, true)
       assertEq(deps.getClaudeState(S), 'working_background')
       assertEq(deps.dismissed.get(S), 0)
     },
   },
   {
     name: 'and the next background resolution returns it to stopped (+unread, tone)',
-    run: (sm, deps) => {
+    run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'SubagentStart', { agent_id: 'a1' })
       hook(sm, 'Stop')
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'Stop')
       sm.flushForTest()
-      sm.handleClientMarkBackground(S, true)
+      await sm.handleClientMarkBackground(S, true)
       deps.unread.set(S, false)
 
       hook(sm, 'SubagentStop', { agent_id: 'a1' })
@@ -493,26 +510,51 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'right-click waits on the live monitor, not on dismissed work that already ended',
+    probes: { ...ALWAYS_RUNNING, probeAgent: async () => 'finished' },
+    run: async (sm, deps) => {
+      // A persistent Monitor alongside a subagent that ended without a
+      // SubagentStop, both dismissed by a typed prompt.
+      hook(sm, 'UserPromptSubmit')
+      jsonl(sm, [toolResult('t1', 'Monitor started (task mon12345)')])
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      hook(sm, 'UserPromptSubmit')
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.dismissed.get(S), 2)
+
+      await sm.handleClientMarkBackground(S, true)
+      assertEq(deps.getClaudeState(S), 'working_background')
+      // The dead subagent was dropped at the click, so the sweep has nothing to
+      // resolve that would re-dismiss the monitor.
+      await sm.reconcileForTest()
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      assertEq(deps.dismissed.get(S), 0)
+    },
+  },
+  {
     name: 'right-click does nothing on a surface with no dismissed work',
-    run: (sm, deps) => {
+    run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'Stop')
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'stopped')
-      sm.handleClientMarkBackground(S, true)
+      await sm.handleClientMarkBackground(S, true)
       assertEq(deps.getClaudeState(S), 'stopped')
     },
   },
   {
     name: 'right-click on yellow dismisses it to stopped, silently',
-    run: (sm, deps) => {
+    run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'SubagentStart', { agent_id: 'a1' })
       hook(sm, 'Stop')
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'working_background')
 
-      sm.handleClientMarkBackground(S, false)
+      await sm.handleClientMarkBackground(S, false)
       assertEq(deps.getClaudeState(S), 'stopped')
       // No tone for a state the user set with their own mouse — the unread flag
       // belongs to the left-click.
@@ -522,20 +564,20 @@ const cases: Case[] = [
   },
   {
     name: 'a manual dismiss is reversible',
-    run: (sm, deps) => {
+    run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'SubagentStart', { agent_id: 'a1' })
       hook(sm, 'Stop')
       sm.flushForTest()
-      sm.handleClientMarkBackground(S, false)
+      await sm.handleClientMarkBackground(S, false)
       assertEq(deps.getClaudeState(S), 'stopped')
-      sm.handleClientMarkBackground(S, true)
+      await sm.handleClientMarkBackground(S, true)
       assertEq(deps.getClaudeState(S), 'working_background')
     },
   },
   {
     name: 'right-click is ignored while Claude is working',
-    run: (sm, deps) => {
+    run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'SubagentStart', { agent_id: 'a1' })
       hook(sm, 'Stop')
@@ -544,7 +586,7 @@ const cases: Case[] = [
       assertEq(deps.getClaudeState(S), 'working')
       // The click was authored against a card that has since moved on; neither
       // answer means anything now.
-      sm.handleClientMarkBackground(S, true)
+      await sm.handleClientMarkBackground(S, true)
       assertEq(deps.getClaudeState(S), 'working')
     },
   },
@@ -597,14 +639,14 @@ function assertEq(actual: unknown, expected: unknown): void {
 
 describe('ClaudeStateMachine transitions', () => {
   for (const c of cases) {
-    it(c.name, () => {
+    it(c.name, async () => {
       // Each case gets a fresh machine + monotonic clock so queued transitions
       // apply in the order the case fired them, independent of other cases.
       clock = 0
       const deps = new FakeDeps()
-      const sm = new ClaudeStateMachine(deps, new BackgroundLedger())
+      const sm = new ClaudeStateMachine(deps, new BackgroundLedger(c.probes ?? ALWAYS_RUNNING))
       try {
-        c.run(sm, deps)
+        await c.run(sm, deps)
       } finally {
         sm.dispose()
       }

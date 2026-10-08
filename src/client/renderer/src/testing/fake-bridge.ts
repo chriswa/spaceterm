@@ -168,9 +168,6 @@ export class FakeBridge implements Api {
   private readonly speechActive = new Set<(active: boolean) => void>()
   private readonly speakingChanged = new Set<(nodeId: NodeId, speaking: boolean, voice?: string) => void>()
   private readonly summaryChatStatus = new Set<(nodeId: NodeId, s: SummaryChatUiState, m?: string) => void>()
-  private readonly peerConnected = new Set<(clientId: string) => void>()
-  private readonly peerDisconnected = new Set<(clientId: string) => void>()
-  private readonly peerCameraBounds = new Set<(clientId: string, bounds: CameraBounds) => void>()
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly rootCwd = new Set<(cwd: string | undefined) => void>()
   private readonly autoStampsEnabled = new Set<(enabled: boolean) => void>()
@@ -256,11 +253,6 @@ export class FakeBridge implements Api {
     },
     summaryChatStatus: (nodeId: NodeId, state: SummaryChatUiState, message?: string): void => {
       for (const fn of this.summaryChatStatus) fn(nodeId, state, message)
-    },
-    peerConnected: (clientId: string): void => { for (const fn of this.peerConnected) fn(clientId) },
-    peerDisconnected: (clientId: string): void => { for (const fn of this.peerDisconnected) fn(clientId) },
-    peerCameraBounds: (clientId: string, bounds: CameraBounds): void => {
-      for (const fn of this.peerCameraBounds) fn(clientId, bounds)
     },
     savedViewports: (viewports: Record<string, CameraBounds>): void => {
       for (const fn of this.savedViewports) fn(viewports)
@@ -430,9 +422,6 @@ export class FakeBridge implements Api {
     onPlaySound: (cb) => subscribe(this.playSound, cb),
     onSpeakingChanged: (cb) => subscribe(this.speakingChanged, cb),
     onSummaryChatStatus: (cb) => subscribe(this.summaryChatStatus, cb),
-    onPeerConnected: (cb) => subscribe(this.peerConnected, cb),
-    onPeerDisconnected: (cb) => subscribe(this.peerDisconnected, cb),
-    onPeerCameraBounds: (cb) => subscribe(this.peerCameraBounds, cb),
     onSavedViewports: (cb) => subscribe(this.savedViewports, cb),
     onRootCwd: (cb) => subscribe(this.rootCwd, cb),
     onAutoStampsEnabled: (cb) => subscribe(this.autoStampsEnabled, cb),
@@ -457,7 +446,7 @@ export class FakeBridge implements Api {
   }
 
   readonly dictation: DictationApi = {
-    start: (sampleRate) => this.reply('dictation.start', 'fake-dictation', sampleRate),
+    start: (sampleRate, forControl) => this.reply('dictation.start', 'fake-dictation', sampleRate, forControl),
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
     cancel: (id) => this.record('dictation.cancel', id),

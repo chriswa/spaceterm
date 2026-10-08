@@ -190,9 +190,6 @@ export interface NodeApi {
   onSummaryChatStatus(
     callback: (nodeId: NodeId, state: SummaryChatUiState, message?: string) => void,
   ): () => void
-  onPeerConnected(callback: (clientId: string) => void): () => void
-  onPeerDisconnected(callback: (clientId: string) => void): () => void
-  onPeerCameraBounds(callback: (clientId: string, bounds: CameraBounds) => void): () => void
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
   /** The root node's working directory, pushed on connect and on every change. */
   onRootCwd(callback: (cwd: string | undefined) => void): () => void
@@ -287,8 +284,12 @@ export interface TtsApi {
  * Operator listens to the microphone itself.
  */
 export interface DictationApi {
-  /** Open a session for s16le mono PCM at `sampleRate`. Rejects with a readable reason. */
-  start(sampleRate: number): Promise<string>
+  /**
+   * Open a session for s16le mono PCM at `sampleRate`. Rejects with a readable
+   * reason. `forControl`: the words go to Control, which then waits for them
+   * — so the caller must hand them over, or say there were none.
+   */
+  start(sampleRate: number, forControl?: boolean): Promise<string>
   /** One chunk, base64. */
   audio(id: string, pcmBase64: string): void
   /** No more audio; resolves to the transcript exactly as Wispr returned it. */

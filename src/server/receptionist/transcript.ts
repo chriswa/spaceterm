@@ -21,7 +21,7 @@ const NO_NAMES: NameOf = () => undefined
 /** Every kind of reasoning entry; a line of any other is one this build cannot draw, and is skipped. */
 const TRACE_KINDS: ReadonlySet<ControlTraceKind> = new Set<ControlTraceKind>([
   'events', 'requeued', 'backlog-add', 'backlog-take', 'backlog-back', 'backlog-dropped', 'backlog-wait',
-  'watch', 'fired', 'unwatch', 'unspoken', 'cut-in',
+  'watch', 'fired', 'unwatch', 'unspoken', 'cut-in', 'stopped', 'resumed',
 ])
 
 /** The record, as bytes. A seam so tests need no file. */

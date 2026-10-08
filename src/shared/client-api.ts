@@ -141,9 +141,6 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onPlaySound: (cb) => on('play-sound', (m) => cb(m.sound)),
       onSpeakingChanged: (cb) => on('speaking-changed', (m) => cb(m.nodeId, m.speaking, m.voice)),
       onSummaryChatStatus: (cb) => on('summary-chat-status', (m) => cb(m.nodeId, m.state, m.message)),
-      onPeerConnected: (cb) => on('peer-connected', (m) => cb(m.clientId)),
-      onPeerDisconnected: (cb) => on('peer-disconnected', (m) => cb(m.clientId)),
-      onPeerCameraBounds: (cb) => on('peer-camera-bounds', (m) => cb(m.clientId, m.bounds)),
       onSavedViewports: (cb) => on('saved-viewports', (m) => cb(m.viewports)),
       onRootCwd: (cb) => on('root-cwd', (m) => cb(m.cwd)),
       onAutoStampsEnabled: (cb) => on('auto-stamps-enabled', (m) => cb(m.enabled)),
@@ -201,7 +198,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onActiveChanged: (cb) => on('speech-active', (m) => cb(m.active))
     },
     dictation: {
-      start: (sampleRate) => client.dictationStart(sampleRate),
+      start: (sampleRate, forControl) => client.dictationStart(sampleRate, forControl),
       audio: (id, pcm) => client.dictationAudio(id, pcm),
       finish: (id) => client.dictationFinish(id),
       cancel: (id) => client.dictationCancel(id),

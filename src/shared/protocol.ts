@@ -400,6 +400,12 @@ export interface DictationStartMessage {
   seq: number
   /** Hz. PCM is signed 16-bit little-endian mono at this rate. */
   sampleRate: number
+  /**
+   * The words go to Control. The server then holds Control from the start
+   * until the client hands it the words, or says there were none, with a
+   * `receptionist-say` or `receptionist-hands-free`.
+   */
+  forControl?: boolean
 }
 
 /** One chunk of audio, base64. Fire-and-forget: failures surface at finish. */
@@ -455,15 +461,16 @@ export interface WakeWordCheckMessage {
 
 /**
  * Words dictated hands-free, after the wake word: for Control, whatever the
- * voice target. Takes Control to this device, as speaking to it does.
+ * voice target. Takes Control to this device, as speaking to it does. Sent
+ * with no `text` when nothing was caught for Control, so that it stops
+ * waiting for words and carries on with whatever the dictation stopped.
  */
 export interface ReceptionistHandsFreeMessage {
   type: 'receptionist-hands-free'
   text: string
   /**
-   * The wake word cut off Control's reply. With no `text` — nothing was caught
-   * after it — Control says it had not finished and carries on, rather than
-   * falling silent mid-answer. An older server ignores it, and stays silent.
+   * The wake word cut off Control's reply. With no `text`, Control says it had
+   * not finished and carries on, rather than falling silent mid-answer.
    */
   interrupted?: boolean
 }
@@ -1006,6 +1013,16 @@ export interface VoiceCommandMessage {
   text: string
 }
 
+/** Voice Operator started or ended a dictation on the Mac: see dictation-presence.ts. */
+export interface VoiceDictationMessage {
+  type: 'voice-dictation'
+  active: boolean
+  /** Names the Voice Operator process: a new one starts `seq` again. */
+  launch: string
+  /** Counts up with each report from one process. */
+  seq: number
+}
+
 /** Store the camera bounds for a numbered viewport slot ('0'..'9'), shared across all clients. */
 export interface SaveViewportMessage {
   type: 'save-viewport'
@@ -1024,6 +1041,7 @@ export type IngestMessage =
   | SpacetermBroadcastMessage
   | PlaySoundMessage
   | VoiceCommandMessage
+  | VoiceDictationMessage
 
 /**
  * Version handshake, sent by a client immediately on connect.
@@ -1651,22 +1669,6 @@ export interface SummaryChatToggleResultMessage {
   message?: string
 }
 
-export interface PeerConnectedMessage {
-  type: 'peer-connected'
-  clientId: string
-}
-
-export interface PeerDisconnectedMessage {
-  type: 'peer-disconnected'
-  clientId: string
-}
-
-export interface PeerCameraBoundsMessage {
-  type: 'peer-camera-bounds'
-  clientId: string
-  bounds: CameraBounds
-}
-
 /**
  * Sent to exactly one client, instructing it to raise its window and show what
  * a focus request named.
@@ -1789,7 +1791,7 @@ export type ControlTraceKind =
   | 'events' | 'requeued'
   | 'backlog-add' | 'backlog-take' | 'backlog-back' | 'backlog-dropped' | 'backlog-wait'
   | 'watch' | 'fired' | 'unwatch'
-  | 'unspoken' | 'cut-in'
+  | 'unspoken' | 'cut-in' | 'stopped' | 'resumed'
 
 /** One reasoning entry: a line, and the detail behind it when there is more to say. */
 export interface ControlTrace {
@@ -2198,9 +2200,6 @@ export type ServerMessage =
   | SpeakingChangedMessage
   | SummaryChatStatusMessage
   | SummaryChatToggleResultMessage
-  | PeerConnectedMessage
-  | PeerDisconnectedMessage
-  | PeerCameraBoundsMessage
   | FocusSurfaceMessage
   | SavedViewportsMessage
   | RootCwdMessage

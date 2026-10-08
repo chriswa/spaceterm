@@ -94,6 +94,8 @@ export interface DictationOptions {
    * gap: hands-free mode hands over everything said since the wake word.
    */
   backlog?: () => Int16Array
+  /** The words go to Control: see `DictationApi.start`. */
+  forControl?: boolean
 }
 
 export class Dictation {
@@ -171,7 +173,7 @@ export class Dictation {
     // Asked for before the first await, so a microphone that must be opened
     // is opened inside the tap, as iOS requires.
     const capturing = acquire()
-    const started = api.start(TARGET_SAMPLE_RATE)
+    const started = api.start(TARGET_SAMPLE_RATE, options.forControl)
     started.catch(() => undefined)
     let capture: Capture
     try {

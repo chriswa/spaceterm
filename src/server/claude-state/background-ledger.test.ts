@@ -191,37 +191,37 @@ const cases: Case[] = [
   },
   {
     name: 'restoreDismissed takes the dismissed work back up',
-    run: () => {
+    run: async () => {
       const l = new BackgroundLedger(fakeProbes())
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
       l.dismissAll(SURFACE)
-      assertEq(l.restoreDismissed(SURFACE), true)
+      assertEq(await l.restoreDismissed(SURFACE), true)
       assertEq(l.outstandingCount(SURFACE), 1)
       assertEq(l.dismissedCount(SURFACE), 0)
     },
   },
   {
     name: 'restoreDismissed refuses when there is nothing dismissed',
-    run: () => {
+    run: async () => {
       // Both shapes of "nothing to take up": a surface that never ran
       // background work, and one whose work is already blocking. Neither may be
       // answered with an invented launch.
       const l = new BackgroundLedger(fakeProbes())
-      assertEq(l.restoreDismissed(SURFACE), false)
+      assertEq(await l.restoreDismissed(SURFACE), false)
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
-      assertEq(l.restoreDismissed(SURFACE), false)
+      assertEq(await l.restoreDismissed(SURFACE), false)
       assertEq(l.outstandingCount(SURFACE), 1)
     },
   },
   {
     name: 'after a restore, the first launch to resolve dismisses the rest',
-    run: () => {
+    run: async () => {
       // The point of "first, not all": the restored work is exactly the work
       // that might never end, so waiting for all of it would never drain.
       const l = new BackgroundLedger(fakeProbes())
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
       l.dismissAll(SURFACE)
-      assertEq(l.restoreDismissed(SURFACE), true)
+      assertEq(await l.restoreDismissed(SURFACE), true)
       assertEq(l.outstandingCount(SURFACE), 2)
       l.ingestJsonl(SURFACE, [stringEntry('user', DONE('b4g2uhdde'))])
       assertEq(l.outstandingCount(SURFACE), 0)
@@ -231,14 +231,58 @@ const cases: Case[] = [
   {
     name: 'a probe that sees work finish settles the restore',
     run: async () => {
+      let bash: LivenessVerdict = 'running'
+      const l = new BackgroundLedger(fakeProbes({ bash: () => bash, monitor: 'running' }))
+      l.setContext(SURFACE, '/p/sess.jsonl', cid('sess'))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
+      l.dismissAll(SURFACE)
+      await l.restoreDismissed(SURFACE)
+      bash = 'finished'
+      assertEq(await l.reconcile(SURFACE), true)
+      assertEq(l.outstandingCount(SURFACE), 0)
+      assertEq(l.dismissedCount(SURFACE), 1)
+    },
+  },
+  {
+    name: 'a restore drops dismissed work that already ended, so it cannot settle the arm',
+    run: async () => {
+      // The live failure: a surface with a running persistent Monitor and two
+      // launches that had ended unnoticed while dismissed. Restored together,
+      // the next sweep "resolved" a dead one and re-dismissed the monitor —
+      // yellow for one sweep, then white with the monitor still running.
+      const l = new BackgroundLedger(fakeProbes({ bash: 'finished', agent: 'finished', monitor: 'running' }))
+      l.setContext(SURFACE, '/p/sess.jsonl', cid('sess'))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
+      l.registerAgent(SURFACE, 'a1')
+      l.dismissAll(SURFACE)
+      assertEq(await l.restoreDismissed(SURFACE), true)
+      assertEq(l.outstandingCount(SURFACE), 1) // only the monitor
+      assertEq(await l.reconcile(SURFACE), false)
+      assertEq(l.outstandingCount(SURFACE), 1)
+      assertEq(l.dismissedCount(SURFACE), 0)
+    },
+  },
+  {
+    name: 'a restore with only ended work restores nothing and forgets it',
+    run: async () => {
+      const l = new BackgroundLedger(fakeProbes({ bash: 'finished' }))
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
+      l.dismissAll(SURFACE)
+      assertEq(await l.restoreDismissed(SURFACE), false)
+      assertEq(l.outstandingCount(SURFACE), 0)
+      assertEq(l.dismissedCount(SURFACE), 0)
+    },
+  },
+  {
+    name: 'a restore the caller no longer wants after probing changes only the dead',
+    run: async () => {
       const l = new BackgroundLedger(fakeProbes({ bash: 'finished', monitor: 'running' }))
       l.setContext(SURFACE, '/p/sess.jsonl', cid('sess'))
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
       l.dismissAll(SURFACE)
-      l.restoreDismissed(SURFACE)
-      assertEq(await l.reconcile(SURFACE), true)
+      assertEq(await l.restoreDismissed(SURFACE, () => false), false)
       assertEq(l.outstandingCount(SURFACE), 0)
-      assertEq(l.dismissedCount(SURFACE), 1)
+      assertEq(l.dismissedCount(SURFACE), 1) // the monitor, still dismissed
     },
   },
   {
@@ -250,7 +294,7 @@ const cases: Case[] = [
       l.setContext(SURFACE, '/p/sess.jsonl', cid('sess'))
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
       l.dismissAll(SURFACE)
-      l.restoreDismissed(SURFACE)
+      await l.restoreDismissed(SURFACE)
       assertEq(await l.reconcile(SURFACE, 0), false)
       assertEq(await l.reconcile(SURFACE, 6 * 60_000), true) // bash drained on the bound
       assertEq(l.outstandingCount(SURFACE), 1)               // monitor still blocking
@@ -266,7 +310,7 @@ const cases: Case[] = [
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
       assertEq(await l.reconcile(SURFACE, 0), false) // clock starts
       l.dismissAll(SURFACE)
-      l.restoreDismissed(SURFACE)
+      await l.restoreDismissed(SURFACE)
       assertEq(await l.reconcile(SURFACE, 6 * 60_000), false) // clock restarts here
       assertEq(l.outstandingCount(SURFACE), 1)
     },
@@ -283,13 +327,13 @@ const cases: Case[] = [
   },
   {
     name: 'clear forgets dismissed work too (SessionEnd)',
-    run: () => {
+    run: async () => {
       const l = new BackgroundLedger(fakeProbes())
       l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])
       l.dismissAll(SURFACE)
       l.clear(SURFACE)
       assertEq(l.dismissedCount(SURFACE), 0)
-      assertEq(l.restoreDismissed(SURFACE), false)
+      assertEq(await l.restoreDismissed(SURFACE), false)
     },
   },
 
@@ -547,7 +591,7 @@ const cases: Case[] = [
         ['ingestJsonl', () => l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])],
         ['completeAgent', () => l.completeAgent(SURFACE, 'agent-1')],
         ['dismissAll', () => l.dismissAll(SURFACE)],
-        ['restoreDismissed', () => { l.restoreDismissed(SURFACE) }],
+        ['restoreDismissed', async () => { await l.restoreDismissed(SURFACE) }],
         ['reconcile', () => l.reconcile(SURFACE)],
         ['clear', () => l.clear(SURFACE)],
         ['restore', () => l.restore(SURFACE, { launches: [] })],

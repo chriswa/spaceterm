@@ -178,6 +178,11 @@ export class SpeechChannel {
    * the interruption was observed. Consumed by `heardPrefix`.
    */
   private interruptedAtCharacter: number | undefined
+  /**
+   * How far the answer a new run superseded got, once its drop answers: see
+   * `supersede`. Consumed by `heardPrefix`.
+   */
+  private supersededAt: Promise<number | undefined> | undefined
   /** What an `Attempt` may see of this channel: who owns it, and a way to let go. */
   private readonly owner: AttemptOwner = {
     current: () => this.attempt,
@@ -227,7 +232,7 @@ export class SpeechChannel {
    */
   begin(phase: 'thinking' | 'synthesizing'): Attempt {
     this.attempt?.abandon()
-    this.interimJobs = []
+    this.supersede()
     const attempt = new Attempt(this.owner)
     this.attempt = attempt
     this.setPhase(phase)
@@ -365,16 +370,29 @@ export class SpeechChannel {
     attempt?.abandon()
     this.setPhase('ready')
     if (!job) return attempt !== undefined
-    const status = speechStatus(await job.backend.drop(job.id))
     // Being cut off is exactly the situation the interruption offset exists to
-    // describe, so record it for the next turn. A reported zero is a real
-    // answer — the listener heard no complete sentence — and has to be told
-    // apart from an absent field, or the whole unheard answer stays in the
-    // history as though it had been delivered.
-    if (typeof status?.character_offset === 'number') {
-      this.interruptedAtCharacter = status.character_offset
-    }
+    // describe, so record it for the next turn. A job that had already
+    // finished was heard in full, and records nothing.
+    this.interruptedAtCharacter = cutOffAt(speechStatus(await job.backend.drop(job.id)))
     return true
+  }
+
+  /**
+   * Drop what the last run left with the backend — its answer, queued or
+   * playing, and its interim lines — keeping how far the answer got for
+   * `heardPrefix`. An abandoned attempt's monitor lets go of its job without
+   * stopping it, so without this the job stays in the backend's queue and
+   * plays after the run that replaced it: a reply Voice Operator held back
+   * while the listener dictated was heard after their words, which the model
+   * had already read as answering it.
+   */
+  private supersede(): void {
+    const job = this.job
+    const interim = this.interimJobs
+    this.job = undefined
+    this.interimJobs = []
+    for (const spoken of interim) void spoken.backend.drop(spoken.id)
+    if (job) this.supersededAt = job.backend.drop(job.id).then((response) => cutOffAt(speechStatus(response)))
   }
 
   /**
@@ -405,20 +423,24 @@ export class SpeechChannel {
   }
 
   /**
-   * How much of the previous answer the listener actually heard, if they cut it
-   * off: a UTF-16 offset into `joinSpeechParts` of what was delivered. Consumed
-   * once, so a later turn does not repeat stale context.
+   * How much of the previous answer the listener actually heard, if they did
+   * not hear all of it: a UTF-16 offset into `joinSpeechParts` of what was
+   * delivered, zero for an answer they heard none of. Consumed once, so a
+   * later turn does not repeat stale context.
+   *
+   * Asked when the listener has spoken, or the speaker has moved on. An
+   * answer still with the backend then — queued behind their dictation, or
+   * playing — is stopped here, since anything it says now comes after their
+   * words, and counts as cut off where it got to.
    */
   async heardPrefix(): Promise<number | undefined> {
+    if (this.job) await this.cancel()
+    const superseded = this.supersededAt
+    this.supersededAt = undefined
+    const dropped = superseded && await superseded
     const recorded = this.interruptedAtCharacter
     this.interruptedAtCharacter = undefined
-    if (recorded !== undefined) return recorded
-    // Still-live job: the follow-up beat the monitor to the terminal status.
-    const job = this.job
-    if (!job) return undefined
-    const status = speechStatus(await job.backend.status(job.id))
-    if (!status || !wasCutOff(status.state)) return undefined
-    return status.character_offset ?? 0
+    return recorded ?? dropped
   }
 
   /**
@@ -478,9 +500,8 @@ export class SpeechChannel {
       // killed, or its connection dropped — was cut off just the same, and
       // settling it as though it had been heard is how a reply went unheard
       // without anyone knowing.
-      if (wasCutOff(status.state)) {
-        this.interruptedAtCharacter = status.character_offset ?? 0
-      }
+      const cutOff = cutOffAt(status)
+      if (cutOff !== undefined) this.interruptedAtCharacter = cutOff
       // A job that died in synthesis made no sound and offered no reason, yet
       // used to settle down exactly the same path as an answer read out in
       // full. To a listener those two are the same event — silence — so the
@@ -570,6 +591,17 @@ export class SpeechChannel {
  */
 function wasCutOff(state: SpeechStatus['state']): boolean {
   return state === 'interrupted_by_user' || state === 'cancelled_by_client'
+}
+
+/**
+ * Where a job stopped short, if it did: `character_offset` for one that was
+ * cut off, zero when it never started. A reported zero is a real answer — the
+ * listener heard no complete sentence — and has to be told apart from a job
+ * heard in full, or the whole unheard answer stays in the history as though
+ * it had been delivered.
+ */
+function cutOffAt(status: SpeechStatus | undefined): number | undefined {
+  return status && wasCutOff(status.state) ? status.character_offset ?? 0 : undefined
 }
 
 /** What was sent to be spoken, for comparing against what was heard; long answers trimmed. */

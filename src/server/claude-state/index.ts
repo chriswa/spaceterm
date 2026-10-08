@@ -159,6 +159,11 @@ export class ClaudeStateMachine {
     this.transitionQueue.drain(true)
   }
 
+  /** Test-only: run one reconciliation sweep now rather than on the interval. */
+  reconcileForTest(): Promise<void> {
+    return this.reconcileBackgroundSurfaces()
+  }
+
   // ─── Public handlers ──────────────────────────────────────────────────────
 
   /**
@@ -661,6 +666,8 @@ export class ClaudeStateMachine {
    * the agent: it is authored against whatever the card was showing, and Claude
    * may have started working in between, where neither answer means anything.
    * The renderer gates the affordance too, but its view is a frame behind.
+   * Restoring probes each dismissed launch first, so the check is repeated
+   * once the probes return.
    *
    * Deliberately NOT routed through applyTransition, for two reasons. It sets
    * the unread flag when entering `stopped`, which fires the completion tone —
@@ -669,8 +676,12 @@ export class ClaudeStateMachine {
    * which would let a click suppress a genuine hook that happened moments
    * earlier. A manual override should lose to real evidence, not outrank it.
    */
-  handleClientMarkBackground(surfaceId: PtySessionId, background: boolean): void {
+  async handleClientMarkBackground(surfaceId: PtySessionId, background: boolean): Promise<void> {
     const prevState = this.deps.getClaudeState(surfaceId)
+    const isIdle = (): boolean => {
+      const state = this.deps.getClaudeState(surfaceId)
+      return state === 'stopped' || state === 'working_background'
+    }
     const logSuppressed = (detail: string): void => {
       this.decisionLogger.log(surfaceId, {
         timestamp: localISOTimestamp(),
@@ -683,16 +694,21 @@ export class ClaudeStateMachine {
       })
     }
 
-    if (prevState !== 'stopped' && prevState !== 'working_background') {
+    if (!isIdle()) {
       logSuppressed('not idle')
       return
     }
     if (background) {
-      // Nothing dismissed means nothing to wait for. The alternative — a
-      // synthetic launch standing in for the user's hunch — is an outstanding
-      // entry with no drain path, which is invariant 13's whole subject.
-      if (!this.backgroundLedger.restoreDismissed(surfaceId)) {
-        logSuppressed('nothing dismissed to restore')
+      // Nothing live among the dismissed work means nothing to wait for. The
+      // alternative — a synthetic launch standing in for the user's hunch — is
+      // an outstanding entry with no drain path, which is invariant 13's whole
+      // subject.
+      const restored = await this.backgroundLedger.restoreDismissed(surfaceId, isIdle)
+      if (!restored) {
+        // The probes may have dropped dead launches, which moves the count the
+        // client gates the affordance on.
+        this.publishDismissedBackground(surfaceId)
+        logSuppressed(isIdle() ? 'no live dismissed work to restore' : 'not idle after probing')
         return
       }
     } else {

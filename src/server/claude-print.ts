@@ -46,8 +46,15 @@ export interface ClaudePrintRequest {
   autoCompact?: { aboveTokens: number }
   /** Names the caller in the daemon's usage log, which is where cost is tracked. */
   tag: string
-  /** Kills the CLI. The daemon still finishes the turn it started. */
+  /** Kills the CLI. The daemon still finishes the turn it started: to stop it, use `abort`. */
   signal?: AbortSignal
+  /**
+   * Stops the turn in the daemon where it is (`claude-print-daemon abort`),
+   * and the response comes back at once with `abort` set. Needs `turnId`.
+   */
+  abort?: AbortSignal
+  /** Names the turn, for `abort`. */
+  turnId?: string
 }
 
 export interface ClaudePrintResponse {
@@ -71,6 +78,13 @@ export interface ClaudePrintResponse {
   }
   /** What this turn arranged: a compaction started now (`size`), or scheduled for `at` (`auto`). */
   next_compaction?: { trigger: 'auto' | 'size'; at: string }
+  /**
+   * Set when the turn was aborted, and `result` is then empty. An abort is
+   * not a rewind: with `prompt_in_session`, the session keeps the prompt and
+   * its interrupted answer, and the next turn follows them; without, the
+   * prompt was never sent.
+   */
+  abort?: { prompt_in_session: boolean }
 }
 
 /**
@@ -91,7 +105,12 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
     if (req.keepAlive.priority) args.push('--priority')
   }
   if (req.autoCompact) args.push('--auto-compact', '--compact-above', String(req.autoCompact.aboveTokens))
-  return new Promise((resolve, reject) => {
+  if (req.turnId) args.push('--turn-id', req.turnId)
+  const { abort, turnId } = req
+  const onAbort = () => { if (turnId) abortClaudePrint(turnId) }
+  if (abort?.aborted) onAbort()
+  else abort?.addEventListener('abort', onAbort, { once: true })
+  return new Promise<ClaudePrintResponse>((resolve, reject) => {
     const child = spawn(CLAUDE_PRINT_BIN, args, { stdio: ['pipe', 'pipe', 'pipe'], signal: req.signal })
     let stdout = ''
     let stderr = ''
@@ -116,7 +135,17 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
     })
     // The prompt goes over stdin so its size and quoting never meet a command line.
     child.stdin.end(req.prompt)
-  })
+  }).finally(() => abort?.removeEventListener('abort', onAbort))
+}
+
+/**
+ * Stop a named turn where it is; its `ask` then returns with `abort` set. An
+ * abort that reaches the daemon before its turn does still stops it. Fails
+ * quietly: a turn that cannot be stopped finishes, and is dropped by its caller.
+ */
+export function abortClaudePrint(turnId: string): void {
+  const child = spawn(CLAUDE_PRINT_BIN, ['abort', turnId], { stdio: 'ignore' })
+  child.on('error', () => undefined)
 }
 
 /**

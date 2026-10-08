@@ -33,7 +33,7 @@ export const RECEPTIONIST_MODEL = { model: 'sonnet', noThinking: false, effort: 
  */
 export const RECEPTIONIST_COMPACT_ABOVE_TOKENS = 40_000
 
-export async function askReceptionistModel(turn: SessionTurn, signal: AbortSignal): Promise<SessionAnswer> {
+export async function askReceptionistModel(turn: SessionTurn, signal: AbortSignal, abort?: AbortSignal): Promise<SessionAnswer> {
   const response = await askClaudePrint({
     prompt: turn.prompt,
     ...(turn.systemPrompt !== undefined ? { systemPrompt: turn.systemPrompt } : {}),
@@ -48,6 +48,7 @@ export async function askReceptionistModel(turn: SessionTurn, signal: AbortSigna
     }),
     tag: turn.retiring ? 'receptionist-handover' : 'receptionist',
     signal,
+    ...(abort && turn.turnId ? { abort, turnId: turn.turnId } : {}),
   }).catch((err: unknown) => {
     throw err instanceof ClaudePrintBusy ? new SessionBusy(err.message) : err
   })
@@ -59,6 +60,7 @@ export async function askReceptionistModel(turn: SessionTurn, signal: AbortSigna
     wallMs: response.wall_ms,
     costUsd: response.total_cost_usd,
     ...(response.next_compaction ? { compactsAt: Date.parse(response.next_compaction.at) } : {}),
+    ...(response.abort ? { aborted: { promptInSession: response.abort.prompt_in_session } } : {}),
   }
 }
 

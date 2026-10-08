@@ -100,6 +100,8 @@ function harness(opts: {
   compactsAt?: number
   /** How many messages find the session busy with a turn some earlier server left behind. */
   busyFor?: number
+  /** Whether an abort stops the turn; when not, it lands after the turn finished, which comes back whole. Default true. */
+  abortsLand?: boolean
   /** Jev's verdict on cutting a reply short; by default never. */
   judgeInterruption?: ReceptionistDeps['judgeInterruption']
   /** Jev's probabilities for the backlog's items; by default it cannot say. */
@@ -137,7 +139,10 @@ function harness(opts: {
   const turns: SessionTurn[] = []
   const replies = [...opts.replies]
   let sessions = 0
-  let busy = false
+  /** The message the session is answering, if any. */
+  let busy: SessionTurn | undefined
+  /** Messages the daemon was told to abort, and whether each had reached the session. */
+  const aborted: Array<{ prompt: string; promptInSession: boolean }> = []
   let busyFor = opts.busyFor ?? 0
   let overlapped = false
   const assigned = new Map<NodeId, NamedVoice>()
@@ -170,17 +175,21 @@ function harness(opts: {
     drop: async (id) => ({ status: 410, body: { id, state: 'cancelled_by_client' } }),
   }
   const receptionist = new Receptionist({
-    // As the daemon: one turn at a time per session, and a turn it has started
-    // is finished even after its caller gives up — which, as the real client
-    // does, rejects at once on abort.
-    askModel: (turn, signal) => {
+    // As the daemon: one turn at a time per session. A caller that gives up
+    // on the time limit is rejected at once, while the daemon finishes the
+    // turn; an abort stops the turn, and answers at once that it did.
+    askModel: (turn, signal, abort) => {
       if (busy || busyFor > 0) {
         if (busy) overlapped = true
         busyFor--
         return Promise.reject(new SessionBusy('session already has a turn in progress'))
       }
+      if (abort?.aborted) {
+        aborted.push({ prompt: turn.prompt, promptInSession: false })
+        return Promise.resolve({ text: '', sessionId: turn.sessionId ?? '', aborted: { promptInSession: false } })
+      }
       turns.push(turn)
-      busy = true
+      busy = turn
       const answering = (async () => {
         if (turn.sessionId && opts.lostSessions?.includes(turn.sessionId)) throw new Error('session not found')
         const next = replies.shift()
@@ -200,9 +209,14 @@ function harness(opts: {
           text, sessionId: turn.sessionId ?? `session-${++sessions}`,
           ...(opts.compactsAt !== undefined ? { compactsAt: opts.compactsAt } : {}),
         }
-      })().finally(() => { busy = false })
+      })().finally(() => { if (busy === turn) busy = undefined })
       return new Promise((resolve, reject) => {
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        if (opts.abortsLand !== false) abort?.addEventListener('abort', () => {
+          if (busy === turn) busy = undefined
+          aborted.push({ prompt: turn.prompt, promptInSession: true })
+          resolve({ text: '', sessionId: turn.sessionId ?? `session-${++sessions}`, aborted: { promptInSession: true } })
+        }, { once: true })
         answering.then(resolve, reject)
       })
     },
@@ -282,7 +296,7 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {} })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -597,6 +611,45 @@ describe('Receptionist', () => {
     expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length] }])
   })
 
+  it('drops a reply still held back when the user\'s words arrive, and tells the model none of it was heard', async () => {
+    // Voice Operator holds a job queued while the user dictates, and plays it once they stop.
+    const wire: string[] = []
+    let dropped: (() => void) | undefined
+    const held: SpeechBackend = {
+      speak: async () => ({ status: 202, body: { id: 'held', state: 'in_progress', playback_state: 'queued', version: 1 } }),
+      status: () => new Promise((resolve) => {
+        dropped = () => resolve({ status: 410, body: { id: 'held', state: 'cancelled_by_client', character_offset: 0, version: 2 } })
+      }),
+      drop: async (id) => {
+        wire.push(`drop ${id}`)
+        dropped?.()
+        return { status: 410, body: { id, state: 'cancelled_by_client', character_offset: 0, version: 2 } }
+      },
+    }
+    const h = harness({
+      speech: held,
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done. Want me to tell him to commit and push?' }]),
+        (turn) => {
+          wire.push('model')
+          expect(turn.prompt).toMatch(/^NOTE: (.* )?Your last reply was never heard: the user started talking before any of it was played\./)
+          expect(turn.prompt).toContain('What they say next does not answer anything in what they did not hear')
+          expect(turn.prompt).toContain('THE USER SAYS: okay, sounds good')
+          return reply([{ from: 'control', text: 'Noted.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    await h.receptionist.hear('okay, sounds good')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    // Gone from the queue before the model is asked, so it can never play after the user's words.
+    expect(wire.slice(0, 2)).toEqual(['drop held', 'model'])
+    const replyAt = h.record.findIndex(message => message.content.includes('commit and push'))
+    expect(h.heardMarks).toEqual([{ replyAt, parts: [0] }])
+  })
+
   it('after an interruption nothing was caught in, says it had not finished and carries on', async () => {
     const h = harness({
       replies: [
@@ -612,7 +665,7 @@ describe('Receptionist', () => {
     })
     await h.receptionist.hear('how is Kevin?')
     await flush()
-    h.receptionist.carryOnAfterEmptyInterruption()
+    h.receptionist.heardNothing(true)
     await flush()
     expect(h.turns).toHaveLength(2)
     expect(h.spoken).toHaveLength(2)
@@ -621,6 +674,7 @@ describe('Receptionist', () => {
   it('never overlaps two messages to the session, and says when a reply was talked over', async () => {
     let releaseStale: ((text: string) => void) | undefined
     const h = harness({
+      abortsLand: false,
       replies: [
         reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
         () => new Promise<string>((resolve) => { releaseStale = resolve }),
@@ -703,6 +757,7 @@ describe('Receptionist', () => {
   it('drops an unprompted turn when the user starts talking, and brings its events back once they stop', async () => {
     let releaseStale: ((text: string) => void) | undefined
     const h = harness({
+      abortsLand: false,
       replies: [
         reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
         () => new Promise<string>((resolve) => { releaseStale = resolve }),
@@ -728,18 +783,132 @@ describe('Receptionist', () => {
     expect(said(h).at(-1)).toContain('Sally finished.')
   })
 
-  it('holds a reply the user asked for until they stop talking', async () => {
-    let answer: ((text: string) => void) | undefined
-    const h = harness({ replies: [() => new Promise<string>((resolve) => { answer = resolve })] })
+  it('aborts the answer to a question the moment the user starts talking again, and carries on if nothing they said was for it', async () => {
+    const h = harness({
+      replies: [
+        () => new Promise<string>(() => {}),
+        (turn) => {
+          expect(turn.prompt).toContain('You were stopped part-way through your last answer')
+          expect(turn.prompt).toContain('nothing they said was for you. Carry on from where you stopped.')
+          // Its words are in the session already, with the aborted answer: not said again.
+          expect(turn.prompt).not.toContain('THE USER SAYS')
+          return reply([{ from: 'control', text: 'Kevin is testing.' }])
+        },
+      ],
+    })
     void h.receptionist.hear('what is Kevin doing?')
     await flush()
     h.receptionist.userSpeaking(true)
-    answer?.(reply([{ from: 'control', text: 'Kevin is testing.' }]))
+    await flush()
+    expect(h.aborted).toEqual([{ prompt: expect.stringContaining('THE USER SAYS: what is Kevin doing?'), promptInSession: true }])
+    expect(h.turns).toHaveLength(1)
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(said(h)).toEqual([JSON.stringify([{ text: 'Kevin is testing.', voice: RECEPTIONIST_VOICE }])])
+  })
+
+  it('takes the words the user says next in place of the answer it stopped', async () => {
+    const h = harness({
+      replies: [
+        () => new Promise<string>(() => {}),
+        (turn) => {
+          expect(turn.prompt).toContain('You were stopped part-way through your last answer')
+          expect(turn.prompt).not.toContain('Carry on from where you stopped')
+          expect(turn.prompt).toContain('THE USER SAYS: no, Sally')
+          return reply([{ from: 'control', text: 'Sally is on the login page.' }])
+        },
+      ],
+    })
+    void h.receptionist.hear('what is Kevin doing?')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    await flush()
+    // On the Mac the words come before the dictation is reported over.
+    void h.receptionist.hear('no, Sally')
     await flush()
     expect(h.spoken).toHaveLength(0)
     h.receptionist.userSpeaking(false)
     await flush()
-    expect(said(h)).toEqual([JSON.stringify([{ text: 'Kevin is testing.', voice: RECEPTIONIST_VOICE }])])
+    expect(h.turns).toHaveLength(2)
+    expect(said(h)).toEqual([JSON.stringify([{ text: 'Sally is on the login page.', voice: RECEPTIONIST_VOICE }])])
+  })
+
+  it('says again the words of a turn stopped before they reached the session', async () => {
+    let finishEarlier: ((text: string) => void) | undefined
+    const h = harness({
+      abortsLand: false,
+      replies: [
+        // A message already in the session, which the next waits behind.
+        () => new Promise<string>((resolve) => { finishEarlier = resolve }),
+        (turn) => {
+          expect(turn.prompt).toContain('THE USER SAYS: tell Kevin to commit and also push')
+          return reply([{ from: 'control', text: 'Will do.' }])
+        },
+      ],
+    })
+    void h.receptionist.hear('how is Kevin?')
+    await flush()
+    void h.receptionist.hear('tell Kevin to commit')
+    await flush()
+    // Still queued behind the first when the user starts talking again.
+    h.receptionist.userSpeaking(true)
+    finishEarlier?.(reply([{ from: 'control', text: 'Kevin is fine.' }]))
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    void h.receptionist.hear('and also push')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    // The record has each of the user's words once.
+    expect(h.record.filter(message => message.role === 'user').map(message => message.content))
+      .toEqual(['THE USER SAYS: how is Kevin?', 'THE USER SAYS: tell Kevin to commit', 'THE USER SAYS: and also push'])
+  })
+
+  it('takes no action in a step that looks something up while the user is talking', async () => {
+    let answer: ((text: string) => void) | undefined
+    const h = harness({
+      abortsLand: false,
+      replies: [
+        () => new Promise<string>((resolve) => { answer = resolve }),
+        (turn) => {
+          expect(turn.prompt).toContain(`so this action was not carried out: {"tool":"send","agent":"${KEVIN}","message":"Commit."}`)
+          return reply([{ from: 'control', text: 'Okay.' }])
+        },
+      ],
+    })
+    void h.receptionist.hear('tell Kevin to commit, and read me Sally')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    answer?.(reply([], [{ tool: 'send', agent: KEVIN, message: 'Commit.' }, { tool: 'read', agent: SALLY }]))
+    await flush()
+    void h.receptionist.hear('never mind')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.wire).toEqual([])
+  })
+
+  it('marks a side question asked before the user last spoke', async () => {
+    let answerSide: ((result: SideQuestionResult) => void) | undefined
+    const h = harness({
+      askAgent: () => new Promise((resolve) => { answerSide = resolve }),
+      replies: [
+        reply([{ from: 'control', text: 'Asking.' }], [{ tool: 'ask_agent', agent: KEVIN, question: 'How big is the tank?' }]),
+        reply([{ from: 'control', text: 'Sally is fine.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('You asked this before the user last spoke')
+          return reply([])
+        },
+      ],
+    })
+    await h.receptionist.hear('ask Kevin how big the tank is')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    void h.receptionist.hear('how is Sally?')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    answerSide?.({ ok: true, text: '42 litres.', usage: {} })
+    await flush()
+    expect(h.turns).toHaveLength(3)
   })
 
   it('reports an answer that came before the monitor did, and ignores the stop of a declined question', async () => {
@@ -2247,6 +2416,61 @@ function handPlayed() {
   }
 }
 
+describe('Receptionist: the user starts talking over its words', () => {
+  it('cuts a reply off where the user started, and carries on if nothing they said was for Control', async () => {
+    const speech = handPlayed()
+    const h = harness({
+      speech: speech.backend,
+      replies: [
+        reply([{ from: 'control', text: 'Kevin finished the solver and every test passes.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('They heard only: "Kevin *INTERRUPTED*"')
+          expect(turn.prompt).toContain("nothing they said was caught. Say in a few words that you hadn't finished")
+          return reply([{ from: 'control', text: 'As I was saying, every test passes.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is Kevin?')
+    await flush()
+    speech.heard('Kevin finished'.length)
+    await flush()
+    h.receptionist.userSpeaking(true)
+    await flush()
+    expect(h.heardMarks).toHaveLength(0)
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.heardMarks).toHaveLength(1)
+    expect(speech.spoken.at(-1)).toEqual([{ text: 'As I was saying, every test passes.', voice: RECEPTIONIST_VOICE }])
+  })
+
+  it('tells the model how much it heard of what was said while looking things up', async () => {
+    const speech = handPlayed()
+    const h = harness({
+      speech: speech.backend,
+      replies: [
+        reply([{ from: 'control', text: 'Let me check on Kevin for you.' }], [{ tool: 'read', agent: KEVIN }]),
+        // The read's results go back, and the model is still answering them when the user talks.
+        () => new Promise<string>(() => {}),
+        (turn) => {
+          expect(turn.prompt).toContain('The user cut off what you said while looking things up. They heard only: "Let me check"')
+          expect(turn.prompt).toContain('THE USER SAYS: never mind')
+          return reply([{ from: 'control', text: 'Okay.' }])
+        },
+      ],
+    })
+    // The read's results go back to the model, which the fake keeps waiting on.
+    void h.receptionist.hear('how is Kevin?')
+    await flush()
+    speech.heard('Let me check'.length)
+    await flush()
+    h.receptionist.userSpeaking(true)
+    void h.receptionist.hear('never mind')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.turns.at(-1)?.prompt).toContain('never mind')
+  })
+})
+
 describe('Receptionist actions run before the words that report them', () => {
   /** "Sent to Kevin." with a send to Kevin written after it, then more words, then a send to Sally in "tools". */
   const sendBoth = JSON.stringify({
@@ -2319,6 +2543,7 @@ describe('Receptionist actions run before the words that report them', () => {
   it('tells the model which actions never ran when its unprompted reply was dropped for the user talking', async () => {
     let releaseStale: ((text: string) => void) | undefined
     const h = harness({
+      abortsLand: false,
       replies: [
         reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
         () => new Promise<string>((resolve) => { releaseStale = resolve }),
@@ -2479,6 +2704,7 @@ describe('Receptionist backlog', () => {
   it('takes every item about what the user asks about, and puts them all back if the reply goes unheard', async () => {
     let h: ReturnType<typeof harness> | undefined
     h = harness({
+      abortsLand: false,
       backlog: ['Leon finished the go-quiet work.', 'Dean asked two questions.', 'Leon asked whether to restart the server.'],
       judgeBacklog: async () => [0.8, 0.1, 0.7],
       replies: [
@@ -2494,7 +2720,8 @@ describe('Receptionist backlog', () => {
     })
     void h.receptionist.hear('where are we with Leon?')
     await flush()
-    expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.'])
+    // The user started talking before the reply was said: the turn stopped, and the items went back at once.
+    expect(h.backlog.size).toBe(3)
     const answered = h.receptionist.hear('actually, wait')
     h.receptionist.userSpeaking(false)
     await answered
@@ -2561,6 +2788,7 @@ describe('Receptionist backlog', () => {
   it('puts the item back when the reply that would bring it up is never heard', async () => {
     let h: ReturnType<typeof harness> | undefined
     h = harness({
+      abortsLand: false,
       backlog: ['Leon finished.'],
       replies: [
         reply([], [{ tool: 'backlog_next' }]),
@@ -2577,7 +2805,8 @@ describe('Receptionist backlog', () => {
     })
     void h.receptionist.hear('ok, done')
     await flush()
-    expect(h.backlog.size).toBe(0)
+    // Stopped as the user started talking, before the reply was said: the item is back at once.
+    expect(h.backlog.size).toBe(1)
     const answered = h.receptionist.hear('wait, one more thing')
     h.receptionist.userSpeaking(false)
     await answered
@@ -2808,6 +3037,7 @@ describe("Receptionist: the transcript's reasoning", () => {
   it('shows news dropped with a turn the user talked over, the words never said, and the silence and watch that followed', async () => {
     let releaseStale: ((text: string) => void) | undefined
     const h = harness({
+      abortsLand: false,
       replies: [
         reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
         () => new Promise<string>((resolve) => { releaseStale = resolve }),
@@ -2830,8 +3060,10 @@ describe("Receptionist: the transcript's reasoning", () => {
       'watch: Watching {Sally} for its next stop: Control called monitor',
       'fired: Watch fired: {Sally} is now stopped, waiting for the user',
       'events: News: {Sally} is now stopped, waiting for the user',
+      'stopped: Stopped before replying: you started talking',
       'unspoken: Never spoken: you spoke over it before a word of it was said',
       'requeued: Turn dropped before a word of it was said; its news waits for the next: {Sally} is now stopped, waiting for the user',
+      'resumed: Carried on: nothing you said was for Control',
       'events: News: {Sally} is now stopped, waiting for the user',
       'watch: Watching {Sally} for its next stop: its stop was neither told nor set aside, so it is watched again',
     ])

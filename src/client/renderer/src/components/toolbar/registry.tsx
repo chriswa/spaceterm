@@ -9,6 +9,7 @@ import {
   CameraLockToggle,
   CopyCleanupToggle,
   DimStaleToggle,
+  SupersampleMetric,
   DebugDropdown,
   FitToMonitorButton,
   FpsMetric,
@@ -161,6 +162,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   { id: 'dim-stale', slot: 'buttons', kind: 'standalone', render: () => <DimStaleToggle /> },
 
   { id: 'fps', slot: 'status', kind: 'standalone', render: () => <FpsMetric /> },
+  { id: 'supersample', slot: 'status', kind: 'standalone', desktopOnly: true, render: () => <SupersampleMetric /> },
   { id: 'agent-memory', slot: 'status', kind: 'standalone', render: () => <AgentMemoryMetric /> },
   // Renders nothing unless switched on from the debug menu.
   { id: 'power-monitor', slot: 'status', kind: 'standalone', render: () => <PowerMonitor /> },
