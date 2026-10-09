@@ -1267,11 +1267,12 @@ export class Receptionist {
       // the listener hears "let me check" instead of silence. As in any
       // reply, its actions run first, and the words report them.
       const done: string[] = []
+      const actions = await this.nameTheNameless(reply.tools, lines => done.push(...lines))
       // Muted, "let me check" is not worth writing down: the answer will be.
       const spoken: SpokenPart[] = reply.say.length && this.listening && !this.reading
         ? this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
         : []
-      await this.runActions(reply.tools, lines => done.push(...lines))
+      await this.runActions(actions, lines => done.push(...lines))
       // Taken, the actions are the model's to hear of even if the user talks
       // over this turn before their results go back: noted at once, for
       // whichever message leaves next, and taken back if it is this turn's.
@@ -2152,10 +2153,11 @@ export class Receptionist {
       return false
     }
     const agents = this.deps.agents()
+    const actions = await this.nameTheNameless(reply.tools)
     // The camera stays where the user put it: an agent being spoken of is no
     // reason to move it. Only force_user_camera does, when they ask. Rendered
-    // before the actions run, since the words name agents as the model saw
-    // them: "{Kevin} is now Ruth." says Kevin.
+    // before the other actions run, since the words name agents as the model
+    // saw them: "{Kevin} is now Ruth." says Kevin.
     const { spoken, speakers } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
@@ -2163,7 +2165,7 @@ export class Receptionist {
     // Done before a word is said, and reported by the words: the user never
     // waits through "Sent to Kevin" for the send. Talking over the words
     // undoes nothing, which is why Control asks first when it is unsure.
-    await this.runActions(reply.tools)
+    await this.runActions(actions)
     // Read after the actions' awaits: muting while they ran writes this reply.
     const reading = this.reading
     const at = this.deps.record.append([{
@@ -2214,6 +2216,29 @@ export class Receptionist {
     } catch (err) {
       serverLog(`[receptionist] actions failed: ${err instanceof Error ? err.message : String(err)}`)
     }
+  }
+
+  /**
+   * Runs the renames in `calls` that give a nameless agent its first name, and
+   * returns the calls left to run. They run before the reply is rendered,
+   * because rendering names every agent it speaks of: otherwise the agent
+   * would first be given a name of the system's choosing, and the reply would
+   * be heard in that name and its voice. An agent that has a name keeps it
+   * until the reply is rendered, so "{Kevin} is now Ruth." still says Kevin.
+   */
+  private async nameTheNameless(
+    calls: readonly ToolCall[], done?: (lines: string[]) => void,
+  ): Promise<readonly ToolCall[]> {
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    const naming = calls.filter(call => {
+      if (call.tool !== 'rename_agent' || !call.name) return false
+      const nodeId = this.resolve(call.agent, handles, agents)
+      return nodeId !== undefined && !this.deps.names.get(nodeId)
+    })
+    if (!naming.length) return calls
+    await this.runActions(naming, done)
+    return calls.filter(call => !naming.includes(call))
   }
 
   /**

@@ -1541,6 +1541,7 @@ describe('Receptionist', () => {
         },
       ],
     })
+    h.assigned.set(KEVIN_ID, { name: 'Kevin', voice: 'am_michael', gender: 'masculine' })
     await h.receptionist.hear('call Kevin Ruth from now on')
     await flush()
     expect(h.spoken[0].content).toEqual([{ text: 'Kevin is now Ruth.', voice: RECEPTIONIST_VOICE }])
@@ -1548,6 +1549,27 @@ describe('Receptionist', () => {
     await flush()
     expect(h.spoken[1].content).toEqual([{ text: 'Ruth here. Volume is conserved now.', voice: 'af_bella' }])
     expect(h.wire).toEqual([])
+  })
+
+  it('speaks a nameless agent in the name and voice its rename gives it, never a name it was given first', async () => {
+    const h = harness({
+      replies: [
+        reply([
+          { from: 'control', text: 'It is now Ruth.' },
+          { from: `{${KEVIN}}`, text: 'Volume is conserved now.' },
+        ], [
+          { tool: 'rename_agent', agent: KEVIN, name: 'Ruth', gender: 'feminine' },
+        ]),
+      ],
+    })
+    await h.receptionist.hear('name the water sim agent and tell me what it said')
+    await flush()
+    expect(h.spoken[0].content).toEqual([
+      { text: 'It is now Ruth.', voice: RECEPTIONIST_VOICE },
+      { text: 'Ruth here. Volume is conserved now.', voice: 'af_bella' },
+    ])
+    expect(h.record.find(message => message.content.startsWith('RENAMED'))?.content).toBe(`RENAMED {${KEVIN}} ("water sim"): now {Ruth:${KEVIN}}`)
+    expect(h.record.some(message => message.content.includes('Kevin'))).toBe(false)
   })
 
   it('keeps the voice of an agent renamed to a name of the same gender, and retitles it', async () => {
@@ -1562,6 +1584,7 @@ describe('Receptionist', () => {
         },
       ],
     })
+    h.assigned.set(KEVIN_ID, { name: 'Kevin', voice: 'am_michael', gender: 'masculine' })
     await h.receptionist.hear('rename Kevin to Jim, and call it fluids')
     await flush()
     expect(h.assigned.get(KEVIN_ID)).toEqual({ name: 'Jim', voice: 'am_michael', gender: 'masculine' })
