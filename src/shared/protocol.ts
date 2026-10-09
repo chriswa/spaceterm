@@ -956,13 +956,31 @@ export interface ReceptionistHoldMessage {
 }
 
 /**
- * The user has read part `part` of the reply at `of` in the transcript view —
- * the whole of it: it was on screen long enough. See `ConsumptionLedger`.
+ * Sent by v14 clients when a part had been on screen a second. Ignored: being
+ * on screen is not reading, so nothing counts as read without the user saying.
  */
 export interface ReceptionistReadMessage {
   type: 'receptionist-read'
   of: number
   part: number
+}
+
+/**
+ * The user clicked a word in the transcript: they took in what Control has
+ * said since their last message up to `char` characters into part `part` of
+ * the reply at `of`, and none of the rest. Ignored for anything said before
+ * their last message, and while Control speaks. See `ConsumptionLedger.mark`.
+ */
+export interface ReceptionistMarkMessage {
+  type: 'receptionist-mark'
+  of: number
+  part: number
+  char: number
+}
+
+/** The user marked everything of Control's waiting for them as read. */
+export interface ReceptionistReadAllMessage {
+  type: 'receptionist-read-all'
 }
 
 /** Play part `part` of the reply at `of` again, on this device, in the voice it was said in. */
@@ -1346,6 +1364,8 @@ export type ClientMessage =
   | ReceptionistStopMessage
   | ReceptionistHoldMessage
   | ReceptionistReadMessage
+  | ReceptionistMarkMessage
+  | ReceptionistReadAllMessage
   | ReceptionistReplayMessage
   | ReceptionistReplayStopMessage
   | ReceptionistCatchUpMessage
@@ -1714,14 +1734,24 @@ export interface ReceptionistStatusMessage {
 }
 
 /**
- * How many of Control's replies were written to a muted device and are not
- * read yet, and where the oldest of them is in the record. Sent on connect
- * and broadcast on every change.
+ * How many of Control's replies have words waiting for the user — written to
+ * a muted device, or cut off while they were not there — and where the oldest
+ * of them is in the record. Sent on connect and broadcast on every change.
  */
 export interface ReceptionistUnreadMessage {
   type: 'receptionist-unread'
   count: number
   first?: number
+}
+
+/**
+ * How far Control's voice has got through the reply at `of` in the record:
+ * `parts[i]` characters of its part `i`, as stored. Null once nothing is being
+ * spoken. Broadcast as it changes; not replayed.
+ */
+export interface ReceptionistSpeakingMessage {
+  type: 'receptionist-speaking'
+  speaking: { of: number; parts: number[] } | null
 }
 
 /** This client's replay: the part playing, or null once it has stopped. Sent only to the client that asked. */
@@ -1763,10 +1793,11 @@ export type ControlTranscriptEntry = {
    */
   | { kind: 'log'; text: string; notDone?: true }
   /**
-   * Not shown itself: the reply at offset `of` was cut off, and `parts[i]` is
-   * how many characters of its part `i` were heard. The rest is shown as not
-   * heard. `unread` when the rest went on as text instead — the user muted
-   * Control partway through it — so it is unread rather than lost.
+   * Not shown itself: the reply at offset `of` was cut off, or the user marked
+   * where they stopped taking it in, and `parts[i]` is how many characters of
+   * its part `i` were taken in. The rest is struck out. `unread` when the rest
+   * is still waiting for them instead — they muted Control partway through,
+   * or were not there to hear it — until their next message settles it.
    */
   | { kind: 'heard'; of: number; parts: number[]; unread?: true }
   /**
@@ -2208,6 +2239,7 @@ export type ServerMessage =
   | ReceptionistHolderMessage
   | ReceptionistUnreadMessage
   | ReceptionistReplayingMessage
+  | ReceptionistSpeakingMessage
   | CameraFollowMessage
   | ReceptionistNoticeMessage
   | ReceptionistTranscriptResultMessage

@@ -10,6 +10,8 @@ let bridge: FakeBridge
 
 const user = (offset: number, text: string): ControlTranscriptEntry => ({ offset, timestamp: '2026-10-05T08:00:00Z', kind: 'user', text })
 const reply = (offset: number, text: string): ControlTranscriptEntry => ({ offset, timestamp: '2026-10-05T08:00:01Z', kind: 'reply', parts: [{ from: 'Control', text }] })
+/** A bubble saying `text`, however its words are drawn. */
+const findBubble = (text: string) => screen.findByText((_, el) => el?.classList.contains('control-transcript__bubble') === true && el.textContent === text)
 
 beforeEach(() => {
   bridge = installFakeBridge(globalThis as never)
@@ -78,7 +80,7 @@ describe('ControlTranscript entries', () => {
       more: false,
     })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
-    await screen.findByText('Want more?')
+    await findBubble('Want more?')
     const heads = [...document.querySelectorAll('.control-transcript__part .control-transcript__meta')].map((el) => el.textContent?.split(' · ')[0])
     expect(heads).toEqual(['Control', 'Kevin', 'Control'])
   })
@@ -89,11 +91,12 @@ describe('ControlTranscript entries', () => {
       more: false,
     })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
-    await screen.findByText('Kevin is done.')
-    expect(document.querySelector('.control-transcript__unheard')).toBeNull()
+    await findBubble('Kevin is done.')
+    expect(document.querySelector('.control-transcript__missed')).toBeNull()
     act(() => bridge.emit.transcriptAppended([{ offset: 90, timestamp: '2026-10-05T08:00:05Z', kind: 'heard', of: 0, parts: [14, 4] }]))
-    const struck = [...document.querySelectorAll('.control-transcript__unheard')].map((el) => el.textContent)
-    expect(struck).toEqual(['solver works.'])
+    const struck = [...document.querySelectorAll('.control-transcript__missed')]
+    expect(struck.map((el) => el.textContent)).toEqual(['solver works.'])
+    expect(struck[0].tagName).toBe('S')
     expect(document.querySelectorAll('.control-transcript__entry')).toHaveLength(1)
   })
 
@@ -313,7 +316,8 @@ describe('ControlTranscript and what the user took in', () => {
     expect(bridge.callsTo('receptionist.catchUp')).toHaveLength(1)
   })
 
-  it('shows what was never heard and what is not read yet, and watches those parts to count them read', async () => {
+  it('strikes out what was missed, and puts what waits under an Unread line until it is marked read', async () => {
+    useReceptionistStore.setState({ unread: { count: 1, first: 120 } })
     bridge.responses.controlTranscript = () => ({
       entries: [
         { offset: 0, timestamp: at, kind: 'reply', parts: [{ from: 'Control', text: 'Kevin is done.' }, { from: 'Kevin', text: 'The solver works.' }] },
@@ -323,15 +327,67 @@ describe('ControlTranscript and what the user took in', () => {
       more: false,
     })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
-    await screen.findByText('Kevin is done.')
-    expect(document.querySelector('.control-transcript__unheard')?.textContent).toBe('solver works.')
-    expect(document.querySelector('.control-transcript__unread')?.textContent).toBe('Sally asks a question.')
-    const watched = [...document.querySelectorAll<HTMLElement>('[data-read-of]')].map((el) => `${el.dataset.readOf}:${el.dataset.readPart}`)
-    expect(watched).toEqual(['0:1', '120:0'])
+    await findBubble('Kevin is done.')
+    expect(document.querySelector('.control-transcript__missed')?.textContent).toBe('solver works.')
+    expect(document.querySelector('.control-transcript__waiting')?.textContent).toBe('Sally asks a question.')
+    const line = document.querySelector('.control-transcript__unread-line')!
+    expect(line.nextElementSibling?.textContent).toContain('Sally asks a question.')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }))
+    expect(bridge.callsTo('receptionist.readAll')).toHaveLength(1)
     // Read: the record says so, and it is drawn whole.
-    act(() => bridge.emit.transcriptAppended([{ offset: 200, timestamp: at, kind: 'consumed', of: 120, part: 0, from: 0, to: 22, how: 'read' }]))
-    expect(document.querySelector('.control-transcript__unread')).toBeNull()
+    act(() => {
+      bridge.emit.transcriptAppended([{ offset: 200, timestamp: at, kind: 'consumed', of: 120, part: 0, from: 0, to: 22, how: 'read' }])
+      useReceptionistStore.setState({ unread: { count: 0 } })
+    })
+    expect(document.querySelector('.control-transcript__waiting')).toBeNull()
+    expect(document.querySelector('.control-transcript__unread-line')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull()
+  })
+
+  it('marks where the user stopped at the word they click, in what Control said since their last message only', async () => {
+    useReceptionistStore.setState({ phase: 'ready', unread: { count: 0 } })
+    bridge.responses.controlTranscript = () => ({
+      entries: [
+        { offset: 0, timestamp: at, kind: 'reply', parts: [{ from: 'Control', text: 'Old news.' }] },
+        { offset: 40, timestamp: at, kind: 'user', text: 'and Kevin?' },
+        { offset: 80, timestamp: at, kind: 'reply', parts: [{ from: 'Control', text: 'Kevin is done.' }, { from: 'Kevin', text: 'The solver works.' }] },
+        { offset: 160, timestamp: at, kind: 'heard', of: 80, parts: [14, 4] },
+      ],
+      more: false,
+    })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await findBubble('Kevin is done.')
+    // Struck, and still clickable: the word says how far.
+    fireEvent.click(screen.getByText('solver'))
+    expect(bridge.lastCall('receptionist.mark')).toEqual([80, 1, 'The solver'.length])
+    // Heard, and clickable too: back to where they stopped.
+    fireEvent.click(screen.getByText('is'))
+    expect(bridge.lastCall('receptionist.mark')).toEqual([80, 0, 'Kevin is'.length])
+    // The speaker's name: none of it from there.
+    fireEvent.click(screen.getByRole('button', { name: 'Kevin' }))
+    expect(bridge.lastCall('receptionist.mark')).toEqual([80, 1, 0])
+    // Locked by the user's last message.
+    expect(screen.getByText('Old news.').closest('.control-transcript__bubble--markable')).toBeNull()
+
+    // Not while Control speaks: the voice says how far.
+    act(() => useReceptionistStore.setState({ phase: 'speaking' }))
+    expect(document.querySelector('.control-transcript__bubble--markable')).toBeNull()
+    act(() => useReceptionistStore.setState({ phase: 'ready' }))
+  })
+
+  it('lights the word being said as the voice goes', async () => {
+    bridge.responses.controlTranscript = () => ({
+      entries: [{ offset: 0, timestamp: at, kind: 'reply', parts: [{ from: 'Control', text: 'Kevin is done.' }, { from: 'Kevin', text: 'The solver works.' }] }],
+      more: false,
+    })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await findBubble('Kevin is done.')
+    act(() => bridge.emit.receptionistSpeaking({ of: 0, parts: [14, 4] }))
+    expect(document.querySelector('.control-transcript__said')?.textContent).toBe('solver')
+    expect(document.querySelector('.control-transcript__unsaid')?.textContent).toBe(' works.')
+    act(() => bridge.emit.receptionistSpeaking(null))
+    expect(document.querySelector('.control-transcript__said')).toBeNull()
   })
 
   it('plays a part again, and stops it', async () => {

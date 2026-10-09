@@ -391,6 +391,21 @@ export function redactSpoken<P extends SpokenPart>(parts: readonly P[], heard: n
 }
 
 /**
+ * How far the voice has got into each part of a reply being spoken, as the
+ * record stores the part (its spoken intro left off). `heard` is as for
+ * `redactSpoken`; unlike `heardLengths`, the word being said counts as far as
+ * the voice has got into it.
+ */
+export function playedLengths(parts: readonly RenderedPart[], heard: number): number[] {
+  let start = 0
+  return parts.map(part => {
+    const at = Math.min(Math.max(0, heard - start), part.text.length)
+    start += part.text.length + 1
+    return Math.max(0, at - part.introLength)
+  })
+}
+
+/**
  * How much of each part of a cut-off reply was heard, as the record stores
  * the part (its spoken intro left off): what the transcript view leaves
  * standing, striking out the rest. `heard` is as for `redactSpoken`, and the

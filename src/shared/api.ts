@@ -386,15 +386,23 @@ export interface ReceptionistApi {
    * `mute` keeps it here, writing rather than speaking; `release` lets go of it.
    */
   hold(action: 'speak-here' | 'mute' | 'release'): void
-  /** Part `part` of the reply at `of` was read in the transcript view. */
-  read(of: number, part: number): void
+  /**
+   * The user took in what Control has said since their last message up to
+   * `char` characters into part `part` of the reply at `of`, and none of the
+   * rest: a word clicked in the transcript view.
+   */
+  mark(of: number, part: number, char: number): void
+  /** Everything of Control's waiting for the user, marked read. */
+  readAll(): void
   /** Play part `part` of the reply at `of` again, here, in the voice it was said in. */
   replay(of: number, part: number): void
   stopReplay(): void
   /** Have Control sum up, aloud, what its unread replies said. */
   catchUp(): void
-  /** Replies written to a muted device and not read yet, and where the oldest is. */
+  /** Replies with words waiting for the user, and where the oldest is. */
   onUnread(callback: (unread: { count: number; first?: number }) => void): () => void
+  /** How far Control's voice has got through a reply, or null once nothing is spoken. Not replayed. */
+  onSpeaking(callback: (speaking: { of: number; parts: number[] } | null) => void): () => void
   /** This client's replay: what is playing, or null; `refused` says why one would not start. Not replayed. */
   onReplaying(callback: (playing: { of: number; part: number } | null, refused?: string) => void): () => void
   /** Words typed to Control: for it whatever the voice target, and they bring it here, as speaking to it does. */

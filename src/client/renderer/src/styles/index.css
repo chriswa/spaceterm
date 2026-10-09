@@ -3864,6 +3864,7 @@ html, body, #root {
   --ct-you: #313244;
   --ct-control: #181825;
   --ct-accent: #4d9eff;
+  --ct-unread: #f38ba8;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3973,25 +3974,35 @@ html, body, #root {
 .control-transcript__entry--user .control-transcript__bubble { background: var(--ct-you); }
 .control-transcript__entry--reply .control-transcript__bubble { background: var(--ct-control); border: 1px solid var(--ct-border); }
 
-/* What the user never heard of a reply they cut off: dim and dotted, not struck — the words stand. */
-.control-transcript__unheard {
+/* What the user did not take in of a reply: struck out. */
+.control-transcript__missed {
   color: var(--ct-dim);
-  text-decoration: underline dotted;
+  text-decoration: line-through;
   text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
 }
-/* Written to them muted, and not read yet: an accent down the bubble's side, until it has been on screen a moment. */
-.control-transcript__bubble--unread { box-shadow: inset 3px 0 0 var(--ct-accent); }
-.control-transcript__new {
+/* Waiting for them, written muted or cut off while they were away: red down the bubble's side, until read or settled by their next message. */
+.control-transcript__bubble--waiting { box-shadow: inset 3px 0 0 var(--ct-unread); }
+.control-transcript__unread-line {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--ct-accent);
+  color: var(--ct-unread);
 }
-.control-transcript__new::before,
-.control-transcript__new::after { content: ''; flex: 1; border-top: 1px solid var(--ct-accent); opacity: 0.5; }
+.control-transcript__unread-line::before,
+.control-transcript__unread-line::after { content: ''; flex: 1; border-top: 1px solid var(--ct-unread); }
+.control-transcript__read-all { display: flex; justify-content: center; }
+
+/* While the voice says a reply: the word being said, lit, and what is still to come, dim. */
+.control-transcript__said { background: color-mix(in srgb, var(--ct-accent) 30%, transparent); border-radius: 3px; }
+.control-transcript__unsaid { color: var(--ct-dim); }
+
+/* What Control has said since the user's last message: a click on a word marks it as where they stopped. */
+.control-transcript__bubble--markable .control-transcript__word { cursor: pointer; border-radius: 3px; }
+.control-transcript__bubble--markable .control-transcript__word:hover { background: color-mix(in srgb, var(--ct-text) 15%, transparent); }
+.control-transcript__meta--markable { background: none; border: none; font: inherit; font-size: 11px; cursor: pointer; text-align: left; }
+.control-transcript__meta--markable:hover { color: var(--ct-text); }
 
 /* A part and the button that plays it again, beside it. */
 .control-transcript__bubble-row { display: flex; align-items: flex-end; gap: 4px; max-width: 100%; }

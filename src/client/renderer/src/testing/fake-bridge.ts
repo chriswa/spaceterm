@@ -186,6 +186,7 @@ export class FakeBridge implements Api {
   private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly receptionistUnread = new Set<(unread: { count: number; first?: number }) => void>()
   private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
+  private readonly receptionistSpeaking = new Set<(speaking: { of: number; parts: number[] } | null) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
   private readonly handsFreeTuning = new Set<(tuning: Partial<HandsFreeTuning>) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
@@ -297,6 +298,9 @@ export class FakeBridge implements Api {
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     receptionistUnread: (unread: { count: number; first?: number }): void => { for (const fn of this.receptionistUnread) fn(unread) },
+    receptionistSpeaking: (speaking: { of: number; parts: number[] } | null): void => {
+      for (const fn of this.receptionistSpeaking) fn(speaking)
+    },
     receptionistReplaying: (playing: { of: number; part: number } | null, refused?: string): void => {
       for (const fn of this.receptionistReplaying) fn(playing, refused)
     },
@@ -476,12 +480,14 @@ export class FakeBridge implements Api {
     stop: () => this.record('receptionist.stop'),
     hold: (action) => this.record('receptionist.hold', action),
     say: (text) => this.record('receptionist.say', text),
-    read: (of, part) => this.record('receptionist.read', of, part),
+    mark: (of, part, char) => this.record('receptionist.mark', of, part, char),
+    readAll: () => this.record('receptionist.readAll'),
     replay: (of, part) => this.record('receptionist.replay', of, part),
     stopReplay: () => this.record('receptionist.stopReplay'),
     catchUp: () => this.record('receptionist.catchUp'),
     onUnread: (cb) => subscribe(this.receptionistUnread, cb),
     onReplaying: (cb) => subscribe(this.receptionistReplaying, cb),
+    onSpeaking: (cb) => subscribe(this.receptionistSpeaking, cb),
     transcript: (before) => this.reply('receptionist.transcript', this.responses.controlTranscript(before), before),
     onTranscriptAppended: (cb) => subscribe(this.transcriptAppended, cb),
     deviceId: FAKE_DEVICE_ID,

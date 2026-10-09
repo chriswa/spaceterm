@@ -76,7 +76,7 @@ import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat'
-import { NO_LISTENER, Receptionist } from './receptionist/receptionist'
+import { NO_LISTENER, Receptionist, VOICE_FOLLOW_MS } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { Watches } from './receptionist/watches'
@@ -542,6 +542,8 @@ function transcriptNameOf(): NameOf {
 const TRACE_PROTOCOL_VERSION = 13
 /** And what was taken in of a reply (`consumed`) in v14. */
 const CONSUMED_PROTOCOL_VERSION = 14
+/** How far Control's voice has got (`receptionist-speaking`) was new in v15. */
+const SPEAKING_PROTOCOL_VERSION = 15
 
 function transcriptEntriesFor(client: ClientConnection, entries: ControlTranscriptEntry[]): ControlTranscriptEntry[] {
   const version = client.protocolVersion ?? 0
@@ -1351,7 +1353,7 @@ function handleIngestMessage(msg: IngestMessage): void {
       // Command mode is dictated on the Mac, so the Mac takes Control.
       if (voiceTarget === 'receptionist' && receptionist) {
         setReceptionistHolder(DESKTOP_DEVICE)
-        void receptionist.hear(text)
+        void receptionist.hear(text, 'spoken')
       }
       else void summaryChat.followUp(text)
       break
@@ -1723,7 +1725,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Speaking to Control is holding it: it answers on the device that spoke.
       if (voiceTarget === 'receptionist' && receptionist) {
         if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
-        void receptionist.hear(text)
+        void receptionist.hear(text, 'spoken')
       } else {
         void summaryChat.followUp(text)
       }
@@ -1766,7 +1768,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'receptionist-read':
-      receptionist?.readPart(msg.of, msg.part)
+      // A v14 client's: on screen a second, which is not reading.
+      break
+
+    case 'receptionist-mark':
+      receptionist?.mark(msg.of, msg.part, msg.char)
+      break
+
+    case 'receptionist-read-all':
+      receptionist?.readAll()
       break
 
     case 'receptionist-replay': {
@@ -2027,7 +2037,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       setVoiceTarget('receptionist')
       // Heard before the dictation that carried the words lets go, so that
       // letting go finds them already taken rather than resuming without them.
-      void receptionist.hear(text)
+      void receptionist.hear(text, msg.type === 'receptionist-say' ? 'typed' : 'spoken')
       remoteDictation.delivered(client.id)
       break
     }
@@ -3495,6 +3505,7 @@ async function startServer(): Promise<void> {
     letGo: () => setReceptionistHolder(null),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),
     voiceOperatorDiscovered: () => speechVoiceOperator.isRunning(),
   }, {
     listener: undefined,
@@ -3509,6 +3520,11 @@ async function startServer(): Promise<void> {
       broadcastToAll(receptionistStatus())
     },
     onUnread: (unread) => broadcastToAll({ type: 'receptionist-unread', ...unread }),
+    onSpeaking: (speaking) => {
+      for (const client of clients) {
+        if ((client.protocolVersion ?? 0) >= SPEAKING_PROTOCOL_VERSION) send(client.link, { type: 'receptionist-speaking', speaking: speaking ?? null })
+      }
+    },
   })
   updateReceptionistListener()
 

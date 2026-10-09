@@ -5,20 +5,22 @@ import type { ControlTranscriptEntry } from '../../../../shared/protocol'
  * transcript view draws it — the client's half of the server's
  * `ConsumptionLedger`, worked out from the same record lines.
  *
- * A spoken reply was heard, unless a `heard` mark says it was cut off; a
- * reply written to a muted device was not read, until `consumed` marks say
- * it was. What is left is `missing`: `unheard` words the voice never reached,
- * or `unread` ones still waiting to be read.
+ * A spoken reply was heard, unless a `heard` mark says how much of it was; a
+ * reply written to a muted device waits to be read. What is left of a part is
+ * `missing`: `missed` words, struck out — talked over, cut short, or marked by
+ * the user as where they stopped — or words `waiting` for the user, written
+ * to them muted or cut off while they were not there, until they read them
+ * or their next message settles them.
  */
 
 /** Characters `[from, to)` of a part. */
 export type Span = readonly [number, number]
 
 export interface PartView {
-  /** What of the part was never heard or read, in order. */
+  /** What of the part was not taken in, in order. */
   missing: Span[]
-  /** Why: cut off while spoken, or written and not read yet. */
-  why: 'unheard' | 'unread'
+  /** Why: lost to the user, or still waiting for them. */
+  why: 'missed' | 'waiting'
 }
 
 /** Each reply's parts, by the reply's offset; only replies with something missing. */
@@ -30,13 +32,13 @@ export function partViews(entries: readonly ControlTranscriptEntry[]): Map<numbe
       replies.set(entry.offset, {
         texts: entry.parts.map(part => part.text),
         taken: entry.parts.map(part => text ? [] : [[0, part.text.length]]),
-        why: text ? 'unread' : 'unheard',
+        why: text ? 'waiting' : 'missed',
       })
     } else if (entry.kind === 'heard') {
       const reply = replies.get(entry.of)
       if (!reply) continue
       reply.taken = reply.texts.map((_, i) => (entry.parts[i] ?? 0) > 0 ? [[0, entry.parts[i]]] : [])
-      if (entry.unread) reply.why = 'unread'
+      reply.why = entry.unread ? 'waiting' : 'missed'
     } else if (entry.kind === 'consumed') {
       replies.get(entry.of)?.taken[entry.part]?.push([entry.from, entry.to])
     }
@@ -47,6 +49,25 @@ export function partViews(entries: readonly ControlTranscriptEntry[]): Map<numbe
     if (parts.some(part => part.missing.length)) views.set(offset, parts)
   }
   return views
+}
+
+/**
+ * The replies the user can still mark where they stopped taking in: what
+ * Control has said since their last message. None while that message is not
+ * loaded (`whole` is false), since the replies in view may not be all of it.
+ */
+export function openReplies(entries: readonly ControlTranscriptEntry[], whole: boolean): Set<number> {
+  const open = new Set<number>()
+  let found = whole
+  for (const entry of entries) {
+    if (entry.kind === 'user') {
+      open.clear()
+      found = true
+    } else if (entry.kind === 'reply') {
+      open.add(entry.offset)
+    }
+  }
+  return found ? open : new Set()
 }
 
 /** What of `[0, length)` the spans leave out. */
@@ -61,15 +82,49 @@ function missingSpans(length: number, taken: readonly Span[]): Span[] {
   return missing.filter(([from, to]) => to > from)
 }
 
-/** A part's text in runs, each taken in or missing, for drawing. */
-export function runs(text: string, missing: readonly Span[]): Array<{ text: string; missing: boolean }> {
-  const out: Array<{ text: string; missing: boolean }> = []
+/**
+ * How a stretch of a part is drawn: taken in, `missed`, `waiting`, or — while
+ * the voice is on it — the word being `said` and what is still `unsaid`.
+ */
+export type SegmentKind = 'taken' | 'missed' | 'waiting' | 'said' | 'unsaid'
+
+/** A stretch of a part, from character `from`. */
+export interface Segment { text: string; from: number; kind: SegmentKind }
+
+/**
+ * A part's text in segments, for drawing: as `view` has it, or, while the
+ * voice is `played` characters into it, as far as it has got.
+ */
+export function segments(text: string, view: PartView | undefined, played?: number): Segment[] {
+  if (played !== undefined) {
+    if (played >= text.length) return [{ text, from: 0, kind: 'taken' }]
+    const start = Math.max(0, played)
+    const wordStart = start + (text.slice(start).length - text.slice(start).trimStart().length)
+    const space = text.slice(wordStart).search(/\s/)
+    const wordEnd = space < 0 ? text.length : wordStart + space
+    return [
+      { text: text.slice(0, wordStart), from: 0, kind: 'taken' as const },
+      { text: text.slice(wordStart, wordEnd), from: wordStart, kind: 'said' as const },
+      { text: text.slice(wordEnd), from: wordEnd, kind: 'unsaid' as const },
+    ].filter(segment => segment.text)
+  }
+  const out: Segment[] = []
   let at = 0
-  for (const [from, to] of missing) {
-    if (from > at) out.push({ text: text.slice(at, from), missing: false })
-    out.push({ text: text.slice(from, to), missing: true })
+  for (const [from, to] of view?.missing ?? []) {
+    if (from > at) out.push({ text: text.slice(at, from), from: at, kind: 'taken' })
+    out.push({ text: text.slice(from, to), from, kind: view!.why })
     at = to
   }
-  if (at < text.length) out.push({ text: text.slice(at), missing: false })
+  if (at < text.length) out.push({ text: text.slice(at), from: at, kind: 'taken' })
   return out
+}
+
+/**
+ * A segment's words and the space between them; each word with where it
+ * ends in the part, which is what clicking it marks as taken in up to.
+ */
+export function words(segment: Segment): Array<{ text: string; end?: number }> {
+  return [...segment.text.matchAll(/\S+|\s+/g)].map(match => /\S/.test(match[0])
+    ? { text: match[0], end: segment.from + match.index + match[0].length }
+    : { text: match[0] })
 }

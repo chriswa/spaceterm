@@ -123,6 +123,8 @@ function harness(opts: {
   watchStore?: NameRegistryStore
   /** Where what Control has yet to be told is kept, from an earlier server; by default nothing. */
   carryStore?: NameRegistryStore
+  /** When it is time to look where the voice is again; by default never. */
+  voiceTick?: () => Promise<void>
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
@@ -161,6 +163,8 @@ function harness(opts: {
   const consumedMarks: Array<{ of: number; part: number; from: number; to: number; how: string }> = []
   const notDone: string[] = []
   const traces: ControlTrace[] = []
+  /** How far the voice had got, each time it moved on, and undefined each time nothing was spoken. */
+  const speaking: Array<{ of: number; parts: number[] } | undefined> = []
   let backlogJson: string | undefined
   const backlog = new Backlog({ store: { load: () => backlogJson, save: (json) => { backlogJson = json } } })
   // Set aside a minute apart, the last a minute ago.
@@ -293,10 +297,11 @@ function harness(opts: {
     retitle: (nodeId, title) => wire.push(`retitle ${nodeId} ${title}`),
     log: () => {},
     sleep: opts.sleep ?? (async () => {}),
+    voiceTick: opts.voiceTick ?? (() => new Promise(() => {})),
     voiceOperatorDiscovered: () => true,
-  }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {} })
+  }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {}, onSpeaking: (now) => speaking.push(now) })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -329,7 +334,7 @@ describe('Receptionist', () => {
         { from: KEVIN, text: 'Volume is conserved now.' },
       ])],
     })
-    await h.receptionist.hear('what is going on with the water sim?')
+    await h.receptionist.hear('what is going on with the water sim?', 'spoken')
     await flush()
     expect(h.spoken[0].content).toEqual([
       { text: 'Kevin is on the water simulation.', voice: RECEPTIONIST_VOICE },
@@ -343,9 +348,9 @@ describe('Receptionist', () => {
 
   it('starts one session, then sends only what is new into it, always with the instructions', async () => {
     const h = harness({ replies: [reply([{ from: 'control', text: 'Hi.' }]), reply([{ from: 'control', text: 'Again.' }])] })
-    await h.receptionist.hear('hello')
+    await h.receptionist.hear('hello', 'spoken')
     await flush()
-    await h.receptionist.hear('anything else?')
+    await h.receptionist.hear('anything else?', 'spoken')
     await flush()
     expect(h.turns[0]).toMatchObject({ systemPrompt: RECEPTIONIST_SYSTEM_PROMPT })
     expect(h.turns[0].sessionId).toBeUndefined()
@@ -361,7 +366,7 @@ describe('Receptionist', () => {
 
   it('carries on the saved session after a restart', async () => {
     const same = harness({ saved: { sessionId: 'kept', promptHash: PROMPT_HASH }, replies: [reply([{ from: 'control', text: 'Yes.' }])] })
-    await same.receptionist.hear('still there?')
+    await same.receptionist.hear('still there?', 'spoken')
     await flush()
     expect(same.turns).toHaveLength(1)
     expect(same.turns[0]).toMatchObject({ sessionId: 'kept', systemPrompt: RECEPTIONIST_SYSTEM_PROMPT })
@@ -372,7 +377,7 @@ describe('Receptionist', () => {
       saved: { sessionId: 'old', promptHash: 'other' },
       replies: ['The user is waiting on Kevin\'s water sim and wants to hear when it is done.', reply([{ from: 'control', text: 'Yes.' }]), reply([{ from: 'control', text: 'Still.' }])],
     })
-    await h.receptionist.hear('still there?')
+    await h.receptionist.hear('still there?', 'spoken')
     await flush()
     // The old session runs on the instructions it keeps, so none are sent, and it is let go afterwards.
     expect(h.turns[0]).toEqual({ prompt: HANDOVER_PROMPT, sessionId: 'old', retiring: true })
@@ -382,7 +387,7 @@ describe('Receptionist', () => {
     expect(h.turns[1].prompt).toMatch(/^HANDOVER, from your previous session:\nThe user is waiting on Kevin's water sim[^]*THE USER SAYS: still there\?/)
     expect(h.session).toEqual({ sessionId: 'session-1', promptHash: PROMPT_HASH })
     // Once.
-    await h.receptionist.hear('and now?')
+    await h.receptionist.hear('and now?', 'spoken')
     await flush()
     expect(h.turns[2]).toMatchObject({ sessionId: 'session-1' })
     expect(h.turns[2].prompt).not.toContain('HANDOVER')
@@ -394,7 +399,7 @@ describe('Receptionist', () => {
       lostSessions: ['old'],
       replies: [reply([{ from: 'control', text: 'Yes.' }])],
     })
-    await h.receptionist.hear('still there?')
+    await h.receptionist.hear('still there?', 'spoken')
     await flush()
     expect(h.turns.map(turn => turn.sessionId)).toEqual(['old', undefined])
     expect(h.turns[1].prompt).toMatch(/^THE USER SAYS: still there\?/)
@@ -407,10 +412,10 @@ describe('Receptionist', () => {
       lostSessions: ['vanished'],
       replies: [reply([{ from: 'control', text: 'Here.' }])],
     })
-    await h.receptionist.hear('hello?')
+    await h.receptionist.hear('hello?', 'spoken')
     await flush()
     expect(h.session).toBeUndefined()
-    await h.receptionist.hear('hello again')
+    await h.receptionist.hear('hello again', 'spoken')
     await flush()
     expect(h.turns.at(-1)?.sessionId).toBeUndefined()
     expect(h.session?.sessionId).toBe('session-1')
@@ -426,7 +431,7 @@ describe('Receptionist', () => {
       busyFor: 2,
       replies: [reply([{ from: 'control', text: 'Here.' }])],
     })
-    await h.receptionist.hear('still there?')
+    await h.receptionist.hear('still there?', 'spoken')
     await flush()
     expect(h.turns.map(turn => turn.sessionId)).toEqual(['kept'])
     expect(h.session?.sessionId).toBe('kept')
@@ -439,9 +444,9 @@ describe('Receptionist', () => {
         compactsAt,
         replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }])],
       })
-      await h.receptionist.hear('what is Kevin doing?')
+      await h.receptionist.hear('what is Kevin doing?', 'spoken')
       await flush()
-      await h.receptionist.hear('tell him to do that now')
+      await h.receptionist.hear('tell him to do that now', 'spoken')
       await flush()
       return h.turns[1]
     }
@@ -468,7 +473,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear("what's everyone up to?")
+    await h.receptionist.hear("what's everyone up to?", 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(1)
   })
@@ -485,9 +490,9 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('who is around?')
+    await h.receptionist.hear('who is around?', 'spoken')
     await flush()
-    await h.receptionist.hear('which one is Kevin?')
+    await h.receptionist.hear('which one is Kevin?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(3)
   })
@@ -508,7 +513,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('who is doing the login form?')
+    await h.receptionist.hear('who is doing the login form?', 'spoken')
     await flush()
     expect(queries).toEqual(['the one fixing the login form validation'])
   })
@@ -524,7 +529,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('who is doing login?')
+    await h.receptionist.hear('who is doing login?', 'spoken')
     await flush()
   })
 
@@ -538,7 +543,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('what did Kevin finish?')
+    await h.receptionist.hear('what did Kevin finish?', 'spoken')
     await flush()
     expect(h.spoken.map(entry => entry.content)).toEqual([
       [{ text: "Let me check Kevin's transcript.", voice: RECEPTIONIST_VOICE }],
@@ -557,7 +562,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('what is Kevin up to?')
+    await h.receptionist.hear('what is Kevin up to?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
@@ -572,7 +577,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('what did Kevin say about ghost cells?')
+    await h.receptionist.hear('what did Kevin say about ghost cells?', 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(1)
   })
@@ -584,7 +589,7 @@ describe('Receptionist', () => {
         return reply([{ from: 'control', text: 'Kevin is fine.' }])
       }],
     })
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(1)
   })
@@ -601,9 +606,9 @@ describe('Receptionist', () => {
       ],
       speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is done. Kevin here. The sol'.length },
     })
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
-    await h.receptionist.hear('wait, what?')
+    await h.receptionist.hear('wait, what?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
     // And marks it in the record, for the transcript: all of Control's part, "The " of Kevin's.
@@ -639,9 +644,9 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
-    await h.receptionist.hear('okay, sounds good')
+    await h.receptionist.hear('okay, sounds good', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
     // Gone from the queue before the model is asked, so it can never play after the user's words.
@@ -663,7 +668,7 @@ describe('Receptionist', () => {
       ],
       speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is done. Kevin here. The sol'.length },
     })
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     h.receptionist.heardNothing(true)
     await flush()
@@ -686,11 +691,11 @@ describe('Receptionist', () => {
         reply([{ from: 'control', text: 'Sally finished.' }]),
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
-    void h.receptionist.hear('hello')
+    void h.receptionist.hear('hello', 'spoken')
     await flush()
     // The talked-over turn is still being answered; the next must wait for it.
     expect(h.turns).toHaveLength(2)
@@ -714,7 +719,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell me when Sally is done')
+    await h.receptionist.hear('tell me when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'working_background')
     await flush()
@@ -741,7 +746,7 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('tell me when Sally and Kevin are done')
+    await h.receptionist.hear('tell me when Sally and Kevin are done', 'spoken')
     await flush()
     h.receptionist.userSpeaking(true)
     h.setState(SALLY_ID, 'stopped')
@@ -768,7 +773,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
@@ -796,7 +801,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    void h.receptionist.hear('what is Kevin doing?')
+    void h.receptionist.hear('what is Kevin doing?', 'spoken')
     await flush()
     h.receptionist.userSpeaking(true)
     await flush()
@@ -819,12 +824,12 @@ describe('Receptionist', () => {
         },
       ],
     })
-    void h.receptionist.hear('what is Kevin doing?')
+    void h.receptionist.hear('what is Kevin doing?', 'spoken')
     await flush()
     h.receptionist.userSpeaking(true)
     await flush()
     // On the Mac the words come before the dictation is reported over.
-    void h.receptionist.hear('no, Sally')
+    void h.receptionist.hear('no, Sally', 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(0)
     h.receptionist.userSpeaking(false)
@@ -846,16 +851,16 @@ describe('Receptionist', () => {
         },
       ],
     })
-    void h.receptionist.hear('how is Kevin?')
+    void h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
-    void h.receptionist.hear('tell Kevin to commit')
+    void h.receptionist.hear('tell Kevin to commit', 'spoken')
     await flush()
     // Still queued behind the first when the user starts talking again.
     h.receptionist.userSpeaking(true)
     finishEarlier?.(reply([{ from: 'control', text: 'Kevin is fine.' }]))
     await flush()
     expect(h.turns).toHaveLength(1)
-    void h.receptionist.hear('and also push')
+    void h.receptionist.hear('and also push', 'spoken')
     h.receptionist.userSpeaking(false)
     await flush()
     expect(h.turns).toHaveLength(2)
@@ -876,12 +881,12 @@ describe('Receptionist', () => {
         },
       ],
     })
-    void h.receptionist.hear('tell Kevin to commit, and read me Sally')
+    void h.receptionist.hear('tell Kevin to commit, and read me Sally', 'spoken')
     await flush()
     h.receptionist.userSpeaking(true)
     answer?.(reply([], [{ tool: 'send', agent: KEVIN, message: 'Commit.' }, { tool: 'read', agent: SALLY }]))
     await flush()
-    void h.receptionist.hear('never mind')
+    void h.receptionist.hear('never mind', 'spoken')
     h.receptionist.userSpeaking(false)
     await flush()
     expect(h.wire).toEqual([])
@@ -900,10 +905,10 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('ask Kevin how big the tank is')
+    await h.receptionist.hear('ask Kevin how big the tank is', 'spoken')
     await flush()
     h.receptionist.userSpeaking(true)
-    void h.receptionist.hear('how is Sally?')
+    void h.receptionist.hear('how is Sally?', 'spoken')
     h.receptionist.userSpeaking(false)
     await flush()
     answerSide?.({ ok: true, text: '42 litres.', usage: {} })
@@ -926,7 +931,7 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(SALLY_ID, 'waiting_question')
-    await h.receptionist.hear('tell Sally not to push')
+    await h.receptionist.hear('tell Sally not to push', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
@@ -947,7 +952,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell me when Kevin is done')
+    await h.receptionist.hear('tell me when Kevin is done', 'spoken')
     await flush()
     // Reported at once; watched again, the same stop is not reported twice.
     expect(h.turns).toHaveLength(2)
@@ -960,7 +965,7 @@ describe('Receptionist', () => {
         reply([], [{ tool: 'monitor', agent: SALLY }]),
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
@@ -989,7 +994,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('when Sally is done, tell Kevin what she did')
+    await h.receptionist.hear('when Sally is done, tell Kevin what she did', 'spoken')
     await flush()
     h.receptionist.setListener(undefined)
     h.setState(SALLY_ID, 'stopped')
@@ -1015,7 +1020,7 @@ describe('Receptionist', () => {
       // The phone's page went, mid-sentence.
       speechEnds: { state: 'cancelled_by_client', character_offset: 'Kevin is done. Kevin here. The sol'.length },
     })
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     h.receptionist.setListener(undefined)
     await flush()
@@ -1027,7 +1032,7 @@ describe('Receptionist', () => {
 
   it('comes back without a word when nothing happened while the user was away', async () => {
     const h = harness({ replies: [reply([{ from: 'control', text: 'Hi.' }])] })
-    await h.receptionist.hear('hello')
+    await h.receptionist.hear('hello', 'spoken')
     await flush()
     h.receptionist.setListener(undefined)
     await flush()
@@ -1059,7 +1064,7 @@ describe('Receptionist', () => {
     })
     // Working, so the monitor waits for its next stop.
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('watch Kevin, and be quiet')
+    await h.receptionist.hear('watch Kevin, and be quiet', 'spoken')
     await flush()
     expect(h.wire).toEqual(['let go'])
     h.receptionist.setListener(h.listener)
@@ -1069,7 +1074,7 @@ describe('Receptionist', () => {
     await flush()
     expect(h.turns).toHaveLength(2)
     expect(said(h).join(' ')).toContain('stopped.')
-    await h.receptionist.hear('thanks')
+    await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(3)
   })
@@ -1087,11 +1092,11 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('be quiet')
+    await h.receptionist.hear('be quiet', 'spoken')
     await flush()
     // As the server does: speaking to Control takes it back, then is heard.
     h.receptionist.setListener(h.listener)
-    void h.receptionist.hear('how is Kevin?')
+    void h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
     expect(said(h)).toHaveLength(1)
@@ -1117,7 +1122,7 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('watch Kevin, and be quiet')
+    await h.receptionist.hear('watch Kevin, and be quiet', 'spoken')
     await flush()
     h.setState(KEVIN_ID, 'stopped')
     await flush()
@@ -1148,7 +1153,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(0)
     h.receptionist.setListener({ id: 'phone', speech: h.listener.speech })
@@ -1202,7 +1207,7 @@ describe('Receptionist', () => {
           },
         ],
       })
-      await h.receptionist.hear('what is Kevin doing? and watch Sally')
+      await h.receptionist.hear('what is Kevin doing? and watch Sally', 'spoken')
       await flush()
       h.setState(SALLY_ID, 'stopped')
       await flush()
@@ -1223,7 +1228,7 @@ describe('Receptionist', () => {
       const speech = playing(() => text.indexOf('run the full'))
       let asked = false
       const h = harness({ speech: speech.backend, judgeInterruption: async () => { asked = true; return 1 }, replies: [watchSally] })
-      await h.receptionist.hear('what is Kevin doing? and watch Sally')
+      await h.receptionist.hear('what is Kevin doing? and watch Sally', 'spoken')
       await flush()
       h.setState(SALLY_ID, 'stopped')
       await flush()
@@ -1235,7 +1240,7 @@ describe('Receptionist', () => {
       const speech = playing(() => 'Kevin is'.length)
       let asked = 0
       const h = harness({ speech: speech.backend, judgeInterruption: async () => { asked++; return 0.2 }, replies: [watchSally] })
-      await h.receptionist.hear('what is Kevin doing? and watch Sally')
+      await h.receptionist.hear('what is Kevin doing? and watch Sally', 'spoken')
       await flush()
       h.setState(SALLY_ID, 'stopped')
       await flush()
@@ -1260,7 +1265,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    void h.receptionist.hear('tell Kevin to commit')
+    void h.receptionist.hear('tell Kevin to commit', 'spoken')
     await flush()
     h.receptionist.setListener(undefined)
     answer?.(reply([{ from: 'control', text: `Sent to {${KEVIN}}.` }], [{ tool: 'send', agent: KEVIN, message: 'Commit.' }]))
@@ -1283,7 +1288,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('ask Kevin exactly how many litres')
+    await h.receptionist.hear('ask Kevin exactly how many litres', 'spoken')
     await flush()
     expect(h.sideQuestions).toEqual([{ nodeId: KEVIN_ID, prompt: sideQuestionPrompt('Exactly how many litres?') }])
     // The agent is told its answer is heard, word for word, so it writes something quotable.
@@ -1300,7 +1305,7 @@ describe('Receptionist', () => {
 
     it('is woken with a real turn before the side question, so both read one cache', async () => {
       const h = harness({ kevinCacheWarmUntil: Date.now() - 60_000, sleep: patient, replies: [asked, answered] })
-      await h.receptionist.hear('ask Kevin exactly how many litres')
+      await h.receptionist.hear('ask Kevin exactly how many litres', 'spoken')
       await flush()
       expect(h.wire).toEqual([`send ${KEVIN_ID} ${WARM_UP_MESSAGE}`])
       expect(h.sideQuestions).toHaveLength(0)
@@ -1319,7 +1324,7 @@ describe('Receptionist', () => {
 
     it('is asked anyway when it never answers the wake-up', async () => {
       const h = harness({ kevinCacheWarmUntil: Date.now() - 60_000, replies: [asked, answered] })
-      await h.receptionist.hear('ask Kevin exactly how many litres')
+      await h.receptionist.hear('ask Kevin exactly how many litres', 'spoken')
       await flush()
       expect(h.wire).toEqual([`send ${KEVIN_ID} ${WARM_UP_MESSAGE}`])
       expect(h.sideQuestions).toHaveLength(1)
@@ -1327,7 +1332,7 @@ describe('Receptionist', () => {
 
     it('is not woken when its cache is warm, or when it is busy', async () => {
       const warm = harness({ kevinCacheWarmUntil: Date.now() + 60_000, sleep: patient, replies: [asked, answered] })
-      await warm.receptionist.hear('ask Kevin exactly how many litres')
+      await warm.receptionist.hear('ask Kevin exactly how many litres', 'spoken')
       await flush()
       expect(warm.wire).toEqual([])
       expect(warm.sideQuestions).toHaveLength(1)
@@ -1335,7 +1340,7 @@ describe('Receptionist', () => {
       // Waiting on a permission prompt: a wake-up typed there would answer it.
       const waiting = harness({ kevinCacheWarmUntil: Date.now() - 60_000, sleep: patient, replies: [asked, answered] })
       waiting.setState(KEVIN_ID, 'waiting_permission')
-      await waiting.receptionist.hear('ask Kevin exactly how many litres')
+      await waiting.receptionist.hear('ask Kevin exactly how many litres', 'spoken')
       await flush()
       expect(waiting.wire).toEqual([])
       expect(waiting.sideQuestions).toHaveLength(1)
@@ -1354,7 +1359,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('ask Kevin if he is done')
+    await h.receptionist.hear('ask Kevin if he is done', 'spoken')
     await flush()
     expect(h.notices).toEqual(["Control's question to Kevin failed: it has not taken a turn since it was started or resumed"])
   })
@@ -1371,7 +1376,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('ask Kevin if he is done')
+    await h.receptionist.hear('ask Kevin if he is done', 'spoken')
     await flush()
     expect(h.notices).toEqual(["Control's question to Kevin failed: it was started before side questions existed, and takes them after a restart"])
   })
@@ -1386,7 +1391,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell Kevin to finish up and commit')
+    await h.receptionist.hear('tell Kevin to finish up and commit', 'spoken')
     await flush()
     expect(h.wire).toEqual([`send ${KEVIN_ID} Please finish up and commit.`])
     expect(h.record.some(message => message.content === 'SENT TO Kevin: Please finish up and commit.')).toBe(true)
@@ -1409,9 +1414,9 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('tell me when Kevin is done')
+    await h.receptionist.hear('tell me when Kevin is done', 'spoken')
     await flush()
-    await h.receptionist.hear('archive Kevin')
+    await h.receptionist.hear('archive Kevin', 'spoken')
     await flush()
     expect(h.wire).toEqual([`archive ${KEVIN_ID}`])
     // Archived before "Archived Kevin." was said, so recorded before it.
@@ -1422,7 +1427,7 @@ describe('Receptionist', () => {
     h.setState(KEVIN_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(2)
-    await h.receptionist.hear('thanks')
+    await h.receptionist.hear('thanks', 'spoken')
     await flush()
   })
 
@@ -1433,14 +1438,14 @@ describe('Receptionist', () => {
         { tool: 'send', agent: SALLY, message: 'Please disregard my last message; it was sent to you by mistake.' },
       ])],
     })
-    await h.receptionist.hear('no, that was meant for Kevin, take it back from Sally')
+    await h.receptionist.hear('no, that was meant for Kevin, take it back from Sally', 'spoken')
     await flush()
     expect(h.wire).toEqual([`escape ${SALLY_ID}`, `send ${SALLY_ID} Please disregard my last message; it was sent to you by mistake.`])
   })
 
   it('says "Sent to" when the model sent something and said nothing', async () => {
     const h = harness({ replies: [reply([], [{ tool: 'send', agent: KEVIN, message: 'Commit, please.' }])] })
-    await h.receptionist.hear('tell Kevin to commit')
+    await h.receptionist.hear('tell Kevin to commit', 'spoken')
     await flush()
     expect(h.spoken[0].content).toEqual([{ text: 'Sent to Kevin.', voice: RECEPTIONIST_VOICE }])
   })
@@ -1458,7 +1463,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('yes, start a new agent for that')
+    await h.receptionist.hear('yes, start a new agent for that', 'spoken')
     await flush()
     expect(h.wire).toEqual([`spawn ${DIR_ID} shorter answers: Make Control answer in one sentence.`])
     h.setState(SALLY_ID, 'stopped')
@@ -1478,7 +1483,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('start one on the login page')
+    await h.receptionist.hear('start one on the login page', 'spoken')
     await flush()
     expect(h.assigned.get(SALLY_ID)?.name).toBe('Kevin')
     expect(h.turns).toHaveLength(2)
@@ -1503,8 +1508,8 @@ describe('Receptionist', () => {
       ],
       findAgents: async () => { talkOver(); return { hits: [], noneProbability: 1 } },
     })
-    talkOver = () => { void h.receptionist.hear('actually, is it running?') }
-    await h.receptionist.hear('start one on the login page')
+    talkOver = () => { void h.receptionist.hear('actually, is it running?', 'spoken') }
+    await h.receptionist.hear('start one on the login page', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
@@ -1522,7 +1527,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('start an agent called Bob on the login page')
+    await h.receptionist.hear('start an agent called Bob on the login page', 'spoken')
     await flush()
     expect(h.assigned.get(SALLY_ID)).toEqual({ name: 'Bob', voice: 'am_adam', gender: 'masculine' })
     expect(h.turns).toHaveLength(2)
@@ -1542,10 +1547,10 @@ describe('Receptionist', () => {
       ],
     })
     h.assigned.set(KEVIN_ID, { name: 'Kevin', voice: 'am_michael', gender: 'masculine' })
-    await h.receptionist.hear('call Kevin Ruth from now on')
+    await h.receptionist.hear('call Kevin Ruth from now on', 'spoken')
     await flush()
     expect(h.spoken[0].content).toEqual([{ text: 'Kevin is now Ruth.', voice: RECEPTIONIST_VOICE }])
-    await h.receptionist.hear('what did she do?')
+    await h.receptionist.hear('what did she do?', 'spoken')
     await flush()
     expect(h.spoken[1].content).toEqual([{ text: 'Ruth here. Volume is conserved now.', voice: 'af_bella' }])
     expect(h.wire).toEqual([])
@@ -1562,7 +1567,7 @@ describe('Receptionist', () => {
         ]),
       ],
     })
-    await h.receptionist.hear('name the water sim agent and tell me what it said')
+    await h.receptionist.hear('name the water sim agent and tell me what it said', 'spoken')
     await flush()
     expect(h.spoken[0].content).toEqual([
       { text: 'It is now Ruth.', voice: RECEPTIONIST_VOICE },
@@ -1585,11 +1590,11 @@ describe('Receptionist', () => {
       ],
     })
     h.assigned.set(KEVIN_ID, { name: 'Kevin', voice: 'am_michael', gender: 'masculine' })
-    await h.receptionist.hear('rename Kevin to Jim, and call it fluids')
+    await h.receptionist.hear('rename Kevin to Jim, and call it fluids', 'spoken')
     await flush()
     expect(h.assigned.get(KEVIN_ID)).toEqual({ name: 'Jim', voice: 'am_michael', gender: 'masculine' })
     expect(h.wire).toEqual([`retitle ${KEVIN_ID} fluids`])
-    await h.receptionist.hear('done?')
+    await h.receptionist.hear('done?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
@@ -1608,9 +1613,9 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('what is Kevin doing?')
+    await h.receptionist.hear('what is Kevin doing?', 'spoken')
     await flush()
-    await h.receptionist.hear('call the login agent Kevin')
+    await h.receptionist.hear('call the login agent Kevin', 'spoken')
     await flush()
     expect(said(h).some(text => text.includes('is now Kevin'))).toBe(false)
     expect(h.assigned.get(SALLY_ID)).toBeUndefined()
@@ -1630,9 +1635,9 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('remember the bananas')
+    await h.receptionist.hear('remember the bananas', 'spoken')
     await flush()
-    await h.receptionist.hear('what did I say about bananas?')
+    await h.receptionist.hear('what did I say about bananas?', 'spoken')
     await flush()
     expect(said(h).some(text => text.includes('Let me look back'))).toBe(true)
   })
@@ -1649,7 +1654,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell Kevin to commit')
+    await h.receptionist.hear('tell Kevin to commit', 'spoken')
     await flush()
     expect(h.wire).toEqual([`send ${KEVIN_ID} Commit, please.`])
     expect(h.spoken.map(entry => entry.content)).toEqual([[{ text: 'Sent to Kevin.', voice: RECEPTIONIST_VOICE }]])
@@ -1665,7 +1670,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('who finished?')
+    await h.receptionist.hear('who finished?', 'spoken')
     await flush()
     expect(h.spoken.map(entry => entry.content)).toEqual([[{ text: 'Kevin finished.', voice: RECEPTIONIST_VOICE }]])
   })
@@ -1685,12 +1690,12 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('who finished?')
+    await h.receptionist.hear('who finished?', 'spoken')
     await flush()
     expect(h.spoken.map(entry => entry.content)[0]).toEqual([{ text: 'Kevin finished.', voice: RECEPTIONIST_VOICE }])
-    await h.receptionist.hear('tell me about Kevin')
+    await h.receptionist.hear('tell me about Kevin', 'spoken')
     await flush()
-    await h.receptionist.hear('really?')
+    await h.receptionist.hear('really?', 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(3)
   })
@@ -1706,9 +1711,9 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell Kevin to commit and watch the login one')
+    await h.receptionist.hear('tell Kevin to commit and watch the login one', 'spoken')
     await flush()
-    await h.receptionist.hear('ok')
+    await h.receptionist.hear('ok', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
@@ -1720,9 +1725,9 @@ describe('Receptionist', () => {
         reply([{ from: 'control', text: 'Sent to {Kevin}.' }, { from: 'kevin', text: 'Volume is conserved.' }], [{ tool: 'send', agent: 'Kevin', message: 'Commit, please.' }]),
       ],
     })
-    await h.receptionist.hear('who is on the water sim?')
+    await h.receptionist.hear('who is on the water sim?', 'spoken')
     await flush()
-    await h.receptionist.hear('tell him to commit')
+    await h.receptionist.hear('tell him to commit', 'spoken')
     await flush()
     expect(h.wire).toEqual([`send ${KEVIN_ID} Commit, please.`])
     expect(h.spoken[1].content).toEqual([
@@ -1751,7 +1756,7 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('tell me when Kevin is done')
+    await h.receptionist.hear('tell me when Kevin is done', 'spoken')
     await flush()
     h.setState(KEVIN_ID, 'stopped')
     await flush()
@@ -1768,9 +1773,9 @@ describe('Receptionist', () => {
         ),
       ],
     })
-    await h.receptionist.hear('who is on the water sim?')
+    await h.receptionist.hear('who is on the water sim?', 'spoken')
     await flush()
-    await h.receptionist.hear('tell him to commit')
+    await h.receptionist.hear('tell him to commit', 'spoken')
     await flush()
     expect(h.wire).toEqual([`send ${KEVIN_ID} Commit, please.`])
     expect(h.spoken[1].content).toEqual([
@@ -1790,13 +1795,13 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('who is on the water sim?')
+    await h.receptionist.hear('who is on the water sim?', 'spoken')
     await flush()
-    await h.receptionist.hear('tell him to commit')
+    await h.receptionist.hear('tell him to commit', 'spoken')
     await flush()
     expect(h.wire).toEqual([`send ${KEVIN_ID} Commit, please.`])
     expect(said(h)[1]).toBe(JSON.stringify([{ text: 'Sent to Kevin.', voice: RECEPTIONIST_VOICE }]))
-    await h.receptionist.hear('thanks')
+    await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(3)
   })
@@ -1814,9 +1819,9 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('who is around?')
+    await h.receptionist.hear('who is around?', 'spoken')
     await flush()
-    await h.receptionist.hear('watch kevin')
+    await h.receptionist.hear('watch kevin', 'spoken')
     await flush()
     expect(said(h).at(-1)).toBe(JSON.stringify([{ text: 'Watching Kevin.', voice: RECEPTIONIST_VOICE }]))
   })
@@ -1833,9 +1838,9 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('who is around?')
+    await h.receptionist.hear('who is around?', 'spoken')
     await flush()
-    await h.receptionist.hear('watch kevin')
+    await h.receptionist.hear('watch kevin', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(3)
   })
@@ -1861,7 +1866,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('what is this one doing?')
+    await h.receptionist.hear('what is this one doing?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
@@ -1880,14 +1885,14 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('send Kevin carry on, then be quiet')
+    await h.receptionist.hear('send Kevin carry on, then be quiet', 'spoken')
     await flush()
     expect(h.spoken).toEqual([])
     // The other actions in the reply still run; they just go unannounced.
     expect(h.wire).toEqual(['let go', `send ${KEVIN_ID} carry on`])
     expect(h.receptionist.phase).toBe('ready')
     // Disconnected: nothing it says from now on is heard.
-    await h.receptionist.hear('anything?')
+    await h.receptionist.hear('anything?', 'spoken')
     await flush()
     expect(h.spoken).toEqual([])
     expect(h.wire).toEqual(['let go', `send ${KEVIN_ID} carry on`])
@@ -1904,12 +1909,12 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('take me to Kevin')
+    await h.receptionist.hear('take me to Kevin', 'spoken')
     await flush()
     expect(h.focused).toEqual([KEVIN_ID])
-    await h.receptionist.hear('show me the spaceterm directory, then the design notes')
+    await h.receptionist.hear('show me the spaceterm directory, then the design notes', 'spoken')
     await flush()
-    await h.receptionist.hear('thanks')
+    await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.focused).toEqual([KEVIN_ID, DIR_ID, NOTE_ID])
   })
@@ -1924,7 +1929,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('take me there')
+    await h.receptionist.hear('take me there', 'spoken')
     await flush()
     expect(h.focused).toEqual([])
   })
@@ -1939,7 +1944,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('what is this one doing?')
+    await h.receptionist.hear('what is this one doing?', 'spoken')
     await flush()
   })
 })
@@ -1969,7 +1974,7 @@ describe('Receptionist: watching an agent until the user is told', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell Sally to do the buttons too')
+    await h.receptionist.hear('tell Sally to do the buttons too', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     h.setState(SALLY_ID, 'working')
@@ -2006,18 +2011,18 @@ describe('Receptionist: watching an agent until the user is told', () => {
         },
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(2)
-    await h.receptionist.hear('anything new?')
+    await h.receptionist.hear('anything new?', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'working')
     h.setState(SALLY_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(4)
-    await h.receptionist.hear('anything new?')
+    await h.receptionist.hear('anything new?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(5)
   })
@@ -2029,7 +2034,7 @@ describe('Receptionist: watching an agent until the user is told', () => {
         reply([], [{ tool: 'backlog_add', item: `{${SALLY}} finished the login form.` }]),
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
@@ -2053,7 +2058,7 @@ describe('Receptionist: watching an agent until the user is told', () => {
       const world = agentWorld()
       const watchStore = memoryStore()
       const before = harness({ world, watchStore, replies: [sendTo(SALLY)] })
-      await before.receptionist.hear('tell Sally to commit')
+      await before.receptionist.hear('tell Sally to commit', 'spoken')
       await flush()
       const after = harness({ world, watchStore, replies: [toldOf(SALLY)] })
       after.receptionist.resumeWatches()
@@ -2068,7 +2073,7 @@ describe('Receptionist: watching an agent until the user is told', () => {
       const world = agentWorld()
       const watchStore = memoryStore()
       const before = harness({ world, watchStore, replies: [sendTo(KEVIN)] })
-      await before.receptionist.hear('tell Kevin to commit')
+      await before.receptionist.hear('tell Kevin to commit', 'spoken')
       await flush()
       changeState(world, KEVIN_ID, 'working')
       changeState(world, KEVIN_ID, 'stopped')
@@ -2082,7 +2087,7 @@ describe('Receptionist: watching an agent until the user is told', () => {
       const world = agentWorld()
       const watchStore = memoryStore()
       const before = harness({ world, watchStore, replies: [sendTo(KEVIN)] })
-      await before.receptionist.hear('tell Kevin to commit')
+      await before.receptionist.hear('tell Kevin to commit', 'spoken')
       await flush()
       const after = harness({ world, watchStore, replies: [toldOf(KEVIN)] })
       after.receptionist.resumeWatches()
@@ -2098,7 +2103,7 @@ describe('Receptionist: watching an agent until the user is told', () => {
       const world = agentWorld()
       const watchStore = memoryStore()
       const before = harness({ world, watchStore, replies: [sendTo(SALLY), toldOf(SALLY)] })
-      await before.receptionist.hear('tell Sally to commit')
+      await before.receptionist.hear('tell Sally to commit', 'spoken')
       await flush()
       before.setState(SALLY_ID, 'stopped')
       await flush()
@@ -2122,13 +2127,13 @@ describe('Receptionist: watching an agent until the user is told', () => {
         },
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.receptionist.userTookOver(SALLY_ID)
     h.setState(SALLY_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(1)
-    await h.receptionist.hear('anything new?')
+    await h.receptionist.hear('anything new?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
@@ -2157,11 +2162,12 @@ describe('Receptionist across a server restart mid-reply', () => {
   it('marks a reply a restart cut off, and tells the next server how much was heard', async () => {
     const carryStore = memoryStore()
     const before = harness({ carryStore, speech: playingUntilDropped(), replies: [kevinIsDone] })
-    await before.receptionist.hear('how is Kevin?')
+    await before.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     await before.receptionist.shutdown()
     const replyAt = before.record.findIndex(message => message.content.includes('The solver works'))
-    expect(before.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length] }])
+    // The user was not cut off by their own doing: the rest waits for them, unread.
+    expect(before.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length], unread: true }])
     const after = harness({
       carryStore,
       replies: [(turn) => {
@@ -2169,7 +2175,7 @@ describe('Receptionist across a server restart mid-reply', () => {
         return reply([{ from: 'control', text: 'Where was I.' }])
       }],
     })
-    await after.receptionist.hear('go on')
+    await after.receptionist.hear('go on', 'spoken')
     await flush()
     expect(after.turns).toHaveLength(1)
   })
@@ -2177,7 +2183,7 @@ describe('Receptionist across a server restart mid-reply', () => {
   it('tells the next server a reply may have been cut off when the last one crashed mid-reply', async () => {
     const carryStore = memoryStore()
     const before = harness({ carryStore, speech: playingUntilDropped(), replies: [kevinIsDone] })
-    await before.receptionist.hear('how is Kevin?')
+    await before.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     const after = harness({
       carryStore,
@@ -2186,7 +2192,7 @@ describe('Receptionist across a server restart mid-reply', () => {
         return reply([{ from: 'control', text: 'Where was I.' }])
       }],
     })
-    await after.receptionist.hear('go on')
+    await after.receptionist.hear('go on', 'spoken')
     await flush()
     expect(after.turns).toHaveLength(1)
   })
@@ -2194,7 +2200,7 @@ describe('Receptionist across a server restart mid-reply', () => {
   it('says nothing of a reply that was heard to the end', async () => {
     const carryStore = memoryStore()
     const before = harness({ carryStore, replies: [kevinIsDone] })
-    await before.receptionist.hear('how is Kevin?')
+    await before.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     await before.receptionist.shutdown()
     expect(before.heardMarks).toEqual([])
@@ -2207,7 +2213,7 @@ describe('Receptionist across a server restart mid-reply', () => {
         return reply([{ from: 'control', text: 'Hi.' }])
       }],
     })
-    await after.receptionist.hear('hello')
+    await after.receptionist.hear('hello', 'spoken')
     await flush()
     expect(after.turns).toHaveLength(1)
   })
@@ -2231,7 +2237,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
       ],
     })
     h.setState(SALLY_ID, 'stopped')
-    await h.receptionist.hear('start one to tidy the imports')
+    await h.receptionist.hear('start one to tidy the imports', 'spoken')
     await flush()
     // A stop on the way in — before it has worked on its prompt — is not its answer.
     h.setState(SALLY_ID, 'stopped')
@@ -2269,7 +2275,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
         },
       ],
     })
-    await h.receptionist.hear('start one on the login page')
+    await h.receptionist.hear('start one on the login page', 'spoken')
     await flush()
     h.end(SALLY_ID)
     await flush()
@@ -2289,7 +2295,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('tell me when Kevin is done')
+    await h.receptionist.hear('tell me when Kevin is done', 'spoken')
     await flush()
     // Stopped and ended in one breath, while the user was talking: one event, the end.
     h.receptionist.userSpeaking(true)
@@ -2320,11 +2326,11 @@ describe('Receptionist: agents it started, and agents that end', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('tell me when Kevin is done')
+    await h.receptionist.hear('tell me when Kevin is done', 'spoken')
     await flush()
     h.end(KEVIN_ID)
     await flush()
-    await h.receptionist.hear('tell Kevin to carry on')
+    await h.receptionist.hear('tell Kevin to carry on', 'spoken')
     await flush()
     expect(h.wire).toEqual([])
   })
@@ -2342,13 +2348,13 @@ describe('Receptionist: agents it started, and agents that end', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('tell me when Kevin is done')
+    await h.receptionist.hear('tell me when Kevin is done', 'spoken')
     await flush()
     h.end(KEVIN_ID)
     await flush()
-    await h.receptionist.hear('bring Kevin back')
+    await h.receptionist.hear('bring Kevin back', 'spoken')
     await flush()
-    await h.receptionist.hear('tell him to carry on')
+    await h.receptionist.hear('tell him to carry on', 'spoken')
     await flush()
     expect(h.wire).toEqual([`unarchive ${KEVIN_ID}`, `send ${KEVIN_ID} Carry on.`])
     expect(h.record.some(message => message.content === `UNARCHIVED {Kevin:${KEVIN}}`)).toBe(true)
@@ -2367,13 +2373,13 @@ describe('Receptionist: agents it started, and agents that end', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('tell me when Kevin is done')
+    await h.receptionist.hear('tell me when Kevin is done', 'spoken')
     await flush()
-    await h.receptionist.hear('archive Kevin')
+    await h.receptionist.hear('archive Kevin', 'spoken')
     await flush()
-    await h.receptionist.hear('actually, bring Kevin back')
+    await h.receptionist.hear('actually, bring Kevin back', 'spoken')
     await flush()
-    await h.receptionist.hear('thanks')
+    await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.wire).toEqual([`archive ${KEVIN_ID}`, `unarchive ${KEVIN_ID}`])
   })
@@ -2388,9 +2394,9 @@ describe('Receptionist: agents it started, and agents that end', () => {
         },
       ],
     })
-    await h.receptionist.hear('unarchive Kevin')
+    await h.receptionist.hear('unarchive Kevin', 'spoken')
     await flush()
-    await h.receptionist.hear('ok')
+    await h.receptionist.hear('ok', 'spoken')
     await flush()
     expect(h.wire).toEqual([])
   })
@@ -2434,6 +2440,8 @@ function handPlayed() {
   return {
     backend, spoken,
     heard: (offset: number, id = newest()) => update(id, { playback_state: 'speaking', character_offset: offset }),
+    /** The voice moves on without the job's change feed hearing of it, as Voice Operator's does within a sentence. */
+    quietly: (offset: number, id = newest()) => { jobs.get(id)!.status.character_offset = offset },
     end: (state: Exclude<SpeechStatus['state'], 'in_progress'>, offset?: number, id = newest()) =>
       update(id, { state, ...(offset !== undefined ? { character_offset: offset } : {}) }),
   }
@@ -2453,13 +2461,15 @@ describe('Receptionist: the user starts talking over its words', () => {
         },
       ],
     })
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     speech.heard('Kevin finished'.length)
     await flush()
     h.receptionist.userSpeaking(true)
     await flush()
-    expect(h.heardMarks).toHaveLength(0)
+    // Struck out in the transcript the moment it stops, while they are still talking.
+    const replyAt = h.record.findIndex(message => message.content.includes('Kevin finished'))
+    expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin '.length] }])
     h.receptionist.userSpeaking(false)
     await flush()
     expect(h.heardMarks).toHaveLength(1)
@@ -2482,12 +2492,12 @@ describe('Receptionist: the user starts talking over its words', () => {
       ],
     })
     // The read's results go back to the model, which the fake keeps waiting on.
-    void h.receptionist.hear('how is Kevin?')
+    void h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     speech.heard('Let me check'.length)
     await flush()
     h.receptionist.userSpeaking(true)
-    void h.receptionist.hear('never mind')
+    void h.receptionist.hear('never mind', 'spoken')
     h.receptionist.userSpeaking(false)
     await flush()
     expect(h.turns.at(-1)?.prompt).toContain('never mind')
@@ -2516,7 +2526,7 @@ describe('Receptionist actions run before the words that report them', () => {
       sentWhenSpoken ??= [...h.wire]
       return deliver(...args)
     }
-    await h.receptionist.hear('tell Kevin to run the tests and Sally to push')
+    await h.receptionist.hear('tell Kevin to run the tests and Sally to push', 'spoken')
     await flush()
     expect(sentWhenSpoken).toEqual([toKevin, toSally])
   })
@@ -2534,11 +2544,11 @@ describe('Receptionist actions run before the words that report them', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell Kevin to run the tests and Sally to push')
+    await h.receptionist.hear('tell Kevin to run the tests and Sally to push', 'spoken')
     await flush()
     speech.end('interrupted_by_user', 'Sent to Kev'.length)
     await flush()
-    await h.receptionist.hear('did they both go?')
+    await h.receptionist.hear('did they both go?', 'spoken')
     await flush()
     expect(h.wire).toEqual([toKevin, toSally])
     expect(h.notDone).toEqual([])
@@ -2555,7 +2565,7 @@ describe('Receptionist actions run before the words that report them', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('when Kevin finishes, tell Sally what he said')
+    await h.receptionist.hear('when Kevin finishes, tell Sally what he said', 'spoken')
     await flush()
     h.receptionist.setListener(undefined)
     h.setState(KEVIN_ID, 'stopped')
@@ -2577,7 +2587,7 @@ describe('Receptionist actions run before the words that report them', () => {
         },
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
@@ -2610,7 +2620,7 @@ describe('Receptionist unarchive_agent', () => {
     })
     h.end(KEVIN_ID)
     // Not awaited: the turn's speech is played by hand.
-    void h.receptionist.hear('bring Kevin back and have him restart the daemon')
+    void h.receptionist.hear('bring Kevin back and have him restart the daemon', 'spoken')
     await flush()
     // Neither step waited for its words.
     expect(h.turns).toHaveLength(2)
@@ -2629,7 +2639,7 @@ describe('Receptionist unarchive_agent', () => {
       ],
     })
     h.end(KEVIN_ID)
-    await h.receptionist.hear('bring Kevin back')
+    await h.receptionist.hear('bring Kevin back', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
@@ -2651,9 +2661,9 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    await h.receptionist.hear('thanks, that settles it')
+    await h.receptionist.hear('thanks, that settles it', 'spoken')
     await flush()
-    await h.receptionist.hear('ok')
+    await h.receptionist.hear('ok', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(3)
   })
@@ -2671,7 +2681,7 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
@@ -2679,7 +2689,7 @@ describe('Receptionist backlog', () => {
     expect(h.turns).toHaveLength(2)
     expect(h.spoken).toHaveLength(1)
     expect(h.backlog.all().map(item => item.text)).toEqual([`{${SALLY}} finished the login page.`])
-    await h.receptionist.hear('right, so we agree?')
+    await h.receptionist.hear('right, so we agree?', 'spoken')
     await flush()
   })
 
@@ -2699,7 +2709,7 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    await h.receptionist.hear('thanks, that settles it')
+    await h.receptionist.hear('thanks, that settles it', 'spoken')
     await flush()
     expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.', 'Leon finished the go-quiet follow-up.'])
   })
@@ -2719,7 +2729,7 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    await h.receptionist.hear('what happened with Leon?')
+    await h.receptionist.hear('what happened with Leon?', 'spoken')
     await flush()
     expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.', 'Sally is stuck on an error.'])
   })
@@ -2741,11 +2751,11 @@ describe('Receptionist backlog', () => {
         reply([{ from: 'control', text: 'Go ahead.' }]),
       ],
     })
-    void h.receptionist.hear('where are we with Leon?')
+    void h.receptionist.hear('where are we with Leon?', 'spoken')
     await flush()
     // The user started talking before the reply was said: the turn stopped, and the items went back at once.
     expect(h.backlog.size).toBe(3)
-    const answered = h.receptionist.hear('actually, wait')
+    const answered = h.receptionist.hear('actually, wait', 'spoken')
     h.receptionist.userSpeaking(false)
     await answered
     await flush()
@@ -2764,7 +2774,7 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    await h.receptionist.hear('any news on the release notes?')
+    await h.receptionist.hear('any news on the release notes?', 'spoken')
     await flush()
     expect(h.backlog.size).toBe(2)
   })
@@ -2784,10 +2794,10 @@ describe('Receptionist backlog', () => {
         reply([{ from: 'control', text: 'Kevin finished.' }]),
       ],
     })
-    await h.receptionist.hear('anyway')
+    await h.receptionist.hear('anyway', 'spoken')
     await flush()
     expect(h.backlog.all()[1].agents).toEqual([KEVIN_ID])
-    await h.receptionist.hear('done with that')
+    await h.receptionist.hear('done with that', 'spoken')
     await flush()
     expect(h.backlog.all().map(item => item.text)).toEqual(['Dean asked two questions.'])
   })
@@ -2803,7 +2813,7 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    await h.receptionist.hear('done with that')
+    await h.receptionist.hear('done with that', 'spoken')
     await flush()
     expect(h.backlog.all().map(item => item.text)).toEqual(['Leon finished.'])
   })
@@ -2826,11 +2836,11 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    void h.receptionist.hear('ok, done')
+    void h.receptionist.hear('ok, done', 'spoken')
     await flush()
     // Stopped as the user started talking, before the reply was said: the item is back at once.
     expect(h.backlog.size).toBe(1)
-    const answered = h.receptionist.hear('wait, one more thing')
+    const answered = h.receptionist.hear('wait, one more thing', 'spoken')
     h.receptionist.userSpeaking(false)
     await answered
     await flush()
@@ -2858,13 +2868,13 @@ describe('Receptionist backlog', () => {
         },
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
-    await h.receptionist.hear('early audio: drop it for now')
+    await h.receptionist.hear('early audio: drop it for now', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
-    await h.receptionist.hear('Yeah.')
+    await h.receptionist.hear('Yeah.', 'spoken')
     await flush()
     expect(said(h).some(text => text.includes('Meanwhile'))).toBe(true)
     expect(h.backlog.size).toBe(0)
@@ -2908,7 +2918,7 @@ describe('Receptionist backlog at a pause', () => {
         },
       ],
     })
-    await h.receptionist.hear('thanks, that settles it')
+    await h.receptionist.hear('thanks, that settles it', 'spoken')
     await flush()
     expect(pause.pauses).toEqual([])
     expect(h.turns).toHaveLength(2)
@@ -2929,7 +2939,7 @@ describe('Receptionist backlog at a pause', () => {
         },
       ],
     })
-    await h.receptionist.hear('tell Sally to carry on')
+    await h.receptionist.hear('tell Sally to carry on', 'spoken')
     await flush()
     expect(pause.pauses).toEqual([PAUSE_MS])
     expect(h.turns).toHaveLength(1)
@@ -2947,7 +2957,7 @@ describe('Receptionist backlog at a pause', () => {
       sleep: pause.sleep,
       replies: [reply([{ from: 'control', text: 'Sent.' }])],
     })
-    await h.receptionist.hear('tell Sally to carry on')
+    await h.receptionist.hear('tell Sally to carry on', 'spoken')
     await flush()
     h.receptionist.userSpeaking(true)
     pause.wake()
@@ -2976,7 +2986,7 @@ describe('Receptionist backlog at a pause', () => {
         },
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     expect(judged).toBe(1)
     h.setState(SALLY_ID, 'stopped')
@@ -3004,7 +3014,7 @@ describe('Receptionist backlog at a pause', () => {
         sleep: pause.sleep,
         replies: [reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }])],
       })
-      await h.receptionist.hear('check on the agent')
+      await h.receptionist.hear('check on the agent', 'spoken')
       await flush()
       expect(pause.pauses).toEqual([])
       expect(h.turns).toHaveLength(1)
@@ -3018,7 +3028,7 @@ describe('Receptionist backlog at a pause', () => {
       judgePause: async () => { judged++; return READY_NOW },
       replies: [reply([{ from: 'control', text: 'Good.' }])],
     })
-    await h.receptionist.hear('thanks')
+    await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(judged).toBe(0)
   })
@@ -3036,7 +3046,7 @@ describe('Receptionist backlog at a pause', () => {
         },
       ],
     })
-    await h.receptionist.hear('thanks')
+    await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
     expect(h.backlog.all().map(item => item.text)).toEqual(['Leon finished.'])
@@ -3046,7 +3056,7 @@ describe('Receptionist backlog at a pause', () => {
     const h = harness({
       replies: [reply([], [{ tool: 'backlog_add', item: `{${KEVIN}} wants two decisions from the user.` }])],
     })
-    await h.receptionist.hear('anyway')
+    await h.receptionist.hear('anyway', 'spoken')
     await flush()
     h.receptionist.userTookOver(KEVIN_ID)
     expect(h.backlog.size).toBe(1)
@@ -3068,7 +3078,7 @@ describe("Receptionist: the transcript's reasoning", () => {
         reply([]),
       ],
     })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'stopped')
     await flush()
@@ -3112,11 +3122,11 @@ describe("Receptionist: the transcript's reasoning", () => {
         reply([{ from: 'control', text: 'Go ahead.' }]),
       ],
     })
-    await h.receptionist.hear('Sally is done, tell me later')
+    await h.receptionist.hear('Sally is done, tell me later', 'spoken')
     await flush()
-    void h.receptionist.hear("what's next?")
+    void h.receptionist.hear("what's next?", 'spoken')
     await flush()
-    const answered = h.receptionist.hear('actually, wait')
+    const answered = h.receptionist.hear('actually, wait', 'spoken')
     h.receptionist.userSpeaking(false)
     await answered
     await flush()
@@ -3133,7 +3143,7 @@ describe("Receptionist: the transcript's reasoning", () => {
       judgePause: async () => ({ now: 0.44, afterPause: 0.38 }),
       replies: [reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }])],
     })
-    await h.receptionist.hear('check on the agent')
+    await h.receptionist.hear('check on the agent', 'spoken')
     await flush()
     expect(h.traces).toEqual([{
       what: 'backlog-wait', text: 'Backlog held: you seem to be in the middle of a topic',
@@ -3143,7 +3153,7 @@ describe("Receptionist: the transcript's reasoning", () => {
 
   it('shows a watch ending when the user takes the agent over', async () => {
     const h = harness({ replies: [reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }])] })
-    await h.receptionist.hear('let me know when Sally is done')
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.receptionist.userTookOver(SALLY_ID)
     expect(lines(h).at(-1)).toMatch(new RegExp(`^unwatch: Stopped watching \\{\\w+:${SALLY}\\}: you typed into it yourself$`))
@@ -3157,7 +3167,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
   it('writes a reply to a muted device instead of speaking it, and counts it unread', async () => {
     const h = harness({ replies: [reply([{ from: 'control', text: 'Kevin is done.' }])] })
     listen(h, true)
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     expect(h.spoken).toEqual([])
     const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
@@ -3173,7 +3183,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
           return reply([{ from: 'control', text: 'Kevin is done, and asks whether to push.' }])
         },
         (turn) => {
-          expect(turn.prompt).toContain('A reply of yours was written to the user rather than spoken, and they have not read it yet: "Kevin is done, and asks whether to push."')
+          expect(turn.prompt).toContain('A reply of yours was written to the user rather than spoken, and they spoke again without reading it: "Kevin is done, and asks whether to push."')
           return reply([{ from: 'control', text: 'Sally is still going.' }])
         },
         (turn) => {
@@ -3184,16 +3194,16 @@ describe('Receptionist muted, and what the user has taken in', () => {
       ],
     })
     listen(h, true)
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
-    await h.receptionist.hear('and Sally?')
+    await h.receptionist.hear('and Sally?', 'spoken')
     await flush()
-    await h.receptionist.hear('ok')
+    await h.receptionist.hear('ok', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(3)
   })
 
-  it('says nothing of a muted reply the user read before speaking again', async () => {
+  it('says nothing of a muted reply the user marked read before speaking again', async () => {
     const h = harness({
       replies: [
         reply([{ from: 'control', text: 'Kevin is done.' }]),
@@ -3205,38 +3215,135 @@ describe('Receptionist muted, and what the user has taken in', () => {
       ],
     })
     listen(h, true)
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
-    h.receptionist.readPart(at, 0)
+    h.receptionist.readAll()
     expect(h.receptionist.unread()).toEqual({ count: 0 })
     expect(h.consumedMarks).toEqual([{ of: at, part: 0, from: 0, to: 'Kevin is done.'.length, how: 'read' }])
-    await h.receptionist.hear('push it')
+    await h.receptionist.hear('push it', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
   })
 
-  it('tells the model when the user has since read what they cut off', async () => {
+  it('tells the model where the user marked they stopped, once their next message locks it', async () => {
     const h = harness({
       replies: [
         reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
-        reply([{ from: 'control', text: 'Sure.' }]),
         (turn) => {
-          expect(turn.prompt).toContain('Since then, the user has read, or heard replayed, what they had missed of your earlier words: "solver works and the tests pass."')
-          return reply([{ from: 'control', text: 'Good.' }])
+          expect(turn.prompt).toContain('They stopped taking in your words after "Kevin is done. The solver works", and cut in there: they did not take in "and the tests pass."')
+          return reply([{ from: 'control', text: 'Sure.' }])
         },
       ],
-      speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is done. Kevin here. The sol'.length },
     })
-    await h.receptionist.hear('how is Kevin?')
-    await flush()
-    await h.receptionist.hear('wait')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     const at = h.record.findIndex(message => message.content.includes('The solver works'))
-    h.receptionist.readPart(at, 1)
-    await h.receptionist.hear('read it')
+    h.receptionist.mark(at, 1, 'The solver works'.length)
+    expect(h.heardMarks).toEqual([{ replyAt: at, parts: ['Kevin is done.'.length, 'The solver works'.length] }])
+    await h.receptionist.hear('which tests?', 'typed')
     await flush()
-    expect(h.turns).toHaveLength(3)
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('lets the user move the mark back and forth until their next message, and not after', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
+        (turn) => {
+          // Moved back to the end: they took it all in after all.
+          expect(turn.prompt).not.toContain('did not take in')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('The solver works'))
+    h.receptionist.mark(at, 0, 'Kevin'.length)
+    h.receptionist.mark(at, 1, 'The solver works and the tests pass.'.length)
+    expect(h.heardMarks).toEqual([
+      { replyAt: at, parts: ['Kevin'.length, 0] },
+      { replyAt: at, parts: ['Kevin is done.'.length, 'The solver works and the tests pass.'.length] },
+    ])
+    await h.receptionist.hear('ok', 'typed')
+    await flush()
+    h.receptionist.mark(at, 0, 0)
+    expect(h.heardMarks).toHaveLength(2)
+  })
+
+  it('takes a reply written muted as read when the user types their next message', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }]),
+        (turn) => {
+          expect(turn.prompt).not.toContain('written to the user')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
+    await h.receptionist.hear('push it', 'typed')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.consumedMarks).toEqual([{ of: at, part: 0, from: 0, to: 'Kevin is done.'.length, how: 'read' }])
+    // Only the answer to it waits now.
+    expect(h.receptionist.unread()).toEqual({ count: 1, first: h.record.findIndex(message => message.content.includes('Sure.')) })
+  })
+
+  it('takes a reply written muted as missed when the user speaks their next message', async () => {
+    const h = harness({ replies: [reply([{ from: 'control', text: 'Kevin is done.' }]), reply([{ from: 'control', text: 'Sure.' }])] })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
+    await h.receptionist.hear('push it', 'spoken')
+    await flush()
+    expect(h.heardMarks).toEqual([{ replyAt: at, parts: [0] }])
+    expect(h.receptionist.unread()).toEqual({ count: 1, first: h.record.findIndex(message => message.content.includes('Sure.')) })
+  })
+
+  it('keeps what the user missed by leaving mid-reply waiting for them', async () => {
+    const speech = handPlayed()
+    const h = harness({ speech: speech.backend, replies: [reply([{ from: 'control', text: 'Kevin finished the solver and every test passes.' }])] })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    speech.heard('Kevin finished'.length)
+    await flush()
+    h.receptionist.setListener(undefined)
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('Kevin finished'))
+    expect(h.heardMarks).toEqual([{ replyAt: at, parts: ['Kevin '.length], unread: true }])
+    expect(h.receptionist.unread()).toEqual({ count: 1, first: at })
+  })
+
+  it('follows the voice word by word, which its change feed does not, and takes no mark while it speaks', async () => {
+    const speech = handPlayed()
+    let tick = (): void => {}
+    const h = harness({
+      speech: speech.backend,
+      replies: [reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works.' }])],
+      voiceTick: () => new Promise((resolve) => { tick = resolve }),
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    speech.heard('Kevin is done. Kevin here. The sol'.length)
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('The solver works'))
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done.'.length, 'The sol'.length] })
+    // Asked outright, without a change for the feed to wake on.
+    speech.quietly('Kevin is done. Kevin here. The solver'.length)
+    tick()
+    await flush()
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done.'.length, 'The solver'.length] })
+    h.receptionist.mark(at, 0, 'Kevin'.length)
+    expect(h.heardMarks).toEqual([])
+    speech.end('completed')
+    await flush()
+    expect(h.speaking.at(-1)).toBeUndefined()
   })
 
   it('tells the model when it is unmuted', async () => {
@@ -3250,10 +3357,10 @@ describe('Receptionist muted, and what the user has taken in', () => {
       ],
     })
     listen(h, true)
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     listen(h, false)
-    await h.receptionist.hear('ok')
+    await h.receptionist.hear('ok', 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(1)
   })
@@ -3266,7 +3373,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
       ],
     })
     listen(h, true)
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     const at = h.record.findIndex(message => message.content.includes('The solver works'))
     const playing: boolean[] = []
@@ -3290,7 +3397,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
       ],
     })
     listen(h, true)
-    await h.receptionist.hear('how is Kevin?')
+    await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     listen(h, false)
     await h.receptionist.catchUp()
@@ -3325,7 +3432,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
     })
 
     async function replaying(h: ReturnType<typeof harness>): Promise<() => void> {
-      await h.receptionist.hear('let me know when Sally is done')
+      await h.receptionist.hear('let me know when Sally is done', 'spoken')
       await flush()
       const at = h.record.findIndex(message => message.content.includes('Will do'))
       const { speech, finish } = playingUntilFinished()

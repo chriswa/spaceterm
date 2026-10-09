@@ -74,7 +74,7 @@ export type ServerEventType =
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
-  | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-replaying'
+  | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-replaying' | 'receptionist-speaking'
   | 'hands-free-tuning'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -292,6 +292,7 @@ export class ServerClient {
       case 'receptionist-transcript-appended':
       case 'receptionist-unread':
       case 'receptionist-replaying':
+      case 'receptionist-speaking':
       case 'hands-free-tuning':
         this.emit(msg)
         return
@@ -901,9 +902,14 @@ export class ServerClient {
     this.fireAndForget({ type: 'receptionist-hold', action })
   }
 
-  /** A part of a reply read in the transcript view. */
-  readReceptionistReply(of: number, part: number): void {
-    this.fireAndForget({ type: 'receptionist-read', of, part })
+  /** Where the user stopped taking Control in, clicked in the transcript view: see `ReceptionistMarkMessage`. */
+  markReceptionistReply(of: number, part: number, char: number): void {
+    this.fireAndForget({ type: 'receptionist-mark', of, part, char })
+  }
+
+  /** Everything of Control's waiting for the user, marked read. */
+  readAllOfReceptionist(): void {
+    this.fireAndForget({ type: 'receptionist-read-all' })
   }
 
   replayReceptionistReply(of: number, part: number): void {

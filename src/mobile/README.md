@@ -115,7 +115,8 @@ colour of who is speaking — white for Control, a hue of their own for an
 agent it quotes. It reads Control's full record
 (`~/.spaceterm/receptionist/conversation.jsonl`), not its session, so
 compaction never shortens it: it opens at the newest — or at the first reply
-not read yet, under a "New" line — and loads older pages as you scroll up.
+with words waiting for you, under a red Unread line — and loads older pages
+as you scroll up.
 Its header says where Control speaks, with Mute or Unmute, Release, the
 earpiece switch, and **Catch me up** while replies wait unread: Control comes
 here unmuted and sums them up aloud.
@@ -131,14 +132,28 @@ are named from the record and log (`transcript-names.ts`), since the name
 registry forgets archived agents; one never named shows its title.
 
 What you cut Control off in the middle of shows once you interrupt: the words
-you never heard, dim and dotted rather than struck out — they stand, and
-Control may have acted on them — and, as dashed struck pills, "not done, cut
-off", the actions that were waiting on them and so never ran, each with **Do
-it now** to ask for it after all. Replies written while muted carry an accent
-until read. All of it is recorded as transcript-only lines the model never
-sees (`amendHeard`, `notDone`, `consumed` in `real-deps.ts`). The view follows
-new content while you are near the bottom, including the circle that turns
-while Control thinks; a button takes you back down when you are not.
+you never heard struck out, and, as dashed struck pills, "not done, cut off",
+the actions that were waiting on them and so never ran, each with **Do it
+now** to ask for it after all. While Control speaks, the word being said is
+lit and the rest of the reply dim.
+
+Words still waiting for you — written while muted, or cut off while you were
+away or had moved to another device — sit under the red Unread line, with a
+red edge on their bubbles, until you read them. Nothing counts as read for
+being on screen: **Mark all read** at the bottom says you have, and so does
+typing your next message here. Speaking your next message instead strikes
+them out as missed, so Control knows you never took them in.
+
+Everything Control has said since your last message — its own words and the
+agents it quoted, however many replies — can still be marked: tap a word,
+struck or not, and everything up to it counts as taken in and everything
+after as missed; tap the speaker's name for none of it from there. Tap again
+to move the mark, as often as you like, until you send your next message,
+which locks it. Not while Control is speaking, when the voice decides. All of
+it is recorded as transcript-only lines the model never sees (`amendHeard`,
+`notDone`, `consumed` in `real-deps.ts`). The view follows new content while
+you are near the bottom, including the circle that turns while Control
+thinks; a button takes you back down when you are not.
 
 Every part of a reply has a ▶ that plays it again on this device, in the
 voice it was said in and with its "Kevin here." (replies keep their voices
@@ -150,11 +165,12 @@ everything it says, and assumes it was heard. The server's
 `ConsumptionLedger` (`src/server/receptionist/consumption.ts`) follows what
 you actually took in of each reply — heard, read, replayed or summed up — and
 counts nothing taken in without evidence: a reply spoken through is heard,
-one written while muted is unread until it has been on screen (most of it in
-view for a second, `useReadReceipts`), and a cut-off one is heard only up to
-the cut. What changed is told to Control with the next message it gets —
-never with a turn of its own — so it never builds on a reply you have not
-read, and stops repeating what you have since read or replayed.
+one written while muted waits until you read it, and a cut-off one is heard
+only up to the cut. Where you marked that you stopped is told to Control with
+your next message, as "they stopped taking in your words after …, and cut in
+there", so it answers from that point; other changes go with the next message
+it gets, never with a turn of its own. So it never builds on a reply you have
+not taken in, and stops repeating what you have since read or replayed.
 
 ## Hearing Control with the phone locked
 
