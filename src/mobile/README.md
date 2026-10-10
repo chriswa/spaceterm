@@ -74,14 +74,9 @@ system monitor as mini-stats (`~/mini-stats`) draws it in the menu bar
 mini-stats writes what its menu-bar item draws, colours and sizes decided, to
 `~/.mini-stats/menubar.json`; the server reads it every 2 s, but only while a
 phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
-Left of the system monitor, and not beside the usage, whose width depends on the
-server, is opProxy's 1Password authorization (`ProviderStatusReadout.tsx`): just
-the time left at its coarsest ("12h", "42m"), amber under an hour; a struck-out
-key alone, red once it is lost, dim while opProxy can't be reached. It is the feed's `status` message
-(`provider-status.ts`; "Provider status" in `APPROVAL_FEED.md`).
-Tapping any readout opens one panel with every set of figures (`MacReadouts.tsx`):
-each mini-stats module's reading, the authorization's time left and clock expiry,
-and each usage window's used, elapsed and time-to-reset.
+Tapping either readout opens one panel with every set of figures (`MacReadouts.tsx`):
+each mini-stats module's reading, and each usage window's used, elapsed and
+time-to-reset.
 
 ## Control: here, muted, or let go
 
@@ -317,36 +312,12 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   voice's own level (`outputDb`), and whether echo cancellation was on — which
   says whether interrupting can work. Never what was said. The server log's `[turn]` lines give each pause's verdict.
 
-## Notifications: approving opProxy from the phone
+## Notifications
 
-The rocket (`RocketButton.tsx`) carries the phone's notifications:
-opProxy's pending 1Password approvals, its 1Password authorization lost
-(caution; unread again each time it is lost anew), and the updates above (in
-the info tone). With any waiting it has a count in the loudest one's tone,
-and a ring pulsing out while any is unread, which ends when the sheet has
-shown it. A new request chimes once (`approvalRequested` in `cues.ts`), the
-same chime opProxy's Mac dialog plays. The sheet the rocket opens has a
-Notifications section at its top (`NotificationsSection.tsx`, handed to
-`App` as `toolbarSheetTop`): lost statuses, then requests, then each source's
-pairing — nothing at all when there is none. Updates are not rows there: the
-strip's buttons below do them. A row opens the request (`ApprovalView.tsx`) in
-place of the sheet, and answering it goes back to the sheet if more are
-waiting. A request vanishes when it is answered anywhere or times out.
-
-Spaceterm does not know what it is approving. The server only relays
-opProxy's feed (`src/server/approval-feed.ts`), and the phone draws the
-provider's document from a few generic blocks — see `APPROVAL_FEED.md` at the
-repo root, which is the contract. New options, colours or buttons are
-opProxy's to add.
-
-Answers are signed by a Secure Enclave key in the iPhone app
-(`ios/SpacetermMobile/NativeApprovals.swift`, `native-approvals.ts`), which
-opProxy pairs once, confirmed with Touch ID at the Mac. Deny is signed at a tap.
-Approve is the app's own slide panel, docked where the bottom bar would be: the
-page arms it with the chosen options, and it shows the document's confirm line
-and those options itself, and signs only once slid all the way across. That
-panel is the part a modified web page cannot fake. No Face ID, by choice. In
-Safari the phone can look but not answer.
+The rocket (`RocketButton.tsx`) carries the phone's notifications, which are
+the updates above (`update-notices.ts`): with any waiting it has a count, and
+a ring pulsing out while any is unread, which ends once the toolbar sheet has
+shown it. Unread is per phone, and survives a reload but nothing longer.
 
 ## The audio and lifecycle record
 

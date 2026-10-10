@@ -29,21 +29,3 @@ describe('cueSamples', () => {
   })
 })
 
-describe('the approval chime', () => {
-  it('is opProxy’s: 1.1 s, peaking at 0.8, from silence', () => {
-    const s = cueSamples('approvalRequested')
-    expect(s.length).toBe(Math.floor(1.1 * 44_100))
-    expect(s[0]).toBe(0)
-    expect(Math.max(...Array.from(s).map(Math.abs))).toBeCloseTo(0.8, 5)
-  })
-
-  it('rings out rather than stopping dead', () => {
-    const s = cueSamples('approvalRequested')
-    const rms = (a: Float32Array) => Math.sqrt(a.reduce((sum, v) => sum + v * v, 0) / a.length)
-    const window = Math.floor(0.05 * 44_100)
-    const early = rms(s.slice(Math.floor(0.15 * 44_100), Math.floor(0.15 * 44_100) + window))
-    const late = rms(s.slice(Math.floor(0.8 * 44_100), Math.floor(0.8 * 44_100) + window))
-    expect(late).toBeGreaterThan(0)
-    expect(late).toBeLessThan(early / 2)
-  })
-})

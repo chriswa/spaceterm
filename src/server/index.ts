@@ -44,7 +44,6 @@ import { checkWakeWord, parseHandsFreeTuning } from './hands-free'
 import { TurnDetector, realTurnDetectorDeps } from './turn-detector'
 import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
-import { ApprovalFeed } from './approval-feed'
 import { RemoteSpeech } from './remote-speech'
 import { MobileAppInstaller, realMobileInstallDeps } from './mobile-install'
 import { readAgentMemoryBytes } from './agent-memory'
@@ -253,8 +252,6 @@ interface ClientConnection {
   cameraBoundsAt?: number
   /** Receives the system monitor (`system-stats-watch`). */
   watchesSystemStats?: boolean
-  /** Receives pending approval requests (`approvals-watch`). */
-  watchesApprovals?: boolean
 }
 
 /**
@@ -309,15 +306,6 @@ const systemStats = new SystemStatsWatcher((snapshot) => {
 function updateSystemStatsWatched(): void {
   systemStats.setWatched([...clients].some((client) => client.watchesSystemStats))
 }
-/**
- * opProxy's pending approvals, for the phones watching. Connected whether or
- * not anyone watches, so a phone sees what is pending the moment it connects.
- */
-const approvalFeed = new ApprovalFeed((snapshot) => {
-  clients.forEach((client) => {
-    if (client.watchesApprovals) send(client.link, { type: 'approvals', snapshot })
-  })
-}, { log: serverLog })
 let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
@@ -1693,31 +1681,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       client.watchesSystemStats = msg.watching
       updateSystemStatsWatched()
       if (msg.watching) send(client.link, { type: 'system-stats', snapshot: systemStats.current() })
-      break
-    }
-
-    case 'approvals-watch': {
-      client.watchesApprovals = msg.watching
-      if (msg.watching) send(client.link, { type: 'approvals', snapshot: approvalFeed.snapshot() })
-      break
-    }
-
-    case 'approval-reply': {
-      const { seq, source, id, reply } = msg
-      serverLog(`[approval-feed] ${clientLabel(client)} answers ${source} ${id}`)
-      void approvalFeed.reply(source, id, reply).then((outcome) => {
-        if (!outcome.ok) serverLog(`[approval-feed] ${source} refused the answer to ${id}: ${outcome.error ?? ''}`)
-        send(client.link, { type: 'approval-result', seq, outcome })
-      })
-      break
-    }
-
-    case 'approval-pair': {
-      const { seq, source, publicKey, name } = msg
-      serverLog(`[approval-feed] ${clientLabel(client)} asks ${source} to pair "${sanitizeForLog(name)}"`)
-      void approvalFeed.pair(source, publicKey, name).then((outcome) => {
-        send(client.link, { type: 'approval-result', seq, outcome })
-      })
       break
     }
 
@@ -3781,7 +3744,6 @@ async function startServer(): Promise<void> {
     broadcastToAll({ type: 'restart-required', required: flag !== null, reason: flag?.reason ?? '' })
   })
   usageTracker.start()
-  approvalFeed.start()
 
   // --- Hooks socket (fire-and-forget ingest from hooks, status-line, MCP tools) ---
   const hooksServer = net.createServer((socket) => {
@@ -3849,7 +3811,6 @@ async function startServer(): Promise<void> {
     if (restartFlagWatcher) restartFlagWatcher()
     stopWatchingMobileSources?.()
     usageTracker.stop()
-    approvalFeed.stop()
     systemStats.setWatched(false)
     codexSessionFileWatcher.dispose()
     cursorSessionFileWatcher.dispose()

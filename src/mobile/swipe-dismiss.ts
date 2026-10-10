@@ -24,7 +24,6 @@ export interface SwipeScreen {
 export const SWIPE_SCREENS = {
   transcript: { selector: '.control-transcript--screen', ignore: 'textarea, input' },
   sheet: { selector: '.toolbar-sheet__panel', ignore: '.toolbar__strip, .toolbar__crab-row-handle, .toolbar__menu' },
-  approval: { selector: '.m-approval', ignore: '.m-approval__options, pre' },
 } as const
 
 /** The screen a touch starting on `target` would dismiss, if any. */

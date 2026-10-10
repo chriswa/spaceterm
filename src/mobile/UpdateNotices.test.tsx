@@ -5,14 +5,12 @@ import { useRestartRequiredStore } from '@/stores/restartRequiredStore'
 import { useClientStalenessStore } from '@/stores/clientStalenessStore'
 import { resetUpdateActions } from '@/stores/updateActionsStore'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
-import { EMPTY_APPROVALS, useApprovalsStore } from './approvals-store'
+import { useNoticesRead } from './update-notices'
 import { RocketButton } from './RocketButton'
-import { NotificationsSection } from './NotificationsSection'
 
 /**
  * Updates waiting to be done count on the rocket; the sheet it opens does them
- * with the strip's own marching buttons, so they are not rows in its
- * notifications.
+ * with the strip's own marching buttons.
  */
 
 beforeEach(() => {
@@ -24,7 +22,7 @@ afterEach(() => {
   act(() => {
     useRestartRequiredStore.getState().set(false, '')
     useClientStalenessStore.getState().set({ web: false, native: false })
-    useApprovalsStore.setState({ snapshot: EMPTY_APPROVALS, seen: new Set(), openKey: null })
+    useNoticesRead.setState({ seen: new Set() })
     useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
     resetUpdateActions()
   })
@@ -50,16 +48,9 @@ describe('update notices', () => {
     act(() => useRestartRequiredStore.getState().set(true, 'x'))
     render(<RocketButton />)
     fireEvent.click(rocket())
-    render(<NotificationsSection />)
     expect(rocket().className).not.toContain('m-rocket--unread')
     act(() => useClientStalenessStore.getState().set({ web: false, native: true }))
     expect(rocket().className).not.toContain('m-rocket--unread')
     expect(rocket().className).toContain('m-rocket--info')
-  })
-
-  it('are not rows in the notifications', () => {
-    act(() => useRestartRequiredStore.getState().set(true, 'protocol changed'))
-    const { container } = render(<NotificationsSection />)
-    expect(container.innerHTML).toBe('')
   })
 })

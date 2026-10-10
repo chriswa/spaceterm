@@ -1,6 +1,5 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
-import type { ApprovalOutcome, SignedApprovalReply } from './approvals'
 import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, SpeechProgressEvent } from './protocol'
 import type {
   ClientMessage,
@@ -70,7 +69,7 @@ export type ServerEventType =
   | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active' | 'speaking-changed'
   | 'summary-chat-status' | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
-  | 'system-stats' | 'approvals'
+  | 'system-stats'
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
@@ -279,7 +278,6 @@ export class ServerClient {
       case 'restart-required':
       case 'usage-report':
       case 'system-stats':
-      case 'approvals':
       case 'speech-audio':
       case 'speech-stop':
       case 'mobile-build-changed':
@@ -313,7 +311,6 @@ export class ServerClient {
       case 'server-restarted':
       case 'restart-flag-result':
       case 'usage-report-result':
-      case 'approval-result':
       case 'mobile-app-install-result':
       case 'listed':
       case 'attached':
@@ -724,22 +721,6 @@ export class ServerClient {
   /** Not remembered across a reconnect: the caller sends it again on 'connect'. */
   watchSystemStats(watching: boolean): void {
     this.fireAndForget({ type: 'system-stats-watch', watching })
-  }
-
-  watchApprovals(watching: boolean): void {
-    this.fireAndForget({ type: 'approvals-watch', watching })
-  }
-
-  async approvalReply(source: string, id: string, reply: SignedApprovalReply): Promise<ApprovalOutcome> {
-    const resp = await this.request({ type: 'approval-reply', source, id, reply })
-    if (resp.type !== 'approval-result') return unexpected(resp)
-    return resp.outcome
-  }
-
-  async approvalPair(source: string, publicKey: string, name: string): Promise<ApprovalOutcome> {
-    const resp = await this.request({ type: 'approval-pair', source, publicKey, name })
-    if (resp.type !== 'approval-result') return unexpected(resp)
-    return resp.outcome
   }
 
   sendCameraBounds(bounds: CameraBounds): void {

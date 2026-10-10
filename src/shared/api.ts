@@ -39,7 +39,6 @@ import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
-import type { ApprovalOutcome, ApprovalsSnapshot, SignedApprovalReply } from './approvals'
 import type { SystemStatsSnapshot } from './system-stats'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
@@ -229,16 +228,6 @@ export interface NodeApi {
    * someone watches. Null while mini-stats is not running.
    */
   watchSystemStats(callback: (snapshot: SystemStatsSnapshot | null) => void): () => void
-  /**
-   * Pending approval requests (opProxy's), at once and on every change, until
-   * the returned function is called. Asked for again on every reconnect, so a
-   * phone that was away sees what is pending the moment it is back.
-   */
-  watchApprovals(callback: (snapshot: ApprovalsSnapshot) => void): () => void
-  /** Answer an approval request with a reply the phone's native code signed; resolves with the source's verdict. */
-  answerApproval(source: string, id: string, reply: SignedApprovalReply): Promise<ApprovalOutcome>
-  /** Ask an approval source to trust this phone's key. Someone at the Mac has to confirm it. */
-  pairApprovalSource(source: string, publicKey: string, name: string): Promise<ApprovalOutcome>
 }
 
 /** Status the toolbar renders for a surface's summary-chat session. */

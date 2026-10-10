@@ -1,32 +1,31 @@
+import { useEffect } from 'react'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
-import { loudestTone, pendingKeys, unreadCount, useApprovalsStore } from './approvals-store'
-import { updateNoticeKey, useUpdateNotices } from './update-notices'
-import { lostStatuses } from './provider-status'
+import { updateNoticeKey, useNoticesRead, useUpdateNotices } from './update-notices'
 
 /**
  * The bottom bar's rocket: opens the toolbar, which on the phone is a sheet
- * with the phone's notifications at its top (NotificationsSection.tsx) and the
- * surfaces in it, and closes it again — the bar stays over it.
+ * with the surfaces in it, and closes it again — the bar stays over it.
  *
- * It is also where notifications show: a count of what is waiting — approval
- * requests waiting on the Mac, opProxy's 1Password authorization lost, updates
- * waiting to be done (whose buttons march in the sheet's strip) — in the
- * loudest one's tone, and a ring pulsing out while any of it is unread, until
- * the sheet has shown it.
+ * It is also where notifications show (update-notices.ts): a count of the
+ * updates waiting to be done, whose buttons march in the sheet's strip, and a
+ * ring pulsing out while any of them is unread, until the sheet has shown it.
  */
 export function RocketButton() {
   const open = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
-  const snapshot = useApprovalsStore((s) => s.snapshot)
-  const seen = useApprovalsStore((s) => s.seen)
+  const seen = useNoticesRead((s) => s.seen)
   const updates = useUpdateNotices()
   const updateKeys = updates.map((u) => updateNoticeKey(u.kind))
-  const pending = pendingKeys(snapshot, updateKeys).length
-  const unread = unreadCount(snapshot, updateKeys, seen)
-  const tone = loudestTone(snapshot.items) ?? (lostStatuses(snapshot).length ? 'caution' : updates.length ? 'info' : null)
+  const pending = updateKeys.length
+  const unread = updateKeys.filter((key) => !seen.has(key)).length
+  // The sheet up: whatever is waiting has been seen, and so has an update raised while it is up.
+  const updateKinds = updateKeys.join()
+  useEffect(() => {
+    if (open) useNoticesRead.getState().markAllRead()
+  }, [open, updateKinds])
   const waiting = pending ? ` — ${pending} waiting${unread ? `, ${unread} new` : ''}` : ''
   return (
     <button
-      className={`m-bar__button m-rocket${open ? ' m-bar__button--on' : ''}${tone ? ` m-rocket--${tone}` : ''}${unread ? ' m-rocket--unread' : ''}`}
+      className={`m-bar__button m-rocket${open ? ' m-bar__button--on' : ''}${pending ? ' m-rocket--info' : ''}${unread ? ' m-rocket--unread' : ''}`}
       onClick={() => useSurfacePresenterStore.getState().setToolbarSheetOpen(!open)}
       aria-label={open ? 'Back to the canvas' : `Toolbar and surfaces${waiting}`}
       aria-expanded={open}

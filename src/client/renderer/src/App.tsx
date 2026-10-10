@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { Toast } from './components/Toast'
 import { onToast, showToast } from './lib/toast'
@@ -149,11 +149,7 @@ function getMarkdownSpawnInfo(parentNode: import('../../../shared/state').NodeDa
 import type { SearchMode } from './lib/search'
 import { ROOT_NODE_ID, asNodeId, nodeIdFromFirstPtySession, nodeIdsOf, type NodeId, type PtySessionId } from '../../../shared/ids'
 
-/**
- * `toolbarSheetTop`: what the phone puts above the toolbar in its sheet (its
- * notifications). The desktop passes nothing.
- */
-export function App({ toolbarSheetTop }: { toolbarSheetTop?: ReactNode } = {}) {
+export function App() {
   const [focusedId, setFocusedId] = useState<NodeId | null>(null)
   const [scrollMode, setScrollMode] = useState(false)
   const [searchVisible, setSearchVisible] = useState(false)
@@ -3041,7 +3037,6 @@ export function App({ toolbarSheetTop }: { toolbarSheetTop?: ReactNode } = {}) {
         return (
           <div className="toolbar-sheet" onClick={closeSheet}>
             <div className="toolbar-sheet__panel" onClick={(e) => e.stopPropagation()}>
-              {toolbarSheetTop}
               <Toolbar
                 {...toolbarProps}
                 variant="sheet"
