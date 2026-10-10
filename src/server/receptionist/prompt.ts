@@ -8,6 +8,7 @@
  */
 
 import type { NodeId } from '../../shared/ids'
+import { endedCacheWords, type EndedCache } from './roster'
 
 export const RECEPTIONIST_SYSTEM_PROMPT = `You are Control, the receptionist for a user who runs many Claude Code coding agents at once. The user talks to you by voice and hears your replies through text-to-speech, often away from the screen. You help them keep track of what every agent is doing.
 
@@ -35,7 +36,7 @@ But when the user has just had you ask {Kevin:swift-hammer} whether the boundary
 - {"tool": "force_user_camera", "target": "<agent token, or a directory's or node's handle>"} moves the user's camera to an agent, a directory, or anything nearby gave a handle for. Use it only when the user asks to be taken to something, such as "take me to Kevin" or "find the agent working on the login page and show it to me". Never move the camera otherwise: not to show an agent you are talking about, not after finding one, and not to be helpful. The user's view is theirs.
 - {"tool": "find_agent", "query": "..."} Instant. ranks the agents by how well they match a description, using their titles and recent transcripts, and gives each a confidence, with the chance that none matches. Describe the agent as fully as you can: what the user said about it, what it is working on, its directory. If no agent stands out, ask the user for more, or try again with a better description.
 - {"tool": "read", "agent": "<agent token>"} Instant. returns the agent's recent conversation in full. Add "search": "words" to find passages about something specific.
-- {"tool": "ask_agent", "agent": "<agent token>", "question": "..."} asks a temporary copy of the agent a side question, which it answers from everything the agent already knows, without interrupting the agent, whether it is working or stopped. It cannot use tools to answer, and the real agent never sees the question or the answer, so anything it must know or act on goes to it in full with send instead. Ask follow-ups the same way.
+- {"tool": "ask_agent", "agent": "<agent token>", "question": "..."} asks a temporary copy of the agent a side question, which it answers from everything the agent already knows, without interrupting the agent, whether it is working or stopped. It cannot use tools to answer, and the real agent never sees the question or the answer, so anything it must know or act on goes to it in full with send instead. Ask follow-ups the same way. It also takes an agent that has ended, while that agent's cache is still warm: the copy is made from its ended session, and the agent stays archived. Once an ended agent's cache is cold, ask_agent cannot reach it: answer from its transcript with read, and offer to bring it back with unarchive_agent.
 - {"tool": "monitor", "agent": "<agent token>"} tells you the next time that agent stops. If it has already stopped since you were last told about it, you are told at once, so an answer that arrived just before you asked is never missed. Use it when the user asks to hear when an agent is done.
 - {"tool": "send", "agent": "<agent token>", "message": "..."} types a message into the real agent's prompt and submits it, as if the user had typed it. You are a transparent proxy: write it in the user's own first person and never mention yourself. "Tell Kevin to finish up" sends what the user said; "let Kevin know what Sally said about the bananas" sends what Sally actually said, gathered with read first if you need it. send automatically sets up monitoring on the agent after sending: you are told when it next stops, so never call monitor for an agent you are sending to. If the user wants a session to end itself and you need to send a prompt to the agent to do so (possibly after something is finished or conditionally), make sure to use the phrase 'self-terminate' specifically.
 - {"tool": "spawn", "directory": "<directory handle>", "title": "...", "prompt": "..."} starts a new agent in one of the directories from list_agents, with a short title and the prompt it starts on, written as the user would. You may add "name" and "gender" to choose its name, as rename_agent does, such as one the user asked for; otherwise leave them out and the system names it. Either way it is named the moment it starts, and, as after unarchive_agent, you get the result, with its token, and reply again. So reply with spawn and an empty "say", and confirm in the reply after, introducing the new agent by its token, such as "Started {Kevin:amber-otter} in the spaceterm directory.", so the user learns its name. spawn automatically sets up monitoring on the new agent, as send does: you are told the next time it stops, or if it ends first, so never call monitor for an agent you just started.
@@ -108,10 +109,18 @@ export type ReceptionistEvent =
   /** `nodeId` is for the system, never shown: which agent to watch again if Control says nothing of it. */
   | { kind: 'agent-stopped'; agent: string; nodeId: NodeId; state: string; lastSaid: string }
   /** A watched agent's session exited: it ended itself, or was ended. `archived` unless it failed to launch and stayed on the canvas. */
-  | { kind: 'agent-ended'; agent: string; archived: boolean; lastSaid: string }
+  /** `cache`: as the agent was when it ended, to say whether ask_agent can still reach it when the news is told. */
+  | { kind: 'agent-ended'; agent: string; archived: boolean; lastSaid: string; cache: EndedCache }
   /** `beforeUserSpoke`: asked before the user's latest words, which may have changed what they want. */
-  | { kind: 'agent-answer'; agent: string; question: string; answer: string; beforeUserSpoke?: true }
+  /** `ended`: the agent has ended, and was asked from its cache without being brought back. */
+  | { kind: 'agent-answer'; agent: string; question: string; answer: string; ended?: true; beforeUserSpoke?: true }
   | { kind: 'agent-answer-failed'; agent: string; question: string; reason: string; beforeUserSpoke?: true }
+
+/**
+ * Follows an ended agent's answer instead of ASK_AGENT_REMINDER: there is no
+ * real agent to send anything to, and it cannot speak for itself.
+ */
+export const ENDED_ANSWER_REMINDER = '[Reminder: this agent has ended and is still archived; a copy of it answered from its cache. It is not live, so tell the user its answer yourself, in plain words, rather than in its voice.]'
 
 /** Said of a side question's answer that was asked before the user last spoke. */
 export const ASKED_BEFORE_USER_SPOKE = 'You asked this before the user last spoke: weigh it against what they have said since, and leave it unmentioned if it no longer matters.'
@@ -123,9 +132,9 @@ export function renderEvent(event: ReceptionistEvent): string {
     case 'agent-ended':
       return `${event.agent} has ended: its session closed, ${event.archived ? 'and its surface went into the archive' : 'leaving its surface dead on the canvas'}. ` +
         `It is no longer live, so speak of it in plain words; read still takes its token${event.archived ? ', and unarchive_agent brings it back' : ''}. ` +
-        `It last said: ${event.lastSaid || '(nothing)'}`
+        `${endedCacheWords(event.cache, Date.now())} It last said: ${event.lastSaid || '(nothing)'}`
     case 'agent-answer':
-      return `${event.agent} was asked "${event.question}" and answered: ${event.answer} ${ASK_AGENT_REMINDER}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
+      return `${event.agent} was asked "${event.question}" and answered: ${event.answer} ${event.ended ? ENDED_ANSWER_REMINDER : ASK_AGENT_REMINDER}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
     case 'agent-answer-failed':
       return `Asking ${event.agent} "${event.question}" failed: ${event.reason}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
   }

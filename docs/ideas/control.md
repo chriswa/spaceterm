@@ -54,6 +54,17 @@ that transcript for the reasoning behind any item here.
   (Claude Code issues #77306 and #93490),
   cost a process start per question, and needed a guard hook to stay
   read-only.
+- **Ended agents, while warm**: an agent whose session has ended has no
+  process to fork from, so `ask_agent` resumes it headless instead
+  (`src/server/ended-side-question.ts`): `claude -p --resume --fork-session
+  --no-session-persistence --max-turns 1`, at the model and effort it last
+  ran at, with tools refused by a `PreToolUse` hook rather than removed,
+  since changing the tool list misses the cache. Measured on 2026-10-10
+  against an ended Opus 5.5 agent's 52k-token session, 37 minutes after it
+  ended: all 51,632 tokens of its last request read from cache, about 1,500
+  written, 2 uncached, in about 3.5 seconds. Every ask logs what it read and
+  wrote. A cold ended agent is not asked: it has to be unarchived, and only
+  when the user agrees.
 - **Sending**: Ship it into the agent's PTY; Escape to interrupt. Every send
   and spawn is logged to `~/.spaceterm/receptionist/log.jsonl` and
   auto-monitored.
@@ -126,7 +137,7 @@ that transcript for the reasoning behind any item here.
   cache warmth (already in Spaceterm's state) and model price before asking
   or waking it. A side question reads the whole context at the cache-read
   rate, so it scales with context size.
-- **Wider reach.** Archived agents, and Codex and Cursor surfaces. Plain
+- **Wider reach.** Cold archived agents, and Codex and Cursor surfaces. Plain
   terminals stay out.
 - **Half-written prompts.** A send pastes on top of whatever is already in
   the agent's input box.

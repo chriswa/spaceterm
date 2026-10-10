@@ -116,10 +116,33 @@ function byRelevance(a: RosterAgent, b: RosterAgent): number {
 }
 
 /** The agent's prompt cache, as list_agents and read report it: whether ask_agent is cheap now. */
-export function cacheWords(agent: RosterAgent, now: number): string {
+export function cacheWords(agent: Pick<RosterAgent, 'cacheWarmUntil' | 'cacheWarmTokens'>, now: number): string {
   const until = agent.cacheWarmUntil ?? 0
   const size = agent.cacheWarmTokens ? ` (${Math.round(agent.cacheWarmTokens / 1000)}k tokens)` : ''
   return until > now ? `warm for ${ago(until - now)} more${size}` : `cold for ${ago(now - until)}${size}`
+}
+
+/** What decides whether an ended agent can be asked. */
+export type EndedCache = Pick<RosterAgent, 'claudeSessionId' | 'cwd' | 'cacheWarmUntil' | 'cacheWarmTokens'>
+
+/**
+ * Whether an agent that has ended can still be asked: only from a warm cache,
+ * which its session is resumed headless to read (`ended-side-question.ts`).
+ * Cold, asking it would pay for its whole conversation again, so it is
+ * brought back with unarchive_agent instead, and only when the user agrees.
+ */
+export function endedAskable(agent: EndedCache, now: number): boolean {
+  return Boolean(agent.claudeSessionId && agent.cwd) && agent.cacheWarmUntil !== undefined && agent.cacheWarmUntil > now
+}
+
+/** What read and the ended news say of an ended agent's cache: whether ask_agent can still reach it. */
+export function endedCacheWords(agent: EndedCache, now: number): string {
+  if (endedAskable(agent, now)) {
+    return `This agent has ended, but its cache is ${cacheWords(agent, now)}, so ask_agent can still ask it without bringing it back.`
+  }
+  const cache = agent.cacheWarmUntil !== undefined ? `its cache is ${cacheWords(agent, now)}` : 'its cache is unknown'
+  return `This agent has ended and ${cache}, so ask_agent cannot reach it: answer from its transcript. ` +
+    'Asking it means bringing it back with unarchive_agent first, which only the user can agree to.'
 }
 
 /** A duration as it would be said: "40 seconds", "12 minutes", "3 hours 5 minutes", "2 days". */

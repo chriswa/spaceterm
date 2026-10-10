@@ -44,8 +44,10 @@ export type SideQuestionResult =
      * own reasons: `nothing-to-fork` before the agent's process has made its
      * first request — a fresh agent, or one just restarted and resumed, whose
      * conversation is on disk but whose last request is not in memory.
+     * `resume-failed`: an ended agent's session could not be resumed to be
+     * asked (`ended-side-question.ts`).
      */
-    reason: 'not-listening' | 'timeout' | 'nothing-to-fork' | 'api-error' | 'empty-reply' | 'aborted' | 'invalid-reply'
+    reason: 'not-listening' | 'timeout' | 'nothing-to-fork' | 'api-error' | 'empty-reply' | 'aborted' | 'invalid-reply' | 'resume-failed'
     detail?: string
   }
 

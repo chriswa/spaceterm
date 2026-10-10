@@ -127,6 +127,6 @@ describe('splitTurnBody', () => {
   })
 
   it('finds nothing in a turn the user did not speak in', () => {
-    expect(splitTurnBody(renderTurnBody([{ kind: 'agent-ended', agent: 'x', archived: true, lastSaid: '' }], undefined))).toBeUndefined()
+    expect(splitTurnBody(renderTurnBody([{ kind: 'agent-ended', agent: 'x', archived: true, lastSaid: '', cache: {} }], undefined))).toBeUndefined()
   })
 })

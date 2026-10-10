@@ -26,6 +26,7 @@ import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirst
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { LoginShellEnv } from './login-env'
+import { askEndedSession, realEndedAskDeps } from './ended-side-question'
 import { UNTITLED_AGENT, agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
 import { isAgentSurface } from '../shared/node-utils'
 import { serverLog, sanitizeForLog } from './server-log'
@@ -323,6 +324,8 @@ let receptionistSpeaker: string | undefined
 let agentNames: NameRegistry
 /** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
 const sideQuestions = new SideQuestions()
+/** Side questions to agents that have ended, run in the login environment a terminal would have. */
+const endedAskDeps = realEndedAskDeps(() => loginEnv.current() ?? process.env)
 let sideQuestionServer: import('http').Server | undefined
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
@@ -3339,6 +3342,10 @@ async function startServer(): Promise<void> {
       const node = stateManager.getNode(nodeId)
       if (node?.type !== 'terminal' || !node.alive) return { ok: false, reason: 'not-listening' }
       return sideQuestions.ask(node.sessionId, prompt)
+    },
+    askEnded: async (agent, prompt) => {
+      if (!agent.claudeSessionId || !agent.cwd) return { result: { ok: false, reason: 'resume-failed', detail: 'no session to resume' } }
+      return askEndedSession({ claudeSessionId: agent.claudeSessionId, cwd: agent.cwd, transcriptPath: agent.transcriptPath }, prompt, endedAskDeps)
     },
     focus: (nodeId) => {
       for (const client of holderClients()) send(client.link, { type: 'camera-follow', nodeId })

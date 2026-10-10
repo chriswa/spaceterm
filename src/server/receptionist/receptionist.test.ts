@@ -91,6 +91,8 @@ function harness(opts: {
   userView?: () => ReturnType<ReceptionistDeps['userView']>
   /** How the agents answer side questions; by default every one answers. */
   askAgent?: (nodeId: NodeId, prompt: string) => Promise<SideQuestionResult>
+  /** How ended agents answer from their cache; by default every one answers. */
+  askEnded?: ReceptionistDeps['askEnded']
   /** The session saved by an earlier server. */
   saved?: SavedSession
   findAgents?: (query: string) => Promise<AgentRanking>
@@ -155,6 +157,8 @@ function harness(opts: {
   const spoken: Array<{ content: SpeechContent; voice?: string }> = []
   const focused: NodeId[] = []
   const sideQuestions: Array<{ nodeId: NodeId; prompt: string }> = []
+  /** Side questions to ended agents, by the session each resumed. */
+  const endedQuestions: Array<{ claudeSessionId?: string; prompt: string }> = []
   const wire: string[] = []
   const notices: string[] = []
   let session: SavedSession | undefined = opts.saved
@@ -271,6 +275,11 @@ function harness(opts: {
       if (opts.askAgent) return opts.askAgent(nodeId, prompt)
       return { ok: true, text: 'It was 42 litres exactly.', usage: { cache_read_input_tokens: 38_291, input_tokens: 40 } }
     },
+    askEnded: async (agent, prompt) => {
+      endedQuestions.push({ claudeSessionId: agent.claudeSessionId, prompt })
+      if (opts.askEnded) return opts.askEnded(agent, prompt)
+      return { result: { ok: true, text: 'It was 42 litres exactly.', usage: { cache_read_input_tokens: 38_291, cache_creation_input_tokens: 1_500, input_tokens: 2 } } }
+    },
     focus: (nodeId) => focused.push(nodeId),
     nodeIds: () => NODE_IDS,
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
@@ -301,7 +310,7 @@ function harness(opts: {
     voiceOperatorDiscovered: () => true,
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {}, onSpeaking: (now) => speaking.push(now) })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, endedQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -1385,7 +1394,26 @@ describe('Receptionist', () => {
     })
   })
 
-  it('says a just-resumed agent has nothing to ask yet, and to read its transcript instead', async () => {
+  it('wakes a just-resumed agent that has nothing to fork, and asks again', async () => {
+    let forks = 0
+    const h = harness({
+      askAgent: async () => (++forks === 1 ? { ok: false, reason: 'nothing-to-fork' } : { ok: true, text: 'Yes, all done.' }),
+      replies: [
+        reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'Done yet?' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('answered: Yes, all done.')
+          return reply([{ from: KEVIN, text: 'Yes, all done.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('ask Kevin if he is done', 'spoken')
+    await flush()
+    // Its cache is warm, so only the missing fork brought on the wake-up.
+    expect(h.wire).toEqual([`send ${KEVIN_ID} ${WARM_UP_MESSAGE}`])
+    expect(h.sideQuestions).toHaveLength(2)
+  })
+
+  it('says a just-resumed agent has nothing to ask yet, if a wake-up did not change that', async () => {
     const h = harness({
       askAgent: async () => ({ ok: false, reason: 'nothing-to-fork' }),
       replies: [
@@ -1399,6 +1427,7 @@ describe('Receptionist', () => {
     })
     await h.receptionist.hear('ask Kevin if he is done', 'spoken')
     await flush()
+    expect(h.wire).toEqual([`send ${KEVIN_ID} ${WARM_UP_MESSAGE}`])
     expect(h.notices).toEqual(["Control's question to Kevin failed: it has not taken a turn since it was started or resumed"])
   })
 
@@ -2307,7 +2336,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
         },
         (turn) => {
           expect(turn.prompt).toMatch(namedToken(SALLY, ':'))
-          expect(turn.prompt).toContain('This agent has ended, so it cannot be asked')
+          expect(turn.prompt).toContain('This agent has ended and its cache is unknown, so ask_agent cannot reach it: answer from its transcript')
           expect(turn.prompt).toContain('Fix the login page.')
           return reply([{ from: 'control', text: 'The login agent finished and closed itself.' }])
         },
@@ -2351,14 +2380,106 @@ describe('Receptionist: agents it started, and agents that end', () => {
     expect(h.turns).toHaveLength(0)
   })
 
-  it('refuses an ended agent for anything but read and unarchive_agent', async () => {
+  describe('asking an ended agent', () => {
+    const watchAndEnd = async (h: ReturnType<typeof harness>) => {
+      h.setState(KEVIN_ID, 'working')
+      await h.receptionist.hear('tell me when Kevin is done', 'spoken')
+      await flush()
+      h.end(KEVIN_ID)
+      await flush()
+    }
+
+    it('says in the ended news that a warm one can still be asked', async () => {
+      const h = harness({
+        kevinCacheWarmUntil: Date.now() + 30 * 60_000,
+        replies: [
+          reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+          (turn) => {
+            expect(turn.prompt).toContain('has ended')
+            expect(turn.prompt).toMatch(/its cache is warm for 30 minutes more \(38k tokens\), so ask_agent can still ask it without bringing it back/)
+            return reply([])
+          },
+        ],
+      })
+      await watchAndEnd(h)
+      expect(h.turns).toHaveLength(2)
+    })
+
+    it('asks a warm one from its cache, without bringing it back', async () => {
+      const h = harness({
+        kevinCacheWarmUntil: Date.now() + 30 * 60_000,
+        replies: [
+          reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+          reply([]),
+          reply([], [{ tool: 'ask_agent', agent: `Kevin:${KEVIN}`, question: 'How many litres?' }]),
+          (turn) => {
+            expect(turn.prompt).toContain(`ask_agent asked {Kevin:${KEVIN}}, which has ended, from its still-warm cache`)
+            return reply([])
+          },
+          (turn) => {
+            expect(turn.prompt).toContain('answered: It was 42 litres exactly.')
+            expect(turn.prompt).toContain('this agent has ended and is still archived')
+            return reply([{ from: 'control', text: 'Kevin said it was 42 litres exactly.' }])
+          },
+        ],
+      })
+      await watchAndEnd(h)
+      await h.receptionist.hear('ask Kevin how many litres', 'spoken')
+      await flush()
+      expect(h.endedQuestions).toEqual([{ claudeSessionId: 'kevin-session', prompt: sideQuestionPrompt('How many litres?') }])
+      expect(h.sideQuestions).toEqual([])
+      expect(h.wire).toEqual([])
+      expect(h.notices).toEqual(['Control asked Kevin: 38.3k cached, 1.5k new'])
+    })
+
+    it('does not ask a cold one, and says unarchiving it needs the user', async () => {
+      const h = harness({
+        kevinCacheWarmUntil: Date.now() - 60_000,
+        replies: [
+          reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+          reply([]),
+          reply([], [{ tool: 'ask_agent', agent: `Kevin:${KEVIN}`, question: 'How many litres?' }]),
+          (turn) => {
+            expect(turn.prompt).toContain(`ask_agent did not ask {Kevin:${KEVIN}}: This agent has ended and its cache is cold`)
+            expect(turn.prompt).toContain('which only the user can agree to')
+            return reply([{ from: 'control', text: 'Kevin has ended; I can bring him back if you like.' }])
+          },
+        ],
+      })
+      await watchAndEnd(h)
+      await h.receptionist.hear('ask Kevin how many litres', 'spoken')
+      await flush()
+      expect(h.endedQuestions).toEqual([])
+      expect(h.wire).toEqual([])
+    })
+
+    it('says in a read whether it can still be asked', async () => {
+      const h = harness({
+        kevinCacheWarmUntil: Date.now() + 10 * 60_000,
+        replies: [
+          reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+          reply([]),
+          reply([], [{ tool: 'read', agent: `Kevin:${KEVIN}` }]),
+          (turn) => {
+            expect(turn.prompt).toContain('so ask_agent can still ask it without bringing it back')
+            return reply([{ from: 'control', text: 'Kevin finished.' }])
+          },
+        ],
+      })
+      await watchAndEnd(h)
+      await h.receptionist.hear('what did Kevin say?', 'spoken')
+      await flush()
+    })
+  })
+
+  it('refuses an ended agent for anything but read, ask_agent and unarchive_agent', async () => {
     const h = harness({
       replies: [
         reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
         reply([], []),
         reply([{ from: 'control', text: `Sent to {Kevin:${KEVIN}}.` }], [{ tool: 'send', agent: `Kevin:${KEVIN}`, message: 'Carry on.' }]),
         (turn) => {
-          expect(turn.prompt).toContain(`"Kevin:${KEVIN}" (in send) is no longer live: only read and unarchive_agent take it`)
+          expect(turn.prompt).toContain(`"Kevin:${KEVIN}" (in send) is no longer live: only read, ask_agent and unarchive_agent take it`)
           return reply([{ from: 'control', text: 'Kevin has ended; I can bring him back.' }])
         },
       ],

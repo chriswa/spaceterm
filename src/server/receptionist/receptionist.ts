@@ -15,6 +15,7 @@ import { AGENT_TOKEN, agentToken, parseAgentRef, stripBraces } from './agent-tok
 import { whereWords, type NearbyNode } from './nearby'
 import type { CameraBounds, ControlTrace, ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
+import type { EndedAnswer } from '../ended-side-question'
 import {
   FORMAT_REMINDER, HANDOVER_CHARS, HANDOVER_HEADING, HANDOVER_PROMPT, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
@@ -30,7 +31,7 @@ import { decidePause, PAUSE_MS, type PauseJudgement, type PauseVerdict } from '.
 import type { Watches, WatchKind } from './watches'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import {
-  cacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+  cacheWords, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
 
 /**
@@ -221,6 +222,12 @@ export interface ReceptionistDeps {
    */
   askAgent(nodeId: NodeId, prompt: string): Promise<SideQuestionResult>
   /**
+   * Ask an agent that has ended a side question, from its prompt cache, without
+   * bringing it back: see `ended-side-question.ts`. Only worth it while that
+   * cache is warm. Always resolves.
+   */
+  askEnded(agent: RosterAgent, prompt: string): Promise<EndedAnswer>
+  /**
    * Move the camera to a node, on the device holding Control. Only ever because the user
    * asked to be taken there: see the force_user_camera tool.
    */
@@ -333,9 +340,7 @@ const LAST_SAID_EVENT_CHARS = 1_500
 /** Ended agents kept for `read` and `unarchive_agent`, newest first: see `Receptionist.ended`. */
 const MAX_ENDED = 100
 /** The tools that take an agent that is no longer live. */
-const ENDED_TOOLS: ReadonlySet<ToolCall['tool']> = new Set(['read', 'unarchive_agent'])
-/** Said with an ended agent's transcript, in place of its cache. */
-const ENDED_READ = 'This agent has ended, so it cannot be asked: answer from its transcript.'
+const ENDED_TOOLS: ReadonlySet<ToolCall['tool']> = new Set(['read', 'ask_agent', 'unarchive_agent'])
 /** Agents `find_agent` reports, best first. */
 const FIND_AGENT_RESULTS = 10
 
@@ -359,6 +364,7 @@ const SIDE_QUESTION_FAILURES: Record<Exclude<SideQuestionResult, { ok: true }>['
   'empty-reply': 'the agent gave no answer',
   aborted: 'the question was cut off',
   'invalid-reply': 'the answer came back garbled',
+  'resume-failed': "its ended session could not be resumed to ask it. Answer from its transcript with read instead",
 }
 
 /** The same failures, as a toast on the user's screen says them. */
@@ -370,6 +376,7 @@ const SIDE_QUESTION_TOASTS: Record<Exclude<SideQuestionResult, { ok: true }>['re
   'empty-reply': 'it gave no answer',
   aborted: 'the question was cut off',
   'invalid-reply': 'the answer came back garbled',
+  'resume-failed': 'its ended session could not be resumed',
 }
 
 /**
@@ -1018,7 +1025,9 @@ export class Receptionist {
     const token = agentToken(handle, this.deps.names.get(nodeId)?.name)
     const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
     if (monitored) this.trace('fired', `Watch fired: ${token} ended`, lastSaid)
-    this.events.push({ kind: 'agent-ended', agent: token, archived, lastSaid: lastSaid.slice(-LAST_SAID_EVENT_CHARS) })
+    const { claudeSessionId, cwd, cacheWarmUntil, cacheWarmTokens } = agent
+    const cache = { claudeSessionId, cwd, cacheWarmUntil, cacheWarmTokens }
+    this.events.push({ kind: 'agent-ended', agent: token, archived, lastSaid: lastSaid.slice(-LAST_SAID_EVENT_CHARS), cache })
     this.maybeSpeakUp()
   }
 
@@ -1548,6 +1557,10 @@ export class Receptionist {
         results.push(this.read(ended.agent, agentToken(ended.handle, this.deps.names.get(ended.agent.nodeId)?.name), call.search, true))
         continue
       }
+      if (ended && call.tool === 'ask_agent') {
+        done.push(this.askEndedAgent(ended, call.question))
+        continue
+      }
       if (ended && call.tool === 'unarchive_agent') {
         done.push(await this.unarchive(ended))
         continue
@@ -1758,7 +1771,7 @@ export class Receptionist {
     const messages = agent.transcriptPath ? read(agent.transcriptPath) : []
     // The cache comes with the transcript: it decides whether ask_agent is worth it.
     const cache = ended
-      ? `\n${ENDED_READ}`
+      ? `\n${endedCacheWords(agent, Date.now())}`
       : (agent.cacheWarmUntil !== undefined ? `\ncache: ${cacheWords(agent, Date.now())}` : '')
         + (agent.takesSideQuestions === false ? `\n${NO_SIDE_QUESTIONS}` : '')
     return `read ${token}${search ? ` for "${search}"` : ''}:${cache}\n${readAgent(messages, search)}`
@@ -1906,13 +1919,53 @@ export class Receptionist {
     const token = this.token(agent.nodeId, handles)
     const onsets = this.onsets
     await this.warmUp(agent)
-    const result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
-    this.deps.log({ event: 'side-question', nodeId: agent.nodeId, question, result })
+    let result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
+    if (!result.ok && result.reason === 'nothing-to-fork') {
+      // Just resumed — unarchived, or restarted — its process has not sent a
+      // request yet, so there is none to replay. One turn of its own makes one.
+      this.deps.log({ event: 'side-question', nodeId: agent.nodeId, question, result, retry: 'after a wake-up' })
+      const now = this.deps.agents().find(candidate => candidate.nodeId === agent.nodeId)
+      if (now) {
+        await this.warmUp(now, true)
+        result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
+      }
+    }
+    this.answered(agent.nodeId, token, name, question, result, onsets)
+  }
+
+  /**
+   * ask_agent for an agent that has ended: from its cache while that is warm,
+   * without bringing it back. The answer comes as an event, as for a live one.
+   */
+  private askEndedAgent(ended: EndedAgent, question: string): string {
+    const { agent, handle } = ended
+    const name = this.deps.names.get(agent.nodeId)?.name
+    const token = agentToken(handle, name)
+    if (!endedAskable(agent, Date.now())) {
+      return `ask_agent did not ask ${token}: ${endedCacheWords(agent, Date.now())}`
+    }
+    const onsets = this.onsets
+    void this.deps.askEnded(agent, sideQuestionPrompt(question)).then(({ result, cacheWarmUntil }) => {
+      // The question read the cache, which keeps it warm for longer.
+      const still = this.ended.get(agent.nodeId)
+      if (still && cacheWarmUntil !== undefined && cacheWarmUntil > (still.agent.cacheWarmUntil ?? 0)) {
+        still.agent = { ...still.agent, cacheWarmUntil }
+      }
+      this.answered(agent.nodeId, token, name ?? agent.title, question, result, onsets, true)
+    })
+    return `ask_agent asked ${token}, which has ended, from its still-warm cache, without bringing it back; the answer will come as an event`
+  }
+
+  /** A side question's outcome, live or ended: logged with what it read from the cache, toasted, and told as an event. */
+  private answered(nodeId: NodeId, token: string, name: string, question: string, result: SideQuestionResult, onsets: number, ended = false): void {
+    const usage = result.ok ? result.usage : undefined
+    const cache = usage ? { read: usage.cache_read_input_tokens ?? 0, written: usage.cache_creation_input_tokens ?? 0, uncached: usage.input_tokens ?? 0 } : undefined
+    this.deps.log({ event: 'side-question', nodeId, question, result, ...(cache ? { cache } : {}), ...(ended ? { ended } : {}) })
     // The user has spoken since: what they said may have made the question moot.
     const stale = this.onsets !== onsets ? { beforeUserSpoke: true as const } : {}
     if (result.ok) {
       this.deps.notify(`Control asked ${name}: ${usageWords(result.usage)}`)
-      this.events.push({ kind: 'agent-answer', agent: token, question, answer: result.text, ...stale })
+      this.events.push({ kind: 'agent-answer', agent: token, question, answer: result.text, ...(ended ? { ended } : {}), ...stale })
     } else {
       serverLog(`[receptionist] side question to ${token} failed: ${result.reason}${result.detail ? ` ${result.detail}` : ''}`)
       this.deps.notify(`Control's question to ${name} failed: ${SIDE_QUESTION_TOASTS[result.reason]}`)
@@ -1938,12 +1991,16 @@ export class Receptionist {
    * A working agent is warm, and one waiting on a prompt must not have it
    * answered by the wake-up. Gives up waiting after WARM_UP_TIMEOUT_MS and
    * asks anyway: an answer at the old price beats none.
+   *
+   * `notForked`: wake it whatever its cache, because its process has nothing
+   * to fork yet — it was just resumed — and the fork said so.
    */
-  private async warmUp(agent: RosterAgent): Promise<void> {
+  private async warmUp(agent: RosterAgent, notForked = false): Promise<void> {
     const { nodeId } = agent
     const already = this.warming.get(nodeId)
     if (already) return already.answered
-    if (agent.state !== 'stopped' || agent.cacheWarmUntil === undefined || agent.cacheWarmUntil > Date.now()) return
+    if (agent.state !== 'stopped') return
+    if (!notForked && (agent.cacheWarmUntil === undefined || agent.cacheWarmUntil > Date.now())) return
     let done!: () => void
     const answered = new Promise<void>((resolve) => { done = resolve })
     this.warming.set(nodeId, { worked: false, done, answered })
@@ -2101,7 +2158,7 @@ export class Receptionist {
         continue
       } else if (this.resolveEnded(ref)) {
         if (!(tool && ENDED_TOOLS.has(tool))) {
-          problems.push(`"${ref}" (${where}) is no longer live: only read and unarchive_agent take it. Speak of it in plain words, by its name.`)
+          problems.push(`"${ref}" (${where}) is no longer live: only read, ask_agent and unarchive_agent take it. Speak of it in plain words, by its name.`)
         }
       } else {
         problems.push(`"${ref}" (${where}) is not a live agent's token, name or handle.${suggest(ref)}`)
