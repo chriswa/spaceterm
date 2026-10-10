@@ -1243,7 +1243,12 @@ export class Receptionist {
       this.deps.log({ event: 'turn-failed', heard: heard ?? null, error: message })
       this.onError(`The receptionist could not answer: ${message}`)
       // Muted, the toast says it.
-      if (this.listening && !this.reading) monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
+      const apologise = this.listening && !this.reading
+      // Into the transcript as well as the toast: the toast is gone in seconds, and a
+      // failure that repeats needs its error where it can be read afterwards.
+      const [headline, ...rest] = message.split('\n')
+      this.trace('failed', `${apologise ? `"${TURN_FAILED_SPEECH}" — ` : ''}could not answer: ${headline}`, rest.join('\n').trim() || undefined)
+      if (apologise) monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
     } finally {
       if (!monitoring) this.channel.settle(attempt)
     }

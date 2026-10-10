@@ -221,7 +221,9 @@ export function ControlTranscript({ variant, onDismiss, headerExtra }: { variant
   // Marks of what was heard or read of a reply are not entries of their own: they say what of it the user missed.
   const views = partViews(entries)
   // Control's reasoning only when asked for: most of the time it is the conversation that matters.
-  const shown = entries.filter((entry) => entry.kind !== 'heard' && entry.kind !== 'consumed' && (reasoning || entry.kind !== 'trace'))
+  // A failed turn is always shown: Control said so out loud, and the error is the only account of why.
+  const shown = entries.filter((entry) => entry.kind !== 'heard' && entry.kind !== 'consumed' &&
+    (reasoning || entry.kind !== 'trace' || entry.what === 'failed'))
   // What the user can still mark: not while the voice decides, nor once their next message is on its way.
   const markable = voicing || pending.length ? new Set<number>() : openReplies(entries, !more)
   const firstWaiting = shown.find((entry) => views.get(entry.offset)?.some((part) => part.why === 'waiting'))?.offset

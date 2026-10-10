@@ -1816,13 +1816,15 @@ export type ControlTranscriptEntry = {
  * kept for the next (`requeued`); the backlog gaining an item, losing one, or
  * holding back while the user is mid-topic; a watch on an agent set up,
  * firing, or ending; a reply that was never spoken; Control cutting its own
- * reply short for news.
+ * reply short for news; a turn that failed (`failed`), which the view shows
+ * even with the reasoning hidden, since Control said so out loud.
  */
 export type ControlTraceKind =
   | 'events' | 'requeued'
   | 'backlog-add' | 'backlog-take' | 'backlog-back' | 'backlog-dropped' | 'backlog-wait'
   | 'watch' | 'fired' | 'unwatch'
   | 'unspoken' | 'cut-in' | 'stopped' | 'resumed'
+  | 'failed'
 
 /** One reasoning entry: a line, and the detail behind it when there is more to say. */
 export interface ControlTrace {

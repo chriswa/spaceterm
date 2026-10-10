@@ -3151,6 +3151,21 @@ describe("Receptionist: the transcript's reasoning", () => {
     }])
   })
 
+  it('shows a failed turn and its error, the apology Control spoke with it, and the rest of the error one tap away', async () => {
+    const h = harness({
+      replies: [() => { throw new Error('claude-print-daemon exited 2: flag provided but not defined: -turn-id\nUsage of ask:\n  -auto-compact') }],
+    })
+    await h.receptionist.hear("what's next?", 'spoken')
+    await flush()
+    // The failure is this test's subject, not a broken script.
+    scriptFailures.splice(0)
+    expect(h.traces).toEqual([{
+      what: 'failed',
+      text: '"Sorry, I lost my train of thought. Could you say that again?" — could not answer: claude-print-daemon exited 2: flag provided but not defined: -turn-id',
+      detail: 'Usage of ask:\n  -auto-compact',
+    }])
+  })
+
   it('shows a watch ending when the user takes the agent over', async () => {
     const h = harness({ replies: [reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }])] })
     await h.receptionist.hear('let me know when Sally is done', 'spoken')

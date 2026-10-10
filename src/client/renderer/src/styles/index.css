@@ -4129,7 +4129,8 @@ html, body, #root {
 .control-transcript__entry--trace[data-what="unwatch"] { --ct-why: #94e2d5; }
 .control-transcript__entry--trace[data-what="unspoken"],
 .control-transcript__entry--trace[data-what="cut-in"],
-.control-transcript__entry--trace[data-what="stopped"] { --ct-why: #f38ba8; }
+.control-transcript__entry--trace[data-what="stopped"],
+.control-transcript__entry--trace[data-what="failed"] { --ct-why: #f38ba8; }
 .control-transcript__entry--trace[data-what="resumed"] { --ct-why: #a6e3a1; }
 .control-transcript__entry--trace summary { cursor: pointer; list-style: none; }
 .control-transcript__entry--trace summary::-webkit-details-marker { display: none; }

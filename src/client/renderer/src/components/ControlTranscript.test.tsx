@@ -208,12 +208,15 @@ describe('ControlTranscript, following along', () => {
         { offset: 0, timestamp: '2026-10-05T08:00:00Z', kind: 'trace', what: 'events', text: 'News: Sally is now stopped', detail: 'Sally said: done.' },
         { offset: 100, timestamp: '2026-10-05T08:00:01Z', kind: 'reply', parts: [] },
         { offset: 200, timestamp: '2026-10-05T08:00:01Z', kind: 'trace', what: 'watch', text: 'Watching Sally for its next stop' },
+        { offset: 300, timestamp: '2026-10-05T08:00:02Z', kind: 'trace', what: 'failed', text: 'could not answer: session not found' },
       ],
       more: false,
     })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Control said nothing')
     expect(screen.queryByText('News: Sally is now stopped')).toBeNull()
+    // A failure is shown regardless: Control said so out loud.
+    expect(screen.getByText('could not answer: session not found').dataset.what).toBe('failed')
 
     fireEvent.click(screen.getByLabelText('Reasoning'))
     const news = screen.getByText('News: Sally is now stopped')
