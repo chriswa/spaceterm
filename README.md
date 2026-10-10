@@ -69,13 +69,6 @@ machine, and some defaults follow from that. Know these first:
   on this machine can attach, read every terminal and run script in the app.
   `SPACETERM_DEBUG_PORT=<port>` moves it (for example when another Chromium app
   already holds 9222).
-- **Spaceterm doesn't edit your agents' config.** Its hooks and MCP server are
-  passed to each launch: `--plugin-dir` for Claude Code and Cursor, `-c`
-  overrides for Codex. Versions before October 2026 merged entries into
-  `~/.cursor/hooks.json` and `~/.codex/hooks.json` and wrote
-  `~/.codex/spaceterm.config.toml`; the first Cursor or Codex launch removes
-  exactly those entries (yours stay), so the hooks don't fire twice. A file
-  that doesn't parse is left alone.
 - **Claude Code surfaces replace your status line** with Spaceterm's, inside
   Spaceterm only.
 
