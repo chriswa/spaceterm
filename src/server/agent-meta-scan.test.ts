@@ -270,14 +270,4 @@ describe('against the real directories on this machine', () => {
     // And its own top-level CLAUDE.md is still found, beside the marketplace.
     expect(scan.docs.map((d) => d.key)).toContain('CLAUDE.md')
   })
-
-  it('finds ~/tts, which has a CLAUDE.md and nothing else', () => {
-    // The case that was reported greyed out. Nothing to do with the scanner in
-    // the end, but it is the shape most directories have and deserves a guard.
-    const dir = join(homedir(), 'tts')
-    if (!existsSync(dir)) return
-    const scan = scanAgentMeta(dir, 'project', REAL_META_SCAN_IO)
-    expect(hasAgentMeta(scan)).toBe(true)
-    expect(scan.docs.map((d) => d.key)).toContain('CLAUDE.md')
-  })
 })

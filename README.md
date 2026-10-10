@@ -23,26 +23,61 @@ running and lose track of which is stuck, this is what it is for.
 ## Requirements
 
 - **macOS** (Apple Silicon or Intel) — see [Platform support](#platform-support)
-- **Node.js 18+** (tested on v22)
+- **Node.js 22.22+** (or 24.15+) — jsdom, which the tests run on, refuses anything older
 - **npm**
 - **Go 1.22+** — for the PTY daemon (`brew install go`)
+- **Xcode Command Line Tools** — `xcode-select --install`; `npm install` compiles against them
+- **git**
+- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** (`claude` on your PATH, signed in) — what most surfaces run. The [Cursor CLI](https://cursor.com/cli) (`agent`, 2026.08.11 or later — older ones ignore a plugin's hooks) and [Codex](https://github.com/openai/codex) (`codex`, 0.124.0 or later) are optional, for those surface types.
+
+Everything else is optional; see [Optional companions](#optional-companions).
 
 ## Setup
 
 ```bash
-git clone <repo-url>
+git clone <repo-url>      # any directory works
 cd spaceterm
 npm install
-npm run daemon:build   # initial build of the PTY daemon (Go)
+npm run daemon:build      # initial build of the PTY daemon (Go)
 ```
 
-`npm install` triggers `electron-rebuild` via `postinstall`. If this step fails, ensure you have Xcode Command Line Tools installed:
-
-```bash
-xcode-select --install
-```
+`npm install`'s `postinstall` does two things. `electron-rebuild` compiles
+native modules (if it fails, install the Xcode Command Line Tools). Then
+`npm run electron:install` gives the development Electron its own bundle id, so
+`spaceterm-surface://` links open this checkout rather than some other Electron
+app — this has to be redone after every install, which is why it runs there.
+It never fails the install; if links ever open the wrong app, run
+`npm run electron:install` yourself.
 
 The optional native module `@echogarden/macos-native-tts` (for TTS) is in `optionalDependencies` — if it fails to compile, `npm install` still succeeds and TTS is silently disabled.
+
+## Before you run it
+
+Spaceterm is built for one person supervising their own agents on their own
+machine, and some defaults follow from that. Know these first:
+
+- **Agents run with permission prompts and sandboxing off.** Every agent
+  surface is launched with its CLI's bypass flag — Claude Code with
+  `--dangerously-skip-permissions`, Cursor with `--yolo --trust --approve-mcps`,
+  Codex with `--dangerously-bypass-approvals-and-sandbox`
+  (`src/server/agent-drivers.ts`). An agent will run any command and edit any
+  file without asking. There is no setting for this today; check your
+  employer's policy before using it on a work machine.
+- **The Chrome DevTools port is always open**, on `127.0.0.1:9222`, so a
+  session that has misbehaved for hours can be profiled without a restart. It
+  is not reachable from the network, but it has no authentication: any process
+  on this machine can attach, read every terminal and run script in the app.
+  `SPACETERM_DEBUG_PORT=<port>` moves it (for example when another Chromium app
+  already holds 9222).
+- **Spaceterm doesn't edit your agents' config.** Its hooks and MCP server are
+  passed to each launch: `--plugin-dir` for Claude Code and Cursor, `-c`
+  overrides for Codex. Versions before October 2026 merged entries into
+  `~/.cursor/hooks.json` and `~/.codex/hooks.json` and wrote
+  `~/.codex/spaceterm.config.toml`; the first Cursor or Codex launch removes
+  exactly those entries (yours stay), so the hooks don't fire twice. A file
+  that doesn't parse is left alone.
+- **Claude Code surfaces replace your status line** with Spaceterm's, inside
+  Spaceterm only.
 
 ## Running
 
@@ -96,6 +131,52 @@ did nothing happen when I clicked that?" is already on disk.
 full set of subscribable events, which is the handshake a script should perform
 before relying on anything else.
 
+## Optional companions
+
+Each of these is found wherever it is installed — by PATH or by a file it
+publishes — so any directory works. `npm run cli -- capabilities` reports
+which of them this machine has.
+
+| Companion | Used for | Without it | Get it |
+|---|---|---|---|
+| [Voice Operator](https://github.com/chriswa/voiceop) | Speech: Control, Summary Chat audio, phone dictation and hands-free | Nothing is spoken; voice commands do nothing | Private repo — ask for access. Found through `~/Library/Application Support/VoiceOperator/speech-service.json`, which it writes when running. Needs a build with `/v1/subscribers` (October 2026 or later), or voice commands never reach Spaceterm. |
+| [claude-print-daemon](https://github.com/chriswa/claude-print-daemon) | Control (the receptionist), Summary Chat (⌘⌃X), auto-stamp icons | Control and Summary Chat report an error on every turn; auto-stamps fail | Private repo — ask for access. `go build`, then put `claude-print-daemon` on PATH or set `CLAUDE_PRINT_DAEMON_BIN`. Uses your own signed-in Claude Code. |
+| `jev` ([chriswa-devkit](https://github.com/chriswa/chriswa-devkit), `tools/jev`) | Agent search; Control's judgement of interruptions and its backlog | Agent search fails with "could not run jev"; Control loses those judgements | Needs [Bun](https://bun.sh) and a paid `TYPESAFE_API_KEY` in your shell's rc files. Put `bin/jev` on PATH. |
+| Tailscale | Reaching the phone app | No phone app | MagicDNS and HTTPS certificates on; see `npm run mobile:link` and `src/mobile/README.md` |
+| Xcode, an Apple ID, an iPhone | The native iPhone app (`npm run mobile:ios`) | Use the phone web app in Safari instead | Signing is per person: `src/mobile/ios/Local.xcconfig`, which the build tells you how to write. See `src/mobile/README.md`. |
+| AI Spend Tracker | Usage bars | Bars stay empty | Found in `/Applications` or `~/claude-usage-tracker/build` |
+| tmux | `npm run et`, the emergency terminal | That command says tmux is required | `brew install tmux` |
+
+### Cursor's status line
+
+Cursor surfaces show their context remaining, model and effort only if Cursor's
+status line reports to Spaceterm. Cursor reads `statusLine` from
+`~/.cursor/cli-config.json` and nowhere else — there is no per-launch way to
+pass it — so Spaceterm leaves it to you. Without it, Cursor surfaces work
+normally and just don't show those three.
+
+The handler is copied to `~/.spaceterm/cursor-agent-plugin/scripts/` the first
+time a Cursor surface launches. Then set, in `~/.cursor/cli-config.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/Users/<you>/.spaceterm/cursor-agent-plugin/scripts/statusline-handler.sh",
+    "updateIntervalMs": 1000
+  }
+}
+```
+
+Use the absolute path, as above. Outside Spaceterm the
+handler prints nothing, so if you already had a status line, move its
+`statusLine` object into `~/.spaceterm/cursor-statusline-passthrough.json`
+(as `{"statusLine": {…}}`) and the handler runs it for you, inside Spaceterm
+and out.
+
+The first use of hands-free downloads an 8 MB turn-detection model from
+Hugging Face into `~/.spaceterm/models`.
+
 ## Platform support
 
 Spaceterm runs on macOS today. The coupling is narrower than that sounds — four
@@ -103,8 +184,8 @@ dependencies, all of which degrade rather than crash:
 
 | Depends on | Used for | Without it |
 |---|---|---|
-| `/usr/bin/security` (Keychain) | Reusing Claude Code's OAuth credential | Summary Chat reports an error |
-| Voice Operator | Speaking summaries aloud | Summary Chat produces text, says nothing |
+| claude-print-daemon | Control, Summary Chat and auto-stamps reaching Claude | Those report an error |
+| Voice Operator | Speaking aloud | Text only, nothing is said |
 | `/usr/bin/pgrep` | Detecting background work | A surface may not drain back to idle on its own |
 | `/usr/sbin/lsof` | Detecting a finished background command | Same |
 
