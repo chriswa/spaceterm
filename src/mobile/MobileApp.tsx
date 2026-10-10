@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { App } from '@/App'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { useNodeStore } from '@/stores/nodeStore'
@@ -26,8 +26,7 @@ import { ControlTranscript } from '@/components/ControlTranscript'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { SWIPE_SCREENS, useSwipeToDismiss, type SwipeScreen } from './swipe-dismiss'
 import { useApprovalsStore, useApprovalsWatch } from './approvals-store'
-import { NotificationsButton } from './NotificationsButton'
-import { NotificationsSheet } from './NotificationsSheet'
+import { NotificationsSection } from './NotificationsSection'
 import { ApprovalView } from './ApprovalView'
 
 /**
@@ -67,7 +66,7 @@ function rememberOpen(nodeId: NodeId | null): void {
 const childKey = (kind: 'terminal' | 'composer' | 'talk', id: string) => `${kind}:${id}`
 
 /** `Canvas` is the desktop's App unless a test stands in for it. */
-export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
+export function MobileApp({ Canvas = App }: { Canvas?: ComponentType<{ toolbarSheetTop?: ReactNode }> } = {}) {
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
   const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
   useStalenessWatch()
@@ -80,34 +79,25 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   const voice = summaryTarget !== null || controlTarget
   /** Control's transcript: the screen above the bottom bar, which stays up to talk and to close it. */
   const transcriptOpen = useControlTranscriptStore((s) => s.open)
-  /** The bell's list, and the approval request opened from it (approvals-store.ts). */
+  /** The notifications, at the top of the toolbar sheet, and the approval request opened from them (approvals-store.ts). */
   useApprovalsWatch()
-  const noticesOpen = useApprovalsStore((s) => s.listOpen)
   const approvalOpen = useApprovalsStore((s) => s.openKey)
-  // The transcript, the toolbar sheet and the bell's list are screens, not
-  // layers: opening one closes the others.
+  // The transcript and the toolbar sheet are screens, not layers: opening one
+  // closes the other.
   useEffect(() => {
     if (!transcriptOpen) return
     useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
-    useApprovalsStore.getState().setListOpen(false)
   }, [transcriptOpen])
   useEffect(() => {
     if (!toolbarSheetOpen) return
     useControlTranscriptStore.getState().setOpen(false)
-    useApprovalsStore.getState().setListOpen(false)
   }, [toolbarSheetOpen])
-  useEffect(() => {
-    if (!noticesOpen) return
-    useControlTranscriptStore.getState().setOpen(false)
-    useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
-  }, [noticesOpen])
   // A sideways drag dismisses any of them, as it leaves the terminal view.
   const swipeScreens = useMemo<SwipeScreen[]>(() => [
     ...(transcriptOpen ? [{ ...SWIPE_SCREENS.transcript, dismiss: () => useControlTranscriptStore.getState().setOpen(false) }] : []),
     ...(toolbarSheetOpen ? [{ ...SWIPE_SCREENS.sheet, dismiss: () => useSurfacePresenterStore.getState().setToolbarSheetOpen(false) }] : []),
-    ...(noticesOpen ? [{ ...SWIPE_SCREENS.notices, dismiss: () => useApprovalsStore.getState().setListOpen(false) }] : []),
     ...(approvalOpen ? [{ ...SWIPE_SCREENS.approval, dismiss: () => useApprovalsStore.getState().closeItem() }] : []),
-  ], [transcriptOpen, toolbarSheetOpen, noticesOpen, approvalOpen])
+  ], [transcriptOpen, toolbarSheetOpen, approvalOpen])
   useSwipeToDismiss(swipeScreens)
   /** The talk button and its neighbours are up: there is a conversation, or the transcript to talk into. */
   const talk = voice || transcriptOpen
@@ -168,7 +158,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
 
   return (
     <>
-      <Canvas />
+      <Canvas toolbarSheetTop={<NotificationsSection />} />
       {focusedTerminal && (
         <TerminalView
           key={childKey('terminal', focusedTerminal)}
@@ -211,7 +201,6 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           headerExtra={<EarpieceSwitch />}
         />
       )}
-      {noticesOpen && <NotificationsSheet />}
       {/* Over everything, bottom bar included: the app's slide panel docks
           where the bar would be. Keyed, so another request starts fresh. */}
       {approvalOpen && <ApprovalView key={approvalOpen} />}
@@ -241,7 +230,6 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           }
           end={
             <>
-              <NotificationsButton />
               <RocketButton />
             </>
           }

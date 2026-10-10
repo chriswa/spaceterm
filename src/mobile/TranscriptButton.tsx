@@ -7,7 +7,7 @@ import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
  * closes it (the icon is then a down arrow). While anything is being said
  * through Control, bars move on it in the colour of who is speaking — Control,
  * or the agent it quotes — so a voice is never mistaken for the microphone.
- * A count, as on the bell, of replies written here muted and not read yet.
+ * A count, as on the rocket, of replies written here muted and not read yet.
  */
 export function TranscriptButton() {
   const open = useControlTranscriptStore((s) => s.open)

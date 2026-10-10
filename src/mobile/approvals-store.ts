@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
+import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { approvalKey, parseApprovalDocument, type ApprovalItem, type ApprovalsSnapshot, type ApprovalTone } from '../shared/approvals'
 import { pendingUpdateKeys } from './update-notices'
 import { lostStatusKeys } from './provider-status'
@@ -12,8 +13,10 @@ import { playCue } from './cues'
  * (update-notices.ts); which ones it has looked at, and which request is open.
  *
  * "Unread" is per phone and only for this page's life (plus a reload): a
- * notice is read once the list has shown it. The bell pulses while anything
- * is unread, and stays lit while anything is pending.
+ * notice is read once the toolbar sheet has shown it — requests in its
+ * Notifications section, updates as the strip's marching buttons. The rocket
+ * pulses while anything is unread, and carries a count while anything is
+ * pending.
  */
 
 const SEEN_KEY = 'spaceterm.approvals.seen'
@@ -21,16 +24,15 @@ const SEEN_KEY = 'spaceterm.approvals.seen'
 interface ApprovalsState {
   snapshot: ApprovalsSnapshot
   seen: ReadonlySet<string>
-  listOpen: boolean
   /** `approvalKey` of the request on screen. Kept after it closes, to say why it went. */
   openKey: string | null
   setSnapshot(snapshot: ApprovalsSnapshot): void
-  setListOpen(open: boolean): void
   /** Everything pending now has been shown. */
   markAllRead(): void
+  /** Open a request, in place of the toolbar sheet it was picked from. */
   openItem(key: string): void
   closeItem(): void
-  /** The open request was answered from this phone: close it, back to the list if more are waiting. */
+  /** The open request was answered from this phone: close it, back to the sheet if more are waiting. */
   answered(key: string): void
 }
 
@@ -62,22 +64,23 @@ export const EMPTY_APPROVALS: ApprovalsSnapshot = { sources: [], items: [], clos
 export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
   snapshot: EMPTY_APPROVALS,
   seen: loadSeen(),
-  listOpen: false,
   openKey: null,
   setSnapshot: (snapshot) => {
-    // Anything arriving while the list is up has been seen.
-    const { listOpen, seen } = get()
-    set({ snapshot, seen: listOpen ? markRead(snapshot) : seen })
+    // Anything arriving while the sheet is up has been seen.
+    const sheetOpen = useSurfacePresenterStore.getState().toolbarSheetOpen
+    set({ snapshot, seen: sheetOpen ? markRead(snapshot) : get().seen })
   },
-  setListOpen: (listOpen) => set(listOpen ? { listOpen, seen: markRead(get().snapshot) } : { listOpen }),
   markAllRead: () => set({ seen: markRead(get().snapshot) }),
-  openItem: (openKey) => set({ openKey, listOpen: false }),
+  openItem: (openKey) => {
+    set({ openKey })
+    useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+  },
   closeItem: () => set({ openKey: null }),
   answered: (key) => {
     if (get().openKey !== key) return
     const others = get().snapshot.items.some((item) => approvalKey(item) !== key)
     set({ openKey: null })
-    if (others) get().setListOpen(true)
+    if (others) useSurfacePresenterStore.getState().setToolbarSheetOpen(true)
   },
 }))
 
@@ -92,7 +95,7 @@ export function unreadCount(snapshot: ApprovalsSnapshot, updateKeys: readonly st
 
 const TONE_RANK: Record<string, number> = { info: 0, caution: 1, danger: 2 }
 
-/** The most urgent tone among the pending requests, which the bell takes; null with none pending. */
+/** The most urgent tone among the pending requests, which the rocket's count takes; null with none pending. */
 export function loudestTone(items: readonly ApprovalItem[]): ApprovalTone | null {
   let loudest: ApprovalTone | null = null
   for (const item of items) {

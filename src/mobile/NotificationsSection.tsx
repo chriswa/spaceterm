@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { approvalKey, parseApprovalDocument, type ApprovalItem } from '../shared/approvals'
 import { toneOf, useApprovalsStore } from './approvals-store'
 import { ApprovalPairing, usePhoneIdentity } from './ApprovalPairing'
-import { useUpdateNotices, type UpdateNotice } from './update-notices'
-import { useUpdateActionsStore } from '@/stores/updateActionsStore'
+import { useUpdateNotices } from './update-notices'
 import { lostStatuses, statusNoticeKey, type LostStatus } from './provider-status'
 
 /** Ticks while mounted, for countdowns. */
@@ -40,27 +39,6 @@ function Row({ item, now }: { item: ApprovalItem; now: number }) {
   )
 }
 
-/** An update waiting to be done, with the button that does it. Not the whole row, so a stray tap restarts nothing. */
-function UpdateRow({ notice }: { notice: UpdateNotice }) {
-  const running = useUpdateActionsStore((s) => s.running[notice.kind])
-  const act = () => {
-    const actions = useUpdateActionsStore.getState()
-    if (notice.kind === 'reload') actions.reload()
-    else void actions[notice.kind]()
-  }
-  return (
-    <div className="m-notices__row m-notices__row--info">
-      <span className="m-notices__text">
-        <span className="m-notices__title">{notice.title}</span>
-        <span className="m-notices__subtitle">{notice.subtitle}</span>
-      </span>
-      <button className="m-notices__action" onClick={act} disabled={running}>
-        {running ? notice.busy : notice.action}
-      </button>
-    </div>
-  )
-}
-
 /** A source's status gone bad: opProxy's 1Password authorization lost. Nothing to tap; the Mac asks. */
 function StatusRow({ lost }: { lost: LostStatus }) {
   const since = new Date(lost.status.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -76,30 +54,30 @@ function StatusRow({ lost }: { lost: LostStatus }) {
 }
 
 /**
- * The bell's list: the screen above the bottom bar. Updates waiting first,
- * then lost statuses, then requests, newest first; a tap opens one. Below them, each source's
- * state — not running, or whether this phone is paired with it, with the
- * button to pair it.
+ * Notifications, at the top of the toolbar sheet: lost statuses, then
+ * requests, newest first; a tap opens one. Below them, each source's state —
+ * not running, or whether this phone is paired with it, with the button to
+ * pair it. Nothing at all with nothing to show.
+ *
+ * Updates waiting are not rows here: the strip's own buttons below march
+ * their ants for them. They still count toward the rocket, and the sheet
+ * showing them is what reads them.
  */
-export function NotificationsSheet() {
+export function NotificationsSection() {
   const snapshot = useApprovalsStore((s) => s.snapshot)
   const identity = usePhoneIdentity()
   const now = useNow()
   const updates = useUpdateNotices()
   const lost = lostStatuses(snapshot)
   const items = [...snapshot.items].sort((a, b) => b.createdAt - a.createdAt)
-  // An update raised while the list is up has been seen.
+  // Mounted with the sheet: whatever is waiting has been seen, and so has an update raised while it is up.
   const updateKinds = updates.map((u) => u.kind).join()
   useEffect(() => { useApprovalsStore.getState().markAllRead() }, [updateKinds])
+  if (!items.length && !lost.length && !snapshot.sources.length) return null
   return (
-    <div className="m-notices" role="dialog" aria-label="Notifications">
-      <div className="m-notices__header">
-        <span>Notifications</span>
-        <button className="m-notices__close" onClick={() => useApprovalsStore.getState().setListOpen(false)} aria-label="Close">✕</button>
-      </div>
+    <section className="m-notices" aria-label="Notifications">
+      <div className="m-notices__header">Notifications</div>
       <div className="m-notices__list">
-        {items.length === 0 && updates.length === 0 && lost.length === 0 && <p className="m-notices__empty">Nothing is waiting for you.</p>}
-        {updates.map((notice) => <UpdateRow key={notice.kind} notice={notice} />)}
         {lost.map((l) => <StatusRow key={statusNoticeKey(l)} lost={l} />)}
         {items.map((item) => <Row key={approvalKey(item)} item={item} now={now} />)}
         {snapshot.sources.map((source) => (
@@ -108,6 +86,6 @@ export function NotificationsSheet() {
           </div>
         ))}
       </div>
-    </div>
+    </section>
   )
 }

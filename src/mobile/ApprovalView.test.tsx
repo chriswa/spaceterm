@@ -4,8 +4,9 @@ import { installFakeBridge, type FakeBridge } from '@/testing/fake-bridge'
 import type { ApprovalDocument, ApprovalItem, ApprovalsSnapshot } from '../shared/approvals'
 import { approvalKey } from '../shared/approvals'
 import { EMPTY_APPROVALS, useApprovalsStore } from './approvals-store'
-import { NotificationsButton } from './NotificationsButton'
-import { NotificationsSheet } from './NotificationsSheet'
+import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
+import { RocketButton } from './RocketButton'
+import { NotificationsSection } from './NotificationsSection'
 import { ApprovalView } from './ApprovalView'
 
 const DOC: ApprovalDocument = {
@@ -63,45 +64,61 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   delete window.webkit
-  act(() => useApprovalsStore.setState({ snapshot: EMPTY_APPROVALS, seen: new Set(), listOpen: false, openKey: null }))
+  act(() => {
+    useApprovalsStore.setState({ snapshot: EMPTY_APPROVALS, seen: new Set(), openKey: null })
+    useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+  })
 })
 
-describe('NotificationsButton', () => {
-  it('is dim with nothing pending, lit in the tone with something, and pulses until the list is opened', () => {
-    render(<NotificationsButton />)
-    const bell = () => document.querySelector('.m-bell')!
-    expect(bell().className).toContain('m-bell--idle')
+describe('the rocket, carrying notifications', () => {
+  const rocket = () => document.querySelector('.m-rocket')!
+
+  it('carries no count with nothing pending, a count in the tone with something, and pulses until the sheet shows it', () => {
+    render(<RocketButton />)
+    expect(document.querySelector('.m-rocket__count')).toBeNull()
+    expect(rocket().className).not.toContain('m-rocket--caution')
 
     act(() => useApprovalsStore.getState().setSnapshot(snapshot([item()])))
-    expect(bell().className).toContain('m-bell--caution')
-    expect(bell().className).toContain('m-bell--unread')
+    expect(rocket().className).toContain('m-rocket--caution')
+    expect(rocket().className).toContain('m-rocket--unread')
+    expect(document.querySelector('.m-rocket__count')!.textContent).toBe('1')
 
-    fireEvent.click(bell())
-    expect(useApprovalsStore.getState().listOpen).toBe(true)
-    expect(bell().className).not.toContain('m-bell--unread')
-    expect(bell().className).toContain('m-bell--caution')
+    // The sheet opens with the notifications at its top, which reads them.
+    fireEvent.click(rocket())
+    render(<NotificationsSection />)
+    expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(true)
+    expect(rocket().className).not.toContain('m-rocket--unread')
+    expect(rocket().className).toContain('m-rocket--caution')
   })
 
   it('takes the loudest tone among what is pending', () => {
-    render(<NotificationsButton />)
+    render(<RocketButton />)
     act(() => useApprovalsStore.getState().setSnapshot(snapshot([item(), item({ id: 'a2' }, { ...DOC, tone: 'danger' })])))
-    expect(document.querySelector('.m-bell')!.className).toContain('m-bell--danger')
+    expect(rocket().className).toContain('m-rocket--danger')
   })
 })
 
-describe('NotificationsSheet', () => {
-  it('lists what is waiting and opens one with a tap', () => {
-    act(() => useApprovalsStore.getState().setSnapshot(snapshot([item()])))
-    render(<NotificationsSheet />)
+describe('NotificationsSection', () => {
+  it('shows nothing with nothing to show', () => {
+    const { container } = render(<NotificationsSection />)
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('lists what is waiting and opens one with a tap, in place of the sheet', () => {
+    act(() => {
+      useApprovalsStore.getState().setSnapshot(snapshot([item()]))
+      useSurfacePresenterStore.getState().setToolbarSheetOpen(true)
+    })
+    render(<NotificationsSection />)
     fireEvent.click(screen.getByText('GitHub token'))
     expect(useApprovalsStore.getState().openKey).toBe(approvalKey(item()))
-    expect(useApprovalsStore.getState().listOpen).toBe(false)
+    expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(false)
   })
 
   it('offers to pair a phone the source does not trust yet', async () => {
     const { posted } = installNative()
     act(() => useApprovalsStore.getState().setSnapshot(snapshot([], [])))
-    render(<NotificationsSheet />)
+    render(<NotificationsSection />)
     fireEvent.click(await screen.findByText('Pair with opProxy'))
     expect(await screen.findByText('ab12 cd34 ef56 7890')).toBeTruthy()
     expect(bridge.calls.find((c) => c.method === 'node.pairApprovalSource')?.args).toEqual(['opProxy', 'cHVi', 'iPhone'])
@@ -154,10 +171,10 @@ describe('ApprovalView', () => {
     await waitFor(() => expect(arms).toHaveLength(1))
     await act(async () => arms[0].resolve(SIGNED))
     await waitFor(() => expect(useApprovalsStore.getState().openKey).toBeNull())
-    expect(useApprovalsStore.getState().listOpen).toBe(false)
+    expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(false)
   })
 
-  it('goes back to the list when something else is waiting', async () => {
+  it('goes back to the sheet when something else is waiting', async () => {
     const { posted } = installNative()
     const other = item({ id: 'a2' })
     act(() => {
@@ -168,7 +185,7 @@ describe('ApprovalView', () => {
     await waitFor(() => expect((screen.getByText('Deny') as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByText('Deny'))
     await waitFor(() => expect(useApprovalsStore.getState().openKey).toBeNull())
-    expect(useApprovalsStore.getState().listOpen).toBe(true)
+    expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(true)
     expect(posted.some((m) => m.op === 'sign')).toBe(true)
   })
 

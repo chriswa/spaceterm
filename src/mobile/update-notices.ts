@@ -4,9 +4,9 @@ import type { UpdateKind } from '@/stores/updateActionsStore'
 
 /**
  * The notifications for bringing the phone and the Mac up to date: a server
- * restart an agent flagged, a newer app, a newer page. Each is a row in the
- * bell's list with a button that does it (updateActionsStore.ts), and counts
- * toward the bell like an approval request.
+ * restart an agent flagged, a newer app, a newer page. Each counts toward the
+ * rocket like an approval request; the sheet it opens does them with the
+ * strip's own buttons, which march their ants while one waits.
  */
 
 export interface UpdateNotice {

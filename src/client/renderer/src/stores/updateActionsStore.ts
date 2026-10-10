@@ -5,10 +5,9 @@ import { showToast } from '../lib/toast'
  * The three ways of bringing this client and the Mac up to date — restart the
  * server, install the phone app, reload the page — and which is under way.
  *
- * One place for them, since more than one control starts each: the toolbar's
- * buttons, and on the phone the notifications list (NotificationsSheet.tsx).
- * Whichever starts one, every control for it shows it busy and starts nothing
- * more. What is *waiting* to be done is `usePendingUpdates`
+ * One place for them: the toolbar's buttons start them, and the desktop's
+ * ↻ goes through here too, so whichever starts one, every control for it
+ * shows it busy and starts nothing more. What is *waiting* to be done is `usePendingUpdates`
  * (clientStalenessStore.ts); this is only what is being done.
  */
 export type UpdateKind = 'restart' | 'install' | 'reload'

@@ -20,7 +20,7 @@ export function providerState(source: ApprovalSource): ProviderState | null {
   return { kind: source.status.ok ? 'ok' : 'lost', status: source.status }
 }
 
-/** A lost status with its source, as the bell's list shows it. */
+/** A lost status with its source, as the sheet's notifications show it. */
 export interface LostStatus { source: string; status: ProviderStatus }
 
 export function lostStatuses(snapshot: ApprovalsSnapshot): LostStatus[] {

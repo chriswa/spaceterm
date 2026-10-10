@@ -8,7 +8,7 @@ import { useNodeStore } from '@/stores/nodeStore'
 import { toneOf, useApprovalsStore } from './approvals-store'
 import { ApprovalPairing, usePhoneIdentity } from './ApprovalPairing'
 import { armApproval, disarmApproval, nativeApprovalsAvailable, signApproval } from './native-approvals'
-import { timeLeft, useNow } from './NotificationsSheet'
+import { timeLeft, useNow } from './NotificationsSection'
 import type { NodeId } from '../shared/ids'
 
 /**

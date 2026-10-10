@@ -49,13 +49,12 @@ dot marks the press, and moving the finger away from it zooms out about it
 The server rebuilds the bundle a couple of seconds after its sources stop
 changing (`MobileBuildKeeper` in `src/server/mobile-build.ts`) and tells the
 phone. Anything waiting — a server restart an agent flagged, a newer native
-app, a newer page — is a notification on the bell (`update-notices.ts`), whose
-row has the button that does it, and in the toolbar sheet the button for each
+app, a newer page — counts on the rocket as a notification
+(`update-notices.ts`), and in the toolbar sheet it opens, the button for each
 marches its ants: **↻** (restart
 the server), **Install the app** (the Mac builds and installs it:
-`src/server/mobile-install.ts`, the same `install.sh`) and **Reload client**.
-Both places start the same actions (`updateActionsStore.ts`), so either shows
-the other's in progress.
+`src/server/mobile-install.ts`, the same `install.sh`) and **Reload client**
+(`updateActionsStore.ts`).
 These two sit after Help, where the desktop has fit-to-monitor, and only on the
 phone (`mobileOnly` in `toolbar/registry.tsx`). A reload is not asked for while
 a restart is, which reloads the page anyway, or while the app is behind, whose
@@ -63,7 +62,7 @@ replacement loads the new page (`clientStalenessStore.ts`). The build writes
 `build.json` (its id and the native fingerprint from `ios/native-version.mjs`),
 which `install.sh` also stamps into the app — see `update-check.ts`.
 
-The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control, the microphone and Control's transcript in the middle, the bell and the toolbar's rocket on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
+The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control, the microphone and Control's transcript in the middle, the toolbar's rocket, which carries the notifications, on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
@@ -90,7 +89,7 @@ The headset left of the microphone (`ControlButton.tsx`) means *Control speaks
 here*. Solid white with a halo, it does; a tap mutes it. Muted — a slashed
 speaker on it — Control stays on this phone but writes instead of speaking:
 its replies go into the transcript, unread until read, and the transcript
-button counts them as the bell does. Dim (a tag naming the device that has
+button counts them as the rocket does. Dim (a tag naming the device that has
 it, if any), it is elsewhere; a tap brings it here, speaking. Magenta, it is
 here but the voice last went to Summary Chat; a tap talks to Control again.
 A ring turns while it thinks; speaking shows on the transcript button. The
@@ -106,9 +105,8 @@ back — is the transcript header's **Release**.
 
 ## Control's transcript
 
-The speech bubble right of the microphone (`TranscriptButton.tsx`), or a long
-press on Control's button in the toolbar sheet, opens the whole conversation
-with Control above the bottom bar, with a box to type to it
+The speech bubble right of the microphone (`TranscriptButton.tsx`) opens the
+whole conversation with Control above the bottom bar, with a box to type to it
 (`ControlTranscript.tsx`, shared with the desktop, where it is a dialog).
 While anything is said through Control, bars move on the button in the
 colour of who is speaking — white for Control, a hue of their own for an
@@ -321,15 +319,19 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
 
 ## Notifications: approving opProxy from the phone
 
-The bell left of the rocket (`NotificationsButton.tsx`) is the phone's
-notifications: opProxy's pending 1Password approvals, its 1Password authorization
-lost (caution; unread again each time it is lost anew), and the updates above
-(listed first, in the info tone). Dim with
-none; lit in the loudest request's tone with some; pulsing while any is unread,
-which ends when the list has shown it. A new request chimes once
-(`approvalRequested` in `cues.ts`), the same chime opProxy's Mac dialog plays. The list (`NotificationsSheet.tsx`) is a
-screen like Control's transcript; a row opens the request (`ApprovalView.tsx`).
-A request vanishes when it is answered anywhere or times out.
+The rocket (`RocketButton.tsx`) carries the phone's notifications:
+opProxy's pending 1Password approvals, its 1Password authorization lost
+(caution; unread again each time it is lost anew), and the updates above (in
+the info tone). With any waiting it has a count in the loudest one's tone,
+and a ring pulsing out while any is unread, which ends when the sheet has
+shown it. A new request chimes once (`approvalRequested` in `cues.ts`), the
+same chime opProxy's Mac dialog plays. The sheet the rocket opens has a
+Notifications section at its top (`NotificationsSection.tsx`, handed to
+`App` as `toolbarSheetTop`): lost statuses, then requests, then each source's
+pairing — nothing at all when there is none. Updates are not rows there: the
+strip's buttons below do them. A row opens the request (`ApprovalView.tsx`) in
+place of the sheet, and answering it goes back to the sheet if more are
+waiting. A request vanishes when it is answered anywhere or times out.
 
 Spaceterm does not know what it is approving. The server only relays
 opProxy's feed (`src/server/approval-feed.ts`), and the phone draws the

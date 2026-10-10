@@ -1034,17 +1034,16 @@ textarea, input, [contenteditable="true"], .cm-content {
 :root[data-keyboard="up"] .control-transcript--screen { height: var(--m-vv-height, 100dvh); }
 .control-transcript--screen .control-transcript__composer { padding: 8px 12px; }
 
-/* ─── Notifications: the bell, its list, and an approval request ───────────
-   NotificationsButton.tsx, NotificationsSheet.tsx, ApprovalView.tsx. Tones
-   come from the provider's document; the palette is the app's. */
+/* ─── Notifications: on the rocket, atop its sheet, and an approval request ─
+   RocketButton.tsx, NotificationsSection.tsx, ApprovalView.tsx. Tones come
+   from the provider's document; the palette is the app's. */
 
-.m-bell { position: relative; }
-.m-bell--idle { color: var(--m-dim); opacity: 0.55; }
-.m-bell--info { background: #89b4fa; color: #11111b; }
-.m-bell--caution { background: #f9e2af; color: #11111b; }
-.m-bell--danger { background: var(--m-danger); color: #11111b; }
-.m-bell--open { box-shadow: 0 0 0 2px var(--m-text); }
-.m-bell__count {
+/* The rocket's count of what is waiting, in the loudest one's tone. */
+.m-rocket { position: relative; --m-tone: var(--m-danger); }
+.m-rocket--info { --m-tone: #89b4fa; }
+.m-rocket--caution { --m-tone: #f9e2af; }
+.m-rocket--danger { --m-tone: var(--m-danger); }
+.m-rocket__count {
   position: absolute;
   top: -7px;
   right: -9px;
@@ -1052,82 +1051,56 @@ textarea, input, [contenteditable="true"], .cm-content {
   height: 18px;
   padding: 0 4px;
   border-radius: 9px;
-  background: var(--m-danger);
+  background: var(--m-tone);
   color: #11111b;
   font: 700 11px/18px -apple-system, system-ui, sans-serif;
   text-align: center;
   border: 2px solid #000;
   box-sizing: content-box;
 }
-/* Unread: a ring pulses out from it, and the bell rocks. */
-.m-bell--unread::after {
+/* Unread: a ring pulses out from it, in the tone. */
+.m-rocket--unread::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 2px solid currentColor;
+  border: 2px solid var(--m-tone);
   pointer-events: none;
-  animation: m-bell-ring 1.4s ease-out infinite;
+  animation: m-rocket-ring 1.4s ease-out infinite;
 }
-.m-bell--caution.m-bell--unread::after { border-color: #f9e2af; }
-.m-bell--danger.m-bell--unread::after { border-color: var(--m-danger); }
-.m-bell--info.m-bell--unread::after { border-color: #89b4fa; }
-.m-bell--unread svg { animation: m-bell-rock 1.4s ease-in-out infinite; transform-origin: 50% 15%; }
-@keyframes m-bell-ring {
+@keyframes m-rocket-ring {
   from { transform: scale(1); opacity: 0.9; }
   to { transform: scale(1.6); opacity: 0; }
 }
-@keyframes m-bell-rock {
-  0%, 60%, 100% { transform: rotate(0); }
-  10% { transform: rotate(14deg); }
-  20% { transform: rotate(-12deg); }
-  30% { transform: rotate(8deg); }
-  40% { transform: rotate(-5deg); }
-}
 @media (prefers-reduced-motion: reduce) {
-  .m-bell--unread::after, .m-bell--unread svg { animation: none; }
+  .m-rocket--unread::after { animation: none; }
 }
 
-/* The list: the screen above the bottom bar, like Control's transcript. */
+/* The section atop the toolbar sheet: never more than half of it, scrolling within. */
 .m-notices {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: calc(100dvh - var(--m-bar-height));
-  z-index: 2147483200;
-  box-sizing: border-box;
+  flex: none;
+  max-height: 50%;
   display: flex;
   flex-direction: column;
-  background: var(--m-bg);
   color: var(--m-text);
-  padding: var(--m-safe-top) var(--m-safe-right) 0 var(--m-safe-left);
-}
-.m-notices__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  font: 600 17px -apple-system, system-ui, sans-serif;
   border-bottom: 1px solid var(--m-border);
 }
-.m-notices__close {
-  border: none;
-  background: none;
+.m-notices__header {
+  padding: 12px 16px 0;
+  font: 600 13px -apple-system, system-ui, sans-serif;
   color: var(--m-dim);
-  font-size: 18px;
-  padding: 4px 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .m-notices__list {
-  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 16px 24px;
+  padding: 8px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.m-notices__empty { color: var(--m-dim); text-align: center; margin: 32px 0 16px; }
 .m-notices__row {
   display: flex;
   align-items: center;
@@ -1149,18 +1122,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-notices__title { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
 .m-notices__subtitle { color: var(--m-dim); font-size: 13px; overflow-wrap: anywhere; }
 .m-notices__meta { flex: none; color: var(--m-dim); font: 13px ui-monospace, Menlo, monospace; }
-.m-notices__source { margin-top: 12px; }
-.m-notices__action {
-  flex: none;
-  padding: 8px 14px;
-  border: none;
-  border-radius: 8px;
-  background: #89b4fa;
-  color: #11111b;
-  font: 600 14px -apple-system, system-ui, sans-serif;
-}
-.m-notices__action:active { filter: brightness(1.15); }
-.m-notices__action:disabled { opacity: 0.6; }
+.m-notices__source { margin-top: 4px; }
 
 .m-pairing { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .m-pairing__note, .m-pairing__waiting { margin: 0; color: var(--m-dim); font-size: 13px; line-height: 1.4; }
