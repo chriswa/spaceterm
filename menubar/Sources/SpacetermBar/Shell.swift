@@ -4,8 +4,11 @@ import Foundation
 /// 'command -v node'). Everything here finishes in milliseconds.
 enum Shell {
 
+    /// `timeout` kills the command if it has not exited by then, for shells
+    /// that run the user's rc files, which can wait on anything.
     @discardableResult
-    static func run(_ launchPath: String, _ args: [String]) -> (out: String, status: Int32) {
+    static func run(_ launchPath: String, _ args: [String],
+                    timeout: TimeInterval? = nil) -> (out: String, status: Int32) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: launchPath)
         p.arguments = args
@@ -14,6 +17,11 @@ enum Shell {
         p.standardError = FileHandle.nullDevice
         p.standardInput = FileHandle.nullDevice
         do { try p.run() } catch { return ("", -1) }
+        if let timeout {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [p] in
+                if p.isRunning { p.terminate() }
+            }
+        }
         // Read before waiting: a pipe that fills up deadlocks a process that
         // is waiting for us to drain it.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -21,12 +29,29 @@ enum Shell {
         return (String(data: data, encoding: .utf8) ?? "", p.terminationStatus)
     }
 
-    /// What `node` resolves to in a login shell — the same resolution the
-    /// supervised processes get. Nil means Spaceterm cannot start.
-    static func loginShellNode() -> String? {
-        let out = run("/bin/zsh", ["-l", "-c", "command -v node"]).out
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return out.isEmpty ? nil : out
+    /// What `node` resolves to — the same resolution the supervised processes
+    /// get. Nil means Spaceterm cannot start.
+    ///
+    /// A login shell first, which is how services are launched. Failing that, an
+    /// interactive one: nvm, fnm and volta usually put node on PATH from
+    /// `.zshrc`, which only an interactive shell reads, and `Spawn` then adds
+    /// the directory found here to the services' PATH. Looked up once, on first
+    /// use; a node installed later needs the bar restarted.
+    static func loginShellNode() -> String? { resolvedNode }
+
+    private static let resolvedNode: String? =
+        lookUpNode(["-l"]) ?? lookUpNode(["-l", "-i"])
+
+    private static func lookUpNode(_ flags: [String]) -> String? {
+        // Marked, because an interactive shell's rc files may print anything.
+        let marker = "__SPACETERM_NODE__"
+        let out = run("/bin/zsh", flags + ["-c", "printf '\\n\(marker)%s\\n' \"$(command -v node)\""],
+                      timeout: 10).out
+        for line in out.split(whereSeparator: \.isNewline).reversed() where line.hasPrefix(marker) {
+            let path = String(line.dropFirst(marker.count))
+            return path.hasPrefix("/") ? path : nil
+        }
+        return nil
     }
 }
 

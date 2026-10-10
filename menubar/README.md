@@ -40,7 +40,11 @@ wrappers, which this app replaces:
 | Client | `node node_modules/.bin/electron-vite dev` | `~/.spaceterm/bar-client.log` |
 
 Each is launched through `zsh -l -c 'exec …'`, so it gets the PATH a terminal
-would (Homebrew's node is not on a GUI app's PATH), minus any agent-session
+would (Homebrew's node is not on a GUI app's PATH). A login shell does not read
+`.zshrc`, where nvm, fnm and volta usually put node, so when a login shell
+finds no node the bar asks an interactive one (`zsh -l -i`) once and adds that
+node's directory to the services' PATH (`Shell.loginShellNode`). The services
+also run minus any agent-session
 variables the bar itself inherited (`open SpacetermBar.app` from a Claude Code
 shell forwards them, and passed on they make every Claude session in Spaceterm
 think it is a nested child — see `Spawn.inheritedAgentSessionVars`), and in its own session

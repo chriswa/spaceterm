@@ -124,9 +124,13 @@ enum Spawn {
 
     /// Our environment, minus any enclosing agent session, with the usual node
     /// locations prepended to PATH as a floor under whatever the login shell adds.
+    /// That includes wherever `Shell.loginShellNode` found node, which covers a
+    /// node that only `.zshrc` puts on PATH (nvm and friends).
     private static func environment() -> [String] {
         var env = scrubInheritedAgentEnv(ProcessInfo.processInfo.environment)
-        let extra = ["/opt/homebrew/bin", "/usr/local/bin"]
+        let nodeDir = Shell.loginShellNode().map { ($0 as NSString).deletingLastPathComponent }
+        var extra = ["/opt/homebrew/bin", "/usr/local/bin"]
+        if let nodeDir { extra = [nodeDir] + extra.filter { $0 != nodeDir } }
         let path = (env["PATH"] ?? "/usr/bin:/bin").split(separator: ":").map(String.init)
         env["PATH"] = (extra + path.filter { !extra.contains($0) }).joined(separator: ":")
         env["SPACETERM_SUPERVISOR"] = "SpacetermBar"
