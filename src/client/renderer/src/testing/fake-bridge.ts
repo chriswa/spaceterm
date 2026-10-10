@@ -175,7 +175,7 @@ export class FakeBridge implements Api {
   private readonly focusChanged = new Set<(focused: boolean) => void>()
   private readonly focusNode = new Set<(nodeId: NodeId | null) => void>()
   private readonly receptionistStatus = new Set<(status: ReceptionistStatus) => void>()
-  private readonly receptionistHolder = new Set<(holder: ReceptionistHolder | null) => void>()
+  private readonly receptionistHolder = new Set<(holder: ReceptionistHolder | null, muted?: string[]) => void>()
   private readonly agentNames = new Set<(names: Record<string, string>) => void>()
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
@@ -280,8 +280,8 @@ export class FakeBridge implements Api {
     receptionistStatus: (status: ReceptionistStatus): void => {
       for (const fn of this.receptionistStatus) fn(status)
     },
-    receptionistHolder: (holder: ReceptionistHolder | null): void => {
-      for (const fn of this.receptionistHolder) fn(holder)
+    receptionistHolder: (holder: ReceptionistHolder | null, muted?: string[]): void => {
+      for (const fn of this.receptionistHolder) fn(holder, muted)
     },
     agentNames: (names: Record<string, string>): void => {
       for (const fn of this.agentNames) fn(names)

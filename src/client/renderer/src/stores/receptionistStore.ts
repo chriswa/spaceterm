@@ -35,14 +35,22 @@ interface ReceptionistState {
   error: string | null
   /** The device Control speaks to, or null when nobody holds it. Mirrors `ServerState.receptionistHolder`. */
   holder: ReceptionistHolding | null
+  /**
+   * This device has muted Control, whether or not it holds it: taking Control
+   * brings it here muted. Mirrors `ServerState.receptionistMuted`.
+   */
+  mutedHere: boolean
   /** Who is being heard while it speaks: "Control", or the agent it quotes. */
   speaker: string | null
   /** Replies written to a muted device and not read yet, and where the oldest is in the record. */
   unread: { count: number; first?: number }
   setStatus: (status: ReceptionistStatus) => void
   setUnread: (unread: { count: number; first?: number }) => void
-  /** `deviceId` is this client's own. */
-  setHolder: (holder: ReceptionistHolder | null, deviceId: string) => void
+  /**
+   * `deviceId` is this client's own; `muted`, the devices that muted Control,
+   * absent from a server too old to say — then only the holder's mute is known.
+   */
+  setHolder: (holder: ReceptionistHolder | null, deviceId: string, muted?: string[]) => void
 }
 
 /**
@@ -55,9 +63,13 @@ export const useReceptionistStore = create<ReceptionistState>((set) => ({
   target: false,
   error: null,
   holder: null,
+  mutedHere: false,
   speaker: null,
   unread: { count: 0 },
   setStatus: ({ phase, target, message, speaker }) => set({ phase, target, error: message ?? null, speaker: speaker ?? null }),
   setUnread: (unread) => set({ unread }),
-  setHolder: (holder, deviceId) => set({ holder: holder && { label: holder.label, mine: holder.deviceId === deviceId, muted: holder.muted === true } }),
+  setHolder: (holder, deviceId, muted) => set({
+    holder: holder && { label: holder.label, mine: holder.deviceId === deviceId, muted: holder.muted === true },
+    mutedHere: muted ? muted.includes(deviceId) : holder?.deviceId === deviceId && holder.muted === true,
+  }),
 }))

@@ -371,18 +371,18 @@ function time(timestamp: string): string {
 
 /**
  * Where Control speaks, and the buttons that move it: the header of the
- * transcript. The same three places the phone's Control button moves between
- * — here, muted here, nobody — said outright (`receptionist.hold`), and a
- * catch-up while replies wait unread.
+ * transcript. Two independent controls (`receptionist.hold`) — holding
+ * Control here or not, and muting it here or not — so the user can mute
+ * first and take Control after, and it arrives muted. And a catch-up while
+ * replies wait unread.
  */
 function ControlHeader({ extra }: { extra?: ReactNode }) {
   const holder = useReceptionistStore((s) => s.holder)
+  const mutedHere = useReceptionistStore((s) => s.mutedHere)
   const unread = useReceptionistStore((s) => s.unread.count)
   const here = holder?.mine === true
-  const where = !holder ? 'Control is with nobody, and works silently'
-    : !here ? `Control is on your ${holder.label}`
-    : holder.muted ? 'Control writes here, muted'
-    : 'Control speaks here'
+  const where = here ? (mutedHere ? 'Control writes here, muted' : 'Control speaks here')
+    : `${holder ? `Control is on your ${holder.label}` : 'Control is with nobody, and works silently'}${mutedHere ? ' · muted here' : ''}`
   const hold = window.api.receptionist.hold
   return (
     <div className="control-transcript__header">
@@ -393,9 +393,12 @@ function ControlHeader({ extra }: { extra?: ReactNode }) {
             Catch me up · {unread}
           </button>
         )}
-        {here && !holder.muted && <button className="control-transcript__header-button" onClick={() => hold('mute')}>Mute</button>}
-        {(!here || holder.muted) && <button className="control-transcript__header-button" onClick={() => hold('speak-here')}>{here ? 'Unmute' : 'Speak here'}</button>}
-        {here && <button className="control-transcript__header-button" onClick={() => hold('release')}>Release</button>}
+        <button className="control-transcript__header-button" aria-pressed={mutedHere} onClick={() => hold(mutedHere ? 'unmute' : 'mute')}>
+          {mutedHere ? 'Unmute' : 'Mute'}
+        </button>
+        <button className="control-transcript__header-button" aria-pressed={here} onClick={() => hold(here ? 'release' : 'take')}>
+          {here ? 'Release' : 'Take Control'}
+        </button>
         {extra}
       </div>
     </div>

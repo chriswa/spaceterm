@@ -641,6 +641,11 @@ function speechFor(client: ClientConnection): SpeechBackend {
   return client.device?.id === DESKTOP_DEVICE.deviceId || !client.device ? speechVoiceOperator : remoteSpeech.forClient(client.id, NO_LISTENER)
 }
 
+/** Who holds Control and who muted it, as every client is told it. */
+function receptionistHolderMessage(): ServerMessage {
+  return { type: 'receptionist-holder', holder: stateManager.getReceptionistHolder(), muted: stateManager.getReceptionistMuted() }
+}
+
 /**
  * Hand Control to a device, or to nobody, and tell every client. Whether it
  * is muted there is the device's own: see `ServerState.receptionistMuted`.
@@ -649,8 +654,25 @@ function setReceptionistHolder(to: ReceptionistHolder | null): void {
   const holder = to && { deviceId: to.deviceId, label: to.label, ...(stateManager.isReceptionistMuted(to.deviceId) ? { muted: true as const } : {}) }
   if (stateManager.setReceptionistHolder(holder)) {
     serverLog(`[receptionist] now held by ${holder?.label ?? 'nobody'}`)
-    broadcastToAll({ type: 'receptionist-holder', holder })
+    broadcastToAll(receptionistHolderMessage())
   }
+  updateReceptionistListener()
+}
+
+/**
+ * Mute or unmute Control on a device, whether or not it holds Control now,
+ * and tell every client: a device that mutes first and takes Control after
+ * gets it muted.
+ */
+function setReceptionistMuted(deviceId: string, muted: boolean): void {
+  if (!stateManager.setReceptionistMuted(deviceId, muted)) return
+  serverLog(`[receptionist] ${muted ? 'muted' : 'unmuted'} on ${deviceId}`)
+  const holder = stateManager.getReceptionistHolder()
+  // The holder carries its own mute; refresh it if it is this device.
+  if (holder?.deviceId === deviceId) {
+    stateManager.setReceptionistHolder({ deviceId: holder.deviceId, label: holder.label, ...(muted ? { muted: true as const } : {}) })
+  }
+  broadcastToAll(receptionistHolderMessage())
   updateReceptionistListener()
 }
 
@@ -1049,7 +1071,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, { type: 'root-cwd', cwd: stateManager.getRootCwd() })
   send(link, { type: 'auto-stamps-enabled', enabled: stateManager.getAutoStampsEnabled() })
   send(link, receptionistStatus())
-  send(link, { type: 'receptionist-holder', holder: stateManager.getReceptionistHolder() })
+  send(link, receptionistHolderMessage())
   send(link, { type: 'receptionist-unread', ...receptionist?.unread() ?? { count: 0 } })
   send(link, { type: 'agent-names', names: agentNameMap() })
   send(link, { type: 'hands-free-tuning', tuning: handsFreeTuning })
@@ -1738,13 +1760,23 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const device = client.device
       if (!device) break
       const holder = stateManager.getReceptionistHolder()
-      if (msg.action === 'release') {
-        if (holder?.deviceId === device.id) setReceptionistHolder(null)
-        break
+      switch (msg.action) {
+        case 'release':
+          if (holder?.deviceId === device.id) setReceptionistHolder(null)
+          break
+        case 'mute':
+        case 'unmute':
+          setReceptionistMuted(device.id, msg.action === 'mute')
+          break
+        case 'speak-here':
+        case 'take':
+          if (msg.action === 'speak-here') setReceptionistMuted(device.id, false)
+          setReceptionistHolder({ deviceId: device.id, label: device.label })
+          setVoiceTarget('receptionist')
+          break
+        default:
+          serverLog(`[receptionist] unknown hold action: ${unhandledVariant(msg.action)}`)
       }
-      stateManager.setReceptionistMuted(device.id, msg.action === 'mute')
-      setReceptionistHolder({ deviceId: device.id, label: device.label })
-      if (msg.action === 'speak-here') setVoiceTarget('receptionist')
       break
     }
 
@@ -1779,7 +1811,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Asking is talking to Control: it comes here, as for any words to it,
       // and unmuted, since being told is the point.
       if (client.device) {
-        stateManager.setReceptionistMuted(client.device.id, false)
+        setReceptionistMuted(client.device.id, false)
         setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
       }
       setVoiceTarget('receptionist')

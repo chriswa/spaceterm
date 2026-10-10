@@ -118,18 +118,23 @@ describe('held microphone', () => {
     expect(browser.opened).toHaveLength(2)
   })
 
-  it('closes when turned off, and remembers the setting on this phone', async () => {
+  it('closes when turned off', async () => {
     const browser = fakeBrowser('AirPods Pro')
-    let held = await load()
+    const held = await load()
     held.setHoldMicrophone(true)
     ;(await held.acquire()).release()
     held.setHoldMicrophone(false)
     expect(browser.opened.every((mic) => mic.closed)).toBe(true)
-    held = await load()
     expect(held.holdsMicrophone()).toBe(false)
+  })
+
+  it('starts off at every launch, however it was left', async () => {
+    fakeBrowser('AirPods Pro')
+    let held = await load()
     held.setHoldMicrophone(true)
     held = await load()
-    expect(held.holdsMicrophone()).toBe(true)
+    expect(held.holdsMicrophone()).toBe(false)
+    expect(held.holdState()).toBe('off')
   })
 
   it('with holding off, every dictation opens and closes its own microphone', async () => {
@@ -150,35 +155,41 @@ describe('bringing the hold back', () => {
   let uninstall: (() => void) | undefined
   afterEach(() => { uninstall?.(); uninstall = undefined })
 
+  /** Holding, then the microphone lost — as iOS takes it in the background. */
+  async function heldThenLost(held: Awaited<ReturnType<typeof load>>) {
+    held.setHoldMicrophone(true)
+    ;(await held.acquire()).release(true)
+  }
+
   it('reopens on a tap, never during a pinch or a pan', async () => {
     const browser = fakeBrowser('AirPods Pro')
-    localStorage.setItem('mobile.holdMicrophone', '1')
     const held = await load()
+    await heldThenLost(held)
     uninstall = held.installHeldMicrophone()
     pointer('pointerdown', 1); pointer('pointerdown', 2); pointer('pointerup', 1); pointer('pointerup', 2)
     pointer('pointerdown', 3); pointer('pointerup', 3, 200, 10)
     await settle()
-    expect(browser.opened).toHaveLength(0)
+    expect(browser.opened).toHaveLength(1)
     tap()
     await settle()
-    expect(browser.opened).toHaveLength(1)
-    expect(browser.opened[0].closed).toBe(false)
+    expect(browser.opened).toHaveLength(2)
+    expect(browser.opened[1].closed).toBe(false)
   })
 
   it('tries the phone\'s own microphone once, then waits for a device to change', async () => {
     const browser = fakeBrowser('iPhone Microphone')
-    localStorage.setItem('mobile.holdMicrophone', '1')
     const held = await load()
+    await heldThenLost(held)
     uninstall = held.installHeldMicrophone()
     tap(); await settle()
     tap(); await settle()
     tap(); await settle()
-    expect(browser.opened).toHaveLength(1)
+    expect(browser.opened).toHaveLength(2)
     browser.useMicrophone('AirPods Pro')
     browser.deviceChanged()
     tap(); await settle()
-    expect(browser.opened).toHaveLength(2)
-    expect(browser.opened[1].closed).toBe(false)
+    expect(browser.opened).toHaveLength(3)
+    expect(browser.opened[2].closed).toBe(false)
   })
 })
 

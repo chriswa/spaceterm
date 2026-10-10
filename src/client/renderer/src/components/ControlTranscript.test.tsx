@@ -304,7 +304,7 @@ describe('ControlTranscript and what the user took in', () => {
   const at = '2026-10-05T08:00:01Z'
 
   it('says where Control speaks, and moves it from its header', async () => {
-    useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, unread: { count: 0 } })
+    useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
     expect(screen.getByText('Control speaks here')).toBeTruthy()
@@ -312,11 +312,24 @@ describe('ControlTranscript and what the user took in', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Release' }))
     expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute', 'release'])
 
-    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, unread: { count: 2, first: 0 } }))
+    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, mutedHere: true, unread: { count: 2, first: 0 } }))
     fireEvent.click(screen.getByRole('button', { name: 'Unmute' }))
     fireEvent.click(screen.getByRole('button', { name: 'Catch me up · 2' }))
-    expect(bridge.callsTo('receptionist.hold').at(-1)?.args[0]).toBe('speak-here')
+    expect(bridge.callsTo('receptionist.hold').at(-1)?.args[0]).toBe('unmute')
     expect(bridge.callsTo('receptionist.catchUp')).toHaveLength(1)
+  })
+
+  it('mutes and takes Control separately, so it can be muted before it is taken', async () => {
+    useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false }, mutedHere: false, unread: { count: 0 } })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Nothing said to Control yet')
+    expect(screen.getByText('Control is on your Mac')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Mute' }))
+
+    act(() => useReceptionistStore.setState({ mutedHere: true }))
+    expect(screen.getByText('Control is on your Mac · muted here')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Take Control' }))
+    expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute', 'take'])
   })
 
   it('strikes out what was missed, and puts what waits under an Unread line until it is marked read', async () => {

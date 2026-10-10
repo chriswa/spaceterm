@@ -68,6 +68,13 @@ if (!token) {
   // `window.api` must exist before App's modules run, as on the desktop.
   void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
     forwardLogs((message) => client.clientLog(message))
+    // A launch starts with Control let go, as with the held microphone: the
+    // server keeps a phone's hold while it is away, but not across a relaunch.
+    // Only a launch, not a reconnect — those keep it. A mute is kept.
+    if (client.isConnected()) client.holdReceptionist('release')
+    else {
+      const off = client.onLifecycle('connect', () => { off(); client.holdReceptionist('release') })
+    }
     mobileEvents.setSender((events) => client.mobileEvents(events))
     recordMobileEvent('server', { connected: true })
     client.onLifecycle('disconnect', () => recordMobileEvent('server', { connected: false }))

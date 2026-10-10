@@ -89,14 +89,20 @@ it, if any), it is elsewhere; a tap brings it here, speaking. Magenta, it is
 here but the voice last went to Summary Chat; a tap talks to Control again.
 A ring turns while it thinks; speaking shows on the transcript button. The
 server takes each tap as said outright (`receptionist-hold`: `speak-here`,
-`mute`, `release`), so two devices pressing at once cannot cross.
+`mute`, `unmute`, `take`, `release`), so two devices pressing at once cannot
+cross.
 
-Being muted is the device's own, and outlasts handing Control away and back
-(`receptionistMuted` in the server state). A muted phone is still Control's
+Being muted is the device's own, separate from holding Control, and outlasts
+handing Control away and back (`receptionistMuted` in the server state): a
+phone can mute first and take Control after, and it arrives muted. A muted phone is still Control's
 listener when it is not connected, so it can sleep (`stay-awake.ts` lets it):
 everything is waiting in the transcript when it wakes. Letting go of Control
 altogether — nobody hears it, and it tells you what you missed when you are
 back — is the transcript header's **Release**.
+
+Neither holding Control nor the always-on microphone survives a relaunch: the
+app lets go of Control when it starts (`main.tsx`), and the microphone hold
+starts off (`held-microphone.ts`). A mute does survive.
 
 ## Control's transcript
 
@@ -110,7 +116,8 @@ agent it quotes. It reads Control's full record
 compaction never shortens it: it opens at the newest — or at the first reply
 with words waiting for you, under a red Unread line — and loads older pages
 as you scroll up.
-Its header says where Control speaks, with Mute or Unmute, Release, the
+Its header says where Control speaks, with two independent buttons — Mute
+or Unmute, and Take Control or Release — the
 earpiece switch, and **Catch me up** while replies wait unread: Control comes
 here unmuted and sums them up aloud.
 

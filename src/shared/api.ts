@@ -31,7 +31,7 @@ import type {
   SummaryChatMode,
   SummaryChatPhase,
   SummaryChatToggleOutcome,
-  SummaryChatUiState, SpeechProgressEvent, HandsFreeTuning, ControlTranscriptEntry
+  SummaryChatUiState, SpeechProgressEvent, HandsFreeTuning, ControlTranscriptEntry, ReceptionistHoldAction
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { NodeData, NodeStamp, ReceptionistHolder, ServerState } from './state'
@@ -371,10 +371,11 @@ export interface ReceptionistApi {
   /** Stop Control mid-answer without letting go of it, as a talk button pressed over it does. */
   stop(): void
   /**
-   * Where Control speaks, said outright: `speak-here` brings it here, unmuted;
-   * `mute` keeps it here, writing rather than speaking; `release` lets go of it.
+   * Where Control speaks, said outright. Holding (`take`, `release`) and
+   * muting (`mute`, `unmute`) are independent; `speak-here` is both at once.
+   * See `ReceptionistHoldMessage`.
    */
-  hold(action: 'speak-here' | 'mute' | 'release'): void
+  hold(action: ReceptionistHoldAction): void
   /**
    * The user took in what Control has said since their last message up to
    * `char` characters into part `part` of the reply at `of`, and none of the
@@ -406,8 +407,11 @@ export interface ReceptionistApi {
   /** This client's device, to tell whether it is the one holding Control. */
   readonly deviceId: string
   onStatus(callback: (status: ReceptionistStatus) => void): () => void
-  /** Who holds Control: null when nobody does. */
-  onHolder(callback: (holder: ReceptionistHolder | null) => void): () => void
+  /**
+   * Who holds Control (null when nobody does), and the devices that muted it
+   * — absent from a server too old to say.
+   */
+  onHolder(callback: (holder: ReceptionistHolder | null, muted?: string[]) => void): () => void
   /** Every agent surface's name, whole, keyed by node id. */
   onAgentNames(callback: (names: Record<string, string>) => void): () => void
   /** Move the camera to a surface the conversation is about — no raise, no focus. */

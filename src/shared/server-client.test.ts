@@ -179,7 +179,7 @@ describe('createApi', () => {
     const api = createApi(client, platform)
     t.receive(
       { type: 'receptionist-status', phase: 'ready', target: true },
-      { type: 'receptionist-holder', holder: { deviceId: 'phone-1', label: 'Phone' } },
+      { type: 'receptionist-holder', holder: { deviceId: 'phone-1', label: 'Phone' }, muted: ['phone-1'] },
       { type: 'agent-names', names: { n1: 'Kevin' } },
       { type: 'camera-follow', nodeId: 'n1' }
     )
@@ -192,7 +192,7 @@ describe('createApi', () => {
     api.receptionist.onAgentNames(names)
     api.receptionist.onCameraFollow(follow)
     expect(status).toHaveBeenCalledWith({ phase: 'ready', target: true, message: undefined })
-    expect(holder).toHaveBeenCalledWith({ deviceId: 'phone-1', label: 'Phone' })
+    expect(holder).toHaveBeenCalledWith({ deviceId: 'phone-1', label: 'Phone' }, ['phone-1'])
     expect(api.receptionist.deviceId).toBe('phone-1')
     expect(names).toHaveBeenCalledWith({ n1: 'Kevin' })
     // A camera move is an instruction for then, not state: never replayed.

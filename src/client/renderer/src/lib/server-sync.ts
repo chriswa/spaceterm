@@ -188,8 +188,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.receptionist.onHolder((holder) => {
-      useReceptionistStore.getState().setHolder(holder, window.api.receptionist.deviceId)
+    window.api.receptionist.onHolder((holder, muted) => {
+      useReceptionistStore.getState().setHolder(holder, window.api.receptionist.deviceId, muted)
     })
   )
 
@@ -213,7 +213,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
     useRootCwdStore.getState().set(serverState.rootCwd)
     useAutoStampsEnabledStore.getState().set(serverState.autoStampsEnabled !== false)
-    useReceptionistStore.getState().setHolder(receptionistHolderOf(serverState), window.api.receptionist.deviceId)
+    useReceptionistStore.getState().setHolder(receptionistHolderOf(serverState), window.api.receptionist.deviceId, serverState.receptionistMuted ?? [])
 
     // Authoritative on reload: the PUSH above only fires when the flag changes
     // while the socket stays open, which a renderer refresh does not repeat.

@@ -217,7 +217,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onTranscriptAppended: (cb) => on('receptionist-transcript-appended', (m) => cb(m.entries)),
       onStatus: (cb) => onReceptionistStatus(({ phase, target, message, speaker }) => cb({ phase, target, message, speaker })),
       deviceId: client.device.id,
-      onHolder: (cb) => onReceptionistHolder((m) => cb(m.holder)),
+      onHolder: (cb) => onReceptionistHolder((m) => cb(m.holder, m.muted)),
       onAgentNames: (cb) => onAgentNames((m) => cb(m.names)),
       onCameraFollow: (cb) => on('camera-follow', (m) => cb(m.nodeId)),
       onNotice: (cb) => on('receptionist-notice', (m) => cb(m.text))

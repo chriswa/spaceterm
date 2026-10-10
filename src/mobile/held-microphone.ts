@@ -24,14 +24,13 @@ import { recordMobileEvent } from './mobile-events'
  * would come out as a whisper. Voice Operator has the same rule ("Only When
  * Using AirPods").
  *
- * Remembered per device. iOS only opens a microphone inside a tap, so after a
- * relaunch, or after iOS takes the microphone away in the background, the hold
- * comes back on the next touch anywhere, or with the next dictation.
+ * Off at every launch: not remembered, so a relaunched app never starts
+ * listening on its own. iOS only opens a microphone inside a tap, so after iOS
+ * takes the microphone away in the background, the hold comes back on the
+ * next touch anywhere, or with the next dictation.
  */
 
 const log = (message: string) => window.api?.log(`[held-mic] ${message}`)
-
-const KEY = 'mobile.holdMicrophone'
 
 /** A microphone label that is a headset rather than the phone itself. */
 export function isHeadset(label: string): boolean {
@@ -171,15 +170,12 @@ function captureOf(opened: Awaited<ReturnType<typeof openCapture>>, release: (br
  */
 export type HoldState = 'off' | 'preparing' | 'held'
 
-let wanted = (() => {
-  try { return localStorage.getItem(KEY) === '1' } catch { return false }
-})()
+let wanted = false
 /** `headset`: the label of a held web microphone, rechecked when devices change. Absent for the app's own. */
 let held: { capture: Capture; close: () => void; headset?: string } | undefined
 let opening: Promise<Capture> | undefined
 const stateListeners = new Set<(state: HoldState) => void>()
-/** Nothing is held at load: the hold, if wanted, comes back with the next tap. */
-let lastState: HoldState = wanted ? 'preparing' : 'off'
+let lastState: HoldState = 'off'
 
 export function holdState(): HoldState {
   if (!wanted) return 'off'
@@ -217,12 +213,11 @@ export function heldCapture(): Capture | undefined {
 }
 
 /**
- * Turn holding on or off, remembered on this phone. In a browser call it
- * inside a tap: turning it on opens the microphone now.
+ * Turn holding on or off, until the app is next launched. In a browser call
+ * it inside a tap: turning it on opens the microphone now.
  */
 export function setHoldMicrophone(on: boolean): void {
   wanted = on
-  try { localStorage.setItem(KEY, on ? '1' : '0') } catch { /* private mode: this session only */ }
   log(on ? 'turned on' : 'turned off')
   recordMobileEvent('hold-wanted', { on })
   if (on) void acquire().then((capture) => capture.release(), () => undefined)
@@ -293,7 +288,7 @@ const TAP_SLOP_PX = 10
 const NATIVE_CHECK_MS = 5000
 
 /**
- * Bring the hold back after a relaunch or a background trip. In the app that
+ * Bring the hold back after a background trip. In the app that
  * needs nothing from the user: its microphone is opened now, and again
  * whenever it is found to have stopped.
  */
@@ -319,7 +314,7 @@ function installNativeHold(): () => void {
 }
 
 /**
- * Bring the hold back after a relaunch or a background trip. In a browser iOS
+ * Bring the hold back after a background trip. In a browser iOS
  * opens a microphone only inside a gesture, so the next tap anywhere does it,
  * and a headset coming or going is rechecked too.
  */

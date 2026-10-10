@@ -916,15 +916,22 @@ export interface ReceptionistStopMessage {
 
 /**
  * Where Control speaks, said outright rather than toggled, so two presses
- * cannot cross: `speak-here` brings it to this device, unmuted, and makes it
- * the voice's target; `mute` keeps it here but has it write rather than speak
- * (taking it here first if need be); `release` lets go of it, if this device
- * holds it, so that it speaks nowhere. Answered by `receptionist-holder`.
+ * cannot cross. Holding and muting are independent:
+ * - `take` brings Control to this device and makes it the voice's target,
+ *   muted or not as this device last left it;
+ * - `release` lets go of it, if this device holds it, so that it speaks nowhere;
+ * - `mute` / `unmute` set whether Control writes to this device rather than
+ *   speaking, whether or not this device holds it now;
+ * - `speak-here` is `unmute` and `take` at once: the phone's Control button.
+ *
+ * Answered by `receptionist-holder`.
  */
 export interface ReceptionistHoldMessage {
   type: 'receptionist-hold'
-  action: 'speak-here' | 'mute' | 'release'
+  action: ReceptionistHoldAction
 }
+
+export type ReceptionistHoldAction = 'take' | 'release' | 'mute' | 'unmute' | 'speak-here'
 
 /**
  * Sent by v14 clients when a part had been on screen a second. Ignored: being
@@ -1716,10 +1723,15 @@ export interface ReceptionistReplayingMessage {
   refused?: string
 }
 
-/** Which device holds Control, if any. Sent on connect and broadcast on every change. */
+/**
+ * Which device holds Control, if any, and which devices have muted it. Sent
+ * on connect and broadcast on every change to either.
+ */
 export interface ReceptionistHolderMessage {
   type: 'receptionist-holder'
   holder: ReceptionistHolder | null
+  /** Device ids: see `ServerState.receptionistMuted`. Absent from servers before v16, which tell a device its mute only while it holds Control. */
+  muted?: string[]
 }
 
 /**

@@ -506,11 +506,18 @@ export class StateManager {
     return this.state.receptionistMuted?.includes(deviceId) ?? false
   }
 
-  setReceptionistMuted(deviceId: string, muted: boolean): void {
-    if (this.isReceptionistMuted(deviceId) === muted) return
+  /** Every device that has muted Control: see `ServerState.receptionistMuted`. */
+  getReceptionistMuted(): string[] {
+    return this.state.receptionistMuted ?? []
+  }
+
+  /** Returns whether anything changed. */
+  setReceptionistMuted(deviceId: string, muted: boolean): boolean {
+    if (this.isReceptionistMuted(deviceId) === muted) return false
     const others = (this.state.receptionistMuted ?? []).filter(id => id !== deviceId)
     this.state.receptionistMuted = muted ? [...others, deviceId] : others
     this.schedulePersist()
+    return true
   }
 
   /** Every live node, for sweeps that consider them all. */

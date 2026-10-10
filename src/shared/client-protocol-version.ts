@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 15
+export const CLIENT_PROTOCOL_VERSION = 16
 
 /**
  * Oldest client protocol this build still serves.
@@ -74,5 +74,9 @@ export const CLIENT_PROTOCOL_VERSION = 15
  * user stopped taking Control in (`receptionist-mark`, `-read-all`), and is
  * never sent how far Control's voice has got (`receptionist-speaking`). It
  * loses nothing else.
+ *
+ * v15 expects `receptionist-hold` `mute` to take Control as well, which it no
+ * longer does: holding and muting are independent (`take`, `unmute`). It
+ * offers Mute only while it already holds Control, so it loses nothing.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

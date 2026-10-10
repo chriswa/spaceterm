@@ -1,6 +1,6 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
-import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, SpeechProgressEvent } from './protocol'
+import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, ReceptionistHoldAction, SpeechProgressEvent } from './protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -878,7 +878,7 @@ export class ServerClient {
   }
 
   /** Where Control speaks: see `ReceptionistHoldMessage`. */
-  holdReceptionist(action: 'speak-here' | 'mute' | 'release'): void {
+  holdReceptionist(action: ReceptionistHoldAction): void {
     this.log(`[receptionist] ${action} from this client`)
     this.fireAndForget({ type: 'receptionist-hold', action })
   }
