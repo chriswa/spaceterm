@@ -26,7 +26,7 @@ describe('macsProblems', () => {
     expect(macsProblems({ required: [HOME, WORK], own: WORK, others: [homeUrl] })).toEqual([])
   })
 
-  it('says to add this Mac to the committed list', () => {
+  it('says this Mac is missing from the list', () => {
     const problems = macsProblems({ required: [WORK], own: HOME, others: [workUrl] })
     expect(problems).toHaveLength(1)
     expect(problems[0]).toMatch(/src\/mobile\/ios\/macs does not list this Mac \(home\.tail1\.ts\.net\)/)

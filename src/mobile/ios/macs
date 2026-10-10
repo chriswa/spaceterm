@@ -1,5 +1,7 @@
 # Every Mac the phone app should reach, by tailnet host name, one per line.
 # A build on any of them refuses unless ~/.spaceterm/other-macs there holds the
-# others' pairing URLs, and unless the building Mac is listed here (src/cli/mobile-macs.ts).
-spare-0248-dr4gmgy4my-chris-waddell.tailed0e69.ts.net
-chriss-macbook-pro.tail6b146a.ts.net
+# others' pairing URLs, and unless the building Mac is listed (src/cli/mobile-macs.ts).
+#
+# Host names identify you and your machines, so list yours in macs.local beside
+# this file instead: it is not committed, and when it exists it replaces this
+# list. This committed list is deliberately empty.

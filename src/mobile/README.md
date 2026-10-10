@@ -403,9 +403,10 @@ npm run mobile:ios        # build, sign, install on the paired iPhone, launch
 
 A phone that moves between tailnets — home and work, say — needs every Mac's
 address, and the app tries them all at launch and keeps whichever answers
-first. `ios/macs` (committed) names each Mac by tailnet host name;
-`ios/macs.local` (not committed), when it exists, replaces it — that is how
-someone building their own copy lists their own Macs.
+first. `ios/macs.local` names each Mac by tailnet host name, one per line. It
+is not committed, since host names identify you and your machines, so each Mac
+you build on needs its own copy (the committed `ios/macs` is an empty
+placeholder, read only when there is no local list).
 `~/.spaceterm/other-macs` (private, since it carries tokens) holds the other
 Macs' pairing URLs, one `npm run mobile:link -- --url` line each. The build
 refuses, saying what to fill in, when this Mac is not in the list or a listed

@@ -2,9 +2,9 @@
  * Every Mac the phone app should be able to find, and whether this Mac can
  * build an app that knows them all.
  *
- * `src/mobile/ios/macs` (committed) names each Mac by its tailnet host name.
- * `src/mobile/ios/macs.local` (not committed), when present, replaces it, so
- * someone building their own copy lists their own Macs without touching it.
+ * `src/mobile/ios/macs.local` (not committed: host names identify a person and
+ * their machines) names each Mac by its tailnet host name. The committed
+ * `src/mobile/ios/macs` is read only when there is no local list, and is empty.
  * `~/.spaceterm/other-macs` (private: it carries tokens) holds the pairing
  * URL of every Mac but this one. A build checks the two against each other and
  * refuses, saying exactly what to fill in, so that an app built on any Mac
@@ -20,7 +20,7 @@ export function macsListFor(hasLocalList: boolean): string {
   return hasLocalList ? LOCAL_MACS_LIST : MACS_LIST
 }
 
-/** Host names from the committed list: one per line, blanks and `#` comments skipped. */
+/** Host names from a list: one per line, blanks and `#` comments skipped. */
 export function parseMacs(text: string): string[] {
   return text.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'))
 }
@@ -55,8 +55,8 @@ export function macsProblems({ required, own, others, list = MACS_LIST }: MacsCh
   const problems: string[] = []
   if (!required.includes(own)) {
     problems.push(list === MACS_LIST
-      ? `${MACS_LIST} does not list this Mac (${own}): add that line and commit it, so apps built elsewhere reach it too.`
-        + ` If this is your own copy of Spaceterm rather than another of that list's Macs, put your Macs in ${LOCAL_MACS_LIST} instead (not committed; it replaces the list), starting with this line: ${own}`
+      ? `${MACS_LIST} does not list this Mac (${own}): put your Macs in ${LOCAL_MACS_LIST}`
+        + ` (not committed; it replaces ${MACS_LIST}), one tailnet host name per line, starting with this line: ${own}`
       : `${list} does not list this Mac (${own}): add that line`)
   }
   const bad = others.filter((url) => !pairingHost(url))
