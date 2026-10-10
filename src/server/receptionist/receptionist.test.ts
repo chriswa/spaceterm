@@ -461,6 +461,23 @@ describe('Receptionist', () => {
     expect((await run(Date.now() + 3_600_000)).prompt).toMatch(/^THE USER SAYS: tell him to do that now/)
   })
 
+  it('shows a compaction of its session in the transcript, once', async () => {
+    const h = harness({
+      compactsAt: Date.now() - 5 * 60_000,
+      replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }]), reply([{ from: 'control', text: 'Done.' }])],
+    })
+    await h.receptionist.hear('what is Kevin doing?', 'spoken')
+    await flush()
+    // A brand-new session forgets too, but nothing was compacted.
+    expect(h.traces.filter(trace => trace.what === 'compacted')).toEqual([])
+    await h.receptionist.hear('tell him to do that now', 'spoken')
+    await flush()
+    await h.receptionist.hear('thanks', 'spoken')
+    await flush()
+    expect(h.traces.filter(trace => trace.what === 'compacted').map(trace => trace.text))
+      .toEqual(['Memory compacted 5 min ago: its last few messages were repeated to it word for word'])
+  })
+
   it('lists the agents and directories when asked', async () => {
     const h = harness({
       replies: [

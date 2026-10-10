@@ -222,8 +222,9 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
   const views = partViews(entries)
   // Control's reasoning only when asked for: most of the time it is the conversation that matters.
   // A failed turn is always shown: Control said so out loud, and the error is the only account of why.
+  // So is a compaction: what Control remembers word for word starts there.
   const shown = entries.filter((entry) => entry.kind !== 'heard' && entry.kind !== 'consumed' &&
-    (reasoning || entry.kind !== 'trace' || entry.what === 'failed'))
+    (reasoning || entry.kind !== 'trace' || entry.what === 'failed' || entry.what === 'compacted'))
   // What the user can still mark: not while the voice decides, nor once their next message is on its way.
   const markable = voicing || pending.length ? new Set<number>() : openReplies(entries, !more)
   const firstWaiting = shown.find((entry) => views.get(entry.offset)?.some((part) => part.why === 'waiting'))?.offset
