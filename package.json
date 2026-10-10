@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Multiple terminals on a zoomable canvas",
   "main": "./out/main/index.js",
+  "engines": {
+    "node": "^22.22.2 || >=24.15.0"
+  },
   "scripts": {
     "dev": "concurrently --restart-tries -1 --restart-after 0 \"npm run server:dev\" \"npm run client:dev\"",
     "daemon:build": "(cd pty-daemon && go build -o pty-daemon .) && echo 'Note: this only builds the binary. If a daemon is already running, use: npm run daemon:dev'",
@@ -58,9 +61,6 @@
     "ws": "^8.22.0",
     "zod": "^4.1.12",
     "zustand": "^5.0.11"
-  },
-  "optionalDependencies": {
-    "@echogarden/macos-native-tts": "^0.1.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",

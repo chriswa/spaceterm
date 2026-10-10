@@ -23,7 +23,7 @@ running and lose track of which is stuck, this is what it is for.
 ## Requirements
 
 - **macOS** (Apple Silicon or Intel) — see [Platform support](#platform-support)
-- **Node.js 22.22+** (or 24.15+) — jsdom, which the tests run on, refuses anything older
+- **Node.js 22.22+** (or 24.15+) — `npm install` refuses anything older (`engines` in package.json; jsdom, which the tests run on, needs it)
 - **npm**
 - **Go 1.22+** — for the PTY daemon (`brew install go`)
 - **Xcode Command Line Tools** — `xcode-select --install`; `npm install` compiles against them
@@ -48,8 +48,6 @@ native modules (if it fails, install the Xcode Command Line Tools). Then
 app — this has to be redone after every install, which is why it runs there.
 It never fails the install; if links ever open the wrong app, run
 `npm run electron:install` yourself.
-
-The optional native module `@echogarden/macos-native-tts` (for TTS) is in `optionalDependencies` — if it fails to compile, `npm install` still succeeds and TTS is silently disabled.
 
 ## Before you run it
 
@@ -92,18 +90,36 @@ The PTY daemon is a separate long-lived process that manages terminal sessions. 
 
 App data lives in `~/.spaceterm/` (state, logs, hooks). The PTY daemon socket, PID file, and log are also in `~/.spaceterm/`.
 
-## Optional: Text-to-speech
+## Speech
 
-Select text in a terminal and press **Cmd+Shift+S** to read it aloud. Works out of the box with the default macOS voice, but sounds better with a premium voice installed.
+Spaceterm speaks through [Voice Operator](#optional-companions), a local speech
+service that runs as a separate app. Everything that talks — the
+speak-the-selection chord and Control — goes through it; agents
+have no speech tool of their own, and Control relays what they say, each in its
+own voice. Nothing is synthesized inside Spaceterm.
 
-### Installing a premium voice
+| Shortcut | Action |
+|----------|--------|
+| Cmd+Shift+S | Speak the selected text (or stop, if something is already being said) |
+| Escape | Stop speech |
 
-1. **System Settings** → **Accessibility** → **Spoken Content**
-2. Click **System Voice** → **Manage Voices...**
-3. Find **English (US)** → **Zoe** → download **Zoe (Premium)** (~300-500 MB)
-4. Restart Spaceterm
+A short rising tone plays when speech starts and a falling one when it stops.
+Voice selection, voice quality and muting all live in Voice Operator; a press
+made while it is muted says so rather than failing silently.
 
-The app auto-detects and prefers premium > enhanced > compact voices.
+Voice Operator publishes its port in
+`~/Library/Application Support/VoiceOperator/speech-service.json`, and Spaceterm
+reads that file on every request, so starting or restarting Voice Operator needs
+no Spaceterm restart. Without it, speech requests are declined with "Voice
+Operator is not answering" and the rest of the app is unaffected.
+
+`src/server/voice-operator.ts` is the only thing that knows where the service
+lives and how it answers. Two callers sit on top of it:
+`src/server/direct-speech.ts` (text handed over already written: the
+speak-the-selection chord, one utterance at a time) and Control
+(`src/server/receptionist/`, which runs a model to produce what it speaks).
+Both are on the server because Voice Operator is a
+local HTTP service; the renderer only plays the start and stop cues.
 
 ## Diagnostics
 
@@ -192,7 +208,6 @@ on any given machine.
 ```
 Electron main process
   ├─ BrowserWindow (React renderer)
-  ├─ TTS
   └─ IPC to server via Unix socket
 
 PTY daemon (pty-daemon/) — Go binary, long-lived

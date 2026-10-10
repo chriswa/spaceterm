@@ -2396,7 +2396,7 @@ export function App() {
           ? terminalSelectionGetters.get(focusRef.current)?.() ?? ''
           : ''
         speak(selection).then((outcome) => {
-          if (outcome === 'unavailable') showToast('Voice Operator is not answering — see TTS-SETUP.md')
+          if (outcome === 'unavailable') showToast('Voice Operator is not answering — see Speech in the README')
           else if (outcome === 'muted') showToast('Voice Operator has speech muted')
         })
       }

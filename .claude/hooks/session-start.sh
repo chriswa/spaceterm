@@ -22,8 +22,7 @@ cd "${CLAUDE_PROJECT_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"}
 # --ignore-scripts skips the `electron-rebuild` postinstall, which compiles
 # native modules against Electron's headers and needs a toolchain we do not
 # have. The repo has no native dependencies of its own (the PTY layer is a
-# separate Go daemon, and @echogarden/macos-native-tts is an optional
-# macOS-only module), so skipping it costs nothing.
+# separate Go daemon), so skipping it costs nothing.
 #
 # `npm install` rather than `npm ci` on purpose: the container image is cached
 # after this hook completes, so a resumed session finds node_modules already

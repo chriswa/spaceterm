@@ -6,13 +6,7 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     build: {
-      lib: { entry: resolve('src/client/main/index.ts') },
-      rollupOptions: {
-        // Dynamic import() of ESM-only native modules must be explicitly externalized
-        // so rollup doesn't bundle them as code-split chunks (which breaks native addon
-        // resolution via import.meta.url / createRequire).
-        external: ['@echogarden/macos-native-tts']
-      }
+      lib: { entry: resolve('src/client/main/index.ts') }
     }
   },
   preload: {
