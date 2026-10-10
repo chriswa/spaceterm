@@ -6,8 +6,8 @@ import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { asNodeId } from '../shared/ids'
 import { holdState, setHoldMicrophone } from './held-microphone'
 import { useDictationSession } from './dictation-session'
-import { LOCK_PX, LONG_PRESS_MS } from './mic-button'
 import { MicButton } from './MicButton'
+import { MicLockButton } from './MicLockButton'
 
 const NODE = asNodeId('n1')
 let bridge: FakeBridge
@@ -26,66 +26,21 @@ afterEach(() => {
 
 const mic = () => screen.getByRole('button', { name: /Talk to|Cut .* off|dictating/ })
 
-function longPress(button: HTMLElement) {
-  vi.useFakeTimers()
-  fireEvent.pointerDown(button, { clientX: 100, clientY: 500 })
-  act(() => { vi.advanceTimersByTime(LONG_PRESS_MS) })
-  // The release's click must not also start listening.
-  fireEvent.pointerUp(button)
-  fireEvent.click(button)
-}
-
-describe('the microphone’s long press', () => {
-  it('offers to abandon Summary Chat, and abandoning ends it without listening', () => {
-    render(<MicButton nodeId={NODE} />)
-    longPress(mic())
-    expect(bridge.callsTo('dictation.start')).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Abandon summarizer' }))
-    expect(bridge.callsTo('endSummaryChat')).toHaveLength(1)
-    expect(screen.queryByRole('button', { name: 'Abandon summarizer' })).toBeNull()
-  })
-
-  it('keeps the conversation when the sheet is tapped outside', () => {
-    const { container } = render(<MicButton nodeId={NODE} />)
-    longPress(mic())
-    fireEvent.click(container.ownerDocument.querySelector('.m-mic-sheet') as HTMLElement)
-    expect(screen.queryByRole('button', { name: 'Abandon summarizer' })).toBeNull()
-    expect(bridge.callsTo('endSummaryChat')).toHaveLength(0)
-  })
-
-  it('does nothing while talking to Control, which has nothing to offer there', () => {
-    render(<MicButton nodeId={null} />)
-    longPress(mic())
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(bridge.callsTo('dictation.start')).toHaveLength(0)
-  })
-})
-
-describe('dragging the microphone up', () => {
-  it('shows the lock, switches hands-free on reaching it, and is not a tap', () => {
-    const { container } = render(<MicButton nodeId={null} />)
-    const button = mic()
-    expect(button.getAttribute('aria-label')).toMatch(/drag up to always listen|drag up to hold/)
-    fireEvent.pointerDown(button, { clientX: 100, clientY: 500 })
-    fireEvent.pointerMove(button, { clientX: 100, clientY: 480 })
-    expect(container.querySelector('.m-mic-lock')).not.toBeNull()
-    expect(container.querySelector('.m-mic-lock--reached')).toBeNull()
-    fireEvent.pointerMove(button, { clientX: 100, clientY: 500 - LOCK_PX })
-    expect(container.querySelector('.m-mic-lock--reached')).not.toBeNull()
-    fireEvent.pointerUp(button, { clientX: 100, clientY: 500 - LOCK_PX })
-    fireEvent.click(button)
+describe('the microphone lock', () => {
+  it('switches hands-free on with a tap, and off with the next, leaving the microphone a plain tap', () => {
+    render(<><MicButton nodeId={null} /><MicLockButton /></>)
+    const lock = screen.getByRole('button', { name: /Always listen|Hold the microphone open/ })
+    expect(lock.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(lock)
     expect(holdState()).not.toBe('off')
+    expect(lock.getAttribute('aria-pressed')).toBe('true')
+    expect(lock.getAttribute('aria-label')).toMatch(/tap to stop/)
     expect(bridge.callsTo('dictation.start')).toHaveLength(0)
-    expect(container.querySelector('.m-mic-lock')).toBeNull()
-    expect(mic().getAttribute('aria-label')).toMatch(/drag up to stop listening/)
 
-    // And again, off.
-    fireEvent.pointerDown(mic(), { clientX: 100, clientY: 500 })
-    fireEvent.pointerMove(mic(), { clientX: 100, clientY: 500 - LOCK_PX })
-    expect(container.querySelector('.m-mic-lock')!.textContent).toMatch(/Stop listening/)
-    fireEvent.pointerUp(mic())
+    fireEvent.click(lock)
     expect(holdState()).toBe('off')
   })
+
 })
 
 describe('the microphone while Control holds the voice', () => {

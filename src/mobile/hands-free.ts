@@ -16,7 +16,7 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * what's Kevin doing?" — and stop when you are done.
  *
  * Runs whenever this phone holds its microphone open (held-microphone.ts) —
- * the microphone button's drag-up lock *is* the always-listen switch. What the microphone hears
+ * the lock beside the microphone button (MicLockButton.tsx) *is* the always-listen switch. What the microphone hears
  * goes through `WakeListener`, on the phone, scored frame by frame for speech
  * by a voice-activity model (speech-detector.ts) — so music or a noisy room is
  * not speech. Nothing leaves the phone unless the user starts talking with

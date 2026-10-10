@@ -14,13 +14,13 @@ import { openReplies, partViews, segments, words, type PartView } from '../lib/c
  * as you scroll up. A dialog over the canvas on the desktop (`modal`), the
  * whole screen on the phone (`screen`).
  *
- * Its header says where Control speaks, and moves it: here, muted here, or
- * let go. Words the user missed are struck out, and words still waiting for
+ * Its footer, under the box to type in, says where Control speaks, and moves
+ * it: here, muted here, or let go. Words the user missed are struck out, and words still waiting for
  * them sit under a red Unread line until they mark them read or send their
  * next message (see `ConsumptionLedger.settle`): nothing counts as read for
  * being on screen. Until then, clicking a word of what Control has said since
  * their last message marks everything up to it taken in and the rest missed,
- * as many times as they like. The word being spoken is lit as the voice goes.
+ * as many times as they like. As the voice goes, what it has yet to say is dim.
  * Any part can be played again in its own voice.
  */
 
@@ -41,7 +41,7 @@ export function mergeEntries(have: readonly ControlTranscriptEntry[], added: rea
 
 /**
  * Marks the buttons that open and close the transcript themselves (the Mac's
- * Control and transcript buttons): a press on one is not a click outside the
+ * Control button): a press on one is not a click outside the
  * dialog, or the dialog would close on the press and reopen on the click.
  */
 export const TRANSCRIPT_TOGGLE_ATTR = 'data-control-transcript-toggle'
@@ -88,9 +88,9 @@ type Restore = 'bottom' | { fromBottom: number } | { toOffset: number }
 const UNREAD_MARGIN_PX = 8
 
 /**
- * `headerExtra` goes at the end of the header: the phone's earpiece switch.
+ * `controlsExtra` goes at the end of the footer: the phone's earpiece switch.
  */
-export function ControlTranscript({ variant, onDismiss, headerExtra }: { variant: 'modal' | 'screen'; onDismiss: () => void; headerExtra?: ReactNode }) {
+export function ControlTranscript({ variant, onDismiss, controlsExtra }: { variant: 'modal' | 'screen'; onDismiss: () => void; controlsExtra?: ReactNode }) {
   const [entries, setEntries] = useState<ControlTranscriptEntry[]>([])
   const [more, setMore] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -252,7 +252,6 @@ export function ControlTranscript({ variant, onDismiss, headerExtra }: { variant
         onDismiss()
       }}
     >
-      <ControlHeader extra={headerExtra} />
       <div className="control-transcript__body">
         <div
           className="control-transcript__list"
@@ -285,7 +284,7 @@ export function ControlTranscript({ variant, onDismiss, headerExtra }: { variant
             ))}
             {unread > 0 && (
               <div className="control-transcript__read-all">
-                <button className="control-transcript__header-button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
+                <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
               </div>
             )}
             {pending.map((text, i) => (
@@ -342,6 +341,7 @@ export function ControlTranscript({ variant, onDismiss, headerExtra }: { variant
         />
         <button className="control-transcript__send" type="submit" disabled={!draft.trim()}>Send</button>
       </form>
+      <ControlFooter extra={controlsExtra} />
     </div>
   )
   if (variant !== 'modal') return dialog
@@ -370,13 +370,13 @@ function time(timestamp: string): string {
 }
 
 /**
- * Where Control speaks, and the buttons that move it: the header of the
- * transcript. Two independent controls (`receptionist.hold`) — holding
+ * Where Control speaks, and the buttons that move it: the foot of the
+ * transcript, under the box to type in. Two independent controls (`receptionist.hold`) — holding
  * Control here or not, and muting it here or not — so the user can mute
  * first and take Control after, and it arrives muted. And a catch-up while
  * replies wait unread.
  */
-function ControlHeader({ extra }: { extra?: ReactNode }) {
+function ControlFooter({ extra }: { extra?: ReactNode }) {
   const holder = useReceptionistStore((s) => s.holder)
   const mutedHere = useReceptionistStore((s) => s.mutedHere)
   const unread = useReceptionistStore((s) => s.unread.count)
@@ -385,18 +385,18 @@ function ControlHeader({ extra }: { extra?: ReactNode }) {
     : `${holder ? `Control is on your ${holder.label}` : 'Control is with nobody, and works silently'}${mutedHere ? ' · muted here' : ''}`
   const hold = window.api.receptionist.hold
   return (
-    <div className="control-transcript__header">
+    <div className="control-transcript__controls">
       <span className="control-transcript__where">{where}</span>
-      <div className="control-transcript__header-buttons">
+      <div className="control-transcript__controls-buttons">
         {unread > 0 && (
-          <button className="control-transcript__header-button" onClick={() => window.api.receptionist.catchUp()}>
+          <button className="control-transcript__button" onClick={() => window.api.receptionist.catchUp()}>
             Catch me up · {unread}
           </button>
         )}
-        <button className="control-transcript__header-button" aria-pressed={mutedHere} onClick={() => hold(mutedHere ? 'unmute' : 'mute')}>
+        <button className="control-transcript__button" aria-pressed={mutedHere} onClick={() => hold(mutedHere ? 'unmute' : 'mute')}>
           {mutedHere ? 'Unmute' : 'Mute'}
         </button>
-        <button className="control-transcript__header-button" aria-pressed={here} onClick={() => hold(here ? 'release' : 'take')}>
+        <button className="control-transcript__button" aria-pressed={here} onClick={() => hold(here ? 'release' : 'take')}>
           {here ? 'Release' : 'Take Control'}
         </button>
         {extra}

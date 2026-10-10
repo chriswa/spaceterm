@@ -18,7 +18,7 @@ import { useDictationSession } from './dictation-session'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { ControlButton } from './ControlButton'
-import { TranscriptButton } from './TranscriptButton'
+import { MicLockButton } from './MicLockButton'
 import { EarpieceSwitch } from './EarpieceSwitch'
 import { BottomBar } from './BottomBar'
 import { MicIndicator } from './MicIndicator'
@@ -191,7 +191,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
         <ControlTranscript
           variant="screen"
           onDismiss={() => useControlTranscriptStore.getState().setOpen(false)}
-          headerExtra={<EarpieceSwitch />}
+          controlsExtra={<EarpieceSwitch />}
         />
       )}
       {/* On the canvas and the terminal view, over the surface list and under
@@ -215,7 +215,8 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
                   } : undefined}
                 />
               )}
-              <TranscriptButton />
+              {/* Always up: hands-free is for talking to Control with nothing open. */}
+              <MicLockButton />
             </>
           }
           end={

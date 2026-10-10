@@ -303,7 +303,7 @@ describe('the desktop dialog closes like a modal', () => {
 describe('ControlTranscript and what the user took in', () => {
   const at = '2026-10-05T08:00:01Z'
 
-  it('says where Control speaks, and moves it from its header', async () => {
+  it('says where Control speaks, and moves it from its footer', async () => {
     useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')

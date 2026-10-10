@@ -1,21 +1,16 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
-import { useNodeStore } from '@/stores/nodeStore'
-import { nodeDisplayTitle } from '@/lib/node-title'
 import type { NodeId } from '../shared/ids'
 import { Dictation, useMicActivity, whenHearing } from './dictation'
 import { useDictationSession } from './dictation-session'
 import { playCue, primeCues } from './cues'
-import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
+import { useHoldState } from './MicLockButton'
 import { useHandsFree, type HandsFreePhase } from './hands-free'
-import { nativeHaptic, nativeMicrophoneAvailable } from './native-microphone'
+import { nativeMicrophoneAvailable } from './native-microphone'
 import { micLevel } from './mic-level'
-import {
-  LONG_PRESS_MS, conversationLeft, endPress, holdPress, lockTarget, micLook, movePress, startPress,
-  type MicInputs, type MicLook, type Press,
-} from './mic-button'
+import { conversationLeft, micLook, type MicInputs, type MicLook } from './mic-button'
 
 /**
  * The microphone, the middle of the bottom bar: one button for everything the
@@ -29,14 +24,7 @@ import {
  * playing or on its way cuts it off and starts listening, as interrupting a
  * person would; the server then forgets the part that was never heard.
  *
- * Drag up onto the lock that appears to turn hands-free on (held-microphone.ts,
- * hands-free.ts): start talking with "Control" and Control gets it without a
- * press. Drag up again to turn it off. In the app it switches as the finger
- * reaches the lock, with a tap you can feel; in a browser on letting go, since
- * only a release lets the page open a microphone.
- *
- * A long press offers to abandon Summary Chat; talking to Control, it does
- * nothing.
+ * A tap and nothing else: hands-free is the lock beside it (MicLockButton.tsx).
  *
  * A composer's dictation that is still running with the composer closed shows
  * here too, and a tap reopens a composer to stop or ship it, when
@@ -60,13 +48,10 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
   const summaryPhase = useSummaryChatStore((s) => (nodeId ? s.phase[nodeId] : undefined))
   /** An answer playing or on its way, which a tap cuts off. Never shown. */
   const answering = toControl ? controlPhase !== 'ready' : summaryPhase !== undefined
-  const node = useNodeStore((s) => (nodeId ? s.nodes[nodeId] : undefined))
   const [mic, setMic] = useState<Mic>({ kind: 'idle' })
-  const [sheet, setSheet] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [hold, setHold] = useState(holdState)
-  useEffect(() => onHoldStateChange(setHold), [])
+  const hold = useHoldState()
   const handsFree = useHandsFree((s) => s.phase)
   const conversation = useHandsFree((s) => s.conversation)
   const secondsLeft = useHandsFree((s) => s.secondsLeft)
@@ -75,19 +60,10 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
   const composer = useDictationSession((s) => s.mic.kind)
   const look = micLook({ error: error !== null, own: mic.kind, composer, capturing, transcribing, hold, handsFree, conversation })
 
-  const [press, setPress] = useState<Press | null>(null)
-  const pressRef = useRef<Press | null>(null)
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  /** The press just ended was not a tap: the click that follows it is not one either. */
-  const notATap = useRef(false)
-  /** Hands-free already switched by this press, as the finger reached the lock. */
-  const switched = useRef(false)
-
   // Never leave the microphone open behind a button that has gone.
   const micRef = useRef(mic)
   micRef.current = mic
   useEffect(() => () => {
-    clearTimeout(pressTimer.current)
     const m = micRef.current
     if (m.kind === 'listening') m.dictation.cancel()
   }, [])
@@ -169,75 +145,15 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
   const reopens = onReopenComposer !== undefined && composer !== 'idle' && mic.kind === 'idle'
 
   const onTap = () => {
-    if (notATap.current) {
-      notATap.current = false
-      return
-    }
     if (reopens) onReopenComposer()
     else if (!talk) return
     else if (mic.kind === 'idle') void listen()
     else if (mic.kind === 'listening') void send(mic.dictation)
   }
 
-  const switchHandsFree = () => setHoldMicrophone(holdState() === 'off')
-
-  /** Only Summary Chat has anything to offer on a long press. */
-  const hasSheet = talk && !toControl
-
-  const endOfPress = () => {
-    clearTimeout(pressTimer.current)
-    pressRef.current = null
-    setPress(null)
-  }
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
-    notATap.current = false
-    switched.current = false
-    // The drag goes on above the button: its moves still come here.
-    try { e.currentTarget.setPointerCapture?.(e.pointerId) } catch { /* not where a test runs */ }
-    const started = startPress(e.clientX, e.clientY)
-    pressRef.current = started
-    setPress(started)
-    clearTimeout(pressTimer.current)
-    pressTimer.current = setTimeout(() => {
-      const current = pressRef.current
-      if (!current) return
-      const held = holdPress(current)
-      pressRef.current = held
-      setPress(held)
-      if (held.done === 'long' && hasSheet) setSheet(true)
-    }, LONG_PRESS_MS)
-  }
-
-  const onPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
-    const before = pressRef.current
-    if (!before || before.done) return
-    const moved = movePress(before, e.clientX, e.clientY)
-    pressRef.current = moved
-    setPress(moved)
-    if (moved.done !== 'lock') return
-    clearTimeout(pressTimer.current)
-    nativeHaptic()
-    // The app opens its own microphone; a page needs the release to.
-    if (nativeMicrophoneAvailable()) {
-      switched.current = true
-      switchHandsFree()
-    }
-  }
-
-  const onPointerUp = () => {
-    const ended = pressRef.current
-    endOfPress()
-    if (!ended) return
-    const was = endPress(ended)
-    if (was !== 'tap') notATap.current = true
-    if (was === 'lock' && !switched.current) switchHandsFree()
-  }
-
   const handsFreeOn = hold !== 'off'
-  const target = lockTarget(press)
   const label = micLabel({
-    look, own: mic.kind, composer, handsFree, hold, secondsLeft,
+    look, own: mic.kind, composer, handsFree, secondsLeft,
     tap: reopens ? 'Still dictating — tap to open the composer and stop or ship it'
       : !talk ? 'Still dictating — open a composer to stop or ship it'
       : answering ? (toControl ? 'Cut Control off and talk' : 'Cut Summary Chat off and talk')
@@ -247,95 +163,57 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
   return (
     <>
       {error && <div className="m-mic__error" role="alert">{error}</div>}
-      <div className="m-mic-slot">
-        {target && (
-          <div className={`m-mic-lock${target.reached ? ' m-mic-lock--reached' : ''}`} style={{ '--m-lock-progress': target.progress } as CSSProperties} aria-hidden="true">
-            <LockIcon open={handsFreeOn} />
-            <span className="m-mic-lock__text">{handsFreeOn ? 'Stop listening' : 'Always listen'}</span>
-          </div>
+      <button
+        ref={buttonRef}
+        className={`m-mic m-mic--${look}`}
+        aria-label={label}
+        disabled={mic.kind === 'starting' || mic.kind === 'sending'}
+        onClick={onTap}
+      >
+        {look === 'conversation' && (
+          // The conversation window's quiet running out, as a ring that drains.
+          <svg className="m-mic__ring" viewBox="0 0 52 52" aria-hidden="true">
+            <circle cx="26" cy="26" r={RING_R} pathLength="100" strokeDasharray="100"
+              strokeDashoffset={100 * (1 - conversationLeft(secondsLeft, fullest.current))} />
+          </svg>
         )}
-        <button
-          ref={buttonRef}
-          className={`m-mic m-mic--${look}`}
-          aria-label={label}
-          disabled={mic.kind === 'starting' || mic.kind === 'sending'}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={endOfPress}
-          onContextMenu={(e) => e.preventDefault()}
-          onClick={onTap}
-        >
-          {look === 'conversation' && (
-            // The conversation window's quiet running out, as a ring that drains.
-            <svg className="m-mic__ring" viewBox="0 0 52 52" aria-hidden="true">
-              <circle cx="26" cy="26" r={RING_R} pathLength="100" strokeDasharray="100"
-                strokeDashoffset={100 * (1 - conversationLeft(secondsLeft, fullest.current))} />
-            </svg>
-          )}
-          {look === 'starting' ? '…' : look === 'hearing' ? (
-            <span className="m-mic__bars" aria-hidden="true"><i /><i /><i /><i /></span>
-          ) : <MicIcon locked={handsFreeOn} />}
-        </button>
-      </div>
-      {sheet && (
-        <div className="mobile-confirm m-mic-sheet" onClick={() => setSheet(false)}>
-          <div className="mobile-confirm__panel" role="dialog" aria-label="Summary Chat" onClick={(e) => e.stopPropagation()}>
-            <div className="m-mic__about">
-              Summary Chat · {node ? nodeDisplayTitle(node) : 'surface gone'}
-            </div>
-            <button
-              className="mobile-btn mobile-btn--danger"
-              onClick={() => {
-                setSheet(false)
-                if (mic.kind === 'listening') mic.dictation.cancel()
-                setMic({ kind: 'idle' })
-                window.api.endSummaryChat()
-              }}
-            >
-              Abandon summarizer
-            </button>
-          </div>
-        </div>
-      )}
+        {look === 'starting' ? '…' : look === 'hearing' ? (
+          <span className="m-mic__bars" aria-hidden="true"><i /><i /><i /><i /></span>
+        ) : <MicIcon locked={handsFreeOn} />}
+      </button>
     </>
   )
 }
 
-/** What the button is doing, what a tap does, and what dragging up does — in that order, each only when it says something. */
-function micLabel({ look, own, composer, handsFree, hold, secondsLeft, tap }: {
+/** What the button is doing, then what a tap does, when it says something. */
+function micLabel({ look, own, composer, handsFree, secondsLeft, tap }: {
   look: MicLook
   own: Mic['kind']
   composer: MicInputs['composer']
   handsFree: HandsFreePhase
-  hold: HoldState
   secondsLeft: number | null
   tap: string
 }): string {
-  const app = nativeMicrophoneAvailable()
-  const drag = hold !== 'off'
-    ? 'drag up to stop listening'
-    : app ? 'drag up to always listen for "Control"' : 'drag up to hold the microphone open with AirPods'
   switch (look) {
     case 'starting': return 'Starting the microphone'
     case 'hearing':
       if (own === 'listening') return 'Listening — tap to send'
       if (composer === 'listening') return tap
       if (handsFree === 'hearing') return 'Listening to you — stop talking to send'
-      return `Your voice is being transcribed — ${drag}`
+      return 'Your voice is being transcribed'
     case 'transcribing':
       if (handsFree === 'sending' && own !== 'sending') return 'Sending what you said to Control'
       return 'Transcribing'
     case 'conversation':
-      return `In conversation with Control: just talk, no need to say "Control"${secondsLeft !== null ? ` — ${secondsLeft} seconds of quiet left` : ''}. ${tap}, or ${drag}`
+      return `In conversation with Control: just talk, no need to say "Control"${secondsLeft !== null ? ` — ${secondsLeft} seconds of quiet left` : ''}. ${tap}`
     case 'armed':
-      return app
-        ? `Listening for "Control" at the start of what you say — everything else is ignored. ${tap}, or ${drag}`
-        : `Microphone held open with AirPods — start talking with "Control". ${tap}, or ${drag}`
+      return nativeMicrophoneAvailable()
+        ? `Listening for "Control" at the start of what you say — everything else is ignored. ${tap}`
+        : `Microphone held open with AirPods — start talking with "Control". ${tap}`
     case 'preparing':
-      return `Getting the microphone ready to listen for "Control". ${tap}, or ${drag}`
+      return `Getting the microphone ready to listen for "Control". ${tap}`
     default:
-      return `${tap} — ${drag}`
+      return tap
   }
 }
 
@@ -352,15 +230,6 @@ function MicIcon({ locked }: { locked: boolean }) {
           <path d="M17.5 15v-1.5a2 2 0 0 1 4 0V15" strokeWidth="1.6" />
         </g>
       )}
-    </svg>
-  )
-}
-
-function LockIcon({ open }: { open: boolean }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="5" y="11" width="14" height="10" rx="2" />
-      <path d={open ? 'M8 11V7a4 4 0 0 1 7.5-2' : 'M8 11V7a4 4 0 0 1 8 0v4'} />
     </svg>
   )
 }

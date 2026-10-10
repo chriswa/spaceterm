@@ -224,11 +224,6 @@ textarea, input, [contenteditable="true"], .cm-content {
    as its quiet runs out; orange is your voice leaving the phone, solid with
    its level while it goes and pulsing while the words are waited for. The
    orange is the MIC label's (MicIndicator.tsx) and iOS's own dot. */
-.m-mic-slot {
-  position: relative;
-  flex: none;
-  display: flex;
-}
 .m-mic {
   position: relative;
   flex: none;
@@ -243,8 +238,7 @@ textarea, input, [contenteditable="true"], .cm-content {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* A drag up is the button's own, not a scroll. */
-  touch-action: none;
+  touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -311,28 +305,16 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-mic__bars i:nth-child(2) { --m-bar-k: 1; }
 .m-mic__bars i:nth-child(3) { --m-bar-k: 0.75; }
 .m-mic__bars i:nth-child(4) { --m-bar-k: 0.4; }
-/* The lock above the thumb while it drags up (as Messages has for a voice
-   note), rising with it; lit once reached. */
-.m-mic-lock {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 10px);
-  transform: translate(-50%, calc(var(--m-lock-progress, 0) * -14px));
-  opacity: calc(0.55 + var(--m-lock-progress, 0) * 0.45);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 8px 8px 6px;
-  border-radius: 20px;
-  background: var(--m-surface);
-  border: 1px solid var(--m-border);
-  color: var(--m-text);
-  pointer-events: none;
-  z-index: 1;
+/* Hands-free's switch (MicLockButton.tsx), right of the microphone: closed
+   while it is off; pulsing while it waits for the microphone; white, locked,
+   while it holds it — the same white as the microphone's own look then. */
+.m-mic-lock--preparing {
+  background: #000;
+  color: #fff;
+  box-shadow: inset 0 0 0 2px #fff;
+  animation: m-mic-pulse 1.2s ease-in-out infinite;
 }
-.m-mic-lock--reached { background: #fff; border-color: #fff; color: #11111b; }
-.m-mic-lock__text { font-size: 10px; font-weight: 600; white-space: nowrap; }
+.m-mic-lock--held { background: #fff; color: #11111b; }
 .m-mic__error {
   position: fixed;
   left: 50%;
@@ -347,12 +329,6 @@ textarea, input, [contenteditable="true"], .cm-content {
   color: var(--m-text);
   font-size: 14px;
 }
-.m-mic-sheet {
-  position: fixed;
-  z-index: 2147483400;
-}
-.m-mic-sheet .mobile-confirm__panel { padding-bottom: calc(12px + var(--m-safe-bottom)); }
-.m-mic__about { color: var(--m-dim); font-size: 14px; text-align: center; }
 
 /* Listening: the mic is open and what is said is being transcribed — the
    composer's mic button. It has to be
@@ -398,79 +374,37 @@ textarea, input, [contenteditable="true"], .cm-content {
 @keyframes m-listening-spin {
   to { --m-listen-angle: 360deg; }
 }
-/* Control's button (ControlButton.tsx), left of the microphone: whether
-   Control speaks here. Dim away, solid white with a halo here, a slashed
-   speaker muted; a ring only while it thinks. Speaking shows on the
-   transcript button, not here. */
+/* Control's button (ControlButton.tsx), left of the microphone: opens the
+   transcript. Dim while Control is elsewhere, magenta while it is here but
+   the voice went to Summary Chat; a ring while it thinks, bars in the
+   speaker's colour while anything is said. Its corners (ControlBadges.tsx,
+   index.css) are a little larger here, for a phone held at arm's length. */
 .m-control { position: relative; }
-.m-control--away { background: #000; color: var(--m-dim); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
-.m-control--here { background: #fff; color: #11111b; box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.35); }
+.m-control--away { color: var(--m-dim); }
 .m-control--summary { background: #e040fb; color: #11111b; }
-.m-control--muted { box-shadow: none; }
+.m-control--open { box-shadow: 0 0 0 2px var(--m-text); }
 .m-control[data-phase="thinking"] { box-shadow: 0 0 0 3px #f9e2af; }
+.m-control--speaking { box-shadow: 0 0 0 2px var(--m-speaker); }
 .m-control.m-control--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
-.m-control__muted {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: #f9e2af;
-  color: #11111b;
-  border: 2px solid #000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-}
-.m-control__where {
-  position: absolute;
-  bottom: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 0 4px;
-  border-radius: 6px;
-  background: var(--m-raised);
-  color: var(--m-text);
-  font: 600 9px/13px -apple-system, system-ui, sans-serif;
-  white-space: nowrap;
-}
-
-/* Control's words (TranscriptButton.tsx), right of the microphone: bars in
-   the speaker's colour while anything is said, and the unread count. */
-.m-transcript { position: relative; }
-.m-transcript--open { box-shadow: 0 0 0 2px var(--m-text); }
-.m-transcript--speaking { box-shadow: 0 0 0 2px var(--m-speaker); }
-.m-transcript__bars { display: flex; align-items: center; gap: 2px; height: 18px; }
-.m-transcript__bars i {
+.m-control .control-badge:not(.control-badge--where):not(.control-badge--count) { width: 16px; height: 16px; top: -5px; }
+.m-control .control-badge--voice { left: -5px; }
+.m-control .control-badge--held { right: -5px; }
+.m-control .control-badge--where { top: -6px; right: -8px; }
+.m-control .control-badge--count { bottom: -6px; right: -8px; height: 15px; line-height: 15px; font-size: 10px; }
+.m-control__bars { display: flex; align-items: center; gap: 2px; height: 18px; }
+.m-control__bars i {
   width: 3px;
   height: 100%;
   border-radius: 2px;
   background: var(--m-speaker);
-  animation: m-transcript-bar 0.9s ease-in-out infinite;
+  animation: m-control-bar 0.9s ease-in-out infinite;
 }
-.m-transcript__bars i:nth-child(2) { animation-delay: -0.3s; }
-.m-transcript__bars i:nth-child(3) { animation-delay: -0.6s; }
-.m-transcript__bars i:nth-child(4) { animation-delay: -0.15s; }
-@keyframes m-transcript-bar {
+.m-control__bars i:nth-child(2) { animation-delay: -0.3s; }
+.m-control__bars i:nth-child(3) { animation-delay: -0.6s; }
+.m-control__bars i:nth-child(4) { animation-delay: -0.15s; }
+@keyframes m-control-bar {
   0%, 100% { transform: scaleY(0.3); }
   50% { transform: scaleY(1); }
-}
-.m-transcript__count {
-  position: absolute;
-  top: -7px;
-  right: -9px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: var(--m-accent);
-  color: #11111b;
-  font: 700 11px/18px -apple-system, system-ui, sans-serif;
-  text-align: center;
-  border: 2px solid #000;
-  box-sizing: content-box;
 }
 /* ─── microphone label ─────────────────────────────────────────────────── */
 
@@ -1007,6 +941,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 .control-transcript--screen .control-transcript__input { font-size: 16px; }
 :root[data-keyboard="up"] .control-transcript--screen { height: var(--m-vv-height, 100dvh); }
 .control-transcript--screen .control-transcript__composer { padding: 8px 12px; }
+.control-transcript--screen .control-transcript__controls { padding: 6px 12px 8px; }
 
 /* ─── Notifications, on the rocket (RocketButton.tsx) ─── */
 

@@ -94,7 +94,7 @@ describe('the phone’s Control transcript', () => {
     useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null })
   })
 
-  it('opens on a tap of the transcript button with the bar still up, the button a down arrow that closes it, and the microphone there', () => {
+  it('opens on a tap of the Control button with the bar still up, the button a down arrow that closes it, and the microphone there', () => {
     const { container, getByRole } = render(<MobileApp Canvas={() => null} />)
     fireEvent.click(getByRole('button', { name: /^Control transcript/ }))
     expect(container.querySelector('.control-transcript--screen')).not.toBeNull()

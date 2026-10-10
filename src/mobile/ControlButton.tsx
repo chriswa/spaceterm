@@ -1,61 +1,73 @@
+import type { CSSProperties } from 'react'
 import { controlLook, useReceptionistStore } from '@/stores/receptionistStore'
+import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
+import { ControlBadges, controlWhereabouts } from '@/components/ControlBadges'
 
 /**
- * Control, the receptionist, left of the microphone: whether Control speaks
- * here. Dim while another device holds it, or none (a small tag names the
- * one that does); solid white with a halo while it speaks on this phone; the
- * same with a slashed speaker while it is here but muted, writing to the
- * transcript instead; magenta while it is here but the voice last went to
- * Summary Chat. A ring turns while it thinks.
+ * Control, the receptionist, left of the microphone. A tap opens its
+ * transcript, or closes it (the icon is then a down arrow), and does nothing
+ * else: taking Control, letting it go and muting it are the transcript's.
  *
- * A tap mutes it when it speaks here, and otherwise has it speak here —
- * unmuted, and talked to again. Letting go of it altogether is the
- * transcript's (its header), as is everything about what was said.
+ * Its corners say how those stand (ControlBadges.tsx): muted or not top left,
+ * where Control is top right, and a count, as on the rocket, of replies
+ * written here muted and not read yet bottom right. Dim while Control is not
+ * here; magenta while it is but the voice last went to Summary Chat. A yellow
+ * ring while it thinks; while anything is said through it, bars in the colour
+ * of who is speaking — Control, or the agent it quotes — so a voice is never
+ * mistaken for the microphone.
  */
 export function ControlButton() {
+  const open = useControlTranscriptStore((s) => s.open)
   const target = useReceptionistStore((s) => s.target)
   const phase = useReceptionistStore((s) => s.phase)
   const error = useReceptionistStore((s) => s.error)
   const holder = useReceptionistStore((s) => s.holder)
+  const mutedHere = useReceptionistStore((s) => s.mutedHere)
+  const speaker = useReceptionistStore((s) => s.speaker)
+  const unread = useReceptionistStore((s) => s.unread.count)
   const look = controlLook(holder, target)
-  const muted = holder?.mine === true && holder.muted
-  const speaking = look === 'here' && !muted
+  const speaking = phase === 'speaking'
 
-  const label = error
-    ? `Control — ${error}`
-    : look === 'away'
-      ? holder ? `Control — on your ${holder.label}; tap to have it speak here` : 'Control — nobody holds it, so it works silently; tap to have it speak here'
-      : muted
-        ? 'Control — here, muted: it writes to the transcript; tap to have it speak'
-        : look === 'summary'
-          ? 'Control — here, but your voice goes to Summary Chat; tap to talk to Control'
-          : 'Control — speaking here; tap to mute it'
+  const label = open ? 'Close the Control transcript'
+    : `Control transcript — ${error ?? controlWhereabouts(holder, mutedHere)}${speaking ? `, ${speaker ?? 'Control'} speaking` : ''}${unread ? `, ${unread} unread` : ''}`
 
   return (
     <button
-      className={`m-control m-control--${look}${muted ? ' m-control--muted' : ''}${error ? ' m-control--error' : ''}`}
+      className={`m-control m-control--${look}${open ? ' m-control--open' : ''}${speaking ? ' m-control--speaking' : ''}${error ? ' m-control--error' : ''}`}
+      style={speaking ? { '--m-speaker': speakerColour(speaker) } as CSSProperties : undefined}
       // Thinking elsewhere is that device's to show.
       data-phase={look !== 'away' && phase === 'thinking' ? 'thinking' : 'ready'}
       aria-label={label}
-      aria-pressed={speaking}
-      onClick={() => window.api.receptionist.hold(speaking ? 'mute' : 'speak-here')}
+      aria-expanded={open}
+      onClick={() => useControlTranscriptStore.getState().setOpen(!open)}
     >
-      <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true">
-        <path d="M2.5 9.5V8a5.5 5.5 0 0 1 11 0v1.5" />
-        <rect x="1.75" y="8.5" width="2.5" height="4" rx="1" fill="currentColor" fillOpacity="0.25" />
-        <rect x="11.75" y="8.5" width="2.5" height="4" rx="1" fill="currentColor" fillOpacity="0.25" />
-        <path d="M13 12.5c0 1.5-1.5 2-3.5 2" />
-      </svg>
-      {muted && (
-        <span className="m-control__muted" aria-hidden="true">
-          {/* A speaker, struck through: here, but not speaking. */}
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1.5 4.5h2l3-2.5v8l-3-2.5h-2z" fill="currentColor" />
-            <path d="M8.5 4.5l3 3M11.5 4.5l-3 3" />
-          </svg>
-        </span>
+      {open ? (
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true">
+          {/* Down: the transcript goes away. */}
+          <path d="M8 2.5v10.5" />
+          <path d="M3.5 8.5 8 13l4.5-4.5" />
+        </svg>
+      ) : speaking ? (
+        <span className="m-control__bars" aria-hidden="true"><i /><i /><i /><i /></span>
+      ) : (
+        <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true">
+          {/* A headset: Control. */}
+          <path d="M2.5 9.5V8a5.5 5.5 0 0 1 11 0v1.5" />
+          <rect x="1.75" y="8.5" width="2.5" height="4" rx="1" fill="currentColor" fillOpacity="0.25" />
+          <rect x="11.75" y="8.5" width="2.5" height="4" rx="1" fill="currentColor" fillOpacity="0.25" />
+          <path d="M13 12.5c0 1.5-1.5 2-3.5 2" />
+        </svg>
       )}
-      {look === 'away' && holder && <span className="m-control__where" aria-hidden="true">{holder.label}</span>}
+      <ControlBadges />
+      {unread > 0 && <span className="control-badge control-badge--count" aria-hidden="true">{unread}</span>}
     </button>
   )
+}
+
+/** Control's voice is white; each agent's a hue of its own, the same every time it speaks. */
+export function speakerColour(speaker: string | null): string {
+  if (!speaker || speaker === 'Control') return '#ffffff'
+  let hash = 0
+  for (const char of speaker) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return `hsl(${hash % 360} 75% 70%)`
 }

@@ -80,17 +80,25 @@ time-to-reset.
 
 ## Control: here, muted, or let go
 
-The headset left of the microphone (`ControlButton.tsx`) means *Control speaks
-here*. Solid white with a halo, it does; a tap mutes it. Muted — a slashed
-speaker on it — Control stays on this phone but writes instead of speaking:
-its replies go into the transcript, unread until read, and the transcript
-button counts them as the rocket does. Dim (a tag naming the device that has
-it, if any), it is elsewhere; a tap brings it here, speaking. Magenta, it is
-here but the voice last went to Summary Chat; a tap talks to Control again.
-A ring turns while it thinks; speaking shows on the transcript button. The
-server takes each tap as said outright (`receptionist-hold`: `speak-here`,
-`mute`, `unmute`, `take`, `release`), so two devices pressing at once cannot
-cross.
+The headset left of the microphone (`ControlButton.tsx`) opens Control's
+transcript (below), and a tap does nothing else: taking Control, letting it go
+and muting it are the transcript's buttons. The headset's corners say how
+those stand (`ControlBadges.tsx`, shared with the Mac's toolbar button):
+
+| Corner | Shows |
+|---|---|
+| top left | a speech bubble: yellow with a cross while this phone has muted Control, white with a voice in it while not; faded while Control is not here, when it only says how Control would arrive |
+| top right | an eye while this phone holds Control; the holder's name (*Mac*) while another device does; nothing while nobody does |
+| bottom right | replies written here muted and not read yet, counted as the rocket does |
+
+Muted, Control stays on this phone but writes instead of speaking: its
+replies go into the transcript, unread until read. The headset is dim while
+Control is not here, and magenta while it is but the voice last went to
+Summary Chat. A yellow ring shows while it thinks, and while anything is said
+through it bars replace the headset in the colour of who is speaking — white
+for Control, a hue of their own for an agent it quotes. The server takes each
+of the transcript's presses as said outright (`receptionist-hold`: `mute`,
+`unmute`, `take`, `release`), so two devices pressing at once cannot cross.
 
 Being muted is the device's own, separate from holding Control, and outlasts
 handing Control away and back (`receptionistMuted` in the server state): a
@@ -98,7 +106,7 @@ phone can mute first and take Control after, and it arrives muted. A muted phone
 listener when it is not connected, so it can sleep (`stay-awake.ts` lets it):
 everything is waiting in the transcript when it wakes. Letting go of Control
 altogether — nobody hears it, and it tells you what you missed when you are
-back — is the transcript header's **Release**.
+back — is the transcript's **Release**.
 
 Neither holding Control nor the always-on microphone survives a relaunch: the
 app lets go of Control when it starts (`main.tsx`), and the microphone hold
@@ -106,22 +114,20 @@ starts off (`held-microphone.ts`). A mute does survive.
 
 ## Control's transcript
 
-The speech bubble right of the microphone (`TranscriptButton.tsx`) opens the
+The Control button opens the
 whole conversation with Control above the bottom bar, with a box to type to it
 (`ControlTranscript.tsx`, shared with the desktop, where it is a dialog).
-While anything is said through Control, bars move on the button in the
-colour of who is speaking — white for Control, a hue of their own for an
-agent it quotes. It reads Control's full record
+It reads Control's full record
 (`~/.spaceterm/receptionist/conversation.jsonl`), not its session, so
 compaction never shortens it: it opens at the newest — or at the first reply
 with words waiting for you, under a red Unread line — and loads older pages
 as you scroll up.
-Its header says where Control speaks, with two independent buttons — Mute
-or Unmute, and Take Control or Release — the
+Under the box to type in, a row says where Control speaks, with two
+independent buttons — Mute or Unmute, and Take Control or Release — the
 earpiece switch, and **Catch me up** while replies wait unread: Control comes
 here unmuted and sums them up aloud.
 
-While it is open the bar stays up: the transcript button is a down arrow that
+While it is open the bar stays up: the Control button is a down arrow that
 closes it, and the microphone talks to Control, whatever the voice target,
 with what it heard appearing at the bottom. It and the toolbar sheet are screens, not
 layers — opening one closes the other — and a one-finger sideways drag
@@ -201,14 +207,12 @@ whether the page still answers (`pageAnsweredMs`).
 ## The microphone
 
 The big button in the middle of the bottom bar (`MicButton.tsx`) is the
-phone's microphone, and only that; the rules for its gestures and looks are
-pure, in `mic-button.ts`.
+phone's microphone, and only that; the rules for its looks are pure, in
+`mic-button.ts`. It is a plain button: no long press, no drag.
 
 | Gesture | Does |
 |---|---|
 | tap | speak, and tap again to send — to Summary Chat, or to Control while it holds the voice target or its transcript is open. Over an answer, cuts it off and listens |
-| drag up | a lock rises above the thumb, as for a voice note in Messages; reaching it (48 px up) turns hands-free (below) on, or off if it was on. In the app it switches as the lock is reached, with a haptic; in a browser on letting go, the only moment a page may open a microphone |
-| long press | with Summary Chat, the sheet to abandon it; with Control, nothing |
 
 It looks the same however the listening started — a tap, "Control", the
 conversation window, or a composer's dictation:
@@ -232,7 +236,8 @@ the canvas, with no terminal open, it only says so.
 
 ## Hands-free: "Control, …"
 
-Dragging the microphone up onto its lock is the always-listen switch. While it
+The lock right of the microphone (`MicLockButton.tsx`), always on the bar, is
+the always-listen switch: a tap turns it on, and another off. While it
 holds the microphone, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
 phone taps (a haptic) and the button turns orange; nothing waits on that, since

@@ -30,8 +30,8 @@ interface ControlTranscriptState {
 
 /**
  * Control's transcript view: whether it is open, and what is on its way into
- * it. Its own store because what opens it — a long press on either Control
- * button — is a standalone widget that cannot reach the host that draws it
+ * it. Its own store because what opens it — the Control button, on the Mac
+ * and the phone — is a standalone widget that cannot reach the host that draws it
  * (`App` on the desktop, `MobileApp` on the phone), and because the phone's
  * talk button sends into it from outside it.
  */
