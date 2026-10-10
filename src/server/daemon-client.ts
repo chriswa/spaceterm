@@ -5,7 +5,7 @@ import { execFileSync } from 'child_process'
 import { DAEMON_SOCKET_PATH } from '../shared/protocol'
 import { LineParser } from './line-parser'
 
-const DAEMON_BIN = resolve(__dirname, '..', '..', 'pty-daemon', 'pty-daemon')
+export const DAEMON_BIN = resolve(__dirname, '..', '..', 'pty-daemon', 'pty-daemon')
 
 export interface DaemonMessage {
   type: string

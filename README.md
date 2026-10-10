@@ -144,7 +144,7 @@ which of them this machine has.
 | `jev` ([chriswa-devkit](https://github.com/chriswa/chriswa-devkit), `tools/jev`) | Agent search; Control's judgement of interruptions and its backlog | Agent search fails with "could not run jev"; Control loses those judgements | Needs [Bun](https://bun.sh) and a paid `TYPESAFE_API_KEY` in your shell's rc files. Put `bin/jev` on PATH. |
 | Tailscale | Reaching the phone app | No phone app | MagicDNS and HTTPS certificates on; see `npm run mobile:link` and `src/mobile/README.md` |
 | Xcode, an Apple ID, an iPhone | The native iPhone app (`npm run mobile:ios`) | Use the phone web app in Safari instead | Signing is per person: `src/mobile/ios/Local.xcconfig`, which the build tells you how to write. See `src/mobile/README.md`. |
-| AI Spend Tracker | Usage bars | Bars stay empty | Found in `/Applications` or `~/claude-usage-tracker/build` |
+| [AI Spend Tracker](https://github.com/chriswa/ai-spend-tracker) | The usage bars on the phone's bottom bar (Claude, Codex, Cursor rate-limit windows) | Bars stay empty | Download the notarized app from its releases into `/Applications`. Found while it is running wherever it lives; when it isn't, in `/Applications`, `~/Applications` or a `~/ai-spend-tracker/build` checkout, or set `SPACETERM_AI_SPEND` to its binary. |
 | tmux | `npm run et`, the emergency terminal | That command says tmux is required | `brew install tmux` |
 
 ### Cursor's status line

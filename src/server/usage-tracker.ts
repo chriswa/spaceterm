@@ -9,8 +9,8 @@ import { serverLog } from './server-log'
 const execFileAsync = promisify(execFile)
 
 /**
- * AI usage from AI Spend Tracker (~/claude-usage-tracker), for the phone's
- * corner readout.
+ * AI usage from AI Spend Tracker (https://github.com/chriswa/ai-spend-tracker),
+ * for the phone's corner readout.
  *
  * The tracker is a menu-bar app that fetches every provider's rate-limit
  * windows every five minutes. Its binary with `--json` prints what the running
@@ -28,9 +28,15 @@ export const STALE_RETRY_MS = 60_000
 export const FAILED_RETRY_MS = 10 * 60_000
 
 const APP_BINARY = 'Contents/MacOS/AISpendTracker'
-/** Where the app usually lives, for when it is not running: installed, or built from source. */
-const APP_CANDIDATES = [
+/**
+ * Where the app usually lives, for when it is not running: installed, or built
+ * from a source checkout in the home directory — under the repo's current name
+ * or the one it had before. Anywhere else, `SPACETERM_AI_SPEND` names the binary.
+ */
+export const APP_CANDIDATES = [
   join('/Applications', 'AI Spend Tracker.app', APP_BINARY),
+  join(homedir(), 'Applications', 'AI Spend Tracker.app', APP_BINARY),
+  join(homedir(), 'ai-spend-tracker', 'build', 'AI Spend Tracker.app', APP_BINARY),
   join(homedir(), 'claude-usage-tracker', 'build', 'AI Spend Tracker.app', APP_BINARY)
 ]
 

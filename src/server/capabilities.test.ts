@@ -25,7 +25,10 @@ function byId(capabilities: Capability[], id: string): Capability {
 describe('probeCapabilities', () => {
   it('reports every optional integration', () => {
     const ids = probeCapabilities(deps()).map((c) => c.id)
-    expect(ids).toEqual(['claude-print-daemon', 'voice-operator', 'pgrep', 'lsof', 'pty-daemon'])
+    expect(ids).toEqual([
+      'pty-daemon-binary', 'agent-claude', 'agent-cursor', 'agent-codex', 'git',
+      'claude-print-daemon', 'jev', 'voice-operator', 'pgrep', 'lsof', 'ai-spend-tracker', 'pty-daemon'
+    ])
   })
 
   it('marks everything available on a fully equipped machine', () => {
@@ -48,7 +51,7 @@ describe('probeCapabilities', () => {
   })
 
   it('says what each missing integration costs', () => {
-    const capabilities = probeCapabilities(deps({ which: () => undefined, isExecutable: () => false, exists: () => false }))
+    const capabilities = probeCapabilities(deps({ which: () => undefined, isExecutable: () => false, exists: () => false }), {})
     for (const c of capabilities) {
       expect(c.available).toBe(false)
       expect(c.affects, `${c.id} should say what breaks`).toBeTruthy()
@@ -68,6 +71,23 @@ describe('probeCapabilities', () => {
       expect(c.affects).toMatch(/Control/)
       expect(c.affects).toMatch(/auto-stamp/)
       expect(c.detail).toMatch(/PATH/)
+    })
+  })
+
+  describe('agent CLIs', () => {
+    it('says which surface type a missing CLI stops', () => {
+      const c = byId(probeCapabilities(deps({ which: (cmd) => cmd === 'agent' ? undefined : `/bin/${cmd}` })), 'agent-cursor')
+      expect(c.available).toBe(false)
+      expect(c.affects).toBe('Cursor surfaces cannot start')
+      expect(byId(probeCapabilities(deps()), 'agent-claude').detail).toBe('/bin/claude')
+    })
+  })
+
+  describe('AI Spend Tracker', () => {
+    it('takes SPACETERM_AI_SPEND over the known install paths', () => {
+      const c = byId(probeCapabilities(deps({ isExecutable: () => false }), { SPACETERM_AI_SPEND: '/x/AISpendTracker' }), 'ai-spend-tracker')
+      expect(c.available).toBe(true)
+      expect(c.detail).toBe('/x/AISpendTracker')
     })
   })
 
@@ -107,10 +127,10 @@ describe('formatCapabilityReport', () => {
 
   it('summarises what is missing by id, for grepping', () => {
     const lines = formatCapabilityReport(
-      probeCapabilities(deps({ which: () => undefined, isExecutable: () => false, exists: () => false }))
+      probeCapabilities(deps({ which: () => undefined, isExecutable: () => false, exists: () => false }), {})
     )
     const summary = lines[lines.length - 1]
-    expect(summary).toMatch(/5 of 5 unavailable/)
+    expect(summary).toMatch(/12 of 12 unavailable/)
     expect(summary).toContain('claude-print-daemon')
     expect(summary).toContain('voice-operator')
   })
