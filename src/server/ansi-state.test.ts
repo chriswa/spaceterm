@@ -4,7 +4,7 @@ import { applyAnsi, renderAnsiState, INITIAL_ANSI_STATE } from './ansi-state'
 /**
  * Tests for the cumulative-ANSI-state tracker that lets a truncated scrollback
  * be replayed without losing state set before the cut. See ansi-state.ts and
- * ANSI_PRESERVATION_BUG.md for what each of these categories corrupts when lost.
+ * docs/investigations/ansi-preservation.md for what each of these categories corrupts when lost.
  */
 
 /** Fold text into the initial state and render what would be re-emitted. */

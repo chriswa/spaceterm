@@ -75,7 +75,7 @@ describe('ScrollbackBuffer', () => {
     expect(b.getContents().length).toBe(TRIM_TARGET)
   })
 
-  // ─── ANSI preservation (see ANSI_PRESERVATION_BUG.md) ────────────────────────
+  // ─── ANSI preservation (see docs/investigations/ansi-preservation.md) ───
 
   it('re-establishes SGR state that was evicted by a trim', () => {
     const b = new ScrollbackBuffer()

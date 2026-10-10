@@ -12,7 +12,7 @@ export class ScrollbackBuffer {
    * trim and re-emitted ahead of the surviving tail by getContents(), so a client
    * replaying a truncated scrollback starts in the state the application expects
    * rather than the terminal default. See ansi-state.ts and
-   * ANSI_PRESERVATION_BUG.md.
+   * docs/investigations/ansi-preservation.md.
    */
   private evictedState: AnsiState = INITIAL_ANSI_STATE
 

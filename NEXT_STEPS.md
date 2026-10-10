@@ -262,6 +262,35 @@ done last session; kept so the reasoning is not lost.
     frame input; `watchDevicePixelRatio` in `cell-metrics.ts` is the other
     precedent.
 
+11. **ZWJ emoji are measured per component.** `@xterm/addon-unicode-graphemes`
+    (grapheme clusters, mode 2027) fixes width for sequences like 👨‍👩‍👧 and is
+    now on npm. Load it in *both* emulators — the server's headless terminal
+    (`snapshot-manager.ts`) and the visible one (`TerminalCard.tsx`) — or they
+    disagree on widths again, which is the Unicode 6/11 bug this replaced.
+12. **Open performance leads** from the last profiling session — `recalcStyle`
+    every frame, whether cost grows with uptime, nothing enforcing gated
+    `requestAnimationFrame`, unverified macOS occlusion, unattributed GPU
+    raster — with how to measure them: `docs/performance/potential-optimizations.md`.
+13. **Restore an archived subtree as remnants, not running agents.**
+    Unarchiving respawns every agent in the subtree at once, because that is
+    what a single-card restore has always done and keeping one rule was worth
+    more than the saving. A ten-surface group therefore starts ten agents on
+    one click — a real RAM and CPU spike. The alternative: restore terminals as
+    dead remnants that a click revives. The machinery exists
+    (`reincarnateTerminal`, and the remnant state a failed-to-launch pty leaves
+    behind); the work is choosing when to use it and making the remnant read as
+    "click to resume" rather than as a crash. Worth revisiting once there is a
+    feel for how large real archived subtrees get. (Deferred from subtree
+    archiving, 2026-09-09.)
+14. **Verbatim read-aloud speaks markdown syntax** — belongs to Voice Operator,
+    not here. Cmd+Ctrl+Shift+X hands the agent's final message over as written.
+    Voice Operator's `TTSPreprocess` handles character-level cases (drops `*`,
+    reads `/` as "slash", a `.` in a path as "dot", `-`/`_` between
+    alphanumerics as spaces) but not block structure: fenced code, `##`
+    headings, list markers and inline backticks reach the synthesizer
+    untouched. Fix it there, where the speech-shaping rules live and every
+    caller benefits. (Deferred from the Verbatim chord, 2026-09-16.)
+
 ### Productization — supporting users who are not the author
 
 10. ~~**Make the capability report reachable.**~~ Half done:
@@ -311,9 +340,17 @@ done last session; kept so the reasoning is not lost.
 
 - **No UTF-8 sanitizer.** The ESC-eats-the-escape defect does not reproduce
   against current xterm.js — tested by driving `@xterm/headless` with the exact
-  bytes rather than assumed. See the rewritten `Potential UTF Bug Fix.md`. The
-  investigation found a real bug next door instead (Unicode 6.0 vs 11.0 width
-  tables between the snapshot and visible terminals), which is fixed.
+  bytes rather than assumed: `e2 94` followed immediately by
+  `1b 5b 33 31 6d` parses the SGR normally, as it does when split across two
+  writes at the worst point and on the string path with the invalid bytes
+  already replaced by U+FFFD (what spaceterm delivers, since Go's
+  `json.Marshal` substitutes them). The daemon also holds back an incomplete
+  trailing UTF-8 sequence (`incompleteUTF8Tail`). The investigation found a
+  real bug next door instead (Unicode 6.0 vs 11.0 width tables between the
+  snapshot and visible terminals), which is fixed.
+- **Markdown cards keep a live CodeMirror each; no snapshots yet.** Deferred
+  until it measurably hurts — see `docs/performance/markdown-card-snapshots.md`
+  for the plan (html2canvas on blur, only when dirty) and what was rejected.
 - **`--ignore-scripts` still skips `electron-rebuild`**, and should: it compiles
   native modules against Electron's headers and the repo has no native
   dependencies of its own. Electron's *binary* download is no longer skipped —

@@ -13,7 +13,9 @@ that transcript for the reasoning behind any item here.
 
 ## How it works today (for orientation)
 
-- **Brain**: Haiku (no thinking) in one long-lived `claude -p` session
+- **Brain**: Sonnet with low effort (Haiku without thinking when this was
+  written; `RECEPTIONIST_MODEL` in `real-deps.ts` is the one line that picks
+  it) in one long-lived `claude -p` session
   through claude-print-daemon, with the instructions as its system prompt
   (a changed prompt starts a new session). Each turn sends only what is new:
   events, the user's words, and NOTEs (how much of an interrupted reply was
@@ -49,7 +51,7 @@ that transcript for the reasoning behind any item here.
   2 seconds. Each raises a toast with the tokens it used. Only agents started
   or resumed since the plugin carried the module can answer; the rest report
   `not-listening`. Forking (`--fork-session`) was removed: it missed the cache
-  (see issues #77306 and #93490 in `~/research/CLAUDE_CODE_BTW_VS_CACHE.md`),
+  (Claude Code issues #77306 and #93490),
   cost a process start per question, and needed a guard hook to stay
   read-only.
 - **Sending**: Ship it into the agent's PTY; Escape to interrupt. Every send
@@ -108,9 +110,10 @@ that transcript for the reasoning behind any item here.
 - **Smarter recall.** `recall` is a plain substring search, newest first.
   Ideas: search by time ("last night"), and read a stretch of the record
   around a hit.
-- **Benchmark Haiku against Sonnet**, with and without thinking and at a few
-  Sonnet effort levels, now that turns read the cache. The model is one line
-  (`RECEPTIONIST_MODEL` in `real-deps.ts`).
+- ~~**Benchmark Haiku against Sonnet**~~ Done, October 2026: Sonnet with low
+  thinking was about 0.7s slower per turn than Haiku without (1.78s median
+  against 1.05s) at roughly 1.3x the cost, and is on trial for its better
+  judgement. The reasoning is beside `RECEPTIONIST_MODEL` in `real-deps.ts`.
 - **Fork lineage.** Record where in a transcript a session was forked and from
   which session, so Control knows "this agent was forked from Kevin", across
   chains of forks.

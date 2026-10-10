@@ -19,7 +19,7 @@ node references the new session ID anymore, so Cmd+K can't find it.
 
 Claude Code transcripts live under `~/.claude/projects/<cwd-slug>/<session-id>.jsonl`,
 where the slug is the project cwd with `/` replaced by `-` (e.g.
-`/Users/chriswaddell/Sightline` → `-Users-chriswaddell-Sightline`).
+`/Users/you/project` → `-Users-you-project`).
 
 ```bash
 find ~/.claude/projects -name "<session-id>*"

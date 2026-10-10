@@ -21,6 +21,13 @@ import type { MetaDocNodeData, MetaGroupNodeData, MetaHostEntry, NodeData } from
 import { asNodeId, ROOT_NODE_ID, type NodeId } from '../shared/ids'
 import { serverLog } from './server-log'
 
+/*
+ * Agent Meta: live cards for the CLAUDE.md and SKILL.md files around a
+ * directory. The design — which cards persist, why generated cards are kept off
+ * disk, how saves filter them, and the known gaps — is in
+ * docs/design/agent-meta.md.
+ */
+
 const RESCAN_DEBOUNCE_MS = 250
 
 /** Cancels a scheduled callback. Calling it after the callback ran is a no-op. */

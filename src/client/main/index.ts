@@ -298,6 +298,8 @@ function setupIPC(): void {
   })
 
   // --- Perf capture ---
+  // Writes ~/.spaceterm/perf-captures/trace-*.json; analyse one with
+  // `node scripts/perf/analyze-trace.mjs <trace>` (or deep-dive.mjs for GPU/compositor).
 
   const perfDir = join(SOCKET_DIR, 'perf-captures')
 
@@ -357,7 +359,9 @@ function setupIPC(): void {
 
 app.setName('Spaceterm')
 
-// Strategy 6: Chromium GPU flags to increase tile memory headroom
+// More GPU tile memory headroom for a canvas of many terminal cards. Chromium
+// treats these as hints, not limits: they help, but are not reliable on their
+// own, which is why offscreen terminals are also kept out of the DOM entirely.
 app.commandLine.appendSwitch('force-gpu-mem-available-mb', '4096')
 app.commandLine.appendSwitch('enable-gpu-rasterization')
 app.commandLine.appendSwitch('enable-zero-copy')

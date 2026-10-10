@@ -7,8 +7,9 @@
  * switch, a scroll region, a charset shift — stays in effect until something
  * changes it. Cutting the stream at a byte offset silently discards any such
  * sequence that was still active, and every byte after the cut was written by
- * the application assuming it was still set. See ANSI_PRESERVATION_BUG.md for
- * the failure cascade this produces with full-screen (react-ink) applications.
+ * the application assuming it was still set. See
+ * docs/investigations/ansi-preservation.md for the failure cascade this
+ * produces with full-screen (react-ink) applications.
  *
  * The approach: fold the discarded prefix into a small state record, then re-emit
  * that state ahead of the surviving tail. This preserves what was set, unlike

@@ -1,6 +1,6 @@
 # ANSI Preservation Bug
 
-## Status: fixed (state loss), with one related issue outstanding
+## Status: fixed, along with the related race
 
 `ScrollbackBuffer` now folds the ANSI state of the evicted prefix into a carried
 state record on every trim, and `getContents()` re-emits that state ahead of the
@@ -18,8 +18,9 @@ autowrap, application cursor keys), and RIS. Cursor *position* is deliberately
 not carried — the replayed tail repositions the cursor itself, and a stale
 absolute position would be worse than none.
 
-Still outstanding: the separate race condition described at the end of this
-document, where live data reaches the client xterm before the scrollback replay.
+The separate race described at the end of this document — live data reaching
+the client xterm before the scrollback replay — is fixed too: `TerminalCard.tsx`
+holds live data in `pendingData` until the replay has finished.
 
 The analysis below is retained because it explains what each category of lost
 state corrupts, which is what the tests assert.
@@ -126,7 +127,7 @@ A single lost state-setting sequence at the truncation point corrupts every subs
 ## Data Flow Reference
 
 ```
-node-pty (PTY)
+pty-daemon (Go, PTY)
   │
   ├──→ ScrollbackBuffer.write(data)     // accumulates raw bytes, truncates at 1MB
   │      └── getContents() → replayed to client on attach
@@ -159,4 +160,4 @@ Send the snapshot (converted to ANSI) as the initial state, then append a bounde
 
 ## Related: Separate Race Condition
 
-There is also a race condition where live data is written to the client xterm before the scrollback is replayed (see `TerminalCard.tsx:380` vs `:358`). That bug is independent of this one but compounds the symptoms. Even if the scrollback were perfectly preserved, the race condition alone can cause garbled output.
+*Fixed since (see Status).* There was also a race condition where live data was written to the client xterm before the scrollback was replayed. That bug is independent of this one but compounds the symptoms. Even if the scrollback were perfectly preserved, the race condition alone can cause garbled output.

@@ -275,7 +275,7 @@ around a card. Every mod
 worth writing is a Tier 1 mod and a Tier 2 mod with a wire between them, and
 that wire is the thing that was missing.
 
-The earlier reading of this — recorded in `THEME_MODS.md` — was that a mod
+The earlier reading of this — recorded in `docs/design/theme-mods.md` — was that a mod
 cannot own an IPC channel, so features like Summary Chat were blocked. That is
 true and beside the point. **A mod does not need its own channel; it needs an
 envelope.**
@@ -334,7 +334,7 @@ its shape. Against today's `ScriptHost`:
 | Find the newest transcript | `resolveTranscript` — **have it** |
 | Call an external HTTP service, spawn a model | the mod is its own process — **needs nothing** |
 | Push status to its own UI | the envelope — **Tier 3** |
-| Draw the bubble, the halo | facets — **built** (`THEME_MODS.md`) |
+| Draw the bubble, the halo | facets — **built** (`docs/design/theme-mods.md`) |
 | Speak | `SpeakServerMessage` is core today; a mod needs either a `speak` capability on `ScriptHost` or to route through its renderer half |
 | Remember which surface is the voice target | a per-mod key-value store, or the mod keeps its own file |
 

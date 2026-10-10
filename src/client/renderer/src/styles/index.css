@@ -825,7 +825,9 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
-  /* Strategy 7: Skip GPU tile creation for offscreen/unfocused cards */
+  /* Skip GPU tile creation for offscreen cards. This only avoids creating
+     tiles: neither it nor display:none or visibility:hidden frees tiles a card
+     already has — only removing the element from the DOM does. */
   content-visibility: auto;
   contain-intrinsic-size: auto 600px 400px;
 }
