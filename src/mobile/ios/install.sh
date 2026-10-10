@@ -12,7 +12,48 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
-bundle_id=com.chriswaddell.spaceterm
+config="$here/Local.xcconfig"
+
+# Who signs the app. Each person building it signs with their own Apple team,
+# so this lives in a file that is not committed (see .gitignore).
+xcconfig_value() {
+  [ -f "$config" ] || return 0
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\([^[:space:]/]*\).*/\1/p" "$config" | tail -1
+}
+team_id="$(xcconfig_value DEVELOPMENT_TEAM)"
+bundle_id="$(xcconfig_value PRODUCT_BUNDLE_IDENTIFIER)"
+if [ -z "$team_id" ] || [ -z "$bundle_id" ]; then
+  # The teams Xcode is signed in to (Xcode → Settings → Accounts), to suggest one.
+  teams="$(defaults export com.apple.dt.Xcode - 2>/dev/null | python3 -c '
+import plistlib, sys
+try:
+    prefs = plistlib.loads(sys.stdin.buffer.read())
+except Exception:
+    sys.exit(0)
+seen = set()
+for teams in (prefs.get("IDEProvisioningTeamByIdentifier") or {}).values():
+    for t in teams:
+        if t.get("teamID") and t["teamID"] not in seen:
+            seen.add(t["teamID"])
+            print("  DEVELOPMENT_TEAM = %s   // %s (%s)" % (t["teamID"], t.get("teamName", ""), t.get("teamType", "")))
+' || true)"
+  echo "The iPhone app needs your own Apple signing team and bundle id, in"
+  echo "src/mobile/ios/Local.xcconfig (not committed). Create it with:"
+  echo
+  echo "  DEVELOPMENT_TEAM = <your team id>"
+  echo "  PRODUCT_BUNDLE_IDENTIFIER = com.<you>.spaceterm"
+  echo
+  if [ -n "$teams" ]; then
+    echo "Teams Xcode knows on this Mac:"
+    echo "$teams"
+  else
+    echo "Xcode has no team on this Mac yet: sign in under Xcode → Settings → Accounts"
+    echo "(a free Apple ID works), then run this again to see your team id."
+  fi
+  echo
+  echo "Spaceterm's iPhone app isn't set up on this Mac yet: create src/mobile/ios/Local.xcconfig."
+  exit 1
+fi
 
 # This Mac's pairing URL, then any other Mac's from ~/.spaceterm/other-macs:
 # the app tries them all and keeps whichever answers first.
@@ -74,6 +115,7 @@ xcodebuild \
   -configuration Release \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
+  -xcconfig "$config" \
   SYMROOT="$here/build" \
   SPACETERM_URLS="$urls" \
   SPACETERM_NATIVE_VERSION="$native_version" \

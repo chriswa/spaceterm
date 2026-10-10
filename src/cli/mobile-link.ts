@@ -15,9 +15,9 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { SOCKET_DIR } from '../shared/protocol'
 import { DEFAULT_WEB_PORT, loadOrCreateWebToken, readOtherMacUrls } from '../server/web-gateway'
-import { parseMacs, macsProblems, pairingHost } from './mobile-macs'
+import { parseMacs, macsProblems, macsListFor, pairingHost, LOCAL_MACS_LIST } from './mobile-macs'
 
-const MACS_FILE = join(__dirname, '..', 'mobile', 'ios', 'macs')
+const REPO_ROOT = join(__dirname, '..', '..')
 
 const TAILSCALE_CANDIDATES = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']
 
@@ -52,7 +52,9 @@ if (urlOnly) {
 if (allUrls) {
   const own = `https://${dnsName}/#token=${token}`
   const others = readOtherMacUrls(SOCKET_DIR)
-  const problems = macsProblems({ required: parseMacs(readFileSync(MACS_FILE, 'utf8')), own: dnsName!, others })
+  const list = macsListFor(existsSync(join(REPO_ROOT, LOCAL_MACS_LIST)))
+  const required = parseMacs(readFileSync(join(REPO_ROOT, list), 'utf8'))
+  const problems = macsProblems({ required, list, own: dnsName!, others })
   if (problems.length) {
     console.error(problems.join('\n'))
     process.exit(1)

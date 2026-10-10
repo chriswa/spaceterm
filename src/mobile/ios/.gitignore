@@ -1,3 +1,5 @@
 build/
 xcuserdata/
 *.xcworkspace/xcuserdata/
+Local.xcconfig
+macs.local

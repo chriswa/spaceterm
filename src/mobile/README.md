@@ -394,10 +394,19 @@ npm run mobile:ios        # build, sign, install on the paired iPhone, launch
 A phone that moves between tailnets — home and work, say — needs every Mac's
 address, and the app tries them all at launch and keeps whichever answers
 first. `ios/macs` (committed) names each Mac by tailnet host name;
+`ios/macs.local` (not committed), when it exists, replaces it — that is how
+someone building their own copy lists their own Macs.
 `~/.spaceterm/other-macs` (private, since it carries tokens) holds the other
 Macs' pairing URLs, one `npm run mobile:link -- --url` line each. The build
-refuses, saying what to fill in, when this Mac is not in `ios/macs` or a listed
+refuses, saying what to fill in, when this Mac is not in the list or a listed
 Mac has no line in `other-macs` (`src/cli/mobile-macs.ts`).
+
+Signing is per person, so it is not committed either: `ios/Local.xcconfig`
+holds `DEVELOPMENT_TEAM` and `PRODUCT_BUNDLE_IDENTIFIER`, and `install.sh`
+passes it to `xcodebuild -xcconfig`. Without it the build stops before doing
+anything and prints the file to write, with the team ids Xcode is signed in to
+on this Mac (Xcode → Settings → Accounts). A free Apple ID works; its builds
+expire after seven days.
 
 Once only: accept Apple's latest Program License Agreement at
 developer.apple.com (signing fails until you do); pair the phone in Xcode →

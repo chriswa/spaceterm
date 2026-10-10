@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMacs, pairingHost, macsProblems } from './mobile-macs'
+import { parseMacs, pairingHost, macsProblems, macsListFor, LOCAL_MACS_LIST } from './mobile-macs'
 
 const HOME = 'home.tail1.ts.net'
 const WORK = 'work.tail2.ts.net'
@@ -30,6 +30,22 @@ describe('macsProblems', () => {
     const problems = macsProblems({ required: [WORK], own: HOME, others: [workUrl] })
     expect(problems).toHaveLength(1)
     expect(problems[0]).toMatch(/src\/mobile\/ios\/macs does not list this Mac \(home\.tail1\.ts\.net\)/)
+  })
+
+  it('offers someone else\'s copy a private list instead of committing to this one', () => {
+    const [problem] = macsProblems({ required: [WORK], own: HOME, others: [] })
+    expect(problem).toContain(`put your Macs in ${LOCAL_MACS_LIST}`)
+    expect(problem).toContain(`starting with this line: ${HOME}`)
+  })
+
+  it('names the private list, and only asks for this Mac, once that list is in use', () => {
+    const problems = macsProblems({ required: [], list: LOCAL_MACS_LIST, own: HOME, others: [] })
+    expect(problems).toEqual([`${LOCAL_MACS_LIST} does not list this Mac (${HOME}): add that line`])
+  })
+
+  it('reads the private list when there is one', () => {
+    expect(macsListFor(true)).toBe(LOCAL_MACS_LIST)
+    expect(macsListFor(false)).toBe('src/mobile/ios/macs')
   })
 
   it('says which Mac is missing from other-macs and how to get its line', () => {

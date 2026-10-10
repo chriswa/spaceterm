@@ -3,12 +3,22 @@
  * build an app that knows them all.
  *
  * `src/mobile/ios/macs` (committed) names each Mac by its tailnet host name.
+ * `src/mobile/ios/macs.local` (not committed), when present, replaces it, so
+ * someone building their own copy lists their own Macs without touching it.
  * `~/.spaceterm/other-macs` (private: it carries tokens) holds the pairing
  * URL of every Mac but this one. A build checks the two against each other and
  * refuses, saying exactly what to fill in, so that an app built on any Mac
  * reaches every Mac — and so that the Mac missing from the list is the one
  * that gets told.
  */
+
+export const MACS_LIST = 'src/mobile/ios/macs'
+export const LOCAL_MACS_LIST = 'src/mobile/ios/macs.local'
+
+/** Which list a build reads: the private one if it exists, else the committed one. */
+export function macsListFor(hasLocalList: boolean): string {
+  return hasLocalList ? LOCAL_MACS_LIST : MACS_LIST
+}
 
 /** Host names from the committed list: one per line, blanks and `#` comments skipped. */
 export function parseMacs(text: string): string[] {
@@ -27,8 +37,10 @@ export function pairingHost(url: string): string | null {
 }
 
 export interface MacsCheck {
-  /** Hosts in `src/mobile/ios/macs`. */
+  /** Hosts in the list this build reads (see `macsListFor`). */
   required: string[]
+  /** That list's repo-relative path; defaults to the committed one. */
+  list?: string
   /** This Mac's tailnet host name. */
   own: string
   /** Lines of `~/.spaceterm/other-macs`. */
@@ -39,10 +51,13 @@ export interface MacsCheck {
  * What stops this Mac building an app that reaches every listed Mac: each a
  * line saying what to fill in and where. Empty means build.
  */
-export function macsProblems({ required, own, others }: MacsCheck): string[] {
+export function macsProblems({ required, own, others, list = MACS_LIST }: MacsCheck): string[] {
   const problems: string[] = []
   if (!required.includes(own)) {
-    problems.push(`src/mobile/ios/macs does not list this Mac (${own}): add that line and commit it, so apps built elsewhere reach it too`)
+    problems.push(list === MACS_LIST
+      ? `${MACS_LIST} does not list this Mac (${own}): add that line and commit it, so apps built elsewhere reach it too.`
+        + ` If this is your own copy of Spaceterm rather than another of that list's Macs, put your Macs in ${LOCAL_MACS_LIST} instead (not committed; it replaces the list), starting with this line: ${own}`
+      : `${list} does not list this Mac (${own}): add that line`)
   }
   const bad = others.filter((url) => !pairingHost(url))
   for (const url of bad) {
