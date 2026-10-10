@@ -83,7 +83,7 @@ export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): 
     id: 'claude-print-daemon',
     name: 'claude-print-daemon',
     available: claudePrint !== undefined,
-    detail: claudePrint ?? `${CLAUDE_PRINT_BIN} not found on PATH (build it with go build and put it on PATH, or set CLAUDE_PRINT_DAEMON_BIN)`,
+    detail: claudePrint ?? `${CLAUDE_PRINT_BIN} not found on PATH (chriswa-devkit tools/claude-print-daemon; build it into bin/ with go build, or set CLAUDE_PRINT_DAEMON_BIN)`,
     affects: claudePrint ? '' : 'Control and Summary Chat cannot reach Claude and report an error on every turn; auto-stamp icons all fail'
   })
 

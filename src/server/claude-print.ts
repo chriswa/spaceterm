@@ -5,7 +5,7 @@ import * as os from 'os'
 import * as path from 'path'
 
 /**
- * Client for claude-print-daemon (~/claude-print-daemon), which keeps
+ * Client for claude-print-daemon (chriswa-devkit's tools/claude-print-daemon), which keeps
  * `claude -p` processes started and waiting so a reply costs roughly the API's
  * own latency rather than Claude Code's startup.
  *
