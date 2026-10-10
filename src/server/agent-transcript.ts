@@ -150,11 +150,11 @@ function renderToolRun(calls: ToolCall[]): string {
  * quietly wrong for every tool added after it was written. This ordering reads
  * the right field for each of the tools that actually appear — `file_path` for
  * Read and Edit, `pattern` for Grep and Glob, `command` for Bash, `url` for
- * WebFetch, `description` for Task — and degrades to "no target" rather than to
+ * WebFetch, `description` for Task, `skill` for Skill — and degrades to "no target" rather than to
  * a wrong one.
  */
 const TOOL_TARGET_KEYS = [
-  'file_path', 'notebook_path', 'pattern', 'command', 'url', 'path', 'description', 'query', 'prompt',
+  'skill', 'file_path', 'notebook_path', 'pattern', 'command', 'url', 'path', 'description', 'query', 'prompt',
 ]
 
 function toolTarget(input: unknown): string | undefined {
@@ -273,6 +273,11 @@ export function lastAgentProse(messages: TranscriptMessage[]): string {
 }
 
 function extractEntry(entry: Record<string, any>): Extracted[] {
+  // Claude Code files what it injects — a loaded skill's whole SKILL.md, above
+  // all — as a user turn marked `isMeta`. Taken as speech, it became the
+  // anchor: an agent that ended by loading self-terminate read back as its
+  // prompt and then the skill's text, as though the user had pasted it.
+  if (entry.isMeta === true) return []
   // Claude's transcript shape, and Cursor's, which differ only in whether the
   // role sits on `type` or `role`.
   const role = entry.type === 'user' || entry.type === 'assistant' ? entry.type

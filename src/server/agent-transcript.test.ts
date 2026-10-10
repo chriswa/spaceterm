@@ -198,6 +198,23 @@ describe('parseTranscript', () => {
   it('handles an empty document', () => {
     expect(parseTranscript('')).toEqual([])
   })
+
+  // The shape of an agent that loaded self-terminate: Claude Code files the
+  // skill's text as a user turn, marked isMeta. Read as speech, it displaced
+  // the real prompt as the turn's anchor.
+  it('skips what Claude Code injects as a meta user turn', () => {
+    const raw = [
+      line({ type: 'user', message: { content: 'find the compaction time, then self-terminate' } }),
+      line({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'self-terminate' } }] } }),
+      line({ type: 'user', message: { content: [{ type: 'tool_result', content: 'Launching skill: self-terminate' }] } }),
+      line({ type: 'user', isMeta: true, message: { content: [{ type: 'text', text: 'Base directory for this skill: …' }] } }),
+    ].join('\n')
+
+    expect(parseTranscript(raw)).toEqual([
+      { role: 'user', text: 'find the compaction time, then self-terminate' },
+      { role: 'assistant', text: '[agent tool activity, not speech] 1 call: Skill.\n- Skill: self-terminate' },
+    ])
+  })
 })
 
 describe('tool activity in a transcript', () => {
