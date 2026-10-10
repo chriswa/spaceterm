@@ -84,28 +84,25 @@ function missingSpans(length: number, taken: readonly Span[]): Span[] {
 
 /**
  * How a stretch of a part is drawn: taken in, `missed`, `waiting`, or — while
- * the voice is on it — the word being `said` and what is still `unsaid`.
+ * the voice is on it — still `unsaid`.
  */
-export type SegmentKind = 'taken' | 'missed' | 'waiting' | 'said' | 'unsaid'
+export type SegmentKind = 'taken' | 'missed' | 'waiting' | 'unsaid'
 
 /** A stretch of a part, from character `from`. */
 export interface Segment { text: string; from: number; kind: SegmentKind }
 
 /**
  * A part's text in segments, for drawing: as `view` has it, or, while the
- * voice is `played` characters into it, as far as it has got.
+ * voice says the reply, what it has said of the part taken in and the rest
+ * `unsaid`. `played` already runs to the end of the word being said (see the
+ * server's `playedLengths`), so that word is simply the last one lit.
  */
 export function segments(text: string, view: PartView | undefined, played?: number): Segment[] {
   if (played !== undefined) {
-    if (played >= text.length) return [{ text, from: 0, kind: 'taken' }]
-    const start = Math.max(0, played)
-    const wordStart = start + (text.slice(start).length - text.slice(start).trimStart().length)
-    const space = text.slice(wordStart).search(/\s/)
-    const wordEnd = space < 0 ? text.length : wordStart + space
+    const said = Math.min(Math.max(0, played), text.length)
     return [
-      { text: text.slice(0, wordStart), from: 0, kind: 'taken' as const },
-      { text: text.slice(wordStart, wordEnd), from: wordStart, kind: 'said' as const },
-      { text: text.slice(wordEnd), from: wordEnd, kind: 'unsaid' as const },
+      { text: text.slice(0, said), from: 0, kind: 'taken' as const },
+      { text: text.slice(said), from: said, kind: 'unsaid' as const },
     ].filter(segment => segment.text)
   }
   const out: Segment[] = []

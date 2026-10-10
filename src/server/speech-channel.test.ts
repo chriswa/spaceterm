@@ -269,6 +269,8 @@ describe('SpeechChannel', () => {
     await flush()
     expect(failed.failures).toEqual([{ kind: 'synthesis_failed' }])
     expect(failed.channel.phase).toBe('ready')
+    // Silence, not an answer heard in full.
+    expect(await failed.channel.heardPrefix()).toBe(0)
 
     expect(speechFailureMessage({ kind: 'synthesis_failed' }, 'the summary'))
       .toBe('Voice Operator could not turn the summary into speech.')

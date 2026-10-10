@@ -274,9 +274,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** One part, ready for the speech backend: words and the voice to say them in. */
 export type SpokenPart = { text: string; voice?: string }
 
-/** A spoken part, and how much of its start is the "Kevin here." the model never wrote. */
-export type RenderedPart = SpokenPart & { introLength: number }
-
 /** What an agent token resolves to when it is spoken: its name, assigned on first use, and its voice. */
 export type Speaker = { name: string; voice: string }
 
@@ -286,7 +283,9 @@ export type Speaker = { name: string; voice: string }
  * Agent tokens become names, and an agent's own part is introduced in its own
  * voice — "Kevin here." — whenever the voice changes to it, so the voice and
  * the name arrive together and the listener learns which is which. The
- * receptionist's parts get no introduction.
+ * receptionist's parts get no introduction. The introduction is part of the
+ * text from here on: the record, the transcript and every offset into a part
+ * count it, so what is read is what is heard.
  *
  * `resolve` takes a token as written, without its braces, and assigns a name
  * the first time an agent is spoken of, which is the whole of when names get
@@ -297,7 +296,7 @@ export function renderSpeech(
   say: readonly SayPart[],
   resolve: (ref: string) => Speaker | undefined,
   controlVoice: string,
-): RenderedPart[] {
+): SpokenPart[] {
   const named = (text: string): string => nameAgents(text, ref => resolve(ref)?.name)
   let previousVoice: string | undefined
   return say.map(part => {
@@ -307,13 +306,15 @@ export function renderSpeech(
     // the one rule the voices exist for.
     if (!speaker) {
       previousVoice = controlVoice
-      return { text: named(part.text), voice: controlVoice, introLength: 0 }
+      return { text: named(part.text), voice: controlVoice }
     }
     // Introduced when the speaker changes, not on every part: an agent quoted
     // twice in a row is still the one voice already introduced.
-    const intro = previousVoice === speaker.voice ? '' : `${speaker.name} here. `
+    // Not twice, when the model wrote it anyway.
+    const text = named(part.text)
+    const introduced = previousVoice === speaker.voice || new RegExp(`^${escapeRegExp(speaker.name)} here\\b`, 'i').test(text)
     previousVoice = speaker.voice
-    return { text: `${intro}${named(part.text)}`, voice: speaker.voice, introLength: intro.length }
+    return { text: introduced ? text : `${speaker.name} here. ${text}`, voice: speaker.voice }
   })
 }
 
@@ -391,32 +392,34 @@ export function redactSpoken<P extends SpokenPart>(parts: readonly P[], heard: n
 }
 
 /**
- * How far the voice has got into each part of a reply being spoken, as the
- * record stores the part (its spoken intro left off). `heard` is as for
- * `redactSpoken`; unlike `heardLengths`, the word being said counts as far as
- * the voice has got into it.
+ * How far the voice has got into each part of a reply being spoken: through
+ * the word it is saying, all of each part before it, and none of each part
+ * after. `heard` is as for `redactSpoken`, though the voice reports it just
+ * past the word sounding; one that lands inside a word is taken to the end of
+ * it, so the word being said is always lit whole.
  */
-export function playedLengths(parts: readonly RenderedPart[], heard: number): number[] {
+export function playedLengths(parts: readonly SpokenPart[], heard: number): number[] {
   let start = 0
   return parts.map(part => {
     const at = Math.min(Math.max(0, heard - start), part.text.length)
     start += part.text.length + 1
-    return Math.max(0, at - part.introLength)
+    if (at === 0) return 0
+    const rest = part.text.slice(at).search(/\s/)
+    return /\S/.test(part.text[at - 1]) && rest !== 0 ? (rest < 0 ? part.text.length : at + rest) : at
   })
 }
 
 /**
- * How much of each part of a cut-off reply was heard, as the record stores
- * the part (its spoken intro left off): what the transcript view leaves
- * standing, striking out the rest. `heard` is as for `redactSpoken`, and the
- * word the voice was cut off in counts as unheard, as there.
+ * How much of each part of a cut-off reply was heard: what the transcript
+ * view leaves standing, striking out the rest. `heard` is as for
+ * `redactSpoken`, and the word the voice was cut off in counts as unheard, as
+ * there.
  */
-export function heardLengths(parts: readonly RenderedPart[], heard: number): number[] {
+export function heardLengths(parts: readonly SpokenPart[], heard: number): number[] {
   let start = 0
   return parts.map(part => {
     const at = Math.min(Math.max(0, heard - start), part.text.length)
     start += part.text.length + 1
-    const cut = at >= part.text.length ? at : interruptedWordStart(part.text, at)
-    return Math.max(0, cut - part.introLength)
+    return at >= part.text.length ? at : interruptedWordStart(part.text, at)
   })
 }

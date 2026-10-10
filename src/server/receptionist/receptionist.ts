@@ -22,7 +22,7 @@ import {
 } from './self-interruption'
 import {
   actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet,
-  type RenderedPart, type Reply, type SayPart, type SpokenPart, type ToolCall,
+  type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, PAUSE_MS, type PauseJudgement, type PauseVerdict } from './backlog-pause'
@@ -121,12 +121,11 @@ export interface AgentRanking {
 type RecordMessage = { role: 'user' | 'assistant'; content: string }
 
 /**
- * A message as it goes into the record. A reply also keeps, beside what the
- * model sees of it, how it reached the user — `delivery: 'text'` when written
- * to a muted device — and each part's voice and spoken introduction, so that
- * it can be replayed as it was said.
+ * A message as it goes into the record. A reply also keeps how it reached the
+ * user — `delivery: 'text'` when written to a muted device — and each part's
+ * voice, so that it can be replayed as it was said.
  */
-export type RecordedMessage = RecordMessage & { delivery?: 'text'; voices?: string[]; intros?: string[] }
+export type RecordedMessage = RecordMessage & { delivery?: 'text'; voices?: string[] }
 
 
 export interface ReceptionistDeps {
@@ -457,14 +456,14 @@ export class Receptionist {
   /** What the session before this one wrote for it, on new instructions: see `handOver`. Sent once, with the first message. */
   private handover: string | undefined
   /** The last reply spoken, so an interruption can say how much of it was heard. */
-  private lastSpoken?: RenderedPart[]
+  private lastSpoken?: SpokenPart[]
   /** Where `lastSpoken` is in the record, so an interruption can mark it there too. */
   private lastSpokenAt?: number
   private events: ReceptionistEvent[] = []
   /** A self-interruption check is under way; see `maybeInterruptSelf`. */
   private judging = false
   /** The reply last judged, and how many events it was judged against: each piece of news is weighed once per reply. */
-  private judgedFor: { spoken: RenderedPart[]; events: number } | undefined
+  private judgedFor: { spoken: SpokenPart[]; events: number } | undefined
   /** Control cut its own reply short for news: the next turn opens with "Hang on." and tells the model so. */
   private selfInterrupted = false
   /** Agents being watched for their next stop: `deps.watches`, which outlives the server. See `WatchKind`. */
@@ -2169,7 +2168,7 @@ export class Receptionist {
    * of. Returns which agents came up, first mention first.
    */
   private render(say: readonly SayPart[], agents: readonly RosterAgent[]): {
-    spoken: RenderedPart[]; mentioned: NodeId[]; speakers: string[]
+    spoken: SpokenPart[]; mentioned: NodeId[]; speakers: string[]
   } {
     const handles = this.handles(agents)
     const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
@@ -2235,11 +2234,11 @@ export class Receptionist {
     const reading = this.reading
     const at = this.deps.record.append([{
       role: 'assistant', content: storedReply(froms, spoken),
-      voices: spoken.map(part => part.voice ?? RECEPTIONIST_VOICE), intros: spoken.map(part => part.text.slice(0, part.introLength)),
+      voices: spoken.map(part => part.voice ?? RECEPTIONIST_VOICE),
       ...(reading ? { delivery: 'text' as const } : {}),
     }])[0]
     if (at !== undefined && spoken.length) {
-      this.ledger.delivered(at, spoken.map(part => part.text.slice(part.introLength)), reading ? 'text' : 'spoken')
+      this.ledger.delivered(at, spoken.map(part => part.text), reading ? 'text' : 'spoken')
       if (reading) this.onUnread(this.ledger.unread())
     }
     // After the reply, so the transcript's reasoning reads as it happened: silence, then the watch kept.
@@ -2262,7 +2261,12 @@ export class Receptionist {
       furthest = heard
       this.onSpeaking({ of: at, parts: playedLengths(spoken, heard) })
     }
+    // Dim from the start, in the same tick the reply joins the transcript:
+    // otherwise it shows lit until the voice first reports where it is.
+    reached(0)
     const monitoring = await this.channel.deliver(attempt, parts, undefined, (progress) => {
+      // The voice failed: whatever it did not say waits for the user to read, and the model is told.
+      if (progress.kind === 'ended' && progress.state === 'synthesis_failed') void this.noteInterruption('failed')
       if (progress.kind !== 'playing') return
       const index = starts.filter(start => start <= progress.heard).length - 1
       const now = speakers[Math.max(0, index)]
@@ -2278,7 +2282,7 @@ export class Receptionist {
    * says it, for the transcript's lit word: the job's change feed moves only
    * a sentence at a time.
    */
-  private async followVoice(spoken: RenderedPart[], reached: (heard: number) => void): Promise<void> {
+  private async followVoice(spoken: SpokenPart[], reached: (heard: number) => void): Promise<void> {
     while (this.lastSpoken === spoken && this.channel.isProducing()) {
       await this.deps.voiceTick()
       const offset = await this.channel.liveOffset()
@@ -2403,10 +2407,10 @@ export class Receptionist {
    * heard: the session keeps the whole reply, and the next answer must not
    * build on words nobody heard. `cause`: the user talked over it, Control cut
    * in on itself, or it was `lost` — the user left, moved, or muted it, or the
-   * server went down — so what they missed waits for them rather than being
-   * struck out: see `ConsumptionLedger.settle`.
+   * server went down — or the voice `failed`, and what they missed waits for
+   * them rather than being struck out: see `ConsumptionLedger.settle`.
    */
-  private noteInterruption(cause: 'user' | 'self' | 'lost', stopping?: Promise<unknown>): Promise<boolean> {
+  private noteInterruption(cause: Interruption, stopping?: Promise<unknown>): Promise<boolean> {
     // One at a time, each after what stopped the speech: noted while a stop is
     // still dropping the job, the cut would be lost along with the reply.
     const noted = this.interruptions.then(async () => {
@@ -2417,7 +2421,7 @@ export class Receptionist {
     return noted
   }
 
-  private async takeInterruption(cause: 'user' | 'self' | 'lost'): Promise<boolean> {
+  private async takeInterruption(cause: Interruption): Promise<boolean> {
     const heard = await this.channel.heardPrefix()
     const spoken = this.lastSpoken
     const spokenAt = this.lastSpokenAt
@@ -2428,7 +2432,7 @@ export class Receptionist {
     if (heard === undefined || !spoken) return false
     if (spokenAt !== undefined) {
       const lengths = heardLengths(spoken, heard)
-      const waiting = cause === 'lost' || muted
+      const waiting = cause === 'lost' || cause === 'failed' || muted
       this.deps.record.amendHeard(spokenAt, lengths, waiting)
       this.ledger.heard(spokenAt, lengths, waiting)
       if (waiting) this.onUnread(this.ledger.unread())
@@ -2437,6 +2441,10 @@ export class Receptionist {
     const audible = kept.map(part => part.text).join(' ')
     if (muted) {
       this.notes.push(`The user muted you partway through your last reply. They heard only: "${audible}". The rest is shown to them as text, which they may not have read yet; do not assume they know it.`)
+      return true
+    }
+    if (cause === 'failed') {
+      this.notes.push(`${audible === INTERRUPTED_MARKER ? 'None of your last reply was heard' : `Your last reply was cut short: they heard only "${audible}"`}, because Voice Operator could not turn it into speech. What they did not hear is shown to them as text, which they may not have read yet; do not assume they know it.`)
       return true
     }
     if (cause === 'self') {
@@ -2451,6 +2459,9 @@ export class Receptionist {
     return true
   }
 }
+
+/** Why a reply stopped short of the user: see `noteInterruption`. */
+type Interruption = 'user' | 'self' | 'lost' | 'failed'
 
 function emptyNews(): ReturnNews {
   return { events: [], unheard: false }
@@ -2550,9 +2561,9 @@ function unspokenNote(calls: readonly ToolCall[]): string {
     (actions.length ? ` ${notDoneNote(actions, 'none of it was said')}` : '')
 }
 
-/** A reply as the model sees it later: what was actually spoken, without the introductions it never wrote. */
-function storedReply(froms: readonly string[], spoken: readonly RenderedPart[]): string {
-  const say: SayPart[] = spoken.map((part, i) => ({ from: froms[i], text: part.text.slice(part.introLength) }))
+/** A reply as the record keeps it: what was actually spoken, introductions and all, so the transcript reads as it was heard. */
+function storedReply(froms: readonly string[], spoken: readonly SpokenPart[]): string {
+  const say: SayPart[] = spoken.map((part, i) => ({ from: froms[i], text: part.text }))
   return JSON.stringify({ say })
 }
 

@@ -114,8 +114,10 @@ export function parseRecordLine(line: string, offset: number, nameOf: NameOf = N
 /**
  * Part `part` of a reply line as it was said, for a replay: the words, the
  * "Kevin here." they were spoken with in front of them (or nothing), and the
- * voice they were spoken in. Undefined for a line that is not a reply, or one recorded
- * before replies kept their voices.
+ * voice they were spoken in. Replies now keep the introduction in their words;
+ * `intros` is how replies recorded before that kept it apart. Undefined for
+ * a line that is not a reply, or one recorded before replies kept their
+ * voices.
  */
 export function spokenPart(line: string, part: number): { intro: string; text: string; voice: string } | undefined {
   let raw: { role?: unknown; content?: unknown; voices?: unknown; intros?: unknown }

@@ -3994,8 +3994,7 @@ html, body, #root {
 .control-transcript__unread-line::after { content: ''; flex: 1; border-top: 1px solid var(--ct-unread); }
 .control-transcript__read-all { display: flex; justify-content: center; }
 
-/* While the voice says a reply: the word being said, lit, and what is still to come, dim. */
-.control-transcript__said { background: color-mix(in srgb, var(--ct-accent) 30%, transparent); border-radius: 3px; }
+/* While the voice says a reply: what is still to come, dim. The word being said is the last one lit. */
 .control-transcript__unsaid { color: var(--ct-dim); }
 
 /* What Control has said since the user's last message: a click on a word marks it as where they stopped. */

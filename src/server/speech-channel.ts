@@ -585,12 +585,14 @@ export class SpeechChannel {
 }
 
 /**
- * A job that stopped before the listener heard all of it: talked over, or
- * cancelled by a client that went away. The channel's own cancel never gets
- * here — its monitor has already let go of the job.
+ * A job that stopped before the listener heard all of it: talked over,
+ * cancelled by a client that went away, or failed in synthesis — Voice
+ * Operator down or restarting — which leaves the rest as unheard as any cut.
+ * The channel's own cancel never gets here — its monitor has already let go
+ * of the job.
  */
 function wasCutOff(state: SpeechStatus['state']): boolean {
-  return state === 'interrupted_by_user' || state === 'cancelled_by_client'
+  return state === 'interrupted_by_user' || state === 'cancelled_by_client' || state === 'synthesis_failed'
 }
 
 /**

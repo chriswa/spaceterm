@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseAgentRef } from './agent-token'
-import { CONTROL, isBlocking, parseReply, redactSpoken, renderSpeech, silencedIfQuiet, type Speaker } from './reply'
+import { CONTROL, isBlocking, parseReply, playedLengths, redactSpoken, renderSpeech, silencedIfQuiet, type Speaker } from './reply'
 
 const KEVIN: Speaker = { name: 'Kevin', voice: 'am_michael' }
 const resolveKevin = (handle: string): Speaker | undefined => handle === 'a1' ? KEVIN : undefined
@@ -100,8 +100,8 @@ describe('renderSpeech', () => {
       { from: 'a1', text: 'The solver is done.' },
     ], resolveKevin, 'af_heart')
     expect(parts).toEqual([
-      { text: 'Kevin is on the water simulation.', voice: 'af_heart', introLength: 0 },
-      { text: 'Kevin here. The solver is done.', voice: 'am_michael', introLength: 'Kevin here. '.length },
+      { text: 'Kevin is on the water simulation.', voice: 'af_heart' },
+      { text: 'Kevin here. The solver is done.', voice: 'am_michael' },
     ])
   })
 
@@ -113,6 +113,11 @@ describe('renderSpeech', () => {
       { from: 'a1', text: 'Third.' },
     ], resolveKevin, 'af_heart')
     expect(parts.map(part => part.text)).toEqual(['Kevin here. First.', 'Second.', 'Meanwhile.', 'Kevin here. Third.'])
+  })
+
+  it('does not introduce an agent twice when the model wrote the introduction itself', () => {
+    const [part] = renderSpeech([{ from: 'a1', text: 'Kevin here. Done.' }], resolveKevin, 'af_heart')
+    expect(part.text).toBe('Kevin here. Done.')
   })
 
   it('never lends an agent voice to a part from an unknown handle', () => {
@@ -187,8 +192,8 @@ describe('renderSpeech: each agent named once', () => {
 
 describe('redactSpoken', () => {
   const parts = [
-    { text: 'Kevin is done.', voice: 'af_heart', introLength: 0 },
-    { text: 'Kevin here. The solver works now.', voice: 'am_michael', introLength: 12 },
+    { text: 'Kevin is done.', voice: 'af_heart' },
+    { text: 'Kevin here. The solver works now.', voice: 'am_michael' },
   ]
 
   it('keeps everything when all of it was heard', () => {
@@ -207,5 +212,19 @@ describe('redactSpoken', () => {
     const kept = redactSpoken(parts, 6)
     expect(kept).toHaveLength(1)
     expect(kept[0].text).toMatch(/INTERRUPTED/)
+  })
+})
+
+describe('playedLengths', () => {
+  const parts = [{ text: 'Kevin is done.' }, { text: 'Kevin here. The solver works.' }, { text: 'Ada here.' }]
+  const second = parts[0].text.length + 1
+
+  it('runs through the word being said, and leaves the parts not yet reached at none', () => {
+    expect(playedLengths(parts, second + 'Kevin'.length)).toEqual([14, 5, 0])
+    expect(playedLengths(parts, second + 'Kevin here. The so'.length)).toEqual([14, 'Kevin here. The solver'.length, 0])
+  })
+
+  it('lights nothing before the voice starts', () => {
+    expect(playedLengths(parts, 0)).toEqual([0, 0, 0])
   })
 })

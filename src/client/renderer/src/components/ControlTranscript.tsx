@@ -541,8 +541,8 @@ function EntryRow({ entry, previous, parts, unreadLine, markable, played, replay
 
 /**
  * A part of a reply: what the user missed of it struck out, what waits for
- * them shown so, and while the voice says it, the word being said lit and
- * the rest still to come dim. `markable`: each word is drawn on its own, so
+ * them shown so, and while the voice says it, what it has yet to say dim.
+ * `markable`: each word is drawn on its own, so
  * a click says which.
  */
 function PartText({ text, view, played, markable }: { text: string; view?: PartView; played?: number; markable?: boolean }) {

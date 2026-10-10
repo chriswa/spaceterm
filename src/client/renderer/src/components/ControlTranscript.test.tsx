@@ -392,18 +392,22 @@ describe('ControlTranscript and what the user took in', () => {
     act(() => useReceptionistStore.setState({ phase: 'ready' }))
   })
 
-  it('lights the word being said as the voice goes', async () => {
+  it('lights what the voice has said, and dims every part it has yet to reach', async () => {
     bridge.responses.controlTranscript = () => ({
-      entries: [{ offset: 0, timestamp: at, kind: 'reply', parts: [{ from: 'Control', text: 'Kevin is done.' }, { from: 'Kevin', text: 'The solver works.' }] }],
+      entries: [{ offset: 0, timestamp: at, kind: 'reply', parts: [
+        { from: 'Control', text: 'Kevin is done.' }, { from: 'Kevin', text: 'Kevin here. The solver works.' }, { from: 'Ada', text: 'Ada here. Mine too.' },
+      ] }],
       more: false,
     })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await findBubble('Kevin is done.')
-    act(() => bridge.emit.receptionistSpeaking({ of: 0, parts: [14, 4] }))
-    expect(document.querySelector('.control-transcript__said')?.textContent).toBe('solver')
-    expect(document.querySelector('.control-transcript__unsaid')?.textContent).toBe(' works.')
+    const unsaid = () => [...document.querySelectorAll('.control-transcript__unsaid')].map(span => span.textContent)
+    act(() => bridge.emit.receptionistSpeaking({ of: 0, parts: [5, 0, 0] }))
+    expect(unsaid()).toEqual([' is done.', 'Kevin here. The solver works.', 'Ada here. Mine too.'])
+    act(() => bridge.emit.receptionistSpeaking({ of: 0, parts: [14, 22, 0] }))
+    expect(unsaid()).toEqual([' works.', 'Ada here. Mine too.'])
     act(() => bridge.emit.receptionistSpeaking(null))
-    expect(document.querySelector('.control-transcript__said')).toBeNull()
+    expect(unsaid()).toEqual([])
   })
 
   it('plays a part again, and stops it', async () => {

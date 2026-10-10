@@ -594,6 +594,27 @@ describe('Receptionist', () => {
     expect(h.spoken).toHaveLength(1)
   })
 
+  it('leaves a reply the voice failed to say waiting to be read, and tells the model', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('None of your last reply was heard, because Voice Operator could not turn it into speech.')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+      speechEnds: { state: 'synthesis_failed' },
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
+    expect(h.heardMarks).toEqual([{ replyAt: at, parts: [0], unread: true }])
+    expect(h.receptionist.unread()).toEqual({ count: 1, first: at })
+    await h.receptionist.hear('and?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
   it('tells the model how much of an interrupted reply was heard', async () => {
     const h = harness({
       replies: [
@@ -611,9 +632,9 @@ describe('Receptionist', () => {
     await h.receptionist.hear('wait, what?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
-    // And marks it in the record, for the transcript: all of Control's part, "The " of Kevin's.
+    // And marks it in the record, for the transcript: all of Control's part, "Kevin here. The " of Kevin's.
     const replyAt = h.record.findIndex(message => message.content.includes('The solver works'))
-    expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length] }])
+    expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'Kevin here. The '.length] }])
   })
 
   it('drops a reply still held back when the user\'s words arrive, and tells the model none of it was heard', async () => {
@@ -2167,7 +2188,7 @@ describe('Receptionist across a server restart mid-reply', () => {
     await before.receptionist.shutdown()
     const replyAt = before.record.findIndex(message => message.content.includes('The solver works'))
     // The user was not cut off by their own doing: the rest waits for them, unread.
-    expect(before.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'The '.length], unread: true }])
+    expect(before.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'Kevin here. The '.length], unread: true }])
     const after = harness({
       carryStore,
       replies: [(turn) => {
@@ -3186,7 +3207,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
     await flush()
     expect(h.spoken).toEqual([])
     const at = h.record.findIndex(message => message.content.includes('Kevin is done.'))
-    expect(h.record[at]).toMatchObject({ delivery: 'text', voices: [RECEPTIONIST_VOICE], intros: [''] })
+    expect(h.record[at]).toMatchObject({ delivery: 'text', voices: [RECEPTIONIST_VOICE] })
     expect(h.receptionist.unread()).toEqual({ count: 1, first: at })
   })
 
@@ -3246,7 +3267,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
       replies: [
         reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
         (turn) => {
-          expect(turn.prompt).toContain('They stopped taking in your words after "Kevin is done. The solver works", and cut in there: they did not take in "and the tests pass."')
+          expect(turn.prompt).toContain('They stopped taking in your words after "Kevin is done. Kevin here. The solver works", and cut in there: they did not take in "and the tests pass."')
           return reply([{ from: 'control', text: 'Sure.' }])
         },
       ],
@@ -3254,8 +3275,8 @@ describe('Receptionist muted, and what the user has taken in', () => {
     await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
     const at = h.record.findIndex(message => message.content.includes('The solver works'))
-    h.receptionist.mark(at, 1, 'The solver works'.length)
-    expect(h.heardMarks).toEqual([{ replyAt: at, parts: ['Kevin is done.'.length, 'The solver works'.length] }])
+    h.receptionist.mark(at, 1, 'Kevin here. The solver works'.length)
+    expect(h.heardMarks).toEqual([{ replyAt: at, parts: ['Kevin is done.'.length, 'Kevin here. The solver works'.length] }])
     await h.receptionist.hear('which tests?', 'typed')
     await flush()
     expect(h.turns).toHaveLength(2)
@@ -3276,10 +3297,10 @@ describe('Receptionist muted, and what the user has taken in', () => {
     await flush()
     const at = h.record.findIndex(message => message.content.includes('The solver works'))
     h.receptionist.mark(at, 0, 'Kevin'.length)
-    h.receptionist.mark(at, 1, 'The solver works and the tests pass.'.length)
+    h.receptionist.mark(at, 1, 'Kevin here. The solver works and the tests pass.'.length)
     expect(h.heardMarks).toEqual([
       { replyAt: at, parts: ['Kevin'.length, 0] },
-      { replyAt: at, parts: ['Kevin is done.'.length, 'The solver works and the tests pass.'.length] },
+      { replyAt: at, parts: ['Kevin is done.'.length, 'Kevin here. The solver works and the tests pass.'.length] },
     ])
     await h.receptionist.hear('ok', 'typed')
     await flush()
@@ -3348,12 +3369,15 @@ describe('Receptionist muted, and what the user has taken in', () => {
     speech.heard('Kevin is done. Kevin here. The sol'.length)
     await flush()
     const at = h.record.findIndex(message => message.content.includes('The solver works'))
-    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done.'.length, 'The sol'.length] })
+    // Dim as it joins the transcript, before the voice reports anything.
+    expect(h.speaking.find(Boolean)).toEqual({ of: at, parts: [0, 0] })
+    // Lit to the end of the word it is in, and counting the introduction the voice said.
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done.'.length, 'Kevin here. The solver'.length] })
     // Asked outright, without a change for the feed to wake on.
-    speech.quietly('Kevin is done. Kevin here. The solver'.length)
+    speech.quietly('Kevin is done. Kevin here. The solver works'.length)
     tick()
     await flush()
-    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done.'.length, 'The solver'.length] })
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done.'.length, 'Kevin here. The solver works.'.length] })
     h.receptionist.mark(at, 0, 'Kevin'.length)
     expect(h.heardMarks).toEqual([])
     speech.end('completed')
@@ -3396,7 +3420,7 @@ describe('Receptionist muted, and what the user has taken in', () => {
     await flush()
     expect(h.spoken).toEqual([{ content: [{ text: 'Kevin here. The solver works.', voice: h.assigned.get(KEVIN_ID)!.voice }] }])
     expect(playing).toEqual([true, false])
-    expect(h.consumedMarks).toEqual([{ of: at, part: 1, from: 0, to: 'The solver works.'.length, how: 'replayed' }])
+    expect(h.consumedMarks).toEqual([{ of: at, part: 1, from: 0, to: 'Kevin here. The solver works.'.length, how: 'replayed' }])
   })
 
   it('catches the user up on what they have not read, and counts it taken in', async () => {

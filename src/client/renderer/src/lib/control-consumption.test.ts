@@ -54,11 +54,15 @@ describe('segments', () => {
     ])
   })
 
-  it('lights the word the voice is on, and dims what it has yet to say', () => {
-    expect(segments('Kevin is done.', undefined, 6)).toEqual([
-      { text: 'Kevin ', from: 0, kind: 'taken' }, { text: 'is', from: 6, kind: 'said' }, { text: ' done.', from: 8, kind: 'unsaid' },
+  it('lights what the voice has said, and dims what it has yet to say', () => {
+    expect(segments('Kevin is done.', undefined, 8)).toEqual([
+      { text: 'Kevin is', from: 0, kind: 'taken' }, { text: ' done.', from: 8, kind: 'unsaid' },
     ])
     expect(segments('Kevin is done.', undefined, 14)).toEqual([{ text: 'Kevin is done.', from: 0, kind: 'taken' }])
+  })
+
+  it('lights nothing of a part the voice has not reached', () => {
+    expect(segments('Kevin is done.', undefined, 0)).toEqual([{ text: 'Kevin is done.', from: 0, kind: 'unsaid' }])
   })
 })
 
