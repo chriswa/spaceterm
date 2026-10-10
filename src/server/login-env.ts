@@ -38,6 +38,9 @@ const SHELL_OWN_VARS = new Set(['PWD', 'OLDPWD', 'SHLVL', '_'])
 
 type StatListener = (cur: Stats, prev: Stats) => void
 
+/** Shells that accept `+m` (job control off) at invocation. See `refresh`. */
+const NO_JOB_CONTROL_SHELLS = new Set(['zsh', 'bash', 'sh', 'dash', 'ksh'])
+
 const CAPTURE_TIMEOUT_MS = 10_000
 const RC_POLL_INTERVAL_MS = 2_000
 
@@ -100,9 +103,17 @@ export class LoginShellEnv implements LoginEnvSource {
       return
     }
     this.inFlight = true
+    // `+m`: no job control. An interactive zsh otherwise makes itself the
+    // foreground process group of the controlling terminal — the one the
+    // server was started from — and does not hand it back on exit, so after
+    // one capture Ctrl+C in that terminal reaches nothing. Detaching
+    // (setsid) does not prevent it; zsh reacquires the TTY. dash does the
+    // same. Only shells known to take `+m` get it: elsewhere (fish, nu,
+    // xonsh) it would be read as a script name and break the capture.
+    const jobControl = NO_JOB_CONTROL_SHELLS.has(basename(this.shell)) ? ['+m'] : []
     const child = execFile(
       this.shell,
-      ['-l', '-i', '-c', `printf '\\0${MARKER}\\0'; env -0`],
+      ['-l', '-i', ...jobControl, '-c', `printf '\\0${MARKER}\\0'; env -0`],
       {
         env: scrubInheritedAgentEnv(process.env),
         cwd: process.env.HOME || homedir(),

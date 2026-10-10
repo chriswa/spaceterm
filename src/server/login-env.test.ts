@@ -59,7 +59,7 @@ describe('LoginShellEnv', () => {
     env = new LoginShellEnv(shell)
     expect(env.current()).toBeNull()
     await vi.waitFor(() => expect(env!.current()).toEqual({ FRESH: 'yes' }))
-    expect(readFileSync(join(dir!, 'argv'), 'utf8')).toMatch(/^-l -i -c /)
+    expect(readFileSync(join(dir!, 'argv'), 'utf8')).toMatch(/^-l -i \+m -c /)
   })
 
   it('keeps the previous capture when a later one fails', async () => {
