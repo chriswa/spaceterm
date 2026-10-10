@@ -97,7 +97,7 @@ if (!token) {
     installStayAwake()
     // Listens for "Control" on the held microphone; see hands-free.ts.
     installHandsFree(window.api)
-    // Summary Chat speaks here, not on the Mac (browserPlatform's playsSpeech).
+    // Control speaks here, not on the Mac, while this phone holds it.
     startSpeechPlayer(window.api.remoteSpeech, (message) => window.api.log(message))
     const { MobileApp } = await import('./MobileApp')
     root.render(

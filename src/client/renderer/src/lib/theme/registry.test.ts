@@ -23,7 +23,7 @@ describe('namespacing', () => {
   afterEach(resetFacetRegistryForTests)
 
   it('treats a colon as the mark of a mod facet', () => {
-    expect(isModFacetId('summary-chat:bubble')).toBe(true)
+    expect(isModFacetId('chatter:bubble')).toBe(true)
     expect(isModFacetId('background')).toBe(false)
   })
 
@@ -33,13 +33,13 @@ describe('namespacing', () => {
 
   it('rejects a half-empty namespace', () => {
     expect(() => registerFacet({ id: ':bubble', defaultValue: 1 })).toThrow(/non-empty/)
-    expect(() => registerFacet({ id: 'summary-chat:', defaultValue: 1 })).toThrow(/non-empty/)
+    expect(() => registerFacet({ id: 'chatter:', defaultValue: 1 })).toThrow(/non-empty/)
   })
 
   it('lets two mods use the same facet name under different namespaces', () => {
-    registerFacet({ id: 'summary-chat:bubble', defaultValue: 'a' })
+    registerFacet({ id: 'chatter:bubble', defaultValue: 'a' })
     registerFacet({ id: 'weather:bubble', defaultValue: 'b' })
-    expect(resolveRegisteredFacet('summary-chat:bubble', 'default', undefined)).toBe('a')
+    expect(resolveRegisteredFacet('chatter:bubble', 'default', undefined)).toBe('a')
     expect(resolveRegisteredFacet('weather:bubble', 'default', undefined)).toBe('b')
   })
 })
@@ -48,7 +48,7 @@ describe('resolution', () => {
   beforeEach(() => {
     resetFacetRegistryForTests()
     registerFacet({
-      id: 'summary-chat:bubble',
+      id: 'chatter:bubble',
       defaultValue: 'speech',
       byTheme: { concentric: 'technical' },
     })
@@ -56,16 +56,16 @@ describe('resolution', () => {
   afterEach(resetFacetRegistryForTests)
 
   it('falls back to the default for a theme the mod has never heard of', () => {
-    expect(resolveRegisteredFacet('summary-chat:bubble', 'nebula', undefined)).toBe('speech')
+    expect(resolveRegisteredFacet('chatter:bubble', 'nebula', undefined)).toBe('speech')
   })
 
   it('uses the mod\'s own per-theme variant when it has one', () => {
     // The dependency arrow: the mod names a base theme, never the reverse.
-    expect(resolveRegisteredFacet('summary-chat:bubble', 'concentric', undefined)).toBe('technical')
+    expect(resolveRegisteredFacet('chatter:bubble', 'concentric', undefined)).toBe('technical')
   })
 
   it('lets a theme override beat the mod\'s variant', () => {
-    expect(resolveRegisteredFacet('summary-chat:bubble', 'concentric', 'custom')).toBe('custom')
+    expect(resolveRegisteredFacet('chatter:bubble', 'concentric', 'custom')).toBe('custom')
   })
 })
 
@@ -103,7 +103,7 @@ describe('core facets', () => {
   it('expose their ids for anything that needs to enumerate them', () => {
     resetFacetRegistryForTests()
     registerFacet({ id: 'background', defaultValue: 1 })
-    registerFacet({ id: 'summary-chat:bubble', defaultValue: 2 })
-    expect(registeredFacetIds()).toEqual(['background', 'summary-chat:bubble'])
+    registerFacet({ id: 'chatter:bubble', defaultValue: 2 })
+    expect(registeredFacetIds()).toEqual(['background', 'chatter:bubble'])
   })
 })

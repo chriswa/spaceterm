@@ -24,9 +24,8 @@ describe('speakableToolText', () => {
       expect(rendered).toContain('(Visibility)')
     })
 
-    // The listener's next move is to pick one. A summary naming only the topic
-    // sends them back to the screen, which is the trip Summary Chat exists to
-    // save them.
+    // The listener's next move is to pick one. An account naming only the
+    // topic sends them back to the screen.
     it('renders the options with their descriptions', () => {
       expect(rendered).toContain('Include it (Recommended)')
       expect(rendered).toContain('Recovery only')
@@ -35,7 +34,7 @@ describe('speakableToolText', () => {
       expect(rendered).toContain('a constant in the queue module')
     })
 
-    it('says who is asking, so a summary does not attribute it to the listener', () => {
+    it('says who is asking, so an account of it does not attribute it to the listener', () => {
       expect(rendered.startsWith('The agent is asking the user to decide:')).toBe(true)
     })
   })
@@ -59,8 +58,8 @@ describe('speakableToolText', () => {
     })
   })
 
-  // Machinery, not a message. A spoken summary that recited Bash invocations
-  // would bury the one sentence the listener pressed the chord for.
+  // Machinery, not a message. A spoken account that recited Bash invocations
+  // would bury the one sentence the listener wanted.
   it('renders nothing for tools whose input is not the message', () => {
     expect(speakableToolText('Bash', { command: 'ls' })).toBeUndefined()
     expect(speakableToolText('Grep', { pattern: 'x' })).toBeUndefined()
@@ -69,7 +68,7 @@ describe('speakableToolText', () => {
   /**
    * These payloads cross a socket from another process and may move on without
    * this code. Rendering nothing is the required failure — a throw here lands
-   * inside a chord press and takes the whole summary with it.
+   * inside a transcript read and takes the whole account with it.
    */
   describe('malformed input', () => {
     it.each([

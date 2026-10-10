@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'crypto'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { serverLog } from '../server-log'
-import { INTERRUPTED_MARKER, lastAgentProse, type TranscriptMessage } from '../summary-chat'
+import { lastAgentProse, type TranscriptMessage } from '../agent-transcript'
+import { INTERRUPTED_MARKER } from '../unheard'
 import { joinSpeechParts, speechPartStarts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import { ConsumptionLedger, type ConsumedHow, type Via } from './consumption'
@@ -35,8 +36,8 @@ import {
 /**
  * Control: one voice conversation about every live agent.
  *
- * Summary Chat is a conversation *about one surface*; this is a conversation
- * about all of them, which is what lets "what's Kevin up to?" mean anything.
+ * A conversation about every surface at once, which is what lets "what's
+ * Kevin up to?" mean anything.
  * It reads transcripts, asks agents side questions their transcripts do not answer,
  * passes the user's messages on to agents as though the user had typed them,
  * and watches agents the user is waiting to hear from.
@@ -154,7 +155,7 @@ export interface ReceptionistDeps {
   findAgents(query: string, agents: readonly RosterAgent[]): Promise<AgentRanking>
   /** Every live Claude Code surface, freshly read. */
   agents(): RosterAgent[]
-  /** The transcript's recent window, as Summary Chat reads it. */
+  /** The transcript's recent window (`readTranscript` in agent-transcript.ts). */
   readTranscript(path: string): TranscriptMessage[]
   /** The whole transcript, for searches. */
   readWholeTranscript(path: string): TranscriptMessage[]
@@ -455,6 +456,8 @@ export class Receptionist {
   private notes: string[] = []
   /** What the session before this one wrote for it, on new instructions: see `handOver`. Sent once, with the first message. */
   private handover: string | undefined
+  /** The compaction last shown in the transcript (its `compactsAt`), so a message sent again does not show it twice. */
+  private compactionShown?: number
   /** The last reply spoken, so an interruption can say how much of it was heard. */
   private lastSpoken?: SpokenPart[]
   /** Where `lastSpoken` is in the record, so an interruption can mark it there too. */
@@ -1376,6 +1379,12 @@ export class Receptionist {
       const consumption = this.ledger.note()
       if (consumption) notes.push(consumption)
       const recap = forgets(session) ? renderRecap(earlier) : undefined
+      if (recap && session?.compactsAt !== undefined && session.compactsAt !== this.compactionShown) {
+        // Shown when the compacted session is next used, which can be an hour after the compaction itself.
+        this.compactionShown = session.compactsAt
+        const minutes = Math.round((Date.now() - session.compactsAt) / 60_000)
+        this.trace('compacted', `Memory compacted ${minutes < 1 ? 'just now' : `${minutes} min ago`}: its last few messages were repeated to it word for word`)
+      }
       // The old session's notes go to the first message of the new one.
       const handover = sessionId ? undefined : this.handover
       const message = [

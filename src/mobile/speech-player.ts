@@ -5,9 +5,9 @@ import { recordMobileEvent } from './mobile-events'
 import { nativeSpeech } from './native-microphone'
 
 /**
- * Plays speech sent to this phone (src/server/remote-speech.ts): Summary
- * Chat's answers, synthesized by Voice Operator on the Mac and sent here a
- * sentence at a time.
+ * Plays speech sent to this phone (src/server/remote-speech.ts): Control's
+ * replies while this phone holds it, synthesized by Voice Operator on the Mac
+ * and sent here a sentence at a time.
  *
  * Sentences are scheduled back to back on the audio clock as they arrive, so
  * a fast synthesizer plays without gaps and a slow one simply pauses between

@@ -8,8 +8,8 @@ import { MOD_CAPABILITIES, isModCapability, parseModManifest } from './mod-manif
  */
 
 const VALID = {
-  id: 'summary-chat',
-  name: 'Summary Chat',
+  id: 'chatter',
+  name: 'Chatter',
   version: '1.0.0',
   protocolVersion: 1,
   capabilities: ['read-nodes', 'emit-mod'],
@@ -20,7 +20,7 @@ describe('a valid manifest', () => {
     const parsed = parseModManifest(VALID)
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    expect(parsed.manifest).toMatchObject({ id: 'summary-chat', capabilities: ['read-nodes', 'emit-mod'] })
+    expect(parsed.manifest).toMatchObject({ id: 'chatter', capabilities: ['read-nodes', 'emit-mod'] })
   })
 
   it('defaults the name to the id and the version to 0.0.0', () => {
@@ -45,7 +45,7 @@ describe('a manifest that cannot be trusted', () => {
     ['no id', 'id must match', { protocolVersion: 1, capabilities: [] }],
     ['an id with a colon', 'id must match', { ...VALID, id: 'my:mod' }],
     ['an id starting with a digit', 'id must match', { ...VALID, id: '1mod' }],
-    ['an uppercase id', 'id must match', { ...VALID, id: 'SummaryChat' }],
+    ['an uppercase id', 'id must match', { ...VALID, id: 'Chatter' }],
     ['no protocolVersion', 'protocolVersion', { id: 'x', capabilities: [] }],
     ['a fractional protocolVersion', 'protocolVersion', { ...VALID, protocolVersion: 1.5 }],
     ['no capabilities', 'capabilities must be an array', { id: 'x', protocolVersion: 1 }],
@@ -89,17 +89,17 @@ describe('mod-provided capabilities', () => {
   it('accepts a namespaced capability nothing has provided yet', () => {
     // The provider may simply not be installed. A manifest should not become
     // invalid because of what is missing beside it.
-    const parsed = parseModManifest({ ...VALID, capabilities: ['summary-chat:speak'] })
+    const parsed = parseModManifest({ ...VALID, capabilities: ['chatter:speak'] })
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    expect(parsed.manifest.capabilities).toEqual(['summary-chat:speak'])
+    expect(parsed.manifest.capabilities).toEqual(['chatter:speak'])
   })
 
   it('records what a mod provides', () => {
-    const parsed = parseModManifest({ ...VALID, provides: ['summary-chat:speak'] })
+    const parsed = parseModManifest({ ...VALID, provides: ['chatter:speak'] })
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    expect(parsed.manifest.provides).toEqual(['summary-chat:speak'])
+    expect(parsed.manifest.provides).toEqual(['chatter:speak'])
   })
 
   it('refuses to let a mod provide another mod\'s capability', () => {
@@ -108,7 +108,7 @@ describe('mod-provided capabilities', () => {
     const parsed = parseModManifest({ ...VALID, provides: ['weather:forecast'] })
     expect(parsed.ok).toBe(false)
     if (parsed.ok) return
-    expect(parsed.error).toContain('must be namespaced to "summary-chat"')
+    expect(parsed.error).toContain('must be namespaced to "chatter"')
   })
 
   it.each([

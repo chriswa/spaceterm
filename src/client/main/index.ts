@@ -435,9 +435,6 @@ app.whenReady().then(async () => {
   // Bypass the Cmd+W (Close Window) menu accelerator so it reaches the renderer.
   // setIgnoreMenuShortcuts in before-input-event selectively disables menu shortcuts
   // for individual keystrokes without modifying the menu itself.
-  //
-  // The Summary Chat chord (Cmd+Ctrl+X) needs no entry here: Cut is bound to a
-  // bare Cmd+X, and an accelerator only fires on an exact modifier match.
   mainWindow!.webContents.on('before-input-event', (_event, input) => {
     mainWindow!.webContents.setIgnoreMenuShortcuts(
       input.meta && input.key.toLowerCase() === 'w'

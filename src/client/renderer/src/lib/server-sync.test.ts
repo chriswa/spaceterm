@@ -5,7 +5,6 @@ import {
   sendMove, sendRename, sendArchive, sendTerminalCreate, sendMarkdownContent, sendRootCwd
 } from './server-sync'
 import { useNodeStore } from '../stores/nodeStore'
-import { useSpeakingStore } from '../stores/speakingStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
@@ -143,22 +142,6 @@ describe('server events reach the stores', () => {
     bridge.emit.nodeAdded(terminal('t1'))
     bridge.emit.nodeRemoved(nid('t1'))
     expect(useNodeStore.getState().nodes.t1).toBeUndefined()
-  })
-
-  it('tracks which surface is speaking', () => {
-    bridge.emit.nodeAdded(terminal('t1'))
-    bridge.emit.speakingChanged(nid('t1'), true, 'Zoe')
-    expect(useSpeakingStore.getState().speaking).toHaveProperty('t1')
-
-    bridge.emit.speakingChanged(nid('t1'), false, undefined)
-    expect(useSpeakingStore.getState().speaking.t1).toBeFalsy()
-  })
-
-  it('logs a speaking event for a node it does not know about', () => {
-    // A stale nodeId reaching the speaking indicator is worth a log line: it
-    // means the server and renderer disagree about what exists.
-    bridge.emit.speakingChanged(nid('ghost'), true, 'Zoe')
-    expect(bridge.callsTo('log').length).toBeGreaterThan(0)
   })
 
   it('replaces saved viewports wholesale on a push', () => {

@@ -10,7 +10,7 @@ import { serverLog } from './server-log'
  * it has played.
  *
  * Each job answers in Voice Operator's own job format — `speak`, a `status`
- * that long-polls, `drop` with how far the listener got — so Summary Chat
+ * that long-polls, `drop` with how far the listener got — so Control
  * follows a phone's speech exactly as it follows the Mac's. Playback progress
  * comes from the phone, which is the only side that knows what was audible.
  */

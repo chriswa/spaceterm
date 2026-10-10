@@ -3,8 +3,6 @@ import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useAutoStampsEnabledStore } from '../stores/autoStampsEnabledStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
-import { useSpeakingStore } from '../stores/speakingStore'
-import { useSummaryChatStore } from '../stores/summaryChatStore'
 import { useRestartRequiredStore } from '../stores/restartRequiredStore'
 import { useReceptionistStore } from '../stores/receptionistStore'
 import { useAgentNamesStore } from '../stores/agentNamesStore'
@@ -13,8 +11,7 @@ import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
 import { playSpeechCue } from './speech-cues'
-import { setSummaryChatWaiting } from './summary-chat-wait-cue'
-import { ROOT_NODE_ID } from '../../../../shared/ids'
+import { setControlThinking } from './thinking-cue'
 import { showToast } from './toast'
 import { pokeFrames } from './frame-policy'
 import type { CreateOptions, SoundName } from '../../../../shared/protocol'
@@ -128,28 +125,6 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   )
 
   cleanupFns.push(
-    window.api.node.onSpeakingChanged((nodeId: NodeId, speaking: boolean, voice: string | undefined) => {
-      if (speaking) {
-        const node = useNodeStore.getState().nodes[nodeId]
-        if (!node || node.type !== 'terminal') {
-          window.api.log(`[speaking] unknown node=${nodeId.slice(0, 8)} (voice=${voice ?? 'n/a'})`)
-        }
-      }
-      useSpeakingStore.getState().setSpeaking(nodeId, speaking, voice)
-    })
-  )
-
-  cleanupFns.push(
-    window.api.node.onSummaryChatStatus((nodeId, state, message) => {
-      useSummaryChatStore.getState().setStatus(nodeId, state)
-      // The cue tracks the surface's phase, not request timing — and `target`
-      // is not a phase, so it must not silence a cue that is already running.
-      if (state !== 'target') setSummaryChatWaiting(nodeId, state === 'thinking')
-      if (state === 'error') showToast(message ?? 'Summary Chat could not start.')
-    })
-  )
-
-  cleanupFns.push(
     window.api.node.onSavedViewports((viewports) => {
       useSavedViewportStore.getState().setAll(viewports)
     })
@@ -180,9 +155,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
       // Every change is broadcast whole, so toast only an error that is new.
       const before = useReceptionistStore.getState().error
       useReceptionistStore.getState().setStatus(status)
-      // The same echo Summary Chat plays while Haiku thinks, keyed by the root
-      // node — Control's home — so the two can never cancel each other's wait.
-      setSummaryChatWaiting(ROOT_NODE_ID, status.phase === 'thinking')
+      // An echo while it waits on the model; see thinking-cue.ts.
+      setControlThinking(status.phase === 'thinking')
       if (status.message && status.message !== before) showToast(`Control: ${status.message}`)
     })
   )

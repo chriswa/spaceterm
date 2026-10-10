@@ -17,7 +17,7 @@ const VOICE = 'M4 4.25v1.5M6 3.25v3.5M8 4.25v1.5'
  * here, when the mute only says how it would arrive. Top right, where Control
  * is: an eye while this device holds it, the holder's name while another
  * does, nothing while nobody does. `busy` stands in for the eye — the Mac's
- * Summary Chat bubble, which says the same and more.
+ * bubble while Control works, which says the same and more.
  */
 export function ControlBadges({ busy }: { busy?: ReactNode }) {
   const holder = useReceptionistStore((s) => s.holder)

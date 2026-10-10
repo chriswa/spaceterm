@@ -529,16 +529,16 @@ describe('broadcast with no subscribers', () => {
 describe('script-mod-emit', () => {
   it('relays the envelope to the app', () => {
     const h = harness()
-    h.send({ type: 'script-mod-emit', seq: 1, modId: 'summary-chat', event: 'status', payload: { a: 1 } })
+    h.send({ type: 'script-mod-emit', seq: 1, modId: 'chatter', event: 'status', payload: { a: 1 } })
 
     expect(h.host.emittedMods).toEqual([
-      { modId: 'summary-chat', event: 'status', payload: { a: 1 } }
+      { modId: 'chatter', event: 'status', payload: { a: 1 } }
     ])
   })
 
   it('acknowledges with how many scripts it reached', () => {
     const h = harness()
-    h.send({ type: 'script-mod-emit', seq: 7, modId: 'summary-chat', event: 'status', payload: null })
+    h.send({ type: 'script-mod-emit', seq: 7, modId: 'chatter', event: 'status', payload: null })
     // Zero listeners is normal, not an error: the renderer half may be the
     // only thing that cares.
     expect(h.conn.only).toMatchObject({ type: 'script-mod-emit-result', seq: 7, delivered: 0 })
@@ -547,20 +547,20 @@ describe('script-mod-emit', () => {
   it('delivers to a script that named the modId', () => {
     const h = harness()
     const listener = new FakeConnection()
-    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['chatter'] })
     listener.sent.length = 0
 
-    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: { n: 3 } })
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'chatter', event: 'spoke', payload: { n: 3 } })
 
     expect(listener.sent).toEqual([
-      { type: 'mod', modId: 'summary-chat', event: 'spoke', payload: { n: 3 } }
+      { type: 'mod', modId: 'chatter', event: 'spoke', payload: { n: 3 } }
     ])
   })
 
   it('does not deliver another mod\'s traffic', () => {
     const h = harness()
     const listener = new FakeConnection()
-    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['chatter'] })
     listener.sent.length = 0
 
     h.send({ type: 'script-mod-emit', seq: 2, modId: 'weather', event: 'tick', payload: null })
@@ -576,7 +576,7 @@ describe('script-mod-emit', () => {
     h.api.handle(listener, { type: 'script-subscribe', seq: 1 })
     listener.sent.length = 0
 
-    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: null })
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'chatter', event: 'spoke', payload: null })
 
     expect(listener.sent).toEqual([])
   })
@@ -585,10 +585,10 @@ describe('script-mod-emit', () => {
     const h = harness()
     // The emitter is itself subscribed to its own mod — a mod with several
     // processes would be.
-    h.api.handle(h.conn, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    h.api.handle(h.conn, { type: 'script-subscribe', seq: 1, modIds: ['chatter'] })
     h.conn.sent.length = 0
 
-    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: null })
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'chatter', event: 'spoke', payload: null })
 
     const relayed = h.conn.sent.filter((m) => m.type === 'mod')
     expect(relayed).toEqual([])
@@ -597,11 +597,11 @@ describe('script-mod-emit', () => {
   it('stops delivering once the listener disconnects', () => {
     const h = harness()
     const listener = new FakeConnection()
-    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['summary-chat'] })
+    h.api.handle(listener, { type: 'script-subscribe', seq: 1, modIds: ['chatter'] })
     listener.disconnect()
     listener.sent.length = 0
 
-    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'spoke', payload: null })
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'chatter', event: 'spoke', payload: null })
 
     expect(listener.sent).toEqual([])
   })
@@ -625,8 +625,8 @@ describe('capability scoping', () => {
 
   it('leaves a connection that never identified unscoped', () => {
     // The nine MCP tools. Scoping is opt-in so landing it breaks nothing.
-    const h = harness((host) => { host.manifests.set('summary-chat', []) })
-    h.send({ type: 'script-mod-emit', seq: 1, modId: 'summary-chat', event: 'e', payload: null })
+    const h = harness((host) => { host.manifests.set('chatter', []) })
+    h.send({ type: 'script-mod-emit', seq: 1, modId: 'chatter', event: 'e', payload: null })
     expect(h.host.emittedMods).toHaveLength(1)
   })
 
@@ -642,21 +642,21 @@ describe('capability scoping', () => {
   })
 
   it('allows a capability the manifest declares', () => {
-    const h = harness((host) => { host.manifests.set('summary-chat', ['emit-mod']) })
-    identify(h, 'summary-chat')
+    const h = harness((host) => { host.manifests.set('chatter', ['emit-mod']) })
+    identify(h, 'chatter')
     h.conn.sent.length = 0
 
-    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'e', payload: null })
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'chatter', event: 'e', payload: null })
 
     expect(h.host.emittedMods).toHaveLength(1)
   })
 
   it('refuses one it does not, with the capability named', () => {
-    const h = harness((host) => { host.manifests.set('summary-chat', ['read-nodes']) })
-    identify(h, 'summary-chat')
+    const h = harness((host) => { host.manifests.set('chatter', ['read-nodes']) })
+    identify(h, 'chatter')
     h.conn.sent.length = 0
 
-    h.send({ type: 'script-mod-emit', seq: 2, modId: 'summary-chat', event: 'e', payload: null })
+    h.send({ type: 'script-mod-emit', seq: 2, modId: 'chatter', event: 'e', payload: null })
 
     expect(h.host.emittedMods).toEqual([])
     expect(h.conn.only).toMatchObject({ type: 'error' })

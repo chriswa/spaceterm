@@ -1,6 +1,5 @@
 import { runModPhase, type ClientModModule, type ModHostBase, type ModLoadResult } from '../../../../shared/mod-module'
 import { modChannel, type ModChannel, type ModMessageShape } from '../lib/mod-channel'
-import * as summaryChat from './summary-chat'
 
 /**
  * The renderer's mods, and the two-phase load that starts them.
@@ -25,9 +24,8 @@ interface RegisteredClientMod {
   module: ClientModModule<ClientModHost>
 }
 
-const CLIENT_MODS: readonly RegisteredClientMod[] = [
-  { modId: 'summary-chat', module: summaryChat },
-]
+/** None in the repo today; the load below is kept so adding one is a line here. */
+const CLIENT_MODS: readonly RegisteredClientMod[] = []
 
 const failed = new Set<string>()
 

@@ -18,7 +18,7 @@
  *
  * - **Core facets** (`background`, `rootNode`, …) have bare ids, live in the
  *   `ThemeFacets` interface, and keep full static typing.
- * - **Mod facets** have namespaced ids (`summary-chat:bubble`) and are
+ * - **Mod facets** have namespaced ids (`chatter:bubble`) and are
  *   registered here at import time. The base app stores and resolves them
  *   without knowing their shape; the *mod* owns the type and exports a typed
  *   accessor, so a mod's consumers are still type-safe. Only the base's

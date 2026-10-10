@@ -3,7 +3,6 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { installFakeBridge } from '@/testing/fake-bridge'
 import { useNodeStore } from '@/stores/nodeStore'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
-import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../shared/ids'
@@ -29,7 +28,6 @@ function tap(area: Element): void {
 beforeEach(() => {
   installFakeBridge()
   useNodeStore.setState({ nodes: { [SURFACE]: terminal } })
-  useSummaryChatStore.setState({ targetNodeId: null })
 })
 
 afterEach(() => {
@@ -40,12 +38,9 @@ afterEach(() => {
 })
 
 describe('the phone’s terminal view and composer', () => {
-  // The composer, the terminal view and the talk button are keyed by the same
-  // surface. With a bare node id as each key, opening the composer orphaned the
+  // The composer and the terminal view are keyed by the same surface. With a bare node id as each key, opening the composer orphaned the
   // terminal view: its picture and touch handlers outlived closing it.
   it('leaves exactly one terminal view through the composer, and none once it closes', () => {
-    // Summary Chat on the same surface keys the talk button by it too.
-    useSummaryChatStore.setState({ targetNodeId: SURFACE })
     const { container } = render(<MobileApp Canvas={() => null} />)
     const views = () => container.querySelectorAll('.mobile-term').length
     act(() => useSurfacePresenterStore.getState().publishFocusedTerminal(SURFACE))
@@ -74,7 +69,6 @@ describe('the phone’s bottom bar', () => {
   })
 
   it('stays up over the terminal view, and goes for the composer, which has its own microphone', () => {
-    useSummaryChatStore.setState({ targetNodeId: SURFACE })
     const { container } = render(<MobileApp Canvas={() => null} />)
     expect(container.querySelector('.m-bar')).not.toBeNull()
     act(() => useSurfacePresenterStore.getState().publishFocusedTerminal(SURFACE))
@@ -91,7 +85,7 @@ describe('the phone’s bottom bar', () => {
 
 describe('the phone’s Control transcript', () => {
   beforeEach(() => {
-    useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null })
+    useReceptionistStore.setState({ phase: 'ready', error: null, holder: null })
   })
 
   it('opens on a tap of the Control button with the bar still up, the button a down arrow that closes it, and the microphone there', () => {
@@ -99,7 +93,7 @@ describe('the phone’s Control transcript', () => {
     fireEvent.click(getByRole('button', { name: /^Control transcript/ }))
     expect(container.querySelector('.control-transcript--screen')).not.toBeNull()
     expect(container.querySelector('.m-bar')).not.toBeNull()
-    // No conversation open, yet the microphone is up, and talks to Control.
+    // The microphone is up, and talks to Control.
     expect(getByRole('button', { name: /^Talk to Control/ })).toBeTruthy()
 
     fireEvent.click(getByRole('button', { name: 'Close the Control transcript' }))

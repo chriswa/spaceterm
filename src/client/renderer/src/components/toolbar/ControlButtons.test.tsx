@@ -25,7 +25,7 @@ function heldBy(label: 'here' | string): void {
 
 beforeEach(() => {
   bridge = installFakeBridge(globalThis as never)
-  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null, mutedHere: false, unread: { count: 0 } })
+  useReceptionistStore.setState({ phase: 'ready', error: null, holder: null, mutedHere: false, unread: { count: 0 } })
   useControlTranscriptStore.setState({ open: false })
 })
 
@@ -41,15 +41,13 @@ describe('ControlButton', () => {
     expect(button.className).toContain('toolbar__btn--active')
     fireEvent.click(button)
     expect(useControlTranscriptStore.getState().open).toBe(false)
-    expect(bridge.callsTo('receptionist.select')).toHaveLength(0)
     expect(bridge.callsTo('receptionist.hold')).toHaveLength(0)
   })
 
-  it('is dim elsewhere and magenta here with the voice on Summary Chat, and says where Control is', () => {
+  it('is dim elsewhere, and says where Control is', () => {
     const { container } = render(<ControlButton />)
     const button = container.querySelector('button')!
     heldBy('Phone')
-    status({ phase: 'ready', target: true })
     expect(button.className).toContain('toolbar__control--away')
     expect(button.dataset.tooltip).toMatch(/Control is on your Phone, unmuted here\. Click to open the transcript/)
     expect(container.querySelector('.control-badge--where')?.textContent).toBe('Phone')
@@ -57,28 +55,24 @@ describe('ControlButton', () => {
     heldBy('here')
     expect(button.className).toContain('toolbar__control--here')
     expect(container.querySelector('.control-badge--held')).not.toBeNull()
-
-    status({ phase: 'ready', target: false })
-    expect(button.className).toContain('toolbar__control--summary')
-    expect(button.dataset.tooltip).toMatch(/Summary Chat/)
   })
 
-  it('swaps the eye for the Summary Chat bubble while Control works here', () => {
+  it('swaps the eye for a speech bubble while Control works here', () => {
     heldBy('here')
     const { container } = render(<ControlButton />)
-    status({ phase: 'ready', target: true })
-    expect(container.querySelector('.toolbar__summary-bubble')).toBeNull()
+    status({ phase: 'ready' })
+    expect(container.querySelector('.toolbar__control-busy')).toBeNull()
     expect(container.querySelector('.control-badge--held')).not.toBeNull()
 
-    status({ phase: 'synthesizing', target: true })
-    expect(container.querySelector('.toolbar__summary-bubble--thinking')).not.toBeNull()
+    status({ phase: 'synthesizing' })
+    expect(container.querySelector('.toolbar__control-busy--thinking')).not.toBeNull()
     expect(container.querySelector('.control-badge--held')).toBeNull()
 
-    status({ phase: 'speaking', target: false })
-    expect(container.querySelector('.toolbar__summary-bubble--talking')).not.toBeNull()
+    status({ phase: 'speaking' })
+    expect(container.querySelector('.toolbar__control-busy--talking')).not.toBeNull()
 
     heldBy('Phone')
-    expect(container.querySelector('.toolbar__summary-bubble')).toBeNull()
+    expect(container.querySelector('.toolbar__control-busy')).toBeNull()
   })
 
   it('crosses out its speech bubble while muted here', () => {
@@ -91,7 +85,7 @@ describe('ControlButton', () => {
 
   it('says why it failed', () => {
     const { container } = render(<ControlButton />)
-    status({ phase: 'ready', target: false, message: 'no API key' })
+    status({ phase: 'ready', message: 'no API key' })
     expect(container.querySelector('button')!.dataset.tooltip).toMatch(/^Control — no API key\./)
   })
 })

@@ -44,7 +44,7 @@ export const MOD_CAPABILITIES = [
 export type BaseModCapability = (typeof MOD_CAPABILITIES)[number]
 
 /**
- * A capability *a mod* defines, namespaced to it: `summary-chat:speak`.
+ * A capability *a mod* defines, namespaced to it: `chatter:speak`.
  *
  * The base validates the shape and nothing else. It cannot know what such a
  * capability means, whether the provider is installed, or whether it is

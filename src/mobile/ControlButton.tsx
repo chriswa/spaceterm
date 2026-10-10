@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { controlLook, useReceptionistStore } from '@/stores/receptionistStore'
+import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { ControlBadges, controlWhereabouts } from '@/components/ControlBadges'
 
@@ -11,21 +11,19 @@ import { ControlBadges, controlWhereabouts } from '@/components/ControlBadges'
  * Its corners say how those stand (ControlBadges.tsx): muted or not top left,
  * where Control is top right, and a count, as on the rocket, of replies
  * written here muted and not read yet bottom right. Dim while Control is not
- * here; magenta while it is but the voice last went to Summary Chat. A yellow
- * ring while it thinks; while anything is said through it, bars in the colour
+ * here. A yellow ring while it thinks; while anything is said through it, bars in the colour
  * of who is speaking — Control, or the agent it quotes — so a voice is never
  * mistaken for the microphone.
  */
 export function ControlButton() {
   const open = useControlTranscriptStore((s) => s.open)
-  const target = useReceptionistStore((s) => s.target)
   const phase = useReceptionistStore((s) => s.phase)
   const error = useReceptionistStore((s) => s.error)
   const holder = useReceptionistStore((s) => s.holder)
   const mutedHere = useReceptionistStore((s) => s.mutedHere)
   const speaker = useReceptionistStore((s) => s.speaker)
   const unread = useReceptionistStore((s) => s.unread.count)
-  const look = controlLook(holder, target)
+  const here = holder?.mine === true
   const speaking = phase === 'speaking'
 
   const label = open ? 'Close the Control transcript'
@@ -33,10 +31,10 @@ export function ControlButton() {
 
   return (
     <button
-      className={`m-control m-control--${look}${open ? ' m-control--open' : ''}${speaking ? ' m-control--speaking' : ''}${error ? ' m-control--error' : ''}`}
+      className={`m-control${here ? '' : ' m-control--away'}${open ? ' m-control--open' : ''}${speaking ? ' m-control--speaking' : ''}${error ? ' m-control--error' : ''}`}
       style={speaking ? { '--m-speaker': speakerColour(speaker) } as CSSProperties : undefined}
       // Thinking elsewhere is that device's to show.
-      data-phase={look !== 'away' && phase === 'thinking' ? 'thinking' : 'ready'}
+      data-phase={here && phase === 'thinking' ? 'thinking' : 'ready'}
       aria-label={label}
       aria-expanded={open}
       onClick={() => useControlTranscriptStore.getState().setOpen(!open)}

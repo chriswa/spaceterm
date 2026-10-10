@@ -23,13 +23,11 @@ import { CardShell } from './CardShell'
 import { useReparentStore } from '../stores/reparentStore'
 import { useResizeStore } from '../stores/resizeStore'
 import { useHoveredCardStore } from '../stores/hoveredCardStore'
-import { useSpeakingStore } from '../stores/speakingStore'
 import { showToast } from '../lib/toast'
 import { saveTerminalScroll, loadTerminalScroll, clearTerminalScroll, consumeScrollRestore } from '../lib/focus-storage'
 import crabIcon from '../assets/crab.png'
 import cursorAgentIcon from '../assets/cursor-agent.png'
 import codexAgentIcon from '../assets/codex-agent.png'
-import megaphoneIcon from '../assets/megaphone.png'
 import { modelHat } from '../lib/model-hat'
 import { CrabHat } from './CrabHat'
 import { CrabEffortSigns } from './CrabEffortSigns'
@@ -215,7 +213,6 @@ interface TerminalCardProps {
   terminalSessions?: TerminalSessionEntry[]
   onSessionRevive?: (nodeId: NodeId, session: TerminalSessionEntry) => void
   onFork?: (id: NodeId) => void
-  onSummarize?: (id: NodeId) => void
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   lastInteractedAt?: number
@@ -243,7 +240,7 @@ export function TerminalCard({
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onStampChange, onOpenArchiveSearch,
   claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, claudeContextPercent, claudeSessionLineCount, ccStatus, ccWaitingFor, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
-  terminalSessions, onSessionRevive, onFork, onSummarize, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef,
+  terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef,
   chromeless = false, autoFocus = true, onRowHeight
 }: TerminalCardProps) {
   // Where an unset node's colour comes from — see the `nodeTint` theme facet.
@@ -264,7 +261,6 @@ export function TerminalCard({
   const propsRef = useRef({ x, y, zoom, cols, rows, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady })
   propsRef.current = { x, y, zoom, cols, rows, focused, id, sessionId, onDisableScrollMode, onForwardWheelToCanvas, onExit, onNodeReady }
 
-  const isSpeaking = useSpeakingStore((s) => id in s.speaking)
 
   const [, setTick] = useState(0)
   const [xtermReady, setXtermReady] = useState(false)
@@ -1343,8 +1339,6 @@ export function TerminalCard({
       onStartReparent={onStartReparent}
       onStartResize={onStartResize}
       onFork={agentType !== 'cursor' && agentType !== 'codex' && claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
-      // Needs a transcript to summarize; the server says so if it has none yet.
-      onSummarize={isAgentSurface ? onSummarize : undefined}
       // Cursor/Codex often lack SessionStart history; gate on agentType so restart stays available.
       onExtraCliArgs={
         agentType === 'claude' || agentType === 'cursor' || agentType === 'codex'
@@ -1403,13 +1397,6 @@ export function TerminalCard({
               {hat && <CrabHat hat={hat} className="terminal-card__crab-hat" />}
               <CrabEffortSigns steps={crabEffortSteps(crabAppearance.kind, claudeEffort)} className="terminal-card__crab-effort" />
             </div>
-          )}
-          {isSpeaking && (
-            <div
-              className="terminal-card__speaking-mark"
-              aria-hidden="true"
-              style={{ maskImage: cssUrl(megaphoneIcon), WebkitMaskImage: cssUrl(megaphoneIcon) }}
-            />
           )}
         </>
       )}

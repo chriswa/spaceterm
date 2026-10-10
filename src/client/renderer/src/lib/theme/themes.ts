@@ -29,7 +29,7 @@ export interface Theme {
   readonly facets: Partial<ThemeFacets>
   /**
    * Overrides for namespaced facets supplied by mods, e.g.
-   * `{ 'summary-chat:bubble': … }`.
+   * `{ 'chatter:bubble': … }`.
    *
    * Separate from `facets`, and `unknown`-valued, because it is the half the
    * base cannot type-check: the value's shape belongs to the mod. Keeping the

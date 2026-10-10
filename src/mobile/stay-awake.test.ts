@@ -27,7 +27,7 @@ describe('keeping the app awake', () => {
   })
 
   it('says nothing until the holder is known', () => {
-    useReceptionistStore.getState().setStatus({ phase: 'ready', target: true })
+    useReceptionistStore.getState().setStatus({ phase: 'ready' })
     expect(asked()).toEqual([])
   })
 

@@ -139,8 +139,6 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onFileContent: (cb) => on('file-content', (m) => cb(m.nodeId, m.content)),
       onServerError: (cb) => on('server-error', (m) => cb(m.message)),
       onPlaySound: (cb) => on('play-sound', (m) => cb(m.sound)),
-      onSpeakingChanged: (cb) => on('speaking-changed', (m) => cb(m.nodeId, m.speaking, m.voice)),
-      onSummaryChatStatus: (cb) => on('summary-chat-status', (m) => cb(m.nodeId, m.state, m.message)),
       onSavedViewports: (cb) => on('saved-viewports', (m) => cb(m.viewports)),
       onRootCwd: (cb) => on('root-cwd', (m) => cb(m.cwd)),
       onAutoStampsEnabled: (cb) => on('auto-stamps-enabled', (m) => cb(m.enabled)),
@@ -166,10 +164,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onMobileBuildChanged: (cb) => on('mobile-build-changed', () => cb())
     },
     log: (message) => platform.log(message),
-    toggleSummaryChat: (nodeId, mode) => client.toggleSummaryChat(nodeId, mode, platform.playsSpeech ?? false),
-    summaryChatFollowUp: (text) => client.summaryChatFollowUp(text),
     installMobileApp: () => client.installMobileApp(),
-    endSummaryChat: () => client.endSummaryChat(),
     async restartSpaceterm() {
       platform.log('[restart] Restart Spaceterm requested')
       await client.restartServer()
@@ -201,10 +196,9 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       progress: (id, index, event) => client.speechProgress(id, index, event)
     },
     receptionist: {
-      select: () => client.selectReceptionist(),
       stop: () => client.stopReceptionist(),
       hold: (action) => client.holdReceptionist(action),
-      say: (text) => client.sayToReceptionist(text),
+      say: (text, how) => client.sayToReceptionist(text, how?.spoken === true),
       mark: (of, part, char) => client.markReceptionistReply(of, part, char),
       readAll: () => client.readAllOfReceptionist(),
       replay: (of, part) => client.replayReceptionistReply(of, part),
@@ -215,7 +209,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onSpeaking: (cb) => on('receptionist-speaking', (m) => cb(m.speaking)),
       transcript: (before) => client.receptionistTranscript(before, TRANSCRIPT_PAGE),
       onTranscriptAppended: (cb) => on('receptionist-transcript-appended', (m) => cb(m.entries)),
-      onStatus: (cb) => onReceptionistStatus(({ phase, target, message, speaker }) => cb({ phase, target, message, speaker })),
+      onStatus: (cb) => onReceptionistStatus(({ phase, message, speaker }) => cb({ phase, message, speaker })),
       deviceId: client.device.id,
       onHolder: (cb) => onReceptionistHolder((m) => cb(m.holder, m.muted)),
       onAgentNames: (cb) => onAgentNames((m) => cb(m.names)),

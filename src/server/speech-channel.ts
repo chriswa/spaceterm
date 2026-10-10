@@ -2,7 +2,7 @@ import { serverLog } from './server-log'
 import {
   joinSpeechParts, speechStatus, type SpeechBackend, type SpeechContent, type SpeechStatus,
 } from './voice-operator'
-import type { SummaryChatPhase } from '../shared/protocol'
+import type { ReceptionistPhase } from '../shared/protocol'
 
 export type { SpeechPart, SpeechContent } from './voice-operator'
 
@@ -10,15 +10,15 @@ export type { SpeechPart, SpeechContent } from './voice-operator'
  * The playback lifecycle of one spoken conversation, independent of what is
  * being said or why.
  *
- * Extracted from Summary Chat, where every rule below was learned the hard way
- * — each comment records a bug. Anything that speaks a conversation (Summary
- * Chat, the receptionist) holds one of these instead of re-deriving that
- * lifecycle, because the bugs it guards against are all in the *timing*, and
- * a second copy would have to rediscover each of them.
+ * Every rule below was learned the hard way — each comment records a bug.
+ * Anything that speaks a conversation (the receptionist) holds one of these
+ * instead of re-deriving that lifecycle, because the bugs it guards against
+ * are all in the *timing*, and a second copy would have to rediscover each of
+ * them.
  */
 
-/** What a channel is doing. Shared with Summary Chat's protocol, which is where it started. */
-export type SpeechPhase = SummaryChatPhase
+/** What a channel is doing: Control's phase, as its protocol carries it. */
+export type SpeechPhase = ReceptionistPhase
 
 const SPEECH_LONG_POLL_TIMEOUT_MS = 5 * 60_000
 /** How long Voice Operator holds a long poll open, in seconds. */
@@ -63,7 +63,7 @@ export type SpeechFailure =
 
 /**
  * What a failure means to the listener. `subject` names what was being spoken
- * — "the summary", "the answer" — so each feature keeps its own wording while
+ * — "the answer", "the reply" — so each feature keeps its own wording while
  * the mapping from Voice Operator's errors lives in one place.
  */
 export function speechFailureMessage(failure: SpeechFailure, subject = 'the answer'): string {
@@ -87,7 +87,7 @@ export interface SpeechChannelDeps {
 export interface SpeechChannelOptions {
   /** Where the next `deliver` speaks. Settable later via `speech`. */
   speech: SpeechBackend
-  /** Prefix for every log line, e.g. `[summary-chat] 1a2b3c4d`. */
+  /** Prefix for every log line, e.g. `[receptionist]`. */
   label: string
   /**
    * Every phase change, in the order they happen. Called synchronously from

@@ -1,7 +1,7 @@
 import * as path from 'path'
 import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
-import { isToolActivity, lastAgentProse, type TranscriptMessage } from '../summary-chat'
+import { isToolActivity, lastAgentProse, type TranscriptMessage } from '../agent-transcript'
 import { agentToken } from './agent-token'
 
 /**
@@ -140,9 +140,9 @@ export function ago(ms: number): string {
 /**
  * The `read` tool: the agent's recent conversation, or the passages matching a
  * search. A plain read leaves out tool calls, so its budget goes to what the
- * agent and user said; a search covers both. Only the window the transcript reader keeps is searchable — the same
- * window Summary Chat reads — which covers the current piece of work but not a
- * long session's early hours.
+ * agent and user said; a search covers both. Only the window the transcript
+ * reader keeps is searchable (`readTranscript` in agent-transcript.ts), which
+ * covers the current piece of work but not a long session's early hours.
  */
 export function readAgent(messages: readonly TranscriptMessage[], search?: string): string {
   if (!messages.length) return 'Nothing readable in this transcript yet.'

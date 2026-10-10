@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 16
+export const CLIENT_PROTOCOL_VERSION = 17
 
 /**
  * Oldest client protocol this build still serves.
@@ -78,5 +78,13 @@ export const CLIENT_PROTOCOL_VERSION = 16
  * v15 expects `receptionist-hold` `mute` to take Control as well, which it no
  * longer does: holding and muting are independent (`take`, `unmute`). It
  * offers Mute only while it already holds Control, so it loses nothing.
+ *
+ * v16 still has Summary Chat, which this build does not: its chord and its
+ * talk button's follow-ups (`summary-chat-toggle`, `-follow-up`, `-end`) and
+ * its Control button's `receptionist-select` are answered with a
+ * `server-error`, and a chord press waits on a reply that never comes. It
+ * reads a missing `target` in `receptionist-status` as the voice having gone
+ * to Summary Chat. Its dictation that pastes into nothing is lost; typing to
+ * Control, hands-free and the transcript work as before.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

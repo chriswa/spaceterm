@@ -431,8 +431,7 @@ export interface WakeWordCheckMessage {
 }
 
 /**
- * Words dictated hands-free, after the wake word: for Control, whatever the
- * voice target. Takes Control to this device, as speaking to it does. Sent
+ * Words dictated hands-free, after the wake word: for Control. Takes Control to this device, as speaking to it does. Sent
  * with no `text` when nothing was caught for Control, so that it stops
  * waiting for words and carries on with whatever the dictation stopped.
  */
@@ -812,25 +811,13 @@ export interface FocusClaudeSessionMessage {
 }
 
 /**
- * One press of the Summary Chat chord. Deliberately an *intent*, not a verb.
- *
- * Whether a press starts an answer or cuts one off is a question about the
- * conversations the server owns, and the client's view of those lags by a
- * broadcast hop. A client that decided for itself would send a second `start`
- * for a press made milliseconds after the first — exactly the press that is
- * meant to cancel. So the client reports what is focused and the server rules.
- *
- * `nodeId` is the focused terminal surface, absent when nothing eligible is
- * focused. A press with nothing focused still cancels: silencing an answer must
- * not depend on which surface the listener happens to be looking at.
- */
-/**
  * Speak a selection, or stop the speech a previous press started.
  *
  * The client sends what it has — the text under the cursor — and the server
- * rules on whether this press starts or stops, for the same reason
- * `summary-chat-toggle` does: only the side holding the Voice Operator job
- * knows whether anything is still being said.
+ * rules on whether this press starts or stops: only the side holding the
+ * Voice Operator job knows whether anything is still being said. The client's
+ * view of that lags by a broadcast hop, so a client that decided for itself
+ * would send a second start for a press meant to cancel the first.
  */
 export interface SpeakToggleMessage {
   type: 'speak-toggle'
@@ -841,18 +828,6 @@ export interface SpeakToggleMessage {
 /** Stop anything the direct speech path is saying. Ignored when it is silent. */
 export interface SpeakStopMessage {
   type: 'speak-stop'
-}
-
-export interface SummaryChatToggleMessage {
-  type: 'summary-chat-toggle'
-  seq: number
-  nodeId?: NodeId
-  mode: SummaryChatMode
-  /**
-   * Speak on this client rather than through Voice Operator on the Mac — the
-   * phone. See `src/server/remote-speech.ts`.
-   */
-  playHere?: boolean
 }
 
 /**
@@ -875,40 +850,6 @@ export interface SpeechProgressMessage {
   event: SpeechProgressEvent
 }
 
-/**
- * What a press asks to be read out.
- *
- * `summary` sends the transcript to Haiku and speaks what comes back.
- * `verbatim` speaks the agent's final message as written and involves no model
- * at all — until the listener asks a follow-up, at which point the conversation
- * catches up. Required rather than optional: a mode that could go missing on
- * the wire would silently read the wrong thing out loud.
- */
-export type SummaryChatMode = 'summary' | 'verbatim'
-
-/**
- * Something the listener said to Summary Chat from a client — the phone's talk
- * button, or dictation the desktop caught pasting into nothing — rather than through Voice Operator's command mode on the Mac. Goes
- * to the same conversation a voice command would.
- */
-export interface SummaryChatFollowUpMessage {
-  type: 'summary-chat-follow-up'
-  text: string
-}
-
-/**
- * The Control button. Held by another device or by none, it brings Control to
- * this client's device and makes it the target of the listener's voice (Voice
- * Operator command-mode transcripts and the phone's talk button go to it until
- * a Summary Chat press takes them back). Held here with the voice on Summary
- * Chat, it makes Control the target again. Held here and the target, it lets
- * go of Control, which silences it. Answered by `receptionist-holder` and
- * `receptionist-status`.
- */
-export interface ReceptionistSelectMessage {
-  type: 'receptionist-select'
-}
-
 /** Stop Control mid-answer, without letting go of it: a talk button pressed over it. */
 export interface ReceptionistStopMessage {
   type: 'receptionist-stop'
@@ -917,12 +858,12 @@ export interface ReceptionistStopMessage {
 /**
  * Where Control speaks, said outright rather than toggled, so two presses
  * cannot cross. Holding and muting are independent:
- * - `take` brings Control to this device and makes it the voice's target,
- *   muted or not as this device last left it;
+ * - `take` brings Control to this device, muted or not as this device last
+ *   left it;
  * - `release` lets go of it, if this device holds it, so that it speaks nowhere;
  * - `mute` / `unmute` set whether Control writes to this device rather than
  *   speaking, whether or not this device holds it now;
- * - `speak-here` is `unmute` and `take` at once: the phone's Control button.
+ * - `speak-here` is `unmute` and `take` at once: a v16 phone's Control button.
  *
  * Answered by `receptionist-holder`.
  */
@@ -979,12 +920,14 @@ export interface ReceptionistCatchUpMessage {
 }
 
 /**
- * Words typed to Control in its transcript view: for Control, whatever the
- * voice target, and — as speaking to it does — it brings Control here.
+ * Words typed to Control in its transcript view: as speaking to it does, they
+ * bring Control here. `spoken`: dictated rather than typed — the Mac's
+ * dictation pasted with nothing to paste into — so Control takes it as said.
  */
 export interface ReceptionistSayMessage {
   type: 'receptionist-say'
   text: string
+  spoken?: true
 }
 
 /**
@@ -997,11 +940,6 @@ export interface ReceptionistTranscriptMessage {
   seq: number
   before?: number
   count: number
-}
-
-/** Abandon every Summary Chat conversation: stop speaking and forget them. */
-export interface SummaryChatEndMessage {
-  type: 'summary-chat-end'
 }
 
 export interface VoiceCommandMessage {
@@ -1323,9 +1261,6 @@ export type ClientMessage =
   | CameraBoundsMessage
   | FocusIdRequestMessage
   | FocusClaudeSessionMessage
-  | SummaryChatToggleMessage
-  | SummaryChatFollowUpMessage
-  | SummaryChatEndMessage
   | SpeechProgressMessage
   | MobileAppInstallMessage
   | SpeakToggleMessage
@@ -1333,7 +1268,6 @@ export type ClientMessage =
   | SaveViewportMessage
   | SetRootCwdMessage
   | SetAutoStampsEnabledMessage
-  | ReceptionistSelectMessage
   | ReceptionistSayMessage
   | ReceptionistTranscriptMessage
   | ReceptionistStopMessage
@@ -1588,23 +1522,15 @@ export interface SpeechActiveMessage {
   active: boolean
 }
 
-export interface SpeakingChangedMessage {
-  type: 'speaking-changed'
-  nodeId: NodeId
-  speaking: boolean
-  voice?: string
-}
-
 /**
- * What a Summary Chat surface is doing.
+ * What Control is doing.
  *
  * `thinking`, `synthesizing`, `speaking` and `ready` are one *phase*: the
  * server emits them from a single transition point, so exactly one is true at
- * a time and no consumer has to reconcile overlapping signals. `target` and
- * `error` are notifications about a surface that leave the phase alone.
+ * a time and no consumer has to reconcile overlapping signals.
  *
  * This mattered: the waiting cue used to be driven by "is thinking" while the
- * server left a surface in `thinking` for the whole duration of its spoken
+ * server left the voice in `thinking` for the whole duration of its spoken
  * answer, so the cue played *over* the speech — and never stopped at all if
  * the speech job never reached a terminal state.
  *
@@ -1612,43 +1538,11 @@ export interface SpeakingChangedMessage {
  * stretch after Voice Operator has accepted the speech job and before any
  * sound comes out of it — a wait that *is* still a wait, but not spaceterm's
  * any more. Voice Operator runs its own echo and its own menu-bar colour
- * across exactly this window, so a surface that stayed `thinking` here put two
- * different waiting cues on top of each other. The rule the phase encodes:
- * spaceterm is audible only while Haiku is the thing being waited on.
+ * across exactly this window, so staying `thinking` here put two different
+ * waiting cues on top of each other. The rule the phase encodes: spaceterm is
+ * audible only while the model is the thing being waited on.
  */
-export type SummaryChatPhase = 'thinking' | 'synthesizing' | 'speaking' | 'ready'
-/**
- * `ended`: the surface's conversation has been abandoned and forgotten — the
- * phone's talk button goes with it. See `SummaryChat.end`.
- */
-export type SummaryChatUiState = SummaryChatPhase | 'target' | 'error' | 'ended'
-
-/** Summary Chat lifecycle for the toolbar's thinking and target indicators. */
-export interface SummaryChatStatusMessage {
-  type: 'summary-chat-status'
-  nodeId: NodeId
-  state: SummaryChatUiState
-  message?: string
-}
-
-/** What one press of the chord turned out to mean. */
-export type SummaryChatToggleOutcome = 'started' | 'cancelled' | 'rejected'
-
-/**
- * The answer to one `summary-chat-toggle`, sent to the client that pressed the
- * key rather than broadcast.
- *
- * The press produces feedback that belongs to a person — a confirming chirp, an
- * abort chirp, a shake and a toast — and there is exactly one person it belongs
- * to. Phase changes stay broadcast, because every client draws them.
- */
-export interface SummaryChatToggleResultMessage {
-  type: 'summary-chat-toggle-result'
-  seq: number
-  outcome: SummaryChatToggleOutcome
-  /** Why the press was rejected. Present only for `rejected`. */
-  message?: string
-}
+export type ReceptionistPhase = 'thinking' | 'synthesizing' | 'speaking' | 'ready'
 
 /**
  * Sent to exactly one client, instructing it to raise its window and show what
@@ -1682,13 +1576,11 @@ export interface RootCwdMessage {
 
 /**
  * The receptionist's lifecycle. Sent on connect and broadcast on every change.
- * `target` says whether the listener's voice currently goes to it rather than
- * to Summary Chat; `message` explains an error.
+ * `message` explains an error.
  */
 export interface ReceptionistStatusMessage {
   type: 'receptionist-status'
-  phase: SummaryChatPhase
-  target: boolean
+  phase: ReceptionistPhase
   message?: string
   /** Who is being heard while `phase` is `speaking`: "Control", or the agent it is quoting. */
   speaker?: string
@@ -1783,14 +1675,15 @@ export type ControlTranscriptEntry = {
  * holding back while the user is mid-topic; a watch on an agent set up,
  * firing, or ending; a reply that was never spoken; Control cutting its own
  * reply short for news; a turn that failed (`failed`), which the view shows
- * even with the reasoning hidden, since Control said so out loud.
+ * even with the reasoning hidden, since Control said so out loud; Control's
+ * session compacted to a summary (`compacted`), also always shown.
  */
 export type ControlTraceKind =
   | 'events' | 'requeued'
   | 'backlog-add' | 'backlog-take' | 'backlog-back' | 'backlog-dropped' | 'backlog-wait'
   | 'watch' | 'fired' | 'unwatch'
   | 'unspoken' | 'cut-in' | 'stopped' | 'resumed'
-  | 'failed'
+  | 'failed' | 'compacted'
 
 /** One reasoning entry: a line, and the detail behind it when there is more to say. */
 export interface ControlTrace {
@@ -2196,9 +2089,6 @@ export type ServerMessage =
   | PlaySoundServerMessage
   | SpeakToggleResultMessage
   | SpeechActiveMessage
-  | SpeakingChangedMessage
-  | SummaryChatStatusMessage
-  | SummaryChatToggleResultMessage
   | FocusSurfaceMessage
   | SavedViewportsMessage
   | RootCwdMessage

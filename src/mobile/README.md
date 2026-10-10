@@ -39,7 +39,7 @@ Touches never reach xterm (`terminal-gesture.ts`):
 | drag up / down | scrolls — sent as wheel events, so the card's own routing picks the TUI's mouse protocol or the shell's scrollback, as on the desktop |
 | swipe sideways, pinch in | back to the canvas the moment it goes far enough; the rest of the gesture pans or zooms the canvas (`handTouchToCanvas`) |
 | tap | the composer, keyboard up |
-| long press | a radial menu around the thumb: slide to **Keyboard** (the keyboard and extra-key row, typing straight into the terminal; *Hide keyboard* while it is up) or **Summarize** (Summary Chat), and let go. Letting go in the middle does nothing |
+| long press | a radial menu around the thumb: slide to **Keyboard** (the keyboard and extra-key row, typing straight into the terminal; *Hide keyboard* while it is up), and let go. Letting go in the middle does nothing |
 
 On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
@@ -62,7 +62,7 @@ replacement loads the new page (`clientStalenessStore.ts`). The build writes
 `build.json` (its id and the native fingerprint from `ios/native-version.mjs`),
 which `install.sh` also stamps into the app — see `update-check.ts`.
 
-The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control, the microphone and Control's transcript in the middle, the toolbar's rocket, which carries the notifications, on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
+The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control, the microphone and its lock in the middle, the toolbar's rocket, which carries the notifications, on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as AI Spend Tracker's menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
@@ -93,8 +93,7 @@ those stand (`ControlBadges.tsx`, shared with the Mac's toolbar button):
 
 Muted, Control stays on this phone but writes instead of speaking: its
 replies go into the transcript, unread until read. The headset is dim while
-Control is not here, and magenta while it is but the voice last went to
-Summary Chat. A yellow ring shows while it thinks, and while anything is said
+Control is not here. A yellow ring shows while it thinks, and while anything is said
 through it bars replace the headset in the colour of who is speaking — white
 for Control, a hue of their own for an agent it quotes. The server takes each
 of the transcript's presses as said outright (`receptionist-hold`: `mute`,
@@ -128,8 +127,7 @@ earpiece switch, and **Catch me up** while replies wait unread: Control comes
 here unmuted and sums them up aloud.
 
 While it is open the bar stays up: the Control button is a down arrow that
-closes it, and the microphone talks to Control, whatever the voice target,
-with what it heard appearing at the bottom. It and the toolbar sheet are screens, not
+closes it, and the microphone talks to Control, with what it heard appearing at the bottom. It and the toolbar sheet are screens, not
 layers — opening one closes the other — and a one-finger sideways drag
 dismisses either, as it leaves the terminal view (`swipe-dismiss.ts`), except
 from the sheet's button strip, which scrolls sideways, a row's reorder handle,
@@ -212,7 +210,7 @@ phone's microphone, and only that; the rules for its looks are pure, in
 
 | Gesture | Does |
 |---|---|
-| tap | speak, and tap again to send — to Summary Chat, or to Control while it holds the voice target or its transcript is open. Over an answer, cuts it off and listens |
+| tap | speak to Control, and tap again to send. Over an answer, cuts it off and listens |
 
 It looks the same however the listening started — a tap, "Control", the
 conversation window, or a composer's dictation:
@@ -226,8 +224,8 @@ conversation window, or a composer's dictation:
 | solid orange, level bars | your voice is leaving the phone, whatever started it — the bars are its level (`mic-level.ts`, fed by each dictation) |
 | orange, pulsing | waiting for the words |
 
-Orange is the **MIC** label's (below) and iOS's own dot. What Control or
-Summary Chat is doing never shows here: Control's own buttons say that.
+Orange is the **MIC** label's (below) and iOS's own dot. What Control is
+doing never shows here: its own button says that.
 
 A composer's dictation carries on after its composer closes
 (`dictation-session.ts`). The button stays up while it does, orange, and a tap

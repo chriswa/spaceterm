@@ -10,7 +10,6 @@ import { KeyRow } from './KeyRow'
 import { TerminalGesture, LONG_PRESS_MS } from './terminal-gesture'
 import { layoutRadial, pickRadial, type Point, type RadialLayout } from './radial-menu'
 import { RadialMenu } from './RadialMenu'
-import { pressSummaryChatChord, REAL_CHORD_CUES } from '@/lib/summary-chat-chord'
 
 /**
  * One terminal surface, filling the screen above the bottom bar and nothing else.
@@ -25,7 +24,7 @@ import { pressSummaryChatChord, REAL_CHORD_CUES } from '@/lib/summary-chat-chord
  * scroll — and a flicked scroll carries on after the finger lifts, as any iOS
  * scroll view does (touch-momentum.ts) — swipe sideways or pinch in to leave,
  * tap to compose. A long press opens a radial menu around the thumb (the
- * keyboard and its extra keys, Summary Chat); the thumb aims, releasing
+ * keyboard and its extra keys); the thumb aims, releasing
  * chooses, and releasing in the middle chooses nothing. See
  * terminal-gesture.ts. Leaving
  * happens mid-gesture, and the canvas takes the rest of it as a pan or pinch.
@@ -42,8 +41,8 @@ const BORROW_SETTLE_MS = 150
 const noop = () => undefined
 
 /** What a long press offers, in order around the arc from the left. */
-type RadialOptionId = 'keyboard' | 'summarize'
-const RADIAL_OPTIONS: RadialOptionId[] = ['keyboard', 'summarize']
+type RadialOptionId = 'keyboard'
+const RADIAL_OPTIONS: RadialOptionId[] = ['keyboard']
 
 /** Distance between the first two touches. */
 function span(touches: TouchList): number {
@@ -72,13 +71,6 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
   const [swipeDx, setSwipeDx] = useState(0)
   /** The long-press menu around the thumb, and the option it points at. */
   const [radial, setRadial] = useState<{ layout: RadialLayout; selected: number | null } | null>(null)
-  /** A short message over the terminal — Summary Chat saying why it could not start. */
-  const [notice, setNotice] = useState<string | null>(null)
-  useEffect(() => {
-    if (!notice) return
-    const timer = setTimeout(() => setNotice(null), 4000)
-    return () => clearTimeout(timer)
-  }, [notice])
   /** The row height the terminal really draws at on this phone; see TerminalCard's onRowHeight. */
   const [rowHeight, setRowHeight] = useState(CELL_HEIGHT)
   /** How far a pinch has closed, for the view to shrink with it; 1 when not pinching. */
@@ -160,19 +152,14 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
     }
     /** What a released long press chose. Inside the touch handler, where iOS lets the keyboard rise. */
     const choose = (option: RadialOptionId) => {
-      if (option === 'keyboard') {
-        // The blur ends typing mode (see below).
-        if (keyboardRef.current) textarea()?.blur()
-        else {
-          textarea()?.focus()
-          setKeyboard(true)
-        }
-      } else {
-        void pressSummaryChatChord(nodeId, 'summary', {
-          toggle: (id, mode) => window.api.toggleSummaryChat(id, mode),
-          ...REAL_CHORD_CUES,
-          rejected: setNotice,
-        })
+      switch (option) {
+        case 'keyboard':
+          // The blur ends typing mode (see below).
+          if (keyboardRef.current) textarea()?.blur()
+          else {
+            textarea()?.focus()
+            setKeyboard(true)
+          }
       }
     }
 
@@ -352,14 +339,11 @@ export function TerminalView({ nodeId, onClose, onCompose }: {
             onRowHeight={setRowHeight}
           />
         </div>
-        {notice && <div className="mobile-term__notice" role="alert">{notice}</div>}
         {radial && (
           <RadialMenu
             layout={radial.layout}
             selected={radial.selected}
-            options={RADIAL_OPTIONS.map((id) => id === 'keyboard'
-              ? { label: keyboard ? 'Hide keyboard' : 'Keyboard', icon: '⌨︎' }
-              : { label: 'Summarize', icon: '🗣︎' })}
+            options={RADIAL_OPTIONS.map(() => ({ label: keyboard ? 'Hide keyboard' : 'Keyboard', icon: '⌨︎' }))}
           />
         )}
       </div>

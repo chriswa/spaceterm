@@ -10,8 +10,8 @@ import { e2eBlocker, launchApp, type LaunchedApp } from './electron-app'
  * menu's ⌘V runs, so it is the path Voice Operator's synthesized keystroke
  * takes.
  *
- * `summaryChatFollowUp` is replaced in the page, so the text never reaches a
- * real Control or Summary Chat.
+ * `receptionist.say` is replaced in the page, so the text never reaches a
+ * real Control.
  */
 
 const blocker = e2eBlocker()
@@ -27,15 +27,15 @@ afterEach(async () => {
 })
 
 describeE2E('a stray paste', () => {
-  it('goes to the voice target when nothing has focus', async () => {
+  it('goes to Control, as said, when nothing has focus', async () => {
     launched = await launchApp()
     const { app, window } = launched
     await window.waitForSelector('.canvas-viewport', { timeout: 60_000 })
 
     await window.evaluate(() => {
-      const sent: string[] = []
-      ;(window as unknown as { __sent: string[] }).__sent = sent
-      window.api.summaryChatFollowUp = (text: string) => { sent.push(text) }
+      const sent: Array<[string, boolean]> = []
+      ;(window as unknown as { __sent: typeof sent }).__sent = sent
+      window.api.receptionist.say = (text, how) => { sent.push([text, how?.spoken === true]) }
       ;(document.activeElement as HTMLElement | null)?.blur()
     })
 
@@ -49,9 +49,9 @@ describeE2E('a stray paste', () => {
       })
 
       await expect.poll(
-        () => window.evaluate(() => (window as unknown as { __sent: string[] }).__sent),
+        () => window.evaluate(() => (window as unknown as { __sent: Array<[string, boolean]> }).__sent),
         { timeout: 10_000 },
-      ).toEqual(['open the build logs'])
+      ).toEqual([['open the build logs', true]])
     } finally {
       await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), saved)
     }

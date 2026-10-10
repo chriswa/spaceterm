@@ -241,14 +241,14 @@ done last session; kept so the reasoning is not lost.
    Done — `RestartRecoveryLedger`, 20 tests, `now` injected.
 7. ~~**Error surfacing is one-way.**~~ Done for launch failures: a restart or
    revive that fails now leaves a `launch-failed` alert on the surface. The same
-   treatment is worth applying to a failed `directory-wt-spawn` and to a
-   summary-chat error, both of which are still toast-only.
+   treatment is worth applying to a failed `directory-wt-spawn`, which is
+   still toast-only.
 8. ~~**Unbounded graph walks.**~~ Checked: all four were already cycle-guarded.
    They are now *one* guarded walk (`shared/node-ancestry.ts`) rather than four
    copies, which is what removes the chance of the next one being written
    without a guard.
-9. **`SummaryChat` and the pollers all own their own retry policy.** Three
-   different backoff shapes, none shared. Not urgent, but it is the same
+9. **The pollers all own their own retry policy.** Different backoff shapes,
+   none shared. Not urgent, but it is the same
    many-copies-of-one-decision signature that produced `terminal-respawn.ts`.
 10. **Two render loops still capture `devicePixelRatio` once.**
     `KeycastOverlay` and the orb root node read it at setup and size their

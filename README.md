@@ -139,8 +139,8 @@ which of them this machine has.
 
 | Companion | Used for | Without it | Get it |
 |---|---|---|---|
-| [Voice Operator](https://github.com/chriswa/voiceop) | Speech: Control, Summary Chat audio, phone dictation and hands-free | Nothing is spoken; voice commands do nothing | Private repo — ask for access. Found through `~/Library/Application Support/VoiceOperator/speech-service.json`, which it writes when running. Needs a build with `/v1/subscribers` (October 2026 or later), or voice commands never reach Spaceterm. |
-| `claude-print-daemon` ([chriswa-devkit](https://github.com/chriswa/chriswa-devkit), `tools/claude-print-daemon`) | Control (the receptionist), Summary Chat (⌘⌃X), auto-stamp icons | Control and Summary Chat report an error on every turn; auto-stamps fail | Needs Go. Build it into the devkit's `bin/` (see its README), and put `bin/` on PATH or set `CLAUDE_PRINT_DAEMON_BIN`. Uses your own signed-in Claude Code. |
+| [Voice Operator](https://github.com/chriswa/voiceop) | Speech: Control, phone dictation and hands-free | Nothing is spoken; voice commands do nothing | Private repo — ask for access. Found through `~/Library/Application Support/VoiceOperator/speech-service.json`, which it writes when running. Needs a build with `/v1/subscribers` (October 2026 or later), or voice commands never reach Spaceterm. |
+| `claude-print-daemon` ([chriswa-devkit](https://github.com/chriswa/chriswa-devkit), `tools/claude-print-daemon`) | Control (the receptionist), auto-stamp icons | Control reports an error on every turn; auto-stamps fail | Needs Go. Build it into the devkit's `bin/` (see its README), and put `bin/` on PATH or set `CLAUDE_PRINT_DAEMON_BIN`. Uses your own signed-in Claude Code. |
 | `jev` ([chriswa-devkit](https://github.com/chriswa/chriswa-devkit), `tools/jev`) | Agent search; Control's judgement of interruptions and its backlog | Agent search fails with "could not run jev"; Control loses those judgements | Needs [Bun](https://bun.sh) and a paid `TYPESAFE_API_KEY` in your shell's rc files. Put `bin/jev` on PATH. |
 | Tailscale | Reaching the phone app | No phone app | MagicDNS and HTTPS certificates on; see `npm run mobile:link` and `src/mobile/README.md` |
 | Xcode, an Apple ID, an iPhone | The native iPhone app (`npm run mobile:ios`) | Use the phone web app in Safari instead | Signing is per person: `src/mobile/ios/Local.xcconfig`, which the build tells you how to write. See `src/mobile/README.md`. |
@@ -184,7 +184,7 @@ dependencies, all of which degrade rather than crash:
 
 | Depends on | Used for | Without it |
 |---|---|---|
-| claude-print-daemon | Control, Summary Chat and auto-stamps reaching Claude | Those report an error |
+| claude-print-daemon | Control and auto-stamps reaching Claude | Those report an error |
 | Voice Operator | Speaking aloud | Text only, nothing is said |
 | `/usr/bin/pgrep` | Detecting background work | A surface may not drain back to idle on its own |
 | `/usr/sbin/lsof` | Detecting a finished background command | Same |

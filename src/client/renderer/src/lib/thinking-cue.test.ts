@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SummaryChatWaitCue, type WaitCueDeps } from './summary-chat-wait-cue'
-import { asNodeId } from '../../../../shared/ids'
-
-const A = asNodeId('node-aaaa1111')
-const B = asNodeId('node-bbbb2222')
+import { ThinkingCue, type ThinkingCueDeps } from './thinking-cue'
 
 /**
  * A fake clock plus a fake tone player. The cue's Web Audio graph is not the
@@ -27,7 +23,7 @@ function harness() {
   /** A real echo lasts this long before it ends on its own. */
   const TONE_MS = 1_500
 
-  const deps: WaitCueDeps = {
+  const deps: ThinkingCueDeps = {
     playTone: () => {
       playing++
       played++
@@ -45,7 +41,7 @@ function harness() {
   }
 
   return {
-    cue: new SummaryChatWaitCue(deps),
+    cue: new ThinkingCue(deps),
     /** Tones started and not yet silenced. */
     get playing() { return playing },
     /** Tones started since the beginning of the test. */
@@ -68,35 +64,35 @@ function harness() {
   }
 }
 
-describe('SummaryChatWaitCue', () => {
+describe('ThinkingCue', () => {
   it('stays silent for a wait that resolves quickly', () => {
     const h = harness()
-    h.cue.setWaiting(A, true)
+    h.cue.setThinking(true)
     h.advance(1_000)
-    h.cue.setWaiting(A, false)
+    h.cue.setThinking(false)
     h.advance(10_000)
 
     expect(h.played).toBe(0)
   })
 
-  it('repeats while a surface is still waiting', () => {
+  it('repeats while Control is still thinking', () => {
     const h = harness()
-    h.cue.setWaiting(A, true)
+    h.cue.setThinking(true)
     h.advance(10_000)
 
     expect(h.played).toBeGreaterThan(1)
   })
 
-  it('goes silent the instant the surface stops waiting', () => {
+  it('goes silent the instant Control stops thinking', () => {
     // The reported bug: the echo kept playing underneath the spoken answer.
-    // `false` arrives when the surface leaves the thinking phase, and nothing
+    // `false` arrives when Control leaves the thinking phase, and nothing
     // may be audible after that.
     const h = harness()
-    h.cue.setWaiting(A, true)
+    h.cue.setThinking(true)
     h.advance(2_000)
     expect(h.playing).toBe(1)
 
-    h.cue.setWaiting(A, false)
+    h.cue.setThinking(false)
     expect(h.playing).toBe(0)
 
     const before = h.played
@@ -104,29 +100,12 @@ describe('SummaryChatWaitCue', () => {
     expect(h.played).toBe(before)
   })
 
-  it('keeps playing until the last waiting surface is done', () => {
-    const h = harness()
-    h.cue.setWaiting(A, true)
-    h.cue.setWaiting(B, true)
-    h.advance(3_000)
-    const afterA = h.played
-
-    h.cue.setWaiting(A, false)
-    h.advance(5_000)
-    expect(h.played).toBeGreaterThan(afterA)
-
-    h.cue.setWaiting(B, false)
-    const afterB = h.played
-    h.advance(60_000)
-    expect(h.played).toBe(afterB)
-  })
-
-  it('stops itself if the surface never reports that it is done', () => {
+  it('stops itself if Control never reports that it is done', () => {
     // A server restart mid-answer, or a dropped socket, means the `ready` that
     // ends a wait may simply never arrive. An echo is unbounded audible
     // output, so it must not be able to run forever waiting for one.
     const h = harness()
-    h.cue.setWaiting(A, true)
+    h.cue.setThinking(true)
     h.advance(10 * 60_000)
 
     expect(h.playing).toBe(0)
@@ -137,15 +116,15 @@ describe('SummaryChatWaitCue', () => {
 
   it('restarts cleanly after the watchdog has fired', () => {
     const h = harness()
-    h.cue.setWaiting(A, true)
+    h.cue.setThinking(true)
     h.advance(10 * 60_000)
     const afterWatchdog = h.played
 
-    h.cue.setWaiting(A, true)
+    h.cue.setThinking(true)
     h.advance(5_000)
     expect(h.played).toBeGreaterThan(afterWatchdog)
 
-    h.cue.setWaiting(A, false)
+    h.cue.setThinking(false)
     const afterStop = h.played
     h.advance(60_000)
     expect(h.played).toBe(afterStop)

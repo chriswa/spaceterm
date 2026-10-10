@@ -80,8 +80,6 @@ export function browserPlatform(): PlatformApi {
     // view was left on its load error, and with no page there was no script
     // left to try again — a black screen until the app was relaunched.
     restartClient: () => undefined,
-    // The phone is where its listener is: Summary Chat answers play here.
-    playsSpeech: true,
     raiseWindow: () => undefined,
     onFocusRequest: () => () => undefined,
     perf: {

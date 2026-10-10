@@ -1,7 +1,7 @@
 import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
-  SessionInfo, SummaryChatMode, SummaryChatToggleResult, SummaryChatUiState, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
+  SessionInfo, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
   ReceptionistApi, ReceptionistStatus, HandsFreeApi, WakeWordCheckResult, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
@@ -162,8 +162,6 @@ export class FakeBridge implements Api {
   private readonly serverError = new Set<(message: string) => void>()
   private readonly playSound = new Set<(sound: string) => void>()
   private readonly speechActive = new Set<(active: boolean) => void>()
-  private readonly speakingChanged = new Set<(nodeId: NodeId, speaking: boolean, voice?: string) => void>()
-  private readonly summaryChatStatus = new Set<(nodeId: NodeId, s: SummaryChatUiState, m?: string) => void>()
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly rootCwd = new Set<(cwd: string | undefined) => void>()
   private readonly autoStampsEnabled = new Set<(enabled: boolean) => void>()
@@ -244,12 +242,6 @@ export class FakeBridge implements Api {
     serverError: (message: string): void => { for (const fn of this.serverError) fn(message) },
     playSound: (sound: string): void => { for (const fn of this.playSound) fn(sound) },
     speechActive: (active: boolean): void => { for (const fn of this.speechActive) fn(active) },
-    speakingChanged: (nodeId: NodeId, speaking: boolean, voice?: string): void => {
-      for (const fn of this.speakingChanged) fn(nodeId, speaking, voice)
-    },
-    summaryChatStatus: (nodeId: NodeId, state: SummaryChatUiState, message?: string): void => {
-      for (const fn of this.summaryChatStatus) fn(nodeId, state, message)
-    },
     savedViewports: (viewports: Record<string, CameraBounds>): void => {
       for (const fn of this.savedViewports) fn(viewports)
     },
@@ -415,8 +407,6 @@ export class FakeBridge implements Api {
     onFileContent: (cb) => subscribe(this.fileContent, cb),
     onServerError: (cb) => subscribe(this.serverError, cb),
     onPlaySound: (cb) => subscribe(this.playSound, cb),
-    onSpeakingChanged: (cb) => subscribe(this.speakingChanged, cb),
-    onSummaryChatStatus: (cb) => subscribe(this.summaryChatStatus, cb),
     onSavedViewports: (cb) => subscribe(this.savedViewports, cb),
     onRootCwd: (cb) => subscribe(this.rootCwd, cb),
     onAutoStampsEnabled: (cb) => subscribe(this.autoStampsEnabled, cb),
@@ -462,10 +452,9 @@ export class FakeBridge implements Api {
    * late subscriber: a test emits after rendering, so it never needs to.
    */
   readonly receptionist: ReceptionistApi = {
-    select: () => this.record('receptionist.select'),
     stop: () => this.record('receptionist.stop'),
     hold: (action) => this.record('receptionist.hold', action),
-    say: (text) => this.record('receptionist.say', text),
+    say: (text, how) => this.record('receptionist.say', text, ...(how ? [how] : [])),
     mark: (of, part, char) => this.record('receptionist.mark', of, part, char),
     readAll: () => this.record('receptionist.readAll'),
     replay: (of, part) => this.record('receptionist.replay', of, part),
@@ -519,16 +508,6 @@ export class FakeBridge implements Api {
   }
 
   log = (message: string): void => this.record('log', message)
-  /** Outcome the next chord press resolves with. Tests override per case. */
-  summaryChatToggleResult: SummaryChatToggleResult = { outcome: 'started' }
-  toggleSummaryChat = async (
-    nodeId: NodeId | undefined, mode: SummaryChatMode,
-  ): Promise<SummaryChatToggleResult> => {
-    this.record('toggleSummaryChat', nodeId, mode)
-    return this.summaryChatToggleResult
-  }
-  summaryChatFollowUp = (text: string): void => this.record('summaryChatFollowUp', text)
-  endSummaryChat = (): void => this.record('endSummaryChat')
   restartSpaceterm = (): Promise<void> => this.reply('restartSpaceterm', undefined)
   installMobileApp = (): Promise<{ ok: boolean; message?: string }> => this.reply('installMobileApp', { ok: true })
   writeDebugLog = (content: string): Promise<string> =>

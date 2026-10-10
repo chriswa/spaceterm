@@ -178,7 +178,7 @@ describe('createApi', () => {
     const { t, client } = connected()
     const api = createApi(client, platform)
     t.receive(
-      { type: 'receptionist-status', phase: 'ready', target: true },
+      { type: 'receptionist-status', phase: 'ready' },
       { type: 'receptionist-holder', holder: { deviceId: 'phone-1', label: 'Phone' }, muted: ['phone-1'] },
       { type: 'agent-names', names: { n1: 'Kevin' } },
       { type: 'camera-follow', nodeId: 'n1' }
@@ -191,7 +191,7 @@ describe('createApi', () => {
     api.receptionist.onHolder(holder)
     api.receptionist.onAgentNames(names)
     api.receptionist.onCameraFollow(follow)
-    expect(status).toHaveBeenCalledWith({ phase: 'ready', target: true, message: undefined })
+    expect(status).toHaveBeenCalledWith({ phase: 'ready', message: undefined })
     expect(holder).toHaveBeenCalledWith({ deviceId: 'phone-1', label: 'Phone' }, ['phone-1'])
     expect(api.receptionist.deviceId).toBe('phone-1')
     expect(names).toHaveBeenCalledWith({ n1: 'Kevin' })
@@ -206,10 +206,12 @@ describe('createApi', () => {
   it('sends Control’s presses fire-and-forget', () => {
     const { t, client } = connected()
     const api = createApi(client, platform)
-    api.receptionist.select()
     api.receptionist.stop()
-    expect(t.last('receptionist-select').msg).toEqual({ type: 'receptionist-select' })
     expect(t.last('receptionist-stop').msg).toEqual({ type: 'receptionist-stop' })
+    api.receptionist.say('typed')
+    expect(t.last('receptionist-say').msg).toEqual({ type: 'receptionist-say', text: 'typed' })
+    api.receptionist.say('dictated', { spoken: true })
+    expect(t.last('receptionist-say').msg).toEqual({ type: 'receptionist-say', text: 'dictated', spoken: true })
   })
 
   it('filters mod traffic to the mod that asked', () => {

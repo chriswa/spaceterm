@@ -132,7 +132,7 @@ describe('codex transcript layout', () => {
 describe('PollingTranscriptWatcher.watchPath', () => {
   it('remembers a known path even when the file does not exist yet', () => {
     // Cursor status-line advertises transcript_path before creating the JSONL.
-    // Summarize must be able to resolve that path from the watcher cache.
+    // Control must be able to resolve that path from the watcher cache.
     const surfaceId = asPtySessionId('surface-aaaa-bbbb-cccc-ddddeeee0001')
     const filePath = path.join(root, `proj/${ID}/${ID}.jsonl`)
     const watcher = new PollingTranscriptWatcher(

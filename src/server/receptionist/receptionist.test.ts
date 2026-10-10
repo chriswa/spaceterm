@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { asNodeId, type NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
-import type { TranscriptMessage } from '../summary-chat'
+import type { TranscriptMessage } from '../agent-transcript'
 import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operator'
 import type { SideQuestionResult } from '../side-questions'
 import type { NamedVoice } from './name-voice-table'

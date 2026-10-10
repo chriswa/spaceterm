@@ -9,7 +9,7 @@ let bridge: FakeBridge
 
 beforeEach(() => {
   bridge = installFakeBridge()
-  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null, mutedHere: false, speaker: null, unread: { count: 0 } })
+  useReceptionistStore.setState({ phase: 'ready', error: null, holder: null, mutedHere: false, speaker: null, unread: { count: 0 } })
   useControlTranscriptStore.setState({ open: false, pending: [] })
 })
 
@@ -29,7 +29,6 @@ describe('the phone’s Control button', () => {
     fireEvent.click(button())
     expect(useControlTranscriptStore.getState().open).toBe(false)
     expect(bridge.callsTo('receptionist.hold')).toHaveLength(0)
-    expect(bridge.callsTo('receptionist.select')).toHaveLength(0)
   })
 
   it('wears an eye while Control is here, the holder’s name while it is elsewhere, and nothing while nobody has it', () => {
@@ -62,24 +61,17 @@ describe('the phone’s Control button', () => {
   it('shows thinking, who is speaking, and what is unread', () => {
     const { container } = render(<ControlButton />)
     hold()
-    act(() => useReceptionistStore.getState().setStatus({ phase: 'thinking', target: true }))
+    act(() => useReceptionistStore.getState().setStatus({ phase: 'thinking' }))
     expect(button().dataset.phase).toBe('thinking')
 
-    act(() => useReceptionistStore.getState().setStatus({ phase: 'speaking', target: true, speaker: 'Kevin' }))
+    act(() => useReceptionistStore.getState().setStatus({ phase: 'speaking', speaker: 'Kevin' }))
     expect(button().dataset.phase).toBe('ready')
     expect(button().getAttribute('aria-label')).toMatch(/Kevin speaking/)
     expect(container.querySelector('.m-control__bars')).not.toBeNull()
 
-    act(() => useReceptionistStore.getState().setStatus({ phase: 'ready', target: true }))
+    act(() => useReceptionistStore.getState().setStatus({ phase: 'ready' }))
     act(() => useReceptionistStore.getState().setUnread({ count: 2, first: 40 }))
     expect(container.querySelector('.control-badge--count')?.textContent).toBe('2')
     expect(container.querySelector('.m-control__bars')).toBeNull()
-  })
-
-  it('is magenta while Control is here but the voice went to Summary Chat', () => {
-    const { container } = render(<ControlButton />)
-    hold()
-    act(() => useReceptionistStore.getState().setStatus({ phase: 'ready', target: false }))
-    expect(container.querySelector('.m-control--summary')).not.toBeNull()
   })
 })

@@ -89,16 +89,16 @@ describe('one bad mod does not stop the others', () => {
 
 describe('peers', () => {
   it('reports a named peer that is not installed', () => {
-    writeMod('themer', manifest('themer', { peers: { 'summary-chat': '^1' } }))
+    writeMod('themer', manifest('themer', { peers: { 'chatter': '^1' } }))
     registry.loadFrom(home)
     expect(registry.missingPeers()).toEqual([
-      { modId: 'themer', peer: 'summary-chat', range: '^1' },
+      { modId: 'themer', peer: 'chatter', range: '^1' },
     ])
   })
 
   it('says nothing when the peer is installed', () => {
-    writeMod('themer', manifest('themer', { peers: { 'summary-chat': '^1' } }))
-    writeMod('summary-chat', manifest('summary-chat'))
+    writeMod('themer', manifest('themer', { peers: { 'chatter': '^1' } }))
+    writeMod('chatter', manifest('chatter'))
     registry.loadFrom(home)
     expect(registry.missingPeers()).toEqual([])
   })
@@ -106,7 +106,7 @@ describe('peers', () => {
   it('does not stop a mod loading when its peer is absent', () => {
     // Advisory, not enforced: a mod that degrades gracefully without its peer
     // is the behaviour worth encouraging.
-    writeMod('themer', manifest('themer', { peers: { 'summary-chat': '^1' } }))
+    writeMod('themer', manifest('themer', { peers: { 'chatter': '^1' } }))
     registry.loadFrom(home)
     expect(registry.capabilitiesFor('themer')).toEqual(['read-nodes'])
   })
@@ -114,22 +114,22 @@ describe('peers', () => {
 
 describe('mod-provided capabilities', () => {
   it('finds the provider of a capability', () => {
-    writeMod('summary-chat', manifest('summary-chat', { provides: ['summary-chat:speak'] }))
+    writeMod('chatter', manifest('chatter', { provides: ['chatter:speak'] }))
     registry.loadFrom(home)
-    expect(registry.providerOf('summary-chat:speak')).toBe('summary-chat')
+    expect(registry.providerOf('chatter:speak')).toBe('chatter')
   })
 
   it('reports a requested capability nobody provides', () => {
-    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
+    writeMod('narrator', manifest('narrator', { capabilities: ['chatter:speak'] }))
     registry.loadFrom(home)
     expect(registry.unprovidedCapabilities()).toEqual([
-      { modId: 'narrator', capability: 'summary-chat:speak' },
+      { modId: 'narrator', capability: 'chatter:speak' },
     ])
   })
 
   it('says nothing once the provider is installed', () => {
-    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
-    writeMod('summary-chat', manifest('summary-chat', { provides: ['summary-chat:speak'] }))
+    writeMod('narrator', manifest('narrator', { capabilities: ['chatter:speak'] }))
+    writeMod('chatter', manifest('chatter', { provides: ['chatter:speak'] }))
     registry.loadFrom(home)
     expect(registry.unprovidedCapabilities()).toEqual([])
   })
@@ -144,15 +144,15 @@ describe('mod-provided capabilities', () => {
   it('answers whether a caller declared a capability', () => {
     // What a provider asks before handing over its API. Information, not a
     // gate: a caller that ignores it and imports directly still gets through.
-    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
+    writeMod('narrator', manifest('narrator', { capabilities: ['chatter:speak'] }))
     registry.loadFrom(home)
-    expect(registry.declares('narrator', 'summary-chat:speak')).toBe(true)
-    expect(registry.declares('narrator', 'summary-chat:shush')).toBe(false)
-    expect(registry.declares('nobody', 'summary-chat:speak')).toBe(false)
+    expect(registry.declares('narrator', 'chatter:speak')).toBe(true)
+    expect(registry.declares('narrator', 'chatter:shush')).toBe(false)
+    expect(registry.declares('nobody', 'chatter:speak')).toBe(false)
   })
 
   it('still loads a mod whose requested capability is unprovided', () => {
-    writeMod('narrator', manifest('narrator', { capabilities: ['summary-chat:speak'] }))
+    writeMod('narrator', manifest('narrator', { capabilities: ['chatter:speak'] }))
     registry.loadFrom(home)
     expect(registry.all().map((m) => m.id)).toEqual(['narrator'])
   })

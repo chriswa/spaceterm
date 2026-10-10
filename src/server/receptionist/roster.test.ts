@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
-import { lastAgentProse, parseWholeTranscript, type TranscriptMessage } from '../summary-chat'
+import { lastAgentProse, parseWholeTranscript, type TranscriptMessage } from '../agent-transcript'
 import { ago, readAgent, renderRoster, type RosterAgent } from './roster'
 
 const transcript: TranscriptMessage[] = [

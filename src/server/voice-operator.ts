@@ -5,7 +5,7 @@ import { homedir } from 'os'
 /**
  * The local Voice Operator speech service, as spaceterm talks to it.
  *
- * Two features speak: Summary Chat, which runs a whole conversation and needs
+ * Two features speak: Control, which runs a whole conversation and needs
  * the job lifecycle (poll, interrupt offsets, voices), and the direct path —
  * the speak-the-selection chord — which only needs "say this, stop that". Both used to own their own transport;
  * the direct one spawned a `cartesia-read` binary that no longer exists, and
@@ -127,7 +127,7 @@ export function speechStatus(response: SpeechResponse): SpeechStatus | undefined
 /**
  * Somewhere speech jobs can be run: Voice Operator itself, which plays on the
  * Mac, or `RemoteSpeech`, which plays on a phone. Both answer in Voice
- * Operator's job format, so Summary Chat follows either the same way.
+ * Operator's job format, so Control follows either the same way.
  */
 export type SpeechBackend = Pick<VoiceOperator, 'speak' | 'status' | 'drop'>
 

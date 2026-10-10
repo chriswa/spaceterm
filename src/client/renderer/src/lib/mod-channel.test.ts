@@ -30,7 +30,7 @@ describe('a mod channel', () => {
     const seen: unknown[] = []
     modChannel<WeatherMsg>('weather').onAny((m) => seen.push(m))
 
-    bridge.emit.modMessage('summary-chat', 'status', { state: 'thinking' })
+    bridge.emit.modMessage('chatter', 'status', { state: 'thinking' })
 
     expect(seen).toEqual([])
   })

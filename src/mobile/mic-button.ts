@@ -23,8 +23,8 @@ export interface MicInputs {
 
 /**
  * One look, however the listening started. `hearing` — the orange — is your
- * voice leaving the phone and nothing else; what Control or Summary Chat is
- * doing never shows here.
+ * voice leaving the phone and nothing else; what Control is doing never shows
+ * here.
  */
 export type MicLook = 'error' | 'hearing' | 'starting' | 'transcribing' | 'conversation' | 'armed' | 'preparing' | 'off'
 

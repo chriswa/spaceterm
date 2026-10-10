@@ -269,13 +269,14 @@ poller-with-a-readout case, which is the one that motivated the tier.
 ### Tier 3 — feature mods that span processes
 
 Tiers 1 and 2 each describe half a mod, and the halves could not talk. A status
-readout is a poller *and* a widget. Summary chat is a subprocess that calls an
-external service *and* a speech bubble *and* a halo around a card. Every mod
+readout is a poller *and* a widget. Summary Chat, before it was removed, was a
+subprocess that called an external service *and* a speech bubble *and* a halo
+around a card. Every mod
 worth writing is a Tier 1 mod and a Tier 2 mod with a wire between them, and
 that wire is the thing that was missing.
 
 The earlier reading of this — recorded in `THEME_MODS.md` — was that a mod
-cannot own an IPC channel, so features like summary chat were blocked. That is
+cannot own an IPC channel, so features like Summary Chat were blocked. That is
 true and beside the point. **A mod does not need its own channel; it needs an
 envelope.**
 
@@ -320,10 +321,12 @@ The mod ships its own protocol module with its own discriminated union and its
 own `assertNever`. It gets the same safety internally that the base has; the
 base simply is not a party to it.
 
-#### What summary chat would still need, concretely
+#### What a feature like Summary Chat would need, concretely
 
 Worth enumerating, because it is short and it is the difference between a plan
-and a wish. Against today's `ScriptHost`:
+and a wish. Summary Chat itself has since been removed — Control does what it
+did — but it was the worked example, and the list holds for the next feature of
+its shape. Against today's `ScriptHost`:
 
 | Need | Status |
 |---|---|
@@ -362,7 +365,7 @@ purpose**:
   it provides. Another mod targets them by string — which is exactly what
   `modFacets` already does, and there is a test for the cross-mod case where
   the only shared knowledge is the key.
-- **Optional peers.** `peers: { 'summary-chat': '^1' }`. Advisory: it orders
+- **Optional peers.** `peers: { 'chatter': '^1' }`. Advisory: it orders
   the register phase and produces a diagnostic when a peer is absent. It does
   not gate loading, because a mod that degrades gracefully without its peer is
   the behaviour we want to encourage.
@@ -441,7 +444,7 @@ purpose**:
 
    **Mods can define capabilities too.** A capability id follows the same
    namespacing rule as everything else: bare (`read-nodes`) is base-defined and
-   its list is closed; `summary-chat:speak` is defined by a mod, which declares
+   its list is closed; `chatter:speak` is defined by a mod, which declares
    it under `provides`. A manifest may request a namespaced capability whose
    provider is not installed — that is a diagnostic, like a missing peer, not a
    load failure, since a manifest should not become invalid because of what is
@@ -481,9 +484,9 @@ only thing standing between in-repo mods and third-party ones.
    spaceterm that want to poke it — Claude Code's nine MCP tools, shell
    scripts, agents — which is a different thing from code that extends
    spaceterm, and separating the two is what untangles Tier 1 from Tier 3.
-3. **Extract summary chat** as the first hybrid mod. It is pilot conversion #3
-   and it exercises every part of the above; anything the plan got wrong shows
-   up here.
+3. **Extract the first hybrid mod.** Summary Chat was to be it, and has since
+   been removed; agent types (pilot conversion #2) exercise every part of the
+   above instead, and anything the plan got wrong shows up there.
 4. **Ecosystem tooling** — the registry inspector and conflict report.
 
 #### Non-goals, stated so they are not assumed
@@ -507,15 +510,12 @@ has since been removed from spaceterm entirely (see git history for
 `gh-rate-limit.ts`, `ring-buffer.ts` and `DeltaSparkline.tsx`), so the argument
 survives but the code to convert does not.
 
-**2. Voice / summary chat.** Already talks HTTP to an external service (Voice
-Operator on `127.0.0.1`), already ~450 lines with its own lifecycle. The most
-natural out-of-process citizen in the codebase. Deps seam and 37 tests. It is
-also the feature that most needs the treatment for a *different* reason: it is
-unavailable on any machine without the macOS Keychain and a running Voice
-Operator, so making it a mod is also how it stops being a button that silently
-does nothing for most users.
+Summary Chat followed it, as the most natural out-of-process citizen: it
+talked HTTP to Voice Operator and had its own lifecycle. It too has been
+removed (see git history for `summary-chat.ts`), since Control, the
+receptionist, does what it did.
 
-**3. Agent types.** `AgentDriver` exists and `AgentProvisioning` now owns the
+**2. Agent types.** `AgentDriver` exists and `AgentProvisioning` now owns the
 plugin directories and config merges (`agent-provisioning.ts`, 47 tests), so
 both halves are behind interfaces. A mod that adds an agent is the most
 compelling demo and is now unblocked end to end.

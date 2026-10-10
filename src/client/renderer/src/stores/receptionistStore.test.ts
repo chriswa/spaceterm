@@ -14,25 +14,25 @@ let bridge: FakeBridge
 
 beforeEach(() => {
   bridge = installFakeBridge(globalThis as never)
-  useReceptionistStore.setState({ phase: 'ready', target: false, error: null, holder: null })
+  useReceptionistStore.setState({ phase: 'ready', error: null, holder: null })
   useAgentNamesStore.setState({ names: {} })
 })
 
 afterEach(() => destroyServerSync())
 
 describe('receptionist status', () => {
-  it('follows the server: target, phase, and an error that clears', async () => {
+  it('follows the server: phase, and an error that clears', async () => {
     await initServerSync()
-    bridge.emit.receptionistStatus({ phase: 'ready', target: true })
-    expect(useReceptionistStore.getState()).toMatchObject({ target: true, phase: 'ready', error: null })
+    bridge.emit.receptionistStatus({ phase: 'ready' })
+    expect(useReceptionistStore.getState()).toMatchObject({ phase: 'ready', error: null })
 
-    bridge.emit.receptionistStatus({ phase: 'speaking', target: true })
+    bridge.emit.receptionistStatus({ phase: 'speaking' })
     expect(useReceptionistStore.getState().phase).toBe('speaking')
 
-    bridge.emit.receptionistStatus({ phase: 'ready', target: false, message: 'no model' })
-    expect(useReceptionistStore.getState()).toMatchObject({ target: false, error: 'no model' })
+    bridge.emit.receptionistStatus({ phase: 'ready', message: 'no model' })
+    expect(useReceptionistStore.getState()).toMatchObject({ error: 'no model' })
 
-    bridge.emit.receptionistStatus({ phase: 'ready', target: false })
+    bridge.emit.receptionistStatus({ phase: 'ready' })
     expect(useReceptionistStore.getState().error).toBeNull()
   })
 

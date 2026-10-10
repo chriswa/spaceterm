@@ -15,9 +15,6 @@ import { useHoveredCardStore } from '../../stores/hoveredCardStore'
 import { useNodeStore } from '../../stores/nodeStore'
 import { StampGlyph, STAMP_LABELS, autoStampMask } from '../StampGlyph'
 import { usePowerMonitorStore } from '../../stores/powerMonitorStore'
-import { useSummaryChatStore } from '../../stores/summaryChatStore'
-import { useReceptionistStore } from '../../stores/receptionistStore'
-import { useSummaryBubble, BUBBLE_STATE } from '../../mods/summary-chat/bubble-facet'
 import { asNodeId, type NodeId } from '../../../../../shared/ids'
 
 /**
@@ -75,14 +72,6 @@ export interface CrabGroupProps {
 
 export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, selectedNodeId, crabNavEvent, now }: CrabGroupProps) {
   const hoveredNodeId = useHoveredCardStore(s => s.hoveredNodeId)
-  // Voice goes to one place at a time: while Control holds it, no surface is
-  // Summary Chat's target, whatever that store last heard.
-  const receptionistIsTarget = useReceptionistStore(s => s.target)
-  const summaryTargetNodeId = useSummaryChatStore(s => receptionistIsTarget ? null : s.targetNodeId)
-  const summaryPhase = useSummaryChatStore(s => s.phase)
-  // Supplied by the summary-chat mod, not by the base theme system — the
-  // active theme may swap it for a different mark entirely.
-  const { Component: SummaryBubble } = useSummaryBubble()
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCrabsRef = useRef<CrabEntry[]>([])
   const positionsRef = useRef<Map<string, number>>(new Map())
@@ -549,9 +538,6 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
             <div key={crab.nodeId} className="toolbar__crab-slot toolbar__crab-row" data-node-id={crab.nodeId}>
               <div className="toolbar__crab-row-icon">
                 {crabButton(crab, { onClick: open })}
-                {crab.nodeId === summaryTargetNodeId && (
-                  <SummaryBubble state={BUBBLE_STATE[summaryPhase[crab.nodeId] ?? 'ready']} />
-                )}
                 {countdown !== null && <span className="toolbar__crab-timer">{countdown}</span>}
               </div>
               <SurfaceAutoStamp nodeId={crab.nodeId} />
@@ -586,11 +572,6 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
   return (
     <div className="toolbar__crabs" ref={containerRef}>
       {crabs.map((crab, i) => {
-          const summaryTarget = crab.nodeId === summaryTargetNodeId
-          // One phase in, one mark out. This used to pick between two
-          // independent flags (`speaking ? … : thinking ? …`), which quietly
-          // hid the fact that the server could report both at once.
-          const summaryState = BUBBLE_STATE[summaryPhase[crab.nodeId] ?? 'ready']
           // Hot only: a cold surface's age is on its canvas caption, and a row
           // of ages here would bury the few timers that are running out.
           const countdown = cacheCountdownText(crab.cacheWarmUntil, crab.cacheWarmEstimated, now, formatCountdownMinutes)
@@ -620,7 +601,6 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
               'data-tooltip': crab.title && crab.title.length > 80 ? crab.title.slice(0, 80) + '\u2026' : crab.title,
               'data-tooltip-no-flip': true
             } as React.ButtonHTMLAttributes<HTMLButtonElement>)}
-            {summaryTarget && <SummaryBubble state={summaryState} />}
             {countdown !== null && <span className="toolbar__crab-timer">{countdown}</span>}
           </div>
           )

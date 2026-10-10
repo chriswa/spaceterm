@@ -4,7 +4,7 @@ import type { NodeId } from '../shared/ids'
 import type { AgentSearchHit, AgentSearchMode, AgentSearchPass } from '../shared/protocol'
 import { archivesOwnedBy, groupNodes } from '../shared/archive-tree'
 import { isAgentSurface } from '../shared/node-utils'
-import { readTranscript } from './summary-chat'
+import { readTranscript } from './agent-transcript'
 
 /**
  * Agent search: pick the agent surface a free-text query is about, with Jev

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { RemoteSpeech, splitSentences, splitSpeech } from './remote-speech'
-import { redactUnheard } from './summary-chat'
+import { redactUnheard } from './unheard'
 import { joinSpeechParts, parseTimedSynthesis, parseWav, speechStatus, type SpeechBackend, type TimedWord } from './voice-operator'
 import type { ServerMessage } from '../shared/protocol'
 

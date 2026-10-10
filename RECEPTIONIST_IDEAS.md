@@ -30,7 +30,7 @@ that transcript for the reasoning behind any item here.
   tail. Below Haiku's minimum cacheable size (about 4k tokens) nothing is
   cached, which costs little at that size.
 - **Speech**: one Voice Operator job per reply, multi-voice (`parts`), through
-  the `SpeechChannel` shared with Summary Chat. Interruptions cut the stored
+  `SpeechChannel`. Interruptions cut the stored
   history down to what was heard.
 - **Names**: lazily assigned, gender-matched name/voice pairs from the roster
   ported out of Voice Operator (`name-voice-table.ts`, `name-registry.ts`).
@@ -64,10 +64,9 @@ that transcript for the reasoning behind any item here.
 - **Holding**: Control speaks to one device, its holder (`receptionistHolder`
   in ServerState; the Mac until changed), kept while that device is closed.
   Speaking to Control from a device takes it there. The Control button
-  (which absorbed Talk To Me) is black while another device or none holds
-  Control, white while this one does and the voice goes to it, magenta while
-  this one does but the voice went to Summary Chat; a press brings black and
-  magenta to white, and lets go from white. Moving between two connected
+  opens its transcript, whose foot takes and releases Control, mutes and
+  unmutes it; the button's corners show which device holds it and whether
+  this one is muted. Moving between two connected
   devices cuts the old one off, and Control carries on on the new one from
   where it was cut. While the holder is
   not connected, or nobody holds it, turns still run — standing instructions
@@ -128,14 +127,10 @@ that transcript for the reasoning behind any item here.
   terminals stay out.
 - **Half-written prompts.** A send pastes on top of whatever is already in
   the agent's input box.
-- **Replace Summary Chat.** Control is meant to replace it; for now they
-  coexist and a Summary Chat press takes the voice target.
+- ~~**Replace Summary Chat.**~~ Done: Summary Chat and its chord are gone.
 
 ## Rough edges not yet looked at
 
-- While Control is the voice target, Summary Chat's "target" indicator on the
-  cards (which surface follow-ups would go to) is hidden, because follow-ups
-  go to Control instead.
 - After the camera follows an agent, keyboard focus stays on whichever
   terminal had it, which may now be off screen.
 - Status errors show only as a toast.

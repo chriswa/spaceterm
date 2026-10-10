@@ -74,7 +74,7 @@ import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
-import { SummaryChat, readTranscript, readWholeTranscript } from './summary-chat'
+import { readTranscript, readWholeTranscript } from './agent-transcript'
 import { NO_LISTENER, Receptionist, VOICE_FOLLOW_MS } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
@@ -94,7 +94,6 @@ import { askClaudePrint } from './claude-print'
 import { DirectSpeech } from './direct-speech'
 import { VoiceOperator, DISCOVERY_PATH as VOICE_OPERATOR_DISCOVERY_PATH, type SpeechBackend } from './voice-operator'
 import { VoiceOperatorSubscription } from './voice-operator-subscription'
-import { PendingTurnCache } from './pending-turn'
 import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
 
 /**
@@ -317,7 +316,6 @@ let sessionStatusObserver: SessionStatusObserver
 let claudeStateMachine: ClaudeStateMachine
 let potentialErrorDetector: PotentialErrorDetector
 let forkTitler: ForkTitler
-let summaryChat: SummaryChat
 /** Undefined until startup builds it; Claude state changes arrive before then. */
 let receptionist: Receptionist | undefined
 /** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
@@ -326,17 +324,11 @@ let agentNames: NameRegistry
 /** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
 const sideQuestions = new SideQuestions()
 let sideQuestionServer: import('http').Server | undefined
-/**
- * Where the listener's voice goes: Voice Operator command-mode transcripts and
- * the phone's talk button. The last thing chosen wins — a Summary Chat press
- * takes it, and so does selecting the receptionist.
- */
-let voiceTarget: 'summary' | 'receptionist' = 'receptionist'
 /** Undefined until startup builds it; node updates arrive before then. */
 let autoStamper: AutoStamper | undefined
 /**
  * Speech for text nobody had to generate: the speak-the-selection chord.
- * Constructed eagerly — unlike SummaryChat, it needs nothing from startup recovery.
+ * Constructed eagerly: it needs nothing from startup recovery.
  */
 const directSpeech = new DirectSpeech({
   vo: new VoiceOperator(),
@@ -471,33 +463,6 @@ function surfaceAgentType(surfaceId: PtySessionId): AgentType | undefined {
   const node = stateManager.getNode(nodeId)
   if (node && node.type === 'terminal') return node.agentType
   return undefined
-}
-
-const pendingTurnCache = new PendingTurnCache()
-
-/**
- * Maintain `pendingTurnCache` from the hook stream.
- *
- * Cleared on every event that ends a turn, not just on the tool's own
- * PostToolUse: a turn can also end by the listener interrupting it or by
- * starting a new prompt, and an entry that outlived its turn would be injected
- * into a later summary as though the surface were still waiting on it.
- */
-function trackPendingTurn(
-  surfaceId: PtySessionId,
-  hookType: string,
-  payload: Record<string, unknown> | undefined,
-  hookTime: number,
-): void {
-  if (hookType === 'PreToolUse') {
-    const toolName = typeof payload?.tool_name === 'string' ? payload.tool_name : ''
-    pendingTurnCache.record(surfaceId, toolName, payload?.tool_input, hookTime)
-    return
-  }
-  if (hookType === 'PostToolUse' || hookType === 'Stop' || hookType === 'UserPromptSubmit'
-      || hookType === 'SessionStart' || hookType === 'SessionEnd') {
-    pendingTurnCache.clear(surfaceId)
-  }
 }
 
 /**
@@ -702,16 +667,9 @@ function receptionistStatus(message?: string): ServerMessage {
   return {
     type: 'receptionist-status',
     phase: receptionist?.phase ?? 'ready',
-    target: voiceTarget === 'receptionist',
     ...(message ? { message } : {}),
     ...(receptionistSpeaker && receptionist?.phase === 'speaking' ? { speaker: receptionistSpeaker } : {}),
   }
-}
-
-function setVoiceTarget(target: typeof voiceTarget): void {
-  if (voiceTarget === target) return
-  voiceTarget = target
-  broadcastToAll(receptionistStatus())
 }
 
 function transcriptPathForNode(nodeId: NodeId): string | undefined {
@@ -1082,11 +1040,6 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
     send(link, { type: 'agent-meta-availability', nodeId, available })
   }
 
-  const summaryTargetNodeId = summaryChat.getTargetNodeId()
-  if (summaryTargetNodeId) {
-    send(link, { type: 'summary-chat-status', nodeId: summaryTargetNodeId, state: 'target' })
-  }
-
   return {
     feed: (data) => client.parser.feed(data),
     // Idempotent: a socket error is followed by a close, and both end here.
@@ -1321,13 +1274,6 @@ function handleIngestMessage(msg: IngestMessage): void {
       // Delegate state transition logic to the state machine
       claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
 
-      // Keep the input of an interactive tool while it is unresolved. Claude
-      // Code does not write the turn that called it to the transcript until it
-      // resolves, so for as long as the surface sits in waiting_question or
-      // waiting_plan this cache is the only readable copy of what it is asking.
-      // See `pending-turn.ts`.
-      trackPendingTurn(msg.surfaceId, hookType, msg.payload as Record<string, unknown> | undefined, hookTime)
-
       // Process SessionStart hooks for agent session history tracking
       // (session lifecycle management stays here — not state machine concern)
       if (hookType === 'SessionStart' && msg.payload && typeof msg.payload === 'object') {
@@ -1379,11 +1325,9 @@ function handleIngestMessage(msg: IngestMessage): void {
       const text = msg.text.trim()
       if (!text) break
       // Command mode is dictated on the Mac, so the Mac takes Control.
-      if (voiceTarget === 'receptionist' && receptionist) {
-        setReceptionistHolder(DESKTOP_DEVICE)
-        void receptionist.hear(text, 'spoken')
-      }
-      else void summaryChat.followUp(text)
+      if (!receptionist) break
+      setReceptionistHolder(DESKTOP_DEVICE)
+      void receptionist.hear(text, 'spoken')
       break
     }
 
@@ -1722,35 +1666,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'summary-chat-follow-up': {
-      const text = msg.text.trim()
-      if (!text) break
-      // Speaking to Control is holding it: it answers on the device that spoke.
-      if (voiceTarget === 'receptionist' && receptionist) {
-        if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
-        void receptionist.hear(text, 'spoken')
-      } else {
-        void summaryChat.followUp(text)
-      }
-      break
-    }
-
-    case 'receptionist-select': {
-      // The Control button, decided here so that two devices pressing at once
-      // agree: held elsewhere or nowhere, it takes Control here and talks to
-      // it; held here with the voice on Summary Chat, it talks to Control; held
-      // here and talked to, it lets go, which silences Control.
-      const device = client.device
-      if (!device) { setVoiceTarget('receptionist'); break }
-      if (stateManager.getReceptionistHolder()?.deviceId === device.id && voiceTarget === 'receptionist') {
-        setReceptionistHolder(null)
-      } else {
-        setReceptionistHolder({ deviceId: device.id, label: device.label })
-        setVoiceTarget('receptionist')
-      }
-      break
-    }
-
     case 'receptionist-stop': {
       void receptionist?.cancel()
       break
@@ -1772,7 +1687,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         case 'take':
           if (msg.action === 'speak-here') setReceptionistMuted(device.id, false)
           setReceptionistHolder({ deviceId: device.id, label: device.label })
-          setVoiceTarget('receptionist')
           break
         default:
           serverLog(`[receptionist] unknown hold action: ${unhandledVariant(msg.action)}`)
@@ -1814,7 +1728,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         setReceptionistMuted(client.device.id, false)
         setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
       }
-      setVoiceTarget('receptionist')
       void receptionist?.catchUp()
       break
 
@@ -1840,46 +1753,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'summary-chat-end': {
-      void summaryChat.end()
-      break
-    }
-
-    case 'summary-chat-toggle': {
-      // A node that is not a terminal is treated as no node at all: the press
-      // can still be a cancellation, and only SummaryChat knows whether it is.
-      const node = msg.nodeId ? stateManager.getNode(msg.nodeId) : undefined
-      const terminal = node?.type === 'terminal' ? node : undefined
-      void (async () => {
-        // The chord silences the receptionist too: a "stop" that only reached
-        // Summary Chat would leave the listener hunting for who is still talking.
-        if (await receptionist?.cancel()) {
-          send(client.link, { type: 'summary-chat-toggle-result', seq: msg.seq, outcome: 'cancelled' })
-          return
-        }
-        const result = await summaryChat.toggle(terminal?.id, {
-          transcriptPath: terminal && transcriptPathForNode(terminal.id),
-          sourceAgentSessionId: terminal?.claudeSessionHistory.at(-1)?.claudeSessionId,
-          claudeState: terminal?.claudeState,
-          pendingTurn: terminal && pendingTurnCache.get(terminal.sessionId),
-        }, msg.mode, msg.playHere ? remoteSpeech.forClient(client.id, speechVoiceOperator) : undefined)
-        // Starting a summary takes the listener's voice back from the receptionist.
-        if (result.outcome === 'started') setVoiceTarget('summary')
-        // Back to the client that pressed the key, not to every peer: the
-        // chirp, the shake and the toast belong to one person.
-        send(client.link, {
-          type: 'summary-chat-toggle-result',
-          seq: msg.seq,
-          outcome: result.outcome,
-          ...(result.outcome === 'rejected' ? { message: result.message } : {}),
-        })
-      })()
-      break
-    }
     case 'speak-toggle': {
       void directSpeech.toggle(msg.text).then((outcome) => {
         // To the client that pressed the key: the toast it may raise belongs to
-        // one person, the way the summary chord's does.
+        // one person.
         send(client.link, { type: 'speak-toggle-result', seq: msg.seq, outcome })
       })
       break
@@ -2044,13 +1921,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         break
       }
       // The wake word names Control, and typing in its transcript is writing
-      // to it: whatever the voice target was, this is for Control, and — as
-      // speaking to it does — it brings Control here.
+      // to it: as speaking to it does, it brings Control here.
       if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
-      setVoiceTarget('receptionist')
       // Heard before the dictation that carried the words lets go, so that
       // letting go finds them already taken rather than resuming without them.
-      void receptionist.hear(text, msg.type === 'receptionist-say' ? 'typed' : 'spoken')
+      void receptionist.hear(text, msg.type === 'receptionist-say' && msg.spoken !== true ? 'typed' : 'spoken')
       remoteDictation.delivered(client.id)
       break
     }
@@ -3166,7 +3041,6 @@ async function startServer(): Promise<void> {
       codexSessionFileWatcher.unwatch(sessionId)
       cursorSessionFileWatcher.unwatch(sessionId)
       snapshotManager.removeSession(sessionId)
-      pendingTurnCache.clear(sessionId)
 
       // If this pty was spawned by a manual restart and died quickly, the new
       // CLI args are the likely cause: revert them and relaunch once.
@@ -3407,15 +3281,6 @@ async function startServer(): Promise<void> {
     claudeStateMachine.handleCursorTranscriptEntries(surfaceId, newEntries)
   })
 
-  summaryChat = new SummaryChat(
-    (nodeId, speaking, voice) => {
-      broadcastToAll({ type: 'speaking-changed', nodeId, speaking, voice })
-    },
-    (nodeId, state, message) => {
-      broadcastToAll({ type: 'summary-chat-status', nodeId, state, message })
-    },
-  )
-
   sideQuestionServer = serveSideQuestions(sideQuestions, path.join(SOCKET_DIR, 'side-questions.sock'))
   agentNames = new NameRegistry({
     // `getNode` only finds live nodes, so an archived surface releases its name
@@ -3514,7 +3379,7 @@ async function startServer(): Promise<void> {
       const node = stateManager.getNode(nodeId)
       if (node?.type === 'terminal' && node.alive) sessionManager.write(node.sessionId, '\x1b')
     },
-    // What the Control button does when it lets go: see `receptionist-select`.
+    // Letting go of Control, as the transcript's Release does (`receptionist-hold`).
     letGo: () => setReceptionistHolder(null),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -3849,7 +3714,6 @@ async function startServer(): Promise<void> {
     // Awaited: Voice Operator is a separate process, so quitting mid-answer
     // without waiting for the cancellation to land leaves it talking on behalf
     // of an app that no longer exists. Bounded by the request timeout.
-    await summaryChat.dispose()
     await receptionist?.shutdown()
     sideQuestionServer?.close()
     snapshotManager.dispose()

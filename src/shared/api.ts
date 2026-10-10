@@ -28,10 +28,7 @@ import type {
   SessionInfo,
   SnapshotMessage,
   SpeakOutcome,
-  SummaryChatMode,
-  SummaryChatPhase,
-  SummaryChatToggleOutcome,
-  SummaryChatUiState, SpeechProgressEvent, HandsFreeTuning, ControlTranscriptEntry, ReceptionistHoldAction
+  ReceptionistPhase, SpeechProgressEvent, HandsFreeTuning, ControlTranscriptEntry, ReceptionistHoldAction
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { NodeData, NodeStamp, ReceptionistHolder, ServerState } from './state'
@@ -42,6 +39,8 @@ import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
+/** What Control is doing; see `ReceptionistStatusMessage`. */
+export type { ReceptionistPhase }
 
 /**
  * `pty:attach` forwards exactly the fields carried by the `attached` wire message
@@ -183,12 +182,6 @@ export interface NodeApi {
   onFileContent(callback: (nodeId: NodeId, content: string) => void): () => void
   onServerError(callback: (message: string) => void): () => void
   onPlaySound(callback: (sound: string) => void): () => void
-  onSpeakingChanged(
-    callback: (nodeId: NodeId, speaking: boolean, voice: string | undefined) => void,
-  ): () => void
-  onSummaryChatStatus(
-    callback: (nodeId: NodeId, state: SummaryChatUiState, message?: string) => void,
-  ): () => void
   onSavedViewports(callback: (viewports: Record<string, CameraBounds>) => void): () => void
   /** The root node's working directory, pushed on connect and on every change. */
   onRootCwd(callback: (cwd: string | undefined) => void): () => void
@@ -228,21 +221,6 @@ export interface NodeApi {
    * someone watches. Null while mini-stats is not running.
    */
   watchSystemStats(callback: (snapshot: SystemStatsSnapshot | null) => void): () => void
-}
-
-/** Status the toolbar renders for a surface's summary-chat session. */
-export type { SummaryChatPhase, SummaryChatUiState, SummaryChatToggleOutcome, SummaryChatMode } from './protocol'
-
-/**
- * What one press of the Summary Chat chord did.
- *
- * The press is a toggle whose meaning the server decides, so the outcome is the
- * only way the renderer knows which feedback to give: a confirming chirp, an
- * abort chirp, or a shake and a toast carrying `message`.
- */
-export interface SummaryChatToggleResult {
-  outcome: SummaryChatToggleOutcome
-  message?: string
 }
 
 /**
@@ -343,9 +321,7 @@ export interface ControlTranscriptPage {
 
 /** What `receptionist-status` says, minus the envelope. */
 export interface ReceptionistStatus {
-  phase: SummaryChatPhase
-  /** Whether the listener's voice goes to the receptionist rather than Summary Chat. */
-  target: boolean
+  phase: ReceptionistPhase
   /** Why it failed, when it did. */
   message?: string
   /** Who is being heard while it speaks: "Control", or the agent it is quoting. */
@@ -362,12 +338,6 @@ export interface ReceptionistStatus {
  * a camera move is an instruction for now, not state.
  */
 export interface ReceptionistApi {
-  /**
-   * Press Control: bring it to this device and talk to it, or talk to it again
-   * after Summary Chat, or — when it is here and talked to — let go of it,
-   * which silences it until some device takes it. The server decides which.
-   */
-  select(): void
   /** Stop Control mid-answer without letting go of it, as a talk button pressed over it does. */
   stop(): void
   /**
@@ -395,8 +365,11 @@ export interface ReceptionistApi {
   onSpeaking(callback: (speaking: { of: number; parts: number[] } | null) => void): () => void
   /** This client's replay: what is playing, or null; `refused` says why one would not start. Not replayed. */
   onReplaying(callback: (playing: { of: number; part: number } | null, refused?: string) => void): () => void
-  /** Words typed to Control: for it whatever the voice target, and they bring it here, as speaking to it does. */
-  say(text: string): void
+  /**
+   * Words to Control, typed unless `spoken` — dictation that landed nowhere on
+   * the Mac. They bring it here, as speaking to it does.
+   */
+  say(text: string, how?: { spoken: boolean }): void
   /**
    * A page of Control's full record, oldest first: the newest entries, or
    * those before `before` (an entry's `offset`). Never what compaction left.
@@ -492,16 +465,6 @@ export interface Api {
   pty: PtyApi
   node: NodeApi
   log(message: string): void
-  /**
-   * Press the Summary Chat chord. Pass the focused terminal surface, or
-   * undefined when nothing eligible is focused — a press with nothing focused
-   * still cancels whatever is speaking, in either mode.
-   */
-  toggleSummaryChat(nodeId: NodeId | undefined, mode: SummaryChatMode): Promise<SummaryChatToggleResult>
-  /** Say something to Summary Chat, as Voice Operator's command mode would. */
-  summaryChatFollowUp(text: string): void
-  /** Abandon every Summary Chat conversation. */
-  endSummaryChat(): void
   restartSpaceterm(): Promise<void>
   /**
    * Build the iPhone app on the Mac and install it on the paired phone. On
@@ -550,8 +513,6 @@ export interface PlatformApi {
   window: Omit<WindowApi, 'onFocusNode'>
   /** Agent memory is measured by the server, not the host; see `createApi`. */
   system: Omit<SystemApi, 'getAgentMemory'>
-  /** This client plays Summary Chat's speech itself, rather than the Mac. */
-  playsSpeech?: boolean
 }
 
 export type ServerPipeEventKind = 'open' | 'data' | 'close'

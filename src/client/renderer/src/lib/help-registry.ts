@@ -82,7 +82,6 @@ export const helpGroups: HelpGroup[] = [
       { keys: `${MAC_CMD} K`, name: 'Node search' },
       { keys: `${MAC_CMD} F`,            name: 'Find in terminal', notes: 'When a terminal is focused' },
       { keys: `${MAC_CMD} F`,            name: 'Agent search (Jev)', notes: 'When no terminal is focused; Enter to search' },
-      { keys: `${MAC_CMD} P`,            name: 'Summarize focused agent chat aloud', notes: 'Press again to cut the answer off' },
     ],
   },
 
@@ -150,8 +149,7 @@ export const helpGroups: HelpGroup[] = [
     entries: [
       { keys: 'Click a crab icon',        name: 'Jump to Claude surface' },
       { keys: 'Drag crab icons',          name: 'Reorder Claude surfaces' },
-      { keys: 'Click the speech bubble',  name: 'Control transcript', notes: 'Shows and hides your conversation with Control; holding the headset does the same' },
-      { keys: 'Click the headset',        name: 'Talk to Control', notes: 'Your voice goes to the receptionist instead of Summary Chat; click again while it talks to stop it. A Summary Chat press takes your voice back' },
+      { keys: 'Click the headset',        name: 'Control transcript', notes: 'Shows and hides your conversation with Control; take, release, mute and unmute Control at its foot' },
       { keys: 'Click the speaker',        name: 'Let Control speak up', notes: 'Control may speak unprompted when something it is watching for happens' },
     ],
   },

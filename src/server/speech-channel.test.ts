@@ -272,8 +272,8 @@ describe('SpeechChannel', () => {
     // Silence, not an answer heard in full.
     expect(await failed.channel.heardPrefix()).toBe(0)
 
-    expect(speechFailureMessage({ kind: 'synthesis_failed' }, 'the summary'))
-      .toBe('Voice Operator could not turn the summary into speech.')
+    expect(speechFailureMessage({ kind: 'synthesis_failed' }, 'the reply'))
+      .toBe('Voice Operator could not turn the reply into speech.')
   })
 
   it('follows a job on the backend that took it, even after the channel is pointed elsewhere', async () => {

@@ -2,11 +2,18 @@
 
 Can a mod add a themeable facet, and can themes have an opinion about it?
 
-Yes, for the visual layer, and there is a working example in the repo. This
-document is what the exploration found — including the three things that do
-*not* work yet and would block a real extraction.
+Yes, for the visual layer. This document is what the exploration found —
+including the three things that do *not* work yet and would block a real
+extraction.
 
-The worked example is the summary-chat speech bubble: the indicator under a
+Summary Chat has since been removed (Control, the receptionist, does what it
+did), and its client mod went with it, so the worked example below is no longer
+in the repo; see git history for `src/client/renderer/src/mods/summary-chat/`.
+The facet registry it exercised (`lib/theme/registry.ts`) and the mod loader
+(`mods/index.ts`) remain, with no in-repo mod using them today. The rest of
+this document is the exploration as it was.
+
+The worked example was the summary-chat speech bubble: the indicator under a
 surface's toolbar icon that shows whether that surface is idle, thinking, or
 speaking. It is the right test case because a theme plausibly wants to change
 it (the grid theme has no use for a cyan-and-amber speech bubble) and because

@@ -15,8 +15,6 @@ import { useStalenessWatch } from './update-check'
 import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
 import { MicButton } from './MicButton'
 import { useDictationSession } from './dictation-session'
-import { useSummaryChatStore } from '@/stores/summaryChatStore'
-import { useReceptionistStore } from '@/stores/receptionistStore'
 import { ControlButton } from './ControlButton'
 import { MicLockButton } from './MicLockButton'
 import { EarpieceSwitch } from './EarpieceSwitch'
@@ -53,14 +51,13 @@ function rememberOpen(nodeId: NodeId | null): void {
 
 /**
  * Keys for this component's children, which are all siblings in one fragment.
- * Several are keyed by a surface — the terminal view, its composer, the talk
- * button — so a bare node id as the key collides whenever two of them are the
+ * Two are keyed by a surface — the terminal view and its composer — so a bare node id as the key collides whenever two of them are the
  * same surface. React then loses track of which child is which: opening the
  * composer mounted a second terminal view and orphaned the first, whose
  * picture and touch handlers stayed on screen after the terminal was closed —
  * a frozen screen that only refocusing another surface cleared.
  */
-const childKey = (kind: 'terminal' | 'composer' | 'talk', id: string) => `${kind}:${id}`
+const childKey = (kind: 'terminal' | 'composer', id: string) => `${kind}:${id}`
 
 /** `Canvas` is the desktop's App unless a test stands in for it. */
 export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
@@ -68,12 +65,6 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
   useStalenessWatch()
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
-  /** The surface Summary Chat is talking about, while a conversation is open. */
-  const summaryTarget = useSummaryChatStore((s) => s.targetNodeId)
-  /** Control holds the voice target: the talk button speaks to it instead. */
-  const controlTarget = useReceptionistStore((s) => s.target)
-  /** A conversation to talk into: the talk button and its neighbours are up. */
-  const voice = summaryTarget !== null || controlTarget
   /** Control's transcript: the screen above the bottom bar, which stays up to talk and to close it. */
   const transcriptOpen = useControlTranscriptStore((s) => s.open)
   // The transcript and the toolbar sheet are screens, not layers: opening one
@@ -92,8 +83,6 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
     ...(toolbarSheetOpen ? [{ ...SWIPE_SCREENS.sheet, dismiss: () => useSurfacePresenterStore.getState().setToolbarSheetOpen(false) }] : []),
   ], [transcriptOpen, toolbarSheetOpen])
   useSwipeToDismiss(swipeScreens)
-  /** The talk button and its neighbours are up: there is a conversation, or the transcript to talk into. */
-  const talk = voice || transcriptOpen
   useVisualViewportVars()
 
   /**
@@ -103,8 +92,6 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
    * itself would not raise it.
    */
   const keyboardKeeperRef = useRef<HTMLInputElement>(null)
-  /** Dictating, with no composer open to show it: the microphone button says so, and a tap goes back to a composer. */
-  const dictating = useDictationSession((s) => s.mic.kind !== 'idle')
 
   // Back to where we were after a reload, once the surface is known again.
   const restoring = useNodeStore((s) => {
@@ -202,20 +189,13 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
           middle={
             <>
               <ControlButton />
-              {(talk || dictating) && (
-                // Over the transcript, it talks to Control, whatever the voice target.
-                <MicButton
-                  key={childKey('talk', controlTarget || transcriptOpen ? 'control' : summaryTarget ?? '')}
-                  nodeId={controlTarget || transcriptOpen ? null : summaryTarget}
-                  talk={talk}
-                  // Any composer takes over the dictation: the open terminal's, if there is one.
-                  onReopenComposer={focusedTerminal ? () => {
-                    keyboardKeeperRef.current?.focus()
-                    setComposerFor(focusedTerminal)
-                  } : undefined}
-                />
-              )}
-              {/* Always up: hands-free is for talking to Control with nothing open. */}
+              <MicButton
+                // Any composer takes over the dictation: the open terminal's, if there is one.
+                onReopenComposer={focusedTerminal ? () => {
+                  keyboardKeeperRef.current?.focus()
+                  setComposerFor(focusedTerminal)
+                } : undefined}
+              />
               <MicLockButton />
             </>
           }

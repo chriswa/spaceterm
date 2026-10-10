@@ -22,7 +22,7 @@ describe('the envelope shape', () => {
     // type. If a future edit splits them, this stops compiling.
     const envelope: ModMessage = {
       type: 'mod',
-      modId: 'summary-chat',
+      modId: 'chatter',
       event: 'status',
       payload: { nodeId: 'node-1', state: 'thinking' },
     }

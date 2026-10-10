@@ -8,7 +8,7 @@ import { CLAUDE_PRINT_BIN } from './claude-print'
  * What optional integrations are available on this machine, and what degrades
  * without each one.
  *
- * Several features are best-effort by design: Summary Chat needs
+ * Several features are best-effort by design: Control needs
  * claude-print-daemon and a running Voice Operator, and
  * background-work reconciliation needs `pgrep`. Each already fails softly —
  * which is right, but means a user on a machine without them sees a feature
@@ -75,7 +75,7 @@ const VOICE_OPERATOR_DISCOVERY = path.join(
 export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): Capability[] {
   const capabilities: Capability[] = []
 
-  // Control, Summary Chat and auto-stamps reach Claude through claude-print-daemon,
+  // Control and auto-stamps reach Claude through claude-print-daemon,
   // which runs the signed-in Claude Code. The binary is enough: it starts the
   // daemon itself.
   const claudePrint = deps.which(CLAUDE_PRINT_BIN)
@@ -84,7 +84,7 @@ export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): 
     name: 'claude-print-daemon',
     available: claudePrint !== undefined,
     detail: claudePrint ?? `${CLAUDE_PRINT_BIN} not found on PATH (chriswa-devkit tools/claude-print-daemon; build it into bin/ with go build, or set CLAUDE_PRINT_DAEMON_BIN)`,
-    affects: claudePrint ? '' : 'Control and Summary Chat cannot reach Claude and report an error on every turn; auto-stamp icons all fail'
+    affects: claudePrint ? '' : 'Control cannot reach Claude and reports an error on every turn; auto-stamp icons all fail'
   })
 
   const voice = deps.exists(VOICE_OPERATOR_DISCOVERY)
@@ -93,7 +93,7 @@ export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): 
     name: 'Voice Operator speech service',
     available: voice,
     detail: voice ? `discovery file at ${VOICE_OPERATOR_DISCOVERY}` : 'not running (macOS only)',
-    affects: voice ? '' : 'Summary Chat produces text but nothing is spoken'
+    affects: voice ? '' : 'nothing is spoken on the Mac: Control and the speak-the-selection chord are silent there'
   })
 
   // Presence, not exit code: pgrep exits 1 when nothing matches, so running it
@@ -132,7 +132,7 @@ export function probeCapabilities(deps: CapabilityDeps = REAL_CAPABILITY_DEPS): 
 /**
  * One log line per capability, plus a summary.
  *
- * Written at startup so the answer to "why is Summary Chat doing nothing?" is
+ * Written at startup so the answer to "why is Control doing nothing?" is
  * already in `~/.spaceterm/` rather than requiring a bug report.
  */
 export function formatCapabilityReport(capabilities: Capability[]): string[] {

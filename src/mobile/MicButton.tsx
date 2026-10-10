@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSummaryChatStore } from '@/stores/summaryChatStore'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
-import type { NodeId } from '../shared/ids'
 import { Dictation, useMicActivity, whenHearing } from './dictation'
 import { useDictationSession } from './dictation-session'
 import { playCue, primeCues } from './cues'
@@ -15,21 +13,19 @@ import { conversationLeft, micLook, type MicInputs, type MicLook } from './mic-b
 /**
  * The microphone, the middle of the bottom bar: one button for everything the
  * phone's microphone does, and only that. Its look is the microphone's, however
- * the listening started (mic-button.ts) — never what Control or Summary Chat is
- * doing; Control's own buttons say that.
+ * the listening started (mic-button.ts) — never what Control is doing; its own
+ * button says that.
  *
- * Tap to speak, tap again to send — to Summary Chat (`summaryChatFollowUp`),
- * or to Control while it holds the voice target or its transcript is open
- * (`nodeId` null), where what it heard shows up. Tapping while an answer is
- * playing or on its way cuts it off and starts listening, as interrupting a
- * person would; the server then forgets the part that was never heard.
+ * Tap to speak to Control, tap again to send; what it heard shows up in the
+ * transcript. Tapping while an answer is playing or on its way cuts it off and
+ * starts listening, as interrupting a person would; the server then forgets
+ * the part that was never heard.
  *
  * A tap and nothing else: hands-free is the lock beside it (MicLockButton.tsx).
  *
  * A composer's dictation that is still running with the composer closed shows
  * here too, and a tap reopens a composer to stop or ship it, when
- * `onReopenComposer` is given. `talk` false: there is nothing to talk to, and
- * the button is up only for that dictation.
+ * `onReopenComposer` is given; otherwise the tap only says so.
  */
 
 const ERROR_SHOWN_MS = 4000
@@ -38,16 +34,9 @@ const RING_R = 24
 
 type Mic = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'sending' }
 
-export function MicButton({ nodeId, talk = true, onReopenComposer }: {
-  nodeId: NodeId | null
-  talk?: boolean
-  onReopenComposer?: () => void
-}) {
-  const toControl = useReceptionistStore((s) => s.target) || nodeId === null
-  const controlPhase = useReceptionistStore((s) => s.phase)
-  const summaryPhase = useSummaryChatStore((s) => (nodeId ? s.phase[nodeId] : undefined))
+export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void }) {
   /** An answer playing or on its way, which a tap cuts off. Never shown. */
-  const answering = toControl ? controlPhase !== 'ready' : summaryPhase !== undefined
+  const answering = useReceptionistStore((s) => s.phase !== 'ready')
   const [mic, setMic] = useState<Mic>({ kind: 'idle' })
   const [error, setError] = useState<string | null>(null)
 
@@ -103,13 +92,12 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
     // A press over an answer is an interruption: stop it, then listen.
     if (answering) {
       // Stopped, not let go of: the user is about to talk to it.
-      if (toControl) window.api.receptionist.stop()
-      else void window.api.toggleSummaryChat(undefined, 'summary').catch(() => undefined)
+      window.api.receptionist.stop()
     }
     setMic({ kind: 'starting' })
     try {
       // Begun here, inside the tap, or iOS will not let it record.
-      const dictation = await whenHearing(Dictation.begin(window.api.dictation, { forControl: toControl }))
+      const dictation = await whenHearing(Dictation.begin(window.api.dictation, { forControl: true }))
       setMic({ kind: 'listening', dictation })
       playCue('listeningStarted')
     } catch (err) {
@@ -126,14 +114,9 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
         fail('transcriptionFailed', new Error("Didn't catch that — tap to try again."))
         return
       }
-      if (toControl) {
-        // Straight to Control, whatever the voice target has become since the
-        // tap; and into its transcript, if that is open, as typing there would.
-        window.api.receptionist.say(text)
-        useControlTranscriptStore.getState().addPending(text)
-      } else {
-        window.api.summaryChatFollowUp(text)
-      }
+      // Into its transcript, if that is open, as typing there would.
+      window.api.receptionist.say(text)
+      useControlTranscriptStore.getState().addPending(text)
       playCue('pasted')
       setMic({ kind: 'idle' })
     } catch (err) {
@@ -141,12 +124,13 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
     }
   }
 
-  /** A composer's dictation still running, which a tap takes back to a composer. */
-  const reopens = onReopenComposer !== undefined && composer !== 'idle' && mic.kind === 'idle'
+  /** A composer's dictation still running: a tap takes it back to a composer, if there is one to open. */
+  const elsewhere = composer !== 'idle' && mic.kind === 'idle'
+  const reopens = elsewhere && onReopenComposer !== undefined
 
   const onTap = () => {
     if (reopens) onReopenComposer()
-    else if (!talk) return
+    else if (elsewhere) return
     else if (mic.kind === 'idle') void listen()
     else if (mic.kind === 'listening') void send(mic.dictation)
   }
@@ -155,9 +139,9 @@ export function MicButton({ nodeId, talk = true, onReopenComposer }: {
   const label = micLabel({
     look, own: mic.kind, composer, handsFree, secondsLeft,
     tap: reopens ? 'Still dictating — tap to open the composer and stop or ship it'
-      : !talk ? 'Still dictating — open a composer to stop or ship it'
-      : answering ? (toControl ? 'Cut Control off and talk' : 'Cut Summary Chat off and talk')
-      : toControl ? 'Talk to Control' : 'Talk to Summary Chat',
+      : elsewhere ? 'Still dictating — open a composer to stop or ship it'
+      : answering ? 'Cut Control off and talk'
+      : 'Talk to Control',
   })
 
   return (

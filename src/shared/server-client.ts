@@ -9,7 +9,7 @@ import type {
   CameraBounds,
   SpeakOutcome
 } from './protocol'
-import type { AgentSearchResponse, CommandOutcome, SummaryChatMode, SummaryChatToggleResult, WakeWordCheckResult } from './api'
+import type { AgentSearchResponse, CommandOutcome, WakeWordCheckResult } from './api'
 import { unhandledVariant } from './exhaustive'
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeStamp, ServerState } from './state'
@@ -66,8 +66,8 @@ export interface ServerClientOptions {
 /** Messages the server sends unprompted. Everything else is a reply. */
 export type ServerEventType =
   | 'mod' | 'data' | 'exit' | 'node-updated' | 'node-added' | 'node-removed'
-  | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active' | 'speaking-changed'
-  | 'summary-chat-status' | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
+  | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active'
+  | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'system-stats'
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
@@ -269,8 +269,6 @@ export class ServerClient {
       case 'snapshot':
       case 'play-sound':
       case 'speech-active':
-      case 'speaking-changed':
-      case 'summary-chat-status':
       case 'focus-surface':
       case 'saved-viewports':
       case 'root-cwd':
@@ -323,7 +321,6 @@ export class ServerClient {
       case 'directory-command-result':
       case 'validate-file-result':
       case 'client-hello-result':
-      case 'summary-chat-toggle-result':
       case 'speak-toggle-result':
       case 'agent-meta-toggle-result':
       case 'agent-meta-availability-result':
@@ -838,38 +835,6 @@ export class ServerClient {
     this.fireAndForget({ type: 'speak-stop' })
   }
 
-  /**
-   * One press of the Summary Chat chord. Request/reply because only the server
-   * can say whether a press started an answer or cut one off.
-   */
-  async toggleSummaryChat(nodeId: NodeId | undefined, mode: SummaryChatMode, playHere = false): Promise<SummaryChatToggleResult> {
-    this.log(`[summary-chat] ${mode} chord pressed, focused node=${nodeId ? nodeId.slice(0, 8) : 'none'}${playHere ? ', speaking here' : ''}`)
-    const resp = await this.request({ type: 'summary-chat-toggle', mode, ...(nodeId ? { nodeId } : {}), ...(playHere ? { playHere } : {}) })
-    if (resp.type !== 'summary-chat-toggle-result') return unexpected(resp)
-    this.log(`[summary-chat] chord ${resp.outcome}${resp.message ? `: ${resp.message}` : ''}`)
-    return { outcome: resp.outcome, message: resp.message }
-  }
-
-  summaryChatFollowUp(text: string): void {
-    this.log(`[summary-chat] follow-up from this client (${text.length} chars)`)
-    this.fireAndForget({ type: 'summary-chat-follow-up', text })
-  }
-
-  endSummaryChat(): void {
-    this.log('[summary-chat] abandoned from this client')
-    this.fireAndForget({ type: 'summary-chat-end' })
-  }
-
-  /**
-   * Press Control: make the receptionist the voice target, or stop it if it is
-   * producing speech. The server decides which; the outcome comes back as a
-   * `receptionist-status` broadcast.
-   */
-  selectReceptionist(): void {
-    this.log('[receptionist] selected from this client')
-    this.fireAndForget({ type: 'receptionist-select' })
-  }
-
   /** The device this client runs on. */
   get device(): ClientDevice { return this.options.device }
 
@@ -907,10 +872,10 @@ export class ServerClient {
     this.fireAndForget({ type: 'receptionist-catch-up' })
   }
 
-  /** Typed in Control's transcript view. */
-  sayToReceptionist(text: string): void {
-    this.log(`[receptionist] ${text.length} chars typed to Control`)
-    this.fireAndForget({ type: 'receptionist-say', text })
+  /** Typed in Control's transcript view, or `spoken`: dictation pasted into nothing on the Mac. */
+  sayToReceptionist(text: string, spoken = false): void {
+    this.log(`[receptionist] ${text.length} chars ${spoken ? 'spoken' : 'typed'} to Control`)
+    this.fireAndForget({ type: 'receptionist-say', text, ...(spoken ? { spoken } : {}) })
   }
 
   async receptionistTranscript(before: number | undefined, count: number): Promise<{ entries: ControlTranscriptEntry[]; more: boolean }> {

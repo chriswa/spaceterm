@@ -86,8 +86,8 @@ textarea, input, [contenteditable="true"], .cm-content {
  * where it is far narrower than --m-corner-radius, and 0.3 of it clears every
  * item here with a few points to spare.
  *
- * No transform or filter on the bar: Summary Chat's sheet and error, inside
- * it, are fixed to the screen.
+ * No transform or filter on the bar: the microphone's error, inside it, is
+ * fixed to the screen.
  */
 .m-bar {
   position: fixed;
@@ -218,8 +218,8 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-detail__when { color: var(--m-dim); }
 
 /* The microphone (MicButton.tsx), the middle of the bar. Its look is the
-   microphone's alone, however the listening started — never what Control or
-   Summary Chat is doing. Grey is closed; white is hands-free holding it, with
+   microphone's alone, however the listening started — never what Control is
+   doing. Grey is closed; white is hands-free holding it, with
    nothing leaving the phone; a blue ring is the conversation window, draining
    as its quiet runs out; orange is your voice leaving the phone, solid with
    its level while it goes and pulsing while the words are waited for. The
@@ -375,13 +375,11 @@ textarea, input, [contenteditable="true"], .cm-content {
   to { --m-listen-angle: 360deg; }
 }
 /* Control's button (ControlButton.tsx), left of the microphone: opens the
-   transcript. Dim while Control is elsewhere, magenta while it is here but
-   the voice went to Summary Chat; a ring while it thinks, bars in the
-   speaker's colour while anything is said. Its corners (ControlBadges.tsx,
+   transcript. Dim while Control is elsewhere; a ring while it thinks, bars in
+   the speaker's colour while anything is said. Its corners (ControlBadges.tsx,
    index.css) are a little larger here, for a phone held at arm's length. */
 .m-control { position: relative; }
 .m-control--away { color: var(--m-dim); }
-.m-control--summary { background: #e040fb; color: #11111b; }
 .m-control--open { box-shadow: 0 0 0 2px var(--m-text); }
 .m-control[data-phase="thinking"] { box-shadow: 0 0 0 3px #f9e2af; }
 .m-control--speaking { box-shadow: 0 0 0 2px var(--m-speaker); }
@@ -596,19 +594,6 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-radial__item--selected { background: var(--m-accent); color: #11111b; transform: scale(1.12); }
 .m-radial__icon { font-size: 22px; line-height: 1; }
 .m-radial__label { font: 600 11px/1.1 -apple-system, system-ui, sans-serif; text-align: center; padding: 0 6px; }
-.mobile-term__notice {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  top: 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--m-danger);
-  background: var(--m-surface);
-  color: var(--m-text);
-  font-size: 14px;
-  pointer-events: none;
-}
 
 /* Takes focus inside the tap that opens the composer; see MobileApp. */
 .mobile-keyboard-keeper {

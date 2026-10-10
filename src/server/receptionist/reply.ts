@@ -7,7 +7,7 @@
  * keeps a turn near the API's own latency; the price is that the shape is
  * checked here instead of by the API.
  */
-import { interruptedWordStart, redactUnheard } from '../summary-chat'
+import { interruptedWordStart, redactUnheard } from '../unheard'
 import { AGENT_TOKEN, stripBraces } from './agent-token'
 import type { VoiceGender } from './name-voice-table'
 
@@ -371,8 +371,8 @@ function escapeRegExp(text: string): string {
  *
  * `heard` is Voice Operator's `character_offset` into the parts joined with a
  * single space — the convention the speech backends share. Parts after the cut
- * are dropped, and the part it fell in is cut the way Summary Chat cuts an
- * answer: see `redactUnheard`, whose rules about the half-heard word apply
+ * are dropped, and the part it fell in is cut as `redactUnheard` cuts an
+ * answer (unheard.ts), whose rules about the half-heard word apply
  * unchanged within a part.
  */
 export function redactSpoken<P extends SpokenPart>(parts: readonly P[], heard: number): P[] {

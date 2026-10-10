@@ -317,20 +317,6 @@ html, body, #root {
   animation-delay: 0.85s;
 }
 
-/* Above the icon, since the cache timer holds the space below it. The toolbar
-   leaves 11px between a crab slot and its top edge (42px bar, 20px slot), so a
-   13px bubble at -10px keeps a pixel of the bar above it and never reaches the
-   canvas. */
-.toolbar__summary-bubble {
-  position: absolute;
-  left: 50%;
-  top: -10px;
-  width: 16px;
-  height: 13px;
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-
 /* A surface's prompt-cache countdown, in the 11px under its icon. */
 .toolbar__crab-timer {
   position: absolute;
@@ -344,50 +330,6 @@ html, body, #root {
   color: rgba(255, 255, 255, 0.75);
   white-space: nowrap;
   pointer-events: none;
-}
-
-.toolbar__summary-bubble path {
-  stroke: #11131a;
-  stroke-width: 1.4px;
-  stroke-linejoin: round;
-}
-
-.toolbar__summary-bubble--idle path {
-  fill: #6d7280;
-}
-
-.toolbar__summary-bubble--thinking path {
-  fill: #59d7ed;
-  filter: drop-shadow(0 0 4px rgba(89, 215, 237, 0.9));
-}
-
-.toolbar__summary-bubble--talking path {
-  fill: #f5d75a;
-  filter: drop-shadow(0 0 4px rgba(245, 215, 90, 0.9));
-}
-
-/* The monochrome variant the summary-chat mod supplies for the grid theme:
-   state reads by how much is filled in, not by hue. */
-.toolbar__summary-bubble--technical path,
-.toolbar__summary-bubble--technical rect {
-  stroke: none;
-  fill: #9aa4bd;
-  filter: none;
-}
-
-.toolbar__summary-bubble--technical path {
-  stroke: #9aa4bd;
-  fill: none;
-}
-
-.toolbar__summary-bubble--technical.toolbar__summary-bubble--talking path,
-.toolbar__summary-bubble--technical.toolbar__summary-bubble--talking rect {
-  stroke: #e8edf7;
-  fill: #e8edf7;
-}
-
-.toolbar__summary-bubble--technical.toolbar__summary-bubble--talking path {
-  fill: none;
 }
 
 @keyframes crab-sonar-ping {
@@ -3042,40 +2984,6 @@ html, body, #root {
   animation: card-shell-glow-pulse 2s ease-in-out infinite;
 }
 
-/* Speaking mark: a plain white megaphone shown while Voice Operator is reading
-   this surface aloud, and gone the moment it stops. Static on purpose — the
-   toolbar bubble already carries the "talking" motion, and a second animated
-   cue out on the canvas was the distracting part.
-
-   Placed in the band between the card's top edge and its node label, up and to
-   the right of the agent mark's centre. Sizes and offsets are in label-scale
-   units like the mark itself, so the two stay in proportion at every zoom.
-   Anchored to the card rather than to the mark because the three marks differ
-   in height and squareness, and a fixed anchor keeps the megaphone in the same
-   spot across all of them (and on a surface with no mark at all). */
-.terminal-card__speaking-mark {
-  position: absolute;
-  /* `top`/`left` place the element's CENTRE, since the transform below pulls it
-     back by half its own size. The centre is offset upward by half the ROTATED
-     footprint (~0.56 x the height at 20 deg), which is what parks the horn's
-     lower edge just past the card's top border. */
-  top: calc(-20.2px * var(--label-node-scale));
-  left: calc(50% + 55px * var(--label-node-scale));
-  height: calc(36px * var(--label-node-scale));
-  aspect-ratio: 256 / 242;
-  /* Counter-clockwise so the horn points up and away from the card. */
-  transform: translate(-50%, -50%) rotate(-20deg);
-  background-color: #ffffff;
-  z-index: -1;
-  pointer-events: none;
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-}
-
 /* Terminal Search Bar */
 .terminal-search-bar {
   position: absolute;
@@ -4445,31 +4353,41 @@ html, body, #root {
   border-radius: 3px;
 }
 
-/* Control, the receptionist. The Summary Chat bubble sits on its top-right
-   corner, where the eye is, rather than centred above it as on a crab: a
-   button is taller than a crab slot, and centred it would leave the bar. */
+/* Control, the receptionist (ControlButtons.tsx). Dim while it is not here;
+   white is the transcript open (toolbar__btn--active). */
 .toolbar__control {
   position: relative;
 }
 
-/* Whose Control's voice is (ControlButtons.tsx): dim while it is not here,
-   magenta while the voice last went to Summary Chat. White is the transcript
-   open (toolbar__btn--active). */
 .toolbar__control--away:not(.toolbar__btn--active) {
   color: rgba(255,255,255,0.45);
 }
 
-.toolbar__control--summary,
-.toolbar__control--summary:hover {
-  background: #e040fb;
-  color: #000;
-}
-
-.toolbar__control .toolbar__summary-bubble {
-  left: auto;
+/* While Control works, a speech bubble takes the eye's corner: cyan while it
+   thinks, amber while it speaks. */
+.toolbar__control-busy {
+  position: absolute;
   right: -6px;
   top: -7px;
-  transform: none;
+  width: 16px;
+  height: 13px;
+  pointer-events: none;
+}
+
+.toolbar__control-busy path {
+  stroke: #11131a;
+  stroke-width: 1.4px;
+  stroke-linejoin: round;
+}
+
+.toolbar__control-busy--thinking path {
+  fill: #59d7ed;
+  filter: drop-shadow(0 0 4px rgba(89, 215, 237, 0.9));
+}
+
+.toolbar__control-busy--talking path {
+  fill: #f5d75a;
+  filter: drop-shadow(0 0 4px rgba(245, 215, 90, 0.9));
 }
 
 /* The Control button's corners (ControlBadges.tsx), on the Mac's toolbar and
