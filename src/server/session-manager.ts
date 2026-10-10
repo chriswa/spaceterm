@@ -6,6 +6,7 @@ import { ScrollbackBuffer } from './scrollback-buffer'
 import { getShellEnv } from './shell-integration'
 import { scrubInheritedAgentEnv } from './spawn-env'
 import { LoginShellEnv, type LoginEnvSource } from './login-env'
+import { resolveOnPath } from './command-path'
 import { serverLog } from './server-log'
 import { expandTilde } from './cwd'
 import { TitleParser } from './title-parser'
@@ -79,6 +80,8 @@ export interface SessionManagerDeps {
   onClaudeSessionHistory: ClaudeSessionHistoryCallback
   /** Fresh environment for command surfaces; defaults to capturing `$SHELL -l -i`. */
   loginEnv?: LoginEnvSource
+  /** Whether a PATH candidate can be exec'd; defaults to checking the filesystem. */
+  isExecutable?: (file: string) => boolean
 }
 
 export class SessionManager {
@@ -90,6 +93,7 @@ export class SessionManager {
   private onCwd: CwdCallback
   private onClaudeSessionHistory: ClaudeSessionHistoryCallback
   private loginEnv: LoginEnvSource
+  private isExecutable?: (file: string) => boolean
 
   constructor(daemon: DaemonClient, deps: SessionManagerDeps) {
     this.daemon = daemon
@@ -99,6 +103,7 @@ export class SessionManager {
     this.onCwd = deps.onCwd
     this.onClaudeSessionHistory = deps.onClaudeSessionHistory
     this.loginEnv = deps.loginEnv ?? new LoginShellEnv()
+    this.isExecutable = deps.isExecutable
   }
 
   create(options?: CreateOptions): SessionInfo {
@@ -125,11 +130,12 @@ export class SessionManager {
     // happened to start this server — see spawn-env.ts for why.
     const loginEnv = isCommand ? this.loginEnv.current() : null
     const baseEnv = scrubInheritedAgentEnv(loginEnv ?? process.env)
-    const executable = isCommand ? options!.command! : shell
     const args = isCommand ? (options!.args || []) : ['-l']
     // Only apply shell integration env when spawning a shell (not a command)
     // Always copy env to avoid mutating process.env
     const env = isCommand ? baseEnv : getShellEnv(shell, baseEnv)
+    // Resolve against the PTY's PATH, not the daemon's — see command-path.ts.
+    const executable = isCommand ? resolveOnPath(options!.command!, env.PATH, this.isExecutable) : shell
     env.SPACETERM_SURFACE_ID = sessionId
     // Stable node ID — survives reincarnation. Falls back to sessionId for initial creation.
     env.SPACETERM_NODE_ID = options?.nodeId ?? sessionId

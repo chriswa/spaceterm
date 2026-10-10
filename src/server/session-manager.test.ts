@@ -29,7 +29,9 @@ async function setup(loginEnv = new FakeLoginEnv()) {
   const client = new DaemonClient(() => {}, { transport: daemon, reconnectDelayMs: 1 })
   await client.connect()
   const deps = recorder()
-  const manager = new SessionManager(client, { ...deps, loginEnv })
+  // Nothing on PATH is executable, so a command reaches the daemon as named
+  // regardless of what this machine has installed.
+  const manager = new SessionManager(client, { ...deps, loginEnv, isExecutable: () => false })
   return { daemon, client, deps, manager }
 }
 
@@ -167,6 +169,21 @@ describe('SessionManager create', () => {
     const [create] = sent(daemon, 'create')
     expect(create.command).toBe('claude')
     expect(create.args).toEqual(['--resume', 'abc'])
+    client.dispose()
+  })
+
+  it('resolves the command on the PTY\'s PATH, not the daemon\'s', async () => {
+    // The daemon looks a bare name up on its own PATH, frozen the day it started.
+    const daemon = new FakeDaemon()
+    const client = new DaemonClient(() => {}, { transport: daemon, reconnectDelayMs: 1 })
+    await client.connect()
+    const manager = new SessionManager(client, {
+      ...recorder(),
+      loginEnv: new FakeLoginEnv({ PATH: '/usr/bin:/home/u/.local/bin' }),
+      isExecutable: (file) => file === '/home/u/.local/bin/claude',
+    })
+    manager.create({ command: 'claude', args: [] })
+    expect(sent(daemon, 'create')[0].command).toBe('/home/u/.local/bin/claude')
     client.dispose()
   })
 
