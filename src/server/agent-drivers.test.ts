@@ -15,7 +15,7 @@ function fakeProvisioning(): AgentProvisioning & { calls: string[] } {
     calls,
     claudePluginDir: () => { calls.push('claudePluginDir'); return '/plugins/claude' },
     cursorPluginDir: () => { calls.push('cursorPluginDir'); return '/plugins/cursor' },
-    prepareCodex: () => { calls.push('prepareCodex') }
+    prepareCodex: () => { calls.push('prepareCodex'); return ['hooks.Stop=[]', 'mcp_servers.spaceterm.args=[]'] }
   }
 }
 
@@ -200,7 +200,13 @@ describe('codex driver', () => {
       '--dangerously-bypass-hook-trust',
       '--dangerously-bypass-approvals-and-sandbox'
     ]))
-    expect(options.args![at(options.args!, '-p') + 1]).toBe('spaceterm')
+    expect(options.args).not.toContain('-p')
+  })
+
+  it('passes each provisioned config override as its own -c', () => {
+    const args = drivers().codex.buildCreateOptions({}).args!
+    expect(args[at(args, 'hooks.Stop=[]') - 1]).toBe('-c')
+    expect(args[at(args, 'mcp_servers.spaceterm.args=[]') - 1]).toBe('-c')
   })
 
   it('takes the working dir as -C, with ~ expanded', () => {
@@ -217,7 +223,7 @@ describe('codex driver', () => {
 
     expect(options.args![0]).toBe('resume')
     expect(at(options.args!, 'sess-7')).toBeGreaterThan(at(options.args!, '--model'))
-    expect(at(options.args!, 'sess-7')).toBeGreaterThan(at(options.args!, '-p'))
+    expect(at(options.args!, 'sess-7')).toBeGreaterThan(at(options.args!, 'hooks.Stop=[]'))
   })
 
   it('uses the fork subcommand when forking', () => {

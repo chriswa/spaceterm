@@ -280,8 +280,8 @@ done last session; kept so the reasoning is not lost.
     Go daemon binary matches the source. A first run that fails currently fails
     silently in four different places.
 13. **Incremental adoption has no on-ramp.** Every feature is on. A user who
-    wants a canvas of terminals also gets hook provisioning into `~/.cursor/`
-    and `~/.codex/`, background-work probing, and a speech integration. The
+    wants a canvas of terminals also gets agent hook provisioning,
+    background-work probing, and a speech integration. The
     provisioning half is behind `AgentProvisioning` already; a settings surface
     that can decline it is mostly wiring, and the honest first step is a config
     file rather than UI.

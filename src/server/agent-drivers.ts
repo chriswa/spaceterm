@@ -56,7 +56,7 @@ export interface AgentDriver {
 
 /**
  * Filesystem provisioning each agent needs before it can be launched: plugin
- * directories, config merges, MCP profiles. Injected rather than imported so
+ * directories and hook handlers. Injected rather than imported so
  * the argv-building logic — which carries the permission-bypass flags and some
  * order-sensitive arguments — can be tested without touching the disk.
  */
@@ -65,8 +65,12 @@ export interface AgentProvisioning {
   claudePluginDir(): string
   /** Provision and return the Cursor plugin directory. */
   cursorPluginDir(): string
-  /** Provision the Codex plugin directory and Spaceterm profile. */
-  prepareCodex(): void
+  /**
+   * Provision the Codex hook handler, and return the `-c` config overrides
+   * (`key=value`, value in TOML) that give one launch Spaceterm's hooks and
+   * MCP server.
+   */
+  prepareCodex(): string[]
 }
 
 /** Escape a string for embedding inside a shell single-quoted string. */
@@ -195,7 +199,7 @@ function codexDriver(provisioning: AgentProvisioning): AgentDriver {
       forkStrategy: 'native'
     },
     buildCreateOptions({ cwd, resumeSessionId, forkSessionId, prompt, extraArgs }) {
-      provisioning.prepareCodex()
+      const overrides = provisioning.prepareCodex()
       // Expand `~` — Codex takes the working dir as an argv entry (`-C`), not a PTY
       // cwd, so no shell expansion happens and a literal `~` would fail to resolve.
       const resolvedCwd = expandTilde(cwd)
@@ -208,7 +212,7 @@ function codexDriver(provisioning: AgentProvisioning): AgentDriver {
         // so the flag is accepted and ignored: MCP tools are always deferred,
         // and a model asked to use one answers "no such tool" without searching.
         '--disable', 'tool_search_always_defer_mcp_tools',
-        '-p', 'spaceterm',
+        ...overrides.flatMap((o) => ['-c', o]),
       ]
       if (resolvedCwd) {
         shared.push('-C', resolvedCwd)

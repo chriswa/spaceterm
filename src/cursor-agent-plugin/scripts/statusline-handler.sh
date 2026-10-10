@@ -1,6 +1,7 @@
 #!/bin/bash
 # Cursor CLI statusLine command — forwards context_window telemetry to Spaceterm.
-# Configured via ~/.cursor/cli-config.json by prepareCursorAgentPluginDir.
+# Not installed automatically: point statusLine in ~/.cursor/cli-config.json at
+# ~/.spaceterm/cursor-agent-plugin/scripts/statusline-handler.sh (README, "Cursor's status line").
 # When SPACETERM_SURFACE_ID is unset (plain `agent` outside Spaceterm), optionally
 # runs the user's previous statusLine command from cursor-statusline-passthrough.json.
 

@@ -7,9 +7,8 @@ import type { AgentProvisioning } from './agent-drivers'
 
 /**
  * Everything that has to exist on disk before an agent CLI can be launched:
- * plugin directories materialised under `~/.spaceterm`, hook handlers copied
- * and made executable, and entries merged into the user's own `~/.cursor` and
- * `~/.codex` config.
+ * plugin directories materialised under `~/.spaceterm`, and hook handlers
+ * copied and made executable.
  *
  * Split out of index.ts because it is the half of agent support that a mod
  * cannot supply today. `AgentDriver` already lets a mod describe *how* to
@@ -17,15 +16,24 @@ import type { AgentProvisioning } from './agent-drivers'
  * first*, and this file is the first-party implementation of it. Keeping the
  * two apart is what MODDING.md's agent-mod pilot needs.
  *
- * Every merge here is deliberately additive: the user's own hooks and
- * statusLine are preserved, and a previous Spaceterm entry is replaced rather
- * than duplicated. Spaceterm does not own these files.
+ * Spaceterm does not write the user's own agent config. Every hook and MCP
+ * server reaches the CLI per launch: Cursor's through `--plugin-dir` (plugin
+ * hooks run since Cursor CLI 2026.08.11), Codex's as `-c` config overrides
+ * (inline `[hooks]` since 0.124.0). Earlier versions merged entries into
+ * `~/.cursor/hooks.json`, `~/.codex/hooks.json` and `~/.cursor/cli-config.json`
+ * and wrote `~/.codex/spaceterm.config.toml`; the `retire*` functions below
+ * remove exactly those entries, once, so the hooks do not fire twice. Cursor's
+ * statusLine has no per-launch mechanism at all, so it is left to the user to
+ * set up (README, "Cursor's status line") and never touched here.
  */
 
 /** Repository root, from which first-party plugin sources are copied. */
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 
-/** Cursor CLI hook events Spaceterm subscribes to via ~/.cursor/hooks.json. */
+/** The MCP server every agent shares: the Claude plugin's stdio server. */
+const MCP_RUN_SH = path.join(PROJECT_ROOT, 'src/claude-code-plugin/mcp-server/run.sh')
+
+/** Cursor CLI hook events Spaceterm subscribes to via its plugin's hooks.json. */
 export const CURSOR_HOOK_EVENTS = [
   'sessionStart',
   'beforeSubmitPrompt',
@@ -37,7 +45,7 @@ export const CURSOR_HOOK_EVENTS = [
 ] as const
 
 
-/** Codex CLI hook events Spaceterm subscribes to via ~/.codex/hooks.json. */
+/** Codex CLI hook events Spaceterm subscribes to via `-c hooks.<event>=…`. */
 export const CODEX_HOOK_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
@@ -49,135 +57,106 @@ export const CODEX_HOOK_EVENTS = [
   'SubagentStop',
 ] as const
 
+/**
+ * Recognised by the plugin directory's name wherever it lives: `~/.spaceterm`,
+ * the repo's `src/`, or a `SPACETERM_HOME` elsewhere — the e2e suite runs with
+ * one under the system temp dir, and older versions merged those runs'
+ * handlers into the real `~/.codex/hooks.json` too.
+ */
 export function isCodexHandlerCommand(cmd: unknown): boolean {
-  return typeof cmd === 'string' && (
-    cmd.includes('/.spaceterm/codex-agent-plugin/scripts/hook-handler.sh') ||
-    cmd.includes('/src/codex-agent-plugin/scripts/hook-handler.sh')
-  )
+  return typeof cmd === 'string' && cmd.includes('/codex-agent-plugin/scripts/hook-handler.sh')
 }
 
-// ─── Config merges ──────────────────────────────────────────────────────────
-//
-// These three rewrite files the user owns. They are pure functions of the
-// parsed document so the merge rules can be tested directly — this is the
-// highest-stakes filesystem code in the repo, since getting a merge wrong
-// silently damages a config Spaceterm did not create. The `ensure*` wrappers
-// below are the thin read-parse-write shells around them.
-
-/** True when a hook entry's command is one Spaceterm installed. */
-function isCursorHandler(entry: unknown, handlerPath: string, script: string): boolean {
+/** True when a hook entry's command is one Spaceterm installed (see above). */
+function isCursorHandler(entry: unknown, handlerPath: string): boolean {
   if (!entry || typeof entry !== 'object') return false
   const cmd = (entry as { command?: unknown }).command
   return typeof cmd === 'string' && (
-    cmd === handlerPath ||
-    cmd.includes(`/.spaceterm/cursor-agent-plugin/scripts/${script}`) ||
-    cmd.includes(`/src/cursor-agent-plugin/scripts/${script}`)
+    cmd === handlerPath || cmd.includes('/cursor-agent-plugin/scripts/hook-handler.sh')
   )
 }
 
-export interface CursorStatusLineMerge {
-  /** The config to write back. */
-  config: Record<string, unknown>
-  /**
-   * The user's previous statusLine, if it was not ours. Parked so our handler
-   * can still run it, and so it survives outside Spaceterm.
-   */
-  passthrough?: unknown
-}
+// ─── Codex launch config ────────────────────────────────────────────────────
 
-/** Merge Spaceterm's statusLine into a parsed `~/.cursor/cli-config.json`. */
-export function mergeCursorStatusLine(parsed: unknown, handlerPath: string): CursorStatusLineMerge {
-  const config: Record<string, unknown> =
-    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? { ...(parsed as Record<string, unknown>) }
-      : { version: 1 }
-
-  const previous = config.statusLine
-  const passthrough =
-    previous && !isCursorHandler(previous, handlerPath, 'statusline-handler.sh')
-      ? previous
-      : undefined
-
-  config.statusLine = {
-    type: 'command',
-    command: handlerPath,
-    // Match Claude-ish cadence without hammering hooks.sock
-    updateIntervalMs: 1000,
-  }
-  if (typeof config.version !== 'number') config.version = 1
-
-  return passthrough === undefined ? { config } : { config, passthrough }
-}
+/** A TOML basic string. JSON's escapes are a subset of TOML's. */
+const tomlString = (s: string): string => JSON.stringify(s)
 
 /**
- * Merge Spaceterm's handler into a parsed `~/.cursor/hooks.json`.
- *
- * Additive: the user's own hooks for each event are preserved and ours is
- * appended, replacing a previous Spaceterm entry rather than duplicating it.
+ * The `-c key=value` overrides that give one Codex launch Spaceterm's hooks
+ * and MCP server. Each value is parsed by Codex as TOML, and the overrides form
+ * their own config layer: hooks from every layer run, so the user's own
+ * `~/.codex/hooks.json` keeps working alongside these.
  */
-export function mergeCursorHooks(parsed: unknown, handlerPath: string): Record<string, unknown> {
-  const existing: { version?: unknown; hooks?: unknown } =
-    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? { ...(parsed as Record<string, unknown>) }
-      : {}
-
-  const hooks: Record<string, unknown[]> =
-    existing.hooks && typeof existing.hooks === 'object' && !Array.isArray(existing.hooks)
-      ? { ...(existing.hooks as Record<string, unknown[]>) }
-      : {}
-
-  for (const event of CURSOR_HOOK_EVENTS) {
-    const prev = Array.isArray(hooks[event]) ? hooks[event] : []
-    const kept = prev.filter((e) => !isCursorHandler(e, handlerPath, 'hook-handler.sh'))
-    kept.push({ command: handlerPath, timeout: 5 })
-    hooks[event] = kept
-  }
-
-  return {
-    ...existing,
-    version: typeof existing.version === 'number' ? existing.version : 1,
-    hooks,
-  }
-}
-
-/**
- * Merge Spaceterm's handler into a parsed `~/.codex/hooks.json`.
- *
- * Codex nests hooks one level deeper than Cursor: each event holds matcher
- * *groups*, and a group holds hooks. A group is ours if any hook inside it is.
- */
-export function mergeCodexHooks(parsed: unknown, handlerPath: string): Record<string, unknown> {
-  const existing: { hooks?: unknown } =
-    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? { ...(parsed as Record<string, unknown>) }
-      : {}
-
-  const hooks: Record<string, unknown[]> =
-    existing.hooks && typeof existing.hooks === 'object' && !Array.isArray(existing.hooks)
-      ? { ...(existing.hooks as Record<string, unknown[]>) }
-      : {}
-
-  const groupHasOurs = (group: unknown): boolean => {
-    if (!group || typeof group !== 'object') return false
-    const inner = (group as { hooks?: unknown }).hooks
-    if (!Array.isArray(inner)) return false
-    return inner.some((h) => isCodexHandlerCommand((h as { command?: unknown })?.command))
-  }
-
-  for (const event of CODEX_HOOK_EVENTS) {
-    const prev = Array.isArray(hooks[event]) ? hooks[event] : []
-    const kept = prev.filter((g) => !groupHasOurs(g))
+export function codexConfigOverrides(handlerPath: string, mcpRunSh: string = MCP_RUN_SH): string[] {
+  const hooks = CODEX_HOOK_EVENTS.map((event) => {
     // Codex clamps SessionEnd to 3s; use that so startup doesn't warn.
     const timeout = event === 'SessionEnd' ? 3 : 5
-    kept.push({
-      matcher: '*',
-      hooks: [{ type: 'command', command: handlerPath, timeout }],
-    })
-    hooks[event] = kept
-  }
-
-  return { ...existing, hooks }
+    return `hooks.${event}=[{matcher="*",hooks=[{type="command",command=${tomlString(handlerPath)},timeout=${timeout}}]}]`
+  })
+  return [
+    ...hooks,
+    `mcp_servers.spaceterm.command=${tomlString(mcpRunSh)}`,
+    'mcp_servers.spaceterm.args=[]',
+  ]
 }
+
+// ─── Retiring what older versions merged into the user's config ─────────────
+//
+// Pure functions of the parsed document, so the rules can be tested directly:
+// this rewrites files Spaceterm does not own. Only Spaceterm's own entries are
+// removed; an event left empty by that removal is dropped, and everything else
+// survives as it was. `changed` is false when there was nothing of ours, so the
+// file is not rewritten at all.
+
+export interface Retired {
+  config: unknown
+  changed: boolean
+}
+
+/** Drop entries matching `ours` from every event in `parsed.hooks`. */
+function withoutHooks(parsed: unknown, ours: (entry: unknown) => boolean): Retired {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { config: parsed, changed: false }
+  const doc = parsed as Record<string, unknown>
+  const hooks = doc.hooks
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return { config: parsed, changed: false }
+
+  let changed = false
+  const kept: Record<string, unknown> = {}
+  for (const [event, entries] of Object.entries(hooks as Record<string, unknown>)) {
+    if (!Array.isArray(entries)) {
+      kept[event] = entries
+      continue
+    }
+    const remaining = entries.filter((e) => !ours(e))
+    if (remaining.length === entries.length) {
+      kept[event] = entries
+      continue
+    }
+    changed = true
+    if (remaining.length > 0) kept[event] = remaining
+  }
+  return changed ? { config: { ...doc, hooks: kept }, changed } : { config: parsed, changed }
+}
+
+/** `~/.cursor/hooks.json` without the handler older versions merged in. */
+export function withoutCursorHooks(parsed: unknown, handlerPath: string): Retired {
+  return withoutHooks(parsed, (e) => isCursorHandler(e, handlerPath))
+}
+
+/**
+ * `~/.codex/hooks.json` without the matcher groups older versions merged in.
+ * Codex nests hooks inside matcher groups; a group is ours if any hook in it is.
+ */
+export function withoutCodexHooks(parsed: unknown): Retired {
+  return withoutHooks(parsed, (group) => {
+    if (!group || typeof group !== 'object') return false
+    const inner = (group as { hooks?: unknown }).hooks
+    return Array.isArray(inner) && inner.some((h) => isCodexHandlerCommand((h as { command?: unknown })?.command))
+  })
+}
+
+/** The first line of the profile older versions wrote to ~/.codex. */
+export const CODEX_PROFILE_HEADER = '# Managed by Spaceterm'
 
 /** Read and parse a JSON file, or undefined when absent or unparseable. */
 function readJson(filePath: string, tag: string): unknown {
@@ -185,7 +164,7 @@ function readJson(filePath: string, tag: string): unknown {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'))
   } catch (err: any) {
-    serverLog(`${tag} Failed to parse ${filePath}: ${err.message}; writing Spaceterm entries only`)
+    serverLog(`${tag} Failed to parse ${filePath}: ${err.message}; leaving it alone`)
     return undefined
   }
 }
@@ -195,39 +174,20 @@ function writeJson(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + '\n')
 }
 
-/**
- * Cursor CLI statusLine (Claude-compatible) is the continuous context % feed.
- * Merge Spaceterm's handler into ~/.cursor/cli-config.json. If the user already
- * had a custom statusLine, park it in ~/.spaceterm/cursor-statusline-passthrough.json
- * so our handler can still run it (and show it outside Spaceterm).
- */
-export function ensureCursorStatusLine(handlerPath: string): void {
-  const configPath = path.join(homedir(), '.cursor', 'cli-config.json')
-  const passthroughPath = path.join(SOCKET_DIR, 'cursor-statusline-passthrough.json')
-
-  const merged = mergeCursorStatusLine(readJson(configPath, '[cursor-statusline]'), handlerPath)
-  if (merged.passthrough !== undefined) {
-    writeJson(passthroughPath, { statusLine: merged.passthrough })
-    serverLog(`[cursor-statusline] Preserved previous statusLine at ${passthroughPath}`)
-  }
-  writeJson(configPath, merged.config)
-  serverLog(`[cursor-statusline] Merged Spaceterm statusLine into ${configPath}`)
+/** Rewrite `filePath` without Spaceterm's entries, if it has any. */
+function retireFromJson(filePath: string, tag: string, retire: (parsed: unknown) => Retired): void {
+  const parsed = readJson(filePath, tag)
+  if (parsed === undefined) return
+  const { config, changed } = retire(parsed)
+  if (!changed) return
+  writeJson(filePath, config)
+  serverLog(`${tag} Removed Spaceterm's entries from ${filePath}; its hooks now come with each launch`)
 }
 
 /**
- * Cursor reads hooks from the workspace by default, which would mean writing
- * into the user's repo. Merge Spaceterm's handler into the user-global
- * ~/.cursor/hooks.json instead.
- */
-export function ensureCursorUserHooks(handlerPath: string): void {
-  const hooksPath = path.join(homedir(), '.cursor', 'hooks.json')
-  writeJson(hooksPath, mergeCursorHooks(readJson(hooksPath, '[cursor-hooks]'), handlerPath))
-  serverLog(`[cursor-hooks] Merged Spaceterm handler into ${hooksPath}`)
-}
-
-/**
- * Materialize the Cursor plugin under ~/.spaceterm (not the user's repo):
- * MCP via --plugin-dir, and sync the hook handler for ~/.cursor/hooks.json merge.
+ * Materialize the Cursor plugin under ~/.spaceterm (not the user's repo), for
+ * `--plugin-dir`: its hooks and MCP server. The statusline handler is copied
+ * too, for users who point `~/.cursor/cli-config.json` at it themselves.
  */
 export function prepareCursorAgentPluginDir(): string {
   const srcRoot = path.join(PROJECT_ROOT, 'src/cursor-agent-plugin')
@@ -247,7 +207,7 @@ export function prepareCursorAgentPluginDir(): string {
   fs.copyFileSync(statuslineSrc, statuslineDest)
   fs.chmodSync(statuslineDest, 0o755)
 
-  // Keep plugin hooks.json as documentation/fallback; CLI does not execute these today.
+  // Cursor CLI runs a --plugin-dir plugin's hooks/hooks.json since 2026.08.11.
   const hooks = {
     version: 1,
     hooks: Object.fromEntries(
@@ -260,40 +220,27 @@ export function prepareCursorAgentPluginDir(): string {
   // Do NOT put SPACETERM_* in mcp.json `env` / `${env:NAME}` here — Cursor Agent
   // CLI plugin path leaves `${env:…}` as literal strings (truthy), which breaks
   // tools. The MCP server recovers real IDs from ancestor process env at startup.
-  const mcpRunSh = path.join(PROJECT_ROOT, 'src/claude-code-plugin/mcp-server/run.sh')
   const mcpJson = {
     mcpServers: {
       spaceterm: {
         type: 'stdio',
-        command: mcpRunSh,
+        command: MCP_RUN_SH,
         args: [] as string[],
       },
     },
   }
   fs.writeFileSync(path.join(destRoot, 'mcp.json'), JSON.stringify(mcpJson, null, 2) + '\n')
 
-  ensureCursorUserHooks(handlerDest)
-  ensureCursorStatusLine(statuslineDest)
+  retireFromJson(path.join(homedir(), '.cursor', 'hooks.json'), '[cursor-hooks]',
+    (parsed) => withoutCursorHooks(parsed, handlerDest))
   return destRoot
 }
 
-/** Latest Cursor chat id from session history (no on-disk JSONL validation). */
-/** Launch Cursor Agent CLI with Spaceterm's plugin (MCP) + user-level hooks. */
 /**
- * Merge Spaceterm's handler into user-global ~/.codex/hooks.json (Claude-shaped
- * event names, matcher groups).
+ * Materialize the Codex hook handler under ~/.spaceterm and return the `-c`
+ * overrides that wire it, and the MCP server, into one launch.
  */
-export function ensureCodexUserHooks(handlerPath: string): void {
-  const hooksPath = path.join(homedir(), '.codex', 'hooks.json')
-  writeJson(hooksPath, mergeCodexHooks(readJson(hooksPath, '[codex-hooks]'), handlerPath))
-  serverLog(`[codex-hooks] Merged Spaceterm handler into ${hooksPath}`)
-}
-
-/**
- * Materialize Codex hook handler under ~/.spaceterm and sync user hooks +
- * Spaceterm-owned profile (MCP) under ~/.codex/.
- */
-export function prepareCodexAgentDir(): string {
+export function prepareCodexAgentDir(): string[] {
   const srcRoot = path.join(PROJECT_ROOT, 'src/codex-agent-plugin')
   const destRoot = path.join(SOCKET_DIR, 'codex-agent-plugin')
   const handlerSrc = path.join(srcRoot, 'scripts/hook-handler.sh')
@@ -303,31 +250,30 @@ export function prepareCodexAgentDir(): string {
   fs.copyFileSync(handlerSrc, handlerDest)
   fs.chmodSync(handlerDest, 0o755)
 
-  ensureCodexUserHooks(handlerDest)
+  retireFromJson(path.join(homedir(), '.codex', 'hooks.json'), '[codex-hooks]', withoutCodexHooks)
+  retireCodexProfile(path.join(homedir(), '.codex', 'spaceterm.config.toml'))
 
-  // Spaceterm-owned profile layered via `-p spaceterm` — does not edit config.toml.
-  const mcpRunSh = path.join(PROJECT_ROOT, 'src/claude-code-plugin/mcp-server/run.sh')
-  const profilePath = path.join(homedir(), '.codex', 'spaceterm.config.toml')
-  fs.mkdirSync(path.dirname(profilePath), { recursive: true })
-  const profileBody = [
-    '# Managed by Spaceterm — overwritten on each Codex surface launch.',
-    '[mcp_servers.spaceterm]',
-    `command = ${JSON.stringify(mcpRunSh)}`,
-    'args = []',
-    '',
-  ].join('\n')
-  fs.writeFileSync(profilePath, profileBody)
-  serverLog(`[codex-mcp] Wrote Spaceterm profile ${profilePath}`)
+  return codexConfigOverrides(handlerDest)
+}
 
-  return destRoot
+/** Delete the `-p spaceterm` profile older versions wrote, if it is still ours. */
+function retireCodexProfile(profilePath: string): void {
+  let body: string
+  try {
+    body = fs.readFileSync(profilePath, 'utf8')
+  } catch {
+    return
+  }
+  if (!body.startsWith(CODEX_PROFILE_HEADER)) return
+  fs.rmSync(profilePath, { force: true })
+  serverLog(`[codex-mcp] Removed ${profilePath}; the MCP server now comes with each launch`)
 }
 
 /**
  * First-party provisioning, as the driver registry consumes it.
  *
  * Claude needs none: its plugin directory is read straight out of the repo, and
- * its settings are passed on the command line rather than merged into a config
- * file.
+ * its settings are passed on the command line.
  */
 export const REAL_AGENT_PROVISIONING: AgentProvisioning = {
   claudePluginDir: () => path.join(PROJECT_ROOT, 'src/claude-code-plugin'),

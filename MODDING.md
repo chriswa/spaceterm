@@ -84,7 +84,7 @@ push state in. Also out-of-process — the producers are shell scripts.
 
 **3. The three agent plugin directories.** `claude-code-plugin/`,
 `cursor-agent-plugin/`, `codex-agent-plugin/`. Note these are plugins *for other
-tools*, provisioned by spaceterm into `~/.cursor/` and `~/.codex/`. They are not
+tools*, materialised by spaceterm under `~/.spaceterm/` and passed to each launch. They are not
 spaceterm mods, but they prove the project already thinks in terms of pluggable agent
 integrations.
 
