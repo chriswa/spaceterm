@@ -59,6 +59,16 @@ export const REAL_VOICE_OPERATOR_DEPS: VoiceOperatorDeps = {
   },
 }
 
+/** What a subscriber asks Voice Operator to send it, and where. */
+export type SubscriberRegistration = {
+  /** Absolute path of a Unix socket taking newline-delimited JSON. */
+  socket: string
+  /** Receive every command dictation as `{"type":"voice-command","text":…}`. */
+  commands: boolean
+  /** `dictation`: `{"type":"voice-dictation",active,launch,seq}` as each starts and ends. */
+  events: 'dictation'[]
+}
+
 /** One stretch of speech in one voice. Unvoiced parts take the request's voice. */
 export type SpeechPart = { text: string; voice?: string }
 
@@ -249,6 +259,19 @@ export class VoiceOperator {
   /** Every voice the service offers, unfiltered. */
   voices(): Promise<SpeechResponse> {
     return this.request('/v1/voices')
+  }
+
+  /**
+   * Register (or refresh) this process as a Voice Operator subscriber: where
+   * it should send command dictations and dictation start/end events. Voice
+   * Operator saves it, so it outlives Voice Operator restarts; repeating it is
+   * harmless. 404 means a Voice Operator too old to take registrations. See
+   * voice-operator-subscription.ts.
+   */
+  subscribe(name: string, registration: SubscriberRegistration): Promise<SpeechResponse> {
+    return this.request(`/v1/subscribers/${encodeURIComponent(name)}`, {
+      method: 'PUT', body: JSON.stringify(registration),
+    })
   }
 
   private port(): number | undefined {

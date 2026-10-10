@@ -93,7 +93,8 @@ import { readPeerNames } from './claude-peer-names'
 import { AutoStamper } from './auto-stamp'
 import { askClaudePrint } from './claude-print'
 import { DirectSpeech } from './direct-speech'
-import { VoiceOperator, type SpeechBackend } from './voice-operator'
+import { VoiceOperator, DISCOVERY_PATH as VOICE_OPERATOR_DISCOVERY_PATH, type SpeechBackend } from './voice-operator'
+import { VoiceOperatorSubscription } from './voice-operator-subscription'
 import { PendingTurnCache } from './pending-turn'
 import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
 
@@ -401,6 +402,23 @@ const mobileAppInstaller = new MobileAppInstaller(realMobileInstallDeps(path.res
 
 /** Speech on the phone, synthesized by Voice Operator — dictation in reverse. See remote-speech.ts. */
 const speechVoiceOperator = new VoiceOperator()
+
+/**
+ * Voice Operator sends command dictations and dictation start/end to whoever
+ * registered for them; keep that this process's hooks socket. Checked every
+ * few seconds once the socket listens, so a Voice Operator that starts (or
+ * restarts) later is picked up. See voice-operator-subscription.ts.
+ */
+const voiceOperatorSubscription = new VoiceOperatorSubscription(
+  { socket: HOOKS_SOCKET_PATH, commands: true, events: ['dictation'] },
+  {
+    readDiscovery: () => {
+      try { return JSON.parse(fs.readFileSync(VOICE_OPERATOR_DISCOVERY_PATH, 'utf8')) as { pid?: unknown } } catch { return undefined }
+    },
+    subscribe: (name, registration) => speechVoiceOperator.subscribe(name, registration),
+    log: (message) => serverLog(message),
+  },
+)
 const findClient = (id: string) => [...clients].find((c) => c.id === id)
 const remoteSpeech = new RemoteSpeech({
   synthesize: (text, voice, signal) => speechVoiceOperator.synthesize(text, voice, signal),
@@ -3781,6 +3799,8 @@ async function startServer(): Promise<void> {
 
   hooksServer.listen(HOOKS_SOCKET_PATH, () => {
     console.log(`Hooks server listening on ${HOOKS_SOCKET_PATH}`)
+    void voiceOperatorSubscription.check()
+    setInterval(() => { void voiceOperatorSubscription.check() }, 5_000).unref()
   })
 
   hooksServer.on('error', (err) => {
