@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { initServerSync, destroyServerSync } from '../lib/server-sync'
-import { useReceptionistStore } from './receptionistStore'
+import { useReceptionistStore, isThinkingWithinEarshot } from './receptionistStore'
 import { useAgentNamesStore } from './agentNamesStore'
 
 /**
@@ -81,5 +81,39 @@ describe('agent names', () => {
     destroyServerSync()
     bridge.emit.agentNames({ a: 'Kevin' })
     expect(useAgentNamesStore.getState().names).toEqual({})
+  })
+})
+
+describe('the thinking cue plays only within earshot', () => {
+  const thinkingHere = () => isThinkingWithinEarshot(useReceptionistStore.getState())
+
+  it('on the device holding Control, unmuted', async () => {
+    await initServerSync()
+    bridge.emit.receptionistHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac' })
+    bridge.emit.receptionistStatus({ phase: 'thinking' })
+    expect(thinkingHere()).toBe(true)
+
+    bridge.emit.receptionistStatus({ phase: 'speaking' })
+    expect(thinkingHere()).toBe(false)
+  })
+
+  it('not on a device that is only watching Control think elsewhere', async () => {
+    await initServerSync()
+    bridge.emit.receptionistHolder({ deviceId: 'phone-1', label: 'Phone' })
+    bridge.emit.receptionistStatus({ phase: 'thinking' })
+    expect(thinkingHere()).toBe(false)
+
+    bridge.emit.receptionistHolder(null)
+    expect(thinkingHere()).toBe(false)
+  })
+
+  it('not where Control is muted, including a mute partway through a thought', async () => {
+    await initServerSync()
+    bridge.emit.receptionistHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac' })
+    bridge.emit.receptionistStatus({ phase: 'thinking' })
+    expect(thinkingHere()).toBe(true)
+
+    bridge.emit.receptionistHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac', muted: true }, [FAKE_DEVICE_ID])
+    expect(thinkingHere()).toBe(false)
   })
 })

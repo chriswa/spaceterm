@@ -56,3 +56,12 @@ export const useReceptionistStore = create<ReceptionistState>((set) => ({
     mutedHere: muted ? muted.includes(deviceId) : holder?.deviceId === deviceId && holder.muted === true,
   }),
 }))
+
+/**
+ * Control is thinking where it can be heard: this device holds it, unmuted.
+ * The thinking cue's condition — the echo is a prelude to speech, so it plays
+ * only where the speech will, and never on a device that is merely watching.
+ */
+export function isThinkingWithinEarshot(state: Pick<ReceptionistState, 'phase' | 'holder'>): boolean {
+  return state.phase === 'thinking' && state.holder?.mine === true && !state.holder.muted
+}

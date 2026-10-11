@@ -3,7 +3,10 @@
  *
  * The cue is a pure function of Control's phase (see `ReceptionistPhase`): it
  * plays while, and only while, Control is `thinking`. Anything else —
- * synthesizing, speaking, ready, error — silences it. It used to be driven by
+ * synthesizing, speaking, ready, error — silences it. And only where Control
+ * is heard: the device holding it, unmuted (`isThinkingWithinEarshot`). Every
+ * client sees the phase, so without that the Mac would ping for a phone's
+ * question, and a muted device would ping for an answer it will only read. It used to be driven by
  * a `thinking` flag that the server left set for the whole duration of the
  * spoken answer, so the echo played underneath the speech.
  *

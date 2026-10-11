@@ -4,7 +4,7 @@ import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useAutoStampsEnabledStore } from '../stores/autoStampsEnabledStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useRestartRequiredStore } from '../stores/restartRequiredStore'
-import { useReceptionistStore } from '../stores/receptionistStore'
+import { useReceptionistStore, isThinkingWithinEarshot } from '../stores/receptionistStore'
 import { useAgentNamesStore } from '../stores/agentNamesStore'
 import { receptionistHolderOf, type NodeData, type NodeStamp } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
@@ -148,6 +148,13 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
     })
   )
 
+  // An echo while Control waits on the model (see thinking-cue.ts), but only
+  // where Control is heard. Derived from the store rather than from the status
+  // event, because a hand-off or a mute mid-thought arrives as a holder change.
+  setControlThinking(isThinkingWithinEarshot(useReceptionistStore.getState()))
+  cleanupFns.push(useReceptionistStore.subscribe((s) => setControlThinking(isThinkingWithinEarshot(s))))
+  cleanupFns.push(() => setControlThinking(false))
+
   // The bridge replays each of these on subscribe — they are not in
   // `ServerState`, and their on-connect push came before this ran.
   cleanupFns.push(
@@ -155,8 +162,6 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
       // Every change is broadcast whole, so toast only an error that is new.
       const before = useReceptionistStore.getState().error
       useReceptionistStore.getState().setStatus(status)
-      // An echo while it waits on the model; see thinking-cue.ts.
-      setControlThinking(status.phase === 'thinking')
       if (status.message && status.message !== before) showToast(`Control: ${status.message}`)
     })
   )
