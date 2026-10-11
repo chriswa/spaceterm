@@ -3811,14 +3811,17 @@ describe('Receptionist muted, and what the user has taken in', () => {
     })
     await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
-    speech.heard('Kevin is done. Kevin here. The sol'.length)
-    await flush()
     const at = h.record.findIndex(message => message.content.includes('The solver works'))
     // Dim as it joins the transcript, before the voice reports anything.
     expect(h.speaking.find(Boolean)).toEqual({ of: at, parts: [0, 0] })
-    // Lit to the end of the word it is in, and counting the introduction the voice said.
+    // The feed's offsets do not move the light: they lag going forward and run ahead of a rewind.
+    speech.heard('Kevin is done. Kevin here. The sol'.length)
+    await flush()
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: [0, 0] })
+    // Asked outright: lit to the end of the word it is in, counting the introduction the voice said.
+    tick()
+    await flush()
     expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done.'.length, 'Kevin here. The solver'.length] })
-    // Asked outright, without a change for the feed to wake on.
     speech.quietly('Kevin is done. Kevin here. The solver works'.length)
     tick()
     await flush()
@@ -3828,6 +3831,44 @@ describe('Receptionist muted, and what the user has taken in', () => {
     speech.end('completed')
     await flush()
     expect(h.speaking.at(-1)).toBeUndefined()
+  })
+
+  it('dims the words after where the listener rewinds to, and tells the model they heard only that far', async () => {
+    const speech = handPlayed()
+    let tick = (): void => {}
+    let told = false
+    const h = harness({
+      speech: speech.backend,
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done. The solver works.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('They heard only: "Kevin is done. *INTERRUPTED*"')
+          told = true
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+      voiceTick: () => new Promise((resolve) => { tick = resolve }),
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('The solver works'))
+    speech.heard(0)
+    await flush()
+    speech.quietly('Kevin is done. The solver works'.length)
+    tick()
+    await flush()
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is done. The solver works.'.length] })
+    // Rewound into the first sentence, which the feed has long since reported finished.
+    speech.quietly('Kevin is'.length)
+    tick()
+    await flush()
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Kevin is'.length] })
+    // Talked over there: what they heard is where they had rewound to.
+    speech.end('interrupted_by_user', 'Kevin is done. '.length)
+    await flush()
+    await h.receptionist.hear('wait', 'spoken')
+    await flush()
+    expect(told).toBe(true)
   })
 
   it('tells the model when it is unmuted', async () => {

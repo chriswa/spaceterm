@@ -2490,12 +2490,15 @@ export class Receptionist {
     this.deps.carryOver.speaking(true)
     const starts = speechPartStarts(parts)
     let speaker: string | undefined
-    // How far the voice has got, for the transcript: never back, as the
-    // feed's sentence-level offsets would take it behind the word asked for.
-    let furthest = -1
+    // Where the voice is, for the transcript: lit up to there and dim after.
+    // It goes back as well as forward, since the listener can rewind, so it
+    // follows the voice asked outright (`followVoice`) and never the change
+    // feed, whose offsets lag a sentence behind going forward and run ahead
+    // of a rewind into a sentence already finished.
+    let shown: number | undefined
     const reached = (heard: number): void => {
-      if (at === undefined || heard <= furthest || this.lastSpoken !== spoken) return
-      furthest = heard
+      if (at === undefined || heard === shown || this.lastSpoken !== spoken) return
+      shown = heard
       this.onSpeaking({ of: at, parts: playedLengths(spoken, heard) })
     }
     // Dim from the start, in the same tick the reply joins the transcript:
@@ -2508,7 +2511,6 @@ export class Receptionist {
       const index = starts.filter(start => start <= progress.heard).length - 1
       const now = speakers[Math.max(0, index)]
       if (now !== speaker) this.onSpeaker(speaker = now)
-      reached(progress.heard)
     })
     if (monitoring) void this.followVoice(spoken, reached)
     return monitoring
@@ -2517,7 +2519,7 @@ export class Receptionist {
   /**
    * Ask the voice where it is in `spoken` every `VOICE_FOLLOW_MS` while it
    * says it, for the transcript's lit word: the job's change feed moves only
-   * a sentence at a time.
+   * a sentence at a time, and only forward.
    */
   private async followVoice(spoken: SpokenPart[], reached: (heard: number) => void): Promise<void> {
     while (this.lastSpoken === spoken && this.channel.isProducing()) {
