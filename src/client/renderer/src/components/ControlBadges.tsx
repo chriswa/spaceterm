@@ -12,8 +12,8 @@ export function ControlHeadset({ size }: { size?: number }) {
   return (
     <svg
       className="control-headset"
-      viewBox="-3.5 0 23 16"
-      width={size ? (size * 23) / 16 : `${23 / 16}em`}
+      viewBox="-5.5 0 27 16"
+      width={size ? (size * 27) / 16 : `${27 / 16}em`}
       height={size ?? '1em'}
       fill="none"
       stroke="currentColor"
@@ -28,11 +28,13 @@ export function ControlHeadset({ size }: { size?: number }) {
       <path d="M13 12.5c0 1.5-1.5 2-3.5 2" />
       {!mutedHere && (
         <g className="control-headset__sound" strokeWidth="1.1">
-          {/* Arcs about each earpiece, a quarter turn each, opening outward. */}
-          <path d="M.53 8.03a3.5 3.5 0 0 0 0 4.94" />
+          {/* Arcs about each earpiece, a quarter turn each, opening outward.
+              None is drawn closer than radius 5.5, so a clear gap parts the
+              sound from the headset. */}
           <path d="M-.89 6.61a5.5 5.5 0 0 0 0 7.78" />
-          <path d="M15.47 8.03a3.5 3.5 0 0 1 0 4.94" />
+          <path d="M-2.3 5.2a7.5 7.5 0 0 0 0 10.61" />
           <path d="M16.89 6.61a5.5 5.5 0 0 1 0 7.78" />
+          <path d="M18.3 5.2a7.5 7.5 0 0 1 0 10.61" />
         </g>
       )}
     </svg>

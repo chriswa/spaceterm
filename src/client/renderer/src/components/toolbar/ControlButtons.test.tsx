@@ -84,6 +84,22 @@ describe('ControlButton', () => {
     expect(container.querySelector('button')!.dataset.tooltip).toMatch(/muted here/)
   })
 
+  it('draws its sound apart from the headset, and inside the icon', () => {
+    const { container } = render(<ControlButton />)
+    const [minX, , width] = container.querySelector('.control-headset')!.getAttribute('viewBox')!.split(' ').map(Number)
+    const arcs = [...container.querySelectorAll('.control-headset__sound path')].map((p) => p.getAttribute('d')!)
+    expect(arcs.length).toBeGreaterThan(0)
+    for (const d of arcs) {
+      // A quarter turn opening outward, so the bulge lies r - r/√2 beyond its ends.
+      const [, x, r, sweep] = d.match(/^M(-?[\d.]+) [\d.]+a([\d.]+) [\d.]+ 0 0 ([01])/)!.map(Number)
+      const reach = sweep ? x + r - r / Math.SQRT2 : x - r + r / Math.SQRT2
+      // Earpieces span 1.75–4.25 and 11.75–14.25 about centres 3 and 13.
+      expect(r).toBeGreaterThanOrEqual(5)
+      expect(reach).toBeGreaterThan(minX)
+      expect(reach).toBeLessThan(minX + width)
+    }
+  })
+
   it('says why it failed', () => {
     const { container } = render(<ControlButton />)
     status({ phase: 'ready', message: 'no API key' })
