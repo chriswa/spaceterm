@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import type { ControlTranscriptEntry } from '../../../../shared/protocol'
+import type { ControlTranscriptEntry, ReceptionistHoldAction } from '../../../../shared/protocol'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
-import { useReceptionistStore } from '../stores/receptionistStore'
+import { useReceptionistStore, type ReceptionistHolding } from '../stores/receptionistStore'
+import { ChoiceGroup } from './ChoiceGroup'
 import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
 import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
 import { openReplies, partViews, segments, words, type PartView } from '../lib/control-consumption'
@@ -14,8 +15,8 @@ import { openReplies, partViews, segments, words, type PartView } from '../lib/c
  * as you scroll up. A dialog over the canvas on the desktop (`modal`), the
  * whole screen on the phone (`screen`).
  *
- * Its footer, under the box to type in, says where Control speaks, and moves
- * it: here, muted here, or let go. Words the user missed are struck out, and words still waiting for
+ * Its footer, under the box to type in, moves Control: let go, here in
+ * writing, or here aloud (`ControlFooter`). Words the user missed are struck out, and words still waiting for
  * them sit under a red Unread line until they mark them read or send their
  * next message (see `ConsumptionLedger.settle`): nothing counts as read for
  * being on screen. Until then, clicking a word of what Control has said since
@@ -88,7 +89,7 @@ type Restore = 'bottom' | { fromBottom: number } | { toOffset: number }
 const UNREAD_MARGIN_PX = 8
 
 /**
- * `controlsExtra` goes at the end of the footer: the phone's earpiece switch.
+ * `controlsExtra` goes at the end of the footer: the phone's choice of speaker or earpiece.
  */
 export function ControlTranscript({ variant, onDismiss, controlsExtra }: { variant: 'modal' | 'screen'; onDismiss: () => void; controlsExtra?: ReactNode }) {
   const [entries, setEntries] = useState<ControlTranscriptEntry[]>([])
@@ -370,38 +371,60 @@ function time(timestamp: string): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
+/** Where Control is, as far as this device goes: not here, here in writing, or here aloud. */
+export type ControlMode = 'released' | 'text' | 'speak'
+
+export function controlMode(holder: ReceptionistHolding | null, mutedHere: boolean): ControlMode {
+  if (!holder?.mine) return 'released'
+  return mutedHere ? 'text' : 'speak'
+}
+
 /**
- * Where Control speaks, and the buttons that move it: the foot of the
- * transcript, under the box to type in. Two independent controls (`receptionist.hold`) — holding
- * Control here or not, and muting it here or not — so the user can mute
- * first and take Control after, and it arrives muted. And a catch-up while
- * replies wait unread.
+ * What to ask the server (`receptionist.hold`) to move Control from `from` to
+ * `to`. The server keeps holding and muting apart, and remembers this
+ * device's mute while it does not hold Control; Released leaves that mute as
+ * it was, and Text mutes before it takes, so Control never arrives here
+ * speaking on the way.
+ */
+export function holdActions(from: ControlMode, to: ControlMode): ReceptionistHoldAction[] {
+  if (from === to) return []
+  switch (to) {
+    case 'released': return ['release']
+    case 'speak': return ['speak-here']
+    case 'text': return from === 'speak' ? ['mute'] : ['mute', 'take']
+  }
+}
+
+const MODES = [
+  { value: 'released', label: 'Released' },
+  { value: 'text', label: 'Text' },
+  { value: 'speak', label: 'Speak' },
+] as const
+
+/**
+ * The foot of the transcript, under the box to type in: one choice of
+ * whether Control is here, and if so whether it speaks or writes. And a
+ * catch-up while replies wait unread.
  */
 function ControlFooter({ extra }: { extra?: ReactNode }) {
   const holder = useReceptionistStore((s) => s.holder)
   const mutedHere = useReceptionistStore((s) => s.mutedHere)
   const unread = useReceptionistStore((s) => s.unread.count)
-  const here = holder?.mine === true
-  const where = here ? (mutedHere ? 'Control writes here, muted' : 'Control speaks here')
-    : `${holder ? `Control is on your ${holder.label}` : 'Control is with nobody, and works silently'}${mutedHere ? ' · muted here' : ''}`
-  const hold = window.api.receptionist.hold
+  const mode = controlMode(holder, mutedHere)
   return (
     <div className="control-transcript__controls">
-      <span className="control-transcript__where">{where}</span>
-      <div className="control-transcript__controls-buttons">
-        {unread > 0 && (
-          <button className="control-transcript__button" onClick={() => window.api.receptionist.catchUp()}>
-            Catch me up · {unread}
-          </button>
-        )}
-        <button className="control-transcript__button" aria-pressed={mutedHere} onClick={() => hold(mutedHere ? 'unmute' : 'mute')}>
-          {mutedHere ? 'Unmute' : 'Mute'}
+      {unread > 0 && (
+        <button className="control-transcript__button" onClick={() => window.api.receptionist.catchUp()}>
+          Catch me up · {unread}
         </button>
-        <button className="control-transcript__button" aria-pressed={here} onClick={() => hold(here ? 'release' : 'take')}>
-          {here ? 'Release' : 'Take Control'}
-        </button>
-        {extra}
-      </div>
+      )}
+      <ChoiceGroup
+        label="Control on this device"
+        options={MODES}
+        value={mode}
+        onChoose={(to) => { for (const action of holdActions(mode, to)) window.api.receptionist.hold(action) }}
+      />
+      {extra}
     </div>
   )
 }

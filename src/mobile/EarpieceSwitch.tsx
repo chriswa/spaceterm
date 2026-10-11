@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react'
+import { ChoiceGroup } from '@/components/ChoiceGroup'
 import { listensOnEarpiece, onEarpieceChange, setListenOnEarpiece } from './audio-session'
 
-/** Where the phone plays Control's voice: the earpiece, held to the ear, or the speaker. At the foot of the transcript. */
+const OUTPUTS = [
+  { value: 'speaker', label: 'Speaker' },
+  { value: 'earpiece', label: 'Earpiece' },
+] as const
+
+/** Where the phone plays Control's voice: the speaker, or the earpiece, held to the ear. At the foot of the transcript. */
 export function EarpieceSwitch() {
   const [earpiece, setEarpiece] = useState(listensOnEarpiece)
   useEffect(() => onEarpieceChange(setEarpiece), [])
   return (
-    <button
-      className="control-transcript__button"
-      aria-label={earpiece ? 'Playing on the earpiece; switch to the speaker' : 'Playing on the speaker; switch to the earpiece'}
-      onClick={() => setListenOnEarpiece(!earpiece)}
-    >
-      {earpiece ? 'Earpiece' : 'Speaker'}
-    </button>
+    <ChoiceGroup
+      label="Play Control on"
+      options={OUTPUTS}
+      value={earpiece ? 'earpiece' : 'speaker'}
+      onChoose={(output) => setListenOnEarpiece(output === 'earpiece')}
+    />
   )
 }

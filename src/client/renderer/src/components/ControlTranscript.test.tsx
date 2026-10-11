@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, act, screen, waitFor } from '@testing-library/react'
-import { ControlTranscript, mergeEntries } from './ControlTranscript'
+import { ControlTranscript, holdActions, mergeEntries } from './ControlTranscript'
 import { installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { useReceptionistStore } from '../stores/receptionistStore'
@@ -303,35 +303,34 @@ describe('the desktop dialog closes like a modal', () => {
 describe('ControlTranscript and what the user took in', () => {
   const at = '2026-10-05T08:00:01Z'
 
-  it('says where Control speaks, and moves it from its footer', async () => {
+  const chosen = () => screen.getAllByRole('radio').filter((el) => el.getAttribute('aria-checked') === 'true').map((el) => el.textContent)
+
+  it('shows Control as Released, Text or Speak, and moves it from its footer', async () => {
     useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
-    expect(screen.getByText('Control speaks here')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Mute' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
-    expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute', 'release'])
+    expect(chosen()).toEqual(['Speak'])
+    expect(screen.queryByText('Control speaks here')).toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: 'Speak' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Text' }))
+    expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute'])
 
     act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, mutedHere: true, unread: { count: 2, first: 0 } }))
-    fireEvent.click(screen.getByRole('button', { name: 'Unmute' }))
+    expect(chosen()).toEqual(['Text'])
+    fireEvent.click(screen.getByRole('radio', { name: 'Released' }))
     fireEvent.click(screen.getByRole('button', { name: 'Catch me up · 2' }))
-    expect(bridge.callsTo('receptionist.hold').at(-1)?.args[0]).toBe('unmute')
+    expect(bridge.callsTo('receptionist.hold').at(-1)?.args[0]).toBe('release')
     expect(bridge.callsTo('receptionist.catchUp')).toHaveLength(1)
   })
 
-  it('mutes and takes Control separately, so it can be muted before it is taken', async () => {
-    useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false }, mutedHere: false, unread: { count: 0 } })
+  it('is Released while another device holds Control, muted here or not', async () => {
+    useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false }, mutedHere: true, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
-    expect(screen.getByText('Control is on your Mac')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Mute' }))
-
-    act(() => useReceptionistStore.setState({ mutedHere: true }))
-    expect(screen.getByText('Control is on your Mac · muted here')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Take Control' }))
-    expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute', 'take'])
+    expect(chosen()).toEqual(['Released'])
+    fireEvent.click(screen.getByRole('radio', { name: 'Speak' }))
+    expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['speak-here'])
   })
-
   it('strikes out what was missed, and puts what waits under an Unread line until it is marked read', async () => {
     useReceptionistStore.setState({ unread: { count: 1, first: 120 } })
     bridge.responses.controlTranscript = () => ({
@@ -425,5 +424,24 @@ describe('ControlTranscript and what the user took in', () => {
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Do it now' }))
     expect(bridge.lastCall('receptionist.say')).toEqual(['Please do this after all: SENT to Kevin: push it'])
+  })
+})
+
+
+describe('holdActions', () => {
+  it('takes Control muted for Text, so it never arrives speaking', () => {
+    expect(holdActions('released', 'text')).toEqual(['mute', 'take'])
+    expect(holdActions('speak', 'text')).toEqual(['mute'])
+  })
+
+  it('unmutes and takes at once for Speak, and lets go for Released', () => {
+    expect(holdActions('released', 'speak')).toEqual(['speak-here'])
+    expect(holdActions('text', 'speak')).toEqual(['speak-here'])
+    expect(holdActions('text', 'released')).toEqual(['release'])
+    expect(holdActions('speak', 'released')).toEqual(['release'])
+  })
+
+  it('asks nothing to stay where it is', () => {
+    for (const mode of ['released', 'text', 'speak'] as const) expect(holdActions(mode, mode)).toEqual([])
   })
 })

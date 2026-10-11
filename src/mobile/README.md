@@ -100,15 +100,17 @@ Control is not here. A yellow ring shows while it thinks, and while anything is 
 through it a ring in the colour of who is speaking — white for Control, a hue
 of their own for an agent it quotes. The server takes each
 of the transcript's presses as said outright (`receptionist-hold`: `mute`,
-`unmute`, `take`, `release`), so two devices pressing at once cannot cross.
+`take`, `speak-here`, `release`), so two devices pressing at once cannot cross.
 
 Being muted is the device's own, separate from holding Control, and outlasts
-handing Control away and back (`receptionistMuted` in the server state): a
-phone can mute first and take Control after, and it arrives muted. A muted phone is still Control's
+handing Control away and back (`receptionistMuted` in the server state). The
+transcript shows the two as one choice — **Released**, **Text** (held, muted)
+or **Speak** (held, unmuted) — since a mute matters only while Control is
+here; Text mutes before it takes, so Control never arrives speaking. A muted phone is still Control's
 listener when it is not connected, so it can sleep (`stay-awake.ts` lets it):
 everything is waiting in the transcript when it wakes. Letting go of Control
 altogether — nobody hears it, and it tells you what you missed when you are
-back — is the transcript's **Release**.
+back — is the transcript's **Released**.
 
 Neither holding Control nor the always-on microphone survives a relaunch: the
 app lets go of Control when it starts (`main.tsx`), and the microphone hold
@@ -124,9 +126,8 @@ It reads Control's full record
 compaction never shortens it: it opens at the newest — or at the first reply
 with words waiting for you, under a red Unread line — and loads older pages
 as you scroll up.
-Under the box to type in, a row says where Control speaks, with two
-independent buttons — Mute or Unmute, and Take Control or Release — the
-earpiece switch, and **Catch me up** while replies wait unread: Control comes
+Under the box to type in: **Catch me up**, the Released / Text / Speak
+choice, and, on the phone only, a Speaker / Earpiece choice. **Catch me up** shows while replies wait unread: Control comes
 here unmuted and sums them up aloud.
 
 While it is open the bar stays up: the Control button is a down arrow that
