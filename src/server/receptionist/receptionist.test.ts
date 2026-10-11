@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, QUIET_OVER, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  MAX_NEWS_FAILURES, PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
+  MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
@@ -435,15 +435,14 @@ describe('Receptionist', () => {
     })
     await h.receptionist.hear('hello?', 'spoken')
     await flush()
-    expect(h.session).toBeUndefined()
-    await h.receptionist.hear('hello again', 'spoken')
-    await flush()
-    expect(h.turns.at(-1)?.sessionId).toBeUndefined()
+    // The failed turn is tried again, in a new session.
+    expect(h.turns.map(turn => turn.sessionId)).toEqual(['vanished', undefined])
     expect(h.session?.sessionId).toBe('session-1')
-    // The new session is told what was said before it, but not this message twice.
+    // Told what was said before it, and why the user's words come again.
     const prompt = h.turns.at(-1)!.prompt
-    expect(prompt).toMatch(/^EARLIER CONVERSATION[^]*THE USER SAYS: hello\?[^]*THE USER SAYS: hello again/)
-    expect(prompt.split('hello again')).toHaveLength(2)
+    expect(prompt).toMatch(/^EARLIER CONVERSATION[^]*THE USER SAYS: hello\?[^]*/)
+    expect(prompt).toContain(RETRYING_AFTER_ERROR)
+    expect(said(h)).toEqual([JSON.stringify([{ text: 'Here.', voice: RECEPTIONIST_VOICE }])])
   })
 
   it('waits out a session still busy with an abandoned turn, and keeps it', async () => {
@@ -1273,7 +1272,7 @@ describe('Receptionist', () => {
       expect(judged).toEqual(['working|on the solver. |1'])
       expect(speech.spoken.map(c => JSON.stringify(c))).toContainEqual(JSON.stringify([{ text: 'Hang on.', voice: RECEPTIONIST_VOICE }]))
       expect(h.turns).toHaveLength(2)
-      // And the transcript's reasoning says it cut itself off, for what, and what it dropped.
+      // And the transcript's activity log says it cut itself off, for what, and what it dropped.
       const cut = h.traces.filter(trace => trace.what === 'cut-in')
       expect(cut).toHaveLength(1)
       expect(cut[0].text).toMatch(new RegExp(`^Cut its own reply short, saying "Hang on\\.", for news: \\{\\w+:${SALLY}\\} is now stopped, waiting for the user$`))
@@ -1307,7 +1306,7 @@ describe('Receptionist', () => {
       await flush()
       expect(asked).toBe(1)
       expect(h.turns).toHaveLength(1)
-      // Carrying on is no cut: nothing in the reasoning says it stopped.
+      // Carrying on is no cut: nothing in the activity log says it stopped.
       expect(h.traces.some(trace => trace.what === 'cut-in')).toBe(false)
     })
   })
@@ -2662,9 +2661,9 @@ describe('Receptionist: agents it started, and agents that end', () => {
         replies: [reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: SALLY }])],
       })
       await watched(h)
-      expect(failed).toBe(MAX_NEWS_FAILURES)
+      expect(failed).toBe(MAX_TURN_RETRIES + 1)
       expect(h.notices.at(-1)).toMatch(/^Control could not take in this news: /)
-      expect(h.traces.some(trace => trace.what === 'failed' && trace.text.startsWith(`Gave up on news after ${MAX_NEWS_FAILURES} failed turns`))).toBe(true)
+      expect(h.traces.some(trace => trace.what === 'failed' && trace.text.startsWith(`Gave up on news after ${MAX_TURN_RETRIES + 1} failed turns`))).toBe(true)
     })
   })
 
@@ -3493,8 +3492,8 @@ describe('Receptionist backlog at a pause', () => {
   })
 })
 
-describe("Receptionist: the transcript's reasoning", () => {
-  /** What the transcript's reasoning says, in order, each as `what: text`. */
+describe("Receptionist: the transcript's activity log", () => {
+  /** What the transcript's activity log says, in order, each as `what: text`. */
   const lines = (h: ReturnType<typeof harness>) => h.traces.map(trace => `${trace.what}: ${trace.text}`)
 
   it('shows news dropped with a turn the user talked over, the words never said, and the silence and watch that followed', async () => {
@@ -3581,19 +3580,56 @@ describe("Receptionist: the transcript's reasoning", () => {
     }])
   })
 
-  it('shows a failed turn and its error, the apology Control spoke with it, and the rest of the error one tap away', async () => {
+  it('shows each failed turn and its error, the retries, the apology once they run out, and the rest of the error one tap away', async () => {
+    const fail = () => { throw new Error('claude-print-daemon exited 2: flag provided but not defined: -turn-id\nUsage of ask:\n  -auto-compact') }
+    const waits: number[] = []
     const h = harness({
-      replies: [() => { throw new Error('claude-print-daemon exited 2: flag provided but not defined: -turn-id\nUsage of ask:\n  -auto-compact') }],
+      replies: Array.from({ length: MAX_TURN_RETRIES + 1 }, () => fail),
+      sleep: async (ms) => { waits.push(ms) },
     })
     await h.receptionist.hear("what's next?", 'spoken')
     await flush()
     // The failure is this test's subject, not a broken script.
     scriptFailures.splice(0)
-    expect(h.traces).toEqual([{
-      what: 'failed',
-      text: '"Sorry, I lost my train of thought. Could you say that again?" — could not answer: claude-print-daemon exited 2: flag provided but not defined: -turn-id',
-      detail: 'Usage of ask:\n  -auto-compact',
-    }])
+    const error = 'claude-print-daemon exited 2: flag provided but not defined: -turn-id'
+    expect(h.traces).toEqual([
+      ...[1, 2, 4].map(n => ({ what: 'failed', text: `could not answer (trying again in ${n * TURN_RETRY_MS / 1000} seconds): ${error}`, detail: 'Usage of ask:\n  -auto-compact' })),
+      { what: 'failed', text: `"Sorry, I lost my train of thought. Could you say that again?" — could not answer: ${error}`, detail: 'Usage of ask:\n  -auto-compact' },
+    ])
+    expect(waits.filter(ms => ms >= TURN_RETRY_MS)).toEqual([1, 2, 4].map(n => n * TURN_RETRY_MS))
+    // Each retry says the user's words again.
+    expect(h.turns.slice(1).every(turn => turn.prompt.includes("what's next?"))).toBe(true)
+  })
+
+  it('holds news back while a failed turn waits to be tried again', async () => {
+    let wake: () => void = () => {}
+    let failed = 0
+    const h = harness({
+      failWhen: (turn) => turn.prompt.includes('is now stopped') && failed++ === 0,
+      sleep: (ms) => ms === TURN_RETRY_MS ? new Promise<void>((resolve) => { wake = resolve }) : Promise.resolve(),
+      replies: [
+        reply([{ from: 'control', text: 'Watching both.' }], [{ tool: 'monitor', agent: SALLY }, { tool: 'monitor', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+          expect(turn.prompt).toMatch(namedToken(KEVIN, ' is now stopped'))
+          return reply([{ from: 'control', text: 'Both are done.' }])
+        },
+      ],
+    })
+    h.setState(KEVIN_ID, 'working')
+    await h.receptionist.hear('tell me when Sally and Kevin are done', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(failed).toBe(1)
+    // Kevin stopping does not spend the retry early: his news waits to go with it.
+    h.setState(KEVIN_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    wake()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(said(h).at(-1)).toContain('Both are done.')
   })
 
   it('shows a watch ending when the user takes the agent over', async () => {

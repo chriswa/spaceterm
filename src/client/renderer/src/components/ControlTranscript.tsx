@@ -97,7 +97,7 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const pending = useControlTranscriptStore((s) => s.pending)
-  const reasoning = useControlTranscriptStore((s) => s.reasoning)
+  const activity = useControlTranscriptStore((s) => s.activity)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const loading = useRef(false)
@@ -220,11 +220,11 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
 
   // Marks of what was heard or read of a reply are not entries of their own: they say what of it the user missed.
   const views = partViews(entries)
-  // Control's reasoning only when asked for: most of the time it is the conversation that matters.
+  // Control's activity only when asked for: most of the time it is the conversation that matters.
   // A failed turn is always shown: Control said so out loud, and the error is the only account of why.
   // So is a compaction: what Control remembers word for word starts there.
   const shown = entries.filter((entry) => entry.kind !== 'heard' && entry.kind !== 'consumed' &&
-    (reasoning || entry.kind !== 'trace' || entry.what === 'failed' || entry.what === 'compacted'))
+    (activity || entry.kind !== 'trace' || entry.what === 'failed' || entry.what === 'compacted'))
   // What the user can still mark: not while the voice decides, nor once their next message is on its way.
   const markable = voicing || pending.length ? new Set<number>() : openReplies(entries, !more)
   const firstWaiting = shown.find((entry) => views.get(entry.offset)?.some((part) => part.why === 'waiting'))?.offset
@@ -315,15 +315,15 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
         onSubmit={(e) => { e.preventDefault(); send() }}
       >
         <label
-          className="control-transcript__reasoning"
-          title="Show Control's reasoning: news as it arrives, what goes on and off its backlog, which agents it watches, and replies never spoken"
+          className="control-transcript__activity"
+          title="Show Control's activity: news as it arrives, what goes on and off its backlog, which agents it watches, and replies never spoken"
         >
           <input
             type="checkbox"
-            checked={reasoning}
-            onChange={(e) => useControlTranscriptStore.getState().setReasoning(e.target.checked)}
+            checked={activity}
+            onChange={(e) => useControlTranscriptStore.getState().setActivity(e.target.checked)}
           />
-          <span>Reasoning</span>
+          <span>Activity</span>
         </label>
         <textarea
           ref={inputRef}

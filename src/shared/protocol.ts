@@ -1664,18 +1664,18 @@ export type ControlTranscriptEntry = {
    * or hearing Control sum it up.
    */
   | { kind: 'consumed'; of: number; part: number; from: number; to: number; how: 'read' | 'replayed' | 'summary' }
-  /** Why Control did or did not speak: see `ControlTrace`. Shown only when the view is asked to show Control's reasoning. */
+  /** What Control did, and what came to it: see `ControlTrace`. Shown only when the view is asked to show Control's activity. */
   | ({ kind: 'trace' } & ControlTrace)
 )
 
 /**
- * What Control's reasoning entries are about, which the transcript view
+ * What Control's activity entries are about, which the transcript view
  * colours by: news arriving (`events`), or a turn on it dropped and its news
  * kept for the next (`requeued`); the backlog gaining an item, losing one, or
  * holding back while the user is mid-topic; a watch on an agent set up,
  * firing, or ending; a reply that was never spoken; Control cutting its own
  * reply short for news; a turn that failed (`failed`), which the view shows
- * even with the reasoning hidden, since Control said so out loud; Control's
+ * even with the activity hidden, since Control said so out loud; Control's
  * session compacted to a summary (`compacted`), also always shown.
  */
 export type ControlTraceKind =
@@ -1685,7 +1685,7 @@ export type ControlTraceKind =
   | 'unspoken' | 'cut-in' | 'stopped' | 'resumed'
   | 'failed' | 'compacted'
 
-/** One reasoning entry: a line, and the detail behind it when there is more to say. */
+/** One activity entry: a line, and the detail behind it when there is more to say. */
 export interface ControlTrace {
   what: ControlTraceKind
   text: string

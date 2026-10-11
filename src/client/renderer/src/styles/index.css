@@ -4016,7 +4016,7 @@ html, body, #root {
   cursor: pointer;
 }
 
-/* Control's reasoning (the Reasoning box): a quiet aside on Control's side, marked by what it is about. */
+/* Control's activity (the Activity box): a quiet aside on Control's side, marked by what it is about. */
 .control-transcript__entry--trace {
   --ct-why: #6c7086;
   display: block;
@@ -4063,8 +4063,8 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-/* Left of the box: whether Control's reasoning is shown. */
-.control-transcript__reasoning {
+/* Left of the box: whether Control's activity is shown. */
+.control-transcript__activity {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -4075,7 +4075,7 @@ html, body, #root {
   user-select: none;
   -webkit-user-select: none;
 }
-.control-transcript__reasoning input { margin: 0; accent-color: var(--ct-accent); cursor: pointer; }
+.control-transcript__activity input { margin: 0; accent-color: var(--ct-accent); cursor: pointer; }
 
 .control-transcript__input {
   flex: 1;

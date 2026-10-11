@@ -514,7 +514,7 @@ function transcriptNameOf(): NameOf {
   }
 }
 
-/** Control's reasoning entries were new in client protocol v13: an older client would draw one as a broken reply. */
+/** Control's activity entries were new in client protocol v13: an older client would draw one as a broken reply. */
 const TRACE_PROTOCOL_VERSION = 13
 /** And what was taken in of a reply (`consumed`) in v14. */
 const CONSUMED_PROTOCOL_VERSION = 14

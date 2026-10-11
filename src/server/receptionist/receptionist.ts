@@ -411,10 +411,17 @@ export const VOICE_FOLLOW_MS = 150
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
 /** How many servers may ask one side question before it is given up on: see `resumeQuestions`. */
 export const MAX_QUESTION_TRIES = 3
-/** How many turns a piece of news may fail in before it is set down untold: see `retryNews`. */
-export const MAX_NEWS_FAILURES = 3
-/** How long a failed turn's news waits before another try. */
-export const NEWS_RETRY_MS = 20_000
+/**
+ * How many times what a failed turn carried — the user's words, its news — is
+ * tried again before it is given up on: see `retryLater`. An API error is
+ * usually gone within a minute or two; one that is not is about the message.
+ */
+export const MAX_TURN_RETRIES = 3
+/** The wait before the first retry; each one after waits twice as long as the last. */
+export const TURN_RETRY_MS = 15_000
+/** Told to Control with the user's words when the turn that first had them failed. */
+export const RETRYING_AFTER_ERROR = 'Your last turn failed with an error before you could answer, so what the user said is given to you again below. ' +
+  'If it is already in the conversation above, answer it once.'
 /** Told to Control with the user's words when the last server stopped before it answered them. */
 export const RESTARTED_BEFORE_ANSWER = 'The server restarted before you answered what the user last said, so it is given to you again below. ' +
   'If you already answered it, do not repeat yourself: carry on from your answer.'
@@ -543,8 +550,15 @@ export class Receptionist {
    * none do: see `resumeIfStopped`.
    */
   private stoppedForUser: 'speaking' | 'thinking' | undefined
-  /** The user's words from a turn stopped before its message reached the session: said with the next turn. */
+  /** The user's words from a turn stopped before its message reached the session, or that failed: said with the next turn. */
   private carriedWords: string | undefined
+  /** Failed turns the carried words have already been through: see `MAX_TURN_RETRIES`. */
+  private carriedFailures = 0
+  /** Turns failed in a row, which sets how long the next retry waits: see `retryLater`. */
+  private failedTurns = 0
+  /** Bumped by each retry scheduled; while one is pending, news waits for it rather than starting a turn. */
+  private retries = 0
+  private backingOff = false
   /** Counts each time the user starts talking, so an answer can tell it was asked before they last spoke. */
   private onsets = 0
   /** Each interruption noted after the one before: see `noteInterruption`. */
@@ -1057,7 +1071,7 @@ export class Receptionist {
     this.ended.remember({ agent, handle })
   }
 
-  /** Watch an agent until its next stop; see `monitors`. `why` is for the transcript's reasoning. */
+  /** Watch an agent until its next stop; see `monitors`. `why` is for the transcript's activity log. */
   private watch(nodeId: NodeId, kind: WatchKind, why: string): void {
     const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
     // Already at work on it: its next stop is the one.
@@ -1178,6 +1192,8 @@ export class Receptionist {
       void this.maybeInterruptSelf()
       return
     }
+    // Waiting out a failure: news that arrives meanwhile goes with the retry.
+    if (this.backingOff) return
     if (!this.events.length && !(this.listening && this.returnNews) && this.carriedWords === undefined) return
     void this.runTurn(undefined)
   }
@@ -1233,6 +1249,8 @@ export class Receptionist {
     // Words a stopped turn never got to the session are said again, ahead of these.
     const carried = this.carriedWords
     this.carriedWords = undefined
+    const carriedFailures = this.carriedFailures
+    this.carriedFailures = 0
     const words = carried === undefined ? heard : heard === undefined ? carried : `${carried} ${heard}`
     // The reply this turn supersedes will never be heard: what backlog_next
     // gave it goes back now, in time to be counted in this turn's message.
@@ -1277,6 +1295,12 @@ export class Receptionist {
         return
       }
       if (!reply) return
+      // Through: a retry still pending has nothing left to wait out.
+      this.failedTurns = 0
+      if (this.backingOff) {
+        this.backingOff = false
+        this.retries++
+      }
       // Acted on where the user could not hear: theirs to be told of when they are back.
       if (away && this.missed) {
         this.missed.events.push(...events)
@@ -1285,21 +1309,34 @@ export class Receptionist {
       monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply), taken, events, words !== undefined)
     } catch (err) {
       this.putBack(taken)
+      const unsent = err instanceof Unsent && err.first
       // Stopped before the session got the user's words: the next turn says them.
-      if (err instanceof Unsent && err.first && words !== undefined) this.carriedWords = words
+      if (unsent && words !== undefined) {
+        this.carriedWords = words
+        this.carriedFailures = carriedFailures
+      }
       if (!attempt.isCurrent) { this.requeue(attempt, events, news, unquieted); return }
-      this.retryNews(attempt, events)
+      // Failed with the words: tried again a little later, unless they have been tried enough.
+      const givenUp = words !== undefined && !unsent && carriedFailures >= MAX_TURN_RETRIES
+      if (words !== undefined && !unsent && !givenUp) {
+        this.carriedWords = words
+        this.carriedFailures = carriedFailures + 1
+        this.notes.push(RETRYING_AFTER_ERROR)
+      }
+      const newsRetried = this.retryNews(attempt, events)
       if (err instanceof LostSession) this.forgetSession()
       const message = err instanceof Error ? err.message : String(err)
       serverLog(`[receptionist] turn failed: ${message}`)
       this.deps.log({ event: 'turn-failed', heard: heard ?? null, error: message })
       this.onError(`The receptionist could not answer: ${message}`)
-      // Muted, the toast says it.
-      const apologise = this.listening && !this.reading
+      const wait = this.carriedWords !== undefined || newsRetried ? this.retryLater() : undefined
+      // Muted, the toast says it. Only words that will not be tried again are apologised for.
+      const apologise = givenUp && this.listening && !this.reading
       // Into the transcript as well as the toast: the toast is gone in seconds, and a
       // failure that repeats needs its error where it can be read afterwards.
       const [headline, ...rest] = message.split('\n')
-      this.trace('failed', `${apologise ? `"${TURN_FAILED_SPEECH}" — ` : ''}could not answer: ${headline}`, rest.join('\n').trim() || undefined)
+      const retrying = wait === undefined ? '' : ` (trying again in ${Math.round(wait / 1000)} seconds)`
+      this.trace('failed', `${apologise ? `"${TURN_FAILED_SPEECH}" — ` : ''}could not answer${retrying}: ${headline}`, rest.join('\n').trim() || undefined)
       if (apologise) monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
     } finally {
       // Told, or failed past retelling: either way, no longer the next server's to tell.
@@ -1309,24 +1346,45 @@ export class Receptionist {
   }
 
   /**
-   * A failed turn's news, given back for another turn a little later: the
-   * daemon may be restarting, or the model briefly unavailable, and news
-   * dropped here was never told at all. Some news is itself why the turn
-   * failed — a message the model's safeguards refuse fails every time — so
-   * each piece gets `MAX_NEWS_FAILURES` turns, and is then set down, in the
-   * transcript and a toast, where the user can see it.
+   * A failed turn's news, given back for the retry: the daemon may be
+   * restarting, or the model briefly unavailable, and news dropped here was
+   * never told at all. Some news is itself why the turn failed — a message
+   * the model's safeguards refuse fails every time — so each piece is retried
+   * `MAX_TURN_RETRIES` times, and is then set down, in the transcript and a
+   * toast, where the user can see it. Returns whether any is retried.
    */
-  private retryNews(attempt: Attempt, events: readonly ReceptionistEvent[]): void {
+  private retryNews(attempt: Attempt, events: readonly ReceptionistEvent[]): boolean {
     const again = events.map(event => ({ ...event, failures: (event.failures ?? 0) + 1 }))
-    const retry = again.filter(event => event.failures < MAX_NEWS_FAILURES)
-    const dropped = again.filter(event => event.failures >= MAX_NEWS_FAILURES)
+    const retry = again.filter(event => event.failures <= MAX_TURN_RETRIES)
+    const dropped = again.filter(event => event.failures > MAX_TURN_RETRIES)
     this.events.requeue(retry, attempt)
     if (dropped.length) {
       const what = dropped.map(eventHeadline).join('; ')
-      this.trace('failed', `Gave up on news after ${MAX_NEWS_FAILURES} failed turns: ${what}`, dropped.map(renderEvent).join('\n\n'))
+      this.trace('failed', `Gave up on news after ${MAX_TURN_RETRIES + 1} failed turns: ${what}`, dropped.map(renderEvent).join('\n\n'))
       this.deps.notify(`Control could not take in this news: ${what}`)
     }
-    if (retry.length) void this.deps.sleep(NEWS_RETRY_MS).then(() => this.maybeSpeakUp())
+    return retry.length > 0
+  }
+
+  /**
+   * Try again after a failed turn, waiting twice as long after each failure in
+   * a row. Retrying at once is no use: on 2026-10-11 four turns flagged by the
+   * model's safeguards inside 45 seconds, each in a fresh session, and the one
+   * after them went through 80 seconds later. Until then news waits, so that
+   * an agent stopping does not spend a retry early; the user's own words do
+   * not wait, and take what is carried with them. Returns the wait.
+   */
+  private retryLater(): number {
+    this.failedTurns++
+    const wait = TURN_RETRY_MS * 2 ** (Math.min(this.failedTurns, MAX_TURN_RETRIES) - 1)
+    const retry = ++this.retries
+    this.backingOff = true
+    void this.deps.sleep(wait).then(() => {
+      if (retry !== this.retries) return
+      this.backingOff = false
+      this.maybeSpeakUp()
+    })
+    return wait
   }
 
   /**
@@ -1815,7 +1873,7 @@ export class Receptionist {
     this.trace('backlog-back', `Back on the backlog, since ${why}: ${back.map(item => item.text).join(' / ')}`)
   }
 
-  /** Why a pause did or did not bring up the backlog, for the transcript's reasoning. `now` brings it up, which `backlog-take` shows. */
+  /** Why a pause did or did not bring up the backlog, for the transcript's activity log. `now` brings it up, which `backlog-take` shows. */
   private tracePause(verdict: PauseVerdict): void {
     if (verdict.when === 'now') return
     if (verdict.reason === 'judge-failed') {
@@ -1899,7 +1957,7 @@ export class Receptionist {
       const token = agentToken(handle ?? nodeId, named?.name)
       this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt, name: named?.name ?? null, chosen: call.name ?? null })
       this.deps.record.append([{ role: 'assistant', content: `STARTED ${token} in ${directory.cwd}: ${call.prompt}` }])
-      // After its name: the reasoning line names it as the STARTED line does.
+      // After its name: the activity line names it as the STARTED line does.
       this.watch(nodeId, 'after-work', 'Control started it')
       const refused = chosen && !chosen.ok ? `, not ${call.name!.name}: ${this.nameProblemWords(chosen.problem)}` : ''
       const name = named ? `. It is called ${named.name}${refused}` : ''
@@ -2420,7 +2478,7 @@ export class Receptionist {
       this.ledger.delivered(at, spoken.map(part => part.text), reading ? 'text' : 'spoken')
       if (reading) this.onUnread(this.ledger.unread())
     }
-    // After the reply, so the transcript's reasoning reads as it happened: silence, then the watch kept.
+    // After the reply, so the transcript's activity log reads as it happened: silence, then the watch kept.
     this.keepWatchingUntold(events, reply, withWords)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools, ...(reading ? { muted: true } : {}) })
     // Muted, it is written, and that is all: there is nothing to cut off.
@@ -2550,7 +2608,7 @@ export class Receptionist {
   }
 
   /**
-   * Control cut its own reply short for news, for the transcript's reasoning:
+   * Control cut its own reply short for news, for the transcript's activity log:
    * the news, Jev's odds, and the words it dropped. What the user heard of the
    * reply is struck out on the reply itself, as for any cut.
    */
@@ -2564,7 +2622,7 @@ export class Receptionist {
     ].join('\n\n'))
   }
 
-  /** A reply that was written and never said, word for word, for the transcript's reasoning. */
+  /** A reply that was written and never said, word for word, for the transcript's activity log. */
   private traceUnspoken(say: readonly SayPart[], why: string): void {
     this.trace('unspoken', `Never spoken: ${why}`, say.map(part => `${part.from === CONTROL ? 'Control' : `{${stripBraces(part.from)}}`}: ${part.text}`).join('\n\n'))
   }
@@ -2574,7 +2632,7 @@ export class Receptionist {
     this.deps.record.trace({ what, text, ...(detail ? { detail } : {}) })
   }
 
-  /** An agent's token for the reasoning, whether it is live, just started, or has ended. */
+  /** An agent's token for the activity log, whether it is live, just started, or has ended. */
   private traceToken(nodeId: NodeId): string {
     const ended = this.ended.get(nodeId)
     const handle = ended?.handle ?? this.handles([...this.deps.agents().filter(agent => agent.nodeId !== nodeId), { nodeId }]).of(nodeId)
@@ -2695,7 +2753,7 @@ function replyOf(raw: string): Reply | undefined {
   }
 }
 
-/** One event as a line of the transcript's reasoning: who, and what became of them. */
+/** One event as a line of the transcript's activity log: who, and what became of them. */
 function eventHeadline(event: ReceptionistEvent): string {
   switch (event.kind) {
     case 'agent-stopped': return `${event.agent} is now ${event.state}`

@@ -61,7 +61,7 @@ export const CLIENT_PROTOCOL_VERSION = 17
  * build no longer listens for, so its hands-free dictations end only on a
  * pause; it loses nothing else.
  *
- * v12 cannot draw Control's reasoning (`trace` transcript entries), so it is
+ * v12 cannot draw Control's activity (`trace` transcript entries), so it is
  * never sent them; it loses nothing else.
  *
  * v13 cannot mute Control or replay its words, and never reports what it has

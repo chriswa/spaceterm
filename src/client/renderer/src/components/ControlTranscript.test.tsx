@@ -201,8 +201,8 @@ describe('ControlTranscript, following along', () => {
     expect(struck.closest('details')!.dataset.action).toBe('sent')
   })
 
-  it("shows Control's reasoning only while the Reasoning box is ticked, and remembers the choice", async () => {
-    useControlTranscriptStore.getState().setReasoning(false)
+  it("shows Control's activity only while the Activity box is ticked, and remembers the choice", async () => {
+    useControlTranscriptStore.getState().setActivity(false)
     bridge.responses.controlTranscript = () => ({
       entries: [
         { offset: 0, timestamp: '2026-10-05T08:00:00Z', kind: 'trace', what: 'events', text: 'News: Sally is now stopped', detail: 'Sally said: done.' },
@@ -218,17 +218,17 @@ describe('ControlTranscript, following along', () => {
     // A failure is shown regardless: Control said so out loud.
     expect(screen.getByText('could not answer: session not found').dataset.what).toBe('failed')
 
-    fireEvent.click(screen.getByLabelText('Reasoning'))
+    fireEvent.click(screen.getByLabelText('Activity'))
     const news = screen.getByText('News: Sally is now stopped')
     expect(news.closest('details')!.dataset.what).toBe('events')
     expect(screen.getByText('Watching Sally for its next stop').dataset.what).toBe('watch')
-    expect(localStorage.getItem('controlTranscript.reasoning')).toBe('true')
+    expect(localStorage.getItem('controlTranscript.activity')).toBe('true')
 
-    // A reasoning line that arrives live waits for the box too.
-    fireEvent.click(screen.getByLabelText('Reasoning'))
+    // An activity line that arrives live waits for the box too.
+    fireEvent.click(screen.getByLabelText('Activity'))
     act(() => bridge.emit.transcriptAppended([{ offset: 300, timestamp: '2026-10-05T08:00:02Z', kind: 'trace', what: 'backlog-add', text: 'Set aside for later: Sally' }]))
     expect(screen.queryByText('Set aside for later: Sally')).toBeNull()
-    fireEvent.click(screen.getByLabelText('Reasoning'))
+    fireEvent.click(screen.getByLabelText('Activity'))
     expect(screen.getByText('Set aside for later: Sally')).toBeTruthy()
   })
 })

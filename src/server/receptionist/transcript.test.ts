@@ -98,7 +98,7 @@ describe('parseRecordLine', () => {
       .toMatchObject({ kind: 'log', text: 'SENT TO Sally: Push it.', notDone: true })
   })
 
-  it("reads a line of Control's reasoning, naming its agents, and skips a kind it does not know", () => {
+  it("reads a line of Control's activity, naming its agents, and skips a kind it does not know", () => {
     const nameOf = (handle: string) => (handle === 'amber-otter' ? 'Sally' : undefined)
     const trace = (what: string) => JSON.stringify({
       timestamp: '2026-10-05T08:00:00Z', trace: { what, text: 'Watch fired: {amber-otter} is now stopped', detail: '{Sally:amber-otter} said done.' },
