@@ -57,7 +57,7 @@ export function ControlBadges({ busy }: { busy?: ReactNode }) {
       {!here && (
         <span className="control-cross" aria-hidden="true">
           <svg viewBox="0 0 10 10">
-            <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
+            <path d="M2.2 2.2l5.6 5.6M7.8 2.2l-5.6 5.6" />
           </svg>
         </span>
       )}
