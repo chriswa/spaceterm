@@ -1,18 +1,17 @@
 import { useReceptionistStore } from '../../stores/receptionistStore'
 import type { ReceptionistPhase } from '../../../../../shared/api'
-import { HeadsetIcon } from './icons'
 import { useControlTranscriptStore } from '../../stores/controlTranscriptStore'
 import { TRANSCRIPT_TOGGLE_ATTR } from '../ControlTranscript'
-import { ControlBadges, controlWhereabouts } from '../ControlBadges'
+import { ControlBadges, ControlHeadset, controlWhereabouts } from '../ControlBadges'
 
 /**
  * The receptionist's toolbar button. A click shows or hides Control's
  * transcript (ControlTranscript.tsx), and does nothing else: taking Control,
  * letting it go and muting it are the transcript's. The button says how
- * those stand, in its corners (ControlBadges.tsx), and is dim while Control
- * is not here and white while the transcript is open. While Control works, a
- * speech bubble takes the eye's corner: cyan while it thinks, amber while it
- * speaks.
+ * those stand (ControlBadges.tsx): sound from the headset while unmuted, a
+ * red X while Control is not here, when it is also dim. Filled white while
+ * the transcript is open. While Control works, a speech bubble takes the top
+ * right: cyan while it thinks, amber while it speaks.
  */
 export function ControlButton() {
   const phase = useReceptionistStore(s => s.phase)
@@ -37,7 +36,7 @@ export function ControlButton() {
       data-tooltip={`${state}. Click to ${open ? 'close' : 'open'} the transcript`}
       data-tooltip-no-flip
     >
-      <HeadsetIcon />
+      <ControlHeadset />
       <ControlBadges busy={phase !== 'ready' ? <BusyBubble phase={phase} /> : undefined} />
       {unread > 0 && <span className="control-badge control-badge--count" aria-hidden="true">{unread}</span>}
     </button>

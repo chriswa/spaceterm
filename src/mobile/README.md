@@ -82,20 +82,23 @@ time-to-reset.
 
 The headset left of the microphone (`ControlButton.tsx`) opens Control's
 transcript (below), and a tap does nothing else: taking Control, letting it go
-and muting it are the transcript's buttons. The headset's corners say how
-those stand (`ControlBadges.tsx`, shared with the Mac's toolbar button):
+and muting it are the transcript's buttons. The button says how those stand
+(`ControlBadges.tsx`, shared with the Mac's toolbar button):
 
-| Corner | Shows |
+| Mark | Shows |
 |---|---|
-| top left | a speech bubble: yellow with a cross while this phone has muted Control, white with a voice in it while not; faded while Control is not here, when it only says how Control would arrive |
-| top right | an eye while this phone holds Control; the holder's name (*Mac*) while another device does; nothing while nobody does |
+| arcs either side of the headset | sound: Control is unmuted on this phone; no arcs is muted |
+| a big red X across the button | this phone does not hold Control |
+| top right | the holder's name (*Mac*) while another device holds Control |
 | bottom right | replies written here muted and not read yet, counted as the rocket does |
+
+The button is filled, the headset dark on light, while the transcript is open.
 
 Muted, Control stays on this phone but writes instead of speaking: its
 replies go into the transcript, unread until read. The headset is dim while
 Control is not here. A yellow ring shows while it thinks, and while anything is said
-through it bars replace the headset in the colour of who is speaking — white
-for Control, a hue of their own for an agent it quotes. The server takes each
+through it a ring in the colour of who is speaking — white for Control, a hue
+of their own for an agent it quotes. The server takes each
 of the transcript's presses as said outright (`receptionist-hold`: `mute`,
 `unmute`, `take`, `release`), so two devices pressing at once cannot cross.
 

@@ -88,7 +88,7 @@ describe('the phone’s Control transcript', () => {
     useReceptionistStore.setState({ phase: 'ready', error: null, holder: null })
   })
 
-  it('opens on a tap of the Control button with the bar still up, the button a down arrow that closes it, and the microphone there', () => {
+  it('opens on a tap of the Control button with the bar still up, the button filled and closing it, and the microphone there', () => {
     const { container, getByRole } = render(<MobileApp Canvas={() => null} />)
     fireEvent.click(getByRole('button', { name: /^Control transcript/ }))
     expect(container.querySelector('.control-transcript--screen')).not.toBeNull()
@@ -96,7 +96,9 @@ describe('the phone’s Control transcript', () => {
     // The microphone is up, and talks to Control.
     expect(getByRole('button', { name: /^Talk to Control/ })).toBeTruthy()
 
-    fireEvent.click(getByRole('button', { name: 'Close the Control transcript' }))
+    const button = getByRole('button', { name: /^Close the Control transcript/ })
+    expect(button.classList.contains('m-control--open')).toBe(true)
+    fireEvent.click(button)
     expect(container.querySelector('.control-transcript')).toBeNull()
   })
 

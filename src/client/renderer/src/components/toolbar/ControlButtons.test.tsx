@@ -44,29 +44,30 @@ describe('ControlButton', () => {
     expect(bridge.callsTo('receptionist.hold')).toHaveLength(0)
   })
 
-  it('is dim elsewhere, and says where Control is', () => {
+  it('is dim and crossed out elsewhere, and says where Control is', () => {
     const { container } = render(<ControlButton />)
     const button = container.querySelector('button')!
+    expect(container.querySelector('.control-cross')).not.toBeNull()
     heldBy('Phone')
+    expect(container.querySelector('.control-cross')).not.toBeNull()
     expect(button.className).toContain('toolbar__control--away')
     expect(button.dataset.tooltip).toMatch(/Control is on your Phone, unmuted here\. Click to open the transcript/)
     expect(container.querySelector('.control-badge--where')?.textContent).toBe('Phone')
 
     heldBy('here')
     expect(button.className).toContain('toolbar__control--here')
-    expect(container.querySelector('.control-badge--held')).not.toBeNull()
+    expect(container.querySelector('.control-cross')).toBeNull()
+    expect(container.querySelector('.control-badge--where')).toBeNull()
   })
 
-  it('swaps the eye for a speech bubble while Control works here', () => {
+  it('wears a speech bubble while Control works here', () => {
     heldBy('here')
     const { container } = render(<ControlButton />)
     status({ phase: 'ready' })
     expect(container.querySelector('.toolbar__control-busy')).toBeNull()
-    expect(container.querySelector('.control-badge--held')).not.toBeNull()
 
     status({ phase: 'synthesizing' })
     expect(container.querySelector('.toolbar__control-busy--thinking')).not.toBeNull()
-    expect(container.querySelector('.control-badge--held')).toBeNull()
 
     status({ phase: 'speaking' })
     expect(container.querySelector('.toolbar__control-busy--talking')).not.toBeNull()
@@ -75,11 +76,11 @@ describe('ControlButton', () => {
     expect(container.querySelector('.toolbar__control-busy')).toBeNull()
   })
 
-  it('crosses out its speech bubble while muted here', () => {
+  it('has sound coming from the headset unless muted here', () => {
     const { container } = render(<ControlButton />)
-    expect(container.querySelector('.control-badge--voice [data-muted]')).toBeNull()
+    expect(container.querySelector('.control-headset__sound')).not.toBeNull()
     act(() => useReceptionistStore.getState().setHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac', muted: true }, FAKE_DEVICE_ID))
-    expect(container.querySelector('.control-badge--voice [data-muted]')).not.toBeNull()
+    expect(container.querySelector('.control-headset__sound')).toBeNull()
     expect(container.querySelector('button')!.dataset.tooltip).toMatch(/muted here/)
   })
 

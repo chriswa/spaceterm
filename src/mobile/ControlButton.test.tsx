@@ -31,31 +31,40 @@ describe('the phone’s Control button', () => {
     expect(bridge.callsTo('receptionist.hold')).toHaveLength(0)
   })
 
-  it('wears an eye while Control is here, the holder’s name while it is elsewhere, and nothing while nobody has it', () => {
+  it('is crossed out unless Control is here, and names the holder while it is elsewhere', () => {
     const { container } = render(<ControlButton />)
-    expect(container.querySelector('.control-badge--held, .control-badge--where')).toBeNull()
+    expect(container.querySelector('.control-cross')).not.toBeNull()
+    expect(container.querySelector('.control-badge--where')).toBeNull()
     expect(button().getAttribute('aria-label')).toMatch(/Nobody holds Control/)
 
     act(() => useReceptionistStore.getState().setHolder({ deviceId: 'desktop', label: 'Mac' }, FAKE_DEVICE_ID))
     expect(container.querySelector('.control-badge--where')?.textContent).toBe('Mac')
-    expect(container.querySelector('.control-badge--held')).toBeNull()
+    expect(container.querySelector('.control-cross')).not.toBeNull()
 
     hold()
-    expect(container.querySelector('.control-badge--held')).not.toBeNull()
+    expect(container.querySelector('.control-cross')).toBeNull()
     expect(container.querySelector('.control-badge--where')).toBeNull()
     expect(button().getAttribute('aria-label')).toMatch(/Control is here/)
   })
 
-  it('crosses out its speech bubble while muted here, and fades it while Control is not here', () => {
+  it('has sound coming from the headset while unmuted here, and none while muted', () => {
     const { container } = render(<ControlButton />)
-    const bubble = () => container.querySelector('.control-badge--voice')!
-    expect(bubble().classList.contains('control-badge--faded')).toBe(true)
-    expect(bubble().querySelector('[data-muted]')).toBeNull()
+    const sound = () => container.querySelector('.control-headset__sound')
+    expect(sound()).not.toBeNull()
 
     hold(true)
-    expect(bubble().classList.contains('control-badge--faded')).toBe(false)
-    expect(bubble().querySelector('[data-muted]')).not.toBeNull()
+    expect(sound()).toBeNull()
+    expect(container.querySelector('.control-cross')).toBeNull()
     expect(button().getAttribute('aria-label')).toMatch(/muted here/)
+  })
+
+  it('is filled while the transcript is open, still showing the X and the sound', () => {
+    const { container } = render(<ControlButton />)
+    fireEvent.click(button())
+    expect(button().classList.contains('m-control--open')).toBe(true)
+    expect(container.querySelector('.control-headset')).not.toBeNull()
+    expect(container.querySelector('.control-cross')).not.toBeNull()
+    expect(container.querySelector('.control-headset__sound')).not.toBeNull()
   })
 
   it('shows thinking, who is speaking, and what is unread', () => {
@@ -67,11 +76,12 @@ describe('the phone’s Control button', () => {
     act(() => useReceptionistStore.getState().setStatus({ phase: 'speaking', speaker: 'Kevin' }))
     expect(button().dataset.phase).toBe('ready')
     expect(button().getAttribute('aria-label')).toMatch(/Kevin speaking/)
-    expect(container.querySelector('.m-control__bars')).not.toBeNull()
+    expect(button().classList.contains('m-control--speaking')).toBe(true)
+    expect(container.querySelector('.control-headset')).not.toBeNull()
 
     act(() => useReceptionistStore.getState().setStatus({ phase: 'ready' }))
     act(() => useReceptionistStore.getState().setUnread({ count: 2, first: 40 }))
     expect(container.querySelector('.control-badge--count')?.textContent).toBe('2')
-    expect(container.querySelector('.m-control__bars')).toBeNull()
+    expect(button().classList.contains('m-control--speaking')).toBe(false)
   })
 })

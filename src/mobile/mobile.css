@@ -375,35 +375,18 @@ textarea, input, [contenteditable="true"], .cm-content {
   to { --m-listen-angle: 360deg; }
 }
 /* Control's button (ControlButton.tsx), left of the microphone: opens the
-   transcript. Dim while Control is elsewhere; a ring while it thinks, bars in
-   the speaker's colour while anything is said. Its corners (ControlBadges.tsx,
-   index.css) are a little larger here, for a phone held at arm's length. */
+   transcript, and is filled while it is open. Dim while Control is elsewhere;
+   a ring while it thinks, and in the speaker's colour while anything is said.
+   What lies over it (ControlBadges.tsx, index.css) is a little larger here,
+   for a phone held at arm's length. */
 .m-control { position: relative; }
 .m-control--away { color: var(--m-dim); }
-.m-control--open { box-shadow: 0 0 0 2px var(--m-text); }
+.m-control--open { background: var(--m-text); color: var(--m-bg); }
 .m-control[data-phase="thinking"] { box-shadow: 0 0 0 3px #f9e2af; }
 .m-control--speaking { box-shadow: 0 0 0 2px var(--m-speaker); }
 .m-control.m-control--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
-.m-control .control-badge:not(.control-badge--where):not(.control-badge--count) { width: 16px; height: 16px; top: -5px; }
-.m-control .control-badge--voice { left: -5px; }
-.m-control .control-badge--held { right: -5px; }
 .m-control .control-badge--where { top: -6px; right: -8px; }
 .m-control .control-badge--count { bottom: -6px; right: -8px; height: 15px; line-height: 15px; font-size: 10px; }
-.m-control__bars { display: flex; align-items: center; gap: 2px; height: 18px; }
-.m-control__bars i {
-  width: 3px;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--m-speaker);
-  animation: m-control-bar 0.9s ease-in-out infinite;
-}
-.m-control__bars i:nth-child(2) { animation-delay: -0.3s; }
-.m-control__bars i:nth-child(3) { animation-delay: -0.6s; }
-.m-control__bars i:nth-child(4) { animation-delay: -0.15s; }
-@keyframes m-control-bar {
-  0%, 100% { transform: scaleY(0.3); }
-  50% { transform: scaleY(1); }
-}
 /* ─── microphone label ─────────────────────────────────────────────────── */
 
 /*
