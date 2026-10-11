@@ -38,6 +38,12 @@ export interface BacklogItem {
 
 export class Backlog {
   private items: BacklogItem[] = []
+  /**
+   * Items taken for a reply that has not yet been said. Kept on disk with the
+   * rest, so a server that stops mid-turn puts them back rather than losing
+   * them: they are off the backlog only once a reply brings them up.
+   */
+  private out: BacklogItem[] = []
   private readonly store: NameRegistryStore
 
   constructor(deps: { store?: NameRegistryStore } = {}) {
@@ -68,6 +74,7 @@ export class Backlog {
     const taken = this.items.filter((_, i) => taking.has(i))
     if (!taken.length) return []
     this.items = this.items.filter((_, i) => !taking.has(i))
+    this.out.push(...taken)
     this.save()
     return taken
   }
@@ -75,7 +82,15 @@ export class Backlog {
   /** Put back items taken for a reply nobody heard, where they were by age. */
   restore(items: readonly BacklogItem[]): void {
     if (!items.length) return
+    this.out = this.out.filter(item => !items.includes(item))
     this.items = [...this.items, ...items].sort((a, b) => a.addedAt - b.addedAt).slice(-MAX_BACKLOG)
+    this.save()
+  }
+
+  /** Items taken for a reply that is now being said: off the backlog for good. */
+  settle(items: readonly BacklogItem[]): void {
+    if (!items.length) return
+    this.out = this.out.filter(item => !items.includes(item))
     this.save()
   }
 
@@ -83,18 +98,21 @@ export class Backlog {
     const raw = this.store.load()
     if (!raw) return
     try {
-      const parsed = JSON.parse(raw) as { items?: unknown }
-      if (!Array.isArray(parsed.items)) return
-      this.items = parsed.items.filter((item): item is BacklogItem =>
+      const parsed = JSON.parse(raw) as { items?: unknown; out?: unknown }
+      const valid = (list: unknown): BacklogItem[] => (Array.isArray(list) ? list : []).filter((item): item is BacklogItem =>
         typeof item?.text === 'string' && typeof item?.addedAt === 'number' &&
-        (item.agents === undefined || (Array.isArray(item.agents) && item.agents.every((id: unknown) => typeof id === 'string')))).slice(-MAX_BACKLOG)
+        (item.agents === undefined || (Array.isArray(item.agents) && item.agents.every((id: unknown) => typeof id === 'string'))))
+      // Taken by a turn the last server never finished: back where they were by age.
+      const out = valid(parsed.out)
+      this.items = [...valid(parsed.items), ...out].sort((a, b) => a.addedAt - b.addedAt).slice(-MAX_BACKLOG)
+      if (out.length) this.save()
     } catch {
       // A corrupt file is an empty backlog, not a server that will not start.
     }
   }
 
   private save(): void {
-    this.store.save(JSON.stringify({ items: this.items }))
+    this.store.save(JSON.stringify({ items: this.items, ...(this.out.length ? { out: this.out } : {}) }))
   }
 }
 

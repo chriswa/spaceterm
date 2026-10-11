@@ -85,6 +85,8 @@ export class SideQuestions {
   private readonly parked = new Map<string, ParkedPoll>()
   private readonly lastPolled = new Map<string, number>()
   private readonly pending = new Map<string, PendingAnswer>()
+  /** Questions waiting for a surface's first poll since this server started: see `ask`. */
+  private readonly awaitingPoll = new Map<string, Array<() => void>>()
 
   /** `startedAt`: when this server began hearing polls, before which no silence means anything. */
   constructor(private readonly deps: SideQuestionsDeps = REAL_DEPS, private readonly startedAt = Date.now()) {}
@@ -106,9 +108,19 @@ export class SideQuestions {
     return now - this.startedAt < LISTENING_WINDOW_MS ? undefined : false
   }
 
-  /** Ask a surface's agent a side question. Always resolves; never rejects. */
-  ask(surfaceId: string, prompt: string, now = Date.now(), timeoutMs = ANSWER_TIMEOUT_MS): Promise<SideQuestionResult> {
-    if (!this.isListening(surfaceId, now)) return Promise.resolve({ ok: false, reason: 'not-listening' })
+  /**
+   * Ask a surface's agent a side question. Always resolves; never rejects.
+   *
+   * In a server's first listening window, a surface that has not polled yet
+   * may only be between polls — its plugin's last one went with the old
+   * server — so the question waits for it rather than failing. That is when a
+   * question the last server never had answered is asked again.
+   */
+  async ask(surfaceId: string, prompt: string, now = Date.now(), timeoutMs = ANSWER_TIMEOUT_MS): Promise<SideQuestionResult> {
+    if (!this.isListening(surfaceId, now) && now - this.startedAt < LISTENING_WINDOW_MS) {
+      await this.untilPolled(surfaceId, LISTENING_WINDOW_MS - (now - this.startedAt))
+    }
+    if (!this.isListening(surfaceId, now)) return { ok: false, reason: 'not-listening' }
     const question: SideQuestion = { id: randomUUID(), prompt }
     return new Promise<SideQuestionResult>((resolve) => {
       const cancelTimer = this.deps.setTimer(() => {
@@ -136,6 +148,9 @@ export class SideQuestions {
    */
   poll(surfaceId: string, now = Date.now(), waitMs = POLL_WAIT_MS): Promise<SideQuestion | undefined> {
     this.lastPolled.set(surfaceId, now)
+    const waiting = this.awaitingPoll.get(surfaceId)
+    this.awaitingPoll.delete(surfaceId)
+    waiting?.forEach(resolve => resolve())
     const queue = this.queued.get(surfaceId)
     if (queue?.length) {
       const [next, ...rest] = queue
@@ -154,6 +169,22 @@ export class SideQuestions {
         }, waitMs),
       }
       this.parked.set(surfaceId, poll)
+    })
+  }
+
+  /** Resolves at the surface's next poll, or after `ms` without one. */
+  private untilPolled(surfaceId: string, ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      let done = false
+      let cancel = (): void => {}
+      const finish = (): void => {
+        if (done) return
+        done = true
+        cancel()
+        resolve()
+      }
+      cancel = this.deps.setTimer(finish, ms)
+      this.awaitingPoll.set(surfaceId, [...(this.awaitingPoll.get(surfaceId) ?? []), finish])
     })
   }
 

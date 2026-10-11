@@ -17,7 +17,7 @@ import type { CameraBounds, ControlTrace, ControlTraceKind, ControlTranscriptEnt
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
 import {
-  FORMAT_REMINDER, HANDOVER_CHARS, HANDOVER_HEADING, HANDOVER_PROMPT, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
+  FORMAT_REMINDER, HANDOVER_CHARS, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
 import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
@@ -30,7 +30,7 @@ import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type 
 import { decidePause, PAUSE_MS, type PauseJudgement, type PauseVerdict } from './backlog-pause'
 import type { Watches, WatchKind } from './watches'
 import type { EndedAgent, EndedAgents } from './ended-agents'
-import type { PendingNews } from './pending-news'
+import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import {
   cacheWords, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
@@ -139,7 +139,7 @@ export interface ReceptionistDeps {
    */
   judgeInterruption(ctx: InterruptionContext): Promise<number>
   /** Things Control set aside to bring up with the user later: see backlog.ts. */
-  backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore'>
+  backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore' | 'settle'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
   watches: Watches
   /** The agents known to have ended, kept across server restarts: see ended-agents.ts. */
@@ -409,6 +409,15 @@ export const STOP_HOLD_MS = 2_000
  */
 export const VOICE_FOLLOW_MS = 150
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
+/** How many servers may ask one side question before it is given up on: see `resumeQuestions`. */
+export const MAX_QUESTION_TRIES = 3
+/** How many turns a piece of news may fail in before it is set down untold: see `retryNews`. */
+export const MAX_NEWS_FAILURES = 3
+/** How long a failed turn's news waits before another try. */
+export const NEWS_RETRY_MS = 20_000
+/** Told to Control with the user's words when the last server stopped before it answered them. */
+export const RESTARTED_BEFORE_ANSWER = 'The server restarted before you answered what the user last said, so it is given to you again below. ' +
+  'If you already answered it, do not repeat yourself: carry on from your answer.'
 /** Said to a model that talked when told the user is away: see `renderTurnBody`'s `away`. */
 const AWAY_REFUSAL = 'NOTHING WAS DONE: the user is away, so "say" must be empty. Reply again with the same tools and an empty "say".'
 /**
@@ -583,7 +592,14 @@ export class Receptionist {
     this.listening = opts.listener !== undefined
     this.listenerId = opts.listener?.id
     this.reading = opts.listener?.reading === true
-    if (!this.listening) this.missed = emptyNews()
+    // What the user said that the last server never answered: the next turn says it again.
+    this.carriedWords = deps.news.takeLeftWords()
+    if (this.carriedWords !== undefined) this.notes.push(RESTARTED_BEFORE_ANSWER)
+    // What they missed while away is still theirs to hear: waiting for them, or for the turn that tells them.
+    const away = deps.news.awayNews()
+    this.returnNews = away.returnNews
+    if (this.listening) this.returnNews = mergeNews(this.returnNews, away.missed)
+    else this.missed = away.missed ?? emptyNews()
     this.channel = new SpeechChannel({
       speech: opts.listener?.speech ?? NO_LISTENER,
       label: 'receptionist',
@@ -764,6 +780,7 @@ export class Receptionist {
       this.listenerId = undefined
       this.channel.speech = NO_LISTENER
       this.missed = emptyNews()
+      this.keepAway()
       // What was heard of the reply they left in the middle of, if they did:
       // news for when they are back.
       void this.noteInterruption('lost', this.channel.silence())
@@ -777,6 +794,7 @@ export class Receptionist {
       // Moved. The job being cut off keeps the backend it started on, so
       // silencing reaches the old device; anything said next goes to the new.
       this.missed = { ...emptyNews(), moved: true }
+      this.keepAway()
       void this.noteInterruption('lost', this.channel.silence()).then(() => this.arrive())
       return
     }
@@ -950,6 +968,7 @@ export class Receptionist {
       if (back) delete news.moved
       this.returnNews = news
     }
+    this.keepAway()
     queueMicrotask(() => this.maybeSpeakUp())
   }
 
@@ -1071,8 +1090,9 @@ export class Receptionist {
       if (!settled || stoppedSince) this.monitors.set(nodeId, { ...watch, kind: 'next-stop' })
       if (stoppedSince) void this.holdStop(nodeId)
     }
-    // News the last server never got to tell.
-    if (this.events.length) this.maybeSpeakUp()
+    this.resumeQuestions()
+    // What the last server never got to tell, or to answer.
+    this.maybeSpeakUp()
   }
 
   /**
@@ -1093,13 +1113,21 @@ export class Receptionist {
 
   /**
    * A watch is used up only by telling the user. A stop this turn said nothing
-   * about, in its words or on its backlog, is news the user has not had, so its
-   * agent is watched again, as though the stop had not come. Left to the model,
-   * it was not: Control stayed silent on a stop, the agent's real answer came
-   * later, and nobody was watching for it. A watch kept this way ends when the
-   * user takes the agent over (`userTookOver`), as any other does.
+   * about, in its words or on its backlog, is news the user has not had.
+   *
+   * Came with the user's words, the reply was theirs, and the stop was passed
+   * over rather than judged: while the agent is still at that stop, it is news
+   * again, for a turn of its own once this one is over. Watched for its next
+   * stop instead, an agent waiting on the user was never heard of again: it
+   * would not stop again until the user acted, and they had not been told.
+   *
+   * Came alone, the silence was Control's judgement of it, so the agent is
+   * watched again, as though the stop had not come. Left to the model, it was
+   * not: Control stayed silent on a stop, the agent's real answer came later,
+   * and nobody was watching for it. A watch kept this way ends when the user
+   * takes the agent over (`userTookOver`), as any other does.
    */
-  private keepWatchingUntold(events: readonly ReceptionistEvent[], reply: Reply): void {
+  private keepWatchingUntold(events: readonly ReceptionistEvent[], reply: Reply, withWords: boolean): void {
     const stops = events.filter(event => event.kind === 'agent-stopped')
     if (!stops.length) return
     const agents = this.deps.agents()
@@ -1110,10 +1138,18 @@ export class Receptionist {
       ...reply.tools.flatMap(call => call.tool === 'backlog_add' ? tokensIn(call.item) : []),
     ]
     const told = new Set(refs.flatMap(ref => this.resolve(ref, handles, agents) ?? []))
-    for (const { nodeId } of stops) {
+    for (const stop of stops) {
+      const { nodeId } = stop
       const agent = agents.find(candidate => candidate.nodeId === nodeId)
       // Gone, or watched again already: by a send, or by monitor.
       if (!agent || told.has(nodeId) || this.monitors.has(nodeId)) continue
+      const sameStop = isSettled(agent.state) && this.reportedStops.get(nodeId) === agent.stateSince
+      if (withWords && sameStop) {
+        this.events.push(stop)
+        this.deps.log({ event: 'kept-untold', nodeId })
+        this.trace('requeued', `Said nothing of ${this.traceToken(nodeId)}'s stop while answering you, and it is still waiting on you: it is news again, for the next turn`)
+        continue
+      }
       this.deps.log({ event: 'kept-watching', nodeId, outcome: this.watchFromNow(agent, 'its stop was neither told nor set aside, so it is watched again') })
     }
   }
@@ -1142,7 +1178,7 @@ export class Receptionist {
       void this.maybeInterruptSelf()
       return
     }
-    if (!this.events.length && !(this.listening && this.returnNews)) return
+    if (!this.events.length && !(this.listening && this.returnNews) && this.carriedWords === undefined) return
     void this.runTurn(undefined)
   }
 
@@ -1208,9 +1244,11 @@ export class Receptionist {
     await this.noteInterruption(selfInterrupted ? 'self' : 'user')
     // Read after that await: the listener may have come or gone during it.
     const away = !this.listening
-    const events = this.events.take(attempt)
     const news = away ? undefined : this.returnNews
     if (!away) this.returnNews = undefined
+    // Held on disk as this turn's until it is over: see pending-news.ts.
+    const events = this.events.take(attempt, words, news)
+    this.keepAway()
     const unquieted = !away && this.quieted
     if (unquieted) this.quieted = false
     const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, unquieted, this.deps.backlog.size, this.watching(), pulled?.described)
@@ -1240,13 +1278,17 @@ export class Receptionist {
       }
       if (!reply) return
       // Acted on where the user could not hear: theirs to be told of when they are back.
-      if (away) this.missed?.events.push(...events)
-      monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply), taken, events)
+      if (away && this.missed) {
+        this.missed.events.push(...events)
+        this.keepAway()
+      }
+      monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply), taken, events, words !== undefined)
     } catch (err) {
       this.putBack(taken)
       // Stopped before the session got the user's words: the next turn says them.
       if (err instanceof Unsent && err.first && words !== undefined) this.carriedWords = words
       if (!attempt.isCurrent) { this.requeue(attempt, events, news, unquieted); return }
+      this.retryNews(attempt, events)
       if (err instanceof LostSession) this.forgetSession()
       const message = err instanceof Error ? err.message : String(err)
       serverLog(`[receptionist] turn failed: ${message}`)
@@ -1267,6 +1309,27 @@ export class Receptionist {
   }
 
   /**
+   * A failed turn's news, given back for another turn a little later: the
+   * daemon may be restarting, or the model briefly unavailable, and news
+   * dropped here was never told at all. Some news is itself why the turn
+   * failed — a message the model's safeguards refuse fails every time — so
+   * each piece gets `MAX_NEWS_FAILURES` turns, and is then set down, in the
+   * transcript and a toast, where the user can see it.
+   */
+  private retryNews(attempt: Attempt, events: readonly ReceptionistEvent[]): void {
+    const again = events.map(event => ({ ...event, failures: (event.failures ?? 0) + 1 }))
+    const retry = again.filter(event => event.failures < MAX_NEWS_FAILURES)
+    const dropped = again.filter(event => event.failures >= MAX_NEWS_FAILURES)
+    this.events.requeue(retry, attempt)
+    if (dropped.length) {
+      const what = dropped.map(eventHeadline).join('; ')
+      this.trace('failed', `Gave up on news after ${MAX_NEWS_FAILURES} failed turns: ${what}`, dropped.map(renderEvent).join('\n\n'))
+      this.deps.notify(`Control could not take in this news: ${what}`)
+    }
+    if (retry.length) void this.deps.sleep(NEWS_RETRY_MS).then(() => this.maybeSpeakUp())
+  }
+
+  /**
    * Give a superseded turn's events back. They were never heard, and the turn
    * that superseded this one may already be over by now — so this has to
    * offer them a turn of their own, not just wait for the next phase change.
@@ -1274,6 +1337,7 @@ export class Receptionist {
   private requeue(attempt: Attempt, events: readonly ReceptionistEvent[], news: ReturnNews | undefined, unquieted: boolean): void {
     if (unquieted) this.quieted = true
     if (news) this.returnNews = mergeNews(news, this.returnNews)
+    this.keepAway()
     if (!events.length && !news) return
     if (events.length) {
       this.trace('requeued', `Turn dropped before a word of it was said; its news waits for the next: ${events.map(eventHeadline).join('; ')}`)
@@ -1738,6 +1802,11 @@ export class Receptionist {
     }
   }
 
+  /** What the user missed while away, to disk as it changes: see pending-news.ts. */
+  private keepAway(): void {
+    this.events.keepAway({ missed: this.missed, returnNews: this.returnNews })
+  }
+
   /** Put back what backlog_next gave a reply nobody will hear. Empties `items`, so putting back twice is harmless. */
   private putBack(items: BacklogItem[], why = 'the reply that brought it up was never heard'): void {
     const back = items.splice(0)
@@ -1912,13 +1981,16 @@ export class Receptionist {
    * Ask an agent a side question, in the background: the answer comes back
    * as an event, with a toast saying what it used.
    */
-  private async askAgent(agent: RosterAgent, question: string, handles: Handles): Promise<void> {
+  private async askAgent(agent: RosterAgent, question: string, handles: Handles, tries = 1): Promise<void> {
     // Named now if it has no name yet: its answer will be quoted in its voice,
     // and the toast should already call it what the listener will hear.
     const named = this.named(agent.nodeId, handles)
     const name = named?.name ?? agent.title
     const token = this.token(agent.nodeId, handles)
     const onsets = this.onsets
+    // On disk until it is answered, so a restart asks it again: see `resumeQuestions`.
+    const asking: Asking = { id: randomUUID(), nodeId: agent.nodeId, question, ended: false, tries }
+    this.events.asked(asking)
     await this.warmUp(agent)
     let result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
     if (!result.ok && result.reason === 'nothing-to-fork') {
@@ -1931,14 +2003,14 @@ export class Receptionist {
         result = await this.deps.askAgent(agent.nodeId, sideQuestionPrompt(question))
       }
     }
-    this.answered(agent.nodeId, token, name, question, result, onsets)
+    this.answered(asking.id, agent.nodeId, token, name, question, result, onsets)
   }
 
   /**
    * ask_agent for an agent that has ended: from its cache while that is warm,
    * without bringing it back. The answer comes as an event, as for a live one.
    */
-  private askEndedAgent(ended: EndedAgent, question: string): string {
+  private askEndedAgent(ended: EndedAgent, question: string, tries = 1): string {
     const { agent, handle } = ended
     const name = this.deps.names.get(agent.nodeId)?.name
     const token = agentToken(handle, name)
@@ -1946,19 +2018,21 @@ export class Receptionist {
       return `ask_agent did not ask ${token}: ${endedCacheWords(agent, Date.now())}`
     }
     const onsets = this.onsets
+    const asking: Asking = { id: randomUUID(), nodeId: agent.nodeId, question, ended: true, tries }
+    this.events.asked(asking)
     void this.deps.askEnded(agent, sideQuestionPrompt(question)).then(({ result, cacheWarmUntil }) => {
       // The question read the cache, which keeps it warm for longer.
       const still = this.ended.get(agent.nodeId)
       if (still && cacheWarmUntil !== undefined && cacheWarmUntil > (still.agent.cacheWarmUntil ?? 0)) {
         this.ended.update(agent.nodeId, { ...still.agent, cacheWarmUntil })
       }
-      this.answered(agent.nodeId, token, name ?? agent.title, question, result, onsets, true)
+      this.answered(asking.id, agent.nodeId, token, name ?? agent.title, question, result, onsets, true)
     })
     return `ask_agent asked ${token}, which has ended, from its still-warm cache, without bringing it back; the answer will come as an event`
   }
 
   /** A side question's outcome, live or ended: logged with what it read from the cache, toasted, and told as an event. */
-  private answered(nodeId: NodeId, token: string, name: string, question: string, result: SideQuestionResult, onsets: number, ended = false): void {
+  private answered(askId: string, nodeId: NodeId, token: string, name: string, question: string, result: SideQuestionResult, onsets: number, ended = false): void {
     const usage = result.ok ? result.usage : undefined
     const cache = usage ? { read: usage.cache_read_input_tokens ?? 0, written: usage.cache_creation_input_tokens ?? 0, uncached: usage.input_tokens ?? 0 } : undefined
     this.deps.log({ event: 'side-question', nodeId, question, result, ...(cache ? { cache } : {}), ...(ended ? { ended } : {}) })
@@ -1972,7 +2046,40 @@ export class Receptionist {
       this.deps.notify(`Control's question to ${name} failed: ${SIDE_QUESTION_TOASTS[result.reason]}`)
       this.events.push({ kind: 'agent-answer-failed', agent: token, question, reason: SIDE_QUESTION_FAILURES[result.reason], ...stale })
     }
+    // News now, which is on disk itself: no longer one for the next server to ask.
+    this.events.answered(askId)
     this.maybeSpeakUp()
+  }
+
+  /**
+   * Ask again the side questions the last server asked and never had
+   * answered: the answer was on its way when the server went, and the new one
+   * would never hear it. Each is asked at most `MAX_QUESTION_TRIES` times, so
+   * a question that brings the server down is not asked forever. One that
+   * cannot be asked again is told as a failure, so Control is never left
+   * waiting for an answer that will not come.
+   */
+  private resumeQuestions(): void {
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    for (const asking of this.events.unanswered()) {
+      const live = asking.ended ? undefined : agents.find(agent => agent.nodeId === asking.nodeId)
+      const ended = asking.ended ? this.ended.get(asking.nodeId) : undefined
+      this.deps.log({ event: 'side-question-resumed', nodeId: asking.nodeId, question: asking.question, tries: asking.tries })
+      if (asking.tries < MAX_QUESTION_TRIES && live) {
+        void this.askAgent(live, asking.question, handles, asking.tries + 1)
+        continue
+      }
+      if (asking.tries < MAX_QUESTION_TRIES && ended && endedAskable(ended.agent, Date.now())) {
+        this.askEndedAgent(ended, asking.question, asking.tries + 1)
+        continue
+      }
+      const token = live ? this.token(live.nodeId, handles) : this.traceToken(asking.nodeId)
+      const reason = asking.tries >= MAX_QUESTION_TRIES
+        ? `the server restarted while it was being asked, ${asking.tries} times over, so it was not asked again. Answer from its transcript with read instead`
+        : 'the server restarted while it was being asked, and the agent can no longer be asked. Answer from its transcript with read instead'
+      this.events.push({ kind: 'agent-answer-failed', agent: token, question: asking.question, reason })
+    }
   }
 
   /**
@@ -2263,7 +2370,9 @@ export class Receptionist {
     return agents.filter(agent => this.monitors.has(agent.nodeId)).map(agent => this.token(agent.nodeId, handles))
   }
 
-  private async speak(attempt: Attempt, body: string, reply: Reply, taken: BacklogItem[], events: readonly ReceptionistEvent[]): Promise<boolean> {
+  private async speak(
+    attempt: Attempt, body: string, reply: Reply, taken: BacklogItem[], events: readonly ReceptionistEvent[], withWords: boolean,
+  ): Promise<boolean> {
     // Never over the user. Talked over while it waited, the reply is never said.
     if (!await this.mayAct(attempt)) {
       this.noteUnspoken(reply)
@@ -2278,6 +2387,7 @@ export class Receptionist {
       if (reply.say.length) {
         this.notes.push('Your previous reply was never spoken: the user was away, so they heard none of it.')
         if (this.missed) this.missed.unheard = true
+        this.keepAway()
         this.traceUnspoken(reply.say, 'nobody was listening')
       }
       this.deps.log({ event: 'turn', body, say: reply.say, spoken: [], tools: reply.tools, away: true })
@@ -2292,7 +2402,9 @@ export class Receptionist {
     const { spoken, speakers } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
-    taken.splice(0)
+    this.deps.backlog.settle(taken.splice(0))
+    // And so is what the turn was about. A server that stops from here on says it was cut off: see carry-over.ts.
+    this.events.told(attempt)
     // Done before a word is said, and reported by the words: the user never
     // waits through "Sent to Kevin" for the send. Talking over the words
     // undoes nothing, which is why Control asks first when it is unsure.
@@ -2309,7 +2421,7 @@ export class Receptionist {
       if (reading) this.onUnread(this.ledger.unread())
     }
     // After the reply, so the transcript's reasoning reads as it happened: silence, then the watch kept.
-    this.keepWatchingUntold(events, reply)
+    this.keepWatchingUntold(events, reply, withWords)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools, ...(reading ? { muted: true } : {}) })
     // Muted, it is written, and that is all: there is nothing to cut off.
     if (reading) return false
@@ -2523,6 +2635,7 @@ export class Receptionist {
     // Cut off by leaving, or by moving: said again when they are back, since
     // the note above may go with a turn they cannot hear.
     if (this.missed) this.missed.cutOff = audible
+    this.keepAway()
     return true
   }
 }
@@ -2539,17 +2652,6 @@ function hasNews(news: ReturnNews): boolean {
   return news.events.length > 0 || news.cutOff !== undefined || news.unheard
 }
 
-/** Two absences' news as one, `earlier` first. */
-function mergeNews(earlier: ReturnNews | undefined, later: ReturnNews | undefined): ReturnNews | undefined {
-  if (!earlier || !later) return earlier ?? later
-  const cutOff = earlier.cutOff ?? later.cutOff
-  return {
-    events: [...earlier.events, ...later.events],
-    unheard: earlier.unheard || later.unheard,
-    ...(cutOff !== undefined ? { cutOff } : {}),
-    ...(earlier.moved || later.moved ? { moved: true } : {}),
-  }
-}
 
 /**
  * A reply that sent something and said nothing gets a few words of its own.

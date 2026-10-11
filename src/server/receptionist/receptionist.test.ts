@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, QUIET_OVER, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
+  MAX_NEWS_FAILURES, PROMPT_HASH, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
@@ -104,6 +104,8 @@ function harness(opts: {
   lostSessions?: string[]
   /** When each answer says the daemon will compact the session (epoch ms); by default it never does. */
   compactsAt?: number
+  /** Messages the model fails to answer, as when its safeguards flag one. */
+  failWhen?: (turn: SessionTurn) => boolean
   /** How many messages find the session busy with a turn some earlier server left behind. */
   busyFor?: number
   /** Whether an abort stops the turn; when not, it lands after the turn finished, which comes back whole. Default true. */
@@ -199,6 +201,7 @@ function harness(opts: {
         busyFor--
         return Promise.reject(new SessionBusy('session already has a turn in progress'))
       }
+      if (opts.failWhen?.(turn)) return Promise.reject(new Error('API Error: safeguards flagged this message'))
       if (abort?.aborted) {
         aborted.push({ prompt: turn.prompt, promptInSession: false })
         return Promise.resolve({ text: '', sessionId: turn.sessionId ?? '', aborted: { promptInSession: false } })
@@ -2103,6 +2106,40 @@ describe('Receptionist: watching an agent until the user is told', () => {
     expect(h.turns).toHaveLength(5)
   })
 
+  it('tells a stop it passed over while answering the user in a turn of its own, not at a next stop that never comes', async () => {
+    // Henry, as it happened: his stop came with the user's words, Control
+    // answered the words and said nothing of him, and he was watched for a
+    // next stop. Waiting on the user, he never stopped again, and was never told.
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+          expect(turn.prompt).toMatch(/THE USER SAYS: what about Leon/)
+          return reply([{ from: 'control', text: 'Leon is still working.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+          expect(turn.prompt).not.toMatch(/THE USER SAYS/)
+          return reply([{ from: 'control', text: `{${SALLY}} finished the login form.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.receptionist.userSpeaking(true)
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    await h.receptionist.hear('what about Leon', 'spoken')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    expect(h.traces.map(trace => `${trace.what}: ${trace.text}`)).toContainEqual(expect.stringMatching(
+      new RegExp(`^requeued: Said nothing of \\{\\w+:${SALLY}\\}'s stop while answering you`)))
+    // Told: nothing is left watching for a stop that will not come.
+    expect(h.receptionist.watchedForTest?.() ?? []).toEqual([])
+  })
+
   it('stops watching an agent whose stop it set aside on the backlog', async () => {
     const h = harness({
       replies: [
@@ -2478,6 +2515,155 @@ describe('Receptionist: agents it started, and agents that end', () => {
       await watchAndEnd(h)
       await h.receptionist.hear('what did Kevin say?', 'spoken')
       await flush()
+    })
+  })
+
+  it('tells the user on their return what they missed, though the server restarted while they were away', async () => {
+    const world = agentWorld()
+    const newsStore = memoryStore()
+    const before = harness({
+      world, newsStore,
+      replies: [
+        reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: SALLY }]),
+        // Told while nobody could hear: acted on, said nothing.
+        reply([]),
+      ],
+    })
+    await before.receptionist.hear('tell me when Sally is done', 'spoken')
+    await flush()
+    before.receptionist.setListener(undefined)
+    before.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(before.turns).toHaveLength(2)
+
+    // A new server, which the user's device has already reconnected to.
+    const after = harness({
+      world, newsStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toContain('THE USER IS BACK')
+        expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+        return reply([{ from: 'control', text: 'Sally finished while you were away.' }])
+      }],
+    })
+    after.receptionist.resumeWatches()
+    await flush()
+    expect(after.turns).toHaveLength(1)
+    expect(said(after).at(-1)).toContain('Sally finished while you were away.')
+  })
+
+  it('answers words the last server took but never answered', async () => {
+    const world = agentWorld()
+    const newsStore = memoryStore()
+    // The model is still writing its answer when the server goes.
+    const before = harness({ world, newsStore, replies: [() => new Promise<string>(() => {})] })
+    void before.receptionist.hear('how is the water sim going?', 'spoken')
+    await flush()
+    expect(before.turns).toHaveLength(1)
+
+    const after = harness({
+      world, newsStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toContain('The server restarted before you answered what the user last said')
+        expect(turn.prompt).toContain('how is the water sim going?')
+        return reply([{ from: 'control', text: 'Kevin conserved the volume.' }])
+      }],
+    })
+    after.receptionist.resumeWatches()
+    await flush()
+    expect(after.turns).toHaveLength(1)
+  })
+
+  it('asks again a side question the last server never had answered', async () => {
+    const world = agentWorld()
+    const newsStore = memoryStore()
+    const before = harness({
+      world, newsStore,
+      // The answer was on its way when the server went.
+      askAgent: () => new Promise<SideQuestionResult>(() => {}),
+      replies: [reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'How many litres?' }])],
+    })
+    await before.receptionist.hear('ask Kevin how many litres', 'spoken')
+    await flush()
+    expect(before.sideQuestions).toHaveLength(1)
+
+    const after = harness({
+      world, newsStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toContain('was asked "How many litres?" and answered: It was 42 litres exactly.')
+        return reply([{ from: KEVIN, text: 'It was 42 litres exactly.' }])
+      }],
+    })
+    after.receptionist.resumeWatches()
+    await flush()
+    expect(after.sideQuestions).toEqual([{ nodeId: KEVIN_ID, prompt: sideQuestionPrompt('How many litres?') }])
+    expect(after.turns).toHaveLength(1)
+    // Answered: a third server has nothing to ask.
+    const third = harness({ world, newsStore, replies: [] })
+    third.receptionist.resumeWatches()
+    await flush()
+    expect(third.sideQuestions).toHaveLength(0)
+  })
+
+  it('says a side question failed when the agent it was for is gone after the restart', async () => {
+    const world = agentWorld()
+    const newsStore = memoryStore()
+    const before = harness({
+      world, newsStore,
+      askAgent: () => new Promise<SideQuestionResult>(() => {}),
+      replies: [reply([{ from: 'control', text: `I'll ask {${KEVIN}}.` }], [{ tool: 'ask_agent', agent: KEVIN, question: 'How many litres?' }])],
+    })
+    await before.receptionist.hear('ask Kevin how many litres', 'spoken')
+    await flush()
+    world.gone.add(KEVIN_ID)
+
+    const after = harness({
+      world, newsStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toContain('"How many litres?" failed: the server restarted while it was being asked, and the agent can no longer be asked')
+        return reply([{ from: 'control', text: 'I lost the answer from Kevin.' }])
+      }],
+    })
+    after.receptionist.resumeWatches()
+    await flush()
+    expect(after.sideQuestions).toHaveLength(0)
+    expect(after.turns).toHaveLength(1)
+  })
+
+  describe('news in a turn that fails', () => {
+    const watched = async (h: ReturnType<typeof harness>) => {
+      await h.receptionist.hear('tell me when Sally is done', 'spoken')
+      await flush()
+      h.setState(SALLY_ID, 'stopped')
+      await flush()
+    }
+    it('is told by a later turn', async () => {
+      let failed = 0
+      const h = harness({
+        failWhen: (turn) => turn.prompt.includes('is now stopped') && failed++ === 0,
+        replies: [
+          reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: SALLY }]),
+          (turn) => {
+            expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+            return reply([{ from: SALLY, text: 'The login page is done.' }])
+          },
+        ],
+      })
+      await watched(h)
+      expect(failed).toBe(2)
+      expect(h.turns).toHaveLength(2)
+      expect(said(h).at(-1)).toContain('The login page is done.')
+    })
+
+    it('is set down where the user can see it once it has failed every try', async () => {
+      let failed = 0
+      const h = harness({
+        failWhen: (turn) => turn.prompt.includes('is now stopped') && ++failed > 0,
+        replies: [reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: SALLY }])],
+      })
+      await watched(h)
+      expect(failed).toBe(MAX_NEWS_FAILURES)
+      expect(h.notices.at(-1)).toMatch(/^Control could not take in this news: /)
+      expect(h.traces.some(trace => trace.what === 'failed' && trace.text.startsWith(`Gave up on news after ${MAX_NEWS_FAILURES} failed turns`))).toBe(true)
     })
   })
 

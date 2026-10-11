@@ -21,8 +21,27 @@ const answered = { isAnswered: true, text: 'MARIGOLD', usage: { cache_read_input
 
 describe('SideQuestions', () => {
   it('refuses a surface whose plugin is not polling', async () => {
-    const broker = new SideQuestions(fakeTimers().deps)
-    expect(await broker.ask('s1', 'what?', 1_000)).toEqual({ ok: false, reason: 'not-listening' })
+    const broker = new SideQuestions(fakeTimers().deps, 0)
+    expect(await broker.ask('s1', 'what?', LISTENING_WINDOW_MS + 1_000)).toEqual({ ok: false, reason: 'not-listening' })
+  })
+
+  // A plugin's last poll went with the old server; its next one is on the way.
+  it('waits for a surface to poll in the first listening window after a restart', async () => {
+    const t = fakeTimers()
+    const broker = new SideQuestions(t.deps, 0)
+    const asked = broker.ask('s1', 'still there?', 1_000)
+    const question = await broker.poll('s1', 3_000)
+    expect(question?.prompt).toBe('still there?')
+    broker.answer(question!.id, answered)
+    expect((await asked).ok).toBe(true)
+  })
+
+  it('refuses a surface that never polls in that window', async () => {
+    const t = fakeTimers()
+    const broker = new SideQuestions(t.deps, 0)
+    const asked = broker.ask('s1', 'what?', 1_000)
+    t.fire(LISTENING_WINDOW_MS - 1_000)
+    expect(await asked).toEqual({ ok: false, reason: 'not-listening' })
   })
 
   it('hands a question to a parked poll and resolves with its answer', async () => {

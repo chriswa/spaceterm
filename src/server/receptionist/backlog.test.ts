@@ -36,6 +36,27 @@ describe('Backlog', () => {
     expect(new Backlog({ store }).all()).toEqual([{ text: 'Leon finished', addedAt: 7 }])
   })
 
+  it('puts back an item a turn took, if the server stopped before the turn said it', () => {
+    const store = memoryStore()
+    const backlog = new Backlog({ store })
+    backlog.add('first', 1)
+    backlog.add('second', 2)
+    backlog.take([0])
+    expect(new Backlog({ store }).all().map(item => item.text)).toEqual(['first', 'second'])
+  })
+
+  it('lets an item go for good once a reply says it, and back once it is restored', () => {
+    const store = memoryStore()
+    const backlog = new Backlog({ store })
+    backlog.add('first', 1)
+    backlog.add('second', 2)
+    backlog.settle(backlog.take([0]))
+    expect(new Backlog({ store }).all().map(item => item.text)).toEqual(['second'])
+    backlog.restore(backlog.take([0]))
+    expect(new Backlog({ store }).all().map(item => item.text)).toEqual(['second'])
+    expect(JSON.parse(store.json!)).toEqual({ items: [{ text: 'second', addedAt: 2 }] })
+  })
+
   it('keeps the agents an item is about, across a restart', () => {
     const store = memoryStore()
     const kevin = asNodeId('kevin-surface')

@@ -104,8 +104,11 @@ export const HANDOVER_HEADING = 'HANDOVER, from your previous session:'
 /** The most of a handover that is passed on. */
 export const HANDOVER_CHARS = 8_000
 
-/** One background result, waiting to be told to the receptionist. `agent` is its token: see `agent-token.ts`. */
-export type ReceptionistEvent =
+/**
+ * One background result, waiting to be told to the receptionist. `agent` is its token: see `agent-token.ts`.
+ * `failures`: turns that took it and failed, so did not tell it. See `Receptionist.retryNews`.
+ */
+export type ReceptionistEvent = { failures?: number } & (
   /** `nodeId` is for the system, never shown: which agent to watch again if Control says nothing of it. */
   | { kind: 'agent-stopped'; agent: string; nodeId: NodeId; state: string; lastSaid: string }
   /** A watched agent's session exited: it ended itself, or was ended. `archived` unless it failed to launch and stayed on the canvas. */
@@ -115,6 +118,7 @@ export type ReceptionistEvent =
   /** `ended`: the agent has ended, and was asked from its cache without being brought back. */
   | { kind: 'agent-answer'; agent: string; question: string; answer: string; ended?: true; beforeUserSpoke?: true }
   | { kind: 'agent-answer-failed'; agent: string; question: string; reason: string; beforeUserSpoke?: true }
+)
 
 /**
  * Follows an ended agent's answer instead of ASK_AGENT_REMINDER: there is no
@@ -150,6 +154,18 @@ export interface ReturnNews {
   unheard: boolean
   /** Whether they switched devices, rather than (or as well as) going away and coming back. */
   moved?: boolean
+}
+
+/** Two absences' news as one, `earlier` first. */
+export function mergeNews(earlier: ReturnNews | undefined, later: ReturnNews | undefined): ReturnNews | undefined {
+  if (!earlier || !later) return earlier ?? later
+  const cutOff = earlier.cutOff ?? later.cutOff
+  return {
+    events: [...earlier.events, ...later.events],
+    unheard: earlier.unheard || later.unheard,
+    ...(cutOff !== undefined ? { cutOff } : {}),
+    ...(earlier.moved || later.moved ? { moved: true } : {}),
+  }
 }
 
 /**
