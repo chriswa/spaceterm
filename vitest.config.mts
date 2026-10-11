@@ -27,6 +27,8 @@ export default defineConfig({
           environment: 'node',
           include: ['src/**/*.test.{ts,tsx}'],
           exclude: ['**/node_modules/**', 'src/client/renderer/**', 'src/mobile/**', 'src/e2e/**'],
+          // Tests never write into the real ~/.spaceterm: see vitest.scratch-home.ts.
+          globalSetup: ['vitest.scratch-home.ts'],
         },
       },
       {
@@ -41,6 +43,7 @@ export default defineConfig({
           // AudioContext, ResizeObserver, matchMedia. Each is there because a
           // real module reaches for it at construction time.
           setupFiles: ['src/client/renderer/src/testing/jsdom-setup.ts'],
+          globalSetup: ['vitest.scratch-home.ts'],
         },
       },
       {
