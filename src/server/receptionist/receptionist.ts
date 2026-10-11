@@ -29,6 +29,8 @@ import {
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, PAUSE_MS, type PauseJudgement, type PauseVerdict } from './backlog-pause'
 import type { Watches, WatchKind } from './watches'
+import type { EndedAgent, EndedAgents } from './ended-agents'
+import type { PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import {
   cacheWords, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
@@ -140,6 +142,10 @@ export interface ReceptionistDeps {
   backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
   watches: Watches
+  /** The agents known to have ended, kept across server restarts: see ended-agents.ts. */
+  ended: EndedAgents
+  /** News not yet told to Control, kept across server restarts: see pending-news.ts. */
+  news: PendingNews
   /** Control's notes, and whether it was mid-reply, across server restarts: see carry-over.ts. */
   carryOver: Pick<CarryOver, 'take' | 'speaking' | 'leave'>
   /** Jev's probability for each backlog item, in order: that it should come next, or that it is about `ctx.about`. See backlog.ts. */
@@ -290,12 +296,6 @@ interface TakenItems {
   described: string
 }
 
-/** An agent that is no longer live, as it was last seen, with the handle it had then. */
-interface EndedAgent {
-  agent: RosterAgent
-  handle: string
-}
-
 /**
  * Who hears Control: a device's speech, and an id telling one device from
  * another. `reading` when that device has muted Control: it is there, but
@@ -337,8 +337,6 @@ const BUSY_RETRIES = 30
 const RECAP_MESSAGES = 10
 const RECAP_MESSAGE_CHARS = 1_500
 const LAST_SAID_EVENT_CHARS = 1_500
-/** Ended agents kept for `read` and `unarchive_agent`, newest first: see `Receptionist.ended`. */
-const MAX_ENDED = 100
 /** The tools that take an agent that is no longer live. */
 const ENDED_TOOLS: ReadonlySet<ToolCall['tool']> = new Set(['read', 'ask_agent', 'unarchive_agent'])
 /** Agents `find_agent` reports, best first. */
@@ -469,7 +467,8 @@ export class Receptionist {
   private lastSpoken?: SpokenPart[]
   /** Where `lastSpoken` is in the record, so an interruption can mark it there too. */
   private lastSpokenAt?: number
-  private events: ReceptionistEvent[] = []
+  /** News waiting for a turn: `deps.news`, which outlives the server. */
+  private readonly events: PendingNews
   /** A self-interruption check is under way; see `maybeInterruptSelf`. */
   private judging = false
   /** The reply last judged, and how many events it was judged against: each piece of news is weighed once per reply. */
@@ -483,9 +482,10 @@ export class Receptionist {
   /**
    * Agents no longer live — their session ended, or Control archived them —
    * as they were last seen, newest last. Their transcripts outlive them, so
-   * `read` and `unarchive_agent` still take them; nothing else does.
+   * `read`, `ask_agent` and `unarchive_agent` still take them; nothing else
+   * does. `deps.ended`, which outlives the server.
    */
-  private readonly ended = new Map<NodeId, EndedAgent>()
+  private readonly ended: EndedAgents
   /** The stop each agent was last reported at (its `stateSince`), so the same stop is never reported twice. */
   private readonly reportedStops = new Map<NodeId, number | undefined>()
   /** Cold agents being woken before a side question reaches them: see `warmUp`. */
@@ -570,6 +570,8 @@ export class Receptionist {
     this.onSpeaking = opts.onSpeaking ?? (() => undefined)
     this.ledger.restore(deps.record.tail())
     this.monitors = deps.watches
+    this.ended = deps.ended
+    this.events = deps.news
     // What the last server never got to tell the model goes with the first message.
     this.notes.push(...deps.carryOver.take())
     const saved = deps.session.load()
@@ -1020,7 +1022,7 @@ export class Receptionist {
     // A stop not yet told is the same news with less in it: the end replaces it.
     const isItsStop = (event: ReceptionistEvent) => event.kind === 'agent-stopped' && parseAgentRef(event.agent).key === handle
     const stopUntold = this.events.some(isItsStop)
-    this.events = this.events.filter(event => !isItsStop(event))
+    this.events.drop(isItsStop)
     if (!monitored && !stopUntold) return
     const token = agentToken(handle, this.deps.names.get(nodeId)?.name)
     const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
@@ -1033,12 +1035,7 @@ export class Receptionist {
 
   /** Keep an agent that is no longer live among the ended ones; see `ended`. */
   private remember(agent: RosterAgent, handle: string): void {
-    this.ended.delete(agent.nodeId)
-    this.ended.set(agent.nodeId, { agent, handle })
-    for (const nodeId of this.ended.keys()) {
-      if (this.ended.size <= MAX_ENDED) break
-      this.ended.delete(nodeId)
-    }
+    this.ended.remember({ agent, handle })
   }
 
   /** Watch an agent until its next stop; see `monitors`. `why` is for the transcript's reasoning. */
@@ -1051,7 +1048,7 @@ export class Receptionist {
   }
 
   /**
-   * Pick up the watches the last server left, once this one knows which agents
+   * Pick up the watches and the untold news the last server left, once this one knows which agents
    * are live and how they stand. An agent that stopped while no server was
    * looking — or in the hold before the last one went — is reported now: its
    * state will not change again, so nothing else would ever report it. One
@@ -1074,6 +1071,8 @@ export class Receptionist {
       if (!settled || stoppedSince) this.monitors.set(nodeId, { ...watch, kind: 'next-stop' })
       if (stoppedSince) void this.holdStop(nodeId)
     }
+    // News the last server never got to tell.
+    if (this.events.length) this.maybeSpeakUp()
   }
 
   /**
@@ -1163,7 +1162,7 @@ export class Receptionist {
     try {
       const offset = await this.channel.liveOffset()
       if (offset === undefined || this.lastSpoken !== spoken) return
-      const news = [...this.events]
+      const news = this.events.all()
       const ctx: InterruptionContext = {
         speech: splitAtOffset(joinSpeechParts(spoken.map(({ text, voice }) => ({ text, voice }))), offset),
         conversation: this.recentConversation(),
@@ -1209,7 +1208,7 @@ export class Receptionist {
     await this.noteInterruption(selfInterrupted ? 'self' : 'user')
     // Read after that await: the listener may have come or gone during it.
     const away = !this.listening
-    const events = this.events.splice(0)
+    const events = this.events.take(attempt)
     const news = away ? undefined : this.returnNews
     if (!away) this.returnNews = undefined
     const unquieted = !away && this.quieted
@@ -1235,7 +1234,7 @@ export class Receptionist {
     try {
       const reply = await this.converse(attempt, body, earlier, away, taken)
       if (!attempt.isCurrent) {
-        this.requeue(events, news, unquieted)
+        this.requeue(attempt, events, news, unquieted)
         this.putBack(taken)
         return
       }
@@ -1247,7 +1246,7 @@ export class Receptionist {
       this.putBack(taken)
       // Stopped before the session got the user's words: the next turn says them.
       if (err instanceof Unsent && err.first && words !== undefined) this.carriedWords = words
-      if (!attempt.isCurrent) { this.requeue(events, news, unquieted); return }
+      if (!attempt.isCurrent) { this.requeue(attempt, events, news, unquieted); return }
       if (err instanceof LostSession) this.forgetSession()
       const message = err instanceof Error ? err.message : String(err)
       serverLog(`[receptionist] turn failed: ${message}`)
@@ -1261,6 +1260,8 @@ export class Receptionist {
       this.trace('failed', `${apologise ? `"${TURN_FAILED_SPEECH}" — ` : ''}could not answer: ${headline}`, rest.join('\n').trim() || undefined)
       if (apologise) monitoring = await this.channel.deliver(attempt, [{ text: TURN_FAILED_SPEECH, voice: RECEPTIONIST_VOICE }])
     } finally {
+      // Told, or failed past retelling: either way, no longer the next server's to tell.
+      this.events.told(attempt)
       if (!monitoring) this.channel.settle(attempt)
     }
   }
@@ -1270,14 +1271,14 @@ export class Receptionist {
    * that superseded this one may already be over by now — so this has to
    * offer them a turn of their own, not just wait for the next phase change.
    */
-  private requeue(events: readonly ReceptionistEvent[], news: ReturnNews | undefined, unquieted: boolean): void {
+  private requeue(attempt: Attempt, events: readonly ReceptionistEvent[], news: ReturnNews | undefined, unquieted: boolean): void {
     if (unquieted) this.quieted = true
     if (news) this.returnNews = mergeNews(news, this.returnNews)
     if (!events.length && !news) return
     if (events.length) {
       this.trace('requeued', `Turn dropped before a word of it was said; its news waits for the next: ${events.map(eventHeadline).join('; ')}`)
     }
-    this.events.unshift(...events)
+    this.events.requeue(events, attempt)
     this.maybeSpeakUp()
   }
 
@@ -1804,7 +1805,7 @@ export class Receptionist {
   private resolveEnded(ref: string): EndedAgent | undefined {
     const { key, name } = parseAgentRef(ref)
     const wanted = key.toLowerCase()
-    for (const ended of [...this.ended.values()].reverse()) {
+    for (const ended of this.ended.values().reverse()) {
       if (ended.handle === wanted) return ended
       if (name === undefined && this.deps.names.get(ended.agent.nodeId)?.name.toLowerCase() === wanted) return ended
     }
@@ -1949,7 +1950,7 @@ export class Receptionist {
       // The question read the cache, which keeps it warm for longer.
       const still = this.ended.get(agent.nodeId)
       if (still && cacheWarmUntil !== undefined && cacheWarmUntil > (still.agent.cacheWarmUntil ?? 0)) {
-        still.agent = { ...still.agent, cacheWarmUntil }
+        this.ended.update(agent.nodeId, { ...still.agent, cacheWarmUntil })
       }
       this.answered(agent.nodeId, token, name ?? agent.title, question, result, onsets, true)
     })

@@ -15,6 +15,8 @@ import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
 import { PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
+import { EndedAgents } from './ended-agents'
+import { PendingNews } from './pending-news'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
 import type { NameRegistryStore } from './name-registry'
 import type { ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
@@ -64,9 +66,11 @@ type Script = string | ((turn: SessionTurn) => string | Promise<string>)
 interface AgentWorld {
   states: Map<NodeId, ClaudeState>
   since: Map<NodeId, number>
+  /** Agents off the live roster: ended, or archived. Outlives a server, as the archive does. */
+  gone: Set<NodeId>
 }
 function agentWorld(): AgentWorld {
-  return { states: new Map([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']]), since: new Map() }
+  return { states: new Map([[KEVIN_ID, 'stopped'], [SALLY_ID, 'working']]), since: new Map(), gone: new Set() }
 }
 let clock = Date.now()
 /** An agent's state changes. Alone, no server sees it: as while the server is down. */
@@ -123,6 +127,10 @@ function harness(opts: {
   world?: AgentWorld
   /** Where watches are kept, from an earlier server; by default nothing is watched. */
   watchStore?: NameRegistryStore
+  /** Where the ended agents are kept, from an earlier server; by default none have ended. */
+  endedStore?: NameRegistryStore
+  /** Where news not yet told is kept, from an earlier server; by default there is none. */
+  newsStore?: NameRegistryStore
   /** Where what Control has yet to be told is kept, from an earlier server; by default nothing. */
   carryStore?: NameRegistryStore
   /** When it is time to look where the voice is again; by default never. */
@@ -130,8 +138,7 @@ function harness(opts: {
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
-  /** Agents off the live roster: ended, or archived. */
-  const gone = new Set<NodeId>()
+  const gone = world.gone
   const agents = (): RosterAgent[] => [
     {
       nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, stateSince: world.since.get(KEVIN_ID), transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session',
@@ -285,6 +292,8 @@ function harness(opts: {
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     backlog,
     watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
+    ended: new EndedAgents({ store: opts.endedStore ?? memoryStore() }),
+    news: new PendingNews({ store: opts.newsStore ?? memoryStore() }),
     carryOver: new CarryOver({ store: opts.carryStore ?? memoryStore() }),
     judgeBacklog: opts.judgeBacklog ?? (async () => { throw new Error('no judge') }),
     judgePause: opts.judgePause ?? (async () => { throw new Error('no judge') }),
@@ -2470,6 +2479,81 @@ describe('Receptionist: agents it started, and agents that end', () => {
       await h.receptionist.hear('what did Kevin say?', 'spoken')
       await flush()
     })
+  })
+
+  it('tells news the last server caught but never got to tell', async () => {
+    const world = agentWorld()
+    const watchStore = memoryStore()
+    const newsStore = memoryStore()
+    const before = harness({ world, watchStore, newsStore, replies: [reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }])] })
+    changeState(world, KEVIN_ID, 'working')
+    before.receptionist.agentStateChanged(KEVIN_ID, 'working')
+    await before.receptionist.hear('tell me when Kevin is done', 'spoken')
+    await flush()
+    // The user is talking, so the news waits; then the server goes.
+    before.receptionist.userSpeaking(true)
+    before.end(KEVIN_ID)
+    await flush()
+    expect(before.turns).toHaveLength(1)
+
+    const after = harness({
+      world, watchStore, newsStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toMatch(/\{Kevin:[a-z]+-[a-z]+\} has ended/)
+        return reply([{ from: 'control', text: 'Kevin has ended.' }])
+      }],
+    })
+    after.receptionist.resumeWatches()
+    await flush()
+    expect(after.turns).toHaveLength(1)
+    // Told: a third server has nothing to tell.
+    const third = harness({ world, watchStore, newsStore, replies: [] })
+    third.receptionist.resumeWatches()
+    await flush()
+    expect(third.turns).toHaveLength(0)
+  })
+
+  it('still reads and brings back an agent that ended before the server restarted', async () => {
+    const world = agentWorld()
+    const endedStore = memoryStore()
+    const before = harness({
+      world, endedStore,
+      replies: [reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]), reply([])],
+    })
+    changeState(world, KEVIN_ID, 'working')
+    before.receptionist.agentStateChanged(KEVIN_ID, 'working')
+    await before.receptionist.hear('tell me when Kevin is done', 'spoken')
+    await flush()
+    before.end(KEVIN_ID)
+    await flush()
+
+    // A new server: nothing in memory, the same archive and the same files.
+    const after = harness({
+      world, endedStore,
+      replies: [
+        reply([], [{ tool: 'read', agent: `Kevin:${KEVIN}` }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`read {Kevin:${KEVIN}}:`)
+          expect(turn.prompt).toContain('This agent has ended')
+          expect(turn.prompt).toContain('42 litres in the big tank')
+          return reply([{ from: 'control', text: 'Kevin measured 42 litres.' }])
+        },
+        reply([{ from: 'control', text: 'Bringing Kevin back.' }], [{ tool: 'unarchive_agent', agent: `Kevin:${KEVIN}` }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`unarchive_agent brought back {Kevin:${KEVIN}} ("water sim"): it is live again`)
+          return reply([{ from: 'control', text: 'Kevin is back.' }])
+        },
+      ],
+    })
+    // The names outlive the server too (names.json); this fake keeps them per harness.
+    after.assigned.set(KEVIN_ID, before.assigned.get(KEVIN_ID)!)
+    await after.receptionist.hear('what did Kevin say?', 'spoken')
+    await flush()
+    await after.receptionist.hear('bring Kevin back', 'spoken')
+    await flush()
+    expect(after.wire).toEqual([`unarchive ${KEVIN_ID}`])
+    // Back, and so no longer among the ended, on disk as in memory.
+    expect(new EndedAgents({ store: endedStore }).get(KEVIN_ID)).toBeUndefined()
   })
 
   it('refuses an ended agent for anything but read, ask_agent and unarchive_agent', async () => {

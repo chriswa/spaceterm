@@ -80,6 +80,8 @@ import { NO_LISTENER, Receptionist, VOICE_FOLLOW_MS } from './receptionist/recep
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { Watches } from './receptionist/watches'
+import { EndedAgents } from './receptionist/ended-agents'
+import { PendingNews } from './receptionist/pending-news'
 import { CarryOver } from './receptionist/carry-over'
 import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
@@ -3314,6 +3316,8 @@ async function startServer(): Promise<void> {
     backlog: new Backlog(),
     // Kept on disk too: a restart must not cost the user an answer Control promised them.
     watches: new Watches(),
+    ended: new EndedAgents(),
+    news: new PendingNews(),
     // And what Control has yet to be told, such as a reply a restart cut off.
     carryOver: new CarryOver(),
     judgeBacklog: jevBacklogJudge(agentSearchDeps.runJev),
