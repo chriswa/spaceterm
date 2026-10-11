@@ -47,23 +47,32 @@ describe('the phone’s Control button', () => {
     expect(button().getAttribute('aria-label')).toMatch(/Control is here/)
   })
 
-  it('has sound coming from the headset while unmuted here, and none while muted', () => {
+  it('has sound coming from the headset only while Control speaks here: not released, not in text', () => {
     const { container } = render(<ControlButton />)
     const sound = () => container.querySelector('.control-headset__sound')
+    expect(sound()).toBeNull()
+
+    hold()
     expect(sound()).not.toBeNull()
+    expect(button().getAttribute('aria-label')).toMatch(/Control is here, speaking aloud/)
 
     hold(true)
     expect(sound()).toBeNull()
     expect(container.querySelector('.control-cross')).toBeNull()
-    expect(button().getAttribute('aria-label')).toMatch(/muted here/)
+    expect(button().getAttribute('aria-label')).toMatch(/Control is here, in text/)
+
+    // Released while the server remembers this phone unmuted: still no sound.
+    act(() => useReceptionistStore.getState().setHolder(null, FAKE_DEVICE_ID, []))
+    expect(sound()).toBeNull()
   })
 
-  it('is filled while the transcript is open, still showing the X and the sound', () => {
+  it('is filled while the transcript is open, still showing the X, or the sound', () => {
     const { container } = render(<ControlButton />)
     fireEvent.click(button())
     expect(button().classList.contains('m-control--open')).toBe(true)
     expect(container.querySelector('.control-headset')).not.toBeNull()
     expect(container.querySelector('.control-cross')).not.toBeNull()
+    hold()
     expect(container.querySelector('.control-headset__sound')).not.toBeNull()
   })
 

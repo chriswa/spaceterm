@@ -8,7 +8,7 @@ import { ControlBadges, ControlHeadset, controlWhereabouts } from '../ControlBad
  * The receptionist's toolbar button. A click shows or hides Control's
  * transcript (ControlTranscript.tsx), and does nothing else: taking Control,
  * letting it go and muting it are the transcript's. The button says how
- * those stand (ControlBadges.tsx): sound from the headset while unmuted, a
+ * those stand (ControlBadges.tsx): sound from the headset while it speaks here, a
  * red X while Control is not here, when it is also dim. Filled white while
  * the transcript is open. While Control works, a speech bubble takes the top
  * right: cyan while it thinks, amber while it speaks.

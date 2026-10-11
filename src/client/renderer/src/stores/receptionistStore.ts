@@ -12,7 +12,7 @@ export interface ReceptionistHolding {
   muted: boolean
 }
 
-interface ReceptionistState {
+export interface ReceptionistState {
   /** What the receptionist is doing. Server-owned, the same on every client. */
   phase: ReceptionistPhase
   /** Why it last failed, while it stays failed. */
@@ -56,6 +56,20 @@ export const useReceptionistStore = create<ReceptionistState>((set) => ({
     mutedHere: muted ? muted.includes(deviceId) : holder?.deviceId === deviceId && holder.muted === true,
   }),
 }))
+
+/**
+ * Where Control is, as far as this device goes — the one thing the user sees
+ * and chooses: not here, here in writing (held, muted), or here aloud (held,
+ * unmuted). The server keeps holding and muting apart and remembers this
+ * device's mute while it does not hold Control, but that mute changes nothing
+ * the user can see until Control is here, so Released hides it.
+ */
+export type ControlMode = 'released' | 'text' | 'speak'
+
+export function controlMode({ holder, mutedHere }: Pick<ReceptionistState, 'holder' | 'mutedHere'>): ControlMode {
+  if (!holder?.mine) return 'released'
+  return mutedHere ? 'text' : 'speak'
+}
 
 /**
  * Control is thinking where it can be heard: this device holds it, unmuted.

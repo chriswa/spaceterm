@@ -9,7 +9,7 @@ import { ControlBadges, ControlHeadset, controlWhereabouts } from '@/components/
  * go and muting it are the transcript's.
  *
  * It shows how those stand (ControlBadges.tsx): sound from the headset while
- * unmuted here, a red X while Control is not here (when it is also dim), the
+ * Control speaks here, a red X while Control is not here (when it is also dim), the
  * holder's name top right while another device has it, and a count, as on the
  * rocket, of replies written here muted and not read yet bottom right. Filled
  * while the transcript is open. A yellow ring while it thinks; while anything

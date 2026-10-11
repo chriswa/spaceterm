@@ -51,7 +51,7 @@ describe('ControlButton', () => {
     heldBy('Phone')
     expect(container.querySelector('.control-cross')).not.toBeNull()
     expect(button.className).toContain('toolbar__control--away')
-    expect(button.dataset.tooltip).toMatch(/Control is on your Phone, unmuted here\. Click to open the transcript/)
+    expect(button.dataset.tooltip).toMatch(/Control is on your Phone\. Click to open the transcript/)
     expect(container.querySelector('.control-badge--where')?.textContent).toBe('Phone')
 
     heldBy('here')
@@ -76,15 +76,33 @@ describe('ControlButton', () => {
     expect(container.querySelector('.toolbar__control-busy')).toBeNull()
   })
 
-  it('has sound coming from the headset unless muted here', () => {
+  it('has sound coming from the headset only while Control speaks here', () => {
     const { container } = render(<ControlButton />)
-    expect(container.querySelector('.control-headset__sound')).not.toBeNull()
+    const sound = () => container.querySelector('.control-headset__sound')
+    const tooltip = () => container.querySelector('button')!.dataset.tooltip
+    // Released, unmuted here: no sound.
+    expect(sound()).toBeNull()
+    heldBy('here')
+    expect(sound()).not.toBeNull()
+    expect(tooltip()).toMatch(/Control is here, speaking aloud/)
     act(() => useReceptionistStore.getState().setHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac', muted: true }, FAKE_DEVICE_ID))
-    expect(container.querySelector('.control-headset__sound')).toBeNull()
-    expect(container.querySelector('button')!.dataset.tooltip).toMatch(/muted here/)
+    expect(sound()).toBeNull()
+    expect(tooltip()).toMatch(/Control is here, in text/)
+  })
+
+  it('has no sound while released, whatever mute the server remembers here', () => {
+    const { container } = render(<ControlButton />)
+    for (const muted of [[], [FAKE_DEVICE_ID]]) {
+      act(() => useReceptionistStore.getState().setHolder({ deviceId: 'other', label: 'Phone' }, FAKE_DEVICE_ID, muted))
+      expect(container.querySelector('.control-headset__sound')).toBeNull()
+      expect(container.querySelector('button')!.dataset.tooltip).toMatch(/Control is on your Phone\. Click/)
+      act(() => useReceptionistStore.getState().setHolder(null, FAKE_DEVICE_ID, muted))
+      expect(container.querySelector('.control-headset__sound')).toBeNull()
+    }
   })
 
   it('draws its sound apart from the headset, and inside the icon', () => {
+    heldBy('here')
     const { container } = render(<ControlButton />)
     const [minX, , width] = container.querySelector('.control-headset')!.getAttribute('viewBox')!.split(' ').map(Number)
     const arcs = [...container.querySelectorAll('.control-headset__sound path')].map((p) => p.getAttribute('d')!)

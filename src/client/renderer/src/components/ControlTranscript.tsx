@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { ControlTranscriptEntry, ReceptionistHoldAction } from '../../../../shared/protocol'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
-import { useReceptionistStore, type ReceptionistHolding } from '../stores/receptionistStore'
+import { controlMode, useReceptionistStore, type ControlMode } from '../stores/receptionistStore'
 import { ChoiceGroup } from './ChoiceGroup'
 import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
 import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
@@ -371,14 +371,6 @@ function time(timestamp: string): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
-/** Where Control is, as far as this device goes: not here, here in writing, or here aloud. */
-export type ControlMode = 'released' | 'text' | 'speak'
-
-export function controlMode(holder: ReceptionistHolding | null, mutedHere: boolean): ControlMode {
-  if (!holder?.mine) return 'released'
-  return mutedHere ? 'text' : 'speak'
-}
-
 /**
  * What to ask the server (`receptionist.hold`) to move Control from `from` to
  * `to`. The server keeps holding and muting apart, and remembers this
@@ -407,10 +399,8 @@ const MODES = [
  * catch-up while replies wait unread.
  */
 function ControlFooter({ extra }: { extra?: ReactNode }) {
-  const holder = useReceptionistStore((s) => s.holder)
-  const mutedHere = useReceptionistStore((s) => s.mutedHere)
+  const mode = useReceptionistStore(controlMode)
   const unread = useReceptionistStore((s) => s.unread.count)
-  const mode = controlMode(holder, mutedHere)
   return (
     <div className="control-transcript__controls">
       {unread > 0 && (

@@ -4420,7 +4420,7 @@ html, body, #root {
 }
 
 /* What lies over the Control button (ControlBadges.tsx), on the Mac's toolbar
-   and the phone's bar alike. The headset gives off sound while unmuted here.
+   and the phone's bar alike. The headset gives off sound while Control speaks here.
    A big red X lies across the button while Control is not here, the holder's
    name sits top right while another device has it, and the unread count
    bottom right. Each is edged in the bar's black so it reads apart from the

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { FAKE_DEVICE_ID, installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { initServerSync, destroyServerSync } from '../lib/server-sync'
-import { useReceptionistStore, isThinkingWithinEarshot } from './receptionistStore'
+import { useReceptionistStore, isThinkingWithinEarshot, controlMode } from './receptionistStore'
 import { useAgentNamesStore } from './agentNamesStore'
 
 /**
@@ -115,5 +115,23 @@ describe('the thinking cue plays only within earshot', () => {
 
     bridge.emit.receptionistHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac', muted: true }, [FAKE_DEVICE_ID])
     expect(thinkingHere()).toBe(false)
+  })
+})
+
+
+describe('controlMode', () => {
+  const mine = { label: 'Mac', mine: true, muted: false }
+  const theirs = { label: 'Phone', mine: false, muted: false }
+
+  it('is Released unless this device holds Control, whatever its remembered mute', () => {
+    for (const mutedHere of [false, true]) {
+      expect(controlMode({ holder: null, mutedHere })).toBe('released')
+      expect(controlMode({ holder: theirs, mutedHere })).toBe('released')
+    }
+  })
+
+  it('is Text or Speak while held here, by this device’s mute', () => {
+    expect(controlMode({ holder: mine, mutedHere: true })).toBe('text')
+    expect(controlMode({ holder: mine, mutedHere: false })).toBe('speak')
   })
 })
