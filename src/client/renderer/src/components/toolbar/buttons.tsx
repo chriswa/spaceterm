@@ -30,8 +30,9 @@ import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
 import { usePendingUpdates } from '../../stores/clientStalenessStore'
 import { useUpdateActionsStore } from '../../stores/updateActionsStore'
 import { useNodeStore } from '../../stores/nodeStore'
-import { restartableAgentSurfaces, rollingRestart } from '../../lib/rolling-restart'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon, RollingRestartIcon, ReloadClientIcon, InstallAppIcon } from './icons'
+import { restartableAgentSurfaces } from '../../lib/rolling-restart'
+import { useRollingRestartStore } from '../../stores/rollingRestartStore'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon, FramesIcon, ReloadClientIcon, InstallAppIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -53,20 +54,23 @@ export function DebugDropdown({ onDebugCapture, onInertiaLogDump }: {
   const startTrace = usePerfStore(s => s.startTrace)
   const powerMonitor = usePowerMonitorStore(s => s.enabled)
   const togglePowerMonitor = usePowerMonitorStore(s => s.toggle)
+  // A rolling restart outlives the menu that started it, so the bug button
+  // carries its progress the way the old standalone button did.
+  const rolling = useRollingRestartStore(s => s.progress)
   const menu = useToolbarMenu()
 
   return (
     <div className="toolbar__menu-group" ref={menu.ref}>
       <button
-        className={'toolbar__btn' + (menu.open ? ' toolbar__btn--active' : '')}
+        className={'toolbar__btn' + (menu.open || rolling ? ' toolbar__btn--active' : '')}
         onClick={menu.toggle}
-        data-tooltip="Debug tools"
+        data-tooltip={rolling ? `Debug tools — rolling restart ${rolling.done}/${rolling.total}` : 'Debug tools'}
         data-tooltip-no-flip
       >
         <BugIcon />
       </button>
       {menu.open && (
-        <div className="toolbar__menu">
+        <div className="toolbar__menu toolbar__menu--wide">
           <button
             className={'toolbar__menu-item' + (tracing ? ' toolbar__menu-item--active' : '')}
             onClick={() => { startTrace(); menu.close() }}
@@ -89,7 +93,7 @@ export function DebugDropdown({ onDebugCapture, onInertiaLogDump }: {
             <ScrollIcon />
             <span>Inertia Log</span>
           </button>
-          {/* These two stay open: each toggles something you want to see the
+          {/* These three stay open: each toggles something you want to see the
               state of, so closing the menu would hide the answer. */}
           <button
             className={'toolbar__menu-item' + (powerMonitor ? ' toolbar__menu-item--active' : '')}
@@ -99,9 +103,76 @@ export function DebugDropdown({ onDebugCapture, onInertiaLogDump }: {
             <span>Power Monitor</span>
           </button>
           <HighPerformanceGpuItem />
+          <BackgroundFramesItem />
+          <RollingRestartItem onStart={menu.close} />
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Whether an unfocused window keeps drawing at full rate.
+ *
+ * Active means "full" — the more expensive setting — so the lit item is the
+ * one costing you something, which is the direction that makes a power toggle
+ * readable at a glance.
+ */
+export function BackgroundFramesItem() {
+  const full = useFramePolicyStore(s => s.unfocused) === 'full'
+  const toggle = useFramePolicyStore(s => s.toggle)
+  return (
+    <button
+      className={'toolbar__menu-item' + (full ? ' toolbar__menu-item--active' : '')}
+      onClick={toggle}
+      data-tooltip={full
+        ? 'Draws at full rate even when another app has focus'
+        : `Drops to ${REDUCED_HZ} fps when unfocused, full rate for a moment whenever something changes`}
+      data-tooltip-no-flip
+    >
+      <FramesIcon />
+      <span>Background Frames</span>
+      <span className="toolbar__menu-note">{full ? 'full' : 'reduced'}</span>
+    </button>
+  )
+}
+
+/**
+ * Restart every live agent surface, one at a time.
+ *
+ * Indiscriminate: a surface mid-turn or running a long background task is
+ * killed along with the idle ones. So the item says how many surfaces it will
+ * hit and what that costs, under a heading of its own and in the danger
+ * colour, rather than reading as one more debug toggle.
+ */
+export function RollingRestartItem({ onStart }: { onStart: () => void }) {
+  const count = useNodeStore(s => restartableAgentSurfaces(s.nodes).length)
+  const progress = useRollingRestartStore(s => s.progress)
+  const start = useRollingRestartStore(s => s.start)
+
+  const onClick = () => {
+    onStart()
+    // Read at click time, not render time, so a surface spawned while the menu
+    // was open is included.
+    void start(restartableAgentSurfaces(useNodeStore.getState().nodes))
+  }
+
+  return (
+    <>
+      <div className="toolbar__menu-heading">Rolling restart</div>
+      <button
+        className="toolbar__menu-item toolbar__menu-item--stacked toolbar__menu-item--danger"
+        onClick={onClick}
+        disabled={count === 0 || progress !== null}
+      >
+        <span className="toolbar__menu-label">
+          {progress
+            ? `Restarting — ${progress.done}/${progress.total}`
+            : count === 0 ? 'No live agent surfaces' : `Restart ${count} agent surface${count === 1 ? '' : 's'}`}
+        </span>
+        <span className="toolbar__menu-blurb">Kills turns and background tasks in flight; each resumes its session</span>
+      </button>
+    </>
   )
 }
 
@@ -397,67 +468,6 @@ export function ThemePicker() {
   )
 }
 
-/**
- * Restart every live agent surface, one at a time.
- *
- * Behind a menu rather than a bare button because it is indiscriminate: a
- * surface mid-turn or running a long background task is killed along with the
- * idle ones. The menu is the confirmation — opening it does nothing, and the
- * item that acts says how many surfaces it will hit and what that costs.
- */
-export function RollingRestartButton() {
-  const count = useNodeStore(s => restartableAgentSurfaces(s.nodes).length)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
-  const menu = useToolbarMenu()
-  const running = progress !== null
-
-  const start = async () => {
-    menu.close()
-    // Read at click time, not render time, so a surface spawned while the menu
-    // was open is included.
-    const surfaces = restartableAgentSurfaces(useNodeStore.getState().nodes)
-    if (surfaces.length === 0) return
-    setProgress({ done: 0, total: surfaces.length })
-    showToast(`Restarting ${surfaces.length} agent surface${surfaces.length === 1 ? '' : 's'}…`)
-    const { restarted, failed } = await rollingRestart(surfaces, (done, total) => setProgress({ done, total }))
-    setProgress(null)
-    showToast(failed === 0
-      ? `Restarted ${restarted} agent surface${restarted === 1 ? '' : 's'}`
-      : `Restarted ${restarted}, ${failed} failed — see their alerts`)
-  }
-
-  return (
-    <div className="toolbar__menu-group" ref={menu.ref}>
-      <button
-        className={'toolbar__btn' + (menu.open || running ? ' toolbar__btn--active' : '')}
-        onClick={menu.toggle}
-        disabled={running}
-        data-tooltip={running
-          ? `Rolling restart — ${progress.done}/${progress.total}`
-          : 'Rolling Restart — Restart every agent surface, one at a time'}
-        data-tooltip-no-flip
-      >
-        <RollingRestartIcon />
-      </button>
-      {menu.open && (
-        <div className="toolbar__menu toolbar__menu--describing">
-          <div className="toolbar__menu-heading">Rolling restart</div>
-          <button
-            className="toolbar__menu-item toolbar__menu-item--danger"
-            onClick={() => { void start() }}
-            disabled={count === 0}
-          >
-            <span className="toolbar__menu-label">
-              {count === 0 ? 'No live agent surfaces' : `Restart ${count} agent surface${count === 1 ? '' : 's'}`}
-            </span>
-            <span className="toolbar__menu-blurb">Kills turns and background tasks in flight; each resumes its session</span>
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // --- Host-driven buttons ---
 //
 // These three cannot be standalone: their state lives in App (a keyboard-driven
@@ -562,31 +572,6 @@ export function KeycastToggle({ enabled, onToggle }: { enabled: boolean; onToggl
       data-tooltip-no-flip
     >
       <KeycastIcon />
-    </button>
-  )
-}
-
-/**
- * Whether an unfocused window keeps drawing at full rate.
- *
- * Active means "full" — the more expensive setting — so the lit button is the
- * one costing you something, which is the direction that makes a power toggle
- * readable at a glance.
- */
-export function UnfocusedFramesToggle() {
-  const unfocused = useFramePolicyStore(s => s.unfocused)
-  const toggle = useFramePolicyStore(s => s.toggle)
-  const full = unfocused === 'full'
-  return (
-    <button
-      className={'toolbar__btn' + (full ? ' toolbar__btn--active' : '')}
-      onClick={toggle}
-      data-tooltip={full
-        ? 'Background Frames: Full — draws at full rate even when another app has focus'
-        : `Background Frames: Reduced — drops to ${REDUCED_HZ} fps when unfocused, full rate for a moment whenever something changes`}
-      data-tooltip-no-flip
-    >
-      <GaugeIcon />
     </button>
   )
 }

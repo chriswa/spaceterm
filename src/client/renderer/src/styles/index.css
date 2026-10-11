@@ -503,6 +503,12 @@ html, body, #root {
   min-width: 240px;
 }
 
+/* Room for one explained item without wrapping its blurb to a word a line
+   (the debug menu's rolling restart). */
+.toolbar__menu--wide {
+  min-width: 240px;
+}
+
 /* For a list long enough to run off the top of a short window (the dim-stale
    menu is two schedules plus sixteen thresholds). */
 .toolbar__menu--scrolling {

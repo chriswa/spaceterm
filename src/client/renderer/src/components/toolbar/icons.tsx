@@ -197,16 +197,12 @@ export function DustpanIcon() {
   )
 }
 
-export function RollingRestartIcon() {
+export function FramesIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
-      {/* A restart arrow, open at the top right */}
-      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
-      <path d="M12.2 1.6v2.8H9.4" />
-      {/* The surfaces it goes round, one after another */}
-      <circle cx="5.5" cy="8" r="0.9" fill="currentColor" stroke="none" />
-      <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none" />
-      <circle cx="10.5" cy="8" r="0.9" fill="currentColor" stroke="none" />
+      {/* Frames stacked one behind another: what keeps being drawn */}
+      <rect x="1.75" y="5.5" width="9" height="7" rx="1" />
+      <path d="M4.5 3.5h8.75a1 1 0 0 1 1 1v6" />
     </svg>
   )
 }

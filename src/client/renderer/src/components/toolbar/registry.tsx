@@ -20,10 +20,8 @@ import {
   AutoStampToggle,
   ReloadClientButton,
   RestartButton,
-  RollingRestartButton,
   StepOutButton,
-  ThemePicker,
-  UnfocusedFramesToggle
+  ThemePicker
 } from './buttons'
 
 /**
@@ -140,7 +138,6 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
     kind: 'host',
     render: (h) => <RestartButton restarting={h.restartingSpaceterm} onRestart={h.onRestartSpaceterm} />
   },
-  { id: 'rolling-restart', slot: 'buttons', kind: 'standalone', render: () => <RollingRestartButton /> },
   { id: 'camera-lock', slot: 'buttons', kind: 'standalone', render: () => <CameraLockToggle /> },
   {
     id: 'debug',
@@ -155,7 +152,6 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
     kind: 'host',
     render: (h) => <KeycastToggle enabled={h.keycastEnabled} onToggle={h.onKeycastToggle} />
   },
-  { id: 'unfocused-frames', slot: 'buttons', kind: 'standalone', render: () => <UnfocusedFramesToggle /> },
   { id: 'notification-sound', slot: 'buttons', kind: 'standalone', render: () => <NotificationSoundToggle /> },
   { id: 'auto-stamp', slot: 'buttons', kind: 'standalone', render: () => <AutoStampToggle /> },
   { id: 'copy-cleanup', slot: 'buttons', kind: 'standalone', render: () => <CopyCleanupToggle /> },
