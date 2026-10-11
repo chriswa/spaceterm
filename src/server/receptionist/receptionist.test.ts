@@ -2130,14 +2130,15 @@ describe('Receptionist: watching an agent until the user is told', () => {
     h.receptionist.userSpeaking(true)
     h.setState(SALLY_ID, 'stopped')
     await flush()
-    await h.receptionist.hear('what about Leon', 'spoken')
+    const heard = h.receptionist.hear('what about Leon', 'spoken')
     h.receptionist.userSpeaking(false)
+    await heard
     await flush()
     expect(h.turns).toHaveLength(3)
     expect(h.traces.map(trace => `${trace.what}: ${trace.text}`)).toContainEqual(expect.stringMatching(
       new RegExp(`^requeued: Said nothing of \\{\\w+:${SALLY}\\}'s stop while answering you`)))
-    // Told: nothing is left watching for a stop that will not come.
-    expect(h.receptionist.watchedForTest?.() ?? []).toEqual([])
+    // Not left to a watch for a stop that would never come.
+    expect(h.traces.map(trace => trace.text)).not.toContainEqual(expect.stringMatching(/watched again/))
   })
 
   it('stops watching an agent whose stop it set aside on the backlog', async () => {
