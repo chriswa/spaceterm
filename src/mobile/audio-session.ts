@@ -16,8 +16,20 @@
  */
 
 import { recordMobileEvent } from './mobile-events'
+import { nativeMicrophoneAvailable } from './native-microphone'
 
-type SessionType = 'playback' | 'play-and-record'
+type SessionType = 'playback' | 'ambient' | 'play-and-record'
+
+/**
+ * What the page is set to when nothing is recording. In a browser,
+ * playback. In the iPhone app, ambient — WebKit's only type that mixes with
+ * other apps' audio: playback stopped Spotify the first time the page made a
+ * sound, and WebKit never lets it carry on (it deactivates without notifying
+ * others). There the app plays Control's voice, records every dictation and
+ * turns music down itself (NativeMicrophone.swift). The cost: the page's own
+ * sounds — the sonar, the cues — are silenced by the Ring/Silent switch.
+ */
+const idleType = (): SessionType => nativeMicrophoneAvailable() ? 'ambient' : 'playback'
 
 interface AudioSessionLike { type: string }
 
@@ -48,7 +60,7 @@ function apply(type: SessionType): void {
 
 /** At startup: everything this page plays is for listening to. */
 export function initAudioSession(): void {
-  if (recording === 0) apply('playback')
+  if (recording === 0) apply(idleType())
 }
 
 /** The session's mode and how many recordings hold it, for a log line. */
@@ -68,6 +80,6 @@ export function beginRecordingSession(): () => void {
     if (released) return
     released = true
     recording--
-    if (recording === 0) apply('playback')
+    if (recording === 0) apply(idleType())
   }
 }

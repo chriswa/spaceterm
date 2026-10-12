@@ -214,6 +214,27 @@ silence it. `native-stay-awake` and `native-awake-running` in the event record s
 coming and going, and the `native-heartbeat` while in the background says
 whether the page still answers (`pageAnsweredMs`).
 
+### Music from other apps
+
+In the iPhone app, nothing of Spaceterm's stops Spotify or any other app's
+audio; it turns it down and lets it back up. WebKit could not: its recording
+and its playback type both interrupt other audio, and it deactivates without
+notifying others, so music it stopped stayed stopped. So in the app every
+dictation uses the app's own microphone (`held-microphone.ts`), whose session
+mixes; the page's idle type is ambient, WebKit's one type that mixes; and the
+app ducks other audio (`.duckOthers`) while a dictation's microphone is open
+and while Control thinks or speaks aloud here (`duck-others.ts`, which waits
+`DUCK_RELEASE_MS` before letting it back up). iOS applies ducking only when a
+session is activated, so each change brings the app's session up again,
+deactivated between with `notifyOthersOnDeactivation`. Hands-free's held
+microphone does not duck. Ambient's cost: the Ring/Silent switch silences the
+page's own sounds, the sonar and the cues. `native-duck-others` and the
+`ducking` field on `native-awake-running` / `native-mic-running` show it.
+
+The app's audio session is changed on its own queue, never the main thread:
+activating it blocks for a second or two while AirPods change profile, and
+on the main thread that froze the screen after every dictation.
+
 ## Control mode: the canvas stops
 
 While Control's transcript is up, or the screen is off, the phone is only

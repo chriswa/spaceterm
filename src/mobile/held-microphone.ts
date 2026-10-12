@@ -142,15 +142,6 @@ function describeWebCapture(stream: MediaStream, context: AudioContext): string 
 /** Every capture of WebKit's microphone, as opposed to the app's own. */
 const webCaptures = new WeakSet<Capture>()
 
-/**
- * In the iPhone app, WebKit's microphone has been found silent: live, granted,
- * and sending nothing. Seen after the app has been away and come back, and it
- * stays that way until the app is relaunched (October 2026: every such
- * dictation failed, and every relaunch fixed it). The app's own microphone
- * is not affected, so from then on this page's dictations use that.
- */
-let webMicrophoneSilent = false
-
 /** A capture's audio, fanned out to whoever is listening. */
 function captureOf(opened: Awaited<ReturnType<typeof openCapture>>, release: (broken: boolean) => void): Capture {
   const listeners = new Set<(block: Float32Array) => void>()
@@ -283,7 +274,13 @@ export function acquire(): Promise<Capture> {
       announce()
       return capture
     }
-    if (webMicrophoneSilent && nativeMicrophoneAvailable()) return openAppCapture()
+    // In the app, every dictation uses the app's own microphone. WebKit's
+    // interrupts other apps' audio — music stops — and never tells it to
+    // carry on (it deactivates without notifying others), so Spotify stayed
+    // stopped after every dictation; the app's mixes and turns it down
+    // instead, then lets it back up. It also skips WebKit's second-long
+    // freeze of the page while its microphone starts.
+    if (nativeMicrophoneAvailable()) return openAppCapture()
     const opened = await openCapture()
     const label = opened.stream.getAudioTracks()[0]?.label ?? ''
     if (wanted && isHeadset(label)) {
@@ -315,21 +312,23 @@ function nativeCapture(native: NativeCaptureHandle, release: (broken: boolean) =
 
 /** The app's own microphone for one dictation, closed when it is released. */
 async function openAppCapture(): Promise<Capture> {
-  const native = await openNativeMicrophone()
+  const native = await openNativeMicrophone({ duck: true })
   recordMobileEvent('mic-opened', { source: 'native', input: native.describe() })
   return nativeCapture(native, () => native.close())
 }
 
 /**
  * The app's own microphone in place of a capture of WebKit's that has sent
- * nothing (see `webMicrophoneSilent`); the silent one is closed first, as
- * iOS lets only one recorder win. Undefined for any other capture, or in a
- * browser, where there is nothing else to try.
+ * nothing — live, granted, and silent, as WebKit's was after the app had been
+ * away (October 2026); the silent one is closed first, as iOS lets only one
+ * recorder win. Undefined for any other capture, or in a browser, where there
+ * is nothing else to try. In the app every dictation now uses the app's own
+ * microphone (`acquire`), so this is a guard for a WebKit capture that should
+ * no longer happen there.
  */
 export async function replaceSilentCapture(capture: Capture): Promise<Capture | undefined> {
   if (!webCaptures.has(capture) || !nativeMicrophoneAvailable()) return undefined
-  webMicrophoneSilent = true
-  log(`WebKit's microphone sent nothing (${capture.describe()}): using the app's own from now on`)
+  log(`WebKit's microphone sent nothing (${capture.describe()}): using the app's own`)
   recordMobileEvent('web-mic-silent', { capture: capture.describe() })
   capture.release(true)
   return openAppCapture()

@@ -221,6 +221,11 @@ export function keepAppAwake(on: boolean): void {
   handler()?.postMessage({ action: 'stay-awake', on })
 }
 
+/** Other apps' audio turned down, or let back up, by the app (duck-others.ts). Nothing in a browser. */
+export function nativeDuckOthers(on: boolean): void {
+  handler()?.postMessage({ action: 'duck-others', on })
+}
+
 /**
  * The phone's haptic signals for the microphone, from the app; nothing in a
  * browser (iOS gives a page no vibration):
@@ -271,8 +276,13 @@ export interface NativeCaptureHandle {
   close(): void
 }
 
-/** Start the app's microphone. Needs no tap. Rejects with the app's reason. */
-export async function openNativeMicrophone(): Promise<NativeCaptureHandle> {
+/**
+ * Start the app's microphone. Needs no tap. Rejects with the app's reason.
+ * `duck`: for one dictation, so other apps' audio is turned down while it is
+ * open; hands-free's held microphone is not, or music would stay down the
+ * whole time it is on.
+ */
+export async function openNativeMicrophone({ duck = false }: { duck?: boolean } = {}): Promise<NativeCaptureHandle> {
   install()
   const post = handler()
   if (!post) throw new Error('This is not the Spaceterm app, so it has no microphone of its own')
@@ -291,7 +301,7 @@ export async function openNativeMicrophone(): Promise<NativeCaptureHandle> {
     timer = setTimeout(() => { stateWaiters.delete(check); reject(new Error('The app\'s microphone did not start')) }, START_TIMEOUT_MS)
     stateWaiters.add(check)
   })
-  post.postMessage({ action: 'start' })
+  post.postMessage({ action: 'start', duck })
   await running
   let closed = false
   return {
