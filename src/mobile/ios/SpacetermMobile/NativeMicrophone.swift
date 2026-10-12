@@ -125,7 +125,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         MainActor.assumeIsolated {
             switch action {
             // `duck`: a dictation's microphone, which turns other audio down while it is open; hands-free's held one does not.
-            case "start": start(duck: (message.body as? [String: Any])?["duck"] as? Bool ?? false)
+            // `highQuality`: a dictation's, asking for AirPods' full-bandwidth recording (`Plan.highQuality`).
+            case "start": start(
+                duck: (message.body as? [String: Any])?["duck"] as? Bool ?? false,
+                highQuality: (message.body as? [String: Any])?["highQuality"] as? Bool ?? false
+            )
             case "stop": stop()
             // Control is thinking or speaking aloud here: other apps' audio — music — turned down meanwhile.
             case "duck-others": setDuckForControl((message.body as? [String: Any])?["on"] as? Bool ?? false)
@@ -143,9 +147,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func start(duck: Bool) {
+    private func start(duck: Bool, highQuality: Bool) {
         wanted = true
         duckForDictation = duck
+        highQualityForDictation = highQuality
         // A new attempt: the page waits for running or an error, and an old error would answer it.
         lastError = nil
         if running {
@@ -164,6 +169,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func stop() {
         wanted = false
         duckForDictation = false
+        highQualityForDictation = false
         let was = up
         events.record("native-mic-stopped")
         if was == .microphone { log("stopped") }
@@ -267,6 +273,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * microphone does not duck, or music would be quiet the whole time it is on.
      */
     private var duckForDictation = false
+    /// The open microphone is a dictation's that asked for AirPods' full-bandwidth recording.
+    private var highQualityForDictation = false
     private var duckForControl = false
     private var duckOthers: Bool { (duckForDictation && wanted) || duckForControl }
     /// What the active session was activated with; nil while it is not active. Ducking takes effect only on activation.
@@ -310,7 +318,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             microphone: mode == .microphone, duck: duckOthers,
             // Ducking changes only with a deactivation between; music is told it may come back up.
             deactivateFirst: sessionDucking != nil && sessionDucking != duckOthers,
-            voiceProcessingAllowed: voiceProcessingAllowed
+            voiceProcessingAllowed: voiceProcessingAllowed,
+            highQuality: mode == .microphone && highQualityForDictation
         )
         let capture = self.capture
         audioQueue.async {
@@ -326,6 +335,19 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let duck: Bool
         let deactivateFirst: Bool
         let voiceProcessingAllowed: Bool
+        /**
+         * iOS 26's `bluetoothHighQualityRecording`, for a dictation (an
+         * experiment, October 2026): AirPods that support it record over a
+         * full-bandwidth link instead of dropping into the hands-free (HFP)
+         * call profile — the profile switch that held each press up for most
+         * of a second, and turned music into a phone call while it lasted.
+         * HFP stays the fallback for a route without it. Apple's header says
+         * it works only in the default mode and may add input latency, so it
+         * is not for hands-free's held microphone; and it goes without voice
+         * processing, whose voice-chat I/O is what HFP is for. A dictation
+         * stops Control first, so there is nothing to cancel.
+         */
+        let highQuality: Bool
     }
 
     private struct Started {
@@ -333,10 +355,16 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let voiceProcessing: Bool
         let voiceProcessingError: String?
         let sampleRate: Double
+        /// How long the blocking part took, from the old engine stopping to the new one running.
+        let ms: Int
+        /// For the record: whether high-quality recording was asked for, refused, supported by the input, and on.
+        var highQuality: [String: Any] = [:]
     }
 
     /// The blocking part of a bring-up, on `audioQueue`: the old engine stopped, the session set and activated, `engine` started.
     nonisolated private static func start(_ engine: AVAudioEngine, _ plan: Plan, stopping old: AVAudioEngine, hadTap: Bool, capture: Converter) throws -> Started {
+        let began = Date()
+        let ms = { Int(Date().timeIntervalSince(began) * 1000) }
         old.stop()
         // The input node is made on first use: touched on an engine that never recorded, it would make one.
         if hadTap { old.inputNode.removeTap(onBus: 0) }
@@ -351,18 +379,37 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             let player = attachPlayer(to: engine)
             engine.prepare()
             try engine.start()
-            return Started(player: player, voiceProcessing: false, voiceProcessingError: nil, sampleRate: 0)
+            return Started(player: player, voiceProcessing: false, voiceProcessingError: nil, sampleRate: 0, ms: ms())
         }
         options.formUnion([.defaultToSpeaker, .allowBluetooth])
-        try session.setCategory(.playAndRecord, mode: .default, options: options)
+        var highQuality: [String: Any] = ["asked": false]
+        if plan.highQuality, #available(iOS 26.0, *) {
+            highQuality["asked"] = true
+            do {
+                try session.setCategory(.playAndRecord, mode: .default, options: options.union(.bluetoothHighQualityRecording))
+            } catch {
+                // Refused alongside the other options, say: the microphone as before.
+                highQuality["refused"] = error.localizedDescription
+                try session.setCategory(.playAndRecord, mode: .default, options: options)
+            }
+        } else {
+            try session.setCategory(.playAndRecord, mode: .default, options: options)
+        }
         // iOS silences haptics while recording unless told otherwise; hands-free's cue is one.
         try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         try session.setActive(true)
+        if plan.highQuality, #available(iOS 26.0, *), let port = session.currentRoute.inputs.first {
+            highQuality["input"] = "\(port.portName) (\(port.portType.rawValue))"
+            if let bluetooth = port.bluetoothMicrophoneExtension {
+                highQuality["supported"] = bluetooth.highQualityRecording.isSupported
+                highQuality["enabled"] = bluetooth.highQualityRecording.isEnabled
+            }
+        }
         let input = engine.inputNode
         // Echo cancellation, against what the player plays. Set before anything is connected.
         var voiceProcessing = false
         var voiceProcessingError: String?
-        if plan.voiceProcessingAllowed {
+        if plan.voiceProcessingAllowed, !plan.highQuality {
             do {
                 try input.setVoiceProcessingEnabled(true)
                 voiceProcessing = true
@@ -381,7 +428,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in capture.handle(buffer) }
         engine.prepare()
         try engine.start()
-        return Started(player: player, voiceProcessing: voiceProcessing, voiceProcessingError: voiceProcessingError, sampleRate: format.sampleRate)
+        return Started(player: player, voiceProcessing: voiceProcessing, voiceProcessingError: voiceProcessingError, sampleRate: format.sampleRate, ms: ms(), highQuality: highQuality)
     }
 
     /// The player Control's voice goes through, on a new engine.
@@ -408,10 +455,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if mode == .microphone {
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
-                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "ducking": plan.duck, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "ducking": plan.duck, "ms": started.ms, "highQuality": started.highQuality, "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("awake, playing to \(outputName()) (\(why))")
-                events.record("native-awake-running", ["why": why, "ducking": plan.duck, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-awake-running", ["why": why, "ducking": plan.duck, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
             }
             // A new engine: anything still to be said starts again on it, from the sentence it was in.
             rescheduleSpeech()

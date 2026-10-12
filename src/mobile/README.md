@@ -231,6 +231,15 @@ microphone does not duck. Ambient's cost: the Ring/Silent switch silences the
 page's own sounds, the sonar and the cues. `native-duck-others` and the
 `ducking` field on `native-awake-running` / `native-mic-running` show it.
 
+A dictation's microphone also asks for iOS 26's AirPods high-quality
+recording (`bluetoothHighQualityRecording`): a full-bandwidth link instead of
+the hands-free call profile, whose switch held each press up for most of a
+second and made music sound like a phone call. HFP is the fallback, and it
+goes without echo cancellation, which a dictation does not need. Whether it
+took is the `highQuality` field on `native-mic-running` (`asked`, `refused`,
+`supported`, `enabled`, the input), beside `ms`, how long the bring-up
+blocked; the time to first audio is `dictation-audio`.
+
 The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
 on the main thread that froze the screen after every dictation.
