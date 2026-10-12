@@ -588,6 +588,23 @@ describe('Receptionist', () => {
     ])
   })
 
+  it('writes what it says alongside a lookup into the transcript, after the actions it reports', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: `Sent to {${KEVIN}}: commit it.` }], [{ tool: 'send', agent: KEVIN, message: 'Please commit.' }, { tool: 'backlog_next' }]),
+        reply([{ from: 'control', text: 'Nothing else is waiting.' }]),
+      ],
+    })
+    await h.receptionist.hear('tell Kevin to commit, then what is next?', 'spoken')
+    await flush()
+    const replies = h.record.filter(message => message.role === 'assistant').map(message => message.content)
+    expect(replies).toEqual([
+      'SENT TO Kevin: Please commit.',
+      JSON.stringify({ say: [{ from: 'control', text: 'Sent to Kevin: commit it.' }] }),
+      JSON.stringify({ say: [{ from: 'control', text: 'Nothing else is waiting.' }] }),
+    ])
+  })
+
   it('says with a read whether the agent\'s cache is warm, which decides whether to ask it', async () => {
     const h = harness({
       kevinCacheWarmUntil: Date.now() - 20 * 60_000,
@@ -2930,6 +2947,9 @@ describe('Receptionist: the user starts talking over its words', () => {
     h.receptionist.userSpeaking(false)
     await flush()
     expect(h.turns.at(-1)?.prompt).toContain('never mind')
+    // And struck out in the transcript from the word it was cut off in, as a reply is.
+    const interimAt = h.record.findIndex(message => message.content.includes('Let me check on Kevin'))
+    expect(h.heardMarks).toEqual([{ replyAt: interimAt, parts: ['Let me '.length] }])
   })
 })
 

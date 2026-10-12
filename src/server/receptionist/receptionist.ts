@@ -564,7 +564,7 @@ export class Receptionist {
   /** Each interruption noted after the one before: see `noteInterruption`. */
   private interruptions: Promise<unknown> = Promise.resolve()
   /** The words the turn under way said while it looked things up, and how far the listener got: see `noteInterimCut`. */
-  private interim: { attempt: Attempt; text: string; heard: number; ended: boolean } | undefined
+  private interim: { attempt: Attempt; spoken: SpokenPart[]; at?: number; text: string; heard: number; ended: boolean } | undefined
   /**
    * Control went quiet with go_quiet and has not yet been told it is heard
    * again. Told with the first turn the user can hear, whatever starts it: a
@@ -729,6 +729,12 @@ export class Receptionist {
     const interim = this.interim
     this.interim = undefined
     if (!interim?.attempt.isCurrent || (interim.ended && interim.heard >= interim.text.length)) return
+    // Struck out in the transcript as a reply's cut-off is.
+    if (interim.at !== undefined) {
+      const lengths = heardLengths(interim.spoken, interim.heard)
+      this.deps.record.amendHeard(interim.at, lengths)
+      this.ledger.heard(interim.at, lengths)
+    }
     const heard = interim.text.slice(0, interim.heard).trim()
     this.notes.push(heard
       ? `The user cut off what you said while looking things up. They heard only: "${heard}".`
@@ -1471,12 +1477,13 @@ export class Receptionist {
       const spoken: SpokenPart[] = reply.say.length && this.listening && !this.reading
         ? this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
         : []
+      const froms = reply.say.map(part => part.from)
       await this.runActions(actions, lines => done.push(...lines))
       // Taken, the actions are the model's to hear of even if the user talks
       // over this turn before their results go back: noted at once, for
       // whichever message leaves next, and taken back if it is this turn's.
       const note = this.noteDone(done)
-      if (spoken.length && !await this.speakInterim(attempt, spoken) && !attempt.isCurrent) return undefined
+      if (spoken.length && !await this.speakInterim(attempt, froms, spoken) && !attempt.isCurrent) return undefined
       const { results } = await this.runTools(reply.tools.filter(isLookup), agents, handles, undefined, taken)
       if (!attempt.isCurrent) return undefined
       if (note !== undefined && this.notes.includes(note)) this.notes.splice(this.notes.indexOf(note), 1)
@@ -2469,15 +2476,7 @@ export class Receptionist {
     await this.runActions(actions)
     // Read after the actions' awaits: muting while they ran writes this reply.
     const reading = this.reading
-    const at = this.deps.record.append([{
-      role: 'assistant', content: storedReply(froms, spoken),
-      voices: spoken.map(part => part.voice ?? RECEPTIONIST_VOICE),
-      ...(reading ? { delivery: 'text' as const } : {}),
-    }])[0]
-    if (at !== undefined && spoken.length) {
-      this.ledger.delivered(at, spoken.map(part => part.text), reading ? 'text' : 'spoken')
-      if (reading) this.onUnread(this.ledger.unread())
-    }
+    const at = this.writeReply(froms, spoken, reading)
     // After the reply, so the transcript's activity log reads as it happened: silence, then the watch kept.
     this.keepWatchingUntold(events, reply, withWords)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools, ...(reading ? { muted: true } : {}) })
@@ -2514,6 +2513,23 @@ export class Receptionist {
     })
     if (monitoring) void this.followVoice(spoken, reached)
     return monitoring
+  }
+
+  /**
+   * A reply's words into the record, as they were said, for the transcript
+   * and the ledger of what the user has taken in. Returns where it is.
+   */
+  private writeReply(froms: readonly string[], spoken: readonly SpokenPart[], reading: boolean): number | undefined {
+    const at = this.deps.record.append([{
+      role: 'assistant', content: storedReply(froms, spoken),
+      voices: spoken.map(part => part.voice ?? RECEPTIONIST_VOICE),
+      ...(reading ? { delivery: 'text' as const } : {}),
+    }])[0]
+    if (at !== undefined && spoken.length) {
+      this.ledger.delivered(at, spoken.map(part => part.text), reading ? 'text' : 'spoken')
+      if (reading) this.onUnread(this.ledger.unread())
+    }
+    return at
   }
 
   /**
@@ -2577,16 +2593,28 @@ export class Receptionist {
    * Say what a turn says while it looks things up, following how far the
    * listener gets, so that talking over it can say how much they heard.
    */
-  private speakInterim(attempt: Attempt, spoken: SpokenPart[]): Promise<boolean> {
-    const interim = { attempt, text: joinSpeechParts(spoken), heard: 0, ended: false }
+  private async speakInterim(attempt: Attempt, froms: readonly string[], spoken: SpokenPart[]): Promise<boolean> {
+    const interim: NonNullable<Receptionist['interim']> = { attempt, spoken, text: joinSpeechParts(spoken), heard: 0, ended: false }
     this.interim = interim
-    return this.channel.deliverInterim(attempt, spoken, (progress) => {
+    const queued = await this.channel.deliverInterim(attempt, spoken, (progress) => {
       if (progress.kind === 'playing') interim.heard = progress.heard
       else {
         interim.ended = true
         interim.heard = progress.state === 'completed' ? interim.text.length : progress.heard ?? interim.heard
       }
     })
+    if (!attempt.isCurrent) return queued
+    // Written like any reply: the transcript shows every word Control says,
+    // not only the step that ends the turn. Refused by the voice, it waits
+    // there for the user to read, as a reply the voice failed on does.
+    interim.at = this.writeReply(froms, spoken, false)
+    if (!queued && interim.at !== undefined) {
+      const none = spoken.map(() => 0)
+      this.deps.record.amendHeard(interim.at, none, true)
+      this.ledger.heard(interim.at, none, true)
+      this.onUnread(this.ledger.unread())
+    }
+    return queued
   }
 
   /** Actions taken whose results the model has not seen, for its next message. Returns the note, if any. */
