@@ -5,8 +5,10 @@ import { nativeDuckOthers } from './native-microphone'
  * Other apps' audio — Spotify, say — turned down while Control thinks and
  * speaks aloud on this phone: the sonar, then its answer. The iPhone app
  * does the turning down (NativeMicrophone.swift `duck-others`), on the audio
- * session it keeps up while this phone holds Control; a dictation's own
- * microphone ducks there too, without asking. Nothing in a browser.
+ * session it keeps up while this phone holds Control. A dictation's own
+ * microphone stops other audio outright, without asking, and the app keeps
+ * it stopped a moment after, so a dictation flows into Control thinking
+ * without the music swelling between. Nothing in a browser.
  *
  * Down at once; back up only once Control has been quiet for
  * `DUCK_RELEASE_MS`, so the gap between the sonar and the answer, or between

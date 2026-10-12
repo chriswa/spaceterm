@@ -216,20 +216,34 @@ whether the page still answers (`pageAnsweredMs`).
 
 ### Music from other apps
 
-In the iPhone app, nothing of Spaceterm's stops Spotify or any other app's
-audio; it turns it down and lets it back up. WebKit could not: its recording
-and its playback type both interrupt other audio, and it deactivates without
+In the iPhone app, Spotify or any other app's audio always comes back after
+Spaceterm has had it. WebKit could not manage that: its recording and its
+playback type both interrupt other audio, and it deactivates without
 notifying others, so music it stopped stayed stopped. So in the app every
-dictation uses the app's own microphone (`held-microphone.ts`), whose session
-mixes; the page's idle type is ambient, WebKit's one type that mixes; and the
-app ducks other audio (`.duckOthers`) while a dictation's microphone is open
-and while Control thinks or speaks aloud here (`duck-others.ts`, which waits
-`DUCK_RELEASE_MS` before letting it back up). iOS applies ducking only when a
-session is activated, so each change brings the app's session up again,
-deactivated between with `notifyOthersOnDeactivation`. Hands-free's held
-microphone does not duck. Ambient's cost: the Ring/Silent switch silences the
-page's own sounds, the sonar and the cues. `native-duck-others` and the
-`ducking` field on `native-awake-running` / `native-mic-running` show it.
+dictation uses the app's own microphone (`held-microphone.ts`), and the
+page's idle type is ambient, WebKit's one type that mixes. The app then
+decides what other audio gets (`Others` in `NativeMicrophone.swift`):
+
+- **stopped** while a dictation's microphone is open, and for two seconds
+  after (`muteHoldSeconds`), so a dictation flows into Control thinking
+  without the music swelling between. Silence is the sign it is listening,
+  and the AirPods' switch between their music and microphone links is
+  hidden inside it;
+- **turned down** while Control thinks or speaks aloud here
+  (`duck-others.ts`, which waits `DUCK_RELEASE_MS` before letting go);
+- **left alone** otherwise, hands-free's held microphone included.
+
+iOS applies any of these only when a session is activated, so each change
+brings the app's session up again, deactivated between with
+`notifyOthersOnDeactivation` — which tells music it may carry on — unless it
+is about to be stopped again. Ambient's cost: the Ring/Silent switch
+silences the page's own sounds, the sonar and the cues. `native-duck-others`,
+`native-mute-hold-ended` and the `others` field on `native-awake-running` /
+`native-mic-running` show it.
+
+The app's audio session is changed on its own queue, never the main thread:
+activating it blocks for a second or two while AirPods change profile, and
+on the main thread that froze the screen after every dictation.
 
 A dictation's microphone also asks for iOS 26's AirPods high-quality
 recording (`bluetoothHighQualityRecording`): a full-bandwidth link instead of

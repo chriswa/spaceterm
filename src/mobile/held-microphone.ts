@@ -277,8 +277,8 @@ export function acquire(): Promise<Capture> {
     // In the app, every dictation uses the app's own microphone. WebKit's
     // interrupts other apps' audio — music stops — and never tells it to
     // carry on (it deactivates without notifying others), so Spotify stayed
-    // stopped after every dictation; the app's mixes and turns it down
-    // instead, then lets it back up. It also skips WebKit's second-long
+    // stopped after every dictation; the app stops it too, but tells it to
+    // carry on once the dictation is over (NativeMicrophone.swift `Others`). It also skips WebKit's second-long
     // freeze of the page while its microphone starts.
     if (nativeMicrophoneAvailable()) return openAppCapture()
     const opened = await openCapture()
@@ -312,7 +312,7 @@ function nativeCapture(native: NativeCaptureHandle, release: (broken: boolean) =
 
 /** The app's own microphone for one dictation, closed when it is released. */
 async function openAppCapture(): Promise<Capture> {
-  const native = await openNativeMicrophone({ duck: true, highQuality: true })
+  const native = await openNativeMicrophone({ mute: true, highQuality: true })
   recordMobileEvent('mic-opened', { source: 'native', input: native.describe() })
   return nativeCapture(native, () => native.close())
 }
