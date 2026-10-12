@@ -108,9 +108,12 @@ describe('ControlButton', () => {
     const arcs = [...container.querySelectorAll('.control-headset__sound path')].map((p) => p.getAttribute('d')!)
     expect(arcs.length).toBeGreaterThan(0)
     for (const d of arcs) {
-      // A quarter turn opening outward, so the bulge lies r - r/√2 beyond its ends.
-      const [, x, r, sweep] = d.match(/^M(-?[\d.]+) [\d.]+a([\d.]+) [\d.]+ 0 0 ([01])/)!.map(Number)
-      const reach = sweep ? x + r - r / Math.SQRT2 : x - r + r / Math.SQRT2
+      // An arc opening outward, straight down from its start: the bulge lies r - √(r² - (chord/2)²) beyond its ends.
+      const [, x, r, sweep, chord] = d.match(/^M(-?[\d.]+) [\d.]+a([\d.]+) [\d.]+ 0 0 ([01]) 0 ([\d.]+)$/)!.map(Number)
+      const bulge = r - Math.sqrt(r * r - (chord / 2) ** 2)
+      const reach = sweep ? x + bulge : x - bulge
+      // No taller than its radius: at most a sixth of a turn, so the sound does not tower over the earpiece.
+      expect(chord).toBeLessThanOrEqual(r)
       // Earpieces span 1.75–4.25 and 11.75–14.25 about centres 3 and 13.
       expect(r).toBeGreaterThanOrEqual(5)
       expect(reach).toBeGreaterThan(minX)

@@ -29,13 +29,15 @@ export function ControlHeadset({ size }: { size?: number }) {
       <path d="M13 12.5c0 1.5-1.5 2-3.5 2" />
       {speaks && (
         <g className="control-headset__sound" strokeWidth="1.1">
-          {/* Arcs about each earpiece, a quarter turn each, opening outward.
+          {/* Arcs about each earpiece, a sixth of a turn each (30° either
+              side of level), opening outward: short enough that the sound
+              stays near the earpiece's height rather than towering over it.
               None is drawn closer than radius 5.5, so a clear gap parts the
               sound from the headset. */}
-          <path d="M-.89 6.61a5.5 5.5 0 0 0 0 7.78" />
-          <path d="M-2.3 5.2a7.5 7.5 0 0 0 0 10.61" />
-          <path d="M16.89 6.61a5.5 5.5 0 0 1 0 7.78" />
-          <path d="M18.3 5.2a7.5 7.5 0 0 1 0 10.61" />
+          <path d="M-1.76 7.75a5.5 5.5 0 0 0 0 5.5" />
+          <path d="M-3.5 6.75a7.5 7.5 0 0 0 0 7.5" />
+          <path d="M17.76 7.75a5.5 5.5 0 0 1 0 5.5" />
+          <path d="M19.5 6.75a7.5 7.5 0 0 1 0 7.5" />
         </g>
       )}
     </svg>
