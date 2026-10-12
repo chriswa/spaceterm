@@ -87,7 +87,7 @@ import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
 import { HandleNames, isHandleOf } from './receptionist/transcript-names'
-import { parseRecordLine, type NameOf } from './receptionist/transcript'
+import { parseRecordLine, type Speakers } from './receptionist/transcript'
 import { SideQuestions, serveSideQuestions } from './side-questions'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
@@ -493,24 +493,31 @@ const transcriptNameScanner = new RecordNameScanner(transcriptHandleNames)
 /**
  * Who each handle in Control's record is, for its transcript: the name the
  * registry holds now, else one the record or log tied to it, else — for an
- * agent never named — its title, archived or not.
+ * agent never named — its title, archived or not. And its node, archived or
+ * not, so a click on its name can go to it.
  */
-function transcriptNameOf(): NameOf {
+function transcriptSpeakers(): Speakers {
   transcriptNameScanner.update()
   for (const name of agentNames.assignedNames()) {
     const nodeId = agentNames.byName(name)
     if (nodeId) transcriptHandleNames.learnNode(nodeId, name)
   }
   let agents: TerminalNodeData[] | undefined
-  return (handle) => {
-    const name = transcriptHandleNames.resolve(handle)
-    if (name) return name
+  const agentOf = (handle: string): TerminalNodeData | undefined => {
     agents ??= stateManager.getNodesIncludingArchived().filter(isAgentSurface)
     const key = handle.trim().toLowerCase()
-    const agent = agents.find(node => isHandleOf(node.id, key))
-    const title = agent && agentSurfaceTitle(agent)
-    // Nothing to call it by: its handle says more than "(untitled)".
-    return title === UNTITLED_AGENT ? undefined : title
+    return agents.find(node => isHandleOf(node.id, key))
+  }
+  return {
+    nameOf: (handle) => {
+      const name = transcriptHandleNames.resolve(handle)
+      if (name) return name
+      const agent = agentOf(handle)
+      const title = agent && agentSurfaceTitle(agent)
+      // Nothing to call it by: its handle says more than "(untitled)".
+      return title === UNTITLED_AGENT ? undefined : title
+    },
+    nodeOf: (handle) => agentOf(handle)?.id,
   }
 }
 
@@ -530,8 +537,8 @@ function transcriptEntriesFor(client: ClientConnection, entries: ControlTranscri
 /** Lines just added to Control's record, sent to every open transcript view. Returns where each starts. */
 function announceRecorded(appended: Array<{ line: string; offset: number }>): number[] {
   if (appended.length) {
-    const nameOf = transcriptNameOf()
-    const entries = appended.flatMap(({ line, offset }) => parseRecordLine(line, offset, nameOf) ?? [])
+    const speakers = transcriptSpeakers()
+    const entries = appended.flatMap(({ line, offset }) => parseRecordLine(line, offset, speakers) ?? [])
     for (const client of clients) {
       const theirs = transcriptEntriesFor(client, entries)
       if (theirs.length) send(client.link, { type: 'receptionist-transcript-appended', entries: theirs })
@@ -1738,7 +1745,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'receptionist-transcript': {
       const count = Math.max(1, Math.min(200, Math.floor(msg.count)))
-      const page = REAL_RECEPTIONIST_RECORD.page(msg.before, count, transcriptNameOf())
+      const page = REAL_RECEPTIONIST_RECORD.page(msg.before, count, transcriptSpeakers())
       send(client.link, { type: 'receptionist-transcript-result', seq: msg.seq, more: page.more, entries: transcriptEntriesFor(client, page.entries) })
       break
     }

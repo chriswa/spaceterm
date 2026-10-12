@@ -1640,11 +1640,12 @@ export type ControlTranscriptEntry = {
   /** `context` is what came with the user's words: events, news on their return. */
   | { kind: 'user'; text: string; context?: string }
   /**
-   * `from` is "Control", or the agent Control quoted in its voice. `delivery`
+   * `from` is "Control", or the agent Control quoted in its voice; `nodeId`
+   * is that agent's node, live or archived, when the server knows it. `delivery`
    * is `text` when it was written to a muted device rather than spoken: unread
    * until it is read (see `consumed`).
    */
-  | { kind: 'reply'; parts: Array<{ from: string; text: string }>; delivery?: 'text' }
+  | { kind: 'reply'; parts: Array<{ from: string; text: string; nodeId?: NodeId }>; delivery?: 'text' }
   /**
    * Something Control did: sent to an agent, started, archived, renamed one.
    * `notDone` when it never ran, because the user spoke before Control's reply was said.

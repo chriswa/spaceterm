@@ -3915,8 +3915,9 @@ html, body, #root {
 /* What Control has said since the user's last message: a click on a word marks it as where they stopped. */
 .control-transcript__bubble--markable .control-transcript__word { cursor: pointer; border-radius: 3px; }
 .control-transcript__bubble--markable .control-transcript__word:hover { background: color-mix(in srgb, var(--ct-text) 15%, transparent); }
-.control-transcript__meta--markable { background: none; border: none; font: inherit; font-size: 11px; cursor: pointer; text-align: left; }
-.control-transcript__meta--markable:hover { color: var(--ct-text); }
+/* An agent's name over what it said: goes to it. Control's name is plain text. */
+.control-transcript__speaker { padding: 0; background: none; border: none; font: inherit; color: inherit; cursor: pointer; }
+.control-transcript__speaker:hover { color: var(--ct-text); text-decoration: underline; }
 
 /* A part and the button that plays it again, beside it. */
 .control-transcript__bubble-row { display: flex; align-items: flex-end; gap: 4px; max-width: 100%; }

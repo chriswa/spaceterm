@@ -6,6 +6,10 @@ import { ChoiceGroup } from './ChoiceGroup'
 import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
 import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
 import { openReplies, partViews, segments, words, type PartView } from '../lib/control-consumption'
+import { useNodeStore } from '../stores/nodeStore'
+import { useSurfacePresenterStore } from '../stores/surfacePresenterStore'
+import { archiveHostOf } from '../../../../shared/archive-tree'
+import { ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
 
 /**
  * Control's transcript: the whole conversation with the receptionist, from
@@ -23,7 +27,8 @@ import { openReplies, partViews, segments, words, type PartView } from '../lib/c
  * being on screen. Until then, clicking a word of what Control has said since
  * their last message marks everything up to it taken in and the rest missed,
  * as many times as they like. As the voice goes, what it has yet to say is dim.
- * Any part can be played again in its own voice.
+ * Any part can be played again in its own voice, and an agent's name over
+ * what it said goes to it (`showAgent`).
  */
 
 /** Within this many pixels of the top, the next page loads. */
@@ -285,6 +290,7 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
                 unreadLine={entry.offset === firstWaiting} markable={markable.has(entry.offset)}
                 played={speaking?.of === entry.offset ? speaking.parts : undefined}
                 replaying={replaying?.of === entry.offset ? replaying.part : undefined}
+                onLeave={onDismiss}
               />
             ))}
             {pending.map((text, i) => (
@@ -429,15 +435,28 @@ function ControlFooter({ extra }: { extra?: ReactNode }) {
 }
 
 /**
+ * Close the transcript and go to an agent Control quoted: to its card while it
+ * is on the canvas, else to the card whose archives hold it, else to the root.
+ * App does the going (`focusRequest`), as for the phone's surface list.
+ */
+export function showAgent(nodeId: NodeId, leave: () => void): void {
+  const { nodes, rootArchivedChildren } = useNodeStore.getState()
+  const target = nodes[nodeId] ? nodeId : archiveHostOf(Object.values(nodes), rootArchivedChildren, nodeId) ?? ROOT_NODE_ID
+  leave()
+  useSurfacePresenterStore.getState().requestFocus(target)
+}
+
+/**
  * `parts`: what of each part of this reply the user did not take in, if anything.
  * `unreadLine`: the first entry with words waiting for the user, under the Unread line.
  * `markable`: said since the user's last message, so a click on a word marks where they stopped.
  * `played`: how far the voice has got into each part, while it says this reply.
  * `replaying`: the part of it this device is playing again.
+ * `onLeave`: closes the transcript, when a speaker's name goes to its agent.
  */
-function EntryRow({ entry, previous, parts, unreadLine, markable, played, replaying }: {
+function EntryRow({ entry, previous, parts, unreadLine, markable, played, replaying, onLeave }: {
   entry: ControlTranscriptEntry; previous?: ControlTranscriptEntry; parts?: PartView[]
-  unreadLine?: boolean; markable?: boolean; played?: number[]; replaying?: number
+  unreadLine?: boolean; markable?: boolean; played?: number[]; replaying?: number; onLeave: () => void
 }) {
   if (entry.kind === 'heard' || entry.kind === 'consumed') return null
   const today = day(entry.timestamp)
@@ -524,11 +543,14 @@ function EntryRow({ entry, previous, parts, unreadLine, markable, played, replay
             <div key={i} className="control-transcript__part">
               {/* Every change of voice is headed, so each block says who spoke it. */}
               {(i === 0 || part.from !== entry.parts[i - 1].from) && (
-                markable
+                part.nodeId
                   ? (
-                    <button className="control-transcript__meta control-transcript__meta--markable" title="Took in none of it from here" onClick={() => mark(0)}>
-                      {part.from}{i === 0 ? ` · ${at}` : ''}
-                    </button>
+                    <div className="control-transcript__meta">
+                      <button className="control-transcript__speaker" title={`Go to ${part.from}`} onClick={() => showAgent(part.nodeId!, onLeave)}>
+                        {part.from}
+                      </button>
+                      {i === 0 ? ` · ${at}` : ''}
+                    </div>
                   )
                   : <div className="control-transcript__meta">{part.from}{i === 0 ? ` · ${at}` : ''}</div>
               )}

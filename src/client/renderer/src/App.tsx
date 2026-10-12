@@ -1531,8 +1531,10 @@ export function App() {
   useEffect(() => {
     if (!focusRequest || focusRequest.seq === handledFocusRef.current) return
     handledFocusRef.current = focusRequest.seq
-    void navigateToNode(focusRequest.nodeId)
-  }, [focusRequest, navigateToNode])
+    // The root is never in the node store, which navigateToNode would wait on for ever.
+    if (focusRequest.nodeId === ROOT_NODE_ID) handleNodeFocus(ROOT_NODE_ID)
+    else void navigateToNode(focusRequest.nodeId)
+  }, [focusRequest, navigateToNode, handleNodeFocus])
 
   const handleHoverFocus = useCallback((nodeId: NodeId) => {
     if (!useCameraLockStore.getState().locked) return

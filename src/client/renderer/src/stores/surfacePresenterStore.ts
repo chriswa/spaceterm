@@ -27,9 +27,10 @@ interface SurfacePresenterState {
    */
   unfocusZoomOut: number | undefined
   /**
-   * A surface the host wants focused — the phone's surface list. App navigates
-   * to it exactly as for a toolbar crab, so unread clearing and the camera
-   * behave the same on both.
+   * A node something outside App wants focused — the phone's surface list, or
+   * an agent's name in Control's transcript; the root among them. App
+   * navigates to it exactly as for a toolbar crab, so unread clearing and the
+   * camera behave the same on both.
    */
   focusRequest: { nodeId: NodeId; seq: number } | null
   /**

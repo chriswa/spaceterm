@@ -4,7 +4,7 @@ import { SOCKET_DIR } from '../../shared/protocol'
 import { askClaudePrint, ClaudePrintBusy } from '../claude-print'
 import { serverLog } from '../server-log'
 import { SessionBusy, type RecordedMessage, type SavedSession, type SessionAnswer, type SessionTurn } from './receptionist'
-import { parseRecordBytes, spokenPart, transcriptPage, type NameOf, type RecordFile } from './transcript'
+import { parseRecordBytes, spokenPart, transcriptPage, type RecordFile, type Speakers } from './transcript'
 import type { ConsumedHow } from './consumption'
 import type { HandleNames } from './transcript-names'
 import type { ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
@@ -179,7 +179,7 @@ export const REAL_RECEPTIONIST_RECORD = {
     return appendTranscriptOnly([{ trace }])
   },
   /** A page of the transcript view: see `transcriptPage`. */
-  page(before: number | undefined, count: number, nameOf: NameOf): { entries: ControlTranscriptEntry[]; more: boolean } {
+  page(before: number | undefined, count: number, speakers: Speakers): { entries: ControlTranscriptEntry[]; more: boolean } {
     let fd: number
     try { fd = fs.openSync(RECEPTIONIST_CONVERSATION, 'r') } catch { return { entries: [], more: false } }
     try {
@@ -191,7 +191,7 @@ export const REAL_RECEPTIONIST_RECORD = {
           return buffer
         },
       }
-      return transcriptPage(file, before, count, nameOf)
+      return transcriptPage(file, before, count, speakers)
     } finally {
       fs.closeSync(fd)
     }

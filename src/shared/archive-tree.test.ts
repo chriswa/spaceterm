@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupNodes, groupNodesWithParent, groupSize, archivesOwnedBy, ownedArchiveLists } from './archive-tree'
+import { groupNodes, groupNodesWithParent, groupSize, archivesOwnedBy, ownedArchiveLists, archiveHostOf } from './archive-tree'
 import type { ArchivedDescendant, ArchivedNode, NodeData } from './state'
 import { asNodeId, ROOT_NODE_ID, type NodeId } from './ids'
 
@@ -95,5 +95,19 @@ describe('ownedArchiveLists', () => {
     const holding = lists.find((l) => l.includes(buried))!
     holding.splice(holding.indexOf(buried), 1)
     expect(archivesOwnedBy(tree)).toEqual([])
+  })
+})
+
+describe('archiveHostOf', () => {
+  it('finds the live node holding an archive, by its entry, a swept-in member, or an archive buried inside one', () => {
+    const buried = entry('buried')
+    const host = node('host', ROOT_NODE_ID, [entry('top', [member('swept', 'top', [], [buried])])])
+    const other = node('other')
+    for (const id of ['top', 'swept', 'buried']) expect(archiveHostOf([other, host], [], nid(id))).toBe('host')
+  })
+
+  it("is the root for the root's own archives, and undefined for a node no archive holds", () => {
+    expect(archiveHostOf([node('live')], [entry('gone')], nid('gone'))).toBe(ROOT_NODE_ID)
+    expect(archiveHostOf([node('live')], [entry('gone')], nid('nowhere'))).toBeUndefined()
   })
 })

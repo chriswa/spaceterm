@@ -159,13 +159,17 @@ them out as missed, so Control knows you never took them in.
 Everything Control has said since your last message — its own words and the
 agents it quoted, however many replies — can still be marked: tap a word,
 struck or not, and everything up to it counts as taken in and everything
-after as missed; tap the speaker's name for none of it from there. Tap again
+after as missed. Tap again
 to move the mark, as often as you like, until you send your next message,
 which locks it. Not while Control is speaking, when the voice decides. All of
 it is recorded as transcript-only lines the model never sees (`amendHeard`,
 `notDone`, `consumed` in `real-deps.ts`). The view follows new content while
 you are near the bottom, including the circle that turns while Control
 thinks; a button takes you back down when you are not.
+
+An agent's name over what it said goes to that agent: its card, or, once
+archived, the card whose archives hold it (the root when none does). Control's
+own name is not a button.
 
 Every part of a reply has a ▶ that plays it again on this device, in the
 voice it was said in and with its "Kevin here." (replies keep their voices

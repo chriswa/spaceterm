@@ -4,7 +4,11 @@ import { ControlTranscript, holdActions, mergeEntries } from './ControlTranscrip
 import { installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { useReceptionistStore } from '../stores/receptionistStore'
+import { useNodeStore } from '../stores/nodeStore'
+import { useSurfacePresenterStore } from '../stores/surfacePresenterStore'
 import type { ControlTranscriptEntry } from '../../../../shared/protocol'
+import type { ArchivedNode, NodeData } from '../../../../shared/state'
+import { asNodeId, ROOT_NODE_ID } from '../../../../shared/ids'
 
 let bridge: FakeBridge
 
@@ -396,9 +400,8 @@ describe('ControlTranscript and what the user took in', () => {
     // Heard, and clickable too: back to where they stopped.
     fireEvent.click(screen.getByText('is'))
     expect(bridge.lastCall('receptionist.mark')).toEqual([80, 0, 'Kevin is'.length])
-    // The speaker's name: none of it from there.
-    fireEvent.click(screen.getByRole('button', { name: 'Kevin' }))
-    expect(bridge.lastCall('receptionist.mark')).toEqual([80, 1, 0])
+    // A speaker's name marks nothing: it is no button at all without a node to go to.
+    expect(screen.queryByRole('button', { name: 'Kevin' })).toBeNull()
     // Locked by the user's last message.
     expect(screen.getByText('Old news.').closest('.control-transcript__bubble--markable')).toBeNull()
 
@@ -406,6 +409,36 @@ describe('ControlTranscript and what the user took in', () => {
     act(() => useReceptionistStore.setState({ phase: 'speaking' }))
     expect(document.querySelector('.control-transcript__bubble--markable')).toBeNull()
     act(() => useReceptionistStore.setState({ phase: 'ready' }))
+  })
+
+  it("goes to the agent whose name heads what it said — its card, else the card holding its archive, else the root — and never for Control", async () => {
+    const card = (id: string, archivedChildren: ArchivedNode[] = []) => ({ id, type: 'title', parentId: ROOT_NODE_ID, archivedChildren } as unknown as NodeData)
+    const archived = (id: string): ArchivedNode => ({ archivedAt: at, data: card(id) })
+    useNodeStore.setState({ nodes: { kevin: card('kevin'), host: card('host', [archived('sally')]) }, rootArchivedChildren: [] })
+    bridge.responses.controlTranscript = () => ({
+      entries: [{ offset: 0, timestamp: at, kind: 'reply', parts: [
+        { from: 'Control', text: 'Three things.' },
+        { from: 'Kevin', text: 'Green.', nodeId: asNodeId('kevin') },
+        { from: 'Control', text: 'And' },
+        { from: 'Sally', text: 'Shipped.', nodeId: asNodeId('sally') },
+        { from: 'Control', text: 'And' },
+        { from: 'Bob', text: 'Gone.', nodeId: asNodeId('bob') },
+      ] }],
+      more: false,
+    })
+    const onDismiss = vi.fn()
+    render(<ControlTranscript variant="modal" onDismiss={onDismiss} />)
+    await findBubble('Three things.')
+    expect(screen.queryByRole('button', { name: /^Control/ })).toBeNull()
+    const goes = (name: string) => {
+      fireEvent.click(screen.getByRole('button', { name }))
+      return useSurfacePresenterStore.getState().focusRequest?.nodeId
+    }
+    expect(goes('Kevin')).toBe('kevin')
+    expect(goes('Sally')).toBe('host')
+    expect(goes('Bob')).toBe(ROOT_NODE_ID)
+    expect(onDismiss).toHaveBeenCalledTimes(3)
+    expect(bridge.callsTo('receptionist.mark')).toHaveLength(0)
   })
 
   it('lights what the voice has said, and dims every part it has yet to reach', async () => {

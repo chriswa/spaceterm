@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
 import { renderTurnBody, splitTurnBody } from './prompt'
-import { parseRecordLine, transcriptPage, type RecordFile } from './transcript'
+import { parseRecordLine, transcriptPage, type RecordFile, type Speakers } from './transcript'
 
 function memoryFile(text: string): RecordFile {
   const bytes = Buffer.from(text, 'utf8')
@@ -58,6 +58,11 @@ describe('transcriptPage', () => {
   })
 })
 
+/** Speakers who know one handle's name, and no node. */
+function named(handle: string, name: string): Speakers {
+  return { nameOf: (h) => (h === handle ? name : undefined), nodeOf: () => undefined }
+}
+
 describe('parseRecordLine', () => {
   it("shows the user's words without what was sent along with them", () => {
     const body = renderTurnBody(
@@ -80,11 +85,20 @@ describe('parseRecordLine', () => {
   })
 
   it('names a speaker the record wrote by handle alone, and a handle in what was said', () => {
-    const nameOf = (handle: string) => (handle === 'amber-otter' ? 'Kevin' : undefined)
     const reply = JSON.stringify({ say: [{ from: 'amber-otter', text: 'Ask {amber-otter}.' }, { from: 'keen-barn', text: 'Hm.' }] })
-    expect(parseRecordLine(line('assistant', reply), 0, nameOf)).toMatchObject({
+    expect(parseRecordLine(line('assistant', reply), 0, named('amber-otter', 'Kevin'))).toMatchObject({
       kind: 'reply', parts: [{ from: 'Kevin', text: 'Ask Kevin.' }, { from: 'keen-barn', text: 'Hm.' }],
     })
+  })
+
+  it("gives each part an agent spoke that agent's node, and Control's none", () => {
+    const speakers = { nameOf: () => undefined, nodeOf: (handle: string) => (handle === 'amber-otter' ? asNodeId('kevin') : undefined) }
+    const reply = JSON.stringify({ say: [
+      { from: 'control', text: 'Kevin says:' }, { from: 'Kevin:amber-otter', text: 'All green.' }, { from: 'amber-otter', text: 'Again.' }, { from: 'keen-barn', text: 'Hm.' },
+    ] })
+    const entry = parseRecordLine(line('assistant', reply), 0, speakers)
+    expect(entry?.kind === 'reply' && entry.parts.map((part) => part.nodeId)).toEqual([undefined, 'kevin', 'kevin', undefined])
+    expect(entry?.kind === 'reply' && 'nodeId' in entry.parts[0]).toBe(false)
   })
 
   it('reads a mark of how much of a reply was heard', () => {
@@ -94,12 +108,12 @@ describe('parseRecordLine', () => {
 
   it('reads an action that never ran, naming its agent', () => {
     const line = JSON.stringify({ timestamp: '2026-10-05T08:00:00Z', notDone: 'SENT TO {amber-otter}: Push it.' })
-    expect(parseRecordLine(line, 0, (handle) => (handle === 'amber-otter' ? 'Sally' : undefined)))
+    expect(parseRecordLine(line, 0, named('amber-otter', 'Sally')))
       .toMatchObject({ kind: 'log', text: 'SENT TO Sally: Push it.', notDone: true })
   })
 
   it("reads a line of Control's activity, naming its agents, and skips a kind it does not know", () => {
-    const nameOf = (handle: string) => (handle === 'amber-otter' ? 'Sally' : undefined)
+    const nameOf = named('amber-otter', 'Sally')
     const trace = (what: string) => JSON.stringify({
       timestamp: '2026-10-05T08:00:00Z', trace: { what, text: 'Watch fired: {amber-otter} is now stopped', detail: '{Sally:amber-otter} said done.' },
     })

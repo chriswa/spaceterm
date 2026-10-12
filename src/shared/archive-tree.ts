@@ -1,5 +1,5 @@
 import type { ArchivedNode, ArchivedDescendant, NodeData } from './state'
-import type { NodeId } from './ids'
+import { ROOT_NODE_ID, type NodeId } from './ids'
 
 /**
  * Walking the two kinds of nesting an archive entry has.
@@ -112,4 +112,24 @@ export function findArchiveEntry(hostArchives: ArchivedNode[], path: NodeId[]): 
     candidates = archivesOwnedBy(found)
   }
   return found
+}
+
+/**
+ * The live node whose archives hold `nodeId` anywhere — an entry's group, or
+ * an archive any entry owns, however deep — or the root for the root's own
+ * archives; undefined when no archive holds it. Where to look for an
+ * archived card on the canvas.
+ */
+export function archiveHostOf(liveNodes: Iterable<NodeData>, rootArchives: ArchivedNode[], nodeId: NodeId): NodeId | undefined {
+  const holds = (entries: ArchivedNode[]): boolean => entries.some((entry) => {
+    for (const member of groupNodes(entry)) {
+      if (member.id === nodeId) return true
+    }
+    return holds(archivesOwnedBy(entry))
+  })
+  if (holds(rootArchives)) return ROOT_NODE_ID
+  for (const node of liveNodes) {
+    if (holds(node.archivedChildren ?? [])) return node.id
+  }
+  return undefined
 }

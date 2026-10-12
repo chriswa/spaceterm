@@ -1,3 +1,4 @@
+import type { NodeId } from '../../shared/ids'
 import type { ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import { AGENT_TOKEN, parseAgentRef } from './agent-token'
 import { splitTurnBody } from './prompt'
@@ -11,12 +12,17 @@ import { CONTROL } from './reply'
  */
 
 /**
- * Who a handle stands for — `Kevin` for `amber-otter` — when the record wrote
- * the handle alone. See `HandleNames`.
+ * Who the handles in the record stand for. `nameOf`: `Kevin` for
+ * `amber-otter`, when the record wrote the handle alone (see `HandleNames`).
+ * `nodeOf`: the agent's node, live or archived, so the view can take the user
+ * to it.
  */
-export type NameOf = (handle: string) => string | undefined
+export interface Speakers {
+  nameOf(handle: string): string | undefined
+  nodeOf(handle: string): NodeId | undefined
+}
 
-const NO_NAMES: NameOf = () => undefined
+const NO_SPEAKERS: Speakers = { nameOf: () => undefined, nodeOf: () => undefined }
 
 /** Every kind of activity entry; a line of any other is one this build cannot draw, and is skipped. */
 const TRACE_KINDS: ReadonlySet<ControlTraceKind> = new Set<ControlTraceKind>([
@@ -37,7 +43,7 @@ const NEWLINE = 0x0a
  * Up to `count` entries ending before byte `before` (the end of the record
  * when undefined), oldest first. `more` when the record goes back further.
  */
-export function transcriptPage(file: RecordFile, before: number | undefined, count: number, nameOf: NameOf = NO_NAMES): { entries: ControlTranscriptEntry[]; more: boolean } {
+export function transcriptPage(file: RecordFile, before: number | undefined, count: number, speakers: Speakers = NO_SPEAKERS): { entries: ControlTranscriptEntry[]; more: boolean } {
   const end = Math.min(before ?? Infinity, file.size())
   let start = end
   let bytes = Buffer.alloc(0)
@@ -46,14 +52,14 @@ export function transcriptPage(file: RecordFile, before: number | undefined, cou
     const from = Math.max(0, start - CHUNK_BYTES)
     bytes = Buffer.concat([file.read(from, start - from), bytes])
     start = from
-    entries = parseRecordBytes(bytes, start, nameOf)
+    entries = parseRecordBytes(bytes, start, speakers)
   }
   const page = entries.slice(-count)
   return { entries: page, more: page.length > 0 && page[0].offset > 0 }
 }
 
 /** Every whole line of `bytes`, which start at `base` in the record. A line cut off at the front is skipped. */
-export function parseRecordBytes(bytes: Buffer, base: number, nameOf: NameOf = NO_NAMES): ControlTranscriptEntry[] {
+export function parseRecordBytes(bytes: Buffer, base: number, speakers: Speakers = NO_SPEAKERS): ControlTranscriptEntry[] {
   const entries: ControlTranscriptEntry[] = []
   let at = 0
   if (base > 0) {
@@ -65,7 +71,7 @@ export function parseRecordBytes(bytes: Buffer, base: number, nameOf: NameOf = N
   while (at < bytes.length) {
     const newline = bytes.indexOf(NEWLINE, at)
     const stop = newline < 0 ? bytes.length : newline
-    const entry = parseRecordLine(bytes.toString('utf8', at, stop), base + at, nameOf)
+    const entry = parseRecordLine(bytes.toString('utf8', at, stop), base + at, speakers)
     if (entry) entries.push(entry)
     at = stop + 1
   }
@@ -73,7 +79,7 @@ export function parseRecordBytes(bytes: Buffer, base: number, nameOf: NameOf = N
 }
 
 /** One line of the record, as the view shows it; undefined for anything it cannot read. */
-export function parseRecordLine(line: string, offset: number, nameOf: NameOf = NO_NAMES): ControlTranscriptEntry | undefined {
+export function parseRecordLine(line: string, offset: number, speakers: Speakers = NO_SPEAKERS): ControlTranscriptEntry | undefined {
   let raw: {
     timestamp?: unknown; role?: unknown; content?: unknown; heard?: { of?: unknown; parts?: unknown; unread?: unknown }; notDone?: unknown
     trace?: { what?: unknown; text?: unknown; detail?: unknown }
@@ -94,21 +100,21 @@ export function parseRecordLine(line: string, offset: number, nameOf: NameOf = N
   const trace = raw.trace
   if (trace && TRACE_KINDS.has(trace.what as ControlTraceKind) && typeof trace.text === 'string') {
     return {
-      ...base, kind: 'trace', what: trace.what as ControlTraceKind, text: readable(trace.text, nameOf),
-      ...(typeof trace.detail === 'string' && trace.detail ? { detail: readable(trace.detail, nameOf) } : {}),
+      ...base, kind: 'trace', what: trace.what as ControlTraceKind, text: readable(trace.text, speakers),
+      ...(typeof trace.detail === 'string' && trace.detail ? { detail: readable(trace.detail, speakers) } : {}),
     }
   }
-  if (typeof raw.notDone === 'string') return { ...base, kind: 'log', text: readable(raw.notDone, nameOf), notDone: true }
+  if (typeof raw.notDone === 'string') return { ...base, kind: 'log', text: readable(raw.notDone, speakers), notDone: true }
   if (typeof raw.content !== 'string' || (raw.role !== 'user' && raw.role !== 'assistant')) return undefined
   if (raw.role === 'user') {
     const split = splitTurnBody(raw.content)
     // Every user message on record is a turn the user spoke in; anything else is shown whole.
-    return split ? { ...base, kind: 'user', text: split.heard, ...(split.context ? { context: readable(split.context, nameOf) } : {}) }
+    return split ? { ...base, kind: 'user', text: split.heard, ...(split.context ? { context: readable(split.context, speakers) } : {}) }
       : { ...base, kind: 'user', text: raw.content }
   }
-  const parts = replyParts(raw.content, nameOf)
+  const parts = replyParts(raw.content, speakers)
   return parts ? { ...base, kind: 'reply', parts, ...(raw.delivery === 'text' ? { delivery: 'text' as const } : {}) }
-    : { ...base, kind: 'log', text: readable(raw.content, nameOf) }
+    : { ...base, kind: 'log', text: readable(raw.content, speakers) }
 }
 
 /**
@@ -131,27 +137,34 @@ export function spokenPart(line: string, part: number): { intro: string; text: s
   return typeof voice === 'string' && typeof text === 'string' ? { intro, text, voice } : undefined
 }
 
-/** A stored reply (`{"say":[{from,text}]}`), or undefined when the content is not one — a log line. */
-function replyParts(content: string, nameOf: NameOf): Array<{ from: string; text: string }> | undefined {
+/**
+ * A stored reply (`{"say":[{from,text}]}`), or undefined when the content is
+ * not one — a log line. A part an agent spoke carries its node, when known.
+ */
+function replyParts(content: string, speakers: Speakers): Array<{ from: string; text: string; nodeId?: NodeId }> | undefined {
   if (!content.startsWith('{')) return undefined
   let parsed: { say?: unknown }
   try { parsed = JSON.parse(content) } catch { return undefined }
   if (!Array.isArray(parsed.say)) return undefined
-  return parsed.say.flatMap((part: { from?: unknown; text?: unknown }) =>
-    typeof part?.text === 'string' ? [{ from: speaker(typeof part.from === 'string' ? part.from : CONTROL, nameOf), text: readable(part.text, nameOf) }] : [])
+  return parsed.say.flatMap((part: { from?: unknown; text?: unknown }) => {
+    if (typeof part?.text !== 'string') return []
+    const from = typeof part.from === 'string' ? part.from : CONTROL
+    const nodeId = from === CONTROL ? undefined : speakers.nodeOf(parseAgentRef(from).key)
+    return [{ from: speaker(from, speakers), text: readable(part.text, speakers), ...(nodeId ? { nodeId } : {}) }]
+  })
 }
 
 /**
  * "control" as Control, `Kevin:amber-otter` as Kevin, and a bare handle as
- * whoever `nameOf` says it is — itself only when nobody knows.
+ * whoever `speakers` says it is — itself only when nobody knows.
  */
-function speaker(from: string, nameOf: NameOf): string {
+function speaker(from: string, speakers: Speakers): string {
   if (from === CONTROL) return 'Control'
   const ref = parseAgentRef(from)
-  return ref.name || nameOf(ref.key) || ref.key
+  return ref.name || speakers.nameOf(ref.key) || ref.key
 }
 
 /** Agent tokens as the names they carry: `{Kevin:amber-otter}` reads "Kevin". */
-function readable(text: string, nameOf: NameOf): string {
-  return text.replace(AGENT_TOKEN, (_, inside: string) => speaker(inside, nameOf))
+function readable(text: string, speakers: Speakers): string {
+  return text.replace(AGENT_TOKEN, (_, inside: string) => speaker(inside, speakers))
 }
