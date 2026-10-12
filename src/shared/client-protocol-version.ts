@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 18
+export const CLIENT_PROTOCOL_VERSION = 19
 
 /**
  * Oldest client protocol this build still serves.
@@ -89,5 +89,8 @@ export const CLIENT_PROTOCOL_VERSION = 18
  * v17 never pauses its canvas (`canvas-pause`), so a phone on it is sent every
  * terminal's snapshots while Control's transcript covers its canvas or its
  * screen is off; it loses nothing else.
+ *
+ * v18 never says whether its app is behind (`app-behind`), so Control cannot
+ * tell the user an iPhone install is waiting; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

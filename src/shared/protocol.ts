@@ -490,6 +490,23 @@ export interface ClientLogMessage {
 }
 
 /**
+ * Whether the app around this page is older than the Mac's source, so that
+ * only an install from the Mac brings it up to date (`update-check.ts`). Sent
+ * by the phone on each connect and whenever it changes; the server keeps each
+ * device's last word, so that Control can say an install is waiting. See
+ * `receptionist/spaceterm-status.ts`.
+ */
+export interface AppBehindMessage {
+  type: 'app-behind'
+  /**
+   * The device's id, as `client-hello` gives it: said again here because a
+   * report sent on connect can arrive before the handshake has named it.
+   */
+  deviceId: string
+  behind: boolean
+}
+
+/**
  * One entry in the phone's audio and lifecycle record (src/mobile/mobile-events.ts):
  * the microphone, dictation, playback, and the app coming and going.
  */
@@ -1203,6 +1220,7 @@ export type AgentSearchResult =
 export type ClientMessage =
   | ShipItMessage
   | ClientLogMessage
+  | AppBehindMessage
   | MobileEventsMessage
   | AgentMemoryQueryMessage
   | TerminalBorrowSizeMessage

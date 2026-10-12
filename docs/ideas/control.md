@@ -86,6 +86,13 @@ that transcript for the reasoning behind any item here.
   get carried out — but each says THE USER IS AWAY and a reply that talks is
   refused. When the holder is back, one turn gets what was missed: where the
   last reply was cut off, and the events acted on meanwhile.
+- **Spaceterm status**: whether a server restart or an iPhone app install is
+  waiting. Control's session has no per-turn context — every message stays in
+  it — so the status is sampled as each message leaves and goes on it only
+  when it differs from what the session was last told (kept in
+  `session.json`), headed SPACETERM STATUS and never written to the record.
+  The phone reports whether its app is behind (`app-behind`). See
+  `receptionist/spaceterm-status.ts`.
 - **Misheard names**: no deterministic layer. The prompt says input is
   dictated, gives examples ("heaven" for Evan), and asks Control to confirm
   when unsure. The registry still never assigns two sound-alike names at once

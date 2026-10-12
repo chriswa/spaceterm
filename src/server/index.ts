@@ -60,6 +60,7 @@ import { CodexCacheReader } from './codex-cache-warmth'
 import { cursorCacheWarmth } from './cursor-cache-warmth'
 import { SessionFileWatcher } from './session-file-watcher'
 import { readRestartFlag, clearRestartFlag, watchRestartFlag } from './restart-flag'
+import type { StatusSample } from './receptionist/spaceterm-status'
 import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher, findCursorTranscript } from './cursor-session-file-watcher'
 import { ClaudeStateMachine } from './claude-state'
@@ -598,6 +599,23 @@ function isClientDevice(value: unknown): value is ClientDevice {
   if (typeof value !== 'object' || value === null) return false
   const { id, label } = value as Record<string, unknown>
   return typeof id === 'string' && id !== '' && typeof label === 'string' && label !== ''
+}
+
+/**
+ * Devices whose app last said it is behind the Mac's source (`app-behind`),
+ * kept while they are away: an app that is behind stays behind until an
+ * install, and the app says so again when it next connects.
+ */
+const appsBehind = new Set<string>()
+
+/** What Spaceterm is waiting on the user to do, for Control: see receptionist/spaceterm-status.ts. */
+function spacetermStatus(): StatusSample {
+  const holder = stateManager.getReceptionistHolder()
+  return {
+    restartPending: readRestartFlag() !== null,
+    phoneInstallPending: appsBehind.size > 0,
+    ...(holder ? { device: holder.label } : {}),
+  }
 }
 
 /** The connections from the device holding Control, newest last. */
@@ -1995,6 +2013,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // not cut someone else's borrow short.
       if (terminalBorrowers.get(msg.nodeId) === client.id) returnBorrowedSize(msg.nodeId, 'returned')
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'app-behind': {
+      if (typeof msg.deviceId !== 'string' || msg.deviceId === '') break
+      if (msg.behind === true) appsBehind.add(msg.deviceId)
+      else appsBehind.delete(msg.deviceId)
       break
     }
 
@@ -3440,6 +3465,7 @@ async function startServer(): Promise<void> {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),
     voiceOperatorDiscovered: () => speechVoiceOperator.isRunning(),
+    spacetermStatus,
   }, {
     listener: undefined,
     onPhase: () => broadcastToAll(receptionistStatus()),

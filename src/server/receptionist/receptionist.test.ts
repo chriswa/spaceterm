@@ -21,6 +21,7 @@ import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
 import type { NameRegistryStore } from './name-registry'
 import type { ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
 import { spokenPart } from './transcript'
+import { STATUS_HEADING, type StatusSample } from './spaceterm-status'
 
 const KEVIN_ID = asNodeId('11111111-0000-4000-8000-000000000000')
 const SALLY_ID = asNodeId('22222222-0000-4000-8000-000000000000')
@@ -137,6 +138,8 @@ function harness(opts: {
   carryStore?: NameRegistryStore
   /** When it is time to look where the voice is again; by default never. */
   voiceTick?: () => Promise<void>
+  /** What Spaceterm is waiting on the user for, read as each message leaves; by default nothing, on the Mac. */
+  status?: () => StatusSample
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
@@ -320,6 +323,7 @@ function harness(opts: {
     sleep: opts.sleep ?? (async () => {}),
     voiceTick: opts.voiceTick ?? (() => new Promise(() => {})),
     voiceOperatorDiscovered: () => true,
+    spacetermStatus: opts.status ?? (() => ({ restartPending: false, phoneInstallPending: false, device: 'Mac' })),
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {}, onSpeaking: (now) => speaking.push(now) })
   return {
     receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, endedQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking,
@@ -496,6 +500,90 @@ describe('Receptionist', () => {
     await flush()
     expect(h.traces.filter(trace => trace.what === 'compacted').map(trace => trace.text))
       .toEqual(['Memory compacted 5 min ago: its last few messages were repeated to it word for word'])
+  })
+
+  describe('Spaceterm status', () => {
+    it('tells the session what is pending only when it changes, ahead of the user\'s words', async () => {
+      let status: StatusSample = { restartPending: false, phoneInstallPending: false, device: 'Mac' }
+      const h = harness({ status: () => status, replies: ['a', 'b', 'c', 'd'].map(text => reply([{ from: 'control', text }])) })
+      await h.receptionist.hear('hello', 'spoken')
+      await flush()
+      // Nothing pending is what a new session already assumes.
+      expect(h.turns[0].prompt).not.toContain(STATUS_HEADING)
+      status = { ...status, restartPending: true }
+      await h.receptionist.hear('anything new?', 'spoken')
+      await flush()
+      const told = h.turns[1].prompt
+      expect(told).toMatch(new RegExp(`^${STATUS_HEADING}, from the Spaceterm system itself, not from the user[^]*Server restart: pending[^]*THE USER SAYS: anything new\\?`))
+      expect(told).toContain('The user is on the Mac.')
+      expect(h.session?.toldStatus).toEqual({ restartPending: true, phoneInstallPending: false })
+      // Unchanged: not said again.
+      await h.receptionist.hear('ok', 'spoken')
+      await flush()
+      expect(h.turns[2].prompt).not.toContain(STATUS_HEADING)
+      // Done: said once more, as no longer needed.
+      status = { ...status, restartPending: false }
+      await h.receptionist.hear('and now?', 'spoken')
+      await flush()
+      expect(h.turns[3].prompt).toContain('Server restart: not needed any more')
+      expect(h.session?.toldStatus).toBeUndefined()
+    })
+
+    it('never puts the status in the record, so the transcript shows only what the user said', async () => {
+      const h = harness({
+        status: () => ({ restartPending: true, phoneInstallPending: true, device: 'Phone' }),
+        replies: [reply([{ from: 'control', text: 'A restart is waiting.' }])],
+      })
+      await h.receptionist.hear('hello', 'spoken')
+      await flush()
+      expect(h.turns[0].prompt).toContain('iPhone app install: pending')
+      expect(h.record.map(message => message.content).join('\n')).not.toContain(STATUS_HEADING)
+    })
+
+    it('remembers across a server restart what the session was told', async () => {
+      const toldStatus = { restartPending: true, phoneInstallPending: false }
+      const replies = [reply([{ from: 'control', text: 'Yes.' }])]
+      // The flag outlived the restart that did not clear it: nothing to tell.
+      const still = harness({ saved: { sessionId: 'kept', promptHash: PROMPT_HASH, toldStatus }, status: () => ({ ...toldStatus }), replies: [...replies] })
+      await still.receptionist.hear('still there?', 'spoken')
+      await flush()
+      expect(still.turns[0].prompt).not.toContain(STATUS_HEADING)
+      // The restart it asked for: the session is told it is done.
+      const restarted = harness({ saved: { sessionId: 'kept', promptHash: PROMPT_HASH, toldStatus }, status: () => ({ restartPending: false, phoneInstallPending: false }), replies: [...replies] })
+      await restarted.receptionist.hear('still there?', 'spoken')
+      await flush()
+      expect(restarted.turns[0].prompt).toContain('Server restart: not needed any more; the restart has been done.')
+      expect(restarted.session).toEqual({ sessionId: 'kept', promptHash: PROMPT_HASH })
+    })
+
+    it('tells a compacted session again what is still pending, since its summary may have dropped it', async () => {
+      const toldStatus = { restartPending: true, phoneInstallPending: false }
+      const h = harness({
+        saved: { sessionId: 'kept', promptHash: PROMPT_HASH, toldStatus, compactsAt: Date.now() - 1_000 },
+        status: () => ({ ...toldStatus }),
+        replies: [reply([{ from: 'control', text: 'Yes.' }])],
+      })
+      await h.receptionist.hear('still there?', 'spoken')
+      await flush()
+      expect(h.turns[0].prompt).toContain('Server restart: pending')
+      expect(h.turns[0].prompt).toContain('a reminder, not news')
+    })
+
+    it('tells it again when the message carrying it failed', async () => {
+      const failed: string[] = []
+      const h = harness({
+        status: () => ({ restartPending: true, phoneInstallPending: false }),
+        // The first message fails, as one the model's safeguards flag.
+        failWhen: (turn) => failed.length === 0 && failed.push(turn.prompt) > 0,
+        replies: [reply([{ from: 'control', text: 'Yes.' }])],
+      })
+      await h.receptionist.hear('hello', 'spoken')
+      await flush()
+      expect(failed[0]).toContain('Server restart: pending')
+      expect(h.turns).toHaveLength(1)
+      expect(h.turns[0].prompt).toContain('Server restart: pending')
+      expect(h.session?.toldStatus).toEqual({ restartPending: true, phoneInstallPending: false })
+    })
   })
 
   it('lists the agents and directories when asked', async () => {

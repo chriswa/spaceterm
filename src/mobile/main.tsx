@@ -9,6 +9,7 @@ import { controlModeGate, installControlMode } from './control-mode'
 import { canvasLifecycle, lastView, rememberView } from './canvas-lifecycle'
 import { retainServerSync } from '@/lib/server-sync'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
+import { useClientStalenessStore } from '@/stores/clientStalenessStore'
 import { PageWork, meteredTransport, installPageWorkReport } from './page-work'
 import { not } from './gate'
 import { installDiagnostics } from './diagnostics'
@@ -101,6 +102,11 @@ if (!token) {
       const off = client.onLifecycle('connect', () => { off(); client.holdReceptionist('release') })
     }
     mobileEvents.setSender((events) => client.mobileEvents(events))
+    // Whether this app needs installing again, for Control to say: on every
+    // connect, since a restarted server has forgotten, and on every change.
+    client.onLifecycle('connect', () => client.appBehind(useClientStalenessStore.getState().native))
+    if (client.isConnected()) client.appBehind(useClientStalenessStore.getState().native)
+    useClientStalenessStore.subscribe((s, prev) => { if (s.native !== prev.native) client.appBehind(s.native) })
     recordMobileEvent('server', { connected: true })
     client.onLifecycle('disconnect', () => recordMobileEvent('server', { connected: false }))
     client.onLifecycle('connect', () => {

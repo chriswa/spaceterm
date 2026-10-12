@@ -13,6 +13,7 @@ import type { NameProblem } from './name-registry'
 import { DIRECTORY_PREFIX, editDistance, Handles, NODE_PREFIX } from './handles'
 import { AGENT_TOKEN, agentToken, parseAgentRef, stripBraces } from './agent-token'
 import { whereWords, type NearbyNode } from './nearby'
+import { NOTHING_PENDING, sameStatus, statusOf, statusToTell, type SpacetermStatus, type StatusSample } from './spaceterm-status'
 import type { CameraBounds, ControlTrace, ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
@@ -114,6 +115,8 @@ export interface SavedSession {
   promptHash: string
   /** When the daemon compacts it, as its last answer said (epoch ms). */
   compactsAt?: number
+  /** The Spaceterm status the session was last told; absent, it was told none. See spaceterm-status.ts. */
+  toldStatus?: SpacetermStatus
 }
 
 /** Jev's ranking of the agents against a description. */
@@ -288,6 +291,8 @@ export interface ReceptionistDeps {
   voiceTick(): Promise<void>
   /** Whether Voice Operator is publishing a port: see SpeechChannel's deps. */
   voiceOperatorDiscovered(): boolean
+  /** What Spaceterm is waiting on the user to do, sampled as each message leaves: see spaceterm-status.ts. */
+  spacetermStatus(): StatusSample
 }
 
 /** Backlog items taken off for one turn, and how the model is told of them. */
@@ -1526,9 +1531,12 @@ export class Receptionist {
       }
       // The old session's notes go to the first message of the new one.
       const handover = sessionId ? undefined : this.handover
+      // Sampled now, as notes are, and said only when the session does not know it already.
+      const status = this.deps.spacetermStatus()
+      const statusNote = statusToTell(status, session?.toldStatus, session !== undefined && forgets(session))
       const message = [
         handover !== undefined ? `${HANDOVER_HEADING}\n${handover}` : undefined,
-        recap, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, prompt,
+        recap, statusNote, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, prompt,
       ].filter(Boolean).join('\n\n')
       try {
         const answer = await this.askWhenFree(
@@ -1540,10 +1548,15 @@ export class Receptionist {
           throw new Unsent(first)
         }
         if (handover !== undefined) this.handover = undefined
-        if (answer.sessionId !== sessionId || answer.compactsAt !== session?.compactsAt) {
+        // The message is in the session, so the session knows the status now:
+        // told it just now, or told it before and nothing changed. A session
+        // other than the one asked for knows only what this message said.
+        const told = statusNote !== undefined || answer.sessionId === sessionId ? statusOf(status) : NOTHING_PENDING
+        if (answer.sessionId !== sessionId || answer.compactsAt !== session?.compactsAt || !sameStatus(told, session?.toldStatus ?? NOTHING_PENDING)) {
           this.session = {
             sessionId: answer.sessionId, promptHash: PROMPT_HASH,
             ...(answer.compactsAt !== undefined ? { compactsAt: answer.compactsAt } : {}),
+            ...(sameStatus(told, NOTHING_PENDING) ? {} : { toldStatus: told }),
           }
           this.deps.session.save(this.session)
         }
