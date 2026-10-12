@@ -43,6 +43,7 @@ import { RemoteDictation } from './remote-dictation'
 import { DictationPresence } from './dictation-presence'
 import { checkWakeWord, parseHandsFreeTuning } from './hands-free'
 import { TurnDetector, realTurnDetectorDeps } from './turn-detector'
+import { VoiceRecord, realVoiceRecordDeps } from './voice-record'
 import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
 import { RemoteSpeech } from './remote-speech'
@@ -346,13 +347,26 @@ const directSpeech = new DirectSpeech({
  */
 const turnDetector = new TurnDetector(realTurnDetectorDeps(path.join(SOCKET_DIR, 'models'), (message) => serverLog(`[turn] ${message}`)))
 
+/** What hands-free heard and decided, with the audio, for review: see voice-record.ts. */
+const voiceRecord = new VoiceRecord(realVoiceRecordDeps(SOCKET_DIR), (message) => serverLog(`[voice-record] ${message}`))
+
 /** Whether the user is dictating, on the phone or the Mac: what Control holds for. See dictation-presence.ts. */
 const dictationPresence = new DictationPresence((speaking) => receptionist?.userSpeaking(speaking))
 
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator(), {
   onSpeaking: (speaking) => dictationPresence.phone(speaking),
-  turnProbability: (audio) => turnDetector.probability(audio),
+  turnProbability: async (audio, dictation) => {
+    const asked = performance.now()
+    try {
+      const p = await turnDetector.probability(audio)
+      voiceRecord.turn({ dictation, probability: p ?? null, elapsedMs: Math.round(performance.now() - asked) }, audio)
+      return p
+    } catch (err) {
+      voiceRecord.turn({ dictation, probability: null, elapsedMs: Math.round(performance.now() - asked), error: err instanceof Error ? err.message : String(err) }, audio)
+      throw err
+    }
+  },
 })
 
 /**
@@ -1879,6 +1893,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const seq = msg.seq
       void remoteDictation.finish(client.id, msg.id).then((outcome) => {
         serverLog(`[dictation] client=${client.id.slice(0, 8)} ${outcome.ok ? `${outcome.value.length} chars` : `failed: ${outcome.error}`}`)
+        voiceRecord.dictation({ device: client.device?.label ?? client.id.slice(0, 8), dictation: msg.id, ...(outcome.ok ? { text: outcome.value } : { error: outcome.error }) })
         send(client.link, outcome.ok
           ? { type: 'dictation-result', seq, text: outcome.value }
           : { type: 'server-error', seq, message: outcome.error })
@@ -1908,7 +1923,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // A hands-free dictation may be moments away, and will ask the turn model at its first pause.
       turnDetector.warm()
       const mode = msg.mode ?? 'wake-word'
-      void checkWakeWord(wakeWordVoiceOperator, Buffer.from(msg.pcm, 'base64'), mode, handsFreeTuning.ignoredWords, (m) => serverLog(`[hands-free] ${m}`)).then((outcome) => {
+      const pcm = Buffer.from(msg.pcm, 'base64')
+      const asked = performance.now()
+      void checkWakeWord(wakeWordVoiceOperator, pcm, mode, handsFreeTuning.ignoredWords, (m) => serverLog(`[hands-free] ${m}`)).then((outcome) => {
+        voiceRecord.check({
+          device: client.device?.label ?? client.id.slice(0, 8), mode, elapsedMs: Math.round(performance.now() - asked),
+          ...(outcome.ok ? { match: outcome.match, heard: outcome.heard, wakeWord: outcome.wakeWord } : { match: false, error: outcome.error }),
+        }, pcm)
         if (!outcome.ok) serverLog(`[hands-free] ${outcome.error}`)
         else if (outcome.match) serverLog(`[hands-free] wake word heard on ${client.device?.label ?? client.id.slice(0, 8)}`)
         send(client.link, outcome.ok

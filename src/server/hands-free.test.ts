@@ -33,7 +33,7 @@ describe('checkWakeWord', () => {
         return { status: 200, body: { match: true, heard: 'Control, what is' } }
       },
     }
-    expect(await checkWakeWord(voice, pcm)).toEqual({ ok: true, match: true })
+    expect(await checkWakeWord(voice, pcm)).toEqual({ ok: true, match: true, heard: 'Control, what is' })
     // The start of what was said, not a word on its own.
     expect(asked).toEqual(['control start'])
   })
@@ -55,9 +55,9 @@ describe('checkWakeWord, in the conversation window', () => {
   })
 
   it('counts any real words as speech, and says when they began with the wake word', async () => {
-    expect(await checkWakeWord(heard('Yes.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: false })
-    expect(await checkWakeWord(heard('No, tell Evan.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: false })
-    expect(await checkWakeWord(heard('Control.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: true })
+    expect(await checkWakeWord(heard('Yes.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: false, heard: 'Yes.' })
+    expect(await checkWakeWord(heard('No, tell Evan.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: false, heard: 'No, tell Evan.' })
+    expect(await checkWakeWord(heard('Control.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: true, heard: 'Control.' })
   })
 
   it('does not count filler, or nothing at all', async () => {

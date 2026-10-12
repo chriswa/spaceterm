@@ -284,7 +284,12 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   "hmm", "uh", "um" and the like). It stays open while either of you is
   speaking, however long, and closes with a tone (three soft steps down)
   once neither has spoken for `conversationMs` (15 s) — Control thinking does
-  not hold it open. The blue ring drains as the quiet runs out, the icon
+  not hold it open. Inside it, speech counts however soon it follows other
+  speech — a rejected cough, or Control's voice leaking past echo
+  cancellation, does not make the words after it "mid-sentence" — and the
+  app reopening a stalled microphone does not close it (it waits
+  `conversationMs` for the microphone; turning the hold off closes it at
+  once). The blue ring drains as the quiet runs out, the icon
   staying put. The window needs a server that knows it: an older one
   answers the wake-word question instead, which the phone notices
   (`hands-free-server-too-old`), closing the window with its tone and logging
@@ -384,7 +389,7 @@ written, across restarts too.
 
 A page has no event for being put to sleep; a `woke` line with `asleepMs`
 says it was, and `heartbeat` lines say it was still running while hidden.
-Nothing said is recorded — only lengths.
+Nothing said is recorded here — only lengths.
 
 For a microphone that did not come back: `audio-interruption-began` says
 whether the page's own microphone was open (`pageMicrophone`), and app
@@ -401,7 +406,27 @@ does every later one on that page.
 
     jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
 
+Every cue is a `cue` line with its gain, its peak in dBFS counting any cue
+it overlaps (`overlapping`), and whether it had to wait for a stopped audio
+context (`waiting`). A cue that waited is played when the context runs again
+only if it is fresh; otherwise, or when a newer cue replaces it, a
+`cue-dropped` line says so (`cues.ts`, `CueTracker`) — iOS used to save them
+all up and play them together, loudly. Each Smart Turn verdict on the phone
+is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
+
     jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
+    jq -c 'select(.kind | test("^cue"))' ~/.spaceterm/mobile-events.jsonl
+
+**What was said, kept on purpose.** The Mac keeps the other half in
+`~/.spaceterm/voice-decisions.jsonl` (`src/server/voice-record.ts`): each
+wake-word and speech check with what Apple's model `heard` and whether it
+counted, each Smart Turn verdict with its probability and the pause it heard
+after the last word (`trailingQuietMs`), and each phone dictation's
+transcript — every line timed, with its audio in `~/.spaceterm/voice-clips/`
+(16 kHz WAV, the newest 400 kept). So a "Control" heard as "patrol", or a
+finished sentence Smart Turn called unfinished, can be found and listened to.
+
+    jq -c 'select(.kind == "wake-word-check" and .match == false)' ~/.spaceterm/voice-decisions.jsonl
 
 While a dictation is sending your voice to be transcribed, an orange **MIC**
 sits above the Dynamic Island (`MicIndicator.tsx`); it pulses while the words

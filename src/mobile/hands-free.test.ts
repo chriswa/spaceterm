@@ -36,7 +36,8 @@ const fakeDetector: FrameScorer = {
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
-function harness({ isWakeWord = true, isWords = true, saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
+/** `isWords`: the speech check's answer, or one per check, numbered from 0. */
+function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
     sampleRate: RATE,
@@ -46,7 +47,10 @@ function harness({ isWakeWord = true, isWords = true, saidWakeWord = false, oldS
     describe: () => 'fake microphone',
   }
   let held: Capture | undefined = capture
+  let wanted = true
   let holdChanged = () => {}
+  /** Sleeps under way, resolved by `elapse` — the stuck-dictation backstop among them. */
+  let sleeps: Array<{ ms: number; resolve: () => void }> = []
   let tuningListener: (t: Partial<HandsFreeTuning>) => void = () => {}
   const said: string[] = []
   const checked: number[] = []
@@ -70,7 +74,7 @@ function harness({ isWakeWord = true, isWords = true, saidWakeWord = false, oldS
           // An old server answers every check as the wake-word question, and does not say so.
           if (oldServer) return { match: isWakeWord }
           return mode === 'speech'
-            ? { match: isWords, answered: 'speech' as const, wakeWord: saidWakeWord }
+            ? { match: typeof isWords === 'function' ? isWords(modes.filter((m) => m === 'speech').length - 1) : isWords, answered: 'speech' as const, wakeWord: saidWakeWord }
             : { match: isWakeWord, answered: 'wake-word' as const }
         },
         say: (text, interrupted) => { sayCalls.push({ text, interrupted }); if (text) said.push(text) },
@@ -80,6 +84,7 @@ function harness({ isWakeWord = true, isWords = true, saidWakeWord = false, oldS
     },
     log: () => {},
     heldCapture: () => held,
+    holdWanted: () => wanted,
     onHoldStateChange: (fn) => { holdChanged = fn; return () => {} },
     quietForMs: () => quietFor,
     playCue: (cue) => { cues.push(cue) },
@@ -99,8 +104,7 @@ function harness({ isWakeWord = true, isWords = true, saidWakeWord = false, oldS
       }
     },
     othersDictating: () => false,
-    // The stuck-dictation backstop never fires in a test.
-    sleep: () => new Promise(() => {}),
+    sleep: (ms) => new Promise((resolve) => { sleeps.push({ ms, resolve }) }),
     loadScorer: async () => fakeDetector,
     record: (kind, detail) => { records.push({ kind, detail }) },
     nativeSpeech: () => ({ playing: controlSpeaking, outputDb: -18, voiceProcessing: true }),
@@ -126,7 +130,17 @@ function harness({ isWakeWord = true, isWords = true, saidWakeWord = false, oldS
     setControlSpeaking: (on: boolean) => { controlSpeaking = on },
     haptics: () => haptics,
     setQuietFor: (ms: number) => { quietFor = ms },
-    dropHold: () => { held = undefined; holdChanged() },
+    dropHold: () => { wanted = false; held = undefined; holdChanged() },
+    /** The app's microphone stalls, still turned on, and is reopened by `reopenHold`. */
+    stallHold: () => { held = undefined; holdChanged() },
+    reopenHold: () => { held = capture; holdChanged() },
+    /** Resolve every sleep of at most `ms`. */
+    elapse: async (ms: number) => {
+      const due = sleeps.filter((s) => s.ms <= ms)
+      sleeps = sleeps.filter((s) => s.ms > ms)
+      for (const s of due) s.resolve()
+      await settle()
+    },
     tune: (t: Partial<HandsFreeTuning>) => tuningListener(t),
   }
 }
@@ -373,6 +387,55 @@ describe('hands-free mode', () => {
       // "Control" still works, as before the window; it just does not open one any more.
       expect(h.dictations).toHaveLength(2)
       expect(useHandsFree.getState().conversation).toBe(false)
+    })
+
+    it('checks words that follow straight on from a rejected start, and lets them cut Control off', async () => {
+      // As heard on AirPods: a faint start Apple's model makes nothing of, then the words straight after.
+      h = harness({ isWords: (nth) => nth > 0 })
+      await inConversation(h)
+      h.setControlSpeaking(true)
+      h.setTranscript('No, wait.')
+      await h.hear(quiet(1000), speech(350), quiet(400), speech(2000), quiet(3500))
+      expect(h.modes).toEqual(['wake-word', 'speech', 'speech'])
+      expect(h.interrupts()).toBe(1)
+      expect(h.sayCalls.at(-1)).toEqual({ text: 'No, wait.', interrupted: true })
+    })
+
+    it('stays open while the app reopens a stalled microphone, so words still cut Control off', async () => {
+      h = harness()
+      await inConversation(h)
+      h.stallHold()
+      expect(useHandsFree.getState().conversation).toBe(true)
+      h.reopenHold()
+      h.setControlSpeaking(true)
+      h.setTranscript('No, stop.')
+      await h.hear(quiet(1000), speech(1500), quiet(3500))
+      expect(h.modes.at(-1)).toBe('speech')
+      expect(h.interrupts()).toBe(1)
+    })
+
+    it('closes, quietly, when a stalled microphone is not back within conversationMs, or holding is turned off', async () => {
+      h = harness()
+      await inConversation(h)
+      h.stallHold()
+      await h.elapse(15_000)
+      expect(useHandsFree.getState().conversation).toBe(false)
+      expect(h.cues).not.toContain('conversationClosed')
+
+      h.uninstall()
+      h = harness()
+      await inConversation(h)
+      h.dropHold()
+      expect(useHandsFree.getState().conversation).toBe(false)
+    })
+
+    it('a stall from before the microphone came back does not close the window later', async () => {
+      h = harness()
+      await inConversation(h)
+      h.stallHold()
+      h.reopenHold()
+      await h.elapse(15_000)
+      expect(useHandsFree.getState().conversation).toBe(true)
     })
 
     it('lets words cut Control off without "Control", when it speaks through echo cancellation', async () => {

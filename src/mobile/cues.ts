@@ -50,14 +50,85 @@ export function cueSamples(cue: Cue): Float32Array<ArrayBuffer> {
   return new Float32Array(out)
 }
 
+/** A cue that waited this long for a stopped audio context is dropped rather than played late. */
+export const CUE_STALE_MS = 400
+
+interface TrackedCue {
+  cue: Cue
+  stop(): void
+  requestedAt: number
+  durationMs: number
+  /** When it stops sounding, by `performance.now()`; unset while it waits for the context. */
+  endsAt?: number
+}
+
+/**
+ * What cues are sounding or waiting, so none pile up. A cue started on a
+ * context that is not running (iOS suspends or interrupts it whenever the
+ * app's own audio takes the session) does not play — it waits, its start
+ * frozen with the context's clock, and every cue that waited sounds at once,
+ * at full volume each, when the context runs again: a burst of overlapping
+ * tones. So only the newest waiting cue is kept, and on resume one that has
+ * waited more than `CUE_STALE_MS` is dropped. Pure, times passed in.
+ */
+export class CueTracker {
+  private cues: TrackedCue[] = []
+
+  /** A cue started now. `running`: the context was running, so it sounds at once. */
+  started(cue: Omit<TrackedCue, 'endsAt'>, running: boolean, now: number): { overlapping: Cue[]; superseded: Cue[] } {
+    this.cues = this.cues.filter((c) => c.endsAt === undefined || c.endsAt > now)
+    const superseded: Cue[] = []
+    if (!running) {
+      for (const waiting of this.cues.filter((c) => c.endsAt === undefined)) {
+        waiting.stop()
+        superseded.push(waiting.cue)
+      }
+      this.cues = this.cues.filter((c) => c.endsAt !== undefined)
+    }
+    const overlapping = this.cues.filter((c) => c.endsAt !== undefined).map((c) => c.cue)
+    this.cues.push({ ...cue, ...(running ? { endsAt: now + cue.durationMs } : {}) })
+    return { overlapping, superseded }
+  }
+
+  /** The context runs again: waiting cues sound now, unless they are stale, which are stopped. */
+  resumed(now: number): { dropped: Array<{ cue: Cue; lateMs: number }>; late: Array<{ cue: Cue; lateMs: number }> } {
+    const dropped: Array<{ cue: Cue; lateMs: number }> = []
+    const late: Array<{ cue: Cue; lateMs: number }> = []
+    for (const c of this.cues) {
+      if (c.endsAt !== undefined) continue
+      const lateMs = Math.round(now - c.requestedAt)
+      if (lateMs > CUE_STALE_MS) {
+        c.stop()
+        dropped.push({ cue: c.cue, lateMs })
+      } else {
+        c.endsAt = now + c.durationMs
+        late.push({ cue: c.cue, lateMs })
+      }
+    }
+    this.cues = this.cues.filter((c) => c.endsAt !== undefined)
+    return { dropped, late }
+  }
+}
+
+const tracker = new CueTracker()
+
 let context: AudioContext | null = null
 
 /** The shared context, made on first use; throws where there is no Web Audio. */
 function ensureContext(): AudioContext {
   if (context) return context
   const made = new AudioContext()
-  // Suspended or interrupted is when an answer plays to nobody.
-  made.onstatechange = () => recordMobileEvent('playback-context', { state: made.state })
+  made.onstatechange = () => {
+    // Suspended or interrupted is when an answer plays to nobody.
+    recordMobileEvent('playback-context', { state: made.state })
+    if (made.state !== 'running') return
+    const { dropped, late } = tracker.resumed(performance.now())
+    for (const d of dropped) {
+      window.api?.log(`[cue] ${d.cue} dropped: it waited ${d.lateMs}ms for the audio to come back`)
+      recordMobileEvent('cue-dropped', { cue: d.cue, lateMs: d.lateMs, why: 'stale' })
+    }
+    for (const l of late) recordMobileEvent('cue-sounded', { cue: l.cue, lateMs: l.lateMs })
+  }
   context = made
   return made
 }
@@ -120,11 +191,20 @@ export function playCue(cue: Cue): void {
     source.connect(gain).connect(ctx.destination)
     source.start()
     noteSounding(ctx, ctx.currentTime + buffer.duration)
-    // In the server log, so a cue that seems quiet or missing can be traced.
-    window.api?.log(`[cue] ${cue} (audio ${ctx.state})`)
-    recordMobileEvent('cue', { cue, audio: ctx.state })
-  } catch {
+    const running = ctx.state === 'running'
+    const { overlapping, superseded } = tracker.started(
+      { cue, stop: () => { try { source.stop() } catch { /* never started */ } }, requestedAt: performance.now(), durationMs: buffer.duration * 1000 },
+      running, performance.now(),
+    )
+    for (const old of superseded) recordMobileEvent('cue-dropped', { cue: old, why: `superseded by ${cue} while the audio was ${ctx.state}` })
+    // Volume as played: this cue's gain, and its peak with any cue it overlaps (each the same level), in dBFS.
+    const peakDb = Math.round(20 * Math.log10(OUTPUT_GAIN * (32000 / 32768) * (1 + overlapping.length)) * 10) / 10
+    // In the server log, so a cue that seems quiet, loud or missing can be traced.
+    window.api?.log(`[cue] ${cue} (audio ${ctx.state}, gain ${OUTPUT_GAIN}, peak ${peakDb} dBFS${overlapping.length ? `, over ${overlapping.join(', ')}` : ''}${running ? '' : ', waiting for the audio to resume'}${superseded.length ? `, replacing ${superseded.join(', ')}` : ''})`)
+    recordMobileEvent('cue', { cue, audio: ctx.state, gain: OUTPUT_GAIN, peakDb, overlapping, waiting: !running, ms: Math.round(buffer.duration * 1000) })
+  } catch (err) {
     // No audio device, or a policy refusal: the cue is skipped.
+    recordMobileEvent('cue-dropped', { cue, why: err instanceof Error ? err.message : String(err) })
   }
 }
 

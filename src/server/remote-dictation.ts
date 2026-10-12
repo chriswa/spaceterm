@@ -47,7 +47,7 @@ export interface RemoteDictationHooks {
    * The turn model (turn-detector.ts): the probability, from 16 kHz audio
    * ending now, that the speaker has finished. Undefined when there is none.
    */
-  turnProbability?: (audio: Float32Array) => Promise<number | undefined>
+  turnProbability?: (audio: Float32Array, dictation: string) => Promise<number | undefined>
   /** Run `fn` after `ms`, returning a way to call it off. */
   schedule?: (ms: number, fn: () => void) => () => void
 }
@@ -197,7 +197,7 @@ export class RemoteDictation {
       offset += block.length
     }
     try {
-      return { ok: true, value: (await this.hooks.turnProbability(audio)) ?? null }
+      return { ok: true, value: (await this.hooks.turnProbability(audio, id)) ?? null }
     } catch (err) {
       return { ok: false, error: `The turn model failed: ${err instanceof Error ? err.message : String(err)}` }
     }

@@ -219,10 +219,20 @@ export class WakeListener {
   /** Speech under way: where it began, what came before, how loud, and whether its start was handed out. */
   private speech: { start: number; noSpeechBefore: number; peakDb: number; eligible: boolean; handedOut: boolean } | null = null
   private nextId = 1
+  /** The conversation window is open: speech counts however soon it follows other speech. */
+  private conversation = false
 
   constructor(private tuning: HandsFreeTuning = DEFAULT_TUNING, private readonly onSpeech: (s: SpeechSighting) => void = () => {}) {}
 
   setTuning(tuning: HandsFreeTuning): void { this.tuning = tuning }
+
+  /**
+   * In the conversation window any words will do, so "nobody talking just
+   * before" — there to keep a "control" mid-sentence from counting — no longer
+   * applies: speech straight after a cough, a rejected start, or what echo
+   * cancellation let through of Control's voice is checked like any other.
+   */
+  setConversation(open: boolean): void { this.conversation = open }
 
   /** Whether someone is speaking now, as far as it has heard. */
   get speaking(): boolean { return this.gate.speaking }
@@ -255,7 +265,7 @@ export class WakeListener {
         // It began START_FRAMES ago; the frames that set it off are speech.
         const start = frameStart - (SpeechGate.START_FRAMES - 1) * FRAME_SAMPLES
         const noSpeechBefore = start - this.quietFrom
-        this.speech = { start, noSpeechBefore, peakDb: -120, eligible: ms(noSpeechBefore) >= this.tuning.noSpeechBeforeMs, handedOut: false }
+        this.speech = { start, noSpeechBefore, peakDb: -120, eligible: this.conversation || ms(noSpeechBefore) >= this.tuning.noSpeechBeforeMs, handedOut: false }
       }
       if (this.speech) this.speech.peakDb = Math.max(this.speech.peakDb, levelDb(pcm))
       if (change === 'stop' && this.speech) {
