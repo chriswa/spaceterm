@@ -552,7 +552,18 @@ nothing, seen after the app has been away and lasting until it is
 relaunched; the dictation carries on with the app's own microphone, and so
 does every later one on that page.
 
-    jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
+In the app, once hands-free is on, the page opens the app's microphone once
+and never closes or reopens it until hands-free is turned off
+(`installNativeHold`). The app keeps it going: in place after iOS stops its
+engine or it stalls (`native-mic-stalled`, `inPlace`; a new engine only if a
+second stall follows within 15 s), and on a new engine when AirPods come or
+go, or when it would not start. The page records a stall (`hold-stalled`,
+`hold-recovered`) but does not act on it: it used to close and reopen the
+microphone after three quiet seconds, and each time the AirPods dropped out
+of their microphone link, and with the screen locked iOS refused to record
+again.
+
+    jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred|hold-stalled|hold-recovered|native-mic-stalled")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
 
 Every cue is a `cue` line with its gain, its peak in dBFS counting any cue
 it overlaps (`overlapping`), and whether it had to wait for a stopped audio

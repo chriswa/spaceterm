@@ -109,6 +109,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     /// No taps, or nothing but digital silence, for this long: start again.
     private static let stallSeconds: Double = 2
     private static let minSecondsBetweenRebuilds: TimeInterval = 3
+    /// A stall this soon after the last stall's restart in place gets a new engine instead.
+    private static let stallEscalateSeconds: TimeInterval = 15
+    private var lastStallRestart = Date.distantPast
     /// An interruption with no end heard by then is taken to have none coming.
     private static let interruptionGraceSeconds: TimeInterval = 1
 
@@ -520,8 +523,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             let nsError = error as NSError
             events.record("native-mic-failed", ["mode": mode.rawValue, "why": why, "error": error.localizedDescription, "domain": nsError.domain, "code": nsError.code, "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground"])
             fail("could not start (\(why)): \(error.localizedDescription)")
-            // The page retries the microphone itself; nothing asks again for the bare engine.
-            if mode == .speaker { scheduleRestart("staying awake would not start", after: 5) }
+            // Tried again from here, the microphone too: the page opens it once and leaves it to this
+            // (held-microphone.ts `installNativeHold`).
+            scheduleRestart(mode == .speaker ? "staying awake would not start" : "the microphone would not start", after: mode == .speaker ? 5 : 2)
         }
         finishTransition()
     }
@@ -551,6 +555,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         audioQueue.async {
             let result = Result { () throws -> Double in
                 var sampleRate: Double = 0
+                // Stopped by iOS already, after a configuration change; running but silent, after a stall.
+                engine.stop()
                 if microphone {
                     let input = engine.inputNode
                     input.removeTap(onBus: 0)
@@ -672,10 +678,16 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         }
         guard running else { return }
         let (pcm, stalled) = capture.drain(stallSeconds: Self.stallSeconds)
-        if stalled, pendingRestart == nil, Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds {
-            log("no sound for \(Int(Self.stallSeconds)) s (nothing, or only digital silence) — starting again")
-            events.record("native-mic-stalled", ["seconds": Self.stallSeconds])
-            scheduleRestart("a stalled microphone", after: 0)
+        let sinceStallRestart = Date().timeIntervalSince(lastStallRestart)
+        if stalled, pendingRestart == nil, !transitioning, Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds,
+           sinceStallRestart > Self.minSecondsBetweenRebuilds {
+            // In place first: the same session, so the AirPods keep their microphone link and nothing is
+            // given up. A new engine only if that did not hold.
+            let inPlace = sinceStallRestart > Self.stallEscalateSeconds
+            lastStallRestart = Date()
+            log("no sound for \(Int(Self.stallSeconds)) s (nothing, or only digital silence) — starting again \(inPlace ? "in place" : "on a new engine")")
+            events.record("native-mic-stalled", ["seconds": Self.stallSeconds, "inPlace": inPlace])
+            scheduleRestart("a stalled microphone", after: 0, inPlace: inPlace)
         }
         guard !pcm.isEmpty, let webView else { return }
         if unanswered >= Self.maxUnanswered {

@@ -188,8 +188,12 @@ function captureOf(opened: Awaited<ReturnType<typeof openCapture>>, release: (br
 export type HoldState = 'off' | 'preparing' | 'held'
 
 let wanted = false
-/** `headset`: the label of a held web microphone, rechecked when devices change. Absent for the app's own. */
-let held: { capture: Capture; close: () => void; headset?: string } | undefined
+/**
+ * `headset`: the label of a held web microphone, rechecked when devices change.
+ * `native`: the app's own, which the page never closes while the hold is on —
+ * see `installNativeHold`.
+ */
+let held: { capture: Capture; close: () => void; headset?: string; native?: boolean } | undefined
 let opening: Promise<Capture> | undefined
 const stateListeners = new Set<(state: HoldState) => void>()
 let lastState: HoldState = 'off'
@@ -224,8 +228,13 @@ export function holdsMicrophone(): boolean {
 }
 
 
-/** The microphone held open now, if it is: what hands-free mode listens to. */
+/**
+ * The microphone held open now, if it is: what hands-free mode listens to.
+ * The app's own stays the one even while it delivers nothing: the app is
+ * bringing it back, and hands-free carries on with it when it does.
+ */
 export function heldCapture(): Capture | undefined {
+  if (held?.native) return held.capture
   return held?.capture.healthy() ? held.capture : undefined
 }
 
@@ -257,8 +266,8 @@ function closeHeld(why: string): void {
  * closes when the dictation releases it. Call inside a tap.
  */
 export function acquire(): Promise<Capture> {
-  if (held?.capture.healthy()) {
-    log('using the held microphone')
+  if (held?.capture.healthy() || held?.native) {
+    log(held.capture.healthy() ? 'using the held microphone' : 'using the held microphone, which the app is bringing back')
     return Promise.resolve(held.capture)
   }
   if (held) closeHeld('it stopped delivering')
@@ -267,8 +276,9 @@ export function acquire(): Promise<Capture> {
     // The app's own microphone: no headset needed, and no tap.
     if (wanted && nativeMicrophoneAvailable()) {
       const native = await openNativeMicrophone()
-      const capture = nativeCapture(native, (broken) => { if (broken) closeHeld('it went silent') })
-      held = { capture, close: () => native.close() }
+      // Released by each dictation, broken or not, and kept: the app recovers its own microphone.
+      const capture = nativeCapture(native, () => undefined)
+      held = { capture, close: () => native.close(), native: true }
       log('holding the app\'s own microphone open')
       recordMobileEvent('hold-opened', { source: 'native', input: native.describe() })
       announce()
@@ -336,19 +346,36 @@ export async function replaceSilentCapture(capture: Capture): Promise<Capture | 
 
 /** Movement that still counts as a tap. */
 const TAP_SLOP_PX = 10
-/** How often the app's own microphone is checked on, and taken back if it stopped. */
+/** How often the app's own microphone is checked on: opened if there is none, a stall recorded. */
 const NATIVE_CHECK_MS = 5000
 
 /**
- * Bring the hold back after a background trip. In the app that
- * needs nothing from the user: its microphone is opened now, and again
- * whenever it is found to have stopped.
+ * Hands-free in the app: once the hold is on, the app's microphone is opened
+ * and never closed or reopened from here until the hold is turned off. The
+ * app keeps it running itself — in place after iOS stops its engine, on a new
+ * one when AirPods come or go (NativeMicrophone.swift). The page used to
+ * close it and open a new one whenever it went quiet for three seconds, which
+ * the app's own restarts routinely caused: each time the session was given
+ * up, the AirPods dropped out of their microphone link, and with the screen
+ * locked iOS would not let it record again (October 2026: "Control" went
+ * unheard for a minute, until the phone was unlocked). Here it is only opened
+ * when there is none — at first, or after the app could not start it — and a
+ * stall is recorded, not acted on.
  */
 function installNativeHold(): () => void {
+  let stalled = false
   const check = () => {
     announce()
-    if (!wanted || held?.capture.healthy() || opening) return
-    if (held) closeHeld('it stopped delivering')
+    if (!wanted || opening) return
+    if (held) {
+      const healthy = held.capture.healthy()
+      if (healthy !== !stalled) {
+        stalled = !healthy
+        log(stalled ? `the app's microphone is delivering nothing; waiting for the app to bring it back (${held.capture.describe()})` : 'the app\'s microphone is delivering again')
+        recordMobileEvent(stalled ? 'hold-stalled' : 'hold-recovered', { capture: held.capture.describe() })
+      }
+      return
+    }
     void acquire().then((capture) => capture.release(), (err) => {
       const error = err instanceof Error ? err.message : String(err)
       log(`could not open the app's microphone: ${error}`)
