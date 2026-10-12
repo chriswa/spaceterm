@@ -104,13 +104,13 @@ of the transcript's presses as said outright (`receptionist-hold`: `mute`,
 
 Being muted is the device's own, separate from holding Control, and outlasts
 handing Control away and back (`receptionistMuted` in the server state). The
-transcript shows the two as one choice — **Released**, **Text** (held, muted)
-or **Speak** (held, unmuted) — since a mute matters only while Control is
-here; Text mutes before it takes, so Control never arrives speaking. A muted phone is still Control's
+transcript shows the two as one choice of what you get of Control's replies
+here — **Away**, **Silent** (held, muted) or **Aloud** (held, unmuted) — since a mute matters only while Control is
+here; Silent mutes before it takes, so Control never arrives speaking. A muted phone is still Control's
 listener when it is not connected, so it can sleep (`stay-awake.ts` lets it):
 everything is waiting in the transcript when it wakes. Letting go of Control
 altogether — nobody hears it, and it tells you what you missed when you are
-back — is the transcript's **Released**.
+back — is the transcript's **Away**.
 
 Neither holding Control nor the always-on microphone survives a relaunch: the
 app lets go of Control when it starts (`main.tsx`), and the microphone hold
@@ -126,9 +126,13 @@ It reads Control's full record
 compaction never shortens it: it opens at the newest — or at the first reply
 with words waiting for you, under a red Unread line — and loads older pages
 as you scroll up.
-Under the box to type in: **Catch me up**, the Released / Text / Speak
-choice, and, on the phone only, a Speaker / Earpiece choice. **Catch me up** shows while replies wait unread: Control comes
-here unmuted and sums them up aloud.
+Under the box to type in, centred: the Away / Silent / Aloud choice; on
+the phone only, a Speaker / Earpiece choice; a Chat / All activity choice of
+whether Control's activity shows between its words. Above the box, while
+replies wait unread: **Mark all read**, and, while Control is Aloud here,
+**Summarize aloud**, which has Control sum them up. It is offered only then
+because asking brings Control here unmuted, and the bar never changes the
+mode you chose.
 
 While it is open the bar stays up: the Control button is a down arrow that
 closes it, and the microphone talks to Control, with what it heard appearing at the bottom. It and the toolbar sheet are screens, not
@@ -148,7 +152,7 @@ lit and the rest of the reply dim.
 Words still waiting for you — written while muted, or cut off while you were
 away or had moved to another device — sit under the red Unread line, with a
 red edge on their bubbles, until you read them. Nothing counts as read for
-being on screen: **Mark all read** at the bottom says you have, and so does
+being on screen: **Mark all read**, above the box to type in, says you have, and so does
 typing your next message here. Speaking your next message instead strikes
 them out as missed, so Control knows you never took them in.
 

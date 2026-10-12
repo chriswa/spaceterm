@@ -3908,7 +3908,6 @@ html, body, #root {
 }
 .control-transcript__unread-line::before,
 .control-transcript__unread-line::after { content: ''; flex: 1; border-top: 1px solid var(--ct-unread); }
-.control-transcript__read-all { display: flex; justify-content: center; }
 
 /* While the voice says a reply: what is still to come, dim. The word being said is the last one lit. */
 .control-transcript__unsaid { color: var(--ct-dim); }
@@ -3939,12 +3938,12 @@ html, body, #root {
 .control-transcript__replay:hover { opacity: 1; background: var(--ct-you); }
 .control-transcript__replay--playing { opacity: 1; color: var(--ct-accent); }
 
-/* The choices that move Control, and the catch-up: under the box to type in. */
+/* The choices that move Control and what the transcript shows: under the box to type in. */
 .control-transcript__controls {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: center;
+  gap: 8px 16px;
   flex-wrap: wrap;
   padding: 8px 20px;
   border-top: 1px solid var(--ct-border);
@@ -3962,7 +3961,18 @@ html, body, #root {
 }
 .control-transcript__button:hover { border-color: var(--ct-accent); }
 
-/* A segmented button, one option chosen (ChoiceGroup.tsx). */
+/* A segmented button, one option chosen (ChoiceGroup.tsx), with its caption if it has one. */
+/* The caption reads as a label, not a fourth option: uppercase, unboxed, set apart from the buttons by more room than they have between them. */
+.choice-field { display: inline-flex; align-items: center; gap: 8px; }
+.choice-field__caption {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ct-dim);
+  user-select: none;
+  -webkit-user-select: none;
+}
 .choice-group {
   display: inline-flex;
   border: 1px solid var(--ct-border);
@@ -3972,16 +3982,17 @@ html, body, #root {
 .choice-group__option {
   padding: 5px 10px;
   border: none;
-  background: transparent;
-  color: var(--ct-dim);
+  /* Filled, so an unchosen option still looks pressable and unlike a caption. */
+  background: color-mix(in srgb, var(--ct-text) 15%, transparent);
+  color: var(--ct-text);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .choice-group__option + .choice-group__option { border-left: 1px solid var(--ct-border); }
-.choice-group__option:hover { color: var(--ct-text); }
+.choice-group__option:hover { background: color-mix(in srgb, var(--ct-text) 25%, transparent); }
 .choice-group__option--chosen { background: var(--ct-accent); color: #fff; cursor: default; }
-.choice-group__option--chosen:hover { color: #fff; }
+.choice-group__option--chosen:hover { background: var(--ct-accent); color: #fff; }
 
 .control-transcript__meta { font-size: 11px; color: var(--ct-dim); padding: 0 4px; }
 .control-transcript__silent { font-size: 12px; font-style: italic; color: var(--ct-dim); }
@@ -4042,7 +4053,7 @@ html, body, #root {
   cursor: pointer;
 }
 
-/* Control's activity (the Activity box): a quiet aside on Control's side, marked by what it is about. */
+/* Control's activity (Show: All activity): a quiet aside on Control's side, marked by what it is about. */
 .control-transcript__entry--trace {
   --ct-why: #6c7086;
   display: block;
@@ -4080,6 +4091,19 @@ html, body, #root {
 
 .control-transcript__error { padding: 6px 20px; font-size: 12px; color: #f38ba8; flex-shrink: 0; }
 
+/* While replies wait unread, over the box to type in: hear them summed up, or mark them read. */
+.control-transcript__unread-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-top: 1px solid var(--ct-border);
+  flex-shrink: 0;
+}
+.control-transcript__unread-count { font-size: 12px; font-weight: 600; color: var(--ct-unread); }
+
 .control-transcript__composer {
   display: flex;
   align-items: flex-end;
@@ -4088,20 +4112,6 @@ html, body, #root {
   border-top: 1px solid var(--ct-border);
   flex-shrink: 0;
 }
-
-/* Left of the box: whether Control's activity is shown. */
-.control-transcript__activity {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  align-self: center;
-  font-size: 12px;
-  color: var(--ct-dim);
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.control-transcript__activity input { margin: 0; accent-color: var(--ct-accent); cursor: pointer; }
 
 .control-transcript__input {
   flex: 1;

@@ -16,7 +16,8 @@ import { openReplies, partViews, segments, words, type PartView } from '../lib/c
  * whole screen on the phone (`screen`).
  *
  * Its footer, under the box to type in, moves Control: let go, here in
- * writing, or here aloud (`ControlFooter`). Words the user missed are struck out, and words still waiting for
+ * writing, or here aloud — and chooses whether Control's activity is shown
+ * between its words (`ControlFooter`). Words the user missed are struck out, and words still waiting for
  * them sit under a red Unread line until they mark them read or send their
  * next message (see `ConsumptionLedger.settle`): nothing counts as read for
  * being on screen. Until then, clicking a word of what Control has said since
@@ -126,6 +127,8 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
   useEffect(() => window.api.receptionist.onSpeaking(setSpeaking), [])
   const voicing = useReceptionistStore((s) => s.phase === 'speaking' || s.phase === 'synthesizing')
   const unread = useReceptionistStore((s) => s.unread.count)
+  /** Control speaks here: only then may the unread bar offer a summary aloud. */
+  const aloud = useReceptionistStore((s) => controlMode(s) === 'speak')
 
   /** The newest page when `before` is undefined, else the page before that offset. */
   const load = useCallback(async (before: number | undefined) => {
@@ -284,11 +287,6 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
                 replaying={replaying?.of === entry.offset ? replaying.part : undefined}
               />
             ))}
-            {unread > 0 && (
-              <div className="control-transcript__read-all">
-                <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
-              </div>
-            )}
             {pending.map((text, i) => (
               <div key={`pending-${i}`} className="control-transcript__entry control-transcript__entry--user control-transcript__entry--pending">
                 <div className="control-transcript__bubble">{text}</div>
@@ -311,21 +309,21 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
         )}
       </div>
       {error && <div className="control-transcript__error" role="alert">{error}</div>}
+      {unread > 0 && (
+        // The ways to be done with what waits: say it is read, or, while
+        // Control speaks here, hear it summed up. Never offered otherwise:
+        // asking brings Control here unmuted, and the bar never changes the
+        // mode the user chose.
+        <div className="control-transcript__unread-bar" role="group" aria-label="Unread replies">
+          <span className="control-transcript__unread-count">{unread} unread</span>
+          {aloud && <button className="control-transcript__button" onClick={() => window.api.receptionist.catchUp()}>Summarize aloud</button>}
+          <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
+        </div>
+      )}
       <form
         className="control-transcript__composer"
         onSubmit={(e) => { e.preventDefault(); send() }}
       >
-        <label
-          className="control-transcript__activity"
-          title="Show Control's activity: news as it arrives, what goes on and off its backlog, which agents it watches, and replies never spoken"
-        >
-          <input
-            type="checkbox"
-            checked={activity}
-            onChange={(e) => useControlTranscriptStore.getState().setActivity(e.target.checked)}
-          />
-          <span>Activity</span>
-        </label>
         <textarea
           ref={inputRef}
           className="control-transcript__input"
@@ -387,34 +385,45 @@ export function holdActions(from: ControlMode, to: ControlMode): ReceptionistHol
   }
 }
 
+/** Named for what the user gets of Control's replies here. */
 const MODES = [
-  { value: 'released', label: 'Released' },
-  { value: 'text', label: 'Text' },
-  { value: 'speak', label: 'Speak' },
+  { value: 'released', label: 'Away' },
+  { value: 'text', label: 'Silent' },
+  { value: 'speak', label: 'Aloud' },
+] as const
+
+const SHOWN = [
+  { value: 'chat', label: 'Chat' },
+  { value: 'all', label: 'All activity' },
 ] as const
 
 /**
- * The foot of the transcript, under the box to type in: one choice of
- * whether Control is here, and if so whether it speaks or writes. And a
- * catch-up while replies wait unread.
+ * The foot of the transcript, under the box to type in: first the choice of
+ * whether Control is here, and if so whether it speaks or writes; then
+ * `extra`; then whether Control's activity is shown — news as it arrives,
+ * what goes on and off its backlog, which agents it watches, and replies
+ * never spoken — or only the conversation.
  */
 function ControlFooter({ extra }: { extra?: ReactNode }) {
   const mode = useReceptionistStore(controlMode)
-  const unread = useReceptionistStore((s) => s.unread.count)
+  const activity = useControlTranscriptStore((s) => s.activity)
   return (
     <div className="control-transcript__controls">
-      {unread > 0 && (
-        <button className="control-transcript__button" onClick={() => window.api.receptionist.catchUp()}>
-          Catch me up · {unread}
-        </button>
-      )}
       <ChoiceGroup
         label="Control on this device"
+        caption="Replies"
         options={MODES}
         value={mode}
         onChoose={(to) => { for (const action of holdActions(mode, to)) window.api.receptionist.hold(action) }}
       />
       {extra}
+      <ChoiceGroup
+        label="Show in the transcript"
+        caption="Show"
+        options={SHOWN}
+        value={activity ? 'all' : 'chat'}
+        onChoose={(shown) => useControlTranscriptStore.getState().setActivity(shown === 'all')}
+      />
     </div>
   )
 }

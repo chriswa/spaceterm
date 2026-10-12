@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, cleanup, fireEvent, act, screen, waitFor } from '@testing-library/react'
+import { render, cleanup, fireEvent, act, screen, waitFor, within } from '@testing-library/react'
 import { ControlTranscript, holdActions, mergeEntries } from './ControlTranscript'
 import { installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
@@ -201,7 +201,7 @@ describe('ControlTranscript, following along', () => {
     expect(struck.closest('details')!.dataset.action).toBe('sent')
   })
 
-  it("shows Control's activity only while the Activity box is ticked, and remembers the choice", async () => {
+  it("shows Control's activity only while All activity is chosen, and remembers the choice", async () => {
     useControlTranscriptStore.getState().setActivity(false)
     bridge.responses.controlTranscript = () => ({
       entries: [
@@ -218,17 +218,17 @@ describe('ControlTranscript, following along', () => {
     // A failure is shown regardless: Control said so out loud.
     expect(screen.getByText('could not answer: session not found').dataset.what).toBe('failed')
 
-    fireEvent.click(screen.getByLabelText('Activity'))
+    fireEvent.click(screen.getByRole('radio', { name: 'All activity' }))
     const news = screen.getByText('News: Sally is now stopped')
     expect(news.closest('details')!.dataset.what).toBe('events')
     expect(screen.getByText('Watching Sally for its next stop').dataset.what).toBe('watch')
     expect(localStorage.getItem('controlTranscript.activity')).toBe('true')
 
-    // An activity line that arrives live waits for the box too.
-    fireEvent.click(screen.getByLabelText('Activity'))
+    // An activity line that arrives live waits for the choice too.
+    fireEvent.click(screen.getByRole('radio', { name: 'Chat' }))
     act(() => bridge.emit.transcriptAppended([{ offset: 300, timestamp: '2026-10-05T08:00:02Z', kind: 'trace', what: 'backlog-add', text: 'Set aside for later: Sally' }]))
     expect(screen.queryByText('Set aside for later: Sally')).toBeNull()
-    fireEvent.click(screen.getByLabelText('Activity'))
+    fireEvent.click(screen.getByRole('radio', { name: 'All activity' }))
     expect(screen.getByText('Set aside for later: Sally')).toBeTruthy()
   })
 })
@@ -303,34 +303,51 @@ describe('the desktop dialog closes like a modal', () => {
 describe('ControlTranscript and what the user took in', () => {
   const at = '2026-10-05T08:00:01Z'
 
-  const chosen = () => screen.getAllByRole('radio').filter((el) => el.getAttribute('aria-checked') === 'true').map((el) => el.textContent)
+  const chosen = () => within(screen.getByRole('radiogroup', { name: 'Control on this device' })).getAllByRole('radio').filter((el) => el.getAttribute('aria-checked') === 'true').map((el) => el.textContent)
 
-  it('shows Control as Released, Text or Speak, and moves it from its footer', async () => {
+  it('shows Control as Away, Silent or Aloud, and moves it from its footer', async () => {
     useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
-    expect(chosen()).toEqual(['Speak'])
+    expect(chosen()).toEqual(['Aloud'])
     expect(screen.queryByText('Control speaks here')).toBeNull()
-    fireEvent.click(screen.getByRole('radio', { name: 'Speak' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'Text' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Aloud' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Silent' }))
     expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute'])
 
     act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, mutedHere: true, unread: { count: 2, first: 0 } }))
-    expect(chosen()).toEqual(['Text'])
-    fireEvent.click(screen.getByRole('radio', { name: 'Released' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Catch me up · 2' }))
+    expect(chosen()).toEqual(['Silent'])
+    fireEvent.click(screen.getByRole('radio', { name: 'Away' }))
     expect(bridge.callsTo('receptionist.hold').at(-1)?.args[0]).toBe('release')
-    expect(bridge.callsTo('receptionist.catchUp')).toHaveLength(1)
   })
 
-  it('is Released while another device holds Control, muted here or not', async () => {
+  it('is Away while another device holds Control, muted here or not', async () => {
     useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false }, mutedHere: true, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
-    expect(chosen()).toEqual(['Released'])
-    fireEvent.click(screen.getByRole('radio', { name: 'Speak' }))
+    expect(chosen()).toEqual(['Away'])
+    fireEvent.click(screen.getByRole('radio', { name: 'Aloud' }))
     expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['speak-here'])
   })
+  it('offers a summary of what waits unread only while Control speaks here, and marking it read always', async () => {
+    useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false }, mutedHere: true, unread: { count: 2, first: 0 } })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Nothing said to Control yet')
+    const bar = () => within(screen.getByRole('group', { name: 'Unread replies' }))
+    // Away, and Silent: asking would bring Control here aloud, which the user did not choose.
+    expect(bar().getByText('2 unread')).toBeTruthy()
+    expect(bar().queryByRole('button', { name: 'Summarize aloud' })).toBeNull()
+    expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
+    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, mutedHere: true }))
+    expect(bar().queryByRole('button', { name: 'Summarize aloud' })).toBeNull()
+    expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
+
+    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false }))
+    fireEvent.click(bar().getByRole('button', { name: 'Summarize aloud' }))
+    expect(bridge.callsTo('receptionist.catchUp')).toHaveLength(1)
+    expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
+  })
+
   it('strikes out what was missed, and puts what waits under an Unread line until it is marked read', async () => {
     useReceptionistStore.setState({ unread: { count: 1, first: 120 } })
     bridge.responses.controlTranscript = () => ({
