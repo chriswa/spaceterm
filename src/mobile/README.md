@@ -251,12 +251,7 @@ reads iOS's route (`audio-output.ts`): a speaker, headphones (AirPods or any
 Bluetooth or wired set), or, in yellow, an ear for the earpiece or a dot for
 anything else. Nothing on the phone chooses the route — iOS sends sound to
 headphones while they are connected and to the speaker otherwise — so the
-badge is there to make a wrong route visible. It shows a new route only once
-it has held for 1.5 s: opening the microphone switches to play-and-record
-before the microphone runs, and iOS sends that to the earpiece for most of a
-second until AirPods' voice link is up. Nothing plays then, so it is harmless,
-but the badge would flash an ear on every press. `audio-output` events in the
-log record every route, settled or not. There was once a Speaker /
+badge is there to make a wrong route visible. There was once a Speaker /
 Earpiece choice, for holding the phone to the ear; it is gone. Only the app
 can say; in a browser there is no badge.
 
