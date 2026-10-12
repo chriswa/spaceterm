@@ -1,4 +1,5 @@
 import AVFoundation
+import CallKit
 import UIKit
 import WebKit
 
@@ -97,12 +98,17 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     /// When the engine last started, and which start that was, for the audio check after it.
     private var lastStart = Date.distantPast
     private var startNumber = 0
+    /// When `recover` last tried, so an engine that will not start is not hammered.
+    private var lastRecovery = Date.distantPast
+    private let calls = CXCallObserver()
 
     private static let sendInterval: TimeInterval = 0.1
     private static let maxUnanswered = 50
     /// No taps, or nothing but digital silence, for this long: start again.
     private static let stallSeconds: Double = 2
     private static let minSecondsBetweenRebuilds: TimeInterval = 3
+    /// An interruption with no end heard by then is taken to have none coming.
+    private static let interruptionGraceSeconds: TimeInterval = 1
 
     init(events: NativeEvents) {
         self.events = events
@@ -369,8 +375,14 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         pendingRestart?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                self?.pendingRestart = nil
-                if inPlace { self?.restartInPlace(why: why) } else { self?.bringUp(why: why) }
+                guard let self else { return }
+                self.pendingRestart = nil
+                // `pageMicrophoneClosed` starts it once the page is done.
+                if self.pageMicrophoneOpen {
+                    self.events.record("native-restart-deferred", ["why": why, "until": "the page's microphone closes"])
+                    return
+                }
+                if inPlace { self.restartInPlace(why: why) } else { self.bringUp(why: why) }
             }
         }
         pendingRestart = work
@@ -387,7 +399,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func onTick() {
         tick += 1
         // Every 2 s, in case the page reloaded and missed the last change.
-        if tick % 20 == 0 { sendState() }
+        if tick % 20 == 0 {
+            sendState()
+            recover("the engine was found stopped")
+        }
         guard running else { return }
         let (pcm, stalled) = capture.drain(stallSeconds: Self.stallSeconds)
         if stalled, pendingRestart == nil, Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds {
@@ -425,6 +440,41 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func pageMicrophoneClosed() {
         guard mode != .off, !engine.isRunning else { return }
         scheduleRestart("the page's microphone closed", after: 0.3, inPlace: true)
+    }
+
+    /**
+     * The page's own microphone (WebKit's) is open. Starting the engine then
+     * takes the microphone from it, and its dictation hears nothing — so no
+     * restart happens meanwhile; `pageMicrophoneClosed` does it afterwards.
+     */
+    private var pageMicrophoneOpen: Bool {
+        guard let webView else { return false }
+        return webView.microphoneCaptureState != .none
+    }
+
+    /**
+     * Whatever stopped the engine, start it again if it should be running and
+     * nothing else is about to. Each cause used to need its own restart, and
+     * those without one left it stopped for good: an interruption iOS never
+     * ends — the page's own sound starting is one, and the commonest — left
+     * the engine that keeps the app awake stopped, and with it the app
+     * suspended as soon as it went to the background, the page and its
+     * connection to the server too (October 2026: stopped for minutes at a
+     * time, over a hundred interruptions and three ends). Called after an
+     * interruption, on coming back to the foreground, and every two seconds.
+     */
+    func recover(_ why: String) {
+        guard mode != .off, pendingRestart == nil, !(up == mode && engine.isRunning) else { return }
+        // `pageMicrophoneClosed` does it; and nothing can start during a call.
+        guard !pageMicrophoneOpen, !calls.calls.contains(where: { !$0.hasEnded }) else { return }
+        guard Date().timeIntervalSince(lastRecovery) > Self.minSecondsBetweenRebuilds else { return }
+        lastRecovery = Date()
+        events.record("native-engine-recovering", [
+            "why": why, "wanted": mode.rawValue, "up": up.rawValue, "engineRunning": engine.isRunning,
+            "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground",
+        ])
+        log("the engine had stopped — starting it again (\(why))")
+        scheduleRestart(why, after: 0, inPlace: true)
     }
 
     // MARK: - To the page
@@ -587,12 +637,20 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                     "reason": Self.describe(AVAudioSession.InterruptionReason(rawValue: reason)),
                     "shouldResume": AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume),
                     "running": self.running, "wanted": self.wanted, "stayAwake": self.stayAwake,
+                    "engineRunning": self.engine.isRunning,
+                    // Which recorder took it: the page's own microphone, or something else.
+                    "pageMicrophone": self.webView.map { NativeEvents.describe($0.microphoneCaptureState) } ?? "no page",
+                    "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground",
                 ])
                 if began {
-                    self.log("interrupted (a call, Siri, another app, or the page's own microphone)")
+                    self.log("interrupted (a call, Siri, another app, or the page's own microphone or sound)")
                     // The engine has stopped: nothing queued will be heard, and the page should play what comes next.
                     self.failSpeech(why: "the audio session was interrupted")
                     self.sendState()
+                    // Most never end: the page's own sound starting interrupts it, and iOS says nothing more.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Self.interruptionGraceSeconds) { [weak self] in
+                        MainActor.assumeIsolated { self?.recover("an interruption with no end") }
+                    }
                 } else {
                     self.scheduleRestart("an interruption ended", after: 0.3)
                 }
@@ -616,6 +674,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                     self.scheduleRestart("a headset came or went")
                 }
             }
+        })
+        // Back from the background, or the lock screen: whatever stopped the engine meanwhile.
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { self.recover("the app came back") }
         })
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereLostNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { self.events.record("audio-media-services-lost") }

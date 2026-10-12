@@ -19,8 +19,16 @@
 
 export const NATIVE_SAMPLE_RATE = 16_000
 
-/** How long without audio before the native microphone is taken to have stopped. */
-const STALE_MS = 3000
+/**
+ * How long without audio before the native microphone is taken to have
+ * stopped, and the hold closes it and opens it again. Longer than the app
+ * takes to restart it itself — two seconds to call it stalled, then up to two
+ * to bring the engine back (NativeMicrophone.swift) — or the page closed it
+ * midway, and each close and reopen flipped AirPods between their music and
+ * call profiles and was itself interrupted: October 2026, the hold went
+ * round that loop five times in ten seconds.
+ */
+const STALE_MS = 6000
 /** How long a start may take: AVAudioEngine waits on the hardware. */
 const START_TIMEOUT_MS = 5000
 

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { DictationApi } from '../shared/api'
 import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
-import { acquire, type Capture } from './held-microphone'
+import { acquire, replaceSilentCapture, type Capture } from './held-microphone'
 import { recordMobileEvent } from './mobile-events'
 import { noteMicLevel } from './mic-level'
 
@@ -18,7 +18,9 @@ import { noteMicLevel } from './mic-level'
  * iOS can hand back a microphone that is granted, "live", and silent — no
  * samples at all, seen after switching away from the app and back. Nothing
  * fails, so `audioArrived` is the only honest signal that listening has begun,
- * and every step logs what it saw so the next such failure says why.
+ * and every step logs what it saw so the next such failure says why. In the
+ * iPhone app such a dictation carries on with the app's own microphone
+ * (`replaceSilentCapture`), which that WebKit fault does not reach.
  */
 
 /** How much audio to batch per message: small enough to stream, large enough not to spam. */
@@ -44,6 +46,14 @@ const TURN_CHECK_TIMEOUT_MS = 2000
 export const NO_AUDIO_TIMEOUT_MS = 2000
 
 /**
+ * The same, for the app's own microphone standing in for a silent one: its
+ * engine turns echo cancellation on as it starts, and iOS stops it once for
+ * that and it is started again (NativeMicrophone.swift), so first audio comes
+ * up to a second later than WebKit's.
+ */
+const REPLACEMENT_AUDIO_TIMEOUT_MS = 3000
+
+/**
  * A dictation that has begun, once sound is actually arriving — the moment a
  * start cue may honestly say "safe to talk". A microphone that is granted but
  * silent throws here instead, having been cancelled, rather than leaving a
@@ -51,17 +61,31 @@ export const NO_AUDIO_TIMEOUT_MS = 2000
  */
 export async function whenHearing(pending: Promise<Dictation>): Promise<Dictation> {
   const dictation = await pending
-  const heard = await Promise.race([
-    dictation.audioArrived.then(() => true),
-    new Promise<false>((resolve) => setTimeout(() => resolve(false), NO_AUDIO_TIMEOUT_MS))
-  ])
-  if (heard) return dictation
+  if (await heardWithin(dictation, NO_AUDIO_TIMEOUT_MS)) return dictation
   log(`no sound within ${NO_AUDIO_TIMEOUT_MS}ms: ${dictation.describe()}`)
   recordMobileEvent('dictation-no-audio', { withinMs: NO_AUDIO_TIMEOUT_MS, capture: dictation.describe() })
+  if (await dictation.replaceSilentCapture() && await heardWithin(dictation, REPLACEMENT_AUDIO_TIMEOUT_MS)) return dictation
   // A held microphone that has gone silent is closed, so the next dictation opens a fresh one.
   dictation.cancel({ broken: true })
   throw new Error('The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
 }
+
+function heardWithin(dictation: Dictation, ms: number): Promise<boolean> {
+  return Promise.race([
+    dictation.audioArrived.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), ms)),
+  ])
+}
+
+/** Where a dictation's microphone comes from: held-microphone.ts, or a test's own. */
+export interface Microphones {
+  /** A capture for one dictation. Called inside the tap. */
+  acquire(): Promise<Capture>
+  /** Another microphone in place of one that has sent nothing, or undefined when there is none to try. */
+  replaceSilent(capture: Capture): Promise<Capture | undefined>
+}
+
+const REAL_MICROPHONES: Microphones = { acquire, replaceSilent: replaceSilentCapture }
 
 /** What the microphone has delivered so far — counted, not kept. */
 export class AudioStats {
@@ -116,20 +140,20 @@ export class Dictation {
   private readonly began = performance.now()
   /** Resolves with the first block of sound — the moment it is safe to talk. */
   readonly audioArrived: Promise<void>
+  private arrived: () => void = () => undefined
 
   /** Stops this dictation hearing the capture. */
-  private readonly unlisten: () => void
+  private unlisten: () => void = () => undefined
 
   private constructor(
     private readonly api: DictationApi,
     /** The microphone: held open between dictations, or this one's own. See held-microphone.ts. */
-    private readonly capture: Capture,
+    private capture: Capture,
     started: Promise<string>,
     options: DictationOptions,
+    private readonly microphones: Microphones,
   ) {
-    const resampler = new Downsampler(capture.sampleRate)
-    let arrived: () => void = () => undefined
-    this.audioArrived = new Promise((resolve) => { arrived = resolve })
+    this.audioArrived = new Promise((resolve) => { this.arrived = resolve })
     Dictation.live++
     bump('capturing', 1)
     const backlog = options.backlog?.()
@@ -137,17 +161,7 @@ export class Dictation {
       this.queued.push(backlog)
       log(`starting with ${(backlog.length / TARGET_SAMPLE_RATE).toFixed(1)}s already heard`)
     }
-    this.unlisten = capture.listen((block) => {
-      if (this.stats.blocks === 0) {
-        log(`first audio after ${Math.round(performance.now() - this.began)}ms (${capture.describe()})`)
-        recordMobileEvent('dictation-audio', { afterMs: Math.round(performance.now() - this.began) })
-        arrived()
-      }
-      this.stats.push(block)
-      noteMicLevel(block)
-      const pcm = resampler.push(block)
-      if (pcm.length > 0) this.queued.push(pcm)
-    })
+    this.listenTo(capture)
     this.timer = window.setInterval(() => this.flush(), SEND_INTERVAL_MS)
     started.then(
       (id) => {
@@ -165,14 +179,59 @@ export class Dictation {
 
   private readonly started: Promise<string>
 
+  private listenTo(capture: Capture): void {
+    const resampler = new Downsampler(capture.sampleRate)
+    this.unlisten = capture.listen((block) => {
+      if (this.stats.blocks === 0) {
+        log(`first audio after ${Math.round(performance.now() - this.began)}ms (${capture.describe()})`)
+        recordMobileEvent('dictation-audio', { afterMs: Math.round(performance.now() - this.began) })
+        this.arrived()
+      }
+      this.stats.push(block)
+      noteMicLevel(block)
+      const pcm = resampler.push(block)
+      if (pcm.length > 0) this.queued.push(pcm)
+    })
+  }
+
+  /**
+   * Its microphone has sent nothing: carry on with another, where there is
+   * one to try. The server session stays as it is — it has heard nothing
+   * either. False when there is none, or it would not open; the dictation is
+   * then as it was, still silent.
+   */
+  async replaceSilentCapture(): Promise<boolean> {
+    if (this.stopped) return false
+    const silent = this.capture
+    this.unlisten()
+    let next: Capture | undefined
+    try {
+      next = await this.microphones.replaceSilent(silent)
+    } catch (err) {
+      log(`no other microphone: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    if (!next) {
+      if (!this.stopped) this.listenTo(silent)
+      return false
+    }
+    // Abandoned while the other one was opening.
+    if (this.stopped) {
+      next.release()
+      return false
+    }
+    this.capture = next
+    this.listenTo(next)
+    return true
+  }
+
   /**
    * Take the microphone and open a server session, in parallel. Call inside a
    * tap: a microphone that is not held open yet is opened here.
    */
-  static async begin(api: DictationApi, options: DictationOptions = {}): Promise<Dictation> {
+  static async begin(api: DictationApi, options: DictationOptions = {}, microphones: Microphones = REAL_MICROPHONES): Promise<Dictation> {
     // Asked for before the first await, so a microphone that must be opened
     // is opened inside the tap, as iOS requires.
-    const capturing = acquire()
+    const capturing = microphones.acquire()
     const started = api.start(TARGET_SAMPLE_RATE, options.forControl)
     started.catch(() => undefined)
     let capture: Capture
@@ -185,7 +244,7 @@ export class Dictation {
     }
     log(`capture open: ${capture.describe()}, page ${document.visibilityState}`)
     recordMobileEvent('dictation-begin', { capture: capture.describe(), backlog: options.backlog !== undefined })
-    return new Dictation(api, capture, started, options)
+    return new Dictation(api, capture, started, options, microphones)
   }
 
   /** For the log when sound never came: what the capture looks like now. */

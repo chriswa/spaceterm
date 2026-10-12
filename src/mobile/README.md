@@ -386,6 +386,21 @@ A page has no event for being put to sleep; a `woke` line with `asleepMs`
 says it was, and `heartbeat` lines say it was still running while hidden.
 Nothing said is recorded — only lengths.
 
+For a microphone that did not come back: `audio-interruption-began` says
+whether the page's own microphone was open (`pageMicrophone`), and app
+events say how long an interruption has gone unended. iOS rarely ends one —
+the page's own sound starting is the commonest, and is never ended — so the
+app starts its engine again itself (`native-engine-recovering`: after an
+interruption, on coming back, or found stopped), never while the page's
+microphone is open (`native-restart-deferred`), as that took the microphone
+from it. `mic-permission-changed` is the permission changing in Settings.
+`web-mic-silent` is WebKit's microphone handing back a live track that sends
+nothing, seen after the app has been away and lasting until it is
+relaunched; the dictation carries on with the app's own microphone, and so
+does every later one on that page.
+
+    jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
+
     jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
 
 While a dictation is sending your voice to be transcribed, an orange **MIC**

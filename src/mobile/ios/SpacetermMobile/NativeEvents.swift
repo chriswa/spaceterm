@@ -49,6 +49,8 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
     private lazy var callWatcher = CallWatcher { [weak self] detail in self?.record("phone-call", detail) }
     /// Since when the audio session has been interrupted with no end heard.
     private var interruptedSince: Date?
+    /// The microphone permission when last looked at, to say when it changes: iOS has no notification for it.
+    private var permission = NativeEvents.describe(AVAudioApplication.shared.recordPermission)
     /// The last ping of the page: sent when, answered after how long.
     private var pingSent: Date?
     private var lastPingMs: Int?
@@ -203,7 +205,16 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
             detail["pageAnsweredMs"] = ms
         }
         record("native-heartbeat", detail)
+        checkPermission()
         ping()
+    }
+
+    /// The microphone permission, withdrawn or granted in Settings while the app was away.
+    private func checkPermission() {
+        let now = Self.describe(AVAudioApplication.shared.recordPermission)
+        guard now != permission else { return }
+        record("mic-permission-changed", ["from": permission, "to": now])
+        permission = now
     }
 
     /// Is the page running? A suspended web view answers when it wakes, if ever.
@@ -242,7 +253,10 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
                     if let runState { self.setRunState(runState) }
                     var detail: [String: Any] = ["session": Self.session()]
                     if let status = self.microphoneStatus?() { detail["mic"] = status }
+                    if let since = self.interruptedSince { detail["interruptedForSeconds"] = Int(Date().timeIntervalSince(since)) }
+                    if let capture = self.webView?.microphoneCaptureState { detail["pageMicrophone"] = Self.describe(capture) }
                     self.record(kind, detail)
+                    self.checkPermission()
                     if kind == "app-active" { self.deliver() }
                 }
             })
@@ -349,7 +363,7 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private static func describe(_ state: WKMediaCaptureState) -> String {
+    static func describe(_ state: WKMediaCaptureState) -> String {
         switch state {
         case .none: "none"
         case .active: "active"
