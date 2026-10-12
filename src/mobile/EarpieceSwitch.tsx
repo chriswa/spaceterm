@@ -14,7 +14,6 @@ export function EarpieceSwitch() {
   return (
     <ChoiceGroup
       label="Play Control on"
-      caption="Play on"
       options={OUTPUTS}
       value={earpiece ? 'earpiece' : 'speaker'}
       onChoose={(output) => setListenOnEarpiece(output === 'earpiece')}

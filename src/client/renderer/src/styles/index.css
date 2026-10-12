@@ -4054,7 +4054,7 @@ html, body, #root {
   cursor: pointer;
 }
 
-/* Control's activity (Show: All activity): a quiet aside on Control's side, marked by what it is about. */
+/* Control's activity (Show: Detailed): a quiet aside on Control's side, marked by what it is about. */
 .control-transcript__entry--trace {
   --ct-why: #6c7086;
   display: block;

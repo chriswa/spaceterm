@@ -398,9 +398,10 @@ const MODES = [
   { value: 'speak', label: 'Aloud' },
 ] as const
 
+/** Concise: only the conversation. Detailed: Control's activity between its words too. */
 const SHOWN = [
-  { value: 'chat', label: 'Chat' },
-  { value: 'all', label: 'All activity' },
+  { value: 'chat', label: 'Concise' },
+  { value: 'all', label: 'Detailed' },
 ] as const
 
 /**
@@ -408,7 +409,8 @@ const SHOWN = [
  * whether Control is here, and if so whether it speaks or writes; then
  * `extra`; then whether Control's activity is shown — news as it arrives,
  * what goes on and off its backlog, which agents it watches, and replies
- * never spoken — or only the conversation.
+ * never spoken — or only the conversation. Only the first is captioned, so
+ * the three fit on one or two lines of a phone; the others read without one.
  */
 function ControlFooter({ extra }: { extra?: ReactNode }) {
   const mode = useReceptionistStore(controlMode)
@@ -425,7 +427,6 @@ function ControlFooter({ extra }: { extra?: ReactNode }) {
       {extra}
       <ChoiceGroup
         label="Show in the transcript"
-        caption="Show"
         options={SHOWN}
         value={activity ? 'all' : 'chat'}
         onChoose={(shown) => useControlTranscriptStore.getState().setActivity(shown === 'all')}

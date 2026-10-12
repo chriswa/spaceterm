@@ -205,7 +205,7 @@ describe('ControlTranscript, following along', () => {
     expect(struck.closest('details')!.dataset.action).toBe('sent')
   })
 
-  it("shows Control's activity only while All activity is chosen, and remembers the choice", async () => {
+  it("shows Control's activity only while Detailed is chosen, and remembers the choice", async () => {
     useControlTranscriptStore.getState().setActivity(false)
     bridge.responses.controlTranscript = () => ({
       entries: [
@@ -222,17 +222,17 @@ describe('ControlTranscript, following along', () => {
     // A failure is shown regardless: Control said so out loud.
     expect(screen.getByText('could not answer: session not found').dataset.what).toBe('failed')
 
-    fireEvent.click(screen.getByRole('radio', { name: 'All activity' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Detailed' }))
     const news = screen.getByText('News: Sally is now stopped')
     expect(news.closest('details')!.dataset.what).toBe('events')
     expect(screen.getByText('Watching Sally for its next stop').dataset.what).toBe('watch')
     expect(localStorage.getItem('controlTranscript.activity')).toBe('true')
 
     // An activity line that arrives live waits for the choice too.
-    fireEvent.click(screen.getByRole('radio', { name: 'Chat' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Concise' }))
     act(() => bridge.emit.transcriptAppended([{ offset: 300, timestamp: '2026-10-05T08:00:02Z', kind: 'trace', what: 'backlog-add', text: 'Set aside for later: Sally' }]))
     expect(screen.queryByText('Set aside for later: Sally')).toBeNull()
-    fireEvent.click(screen.getByRole('radio', { name: 'All activity' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Detailed' }))
     expect(screen.getByText('Set aside for later: Sally')).toBeTruthy()
   })
 })
