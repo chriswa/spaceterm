@@ -28,14 +28,14 @@ export interface MicInputs {
  * (mobile.css):
  *
  * - `off`: grey. The microphone is closed.
- * - `preparing`: white outline, pulsing. Hands-free is on and opening the microphone.
+ * - `preparing`: white outline, a spark round it. Hands-free is on and opening the microphone.
  * - `armed`: black, white ring. Hands-free is listening for "Control"; nothing leaves the phone.
  * - `checking`: armed, with the ring bright and thick. It heard speech and is asking the Mac whether it was for Control.
  * - `conversation`: black, a blue ring draining. Just talk — no "Control" — until it has drained.
- * - `connecting`: a white arc spinning round the edge. A tap was taken; the microphone is starting (AirPods can take seconds). Don't talk yet.
- * - `retrying`: the same arc, amber. The microphone did not start the first time; trying once more by itself.
+ * - `connecting`: dark, a gold spark running round the rim. A tap was taken; the microphone is starting (AirPods can take seconds). Don't talk yet.
+ * - `retrying`: amber icon, an amber spark. The microphone did not start the first time; trying once more by itself.
  * - `hearing`: solid orange with level bars. Your voice is being recorded — talk.
- * - `transcribing`: orange, pulsing. Recording over; waiting for the words.
+ * - `transcribing`: orange, a white spark round it. Recording over; waiting for the words.
  * - `error`: solid red with "!". It failed; the message says why. A tap tries again.
  *
  * What Control is doing never shows here; its own button says that.

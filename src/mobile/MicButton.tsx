@@ -6,6 +6,7 @@ import { useDictationSession } from './dictation-session'
 import { playCue, primeCues } from './cues'
 import { nativeHaptic } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
+import { Spark } from './Spark'
 import { noteUserInterrupted } from './control-tones'
 import { useHoldState } from './MicLockButton'
 import { useHandsFree, type HandsFreePhase } from './hands-free'
@@ -207,12 +208,10 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
               strokeDashoffset={100 * (1 - conversationLeft(secondsLeft, fullest.current))} />
           </svg>
         )}
-        {(look === 'connecting' || look === 'retrying') && (
-          // A tap was taken and the microphone is on its way: an arc chasing round the edge.
-          <svg className="m-mic__spinner" viewBox="0 0 52 52" aria-hidden="true">
-            <circle cx="26" cy="26" r={RING_R} pathLength="100" strokeDasharray="28 72" />
-          </svg>
-        )}
+        {/* Waiting on what a press, or the hold, asked for: a spark round the rim. */}
+        {(look === 'connecting' || look === 'preparing') && <Spark />}
+        {look === 'retrying' && <Spark tone="amber" />}
+        {look === 'transcribing' && <Spark tone="white" />}
         {look === 'hearing' ? (
           <span className="m-mic__bars" aria-hidden="true"><i /><i /><i /><i /></span>
         ) : look === 'error' ? (

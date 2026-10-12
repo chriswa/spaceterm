@@ -265,6 +265,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     log(`conversation window closed (${why}): "Control" again from here`)
     record('hands-free-conversation', { open: false, why })
     if (why !== 'microphone') deps.playCue('conversationClosed')
+    // Ran out: felt too, in a pocket, as three.
+    if (why === 'silence') deps.haptic('triple')
   }
 
   /**

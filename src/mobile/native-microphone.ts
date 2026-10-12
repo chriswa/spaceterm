@@ -57,6 +57,8 @@ interface NativeState {
    * same. An older app does not say so.
    */
   awake?: boolean
+  /** 2: it plays a whole haptic pattern from one message, in the background too. An older app does not say. */
+  haptics?: number
 }
 
 /** A sentence of Control's voice, as the app plays it: begun, heard to its end, or not playable. */
@@ -220,26 +222,44 @@ export function keepAppAwake(on: boolean): void {
 }
 
 /**
- * The phone's two haptic signals for the microphone, from the app; nothing in
- * a browser (iOS gives a page no vibration). `tap`: your words are being taken
- * down — a dictation has really begun, or hands-free heard "Control". `double`:
- * the recording has ended and is on its way. Only two, so neither needs
- * learning; anything tentative (speech heard, not yet known to be for Control)
- * buzzes nothing, or every cough would.
+ * The phone's haptic signals for the microphone, from the app; nothing in a
+ * browser (iOS gives a page no vibration):
+ *
+ * - `tap`: your words are being taken down — a dictation has really begun, or
+ *   hands-free heard "Control".
+ * - `double`: the recording has ended and is on its way.
+ * - `triple`: hands-free's conversation window has run out; "Control" is
+ *   needed again.
+ *
+ * Anything tentative (speech heard, not yet known to be for Control) buzzes
+ * nothing, or every cough would.
+ *
+ * On screen they are short taps. In a pocket — the app in the background, the
+ * screen locked — iOS plays no taps, only its system vibration, and only
+ * while the app's audio is running (NativeMicrophone.swift, `playHaptic`): so
+ * there each is a buzz of about 0.4 s, chained.
  */
-export type HapticPattern = 'tap' | 'double'
+export type HapticPattern = 'tap' | 'double' | 'triple'
 
-/** Between the two taps of `double`: apart enough to feel as two, close enough to feel as one signal. */
-export const DOUBLE_TAP_GAP_MS = 140
+/** Between taps, for an app too old to play a pattern itself: apart enough to feel as two. */
+export const TAP_GAP_MS = 140
+
+const TAPS: Record<HapticPattern, number> = { tap: 1, double: 2, triple: 3 }
 
 export function nativeHaptic(pattern: HapticPattern = 'tap'): void {
   const post = handler()
   if (!post) return
-  // The app plays one tap per message (NativeMicrophone.swift), so a pattern is
-  // made here, by timing, and needs no new build of the app.
-  post.postMessage({ action: 'haptic' })
-  if (pattern === 'double') setTimeout(() => handler()?.postMessage({ action: 'haptic' }), DOUBLE_TAP_GAP_MS)
-  recordMobileEvent('haptic', { pattern })
+  recordMobileEvent('haptic', { pattern, native: (state.haptics ?? 1) >= 2 ? 'pattern' : 'taps' })
+  // An app that plays a whole pattern does it natively — timed there, and in
+  // the background too. An older one plays a tap per message, timed from here.
+  if ((state.haptics ?? 1) >= 2) {
+    post.postMessage({ action: 'haptic', pattern })
+    return
+  }
+  for (let i = 0; i < TAPS[pattern]; i++) {
+    if (i === 0) post.postMessage({ action: 'haptic' })
+    else setTimeout(() => handler()?.postMessage({ action: 'haptic' }), i * TAP_GAP_MS)
+  }
 }
 
 /** The native microphone, opened. */

@@ -231,10 +231,10 @@ textarea, input, [contenteditable="true"], .cm-content {
    doing; each look is listed with its meaning in mic-button.ts. Grey is
    closed; white is hands-free holding it, with nothing leaving the phone,
    brightening while what it heard is checked; a blue ring is the conversation
-   window, draining as its quiet runs out; a spinning arc is a tap taken and
-   the microphone starting (amber: trying again); orange is your voice leaving
-   the phone, solid with its level while it goes and pulsing while the words
-   are waited for; red with "!" is a failure. The orange is the MIC label's
+   window, draining as its quiet runs out; a spark round the rim is a wait
+   (Spark.tsx) — the microphone starting, amber when trying again; orange is
+   your voice leaving the phone, solid with its level while it goes, with a
+   white spark while the words are waited for; red with "!" is a failure. The orange is the MIC label's
    (MicIndicator.tsx) and iOS's own dot. */
 .m-mic {
   position: relative;
@@ -257,34 +257,45 @@ textarea, input, [contenteditable="true"], .cm-content {
   -webkit-touch-callout: none;
   transition: background-color 150ms, color 150ms, box-shadow 150ms;
 }
-/* A tap taken, the microphone starting: don't talk yet. An arc chases round
-   the edge — white, or amber while it tries a second time. */
-.m-mic--connecting,
-.m-mic--retrying { background: #000; color: #fff; }
-.m-mic--retrying { color: #f9e2af; }
-.m-mic__spinner {
+/* A press taken, its result on the way (Spark.tsx): a spark runs round the
+   rim, as on a directory card's badge while its pull or push is in flight.
+   pathLength is 100, so the dash is 14% of the rim and a lap is 100. */
+.m-spark {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  overflow: visible;
   pointer-events: none;
-  transform-origin: 50% 50%;
-  animation: m-mic-spin 0.8s linear infinite;
 }
-.m-mic__spinner circle { fill: none; stroke: currentColor; stroke-width: 3.5; stroke-linecap: round; }
-@keyframes m-mic-spin { to { transform: rotate(360deg); } }
+.m-spark circle {
+  fill: none;
+  stroke: #fff4c2;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 14 86;
+  filter: drop-shadow(0 0 2px #ffd84a) drop-shadow(0 0 4px #ffb300);
+  animation: m-spark 1.1s linear infinite;
+}
+.m-spark--amber circle { stroke: #ffb38a; filter: drop-shadow(0 0 2px #ff7a3d) drop-shadow(0 0 4px #f38ba8); }
+.m-spark--white circle { stroke: #fff; filter: drop-shadow(0 0 2px #fff); }
+@keyframes m-spark { to { stroke-dashoffset: -100; } }
+/* A tap taken, the microphone starting: don't talk yet. Dark, the spark
+   going round — amber while it tries a second time. */
+.m-mic--connecting,
+.m-mic--retrying { background: #000; color: #fff; }
+.m-mic--retrying { color: #f9e2af; }
 /* Hands-free heard speech and is asking the Mac whether it was for Control. */
 .m-mic--checking {
   background: #000;
   color: #fff;
   box-shadow: inset 0 0 0 3.5px #fff;
 }
-/* Hands-free on, but not holding the microphone yet: outlined, pulsing. */
+/* Hands-free on, but not holding the microphone yet: outlined, the spark going round. */
 .m-mic--preparing {
   background: #000;
   color: #fff;
   box-shadow: inset 0 0 0 2px #fff;
-  animation: m-mic-pulse 1.2s ease-in-out infinite;
 }
 /* Hands-free holds the microphone; nothing leaves the phone until "Control". */
 .m-mic--armed,
@@ -331,10 +342,8 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-mic__output[data-output='other'] { color: #f9e2af; }
 .m-mic--hearing,
 .m-mic--transcribing { background: var(--m-listening); color: #11111b; }
-.m-mic--transcribing { animation: m-mic-pulse 1s ease-in-out infinite; }
 .m-mic--error { background: var(--m-danger); color: #11111b; }
 .m-mic__alert { font-size: 26px; font-weight: 800; line-height: 1; }
-@keyframes m-mic-pulse { 50% { opacity: 0.45; } }
 /* The voice going out, a bar each, from `--m-level` (mic-level.ts) set on the
    button once a frame. Different heights for the same level, so it reads as a
    voice and not a meter. */
@@ -357,13 +366,13 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-mic__bars i:nth-child(3) { --m-bar-k: 0.75; }
 .m-mic__bars i:nth-child(4) { --m-bar-k: 0.4; }
 /* Hands-free's switch (MicLockButton.tsx), right of the microphone: closed
-   while it is off; pulsing while it waits for the microphone; white, locked,
+   while it is off; a spark round it while it waits for the microphone; white, locked,
    while it holds it — the same white as the microphone's own look then. */
+.m-mic-lock { position: relative; }
 .m-mic-lock--preparing {
   background: #000;
   color: #fff;
   box-shadow: inset 0 0 0 2px #fff;
-  animation: m-mic-pulse 1.2s ease-in-out infinite;
 }
 .m-mic-lock--held { background: #fff; color: #11111b; }
 .m-mic__error {

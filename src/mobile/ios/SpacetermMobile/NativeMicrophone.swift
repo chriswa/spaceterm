@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import CallKit
 import UIKit
 import WebKit
@@ -128,8 +129,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             // A page that has just loaded wants the state now — for the output badge — not at the next change.
             case "state": sendState()
             case "stay-awake": setStayAwake((message.body as? [String: Any])?["on"] as? Bool ?? false)
-            // Hands-free heard "Control": a tap the user feels, since a tone would land mid-sentence.
-            case "haptic": UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            // The microphone's states, felt rather than heard: see `playHaptic`.
+            case "haptic": playHaptic((message.body as? [String: Any])?["pattern"] as? String ?? "tap")
             case "speech-play": playSpeech(message.body as? [String: Any] ?? [:])
             case "speech-stop": stopSpeech(id: (message.body as? [String: Any])?["id"] as? String ?? "")
             // Someone started talking over Control: quieter until it is known whether they said "Control".
@@ -484,7 +485,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // `awake`: the engine is up without the microphone, and plays it all the same.
         // Whether the engine *is* running, not what it was brought up for: iOS stops it under the app, and
         // a page told "awake" by an app whose engine had stopped sent it Control's voice to play into nothing.
-        var state: [String: Any] = ["running": running, "awake": up == .speaker && engine.isRunning, "speech": true, "voiceProcessing": voiceProcessing]
+        // `haptics`: 2 — this app plays a whole pattern from one message, in the background too (`playHaptic`).
+        var state: [String: Any] = ["running": running, "awake": up == .speaker && engine.isRunning, "speech": true, "voiceProcessing": voiceProcessing, "haptics": 2]
         if running { state["input"] = inputName() }
         // Where sound goes now, whatever the microphone is doing: the badge on the page's microphone button.
         if let output = AVAudioSession.sharedInstance().currentRoute.outputs.first {
@@ -494,6 +496,44 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         if let lastError, !running { state["error"] = lastError }
         guard let json = try? JSONSerialization.data(withJSONObject: state), let text = String(data: json, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.spacetermNativeMicrophone && window.spacetermNativeMicrophone.state(\(text)), 0", completionHandler: nil)
+    }
+
+    // MARK: - Haptics
+
+    /// `tap`, `double` or `triple` taps (src/mobile/native-microphone.ts says what each means).
+    ///
+    /// In the foreground, UIKit's impact generator: crisp, short taps. It plays
+    /// nothing once the app is in the background or the screen is locked, and
+    /// neither does Core Haptics — iOS keeps both to the app on screen. What
+    /// does reach a pocket is a system vibration, `kSystemSoundID_Vibrate`,
+    /// played while this app's audio session is active under the `audio`
+    /// background mode (hands-free holds the microphone, or the app stays
+    /// awake for Control) and allowed during recording
+    /// (`setAllowHapticsAndSystemSoundsDuringRecording`). It is one long buzz,
+    /// about 0.4 s, with no strength to choose, so a pattern is buzzes chained
+    /// on each one's completion. The phone's Sounds & Haptics settings decide
+    /// whether it plays at all (e.g. no haptics in silent mode).
+    private func playHaptic(_ pattern: String) {
+        let count = pattern == "triple" ? 3 : pattern == "double" ? 2 : 1
+        let foreground = UIApplication.shared.applicationState == .active
+        events.record("native-haptic", ["pattern": pattern, "how": foreground ? "impact" : "vibrate", "sessionActive": engine.isRunning])
+        if foreground {
+            let generator = UIImpactFeedbackGenerator(style: .heavy)
+            generator.prepare()
+            for i in 0..<count {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.14 * Double(i)) { generator.impactOccurred() }
+            }
+        } else {
+            vibrate(times: count)
+        }
+    }
+
+    private func vibrate(times: Int) {
+        guard times > 0 else { return }
+        AudioServicesPlaySystemSoundWithCompletion(kSystemSoundID_Vibrate) {
+            // A gap after each buzz, so two read as two and not one long one.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.vibrate(times: times - 1) }
+        }
     }
 
     private func fail(_ message: String) {

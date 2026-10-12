@@ -336,6 +336,7 @@ describe('hands-free mode', () => {
       await h.hear(quiet(5500))
       expect(useHandsFree.getState().conversation).toBe(false)
       expect(h.cues.at(-1)).toBe('conversationClosed')
+      expect(h.hapticPatterns.at(-1)).toBe('triple')
       await h.hear(quiet(1000), speech(1500), quiet(500))
       expect(h.modes.at(-1)).toBe('wake-word')
     })

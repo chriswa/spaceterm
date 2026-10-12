@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
 import { nativeMicrophoneAvailable } from './native-microphone'
+import { Spark } from './Spark'
 
 /** Whether the microphone is held open (held-microphone.ts), as it changes. */
 export function useHoldState(): HoldState {
@@ -32,6 +33,8 @@ export function MicLockButton() {
       // No haptic: a tap means your words are being taken down (native-microphone.ts). The press shows instead.
       onClick={() => setHoldMicrophone(!on)}
     >
+      {/* Turned on, the microphone not held yet: a spark round the rim until it is. */}
+      {hold === 'preparing' && <Spark />}
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <rect x="5" y="11" width="14" height="10" rx="2" />
         {/* Shut while it holds the microphone; open while it does not. */}

@@ -236,14 +236,14 @@ conversation window, or a composer's dictation:
 | Look | Means |
 |---|---|
 | grey | the microphone is closed |
-| outlined, pulsing | hands-free is on, waiting for the microphone |
+| outlined, a gold spark running round | hands-free is on, waiting for the microphone (the lock shows the spark too) |
 | white, lock badge, thin white ring | hands-free holds it; nothing leaves the phone until "Control" |
 | white, thick bright ring | hands-free heard speech and is asking the Mac whether it was for Control |
 | blue ring, draining | the conversation window: just talk. The ring is the quiet left before "Control" is needed again |
-| black, white arc spinning | a tap was taken and the microphone is starting — AirPods playing music take seconds to switch. Don't talk yet |
-| black, amber arc spinning | it did not start; trying once more by itself (the app's microphone needs no second tap) |
+| dark, a gold spark running round the rim | a tap was taken and the microphone is starting — AirPods playing music take seconds to switch. Don't talk yet |
+| dark, amber icon and spark | it did not start; trying once more by itself (the app's microphone needs no second tap) |
 | solid orange, level bars | your voice is leaving the phone, whatever started it — the bars are its level (`mic-level.ts`, fed by each dictation). Only once sound is really arriving |
-| orange, pulsing | waiting for the words |
+| orange, a white spark running round | waiting for the words |
 | solid red, "!" | it failed; the message above says why, for 8 s. A tap tries again |
 
 A small badge at its top right is where sound is going now, as the iPhone app
@@ -274,11 +274,20 @@ AirPods still switching profile. Two patterns only:
 |---|---|
 | one tap | your words are being taken down: sound is arriving after a tap, or hands-free heard "Control" |
 | two taps | the recording is over and on its way |
+| three taps | hands-free's conversation window ran out; "Control" is needed again |
 
 Speech hands-free is still checking buzzes nothing — every cough would — and
 shows as the thick white ring. Haptics come from the app only (iOS gives a
-page no vibration), and iOS plays them only while the app is in the
-foreground.
+page no vibration). On screen they are short taps. In a pocket or with the
+screen locked, iOS plays no taps — UIKit's feedback generators and Core
+Haptics are both kept to the app on screen — so the app uses the one
+vibration iOS lets a background app play, `kSystemSoundID_Vibrate`, while
+its audio is running (hands-free holding the microphone, or Control held
+here): a buzz of about 0.4 s each, chained, so the patterns are the same
+counts, longer. The phone's Sounds & Haptics settings can still silence it.
+That needs the app built since this was added (`haptics: 2` in its state);
+an older one taps on screen only. Every haptic is a `haptic` line in the
+record, and a `native-haptic` line says how the app played it.
 
 Sounds are few, and only where replies are **Aloud** — this phone holds
 Control, unmuted; on Silent or Released the phone makes no sound of its own
