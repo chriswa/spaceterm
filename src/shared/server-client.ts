@@ -720,6 +720,11 @@ export class ServerClient {
     this.fireAndForget({ type: 'system-stats-watch', watching })
   }
 
+  /** Not remembered across a reconnect: the caller sends it again on 'connect'. */
+  pauseCanvas(paused: boolean): void {
+    this.fireAndForget({ type: 'canvas-pause', paused })
+  }
+
   sendCameraBounds(bounds: CameraBounds): void {
     this.fireAndForget({ type: 'camera-bounds', bounds })
   }

@@ -335,3 +335,23 @@ describe('unicode width', () => {
     expect(h.snapshots[0].cursorX).toBe(1)
   })
 })
+
+describe('currentSnapshot', () => {
+  it('serializes the screen without taking it off the tick', async () => {
+    const h = harness()
+    h.manager.addSession(sid('s1'), 80, 24)
+    h.manager.write(sid('s1'), 'still owed')
+    await h.manager.flushForTest()
+
+    const now = h.manager.currentSnapshot(sid('s1'))
+    expect(now && text(now)).toContain('still owed')
+
+    // Every other subscriber still gets the change on the next tick.
+    h.ticker.tick()
+    expect(h.snapshots).toHaveLength(1)
+  })
+
+  it('is null for an unknown session', () => {
+    expect(harness().manager.currentSnapshot(sid('nope'))).toBeNull()
+  })
+})

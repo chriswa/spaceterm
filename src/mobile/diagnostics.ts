@@ -26,6 +26,8 @@
  *   with the zoom it started and ended at. A kill mid-motion then says which.
  */
 
+import { whileOn, type Gate } from './gate'
+
 declare global {
   interface Window { spacetermProcessRestarts?: number }
 }
@@ -53,7 +55,7 @@ function describe(el: Element | null): string {
   return `${el.tagName.toLowerCase()}${cls}${el.isConnected ? '' : ' (detached)'}`
 }
 
-export function installDiagnostics(log: (message: string) => void): void {
+export function installDiagnostics(log: (message: string) => void, watching: Gate): void {
   if (window.spacetermProcessRestarts) {
     log(`[lifecycle] reloaded because iOS ended the page's process (${window.spacetermProcessRestarts} this launch)`)
     const crumb = readBreadcrumb()
@@ -100,47 +102,57 @@ export function installDiagnostics(log: (message: string) => void): void {
     vv.addEventListener('scroll', changed)
   }
 
-  let lastFrame = performance.now()
-  let stalledSince: number | null = null
-  const frame = (t: number) => {
-    lastFrame = t
-    if (stalledSince !== null) {
-      log(`[frames] resumed after ${Math.round(t - stalledSince)}ms without one`)
-      stalledSince = null
-    }
-    requestAnimationFrame(frame)
-  }
-  requestAnimationFrame(frame)
   let lastOctave: number | null = null
-  let lastTick = performance.now()
-  setInterval(() => {
-    const zoom = cameraZoom()
-    const glowing = document.querySelectorAll('.card-shell--glow').length
-    if (zoom > 0) {
-      const octave = Math.round(Math.log2(zoom))
-      if (octave !== lastOctave) {
-        lastOctave = octave
-        log(`[zoom] ${zoom.toFixed(4)}, ${glowing} glowing cards`)
+  // The frame and stall watch runs only while the page shows something other
+  // than Control's transcript (`watching`): a frame loop and four DOM queries
+  // and storage writes a second are not to be paid with the phone in a pocket.
+  whileOn(watching, () => {
+    let lastFrame = performance.now()
+    let stalledSince: number | null = null
+    let frameId = 0
+    const frame = (t: number) => {
+      lastFrame = t
+      if (stalledSince !== null) {
+        log(`[frames] resumed after ${Math.round(t - stalledSince)}ms without one`)
+        stalledSince = null
       }
+      frameId = requestAnimationFrame(frame)
     }
-    writeBreadcrumb(`${new Date().toISOString()} zoom ${zoom.toFixed(4)}, ${glowing} glowing of ${document.querySelectorAll('.card-shell').length} cards, ${pinching ? 'pinching' : 'not pinching'}, ${document.visibilityState}; last camera event: ${lastCameraEvent}`)
-    const now = performance.now()
-    const late = now - lastTick - WATCH_MS
-    lastTick = now
-    // A hidden page has no frames, and is meant not to.
-    if (document.visibilityState !== 'visible') {
-      lastFrame = now
-      return
+    frameId = requestAnimationFrame(frame)
+    let lastTick = performance.now()
+    const id = setInterval(() => {
+      const zoom = cameraZoom()
+      const glowing = document.querySelectorAll('.card-shell--glow').length
+      if (zoom > 0) {
+        const octave = Math.round(Math.log2(zoom))
+        if (octave !== lastOctave) {
+          lastOctave = octave
+          log(`[zoom] ${zoom.toFixed(4)}, ${glowing} glowing cards`)
+        }
+      }
+      writeBreadcrumb(`${new Date().toISOString()} zoom ${zoom.toFixed(4)}, ${glowing} glowing of ${document.querySelectorAll('.card-shell').length} cards, ${pinching ? 'pinching' : 'not pinching'}, ${document.visibilityState}; last camera event: ${lastCameraEvent}`)
+      const now = performance.now()
+      const late = now - lastTick - WATCH_MS
+      lastTick = now
+      // A hidden page has no frames, and is meant not to.
+      if (document.visibilityState !== 'visible') {
+        lastFrame = now
+        return
+      }
+      // The page itself was busy, which stops frames too: that is not the web view.
+      if (late >= STALL_MS) {
+        log(`[frames] the page was busy for ${Math.round(late)}ms`)
+        lastFrame = now
+        return
+      }
+      const gap = now - lastFrame
+      if (gap < STALL_MS || stalledSince !== null) return
+      stalledSince = lastFrame
+      log(`[frames] none for ${Math.round(gap)}ms while timers run — the web view has stopped drawing (focus ${describe(document.activeElement)}, visible ${Math.round(vv?.height ?? 0)})`)
+    }, WATCH_MS)
+    return () => {
+      clearInterval(id)
+      cancelAnimationFrame(frameId)
     }
-    // The page itself was busy, which stops frames too: that is not the web view.
-    if (late >= STALL_MS) {
-      log(`[frames] the page was busy for ${Math.round(late)}ms`)
-      lastFrame = now
-      return
-    }
-    const gap = now - lastFrame
-    if (gap < STALL_MS || stalledSince !== null) return
-    stalledSince = lastFrame
-    log(`[frames] none for ${Math.round(gap)}ms while timers run — the web view has stopped drawing (focus ${describe(document.activeElement)}, visible ${Math.round(vv?.height ?? 0)})`)
-  }, WATCH_MS)
+  })
 }

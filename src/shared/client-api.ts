@@ -16,6 +16,10 @@ const TRANSCRIPT_PAGE = 60
  * share every server interaction rather than each keeping a copy.
  */
 export function createApi(client: ServerClient, platform: PlatformApi): Api {
+  // The server forgets a paused canvas with its connection: say so again on each one.
+  let canvasPaused = false
+  client.onLifecycle('connect', () => { if (canvasPaused) client.pauseCanvas(true) })
+
   /**
    * Per-session listeners, keyed so a canvas of fifty cards does not run
    * fifty filters on every output chunk and snapshot.
@@ -161,7 +165,11 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
           client.watchSystemStats(false)
         }
       },
-      onMobileBuildChanged: (cb) => on('mobile-build-changed', () => cb())
+      onMobileBuildChanged: (cb) => on('mobile-build-changed', () => cb()),
+      pauseCanvas: (paused) => {
+        canvasPaused = paused
+        client.pauseCanvas(paused)
+      }
     },
     log: (message) => platform.log(message),
     installMobileApp: () => client.installMobileApp(),

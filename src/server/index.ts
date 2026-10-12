@@ -35,6 +35,7 @@ import { expandTilde } from './cwd'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
+import { receivesSnapshots, owedOnResume } from './snapshot-delivery'
 import { agentSurfaceFootprint, computePlacement } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrowedTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
@@ -255,6 +256,8 @@ interface ClientConnection {
   cameraBoundsAt?: number
   /** Receives the system monitor (`system-stats-watch`). */
   watchesSystemStats?: boolean
+  /** Its canvas is paused (`canvas-pause`): no snapshots. See snapshot-delivery.ts. */
+  canvasPaused?: boolean
 }
 
 /**
@@ -1669,6 +1672,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'canvas-pause': {
+      const resuming = client.canvasPaused === true && !msg.paused
+      client.canvasPaused = msg.paused
+      if (resuming) {
+        for (const sessionId of owedOnResume(client)) {
+          const snap = snapshotManager.currentSnapshot(sessionId)
+          if (snap) send(client.link, snap)
+        }
+      }
+      break
+    }
+
     case 'system-stats-watch': {
       client.watchesSystemStats = msg.watching
       updateSystemStatsWatched()
@@ -2535,9 +2550,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         // focus re-attaches, which re-sends the serialized state it needs.
         client.subscriptions.set(msg.sessionId, 'snapshot')
         client.attachBuffers.delete(msg.sessionId)
-        // Send an immediate snapshot so the client has something to render
-        const snap = snapshotManager.snapshotNow(msg.sessionId)
-        if (snap) send(client.link, snap)
+        // Send an immediate snapshot so the client has something to render —
+        // unless its canvas is paused, when resuming sends it instead.
+        if (!client.canvasPaused) {
+          const snap = snapshotManager.snapshotNow(msg.sessionId)
+          if (snap) send(client.link, snap)
+        }
       } else if (client.subscriptions.get(msg.sessionId) === 'snapshot') {
         // Stop snapshots. The live stream itself starts at `attach`, which the
         // client sends next; a live subscription that somehow arrived first is
@@ -3015,9 +3033,7 @@ async function startServer(): Promise<void> {
   // Initialize SnapshotManager — sends periodic snapshots to clients in snapshot mode
   snapshotManager = new SnapshotManager((snapshot) => {
     clients.forEach((client) => {
-      if (client.subscriptions.get(snapshot.sessionId) === 'snapshot') {
-        send(client.link, snapshot)
-      }
+      if (receivesSnapshots(client, snapshot.sessionId)) send(client.link, snapshot)
     })
   })
 

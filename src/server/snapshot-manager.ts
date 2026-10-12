@@ -165,6 +165,17 @@ export class SnapshotManager {
     })
   }
 
+  /**
+   * The session's screen as it stands, for one client catching up — a phone
+   * back from Control mode. Unlike `snapshotNow` it leaves the tick's
+   * bookkeeping alone: a session still dirty is still owed to every other
+   * client subscribed to it.
+   */
+  currentSnapshot(sessionId: PtySessionId): SnapshotMessage | null {
+    const session = this.sessions.get(sessionId)
+    return session ? this.serializeSession(session) : null
+  }
+
   /** Force an immediate snapshot for a specific session */
   snapshotNow(sessionId: PtySessionId): SnapshotMessage | null {
     const session = this.sessions.get(sessionId)

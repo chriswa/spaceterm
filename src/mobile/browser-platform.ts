@@ -1,5 +1,6 @@
 import type { PlatformApi } from '../shared/api'
 import { DEFAULT_LAUNCH_PREFS } from '../shared/launch-prefs'
+import { createGate } from './gate'
 
 /**
  * The host half of `window.api` in a browser. Everything server-facing is
@@ -40,20 +41,36 @@ function log(message: string): void {
 }
 
 /**
- * Whether the canvas is hidden behind a full-screen view (the terminal). The
- * renderer pauses every canvas loop — background, thumbnails, the rest — when
- * told the window is not visible; a canvas nobody can see under the terminal
- * view is, for that purpose, not visible.
+ * Whether the canvas is hidden behind a full-screen view: the terminal, or
+ * Control's transcript (control-mode.ts). The renderer pauses every canvas
+ * loop — background, thumbnails, the rest — when told the window is not
+ * visible; a canvas nobody can see under a full-screen view is, for that
+ * purpose, not visible. Each view covers it separately, so closing one never
+ * uncovers it while the other is still up.
  */
-let canvasCovered = false
-const visibilityListeners = new Set<(visible: boolean) => void>()
-const canvasVisible = () => document.visibilityState === 'visible' && !canvasCovered
-const announceVisibility = () => visibilityListeners.forEach((cb) => cb(canvasVisible()))
-if (typeof document !== 'undefined') document.addEventListener('visibilitychange', announceVisibility)
+export type CanvasCover = 'terminal' | 'control'
+const coveredBy = new Set<CanvasCover>()
 
-export function setCanvasCovered(covered: boolean): void {
-  if (covered === canvasCovered) return
-  canvasCovered = covered
+/** The page is hidden: the screen off, or another app in front. */
+export const pageHidden = createGate(typeof document !== 'undefined' && document.visibilityState === 'hidden')
+/** The canvas is on screen: the page visible and nothing covering it. */
+export const canvasOnScreen = createGate(!pageHidden.on)
+const visibilityListeners = new Set<(visible: boolean) => void>()
+const announceVisibility = () => {
+  canvasOnScreen.set(!pageHidden.on && coveredBy.size === 0)
+  visibilityListeners.forEach((cb) => cb(canvasOnScreen.on))
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    pageHidden.set(document.visibilityState === 'hidden')
+    announceVisibility()
+  })
+}
+
+export function setCanvasCovered(by: CanvasCover, covered: boolean): void {
+  if (covered === coveredBy.has(by)) return
+  if (covered) coveredBy.add(by)
+  else coveredBy.delete(by)
   announceVisibility()
 }
 

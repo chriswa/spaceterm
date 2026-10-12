@@ -416,7 +416,8 @@ export class FakeBridge implements Api {
     onUsageReport: (cb) => subscribe(this.usageReport, cb),
     onMobileBuildChanged: () => () => undefined,
     usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport),
-    watchSystemStats: (cb) => subscribe(this.systemStats, cb)
+    watchSystemStats: (cb) => subscribe(this.systemStats, cb),
+    pauseCanvas: (paused) => this.record('node.pauseCanvas', paused)
   }
 
   readonly tts: TtsApi = {

@@ -113,7 +113,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
     window.api.log(`[mobile-view] focused terminal ${focusedTerminal ?? 'none'}`)
     if (focusedTerminal) rememberOpen(focusedTerminal)
     // The terminal view covers the whole canvas: let it stop drawing.
-    setCanvasCovered(focusedTerminal !== null)
+    setCanvasCovered('terminal', focusedTerminal !== null)
   }, [focusedTerminal])
 
   /**
@@ -133,7 +133,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
     if (!open) return
     // Now, not from the effect after the re-render: the canvas's zoom-out on
     // the way back starts first, and a covered canvas snaps where it would fly.
-    setCanvasCovered(false)
+    setCanvasCovered('terminal', false)
     rememberOpen(null)
     useSurfacePresenterStore.getState().requestUnfocus(zoomOut)
   }

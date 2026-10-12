@@ -214,6 +214,31 @@ silence it. `native-stay-awake` and `native-awake-running` in the event record s
 coming and going, and the `native-heartbeat` while in the background says
 whether the page still answers (`pageAnsweredMs`).
 
+## Control mode: the canvas stops
+
+While Control's transcript is up, or the screen is off, the phone is only
+talking to Control and nothing on the canvas could be seen, so the canvas does
+nothing (`control-mode.ts`):
+
+- It is covered, as under the terminal view: the background, card painting,
+  camera flights and the clock behind the elapsed captions all stop.
+- The server stops sending it terminal snapshots (`canvas-pause`,
+  `src/server/snapshot-delivery.ts`). They were nearly everything the phone
+  received — about 6 MB a minute with 25 terminals, parsed with the screen
+  off — and are dropped, not queued: on the way back the server sends each
+  card's screen as it now stands.
+- The freeze and memory instruments (`diagnostics.ts`, `memory-probe.ts`)
+  stop; the memory probe runs only while the canvas is on screen.
+
+Everything else still arrives and lands in its store, so leaving Control mode
+replays nothing. Agent spend and the mini stats carry on as before.
+
+Whether it holds is in the event record: `control-mode` as it comes and goes,
+and a `page-work` event every minute — messages and kilobytes received (the
+heaviest types in `byType`, `[count, kb]`), the time spent handling them
+(`handlingMs`), and how much of the minute was in Control mode
+(`controlModeS`). A minute in Control mode should be kilobytes, not megabytes.
+
 ## The microphone
 
 The big button in the middle of the bottom bar (`MicButton.tsx`) is the

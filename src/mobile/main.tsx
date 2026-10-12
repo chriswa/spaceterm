@@ -4,7 +4,10 @@ import { installApi } from '@/lib/install-api'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { deferCameraScaleWhileMoving } from '@/hooks/useCamera'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
-import { browserPlatform, forwardLogs } from './browser-platform'
+import { browserPlatform, forwardLogs, canvasOnScreen } from './browser-platform'
+import { controlModeGate, installControlMode } from './control-mode'
+import { PageWork, meteredTransport, installPageWorkReport } from './page-work'
+import { not } from './gate'
 import { installDiagnostics } from './diagnostics'
 import { installMemoryProbe } from './memory-probe'
 import { startSpeechPlayer } from './speech-player'
@@ -71,7 +74,9 @@ if (!token) {
   installNativeEventBridge()
   installLifecycleEvents()
   // `window.api` must exist before App's modules run, as on the desktop.
-  void installApi(webSocketTransport(gatewayUrl(token)), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
+  // What the page is sent and spends on it, reported once a minute; see page-work.ts.
+  const work = new PageWork()
+  void installApi(meteredTransport(webSocketTransport(gatewayUrl(token)), work), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
     forwardLogs((message) => client.clientLog(message))
     // A launch starts with Control let go, as with the held microphone: the
     // server keeps a phone's hold while it is away, but not across a relaunch.
@@ -90,8 +95,17 @@ if (!token) {
     // Switching apps is when the phone's microphone and socket misbehave, so
     // the log marks each one.
     document.addEventListener('visibilitychange', () => window.api.log(`[lifecycle] page ${document.visibilityState}`))
-    installDiagnostics((message) => window.api.log(message))
-    installMemoryProbe((message) => window.api.log(message), Boolean(window.spacetermProcessRestarts))
+    // Only talking to Control — its transcript up, or the screen off: the
+    // canvas stops, and so does the server's stream of it. See control-mode.ts.
+    const controlMode = controlModeGate()
+    installControlMode(controlMode, {
+      pauseCanvas: (paused) => window.api.node.pauseCanvas(paused),
+      log: (message) => window.api.log(message),
+      record: recordMobileEvent,
+    })
+    installPageWorkReport({ work, controlMode, record: recordMobileEvent })
+    installDiagnostics((message) => window.api.log(message), not(controlMode))
+    installMemoryProbe((message) => window.api.log(message), Boolean(window.spacetermProcessRestarts), canvasOnScreen)
     // Not back where it ran out of memory, or it runs out again: see crash-camera.ts.
     const recovered = recoverCameraAfterKill(window.spacetermProcessRestarts ?? 0)
     if (recovered) window.api.log(recovered)

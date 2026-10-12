@@ -8,7 +8,9 @@ design), which stay at the root because `CLAUDE.md` points there.
   CLAUDE.md / SKILL.md cards), `theme-mods.md` (themeable facets for mods).
 - `ideas/` — designed but not built, with the alternatives already rejected:
   `browser-cards.md` (web pages on the canvas), `control.md` (Control, the
-  voice receptionist: open work and V2).
+  voice receptionist: open work and V2), `watch.md` (Control from an Apple
+  Watch: options and the battery case), `phone-control-mode.md` (the phone
+  spending nothing on the canvas while you talk to Control).
 - `investigations/` — a bug's analysis, kept for what the fix's tests assert:
   `ansi-preservation.md`.
 - `performance/` — `potential-optimizations.md` (open leads and how to

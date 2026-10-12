@@ -146,6 +146,18 @@ export interface SystemStatsWatchMessage {
   watching: boolean
 }
 
+/**
+ * Pause or resume this client's canvas. While paused it is sent no terminal
+ * `snapshot` frames — they are dropped, not queued — and on resume it is sent
+ * each subscribed terminal's screen as it now stands. The phone pauses while
+ * Control's transcript covers its canvas or its screen is off. Not remembered
+ * across a reconnect. See `src/server/snapshot-delivery.ts`.
+ */
+export interface CanvasPauseMessage {
+  type: 'canvas-pause'
+  paused: boolean
+}
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -1211,6 +1223,7 @@ export type ClientMessage =
   | RestartFlagQueryMessage
   | UsageReportQueryMessage
   | SystemStatsWatchMessage
+  | CanvasPauseMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage

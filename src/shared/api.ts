@@ -221,6 +221,12 @@ export interface NodeApi {
    * someone watches. Null while mini-stats is not running.
    */
   watchSystemStats(callback: (snapshot: SystemStatsSnapshot | null) => void): () => void
+  /**
+   * Pause this client's canvas: the server stops sending terminal snapshots
+   * until it is resumed, then sends each card's current screen. Kept across
+   * reconnects. The phone's Control mode (src/mobile/control-mode.ts).
+   */
+  pauseCanvas(paused: boolean): void
 }
 
 /**

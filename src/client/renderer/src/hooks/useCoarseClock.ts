@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ELAPSED_TICK_MS } from '../../../../shared/elapsed-label'
+import { isWindowVisible, onWindowVisibleChange } from './useWindowVisible'
+
+const coarseNow = () => Math.floor(Date.now() / ELAPSED_TICK_MS) * ELAPSED_TICK_MS
 
 /**
  * A wall clock that advances in `ELAPSED_TICK_MS` steps, for the elapsed
@@ -17,13 +20,28 @@ import { ELAPSED_TICK_MS } from '../../../../shared/elapsed-label'
  * alone.
  */
 export function useCoarseClock(): number {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / ELAPSED_TICK_MS) * ELAPSED_TICK_MS)
+  const [now, setNow] = useState(coarseNow)
 
+  // Stopped while the window is not worth drawing for — occluded on the Mac;
+  // locked, or under the terminal view or Control's transcript, on the phone —
+  // since each tick re-renders the whole canvas. Caught up on the way back.
   useEffect(() => {
-    const id = setInterval(() => {
-      setNow(Math.floor(Date.now() / ELAPSED_TICK_MS) * ELAPSED_TICK_MS)
-    }, ELAPSED_TICK_MS)
-    return () => clearInterval(id)
+    let id: ReturnType<typeof setInterval> | null = null
+    const run = (visible: boolean) => {
+      if (visible && id === null) {
+        setNow(coarseNow())
+        id = setInterval(() => setNow(coarseNow()), ELAPSED_TICK_MS)
+      } else if (!visible && id !== null) {
+        clearInterval(id)
+        id = null
+      }
+    }
+    run(isWindowVisible())
+    const off = onWindowVisibleChange(run)
+    return () => {
+      off()
+      if (id !== null) clearInterval(id)
+    }
   }, [])
 
   return now
