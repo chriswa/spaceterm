@@ -36,6 +36,8 @@ function fakeCapture(sampleRate = 16_000) {
   return {
     capture,
     speak: () => { for (const fn of listeners) fn(new Float32Array(1600).fill(0.1)) },
+    /** A dead input: blocks arrive, every sample exactly zero. */
+    sendZeros: () => { for (const fn of listeners) fn(new Float32Array(1600)) },
     listening: () => listeners.size,
     released: () => released,
   }
@@ -88,6 +90,18 @@ describe('whenHearing', () => {
     await vi.advanceTimersByTimeAsync(NO_AUDIO_TIMEOUT_MS)
     await failed
     expect(silent.released()).toBe(true)
+  })
+
+  it('counts a microphone sending only exact zeros as sending nothing', async () => {
+    const dead = fakeCapture()
+    const hearing = whenHearing(Dictation.begin(fakeApi(), {}, { acquire: async () => dead.capture, replaceSilent: async () => undefined }))
+    const failed = expect(hearing).rejects.toThrow(/only silence/)
+    for (let i = 0; i < 20; i++) {
+      dead.sendZeros()
+      await vi.advanceTimersByTimeAsync(100)
+    }
+    await failed
+    expect(dead.released()).toBe(true)
   })
 
   it('gives up when the stand-in is silent too', async () => {

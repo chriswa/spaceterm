@@ -42,6 +42,8 @@ interface NativeState {
   running: boolean
   /** The input in use, e.g. "iPhone Microphone" or "AirPods Pro". */
   input?: string
+  /** Running, but the input sends only exact zeros — AirPods whose microphone is elsewhere, say. */
+  silentInput?: boolean
   /** Where sound goes now, e.g. "Speaker" or "AirPods Pro"; an older app does not say. */
   output?: string
   /** Its AVAudioSession port type, e.g. "Speaker", "Receiver", "BluetoothA2DPOutput". */
@@ -130,6 +132,10 @@ function install(): void {
         log(`${next.running ? 'running' : 'stopped'}${next.input ? ` on "${next.input}"` : ''}${next.error ? `: ${next.error}` : ''}`)
         // The input changing is AirPods coming or going.
         recordMobileEvent('native-mic-state', { running: next.running, input: next.input ?? null, error: next.error ?? null, was: { running: state.running, input: state.input ?? null } })
+      }
+      if ((next.silentInput === true) !== (state.silentInput === true)) {
+        log(next.silentInput ? `"${next.input ?? '?'}" is sending only digital silence` : 'the microphone is sending sound again')
+        recordMobileEvent('native-silent-input', { on: next.silentInput === true, input: next.input ?? null })
       }
       if (next.running !== state.running || next.awake !== state.awake) engineChanges++
       const outputChanged = next.output !== state.output || next.outputType !== state.outputType

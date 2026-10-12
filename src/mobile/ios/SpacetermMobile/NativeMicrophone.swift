@@ -109,9 +109,20 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     /// No taps, or nothing but digital silence, for this long: start again.
     private static let stallSeconds: Double = 2
     private static let minSecondsBetweenRebuilds: TimeInterval = 3
-    /// A stall this soon after the last stall's restart in place gets a new engine instead.
-    private static let stallEscalateSeconds: TimeInterval = 15
+    /// Restarts for one stall: how many so far, and when the last was. Cleared once sound flows again.
+    private var stallRestarts = 0
     private var lastStallRestart = Date.distantPast
+    /// The stall now, if any, as last recorded.
+    private var currentStall: Converter.Stall?
+    /// Microphone starts that failed in a row, for the delay before the next.
+    private var failedStarts = 0
+    /**
+     * The Bluetooth microphone sent only exact zeros: use the iPhone's own
+     * until a Bluetooth device comes or goes. Seen October 12 with AirPods
+     * whose microphone had gone to the Mac, and still dead after the Mac let
+     * go: the route said AirPods, and every restart got zeros again.
+     */
+    private var avoidBluetoothInput = false
     /// An interruption with no end heard by then is taken to have none coming.
     private static let interruptionGraceSeconds: TimeInterval = 1
 
@@ -364,7 +375,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             deactivateFirst: sessionOthers != nil && sessionOthers != others,
             notifyOthers: others != .mute,
             voiceProcessingAllowed: voiceProcessingAllowed,
-            highQuality: mode == .microphone && highQualityForDictation
+            highQuality: mode == .microphone && highQualityForDictation && !avoidBluetoothInput,
+            builtInInput: mode == .microphone && avoidBluetoothInput
         )
         let capture = self.capture
         audioQueue.async {
@@ -394,6 +406,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
          * stops Control first, so there is nothing to cancel.
          */
         let highQuality: Bool
+        /// The iPhone's own microphone, not a Bluetooth one (`avoidBluetoothInput`).
+        let builtInInput: Bool
     }
 
     private struct Started {
@@ -449,6 +463,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // iOS silences haptics while recording unless told otherwise; hands-free's cue is one.
         try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         try session.setActive(true)
+        // Nil puts the choice back with iOS: AirPods when they are there.
+        let builtIn = plan.builtInInput ? session.availableInputs?.first(where: { $0.portType == .builtInMic }) : nil
+        try? session.setPreferredInput(builtIn)
         if plan.highQuality, #available(iOS 26.0, *), let port = session.currentRoute.inputs.first {
             highQuality["input"] = "\(port.portName) (\(port.portType.rawValue))"
             if let bluetooth = port.bluetoothMicrophoneExtension {
@@ -501,6 +518,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             voiceProcessing = started.voiceProcessing
             if let error = started.voiceProcessingError { events.record("voice-processing-failed", ["error": error]) }
             sessionOthers = plan.others
+            failedStarts = 0
             up = mode
             lastError = nil
             if mode == .microphone {
@@ -525,7 +543,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             fail("could not start (\(why)): \(error.localizedDescription)")
             // Tried again from here, the microphone too: the page opens it once and leaves it to this
             // (held-microphone.ts `installNativeHold`).
-            scheduleRestart(mode == .speaker ? "staying awake would not start" : "the microphone would not start", after: mode == .speaker ? 5 : 2)
+            // Less and less often: 2, 4, 8, 16 s, then every 30.
+            failedStarts += 1
+            let delay = mode == .speaker ? 5 : min(30, 2 * pow(2, Double(failedStarts - 1)))
+            events.record("native-mic-retry", ["mode": mode.rawValue, "inSeconds": delay, "failedStarts": failedStarts])
+            scheduleRestart(mode == .speaker ? "staying awake would not start" : "the microphone would not start", after: delay)
         }
         finishTransition()
     }
@@ -662,6 +684,61 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
+    /**
+     * The microphone has delivered nothing, or only exact zeros, for
+     * `stallSeconds`. Started again — in place first, the same session, so
+     * the AirPods keep their microphone link; a new engine the second time —
+     * and then less and less often (`stallBackoff`), never more than once a
+     * minute. A restart did not fix it before: on October 12 the AirPods'
+     * microphone sent zeros for minutes (they had gone to the Mac), and a new
+     * engine every two seconds flipped the route between the earpiece and the
+     * AirPods the whole time, and failed with no input format each time.
+     * Zeros are told to the page (`silentInput`), which can say so.
+     */
+    private func noteStall(_ stall: Converter.Stall?) {
+        if stall != currentStall {
+            let was = currentStall
+            currentStall = stall
+            if let stall {
+                log("the microphone is stalled: \(stall.rawValue) for \(Int(Self.stallSeconds)) s, on \(inputName())")
+                events.record("native-mic-stalled", ["why": stall.rawValue, "input": inputName(), "route": NativeEvents.describeRoute(AVAudioSession.sharedInstance().currentRoute)])
+            } else {
+                log("the microphone has sound again, after \(stallRestarts) restart(s)")
+                events.record("native-mic-sound-again", ["after": was?.rawValue ?? "", "restarts": stallRestarts, "input": inputName()])
+                stallRestarts = 0
+            }
+            sendState()
+        }
+        guard let stall, pendingRestart == nil, !transitioning,
+              Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds,
+              Date().timeIntervalSince(lastStallRestart) > Self.stallBackoff(stallRestarts) else { return }
+        // Zeros from a Bluetooth microphone: restarting it got zeros again, so the iPhone's own instead.
+        if stall == .digitalSilence, !avoidBluetoothInput, Self.isBluetooth(AVAudioSession.sharedInstance().currentRoute.inputs.first) {
+            avoidBluetoothInput = true
+            stallRestarts += 1
+            lastStallRestart = Date()
+            log("\(inputName()) is sending only digital silence — switching to the iPhone's microphone until a Bluetooth device comes or goes")
+            events.record("native-mic-avoiding-bluetooth", ["input": inputName()])
+            scheduleRestart("the Bluetooth microphone sent only silence", after: 0)
+            return
+        }
+        let inPlace = stallRestarts != 1
+        stallRestarts += 1
+        lastStallRestart = Date()
+        events.record("native-mic-stall-restart", ["why": stall.rawValue, "attempt": stallRestarts, "inPlace": inPlace])
+        scheduleRestart("a stalled microphone (\(stall.rawValue))", after: 0, inPlace: inPlace)
+    }
+
+    nonisolated private static func isBluetooth(_ port: AVAudioSessionPortDescription?) -> Bool {
+        guard let type = port?.portType else { return false }
+        return type == .bluetoothHFP || type == .bluetoothLE || type == .bluetoothA2DP
+    }
+
+    /// How long after the last restart for a stall before the next: 3 s, 3 s, then 10, 30, 60.
+    private static func stallBackoff(_ restarts: Int) -> TimeInterval {
+        [3, 3, 10, 30][min(restarts, 3)] + (restarts > 3 ? 30 : 0)
+    }
+
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: Self.sendInterval, repeats: true) { _ in
@@ -677,18 +754,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             recover("the engine was found stopped")
         }
         guard running else { return }
-        let (pcm, stalled) = capture.drain(stallSeconds: Self.stallSeconds)
-        let sinceStallRestart = Date().timeIntervalSince(lastStallRestart)
-        if stalled, pendingRestart == nil, !transitioning, Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds,
-           sinceStallRestart > Self.minSecondsBetweenRebuilds {
-            // In place first: the same session, so the AirPods keep their microphone link and nothing is
-            // given up. A new engine only if that did not hold.
-            let inPlace = sinceStallRestart > Self.stallEscalateSeconds
-            lastStallRestart = Date()
-            log("no sound for \(Int(Self.stallSeconds)) s (nothing, or only digital silence) — starting again \(inPlace ? "in place" : "on a new engine")")
-            events.record("native-mic-stalled", ["seconds": Self.stallSeconds, "inPlace": inPlace])
-            scheduleRestart("a stalled microphone", after: 0, inPlace: inPlace)
-        }
+        let (pcm, stall, heard) = capture.drain(stallSeconds: Self.stallSeconds)
+        // Only real sound ends a stall: a restart resets the clock, which is not the same.
+        if stall != nil || heard { noteStall(stall) }
         guard !pcm.isEmpty, let webView else { return }
         if unanswered >= Self.maxUnanswered {
             if !dropping {
@@ -765,7 +833,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // a page told "awake" by an app whose engine had stopped sent it Control's voice to play into nothing.
         // `haptics`: 2 — this app plays a whole pattern from one message, in the background too (`playHaptic`).
         var state: [String: Any] = ["running": running, "awake": up == .speaker && engineRunning, "speech": true, "voiceProcessing": voiceProcessing, "haptics": 2]
-        if running { state["input"] = inputName() }
+        if running {
+            state["input"] = inputName()
+            // Running, but the input sends only zeros: AirPods whose microphone is elsewhere, say.
+            if currentStall == .digitalSilence { state["silentInput"] = true }
+        }
         // Where sound goes now, whatever the microphone is doing: the badge on the page's microphone button.
         if let output = AVAudioSession.sharedInstance().currentRoute.outputs.first {
             state["output"] = output.portName
@@ -995,6 +1067,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                 if let previous { detail["previous"] = NativeEvents.describeRoute(previous) }
                 self.events.record("audio-route-change", detail)
                 self.sendState()
+                if why == .newDeviceAvailable || why == .oldDeviceUnavailable, self.avoidBluetoothInput {
+                    self.avoidBluetoothInput = false
+                    self.events.record("native-mic-bluetooth-allowed-again", ["reason": NativeEvents.describe(why)])
+                }
                 if self.running, why == .newDeviceAvailable || why == .oldDeviceUnavailable {
                     self.scheduleRestart("a headset came or went")
                 }
@@ -1121,13 +1197,19 @@ private final class Converter: @unchecked Sendable {
         return result
     }
 
-    /// The audio since the last drain, and whether the input has stalled.
-    func drain(stallSeconds: Double) -> (pcm: [Int16], stalled: Bool) {
+    /// Why the input has stalled: nothing from the engine, or only exact zeros from the input.
+    enum Stall: String { case noTaps = "no audio from the engine", digitalSilence = "only digital silence from the input" }
+
+    /// The audio since the last drain, and whether the input has stalled. `heard`: real sound since the last reset —
+    /// without it, no stall only means a reset was too recent to tell.
+    func drain(stallSeconds: Double) -> (pcm: [Int16], stall: Stall?, heard: Bool) {
         lock.lock(); defer { lock.unlock() }
         let result = pcm
         pcm = []
         let now = CACurrentMediaTime()
-        return (result, now - lastTap > stallSeconds || now - lastSound > stallSeconds)
+        let heard = lastSound > resetAt
+        if now - lastTap > stallSeconds { return (result, .noTaps, heard) }
+        return (result, now - lastSound > stallSeconds ? .digitalSilence : nil, heard)
     }
 }
 

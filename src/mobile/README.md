@@ -563,7 +563,19 @@ microphone after three quiet seconds, and each time the AirPods dropped out
 of their microphone link, and with the screen locked iOS refused to record
 again.
 
-    jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred|hold-stalled|hold-recovered|native-mic-stalled")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
+A stall is either no audio from the engine or only exact zeros from the
+input (`native-mic-stalled` says which). The app restarts for it in place,
+then on a new engine, then less and less often (`native-mic-stall-restart`),
+never every two seconds — that flipped the route between the earpiece and
+the AirPods, the badge with it. Exact zeros from a Bluetooth microphone —
+AirPods whose microphone went to the Mac, and stayed dead after — switch to
+the iPhone's own microphone until a Bluetooth device comes or goes
+(`native-mic-avoiding-bluetooth`, `native-mic-bluetooth-allowed-again`), and
+the page is told (`native-silent-input`). A dictation counts only real sound
+as heard: blocks of zeros leave the button off orange, and after two seconds
+it fails saying the microphone sends only silence.
+
+    jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred|hold-stalled|hold-recovered|native-mic-stall|silent-input|avoiding-bluetooth")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
 
 Every cue is a `cue` line with its gain, its peak in dBFS counting any cue
 it overlaps (`overlapping`), and whether it had to wait for a stopped audio

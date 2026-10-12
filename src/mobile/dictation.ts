@@ -69,7 +69,9 @@ export async function whenHearing(pending: Promise<Dictation>): Promise<Dictatio
   if (await dictation.replaceSilentCapture() && await heardWithin(dictation, REPLACEMENT_AUDIO_TIMEOUT_MS)) return dictation
   // A held microphone that has gone silent is closed, so the next dictation opens a fresh one.
   dictation.cancel({ broken: true })
-  throw new Error('The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
+  throw new Error(dictation.sentOnlyZeros()
+    ? 'The microphone is sending only silence: are your AirPods connected to another device? Try again, or take them out and put them back.'
+    : 'The microphone is not sending any sound. Try again; if it keeps happening, reopen the app.')
 }
 
 function heardWithin(dictation: Dictation, ms: number): Promise<boolean> {
@@ -142,8 +144,20 @@ export class Dictation {
   /** Counted in `useMicActivity.capturing`: sound has arrived. */
   private counted = false
   private readonly began = performance.now()
-  /** Resolves with the first block of sound — the moment it is safe to talk. */
+  /**
+   * Resolves with the first block of sound — the moment it is safe to talk.
+   * Sound, not blocks: a block of exact zeros is a dead input, not a quiet
+   * room, whose noise is never exactly zero. AirPods whose microphone had gone
+   * elsewhere sent zeros for minutes (October 2026), and the button showed
+   * orange over a recording of nothing until it was stopped.
+   */
   readonly audioArrived: Promise<void>
+  private heardSound = false
+
+  /** Blocks came, every sample in them exactly zero: an input that is there but dead. */
+  sentOnlyZeros(): boolean {
+    return this.stats.blocks > 0 && !this.heardSound
+  }
   private arrived: () => void = () => undefined
 
   /** Stops this dictation hearing the capture. */
@@ -188,6 +202,13 @@ export class Dictation {
       if (this.stats.blocks === 0) {
         log(`first audio after ${Math.round(performance.now() - this.began)}ms (${capture.describe()})`)
         recordMobileEvent('dictation-audio', { afterMs: Math.round(performance.now() - this.began) })
+      }
+      if (!this.heardSound && block.some((v) => v !== 0)) {
+        this.heardSound = true
+        if (this.stats.blocks > 0) {
+          log(`first sound after ${Math.round(performance.now() - this.began)}ms, ${this.stats.blocks} block(s) of exact zeros before it`)
+          recordMobileEvent('dictation-sound', { afterMs: Math.round(performance.now() - this.began), zeroBlocks: this.stats.blocks })
+        }
         if (!this.counted && !this.stopped) {
           this.counted = true
           bump('capturing', 1)
