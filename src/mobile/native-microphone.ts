@@ -286,11 +286,9 @@ export interface NativeCaptureHandle {
  * Start the app's microphone. Needs no tap. Rejects with the app's reason.
  * `mute`: for one dictation, so other apps' audio — music — stops while it
  * is open and for a moment after, then carries on; hands-free's held
- * microphone does not, or music would stay stopped the whole time it is on. `highQuality`: AirPods' full-bandwidth recording on
- * iOS 26, where they have it, in place of the hands-free call profile —
- * also only for a dictation (NativeMicrophone.swift `Plan.highQuality`).
+ * microphone does not, or music would stay stopped the whole time it is on.
  */
-export async function openNativeMicrophone({ mute = false, highQuality = false }: { mute?: boolean; highQuality?: boolean } = {}): Promise<NativeCaptureHandle> {
+export async function openNativeMicrophone({ mute = false }: { mute?: boolean } = {}): Promise<NativeCaptureHandle> {
   install()
   const post = handler()
   if (!post) throw new Error('This is not the Spaceterm app, so it has no microphone of its own')
@@ -309,7 +307,7 @@ export async function openNativeMicrophone({ mute = false, highQuality = false }
     timer = setTimeout(() => { stateWaiters.delete(check); reject(new Error('The app\'s microphone did not start')) }, START_TIMEOUT_MS)
     stateWaiters.add(check)
   })
-  post.postMessage({ action: 'start', mute, highQuality })
+  post.postMessage({ action: 'start', mute })
   await running
   let closed = false
   return {
@@ -319,7 +317,8 @@ export async function openNativeMicrophone({ mute = false, highQuality = false }
       return () => { listeners.delete(fn) }
     },
     healthy() {
-      if (closed || !state.running) return false
+      // Running but sending exact zeros is not a working microphone: the hold shows it waiting.
+      if (closed || !state.running || state.silentInput === true) return false
       const since = lastAudio || startedAt
       return performance.now() - since < STALE_MS
     },

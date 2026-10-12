@@ -322,7 +322,7 @@ function nativeCapture(native: NativeCaptureHandle, release: (broken: boolean) =
 
 /** The app's own microphone for one dictation, closed when it is released. */
 async function openAppCapture(): Promise<Capture> {
-  const native = await openNativeMicrophone({ mute: true, highQuality: true })
+  const native = await openNativeMicrophone({ mute: true })
   recordMobileEvent('mic-opened', { source: 'native', input: native.describe() })
   return nativeCapture(native, () => native.close())
 }

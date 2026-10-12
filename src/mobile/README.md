@@ -250,14 +250,10 @@ The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
 on the main thread that froze the screen after every dictation.
 
-A dictation's microphone also asks for iOS 26's AirPods high-quality
-recording (`bluetoothHighQualityRecording`): a full-bandwidth link instead of
-the hands-free call profile, whose switch held each press up for most of a
-second and made music sound like a phone call. HFP is the fallback, and it
-goes without echo cancellation, which a dictation does not need. Whether it
-took is the `highQuality` field on `native-mic-running` (`asked`, `refused`,
-`supported`, `enabled`, the input), beside `ms`, how long the bring-up
-blocked; the time to first audio is `dictation-audio`.
+A dictation's microphone once asked for iOS 26's AirPods high-quality
+recording (`bluetoothHighQualityRecording`). It saved no time, and the
+AirPods' microphone went dead the first time hands-free followed one of its
+dictations, so both use the hands-free profile now.
 
 The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
@@ -567,15 +563,18 @@ A stall is either no audio from the engine or only exact zeros from the
 input (`native-mic-stalled` says which). The app restarts for it in place,
 then on a new engine, then less and less often (`native-mic-stall-restart`),
 never every two seconds — that flipped the route between the earpiece and
-the AirPods, the badge with it. Exact zeros from a Bluetooth microphone —
-AirPods whose microphone went to the Mac, and stayed dead after — switch to
-the iPhone's own microphone until a Bluetooth device comes or goes
-(`native-mic-avoiding-bluetooth`, `native-mic-bluetooth-allowed-again`), and
-the page is told (`native-silent-input`). A dictation counts only real sound
-as heard: blocks of zeros leave the button off orange, and after two seconds
-it fails saying the microphone sends only silence.
+the AirPods, the badge with it. Exact zeros from a Bluetooth microphone after a
+restart in place get its link given up and taken again, once, in the
+foreground (`native-mic-relink-bluetooth`, with every input iOS offers);
+there is no switch to the iPhone's own microphone. The page is told
+(`native-silent-input`), and the hold shows it waiting. A dictation goes
+orange on the first sample that is not exactly zero: a live microphone in a
+quiet room sends noise at once (95 heartbeats with the microphone running,
+none with a peak of exact zero), so this is the microphone being live, not
+the user speaking. A dead one sends zeros, and after two seconds the
+dictation fails saying so.
 
-    jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred|hold-stalled|hold-recovered|native-mic-stall|silent-input|avoiding-bluetooth")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
+    jq -c 'select((.kind | test("no-audio|web-mic-silent|recovering|deferred|hold-stalled|hold-recovered|native-mic-stall|silent-input|relink-bluetooth")) or .detail.why? == "it stopped delivering")' ~/.spaceterm/mobile-events.jsonl
 
 Every cue is a `cue` line with its gain, its peak in dBFS counting any cue
 it overlaps (`overlapping`), and whether it had to wait for a stopped audio
