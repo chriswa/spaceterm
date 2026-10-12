@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ControlTranscriptEntry, ReceptionistHoldAction } from '../../../../shared/protocol'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { controlMode, useReceptionistStore, type ControlMode } from '../stores/receptionistStore'
@@ -94,10 +94,7 @@ type Restore = 'bottom' | { fromBottom: number } | { toOffset: number }
 /** Room left above the first unread entry when the view opens on it. */
 const UNREAD_MARGIN_PX = 8
 
-/**
- * `controlsExtra` goes at the end of the footer: the phone's choice of speaker or earpiece.
- */
-export function ControlTranscript({ variant, onDismiss, controlsExtra }: { variant: 'modal' | 'screen'; onDismiss: () => void; controlsExtra?: ReactNode }) {
+export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | 'screen'; onDismiss: () => void }) {
   const [entries, setEntries] = useState<ControlTranscriptEntry[]>([])
   const [more, setMore] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -347,7 +344,7 @@ export function ControlTranscript({ variant, onDismiss, controlsExtra }: { varia
         />
         <button className="control-transcript__send" type="submit" disabled={!draft.trim()}>Send</button>
       </form>
-      <ControlFooter extra={controlsExtra} />
+      <ControlFooter />
     </div>
   )
   if (variant !== 'modal') return dialog
@@ -407,12 +404,12 @@ const SHOWN = [
 /**
  * The foot of the transcript, under the box to type in: first the choice of
  * whether Control is here, and if so whether it speaks or writes; then
- * `extra`; then whether Control's activity is shown — news as it arrives,
- * what goes on and off its backlog, which agents it watches, and replies
- * never spoken — or only the conversation. Only the first is captioned, so
- * the three fit on one or two lines of a phone; the others read without one.
+ * whether Control's activity is shown — news as it arrives, what goes on and
+ * off its backlog, which agents it watches, and replies never spoken — or
+ * only the conversation. Only the first is captioned; the second reads
+ * without one.
  */
-function ControlFooter({ extra }: { extra?: ReactNode }) {
+function ControlFooter() {
   const mode = useReceptionistStore(controlMode)
   const activity = useControlTranscriptStore((s) => s.activity)
   return (
@@ -424,7 +421,6 @@ function ControlFooter({ extra }: { extra?: ReactNode }) {
         value={mode}
         onChoose={(to) => { for (const action of holdActions(mode, to)) window.api.receptionist.hold(action) }}
       />
-      {extra}
       <ChoiceGroup
         label="Show in the transcript"
         options={SHOWN}

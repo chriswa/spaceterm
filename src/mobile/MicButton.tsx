@@ -9,6 +9,7 @@ import { useHandsFree, type HandsFreePhase } from './hands-free'
 import { nativeMicrophoneAvailable } from './native-microphone'
 import { micLevel } from './mic-level'
 import { conversationLeft, micLook, type MicInputs, type MicLook } from './mic-button'
+import { outputKind, useAudioOutput, type OutputKind } from './audio-output'
 
 /**
  * The microphone, the middle of the bottom bar: one button for everything the
@@ -47,6 +48,7 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
   const capturing = useMicActivity((s) => s.capturing > 0)
   const transcribing = useMicActivity((s) => s.transcribing > 0)
   const composer = useDictationSession((s) => s.mic.kind)
+  const output = useAudioOutput()
   const look = micLook({ error: error !== null, own: mic.kind, composer, capturing, transcribing, hold, handsFree, conversation })
 
   // Never leave the microphone open behind a button that has gone.
@@ -164,6 +166,12 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
         {look === 'starting' ? '…' : look === 'hearing' ? (
           <span className="m-mic__bars" aria-hidden="true"><i /><i /><i /><i /></span>
         ) : <MicIcon locked={handsFreeOn} />}
+        {output && (
+          // Where sound goes now, as iOS routes it: shown so a wrong route can be seen.
+          <span className="m-mic__output" data-output={outputKind(output.type)} title={`Sound: ${output.name}`} aria-hidden="true">
+            <OutputIcon kind={outputKind(output.type)} />
+          </span>
+        )}
       </button>
     </>
   )
@@ -198,6 +206,25 @@ function micLabel({ look, own, composer, handsFree, secondsLeft, tap }: {
       return `Getting the microphone ready to listen for "Control". ${tap}`
     default:
       return tap
+  }
+}
+
+function OutputIcon({ kind }: { kind: OutputKind }) {
+  const common = { width: 10, height: 10, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+  switch (kind) {
+    case 'speaker': return (
+      <svg {...common}><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor" /><path d="M17 8a5 5 0 0 1 0 8" /></svg>
+    )
+    case 'earpiece': return (
+      // An ear.
+      <svg {...common}><path d="M7 10a5 5 0 0 1 10 0c0 3-3 4-3 7a3 3 0 0 1-6 0" /></svg>
+    )
+    case 'headphones': return (
+      <svg {...common}><path d="M4 17v-4a8 8 0 0 1 16 0v4" /><rect x="3" y="15" width="4" height="6" rx="1" fill="currentColor" /><rect x="17" y="15" width="4" height="6" rx="1" fill="currentColor" /></svg>
+    )
+    default: return (
+      <svg {...common}><circle cx="12" cy="12" r="3" fill="currentColor" /></svg>
+    )
   }
 }
 

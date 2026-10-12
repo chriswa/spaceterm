@@ -119,6 +119,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             switch action {
             case "start": start()
             case "stop": stop()
+            // A page that has just loaded wants the state now — for the output badge — not at the next change.
+            case "state": sendState()
             case "stay-awake": setStayAwake((message.body as? [String: Any])?["on"] as? Bool ?? false)
             // Hands-free heard "Control": a tap the user feels, since a tone would land mid-sentence.
             case "haptic": UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
@@ -434,6 +436,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // a page told "awake" by an app whose engine had stopped sent it Control's voice to play into nothing.
         var state: [String: Any] = ["running": running, "awake": up == .speaker && engine.isRunning, "speech": true, "voiceProcessing": voiceProcessing]
         if running { state["input"] = inputName() }
+        // Where sound goes now, whatever the microphone is doing: the badge on the page's microphone button.
+        if let output = AVAudioSession.sharedInstance().currentRoute.outputs.first {
+            state["output"] = output.portName
+            state["outputType"] = output.portType.rawValue
+        }
         if let lastError, !running { state["error"] = lastError }
         guard let json = try? JSONSerialization.data(withJSONObject: state), let text = String(data: json, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.spacetermNativeMicrophone && window.spacetermNativeMicrophone.state(\(text)), 0", completionHandler: nil)
@@ -604,6 +611,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                 ]
                 if let previous { detail["previous"] = NativeEvents.describeRoute(previous) }
                 self.events.record("audio-route-change", detail)
+                self.sendState()
                 if self.running, why == .newDeviceAvailable || why == .oldDeviceUnavailable {
                     self.scheduleRestart("a headset came or went")
                 }

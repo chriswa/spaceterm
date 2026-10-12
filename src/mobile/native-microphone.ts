@@ -28,6 +28,10 @@ interface NativeState {
   running: boolean
   /** The input in use, e.g. "iPhone Microphone" or "AirPods Pro". */
   input?: string
+  /** Where sound goes now, e.g. "Speaker" or "AirPods Pro"; an older app does not say. */
+  output?: string
+  /** Its AVAudioSession port type, e.g. "Speaker", "Receiver", "BluetoothA2DPOutput". */
+  outputType?: string
   error?: string
   /** The app plays Control's voice itself while running (`speech-play`); an older app does not say so. */
   speech?: boolean
@@ -86,6 +90,7 @@ let receivedSamples = 0
 const listeners = new Set<(block: Float32Array) => void>()
 const speechListeners = new Set<(event: NativeSpeechEvent) => void>()
 const stateWaiters = new Set<(state: NativeState) => void>()
+const outputListeners = new Set<(output: NativeOutput | undefined) => void>()
 
 function decode(pcmBase64: string): Float32Array {
   const bytes = Uint8Array.from(atob(pcmBase64), (c) => c.charCodeAt(0))
@@ -111,7 +116,10 @@ function install(): void {
         recordMobileEvent('native-mic-state', { running: next.running, input: next.input ?? null, error: next.error ?? null, was: { running: state.running, input: state.input ?? null } })
       }
       if (next.running !== state.running || next.awake !== state.awake) engineChanges++
+      const outputChanged = next.output !== state.output || next.outputType !== state.outputType
+      if (outputChanged) recordMobileEvent('audio-output', { output: next.output ?? null, type: next.outputType ?? null, was: state.output ?? null })
       state = next
+      if (outputChanged) for (const fn of outputListeners) fn(nativeOutput())
       for (const fn of [...stateWaiters]) fn(next)
     },
     speech(event) {
@@ -166,6 +174,21 @@ export const nativeSpeech = {
     speechListeners.add(fn)
     return () => { speechListeners.delete(fn) }
   },
+}
+
+/** Where the app says sound goes now. */
+export interface NativeOutput { name: string; type: string }
+
+export function nativeOutput(): NativeOutput | undefined {
+  return state.output !== undefined ? { name: state.output, type: state.outputType ?? '' } : undefined
+}
+
+/** Follow where sound goes, asking the app for it now. Nothing in a browser, or from an app too old to say. */
+export function onNativeOutput(fn: (output: NativeOutput | undefined) => void): () => void {
+  install()
+  outputListeners.add(fn)
+  handler()?.postMessage({ action: 'state' })
+  return () => { outputListeners.delete(fn) }
 }
 
 /**

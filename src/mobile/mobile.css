@@ -279,6 +279,24 @@ textarea, input, [contenteditable="true"], .cm-content {
   stroke-linecap: round;
   transition: stroke-dashoffset 1s linear;
 }
+/* Where sound goes now (audio-output.ts), at the top right: speaker, ear, or headphones. */
+.m-mic__output {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--m-surface);
+  color: var(--m-text);
+  box-shadow: 0 0 0 1.5px var(--m-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.m-mic__output[data-output='earpiece'],
+.m-mic__output[data-output='other'] { color: #f9e2af; }
 .m-mic--hearing,
 .m-mic--transcribing { background: var(--m-listening); color: #11111b; }
 .m-mic--transcribing { animation: m-mic-pulse 1s ease-in-out infinite; }

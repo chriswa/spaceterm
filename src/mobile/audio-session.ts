@@ -10,9 +10,9 @@
  * at a whisper. So: play-and-record exactly while something is recording,
  * playback the rest of the time, and nowhere else decides.
  *
- * Unless the listener wants the earpiece — to hold the phone to their ear.
- * The earpiece *is* play-and-record's default route, so that preference is
- * simply staying in it. Remembered on this phone.
+ * Where playback goes is iOS's to decide: AirPods or other headphones while
+ * they are connected, else the speaker. There is no choice of earpiece; the
+ * microphone button shows the route instead (audio-output.ts).
  */
 
 import { recordMobileEvent } from './mobile-events'
@@ -27,15 +27,6 @@ function session(): AudioSessionLike | undefined {
 
 /** Recordings open now. Two can overlap briefly — one ending as the next begins. */
 let recording = 0
-
-const EARPIECE_KEY = 'mobile.earpiece'
-let earpiece = (() => {
-  try { return localStorage.getItem(EARPIECE_KEY) === '1' } catch { return false }
-})()
-const listeners = new Set<(earpiece: boolean) => void>()
-
-/** What the page is set to when nothing is recording. */
-const idleType = (): SessionType => earpiece ? 'play-and-record' : 'playback'
 
 function apply(type: SessionType): void {
   const s = session()
@@ -55,26 +46,9 @@ function apply(type: SessionType): void {
   }
 }
 
-/** At startup: everything this page plays is for listening to — on the speaker unless the earpiece was chosen. */
+/** At startup: everything this page plays is for listening to. */
 export function initAudioSession(): void {
-  if (recording === 0) apply(idleType())
-}
-
-export function listensOnEarpiece(): boolean {
-  return earpiece
-}
-
-/** Hold-to-ear listening, or (the default) the loudspeaker. */
-export function setListenOnEarpiece(on: boolean): void {
-  earpiece = on
-  try { localStorage.setItem(EARPIECE_KEY, on ? '1' : '0') } catch { /* private mode: this session only */ }
-  if (recording === 0) apply(idleType())
-  for (const fn of listeners) fn(on)
-}
-
-export function onEarpieceChange(fn: (earpiece: boolean) => void): () => void {
-  listeners.add(fn)
-  return () => { listeners.delete(fn) }
+  if (recording === 0) apply('playback')
 }
 
 /** The session's mode and how many recordings hold it, for a log line. */
@@ -94,6 +68,6 @@ export function beginRecordingSession(): () => void {
     if (released) return
     released = true
     recording--
-    if (recording === 0) apply(idleType())
+    if (recording === 0) apply('playback')
   }
 }

@@ -17,7 +17,6 @@ import { MicButton } from './MicButton'
 import { useDictationSession } from './dictation-session'
 import { ControlButton } from './ControlButton'
 import { MicLockButton } from './MicLockButton'
-import { EarpieceSwitch } from './EarpieceSwitch'
 import { BottomBar } from './BottomBar'
 import { MicIndicator } from './MicIndicator'
 import { ControlTranscript } from '@/components/ControlTranscript'
@@ -178,7 +177,6 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
         <ControlTranscript
           variant="screen"
           onDismiss={() => useControlTranscriptStore.getState().setOpen(false)}
-          controlsExtra={<EarpieceSwitch />}
         />
       )}
       {/* On the canvas and the terminal view, over the surface list and under

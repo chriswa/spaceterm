@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { beginRecordingSession, initAudioSession, setListenOnEarpiece } from './audio-session'
+import { beginRecordingSession, initAudioSession } from './audio-session'
 
 /** jsdom has no Audio Session API; the module reads and writes only `type`. */
 const session = { type: 'auto' }
@@ -7,7 +7,6 @@ Object.defineProperty(navigator, 'audioSession', { value: session, configurable:
 
 describe('audio session', () => {
   beforeEach(() => {
-    setListenOnEarpiece(false)
     session.type = 'auto'
     initAudioSession()
   })
@@ -27,15 +26,6 @@ describe('audio session', () => {
     first()
     expect(session.type).toBe('play-and-record')
     second()
-    expect(session.type).toBe('playback')
-  })
-
-  it('the earpiece preference holds play-and-record between recordings too', () => {
-    setListenOnEarpiece(true)
-    expect(session.type).toBe('play-and-record')
-    beginRecordingSession()()
-    expect(session.type).toBe('play-and-record')
-    setListenOnEarpiece(false)
     expect(session.type).toBe('playback')
   })
 })

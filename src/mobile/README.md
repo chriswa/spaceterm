@@ -127,9 +127,8 @@ compaction never shortens it: it opens at the newest — or at the first reply
 with words waiting for you, under a red Unread line — and loads older pages
 as you scroll up.
 Under the box to type in, centred: the Away / Silent / Aloud choice, captioned
-Replies; on the phone only, a Speaker / Earpiece choice; a Concise / Detailed
-choice of whether Control's activity shows between its words. Only Replies has
-a caption, so the three fit on two lines. Above the box, while
+Replies, and a Concise / Detailed choice of whether Control's activity shows
+between its words. Above the box, while
 replies wait unread: **Mark all read**, and, while Control is Aloud here,
 **Summarize aloud**, which has Control sum them up. It is offered only then
 because asking brings Control here unmuted, and the bar never changes the
@@ -236,6 +235,15 @@ conversation window, or a composer's dictation:
 | blue ring, draining | the conversation window: just talk. The ring is the quiet left before "Control" is needed again |
 | solid orange, level bars | your voice is leaving the phone, whatever started it — the bars are its level (`mic-level.ts`, fed by each dictation) |
 | orange, pulsing | waiting for the words |
+
+A small badge at its top right is where sound is going now, as the iPhone app
+reads iOS's route (`audio-output.ts`): a speaker, headphones (AirPods or any
+Bluetooth or wired set), or, in yellow, an ear for the earpiece or a dot for
+anything else. Nothing on the phone chooses the route — iOS sends sound to
+headphones while they are connected and to the speaker otherwise — so the
+badge is there to make a wrong route visible. There was once a Speaker /
+Earpiece choice, for holding the phone to the ear; it is gone. Only the app
+can say; in a browser there is no badge.
 
 Orange is the **MIC** label's (below) and iOS's own dot. What Control is
 doing never shows here: its own button says that.
