@@ -1,10 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
+import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { updateNoticeKey, useNoticesRead, useUpdateNotices } from './update-notices'
 
 /**
  * The bottom bar's rocket: opens the toolbar, which on the phone is a sheet
  * with the surfaces in it, and closes it again — the bar stays over it.
+ * Closed with the rocket, it goes back to where it was opened from: Control's
+ * transcript, if that was up (opening the sheet closes it), or the canvas.
  *
  * It is also where notifications show (update-notices.ts): a count of the
  * updates waiting to be done, whose buttons march in the sheet's strip, and a
@@ -12,6 +15,18 @@ import { updateNoticeKey, useNoticesRead, useUpdateNotices } from './update-noti
  */
 export function RocketButton() {
   const open = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
+  /** The transcript was up when this press opened the sheet. */
+  const fromTranscriptRef = useRef(false)
+  const toggle = () => {
+    if (!open) {
+      fromTranscriptRef.current = useControlTranscriptStore.getState().open
+      useSurfacePresenterStore.getState().setToolbarSheetOpen(true)
+      return
+    }
+    useSurfacePresenterStore.getState().setToolbarSheetOpen(false)
+    if (fromTranscriptRef.current) useControlTranscriptStore.getState().setOpen(true)
+    fromTranscriptRef.current = false
+  }
   const seen = useNoticesRead((s) => s.seen)
   const updates = useUpdateNotices()
   const updateKeys = updates.map((u) => updateNoticeKey(u.kind))
@@ -26,8 +41,8 @@ export function RocketButton() {
   return (
     <button
       className={`m-bar__button m-rocket${open ? ' m-bar__button--on' : ''}${pending ? ' m-rocket--info' : ''}${unread ? ' m-rocket--unread' : ''}`}
-      onClick={() => useSurfacePresenterStore.getState().setToolbarSheetOpen(!open)}
-      aria-label={open ? 'Back to the canvas' : `Toolbar and surfaces${waiting}`}
+      onClick={toggle}
+      aria-label={open ? (fromTranscriptRef.current ? 'Back to Control' : 'Back to the canvas') : `Toolbar and surfaces${waiting}`}
       aria-expanded={open}
     >
       <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

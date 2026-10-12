@@ -70,6 +70,16 @@ describe('the phone’s bottom bar', () => {
     expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(false)
   })
 
+  it('goes back to Control’s transcript from the surface list, when that is where it was opened', () => {
+    act(() => useControlTranscriptStore.getState().setOpen(true))
+    const { getByRole } = render(<MobileApp Canvas={() => null} />)
+    fireEvent.click(getByRole('button', { name: 'Toolbar and surfaces' }))
+    expect(useControlTranscriptStore.getState().open).toBe(false)
+    fireEvent.click(getByRole('button', { name: 'Back to Control' }))
+    expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(false)
+    expect(useControlTranscriptStore.getState().open).toBe(true)
+  })
+
   it('stays up over the terminal view, and goes for the composer, which has its own microphone', () => {
     const { container } = render(<MobileApp Canvas={() => null} />)
     expect(container.querySelector('.m-bar')).not.toBeNull()
