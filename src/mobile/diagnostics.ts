@@ -35,6 +35,15 @@ declare global {
 /** No frame for this long while the page is visible is a stall worth logging. */
 const STALL_MS = 1000
 const WATCH_MS = 250
+/**
+ * A watch tick this late means the page's own thread was held up, which
+ * stops frames too: that is the page, not the web view. Half a stall, not a
+ * whole one: a page held for a little over a second makes its tick only
+ * three quarters of a second late (the tick was due a quarter in), and was
+ * logged as the web view not drawing — every press of the microphone with
+ * AirPods, October 2026, which was WebKit holding the page inside getUserMedia.
+ */
+const BUSY_LATE_MS = STALL_MS / 2
 const BREADCRUMB_KEY = 'spaceterm:diagnostics-breadcrumb'
 
 function readBreadcrumb(): string | null {
@@ -140,8 +149,8 @@ export function installDiagnostics(log: (message: string) => void, watching: Gat
         return
       }
       // The page itself was busy, which stops frames too: that is not the web view.
-      if (late >= STALL_MS) {
-        log(`[frames] the page was busy for ${Math.round(late)}ms`)
+      if (late >= BUSY_LATE_MS) {
+        log(`[frames] the page was busy for about ${Math.round(late + WATCH_MS)}ms`)
         lastFrame = now
         return
       }

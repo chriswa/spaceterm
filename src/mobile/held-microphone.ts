@@ -71,11 +71,20 @@ registerProcessor('spaceterm-tap', Tap)
 export async function openCapture(): Promise<{
   context: AudioContext; stream: MediaStream; node: AudioWorkletNode; close: () => void
 }> {
+  const began = performance.now()
   const context = new AudioContext()
   void context.resume()
   // Earpiece-default play-and-record only while the microphone is open.
   const releaseSession = beginRecordingSession()
   let stream: MediaStream
+  /** How long each step took, for `mic-open-steps`: where a slow start went. */
+  const steps: Record<string, number> = {}
+  let stepStart = began
+  const step = (name: string) => {
+    const now = performance.now()
+    steps[name] = Math.round(now - stepStart)
+    stepStart = now
+  }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
@@ -91,14 +100,18 @@ export async function openCapture(): Promise<{
         : 'The microphone needs HTTPS — open Spaceterm through its tailscale address'
     )
   }
+  step('getUserMedia')
   const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }))
   try {
     await context.audioWorklet.addModule(url)
+    step('worklet')
     const source = context.createMediaStreamSource(stream)
     const node = new AudioWorkletNode(context, 'spaceterm-tap')
     source.connect(node)
+    step('nodes')
     let closed = false
     recordMobileEvent('mic-opened', { source: 'web', input: stream.getAudioTracks()[0]?.label ?? '' })
+    recordMobileEvent('mic-open-steps', { ...steps, totalMs: Math.round(performance.now() - began) })
     const close = () => {
       if (closed) return
       closed = true
