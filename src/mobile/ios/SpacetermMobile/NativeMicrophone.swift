@@ -279,12 +279,18 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * thinks and speaks aloud here (`duck-others`). Either way it comes back:
      * leaving `mute` or `duck` deactivates the session with
      * `notifyOthersOnDeactivation`, which tells music it may carry on — what
-     * WebKit never did. Hands-free's held microphone leaves it alone, or music
-     * would be stopped the whole time it is on.
+     * WebKit never did. Hands-free's held microphone leaves it alone
+     * throughout, Control speaking included: see `others`.
      */
     private enum Others: String { case mix, duck, mute }
     private var others: Others {
-        if (muteForDictation && wanted) || mutingAfterDictation { return .mute }
+        // Hands-free's held microphone is never brought up again for other audio's sake. Each change
+        // deactivates the session between, which dropped the AirPods out of their microphone link
+        // (a blip of music each time), left the microphone delivering nothing for ten seconds or
+        // more, and — with the screen locked — lost it for good: iOS will not let an app in the
+        // background start recording again (October 2026, every hands-free turn).
+        if wanted { return muteForDictation ? .mute : .mix }
+        if mutingAfterDictation { return .mute }
         return duckForControl ? .duck : .mix
     }
     /// What the active session was activated with; nil while it is not active. iOS applies it only on activation.
