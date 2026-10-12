@@ -8,6 +8,8 @@ import { useReceptionistStore } from '@/stores/receptionistStore'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID } from '../shared/ids'
 import type { TerminalNodeData } from '../shared/state'
 import { MobileApp } from './MobileApp'
+import { createGate } from './gate'
+import { showToast } from '@/lib/toast'
 
 const SURFACE = asNodeId('c35ae62d-aa5a-46d1-8e03-086f95cd612e')
 
@@ -113,5 +115,27 @@ describe('the phone’s Control transcript', () => {
     expect(useSurfacePresenterStore.getState().toolbarSheetOpen).toBe(true)
     expect(useControlTranscriptStore.getState().open).toBe(false)
     expect(container.querySelector('.control-transcript')).toBeNull()
+  })
+})
+
+describe('the phone’s canvas, mounted only when wanted', () => {
+  it('draws neither the canvas nor the terminal view while unmounted, and both once mounted', () => {
+    const gate = createGate(false)
+    const { container, queryByTestId } = render(<MobileApp Canvas={() => <div data-testid="canvas" />} canvasMounted={gate} />)
+    act(() => useSurfacePresenterStore.getState().publishFocusedTerminal(SURFACE))
+    expect(queryByTestId('canvas')).toBeNull()
+    expect(container.querySelector('.mobile-term')).toBeNull()
+    // The bottom bar is there regardless: it is how Control is talked to.
+    expect(container.querySelector('.m-bar')).not.toBeNull()
+
+    act(() => gate.set(true))
+    expect(queryByTestId('canvas')).not.toBeNull()
+    expect(container.querySelector('.mobile-term')).not.toBeNull()
+  })
+
+  it('shows toasts with no canvas mounted', () => {
+    const { container } = render(<MobileApp Canvas={() => null} canvasMounted={createGate(false)} />)
+    act(() => showToast('Control: no answer'))
+    expect(container.textContent).toContain('Control: no answer')
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react'
 import { App } from '@/App'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { useNodeStore } from '@/stores/nodeStore'
@@ -23,6 +23,9 @@ import { MicIndicator } from './MicIndicator'
 import { ControlTranscript } from '@/components/ControlTranscript'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { SWIPE_SCREENS, useSwipeToDismiss, type SwipeScreen } from './swipe-dismiss'
+import { ToastHost } from '@/components/ToastHost'
+import { createGate, type Gate } from './gate'
+import { holdCanvas } from './canvas-lifecycle'
 
 /**
  * The phone: the desktop's canvas for getting around, with a full-screen view
@@ -59,12 +62,22 @@ function rememberOpen(nodeId: NodeId | null): void {
  */
 const childKey = (kind: 'terminal' | 'composer', id: string) => `${kind}:${id}`
 
-/** `Canvas` is the desktop's App unless a test stands in for it. */
-export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
+/** Mounted for good, where nothing says otherwise: a test, say. */
+const ALWAYS = createGate(true)
+
+/**
+ * `Canvas` is the desktop's App unless a test stands in for it.
+ * `canvasMounted` says when it is mounted at all (canvas-lifecycle.ts); the
+ * terminal view and the composer go with it, being App's focus drawn here.
+ */
+export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: ComponentType; canvasMounted?: Gate } = {}) {
+  const mounted = useSyncExternalStore(canvasMounted.subscribe, () => canvasMounted.on)
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
   const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
   useStalenessWatch()
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
+  // A draft open in the composer keeps the canvas, and it, mounted.
+  useEffect(() => (composerFor ? holdCanvas() : undefined), [composerFor])
   /** Control's transcript: the screen above the bottom bar, which stays up to talk and to close it. */
   const transcriptOpen = useControlTranscriptStore((s) => s.open)
   // The transcript and the toolbar sheet are screens, not layers: opening one
@@ -140,8 +153,8 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
 
   return (
     <>
-      <Canvas />
-      {focusedTerminal && (
+      {mounted && <Canvas />}
+      {mounted && focusedTerminal && (
         <TerminalView
           key={childKey('terminal', focusedTerminal)}
           nodeId={focusedTerminal}
@@ -162,7 +175,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
         />
       )}
       <input ref={keyboardKeeperRef} className="mobile-keyboard-keeper" aria-hidden tabIndex={-1} />
-      {composerFor && (
+      {mounted && composerFor && (
         <Composer
           // Keyed, so opening another surface's composer starts fresh on its draft.
           key={childKey('composer', composerFor)}
@@ -176,6 +189,7 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
         />
       )}
       <MicIndicator />
+      <ToastHost />
       {transcriptOpen && (
         <ControlTranscript
           variant="screen"

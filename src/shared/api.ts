@@ -120,7 +120,7 @@ export interface NodeApi {
    * the paste framing and the submit delay — see `src/server/ship-it.ts`.
    */
   shipIt(nodeId: NodeId, text: string): Promise<void>
-  setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot'): void
+  setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot' | 'none'): void
   crabReorder(order: string[]): Promise<void>
 
   directoryAdd(parentId: NodeId, cwd: string, x?: number, y?: number): Promise<{ nodeId: NodeId }>

@@ -18,9 +18,10 @@ CAVEATS:
 
 Written October 2026 against `fc00775` as a proposal. **Steps 1, 2 and 4
 are built** (see "Control mode" in `src/mobile/README.md`), with the canvas
-paused rather than unmounted, and step 3's instruments gated. Still open: the
-snapshot-subscription leak, `App` re-rendering on `node-updated` while paused,
-unwatching mini stats while hidden, the `mobileEvents` storage write, the CSS
+paused at first, then unmounted after five minutes out of sight and not
+mounted at all on a fresh start (`src/mobile/canvas-lifecycle.ts`), and step
+3's instruments gated. The snapshot-subscription leak is fixed (`none`).
+Still open: unwatching mini stats while hidden, the `mobileEvents` storage write, the CSS
 animations, and step 5.
 
 ## What the phone does today while you talk to Control

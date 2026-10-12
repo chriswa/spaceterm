@@ -716,7 +716,12 @@ export interface ValidateFileResult {
 export interface SetTerminalModeMessage {
   type: 'set-terminal-mode'
   sessionId: PtySessionId
-  mode: 'live' | 'snapshot'
+  /**
+   * `none`: the card asking for snapshots has gone. Ends a snapshot
+   * subscription and leaves a live one alone, as `live` does — which is also
+   * how a server older than `none` reads it.
+   */
+  mode: 'live' | 'snapshot' | 'none'
 }
 
 /** Fire-and-forget: a genuine user interaction (e.g. a keystroke) with a node. */

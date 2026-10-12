@@ -149,7 +149,15 @@ function hide() {
  * elsewhere, a tapped button's tooltip stayed stuck over the canvas on the phone.
  * Hover is a mouse idea; a finger gets no tooltip at all.
  */
+let tooltipsInstalled = false
+
+/**
+ * Once per page: the listeners are on `document` and never removed, and the
+ * phone mounts App — which calls this — again each time its canvas comes back.
+ */
 export function initTooltips(): void {
+  if (tooltipsInstalled) return
+  tooltipsInstalled = true
   // Watch for data-tooltip attribute changes while a tooltip is visible.
   // This handles cases where React re-renders a button mid-hover (e.g. toggle
   // buttons) and changes the attribute without triggering a new mouseover event.

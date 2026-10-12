@@ -695,7 +695,7 @@ export class ServerClient {
     this.fireAndForget({ type: 'node-interaction', nodeId })
   }
 
-  setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot'): void {
+  setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot' | 'none'): void {
     this.fireAndForget({ type: 'set-terminal-mode', sessionId, mode })
   }
 

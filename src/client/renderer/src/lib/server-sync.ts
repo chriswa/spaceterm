@@ -32,17 +32,45 @@ export type NodeUpdateInterceptor = (
 ) => void
 
 let cleanupFns: Array<() => void> = []
+const interceptors = new Set<NodeUpdateInterceptor>()
+
+/**
+ * Fire `fn` before each node-updated patch is applied, with the node as it
+ * was, so a caller can detect field-level changes (App's fork detection on
+ * claudeSessionHistory growth). Separate from installing the sync, because
+ * the sync can outlive the caller: on the phone it runs for the page's whole
+ * life, and the canvas comes and goes (`retainServerSync`).
+ */
+export function addNodeUpdateInterceptor(fn: NodeUpdateInterceptor): () => void {
+  interceptors.add(fn)
+  return () => { interceptors.delete(fn) }
+}
+
+let retainers = 0
+
+/**
+ * Keep the server sync installed while anything holds it: installed by the
+ * first holder, removed when the last lets go. The desktop's App is its only
+ * holder; the phone holds it for the page's life from main.tsx, so its
+ * stores — Control's among them — are current with no canvas mounted, and the
+ * canvas mounting or unmounting does not resync.
+ */
+export function retainServerSync(): () => void {
+  if (retainers++ === 0) void initServerSync()
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    if (--retainers === 0) destroyServerSync()
+  }
+}
 
 /**
  * Initialize the server sync layer.
  * Subscribes to IPC events and bridges them to the Zustand store.
- * Call once on app startup.
- *
- * @param onBeforeNodeUpdate — optional interceptor fired before each node-updated
- *   patch is applied. Receives the previous node state so callers can detect
- *   field-level changes (e.g. fork detection on claudeSessionHistory growth).
+ * Call once on app startup — or hold it with `retainServerSync`.
  */
-export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor): Promise<void> {
+export async function initServerSync(): Promise<void> {
   const store = useNodeStore.getState()
 
   // Anything that changes the picture changes this store, so one subscription
@@ -57,7 +85,7 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   cleanupFns.push(
     window.api.node.onUpdated((nodeId: NodeId, fields: Partial<NodeData>) => {
       const prev = useNodeStore.getState().nodes[nodeId]
-      onBeforeNodeUpdate?.(nodeId, fields, prev)
+      interceptors.forEach((intercept) => intercept(nodeId, fields, prev))
 
       // Notification sound: node became unread
       if (

@@ -233,6 +233,33 @@ nothing (`control-mode.ts`):
 Everything else still arrives and lands in its store, so leaving Control mode
 replays nothing. Agent spend and the mini stats carry on as before.
 
+### The canvas is not always mounted
+
+Paused, a mounted canvas still re-renders on agent updates and holds every
+card, so it is only mounted while it might be looked at
+(`canvas-lifecycle.ts`):
+
+- **A fresh start opens on Control's transcript with no canvas at all.** It
+  first mounts when you leave the transcript — closing it, the rocket's
+  surface list, or an agent's name in it.
+- **Five minutes in Control mode unmounts it** — transcript up, another app in
+  front, or the phone asleep — with the terminal view and composer that are
+  part of it. An open composer keeps it.
+- **Coming back** to the transcript leaves it unmounted. Coming back to the
+  canvas or a terminal mounts it again, and App restores the camera and focus
+  it saved, which puts you back on the same view or in the same terminal.
+- A reload (after a dropped connection) goes back to whichever view it was on
+  (`mobile.view` in sessionStorage); only a fresh start opens on the
+  transcript.
+
+What the canvas did that the rest of the phone needs now lives outside it:
+the server sync, which fills the stores everything reads, is held by
+`main.tsx` for the page's life (`retainServerSync`), and toasts have their own
+host (`ToastHost`). A focus request made with no canvas — an agent's name in
+the transcript — waits for it, and App takes it once it has placed the camera.
+A Control camera follow while it is unmounted is not kept. `canvas` events in
+the record say when it comes and goes.
+
 Whether it holds is in the event record: `control-mode` as it comes and goes,
 and a `page-work` event every minute — messages and kilobytes received (the
 heaviest types in `byType`, `[count, kb]`), the time spent handling them

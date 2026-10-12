@@ -971,6 +971,10 @@ export function TerminalCard({
 
     return () => {
       cleanup()
+      // Or the server goes on sending this card's snapshots after it has gone:
+      // the phone unmounts its whole canvas (canvas-lifecycle.ts). On a switch
+      // to live it is followed at once by `live` and the attach.
+      window.api.node.setTerminalMode(sessionId, 'none')
     }
   }, [focused, sessionId, canPaint])
 

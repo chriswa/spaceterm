@@ -30,7 +30,9 @@ interface SurfacePresenterState {
    * A node something outside App wants focused — the phone's surface list, or
    * an agent's name in Control's transcript; the root among them. App
    * navigates to it exactly as for a toolbar crab, so unread clearing and the
-   * camera behave the same on both.
+   * camera behave the same on both. App clears it once acted on, so a request
+   * made while the phone's canvas is unmounted waits for it, and one already
+   * acted on is not acted on again when it remounts.
    */
   focusRequest: { nodeId: NodeId; seq: number } | null
   /**
@@ -45,7 +47,12 @@ interface SurfacePresenterState {
   publishFocusedTerminal(nodeId: NodeId | null): void
   requestUnfocus(zoomOut?: number): void
   requestFocus(nodeId: NodeId): void
+  /** App has acted on request `seq`. A newer request is left alone. */
+  clearFocusRequest(seq: number): void
 }
+
+/** Never reused, even across a cleared request, so App's last-handled seq cannot match a new one. */
+let focusRequestSeq = 0
 
 export const useSurfacePresenterStore = create<SurfacePresenterState>((set) => ({
   external: false,
@@ -60,5 +67,6 @@ export const useSurfacePresenterStore = create<SurfacePresenterState>((set) => (
   setExternal: (external) => set({ external }),
   publishFocusedTerminal: (nodeId) => set((s) => (s.focusedTerminal === nodeId ? s : { focusedTerminal: nodeId })),
   requestUnfocus: (zoomOut) => set((s) => ({ unfocusRequests: s.unfocusRequests + 1, unfocusZoomOut: zoomOut })),
-  requestFocus: (nodeId) => set((s) => ({ focusRequest: { nodeId, seq: (s.focusRequest?.seq ?? 0) + 1 } }))
+  requestFocus: (nodeId) => set({ focusRequest: { nodeId, seq: ++focusRequestSeq } }),
+  clearFocusRequest: (seq) => set((s) => (s.focusRequest?.seq === seq ? { focusRequest: null } : s))
 }))

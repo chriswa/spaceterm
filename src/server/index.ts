@@ -2557,9 +2557,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           if (snap) send(client.link, snap)
         }
       } else if (client.subscriptions.get(msg.sessionId) === 'snapshot') {
-        // Stop snapshots. The live stream itself starts at `attach`, which the
-        // client sends next; a live subscription that somehow arrived first is
-        // left alone rather than torn down.
+        // Stop snapshots: `none`, the card has gone; `live`, the live stream
+        // starts at the `attach` the client sends next. A live subscription is
+        // left alone rather than torn down either way.
         client.subscriptions.delete(msg.sessionId)
       }
       break

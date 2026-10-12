@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
-import { Toast } from './components/Toast'
-import { onToast, showToast } from './lib/toast'
+import { ToastHost } from './components/ToastHost'
+import { showToast } from './lib/toast'
 import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers } from './components/TerminalCard'
 import { MarkdownCard } from './components/MarkdownCard'
@@ -55,7 +55,7 @@ import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
 import { useUpdateActionsStore } from './stores/updateActionsStore'
-import { initServerSync, destroyServerSync, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetStamp, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendCacheTimerMute, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
+import { retainServerSync, addNodeUpdateInterceptor, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetStamp, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendCacheTimerMute, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
@@ -176,8 +176,6 @@ export function App() {
   // Fallback colour for nodes the user has not coloured — see the nodeTint facet.
   const nodeTint = useFacet('nodeTint')
   const restartingSpaceterm = useUpdateActionsStore(s => s.running.restart)
-  const [toasts, setToasts] = useState<Array<{ id: number; message: string; createdAt: number }>>([])
-  const toastIdRef = useRef(0)
   const focusRef = useRef<NodeId | null>(focusedId)
   focusRef.current = focusedId
   const navBlockUntilRef = useRef(0)
@@ -193,6 +191,17 @@ export function App() {
   const lastCrabRef = useRef<{ nodeId: NodeId; createdAt: string } | null>(null)
   const [crabNavEvent, setCrabNavEvent] = useState<{ fromNodeId: NodeId | null; toNodeId: NodeId; ts: number } | null>(null)
   const focusRestoredRef = useRef(false)
+  /**
+   * The camera and focus restored, or the start-up fly-out begun: until then a
+   * focus request from outside (the phone's surface list, an agent's name in
+   * Control's transcript) would only be undone by the restore. On the phone a
+   * request can arrive before this mounts — it is what mounts the canvas.
+   */
+  const [placed, setPlaced] = useState(false)
+  const markPlaced = useCallback(() => {
+    focusRestoredRef.current = true
+    setPlaced(true)
+  }, [])
   const [quickActions, setQuickActions] = useState<{ nodeId: NodeId; screenX: number; screenY: number; byTouch?: boolean } | null>(null)
   /**
    * What a finger's long press took hold of: a node, and once the finger moves
@@ -551,27 +560,6 @@ export function App() {
     if (crab) lastCrabRef.current = { nodeId: crab.nodeId, createdAt: crab.createdAt }
   }, [focusedId, crabs])
 
-  const expireToast = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
-  }, [])
-
-  // Subscribe to global toast emitter
-  useEffect(() => {
-    return onToast((message) => {
-      const id = ++toastIdRef.current
-      setToasts((prev) => [...prev, { id, message, createdAt: Date.now() }])
-    })
-  }, [])
-
-  // Subscribe to server errors → toast notifications
-  useEffect(() => {
-    const cleanup = window.api.node.onServerError((message: string) => {
-      console.error('[server]', message)
-      showToast(message)
-    })
-    return cleanup
-  }, [])
-
   // Fit all nodes on initial load once server state has been received
   const initialSyncDone = useNodeStore(s => s.initialSyncDone)
   const initialFitDone = useRef(false)
@@ -580,7 +568,7 @@ export function App() {
     initialFitDone.current = true
     requestAnimationFrame(() => {
       const viewport = document.querySelector('.canvas-viewport') as HTMLElement | null
-      if (!viewport) { focusRestoredRef.current = true; return }
+      if (!viewport) { markPlaced(); return }
       const vw = viewport.clientWidth
       const vh = viewport.clientHeight
 
@@ -630,13 +618,13 @@ export function App() {
           )
           cleanupStaleScrollEntries(validSessionIds)
 
-          focusRestoredRef.current = true
+          markPlaced()
           return
         }
       }
 
       // Nothing visible (or no stored camera) → teleport to origin zoomed in, fly out
-      focusRestoredRef.current = true
+      markPlaced()
       const target = cameraFittingEverything(vw, vh)
 
       resetCamera()  // instant teleport to origin, zoomed in at z:10
@@ -646,7 +634,7 @@ export function App() {
       window.api.log(`[camera] start: ${restoredFromStorageRef.current ? 'restored camera showed nothing' : 'no stored camera'}; ${useNodeStore.getState().nodeList.length} nodes; flying out from the root to ${fmtCam(target)} (${document.visibilityState})`)
       traceStartupFly(() => cameraRef.current, target)
     })
-  }, [initialSyncDone, flyTo, resetCamera])
+  }, [initialSyncDone, flyTo, resetCamera, markPlaced])
 
   const draggingRef = useRef(new Set<NodeId>())
   const dragDescendantsRef = useRef<NodeId[]>([])
@@ -1013,8 +1001,9 @@ export function App() {
 
   // Initialize server sync on mount — placed after getParentCwd/navigateToNode/cwdMapRef
   // so the fork-detection interceptor closure can reference them.
+  useEffect(() => retainServerSync(), [])
   useEffect(() => {
-    initServerSync((nodeId, fields, prevNode) => {
+    return addNodeUpdateInterceptor((nodeId, fields, prevNode) => {
       // Fork detection: when claudeSessionHistory grows with a 'fork' entry,
       // spawn a new terminal that resumes the previous Claude session.
       // Cursor has no fork — skip.
@@ -1035,7 +1024,6 @@ export function App() {
         navigateToNode(nodeIdFromFirstPtySession(result.sessionId))
       })
     })
-    return destroyServerSync
   }, [])
 
   const handleCrabClick = useCallback((nodeId: NodeId, metaKey: boolean) => {
@@ -1511,11 +1499,16 @@ export function App() {
     const node = focusedId ? useNodeStore.getState().nodes[focusedId] : undefined
     useSurfacePresenterStore.getState().publishFocusedTerminal(node?.type === 'terminal' ? node.id : null)
   }, [focusedId])
+  // Nothing is focused once this has gone: the phone unmounts its canvas
+  // (canvas-lifecycle.ts), and remounted, the canvas restores focus itself.
+  useEffect(() => () => useSurfacePresenterStore.getState().publishFocusedTerminal(null), [])
   // Each request is acted on exactly once. Both handlers change focus, which
   // gives them new identities, so an effect keyed on them alone would re-run
   // and act on the same request again — forever.
   const unfocusRequests = useSurfacePresenterStore((s) => s.unfocusRequests)
-  const handledUnfocusRef = useRef(0)
+  // Asked before this mounted, an unfocus has nothing to act on: the phone's
+  // canvas is unmounted and remounted, and each mount starts unfocused.
+  const handledUnfocusRef = useRef(useSurfacePresenterStore.getState().unfocusRequests)
   useEffect(() => {
     if (unfocusRequests === handledUnfocusRef.current) return
     handledUnfocusRef.current = unfocusRequests
@@ -1529,12 +1522,14 @@ export function App() {
   const focusRequest = useSurfacePresenterStore((s) => s.focusRequest)
   const handledFocusRef = useRef(0)
   useEffect(() => {
-    if (!focusRequest || focusRequest.seq === handledFocusRef.current) return
+    if (!focusRequest || focusRequest.seq === handledFocusRef.current || !placed) return
     handledFocusRef.current = focusRequest.seq
+    // Taken, so a later mount of this canvas does not act on it again.
+    useSurfacePresenterStore.getState().clearFocusRequest(focusRequest.seq)
     // The root is never in the node store, which navigateToNode would wait on for ever.
     if (focusRequest.nodeId === ROOT_NODE_ID) handleNodeFocus(ROOT_NODE_ID)
     else void navigateToNode(focusRequest.nodeId)
-  }, [focusRequest, navigateToNode, handleNodeFocus])
+  }, [focusRequest, navigateToNode, handleNodeFocus, placed])
 
   const handleHoverFocus = useCallback((nodeId: NodeId) => {
     if (!useCameraLockStore.getState().locked) return
@@ -3025,7 +3020,8 @@ export function App() {
           openedByTouch={edgeSplit.byTouch}
         />
       )}
-      <Toast toasts={toasts} onExpire={expireToast} />
+      {/* The phone draws its own, since this canvas is not always mounted there. */}
+      {!presentTerminalsExternally && <ToastHost />}
       {keycastEnabled && <KeycastOverlay />}
     </div>
   )

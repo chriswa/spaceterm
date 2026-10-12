@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { FakeBridge, installFakeBridge } from '../testing/fake-bridge'
 import {
-  initServerSync, destroyServerSync,
+  initServerSync, destroyServerSync, retainServerSync, addNodeUpdateInterceptor,
   sendMove, sendRename, sendArchive, sendTerminalCreate, sendMarkdownContent, sendRootCwd
 } from './server-sync'
 import { useNodeStore } from '../stores/nodeStore'
@@ -280,6 +280,34 @@ describe('destroyServerSync', () => {
     }
     await initServerSync()
     expect(bridge.listenerCount('added')).toBe(1)
+  })
+})
+
+describe('retainServerSync', () => {
+  // The phone holds the sync for the page's life and its canvas holds it too,
+  // coming and going: the canvas leaving must not stop the phone's stores.
+  it('stays installed until the last holder lets go', () => {
+    const page = retainServerSync()
+    const canvas = retainServerSync()
+    expect(bridge.listenerCount('added')).toBe(1)
+    canvas()
+    canvas()
+    expect(bridge.listenerCount('added')).toBe(1)
+    page()
+    expect(bridge.listenerCount('added')).toBe(0)
+  })
+})
+
+describe('addNodeUpdateInterceptor', () => {
+  it('sees each update with the node as it was, until removed', async () => {
+    bridge.responses.syncRequest = serverState(terminal('t1'))
+    await initServerSync()
+    const seen: Array<[string, unknown]> = []
+    const remove = addNodeUpdateInterceptor((nodeId, fields, prev) => seen.push([nodeId, prev?.name ?? null]))
+    bridge.emit.nodeUpdated(nid('t1'), { name: 'renamed' } as Partial<NodeData>)
+    remove()
+    bridge.emit.nodeUpdated(nid('t1'), { name: 'again' } as Partial<NodeData>)
+    expect(seen).toEqual([['t1', null]])
   })
 })
 

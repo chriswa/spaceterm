@@ -6,6 +6,9 @@ import { deferCameraScaleWhileMoving } from '@/hooks/useCamera'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
 import { browserPlatform, forwardLogs, canvasOnScreen } from './browser-platform'
 import { controlModeGate, installControlMode } from './control-mode'
+import { canvasLifecycle, lastView, rememberView } from './canvas-lifecycle'
+import { retainServerSync } from '@/lib/server-sync'
+import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { PageWork, meteredTransport, installPageWorkReport } from './page-work'
 import { not } from './gate'
 import { installDiagnostics } from './diagnostics'
@@ -64,6 +67,13 @@ if (!token) {
 } else {
   // Before anything renders: the canvas must never mount a live terminal in a card.
   useSurfacePresenterStore.getState().setExternal(true)
+  // A fresh start opens on Control's transcript, with no canvas; a reload goes
+  // back to whichever it was on. See canvas-lifecycle.ts.
+  const startView = lastView()
+  if (startView === 'control') useControlTranscriptStore.getState().setOpen(true)
+  useControlTranscriptStore.subscribe((s, prev) => {
+    if (s.open !== prev.open) rememberView(s.open ? 'control' : 'canvas')
+  })
   // A zoom scales the cards as drawn and redraws them once it settles: redrawn
   // at every scale, a zoom-out ran WebKit out of memory. See useCamera.
   deferCameraScaleWhileMoving(true)
@@ -78,6 +88,10 @@ if (!token) {
   const work = new PageWork()
   void installApi(meteredTransport(webSocketTransport(gatewayUrl(token)), work), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
     forwardLogs((message) => client.clientLog(message))
+    // The stores everything here reads — the nodes, Control's, the restart
+    // flag — kept current for the page's whole life, not only while the
+    // canvas is mounted. Never released.
+    retainServerSync()
     // A launch starts with Control let go, as with the held microphone: the
     // server keeps a phone's hold while it is away, but not across a relaunch.
     // Only a launch, not a reconnect — those keep it. A mute is kept.
@@ -104,6 +118,14 @@ if (!token) {
       record: recordMobileEvent,
     })
     installPageWorkReport({ work, controlMode, record: recordMobileEvent })
+    // After installControlMode, so leaving Control mode resumes the server's
+    // snapshots before the canvas's cards mount and ask for theirs.
+    const canvasMounted = canvasLifecycle({
+      controlMode,
+      startMounted: startView === 'canvas',
+      log: (message) => window.api.log(message),
+    })
+    canvasMounted.subscribe((mounted) => recordMobileEvent('canvas', { mounted }))
     installDiagnostics((message) => window.api.log(message), not(controlMode))
     installMemoryProbe((message) => window.api.log(message), Boolean(window.spacetermProcessRestarts), canvasOnScreen)
     // Not back where it ran out of memory, or it runs out again: see crash-camera.ts.
@@ -130,7 +152,7 @@ if (!token) {
     const { MobileApp } = await import('./MobileApp')
     root.render(
       <StrictMode>
-        <MobileApp />
+        <MobileApp canvasMounted={canvasMounted} />
       </StrictMode>
     )
   })
