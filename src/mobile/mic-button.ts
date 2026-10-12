@@ -9,31 +9,46 @@ import type { HandsFreePhase } from './hands-free'
 /** Everything the button's look is drawn from. */
 export interface MicInputs {
   error: boolean
-  /** The button's own dictation: a tap to talk. */
-  own: 'idle' | 'starting' | 'listening' | 'sending'
+  /** The button's own dictation: a tap to talk. `retrying`: the first start failed, and it is trying once more. */
+  own: 'idle' | 'starting' | 'retrying' | 'listening' | 'sending'
   /** A composer's dictation, which outlives the composer (dictation-session.ts). */
   composer: 'idle' | 'starting' | 'listening' | 'transcribing'
-  /** Any dictation on the page sending audio, or waiting for its words (useMicActivity). */
+  /** Any dictation on the page sending audio — from its first sound — or waiting for its words (useMicActivity). */
   capturing: boolean
   transcribing: boolean
   hold: HoldState
   handsFree: HandsFreePhase
   conversation: boolean
+  /** Hands-free heard speech and is checking it on the Mac; nothing decided yet. */
+  checking: boolean
 }
 
 /**
- * One look, however the listening started. `hearing` — the orange — is your
- * voice leaving the phone and nothing else; what Control is doing never shows
- * here.
+ * One look, however the listening started, each distinct at a glance
+ * (mobile.css):
+ *
+ * - `off`: grey. The microphone is closed.
+ * - `preparing`: white outline, pulsing. Hands-free is on and opening the microphone.
+ * - `armed`: black, white ring. Hands-free is listening for "Control"; nothing leaves the phone.
+ * - `checking`: armed, with the ring bright and thick. It heard speech and is asking the Mac whether it was for Control.
+ * - `conversation`: black, a blue ring draining. Just talk — no "Control" — until it has drained.
+ * - `connecting`: a white arc spinning round the edge. A tap was taken; the microphone is starting (AirPods can take seconds). Don't talk yet.
+ * - `retrying`: the same arc, amber. The microphone did not start the first time; trying once more by itself.
+ * - `hearing`: solid orange with level bars. Your voice is being recorded — talk.
+ * - `transcribing`: orange, pulsing. Recording over; waiting for the words.
+ * - `error`: solid red with "!". It failed; the message says why. A tap tries again.
+ *
+ * What Control is doing never shows here; its own button says that.
  */
-export type MicLook = 'error' | 'hearing' | 'starting' | 'transcribing' | 'conversation' | 'armed' | 'preparing' | 'off'
+export type MicLook = 'error' | 'hearing' | 'retrying' | 'connecting' | 'transcribing' | 'checking' | 'conversation' | 'armed' | 'preparing' | 'off'
 
 export function micLook(i: MicInputs): MicLook {
   if (i.error) return 'error'
   if (i.capturing || i.own === 'listening' || i.composer === 'listening' || i.handsFree === 'hearing') return 'hearing'
-  if (i.own === 'starting' || i.composer === 'starting') return 'starting'
+  if (i.own === 'retrying') return 'retrying'
+  if (i.own === 'starting' || i.composer === 'starting') return 'connecting'
   if (i.transcribing || i.own === 'sending' || i.composer === 'transcribing' || i.handsFree === 'sending') return 'transcribing'
-  if (i.hold === 'held') return i.conversation ? 'conversation' : 'armed'
+  if (i.hold === 'held') return i.checking ? 'checking' : i.conversation ? 'conversation' : 'armed'
   return i.hold === 'preparing' ? 'preparing' : 'off'
 }
 

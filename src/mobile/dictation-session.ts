@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { Dictation, whenHearing } from './dictation'
 import { playCue } from './cues'
+import { nativeHaptic } from './native-microphone'
 
 /**
  * The phone's one dictation, which outlives the composer that started it.
@@ -8,8 +9,9 @@ import { playCue } from './cues'
  * Start talking in one surface's composer, leave it, open another's — the
  * microphone is still on, and whichever composer is open when it stops takes
  * the words, at its caret. Meanwhile a mark at the bottom of the screen says
- * it is listening (MobileApp). The cues are Voice Operator's, as before:
- * started once sound is really arriving, finished, and the failure tones.
+ * it is listening (MobileApp). Felt, not heard (native-microphone.ts): a tap
+ * once sound is really arriving, two when it stops; a failure is the error
+ * tone, where replies are aloud.
  *
  * What was said is the composer's to place, not this store's: it hands the
  * transcript back from `finish` and the composer inserts it.
@@ -51,17 +53,17 @@ export const useDictationSession = create<DictationSession>((set, get) => ({
       // As on the desktop, the start cue means "safe to talk".
       const dictation = await whenHearing(pending)
       set({ mic: { kind: 'listening', dictation } })
-      playCue('listeningStarted')
+      nativeHaptic('tap')
     } catch (err) {
       set({ mic: { kind: 'idle' }, error: message(err) })
-      playCue('captureFailed')
+      playCue('error')
     }
   },
 
   async finish() {
     const mic = get().mic
     if (mic.kind !== 'listening') return null
-    playCue('listeningFinished')
+    nativeHaptic('double')
     set({ mic: { kind: 'transcribing' }, error: null })
     try {
       const transcript = await mic.dictation.finish()
@@ -69,7 +71,7 @@ export const useDictationSession = create<DictationSession>((set, get) => ({
       return transcript
     } catch (err) {
       set({ mic: { kind: 'idle' }, error: message(err) })
-      playCue('transcriptionFailed')
+      playCue('error')
       return null
     }
   }

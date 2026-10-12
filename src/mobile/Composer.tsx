@@ -4,7 +4,7 @@ import type { NodeId } from '../shared/ids'
 import { Dictation } from './dictation'
 import { insertDictation } from './pcm'
 import { promptStore } from './prompt-store'
-import { playCue, primeCues } from './cues'
+import { primeCues } from './cues'
 import { useDictationSession } from './dictation-session'
 import { deleteWordBefore } from './text-edit'
 import { TerminalGesture } from './terminal-gesture'
@@ -109,7 +109,6 @@ export function Composer({ nodeId, onClose, onExitToCanvas }: {
     const next = insertDictation(current, Math.min(cursorRef.current, current.length), transcript)
     if (next.text !== current) {
       setText(next.text, next.cursor)
-      playCue('pasted')
     }
     return next.text
   }

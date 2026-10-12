@@ -223,6 +223,12 @@ phone's microphone, and only that; the rules for its looks are pure, in
 | Gesture | Does |
 |---|---|
 | tap | speak to Control, and tap again to send. Over an answer, cuts it off and listens |
+| tap while it is starting | gives up on starting |
+| tap on red | tries again |
+
+Every button in the bottom bar sinks and brightens the instant a finger lands
+(`press-feedback.ts`), before anything the press starts has happened, so a
+press that was taken is never mistaken for one that missed.
 
 It looks the same however the listening started — a tap, "Control", the
 conversation window, or a composer's dictation:
@@ -232,9 +238,13 @@ conversation window, or a composer's dictation:
 | grey | the microphone is closed |
 | outlined, pulsing | hands-free is on, waiting for the microphone |
 | white, lock badge, thin white ring | hands-free holds it; nothing leaves the phone until "Control" |
+| white, thick bright ring | hands-free heard speech and is asking the Mac whether it was for Control |
 | blue ring, draining | the conversation window: just talk. The ring is the quiet left before "Control" is needed again |
-| solid orange, level bars | your voice is leaving the phone, whatever started it — the bars are its level (`mic-level.ts`, fed by each dictation) |
+| black, white arc spinning | a tap was taken and the microphone is starting — AirPods playing music take seconds to switch. Don't talk yet |
+| black, amber arc spinning | it did not start; trying once more by itself (the app's microphone needs no second tap) |
+| solid orange, level bars | your voice is leaving the phone, whatever started it — the bars are its level (`mic-level.ts`, fed by each dictation). Only once sound is really arriving |
 | orange, pulsing | waiting for the words |
+| solid red, "!" | it failed; the message above says why, for 8 s. A tap tries again |
 
 A small badge at its top right is where sound is going now, as the iPhone app
 reads iOS's route (`audio-output.ts`): a speaker, headphones (AirPods or any
@@ -253,13 +263,41 @@ A composer's dictation carries on after its composer closes
 opens the open terminal's composer, which takes it over to stop or ship it; on
 the canvas, with no terminal open, it only says so.
 
+## What the phone makes you feel and hear
+
+The microphone's states are haptics, not tones (`nativeHaptic`,
+`native-microphone.ts`): a tone at the start or end of a dictation competed
+with the ducking and echo cancellation around the microphone, and played into
+AirPods still switching profile. Two patterns only:
+
+| Haptic | Means |
+|---|---|
+| one tap | your words are being taken down: sound is arriving after a tap, or hands-free heard "Control" |
+| two taps | the recording is over and on its way |
+
+Speech hands-free is still checking buzzes nothing — every cough would — and
+shows as the thick white ring. Haptics come from the app only (iOS gives a
+page no vibration), and iOS plays them only while the app is in the
+foreground.
+
+Sounds are few, and only where replies are **Aloud** — this phone holds
+Control, unmuted; on Silent or Released the phone makes no sound of its own
+(`cuesAudible`, `cues.ts`):
+
+| Sound | Means |
+|---|---|
+| sonar, a soft repeating echo | Control is thinking, or its voice is being made (`thinking-cue.ts`) |
+| "beep boop", soft, stepping down | Control finished and chose to say nothing — not a failure (`control-tones.ts`) |
+| two low notes | something failed: the microphone, a transcription, or Control |
+| three soft steps down | hands-free's conversation window closed; "Control" is needed again |
+
 ## Hands-free: "Control, …"
 
 The lock right of the microphone (`MicLockButton.tsx`), always on the bar, is
 the always-listen switch: a tap turns it on, and another off. While it
 holds the microphone, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
-phone taps (a haptic) and the button turns orange; nothing waits on that, since
+phone taps once (a haptic) and the button turns orange; nothing waits on that, since
 the dictation is fed everything from your first syllable out of the
 listener's buffer. When you are done, just stop: at each pause of 0.8 s the
 Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from your
@@ -267,7 +305,7 @@ words and intonation whether you sound finished, and if it is at least 85%
 sure, the dictation ends there. If it is not, a pause still ends it once it
 outlasts a patience that grows with how long you have been talking — three
 seconds for a quick request, up to twenty seconds five minutes into a
-monologue. The end tone means it was heard and sent: "Control" comes off the
+monologue. Two taps mean it was heard and sent: "Control" comes off the
 front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as a tap's.
 
 - **Only "Control" said first counts**, with nobody talking just before it;

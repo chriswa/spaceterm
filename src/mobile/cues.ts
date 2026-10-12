@@ -1,40 +1,51 @@
 /**
- * Voice Operator's audio cues, on the phone.
+ * The phone's audio cues — few, and only where Control is heard.
  *
- * The same sounds, made the same way: Voice Operator synthesises every cue as
- * a short run of sine notes rather than shipping sound files
- * (~/voiceop/Sources/VoiceOperator/Core/SoundEffects.swift), so the note
- * tables below are copied from it verbatim, and the synthesis is its `chirp`
- * ported — 5 ms fades, `speedup` 2, output gain 0.35. Keep the two in step.
+ * The microphone's states are haptics on the phone, not tones
+ * (`nativeHaptic`, native-microphone.ts): a tone at the start or end of a
+ * dictation competed with the ducking and echo cancellation around the
+ * microphone, and played into AirPods still switching profile. What is left
+ * is what only a sound can say, and only when Replies are Aloud (`cuesAudible`)
+ * — on Silent or Released the phone makes no sound of its own:
  *
- * Except the two hold cues, which are Spaceterm's own: the microphone held
- * open (held-microphone.ts) taking hold and letting go. Two taps and a leap,
- * so they never sound like a dictation starting or stopping.
+ * - `error`: something failed — the microphone, a transcription, or Control
+ *   itself. Two low notes, the same pitch.
+ * - `nothingToSay`: Control finished thinking and chose to say nothing. Not a
+ *   failure: a soft "beep boop".
+ * - `conversationClosed`: hands-free's conversation window has closed, and
+ *   "Control" is needed again. Three soft steps down.
+ *
+ * The sonar while Control thinks, or waits for its voice to be made, is
+ * thinking-cue.ts, shared with the desktop.
+ *
+ * Synthesised as Voice Operator synthesises its cues — a short run of sine
+ * notes, its `chirp` ported (~/voiceop/Sources/VoiceOperator/Core/SoundEffects.swift):
+ * 5 ms fades, `speedup` 2. `error` is its capture-failed table.
  */
 
+import { controlMode, useReceptionistStore } from '@/stores/receptionistStore'
 import { recordMobileEvent } from './mobile-events'
 
-export type Cue = 'listeningStarted' | 'listeningFinished' | 'pasted' | 'transcriptionFailed' | 'captureFailed'
-  | 'holdEngaged' | 'holdReleased' | 'conversationClosed'
+export type Cue = 'error' | 'nothingToSay' | 'conversationClosed'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
-  listeningStarted: [[660, 0.09], [990, 0.11]],
-  listeningFinished: [[990, 0.09], [660, 0.11]],
-  pasted: [[523, 0.09], [659, 0.09], [784, 0.09], [1047, 0.14]],
-  transcriptionFailed: [[523, 0.10], [392, 0.10], [262, 0.22]],
-  captureFailed: [[196, 0.20], [0, 0.07], [196, 0.30]],
-  holdEngaged: [[392, 0.06], [0, 0.04], [392, 0.06], [0, 0.04], [784, 0.18]],
-  holdReleased: [[587, 0.06], [0, 0.04], [587, 0.06], [0, 0.04], [294, 0.18]],
-  // Spaceterm's own too: hands-free's conversation window has closed, and "Control" is needed again. Three steps down, softly.
-  conversationClosed: [[880, 0.08], [0, 0.03], [659, 0.08], [0, 0.03], [440, 0.18]]
+  error: [[196, 0.20], [0, 0.07], [196, 0.30]],
+  nothingToSay: [[784, 0.10], [0, 0.04], [523, 0.16]],
+  conversationClosed: [[880, 0.08], [0, 0.03], [659, 0.08], [0, 0.03], [440, 0.18]],
+}
+
+/** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
+const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, conversationClosed: 0.2 }
+
+/** Replies are Aloud here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
+export function cuesAudible(): boolean {
+  return controlMode(useReceptionistStore.getState()) === 'speak'
 }
 
 const SPEEDUP = 2
 const SAMPLE_RATE = 44_100
 const FADE_S = 0.005
-/** SoundBank's player volume. */
-const OUTPUT_GAIN = 0.35
 
 /** The cue's samples, exactly as Voice Operator's `chirp` computes them. */
 export function cueSamples(cue: Cue): Float32Array<ArrayBuffer> {
@@ -178,6 +189,11 @@ export function cueMs(cue: Cue): number {
  * unavailable: a cue is confirmation, never a reason for something to fail.
  */
 export function playCue(cue: Cue): void {
+  if (!cuesAudible()) {
+    recordMobileEvent('cue-dropped', { cue, why: 'replies are not aloud here' })
+    return
+  }
+  const gainValue = GAINS[cue]
   try {
     const ctx = ensureContext()
     if (ctx.state === 'suspended') void ctx.resume()
@@ -186,7 +202,7 @@ export function playCue(cue: Cue): void {
     buffer.copyToChannel(samples, 0)
     const source = ctx.createBufferSource()
     const gain = ctx.createGain()
-    gain.gain.value = OUTPUT_GAIN
+    gain.gain.value = gainValue
     source.buffer = buffer
     source.connect(gain).connect(ctx.destination)
     source.start()
@@ -198,10 +214,10 @@ export function playCue(cue: Cue): void {
     )
     for (const old of superseded) recordMobileEvent('cue-dropped', { cue: old, why: `superseded by ${cue} while the audio was ${ctx.state}` })
     // Volume as played: this cue's gain, and its peak with any cue it overlaps (each the same level), in dBFS.
-    const peakDb = Math.round(20 * Math.log10(OUTPUT_GAIN * (32000 / 32768) * (1 + overlapping.length)) * 10) / 10
+    const peakDb = Math.round(20 * Math.log10(gainValue * (32000 / 32768) * (1 + overlapping.length)) * 10) / 10
     // In the server log, so a cue that seems quiet, loud or missing can be traced.
-    window.api?.log(`[cue] ${cue} (audio ${ctx.state}, gain ${OUTPUT_GAIN}, peak ${peakDb} dBFS${overlapping.length ? `, over ${overlapping.join(', ')}` : ''}${running ? '' : ', waiting for the audio to resume'}${superseded.length ? `, replacing ${superseded.join(', ')}` : ''})`)
-    recordMobileEvent('cue', { cue, audio: ctx.state, gain: OUTPUT_GAIN, peakDb, overlapping, waiting: !running, ms: Math.round(buffer.duration * 1000) })
+    window.api?.log(`[cue] ${cue} (audio ${ctx.state}, gain ${gainValue}, peak ${peakDb} dBFS${overlapping.length ? `, over ${overlapping.join(', ')}` : ''}${running ? '' : ', waiting for the audio to resume'}${superseded.length ? `, replacing ${superseded.join(', ')}` : ''})`)
+    recordMobileEvent('cue', { cue, audio: ctx.state, gain: gainValue, peakDb, overlapping, waiting: !running, ms: Math.round(buffer.duration * 1000) })
   } catch (err) {
     // No audio device, or a policy refusal: the cue is skipped.
     recordMobileEvent('cue-dropped', { cue, why: err instanceof Error ? err.message : String(err) })

@@ -76,6 +76,7 @@ export function controlMode({ holder, mutedHere }: Pick<ReceptionistState, 'hold
  * The thinking cue's condition — the echo is a prelude to speech, so it plays
  * only where the speech will, and never on a device that is merely watching.
  */
-export function isThinkingWithinEarshot(state: Pick<ReceptionistState, 'phase' | 'holder'>): boolean {
-  return state.phase === 'thinking' && state.holder?.mine === true && !state.holder.muted
+export function isThinkingWithinEarshot(state: Pick<ReceptionistState, 'phase' | 'holder'>, alsoSynthesizing = false): boolean {
+  const waiting = state.phase === 'thinking' || (alsoSynthesizing && state.phase === 'synthesizing')
+  return waiting && state.holder?.mine === true && !state.holder.muted
 }

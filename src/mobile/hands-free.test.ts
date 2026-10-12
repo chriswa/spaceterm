@@ -56,7 +56,7 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
   const checked: number[] = []
   const modes: string[] = []
   const cues: string[] = []
-  let haptics = 0
+  const haptics: string[] = []
   const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
   let quietFor = 10_000
   const records: Array<{ kind: string; detail?: Record<string, unknown> }> = []
@@ -88,7 +88,7 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
     onHoldStateChange: (fn) => { holdChanged = fn; return () => {} },
     quietForMs: () => quietFor,
     playCue: (cue) => { cues.push(cue) },
-    haptic: () => { haptics++ },
+    haptic: (pattern) => { haptics.push(pattern) },
     beginDictation: async (options: DictationOptions) => {
       const d = {
         backlogSeconds: (options.backlog?.().length ?? 0) / RATE,
@@ -128,7 +128,8 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
     setTranscript: (text: string) => { transcript = text },
     interrupts: () => interrupts,
     setControlSpeaking: (on: boolean) => { controlSpeaking = on },
-    haptics: () => haptics,
+    haptics: () => haptics.length,
+    hapticPatterns: haptics,
     setQuietFor: (ms: number) => { quietFor = ms },
     dropHold: () => { wanted = false; held = undefined; holdChanged() },
     /** The app's microphone stalls, still turned on, and is reopened by `reopenHold`. */
@@ -163,7 +164,9 @@ describe('hands-free mode', () => {
     expect(h.dictations[0].backlogSeconds).toBeGreaterThan(1)
     await h.hear(speech(1500), quiet(3500))
     expect(h.said).toEqual(['what is Kevin doing?'])
-    expect(h.cues).toEqual(['listeningFinished', 'pasted'])
+    // One tap as it was heard, two as it was sent; no tones.
+    expect(h.hapticPatterns).toEqual(['tap', 'double'])
+    expect(h.cues).toEqual([])
     expect(useHandsFree.getState().phase).toBe('listening')
   })
 
@@ -219,7 +222,8 @@ describe('hands-free mode', () => {
     await h.hear(quiet(3000))
     expect(h.dictations[0].finished).toBe(true)
     expect(h.said).toEqual([])
-    expect(h.cues).toEqual(['listeningFinished'])
+    expect(h.hapticPatterns).toEqual(['tap', 'double'])
+    expect(h.cues).toEqual([])
   })
 
   it('hears "Control" in a loud room: noise is not speech, so it does not count as talk before it', async () => {

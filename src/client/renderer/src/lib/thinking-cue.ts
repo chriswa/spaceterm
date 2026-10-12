@@ -18,6 +18,13 @@
  * first, not a progress signal. One waiter, one cue: spaceterm owns the wait
  * until the answer is handed over, and Voice Operator owns it after.
  */
+/**
+ * The phone's exception (src/mobile/main.tsx): there the cue carries on while
+ * Control's voice is made, since Voice Operator's own echo plays on the Mac,
+ * not in the phone's ear, and the wait for a voice is still a wait.
+ */
+export const thinkingCueScope = { alsoSynthesizing: false }
+
 const INITIAL_DELAY_MS = 1_500
 const CUE_DURATION_MS = 1_500
 const REPEAT_GAP_MS = 1_000

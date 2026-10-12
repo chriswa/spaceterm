@@ -1,5 +1,4 @@
 import { beginRecordingSession } from './audio-session'
-import { playCue } from './cues'
 import { nativeMicrophoneAvailable, openNativeMicrophone, type NativeCaptureHandle } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
 
@@ -202,8 +201,10 @@ export function onHoldStateChange(fn: (state: HoldState) => void): () => void {
 }
 
 /**
- * Tell the button, and sound the hold taking or letting go of the microphone:
- * the moment the always-on mode really starts or stops, not the tap that asked.
+ * Tell the button the hold taking or letting go of the microphone: the moment
+ * the always-on mode really starts or stops, not the tap that asked. Silent:
+ * the lock button shows it, and the microphone reopening itself after a stall
+ * used to sound as a release and a take, over and over.
  */
 function announce(): void {
   const state = holdState()
@@ -211,8 +212,6 @@ function announce(): void {
   lastState = state
   if (state === before) return
   recordMobileEvent('hold-state', { from: before, to: state })
-  if (state === 'held') playCue('holdEngaged')
-  else if (before === 'held') playCue('holdReleased')
   for (const fn of stateListeners) fn(state)
 }
 

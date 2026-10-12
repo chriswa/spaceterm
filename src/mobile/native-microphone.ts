@@ -29,8 +29,14 @@ export const NATIVE_SAMPLE_RATE = 16_000
  * round that loop five times in ten seconds.
  */
 const STALE_MS = 6000
-/** How long a start may take: AVAudioEngine waits on the hardware. */
-const START_TIMEOUT_MS = 5000
+/**
+ * How long a start may take: AVAudioEngine waits on the hardware, and AirPods
+ * playing music must first switch to their call profile. That switch took
+ * 5.0 s on 12 October 2026 — the microphone came up 10 ms after a 5-second
+ * limit had given up on it, and the button showed an error over a microphone
+ * that was working.
+ */
+const START_TIMEOUT_MS = 15_000
 
 interface NativeState {
   running: boolean
@@ -213,9 +219,27 @@ export function keepAppAwake(on: boolean): void {
   handler()?.postMessage({ action: 'stay-awake', on })
 }
 
-/** A tap the user can feel, from the app; nothing in a browser. */
-export function nativeHaptic(): void {
-  handler()?.postMessage({ action: 'haptic' })
+/**
+ * The phone's two haptic signals for the microphone, from the app; nothing in
+ * a browser (iOS gives a page no vibration). `tap`: your words are being taken
+ * down — a dictation has really begun, or hands-free heard "Control". `double`:
+ * the recording has ended and is on its way. Only two, so neither needs
+ * learning; anything tentative (speech heard, not yet known to be for Control)
+ * buzzes nothing, or every cough would.
+ */
+export type HapticPattern = 'tap' | 'double'
+
+/** Between the two taps of `double`: apart enough to feel as two, close enough to feel as one signal. */
+export const DOUBLE_TAP_GAP_MS = 140
+
+export function nativeHaptic(pattern: HapticPattern = 'tap'): void {
+  const post = handler()
+  if (!post) return
+  // The app plays one tap per message (NativeMicrophone.swift), so a pattern is
+  // made here, by timing, and needs no new build of the app.
+  post.postMessage({ action: 'haptic' })
+  if (pattern === 'double') setTimeout(() => handler()?.postMessage({ action: 'haptic' }), DOUBLE_TAP_GAP_MS)
+  recordMobileEvent('haptic', { pattern })
 }
 
 /** The native microphone, opened. */

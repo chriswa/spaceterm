@@ -95,3 +95,34 @@ describe('a composer’s dictation still running', () => {
     expect(bridge.callsTo('dictation.start')).toHaveLength(0)
   })
 })
+
+describe('a tap, from press to sound', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('shows the microphone connecting at once, not orange until sound arrives, and a second tap gives up', async () => {
+    const dictation = await import('./dictation')
+    vi.spyOn(dictation.Dictation, 'begin').mockReturnValue(new Promise(() => {}) as never)
+    vi.spyOn(dictation, 'whenHearing').mockReturnValue(new Promise(() => {}) as never)
+    const { container } = render(<MicButton />)
+    fireEvent.click(screen.getByRole('button', { name: /^Talk to Control/ }))
+    expect(container.querySelector('.m-mic--connecting')).not.toBeNull()
+    expect(container.querySelector('.m-mic--hearing')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Starting the microphone.*tap to give up/ }))
+    expect(container.querySelector('.m-mic--off')).not.toBeNull()
+  })
+
+  it('shows a failure in red until a tap, which tries again', async () => {
+    const dictation = await import('./dictation')
+    vi.spyOn(dictation.Dictation, 'begin').mockReturnValue({} as never)
+    const hearing = vi.spyOn(dictation, 'whenHearing').mockRejectedValueOnce(new Error("The app's microphone did not start"))
+    hearing.mockReturnValue(new Promise(() => {}) as never)
+    const { container } = render(<MicButton />)
+    fireEvent.click(screen.getByRole('button', { name: /^Talk to Control/ }))
+    await screen.findByRole('alert')
+    expect(container.querySelector('.m-mic--error')).not.toBeNull()
+    expect(screen.getByRole('alert').textContent).toMatch(/did not start/)
+    fireEvent.click(screen.getByRole('button', { name: /Failed — tap to try again/ }))
+    expect(container.querySelector('.m-mic--connecting')).not.toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})

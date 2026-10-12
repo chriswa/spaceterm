@@ -11,7 +11,12 @@ import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
 import { installHeldMicrophone } from './held-microphone'
 import { installStayAwake } from './stay-awake'
-import { installHandsFree } from './hands-free'
+import { installHandsFree, useHandsFree } from './hands-free'
+import { installControlTones } from './control-tones'
+import { playCue } from './cues'
+import { Dictation } from './dictation'
+import { useDictationSession } from './dictation-session'
+import { thinkingCueScope } from '@/lib/thinking-cue'
 import { phoneDevice } from './device'
 import { mobileEvents, recordMobileEvent } from './mobile-events'
 import { installLifecycleEvents, installNativeEventBridge } from './lifecycle-events'
@@ -97,6 +102,15 @@ if (!token) {
     installStayAwake()
     // Listens for "Control" on the held microphone; see hands-free.ts.
     installHandsFree(window.api)
+    // The sonar carries on while Control's voice is made, and its turns end
+    // with a tone when it says nothing or fails — where replies are Aloud.
+    thinkingCueScope.alsoSynthesizing = true
+    installControlTones({
+      play: playCue,
+      userTalking: () => Dictation.live > 0 || useDictationSession.getState().mic.kind !== 'idle'
+        || useHandsFree.getState().phase === 'hearing' || useHandsFree.getState().phase === 'sending',
+      now: () => performance.now(),
+    })
     // Control speaks here, not on the Mac, while this phone holds it.
     startSpeechPlayer(window.api.remoteSpeech, (message) => window.api.log(message))
     const { MobileApp } = await import('./MobileApp')

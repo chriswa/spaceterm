@@ -30,10 +30,12 @@ const log = (message: string) => window.api?.log(`[dictation] ${message}`)
 
 /**
  * What every dictation on the page is doing, for the mark around the
- * Dynamic Island (MicIndicator.tsx): `capturing` while audio is going to the
- * transcriber, `transcribing` while the words are being waited for. A
- * microphone merely held open — hands-free mode listening for "Control" —
- * is neither.
+ * Dynamic Island (MicIndicator.tsx) and the microphone button's orange:
+ * `capturing` while audio is going to the transcriber — from its first block,
+ * not from the microphone opening, which over AirPods can be seconds earlier
+ * (an orange button then invited talking into nothing) — and `transcribing`
+ * while the words are being waited for. A microphone merely held open —
+ * hands-free mode listening for "Control" — is neither.
  */
 export const useMicActivity = create<{ capturing: number; transcribing: number }>(() => ({ capturing: 0, transcribing: 0 }))
 const bump = (key: 'capturing' | 'transcribing', by: number) =>
@@ -137,6 +139,8 @@ export class Dictation {
   /** Abandoned: the session, whenever it arrives, is to be thrown away. */
   private cancelled = false
   private readonly stats = new AudioStats()
+  /** Counted in `useMicActivity.capturing`: sound has arrived. */
+  private counted = false
   private readonly began = performance.now()
   /** Resolves with the first block of sound — the moment it is safe to talk. */
   readonly audioArrived: Promise<void>
@@ -155,7 +159,6 @@ export class Dictation {
   ) {
     this.audioArrived = new Promise((resolve) => { this.arrived = resolve })
     Dictation.live++
-    bump('capturing', 1)
     const backlog = options.backlog?.()
     if (backlog && backlog.length > 0) {
       this.queued.push(backlog)
@@ -185,6 +188,10 @@ export class Dictation {
       if (this.stats.blocks === 0) {
         log(`first audio after ${Math.round(performance.now() - this.began)}ms (${capture.describe()})`)
         recordMobileEvent('dictation-audio', { afterMs: Math.round(performance.now() - this.began) })
+        if (!this.counted && !this.stopped) {
+          this.counted = true
+          bump('capturing', 1)
+        }
         this.arrived()
       }
       this.stats.push(block)
@@ -322,7 +329,7 @@ export class Dictation {
     if (this.stopped) return
     this.stopped = true
     Dictation.live--
-    bump('capturing', -1)
+    if (this.counted) bump('capturing', -1)
     window.clearInterval(this.timer)
     this.unlisten()
     this.capture.release(broken)

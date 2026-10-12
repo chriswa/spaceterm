@@ -3,7 +3,7 @@ import { conversationLeft, micLook, type MicInputs } from './mic-button'
 
 const QUIET: MicInputs = {
   error: false, own: 'idle', composer: 'idle', capturing: false, transcribing: false,
-  hold: 'off', handsFree: 'off', conversation: false,
+  hold: 'off', handsFree: 'off', conversation: false, checking: false,
 }
 
 describe('what the microphone looks like', () => {
@@ -12,6 +12,15 @@ describe('what the microphone looks like', () => {
     expect(micLook({ ...QUIET, hold: 'preparing' })).toBe('preparing')
     expect(micLook({ ...QUIET, hold: 'held', handsFree: 'listening' })).toBe('armed')
     expect(micLook({ ...QUIET, hold: 'held', handsFree: 'listening', conversation: true })).toBe('conversation')
+    // Speech heard, its check under way: neither the armed look nor yet orange.
+    expect(micLook({ ...QUIET, hold: 'held', handsFree: 'listening', checking: true })).toBe('checking')
+  })
+
+  it('is not orange until sound arrives: a tap first shows the microphone connecting, then retrying', () => {
+    expect(micLook({ ...QUIET, own: 'starting' })).toBe('connecting')
+    expect(micLook({ ...QUIET, composer: 'starting' })).toBe('connecting')
+    expect(micLook({ ...QUIET, own: 'retrying' })).toBe('retrying')
+    expect(micLook({ ...QUIET, own: 'starting', hold: 'held', handsFree: 'listening' })).toBe('connecting')
   })
 
   it('is orange whenever a voice is leaving the phone, whatever started it', () => {
@@ -32,7 +41,6 @@ describe('what the microphone looks like', () => {
 
   it('lets hearing outrank waiting, and an error outrank everything', () => {
     expect(micLook({ ...QUIET, capturing: true, transcribing: true })).toBe('hearing')
-    expect(micLook({ ...QUIET, own: 'starting' })).toBe('starting')
     expect(micLook({ ...QUIET, error: true, capturing: true })).toBe('error')
   })
 })

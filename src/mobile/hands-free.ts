@@ -2,9 +2,10 @@ import { create } from 'zustand'
 import type { DictationApi, HandsFreeApi } from '../shared/api'
 import type { HandsFreeTuning } from '../shared/protocol'
 import { playCue, quietForMs, type Cue } from './cues'
+import { noteUserInterrupted } from './control-tones'
 import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, holdsMicrophone, onHoldStateChange, type Capture } from './held-microphone'
-import { nativeHaptic, nativeSpeech } from './native-microphone'
+import { nativeHaptic, nativeSpeech, type HapticPattern } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
 import { nativePlayback } from './speech-player'
 import { Downsampler, pcmToBase64 } from './pcm'
@@ -25,12 +26,12 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * Wispr), whether its first word is "control". Only "Control" said first
  * counts; the word anywhere else in a sentence does not.
  *
- * On a match the phone taps (a haptic, in the app) and the microphone button
+ * On a match the phone taps once (a haptic, in the app) and the microphone button
  * turns orange, and an ordinary Wispr dictation opens on the microphone that is
  * already open — fed everything said since the first syllable, out of the
  * listener's buffer, then live. So nothing waits on the check: it is
- * retroactive. A start tone would land mid-sentence, in the recording; the end
- * tone is the confirmation that it was heard and sent.
+ * retroactive. A start tone would land mid-sentence, in the recording; two
+ * taps at the end are the confirmation that it was heard and sent.
  *
  * It ends at a pause, when the server's turn model (Smart Turn,
  * src/server/turn-detector.ts) says the speaker sounds finished; or when a
@@ -69,9 +70,11 @@ export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
  * dictation without it — open until neither side has spoken for
  * `conversationMs`. `secondsLeft`: how long it has left, whole seconds,
  * rounded up — full while anyone is speaking, since that holds it.
+ * `checking`: speech was heard and is being checked on the Mac — for "Control",
+ * or for being words — and nothing has been decided yet.
  */
-export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null }>(
-  () => ({ phase: 'off', conversation: false, secondsLeft: null }),
+export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean }>(
+  () => ({ phase: 'off', conversation: false, secondsLeft: null, checking: false }),
 )
 
 /**
@@ -102,7 +105,7 @@ export interface HandsFreeDeps {
   quietForMs(): number
   playCue(cue: Cue): void
   /** A tap the user can feel: the wake word was heard. Nothing, where there is no way to. */
-  haptic(): void
+  haptic(pattern: HapticPattern): void
   /** A dictation on the held microphone. */
   beginDictation(options: DictationOptions): Promise<HandsFreeDictation>
   /** Whether some other dictation is capturing on this page. */
@@ -137,7 +140,10 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
   record: (kind, detail) => recordMobileEvent(kind, detail),
   nativeSpeech: () => ({ playing: nativePlayback.playing(), outputDb: nativePlayback.outputDb(), voiceProcessing: nativeSpeech.voiceProcessing() }),
   duckSpeech: (on) => nativeSpeech.duck(on),
-  interruptControl: () => window.api.receptionist.stop(),
+  interruptControl: () => {
+    noteUserInterrupted()
+    window.api.receptionist.stop()
+  },
 })
 
 /** While the page is hidden, how often to note that audio is still arriving. */
@@ -376,7 +382,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
    */
   const respond = async ({ start, spokeMs }: WakeCandidate, interrupted = false, wakeWordStart = true) => {
     setPhase('hearing')
-    deps.haptic()
+    deps.haptic('tap')
     openConversation()
     let dictation: HandsFreeDictation | undefined
     try {
@@ -401,7 +407,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       utterance = undefined
       utteranceDictation = undefined
       endUtterance = undefined
-      deps.playCue('listeningFinished')
+      deps.haptic('double')
       record('hands-free-ended', { reason })
       if (reason === 'lost') {
         log('the microphone stopped mid-dictation')
@@ -420,11 +426,10 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       }
       log(`${text.length} chars to Control (ended on ${reason}${interrupted ? ', having cut it off' : ''})`)
       api.handsFree.say(text, interrupted)
-      deps.playCue('pasted')
     } catch (err) {
       log(`dictation failed: ${err instanceof Error ? err.message : String(err)}`)
       dictation?.cancel()
-      deps.playCue('transcriptionFailed')
+      deps.playCue('error')
       if (interrupted) carryOn()
     } finally {
       utterance = undefined
@@ -499,8 +504,10 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       log(`speech after ${candidate.noSpeechBeforeMs}ms without speech — checking its start ${mode === 'speech' ? 'for words' : `for "${WAKE_WORD}"`}`)
       const overControl = deps.nativeSpeech().playing
       checking++
+      useHandsFree.setState({ checking: true })
       void check(candidate.clip, mode).then(({ match, wakeWord }) => {
         checking--
+        if (checking === 0) useHandsFree.setState({ checking: false })
         log(match
           ? mode === 'speech' ? 'words, in the conversation window: dictating from its start' : 'it starts with the wake word: dictating from its start'
           : mode === 'speech' ? 'not words (a cough, filler, nothing)' : 'not the wake word')
@@ -613,6 +620,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     unlisten?.()
     capture = undefined
     closeConversation('microphone')
+    useHandsFree.setState({ checking: false })
     setPhase('off')
   }
 }

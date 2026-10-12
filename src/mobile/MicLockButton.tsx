@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
-import { nativeHaptic, nativeMicrophoneAvailable } from './native-microphone'
+import { nativeMicrophoneAvailable } from './native-microphone'
 
 /** Whether the microphone is held open (held-microphone.ts), as it changes. */
 export function useHoldState(): HoldState {
@@ -29,10 +29,8 @@ export function MicLockButton() {
       className={`m-bar__button m-mic-lock m-mic-lock--${hold}`}
       aria-label={label}
       aria-pressed={on}
-      onClick={() => {
-        nativeHaptic()
-        setHoldMicrophone(!on)
-      }}
+      // No haptic: a tap means your words are being taken down (native-microphone.ts). The press shows instead.
+      onClick={() => setHoldMicrophone(!on)}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <rect x="5" y="11" width="14" height="10" rx="2" />

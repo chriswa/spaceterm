@@ -217,13 +217,25 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-detail__table .m-detail__name { text-align: left; }
 .m-detail__when { color: var(--m-dim); }
 
+/* A press, the instant a finger lands (press-feedback.ts): the button sinks
+   and brightens before anything it starts has happened. */
+.m-bar button { transition: transform 120ms ease-out, filter 120ms ease-out, background-color 150ms, color 150ms, box-shadow 150ms; }
+.m-bar button[data-pressed] {
+  transform: scale(0.86);
+  filter: brightness(1.6);
+  transition: transform 30ms, filter 30ms;
+}
+
 /* The microphone (MicButton.tsx), the middle of the bar. Its look is the
    microphone's alone, however the listening started — never what Control is
-   doing. Grey is closed; white is hands-free holding it, with
-   nothing leaving the phone; a blue ring is the conversation window, draining
-   as its quiet runs out; orange is your voice leaving the phone, solid with
-   its level while it goes and pulsing while the words are waited for. The
-   orange is the MIC label's (MicIndicator.tsx) and iOS's own dot. */
+   doing; each look is listed with its meaning in mic-button.ts. Grey is
+   closed; white is hands-free holding it, with nothing leaving the phone,
+   brightening while what it heard is checked; a blue ring is the conversation
+   window, draining as its quiet runs out; a spinning arc is a tap taken and
+   the microphone starting (amber: trying again); orange is your voice leaving
+   the phone, solid with its level while it goes and pulsing while the words
+   are waited for; red with "!" is a failure. The orange is the MIC label's
+   (MicIndicator.tsx) and iOS's own dot. */
 .m-mic {
   position: relative;
   flex: none;
@@ -245,8 +257,28 @@ textarea, input, [contenteditable="true"], .cm-content {
   -webkit-touch-callout: none;
   transition: background-color 150ms, color 150ms, box-shadow 150ms;
 }
-.m-mic:active { filter: brightness(1.25); }
-.m-mic--starting { color: var(--m-text); }
+/* A tap taken, the microphone starting: don't talk yet. An arc chases round
+   the edge — white, or amber while it tries a second time. */
+.m-mic--connecting,
+.m-mic--retrying { background: #000; color: #fff; }
+.m-mic--retrying { color: #f9e2af; }
+.m-mic__spinner {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  transform-origin: 50% 50%;
+  animation: m-mic-spin 0.8s linear infinite;
+}
+.m-mic__spinner circle { fill: none; stroke: currentColor; stroke-width: 3.5; stroke-linecap: round; }
+@keyframes m-mic-spin { to { transform: rotate(360deg); } }
+/* Hands-free heard speech and is asking the Mac whether it was for Control. */
+.m-mic--checking {
+  background: #000;
+  color: #fff;
+  box-shadow: inset 0 0 0 3.5px #fff;
+}
 /* Hands-free on, but not holding the microphone yet: outlined, pulsing. */
 .m-mic--preparing {
   background: #000;
@@ -300,7 +332,8 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-mic--hearing,
 .m-mic--transcribing { background: var(--m-listening); color: #11111b; }
 .m-mic--transcribing { animation: m-mic-pulse 1s ease-in-out infinite; }
-.m-mic--error { box-shadow: inset 0 0 0 2px var(--m-danger); color: var(--m-danger); }
+.m-mic--error { background: var(--m-danger); color: #11111b; }
+.m-mic__alert { font-size: 26px; font-weight: 800; line-height: 1; }
 @keyframes m-mic-pulse { 50% { opacity: 0.45; } }
 /* The voice going out, a bar each, from `--m-level` (mic-level.ts) set on the
    button once a frame. Different heights for the same level, so it reads as a

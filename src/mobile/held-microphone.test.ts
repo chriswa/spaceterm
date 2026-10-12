@@ -194,7 +194,7 @@ describe('bringing the hold back', () => {
 })
 
 describe('the hold, as the button and the ear know it', () => {
-  it('prepares, sounds when it takes the microphone, and sounds again when it lets go', async () => {
+  it('prepares, takes the microphone, and lets it go — silently, the lock button showing it', async () => {
     const browser = fakeBrowser('AirPods Pro')
     const held = await load()
     const states: string[] = []
@@ -206,7 +206,7 @@ describe('the hold, as the button and the ear know it', () => {
     expect(held.holdState()).toBe('held')
     held.setHoldMicrophone(false)
     expect(states).toEqual(['preparing', 'held', 'off'])
-    expect(browser.cues).toEqual(['holdEngaged', 'holdReleased'])
+    expect(browser.cues).toEqual([])
   })
 
   it('stays preparing, and silent, without a headset to hold', async () => {

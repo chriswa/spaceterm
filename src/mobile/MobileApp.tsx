@@ -18,6 +18,7 @@ import { useDictationSession } from './dictation-session'
 import { ControlButton } from './ControlButton'
 import { MicLockButton } from './MicLockButton'
 import { BottomBar } from './BottomBar'
+import { installPressFeedback } from './press-feedback'
 import { MicIndicator } from './MicIndicator'
 import { ControlTranscript } from '@/components/ControlTranscript'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
@@ -83,6 +84,8 @@ export function MobileApp({ Canvas = App }: { Canvas?: ComponentType } = {}) {
   ], [transcriptOpen, toolbarSheetOpen])
   useSwipeToDismiss(swipeScreens)
   useVisualViewportVars()
+  // Every press in the bottom bar shows the instant it lands; see press-feedback.ts.
+  useEffect(() => installPressFeedback(document, '.m-bar button'), [])
 
   /**
    * Focused inside the tap that opens the composer, so iOS raises the keyboard

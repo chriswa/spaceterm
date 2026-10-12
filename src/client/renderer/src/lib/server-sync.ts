@@ -11,7 +11,7 @@ import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
 import { playSpeechCue } from './speech-cues'
-import { setControlThinking } from './thinking-cue'
+import { setControlThinking, thinkingCueScope } from './thinking-cue'
 import { showToast } from './toast'
 import { pokeFrames } from './frame-policy'
 import type { CreateOptions, SoundName } from '../../../../shared/protocol'
@@ -151,8 +151,8 @@ export async function initServerSync(onBeforeNodeUpdate?: NodeUpdateInterceptor)
   // An echo while Control waits on the model (see thinking-cue.ts), but only
   // where Control is heard. Derived from the store rather than from the status
   // event, because a hand-off or a mute mid-thought arrives as a holder change.
-  setControlThinking(isThinkingWithinEarshot(useReceptionistStore.getState()))
-  cleanupFns.push(useReceptionistStore.subscribe((s) => setControlThinking(isThinkingWithinEarshot(s))))
+  setControlThinking(isThinkingWithinEarshot(useReceptionistStore.getState(), thinkingCueScope.alsoSynthesizing))
+  cleanupFns.push(useReceptionistStore.subscribe((s) => setControlThinking(isThinkingWithinEarshot(s, thinkingCueScope.alsoSynthesizing))))
   cleanupFns.push(() => setControlThinking(false))
 
   // The bridge replays each of these on subscribe — they are not in

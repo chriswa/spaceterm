@@ -4,6 +4,9 @@ import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { Dictation, useMicActivity, whenHearing } from './dictation'
 import { useDictationSession } from './dictation-session'
 import { playCue, primeCues } from './cues'
+import { nativeHaptic } from './native-microphone'
+import { recordMobileEvent } from './mobile-events'
+import { noteUserInterrupted } from './control-tones'
 import { useHoldState } from './MicLockButton'
 import { useHandsFree, type HandsFreePhase } from './hands-free'
 import { nativeMicrophoneAvailable } from './native-microphone'
@@ -29,11 +32,12 @@ import { outputKind, useAudioOutput, type OutputKind } from './audio-output'
  * `onReopenComposer` is given; otherwise the tap only says so.
  */
 
-const ERROR_SHOWN_MS = 4000
+/** How long a failure stays on the button, red, unless a tap tries again first. */
+const ERROR_SHOWN_MS = 8000
 /** The conversation window's ring: its radius in a 52-unit box, inside the button's edge. */
 const RING_R = 24
 
-type Mic = { kind: 'idle' } | { kind: 'starting' } | { kind: 'listening'; dictation: Dictation } | { kind: 'sending' }
+type Mic = { kind: 'idle' } | { kind: 'starting' } | { kind: 'retrying' } | { kind: 'listening'; dictation: Dictation } | { kind: 'sending' }
 
 export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void }) {
   /** An answer playing or on its way, which a tap cuts off. Never shown. */
@@ -48,13 +52,17 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
   const capturing = useMicActivity((s) => s.capturing > 0)
   const transcribing = useMicActivity((s) => s.transcribing > 0)
   const composer = useDictationSession((s) => s.mic.kind)
+  const checking = useHandsFree((s) => s.checking)
   const output = useAudioOutput()
-  const look = micLook({ error: error !== null, own: mic.kind, composer, capturing, transcribing, hold, handsFree, conversation })
+  const look = micLook({ error: error !== null, own: mic.kind, composer, capturing, transcribing, hold, handsFree, conversation, checking })
 
   // Never leave the microphone open behind a button that has gone.
   const micRef = useRef(mic)
   micRef.current = mic
+  /** Bumped by a tap that gives up on a start, and on unmount: a dictation that arrives after is cancelled. */
+  const startNumber = useRef(0)
   useEffect(() => () => {
+    startNumber.current++
     const m = micRef.current
     if (m.kind === 'listening') m.dictation.cancel()
   }, [])
@@ -82,8 +90,8 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
     return () => cancelAnimationFrame(frame)
   }, [look])
 
-  const fail = (cue: 'captureFailed' | 'transcriptionFailed', err: unknown) => {
-    playCue(cue)
+  const fail = (err: unknown) => {
+    playCue('error')
     setError(err instanceof Error ? err.message : String(err))
     setMic({ kind: 'idle' })
   }
@@ -94,35 +102,68 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
     // A press over an answer is an interruption: stop it, then listen.
     if (answering) {
       // Stopped, not let go of: the user is about to talk to it.
+      noteUserInterrupted()
       window.api.receptionist.stop()
     }
+    const number = ++startNumber.current
     setMic({ kind: 'starting' })
-    try {
-      // Begun here, inside the tap, or iOS will not let it record.
-      const dictation = await whenHearing(Dictation.begin(window.api.dictation, { forControl: true }))
-      setMic({ kind: 'listening', dictation })
-      playCue('listeningStarted')
-    } catch (err) {
-      fail('captureFailed', err)
+    // Begun here, inside the tap, or iOS will not let it record.
+    let pending = Dictation.begin(window.api.dictation, { forControl: true })
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const dictation = await whenHearing(pending)
+        if (number !== startNumber.current) {
+          dictation.cancel()
+          return
+        }
+        setMic({ kind: 'listening', dictation })
+        // Felt the moment sound is really arriving: talk now.
+        nativeHaptic('tap')
+        return
+      } catch (err) {
+        if (number !== startNumber.current) return
+        const message = err instanceof Error ? err.message : String(err)
+        // The app's own microphone needs no tap, so it can be tried again
+        // without one: the first start may have lost a race with AirPods
+        // changing profile, or a stalled engine.
+        if (attempt === 1 && nativeMicrophoneAvailable()) {
+          window.api?.log(`[mic-button] start failed (${message}); trying once more`)
+          recordMobileEvent('mic-button-retry', { error: message })
+          setMic({ kind: 'retrying' })
+          pending = Dictation.begin(window.api.dictation, { forControl: true })
+          continue
+        }
+        recordMobileEvent('mic-button-failed', { error: message, attempts: attempt })
+        fail(err)
+        return
+      }
     }
   }
 
+  /** A tap while the microphone is still starting: give up on it. */
+  const abandon = () => {
+    startNumber.current++
+    window.api?.log('[mic-button] start abandoned by a tap')
+    recordMobileEvent('mic-button-abandoned', {})
+    setMic({ kind: 'idle' })
+  }
+
   const send = async (dictation: Dictation) => {
-    playCue('listeningFinished')
+    // Felt, at once: the recording is over and on its way.
+    nativeHaptic('double')
     setMic({ kind: 'sending' })
     try {
       const text = (await dictation.finish()).trim()
       if (!text) {
-        fail('transcriptionFailed', new Error("Didn't catch that — tap to try again."))
+        fail(new Error("Didn't catch any words — tap to try again."))
         return
       }
       // Into its transcript, if that is open, as typing there would.
       window.api.receptionist.say(text)
       useControlTranscriptStore.getState().addPending(text)
-      playCue('pasted')
       setMic({ kind: 'idle' })
     } catch (err) {
-      fail('transcriptionFailed', err)
+      fail(err)
     }
   }
 
@@ -134,6 +175,7 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
     if (reopens) onReopenComposer()
     else if (elsewhere) return
     else if (mic.kind === 'idle') void listen()
+    else if (mic.kind === 'starting' || mic.kind === 'retrying') abandon()
     else if (mic.kind === 'listening') void send(mic.dictation)
   }
 
@@ -153,7 +195,9 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
         ref={buttonRef}
         className={`m-mic m-mic--${look}`}
         aria-label={label}
-        disabled={mic.kind === 'starting' || mic.kind === 'sending'}
+        // Not `disabled` while starting: a disabled button takes no press, so it
+        // could not show one, and a tap then gives up on the start.
+        aria-disabled={mic.kind === 'sending'}
         onClick={onTap}
       >
         {look === 'conversation' && (
@@ -163,8 +207,16 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
               strokeDashoffset={100 * (1 - conversationLeft(secondsLeft, fullest.current))} />
           </svg>
         )}
-        {look === 'starting' ? '…' : look === 'hearing' ? (
+        {(look === 'connecting' || look === 'retrying') && (
+          // A tap was taken and the microphone is on its way: an arc chasing round the edge.
+          <svg className="m-mic__spinner" viewBox="0 0 52 52" aria-hidden="true">
+            <circle cx="26" cy="26" r={RING_R} pathLength="100" strokeDasharray="28 72" />
+          </svg>
+        )}
+        {look === 'hearing' ? (
           <span className="m-mic__bars" aria-hidden="true"><i /><i /><i /><i /></span>
+        ) : look === 'error' ? (
+          <span className="m-mic__alert" aria-hidden="true">!</span>
         ) : <MicIcon locked={handsFreeOn} />}
         {output && (
           // Where sound goes now, as iOS routes it: shown so a wrong route can be seen.
@@ -187,7 +239,10 @@ function micLabel({ look, own, composer, handsFree, secondsLeft, tap }: {
   tap: string
 }): string {
   switch (look) {
-    case 'starting': return 'Starting the microphone'
+    case 'connecting': return 'Starting the microphone — wait for orange to talk; tap to give up'
+    case 'retrying': return 'The microphone did not start; trying once more — tap to give up'
+    case 'checking': return `Heard something — checking whether it was for Control. ${tap}`
+    case 'error': return `Failed — tap to try again`
     case 'hearing':
       if (own === 'listening') return 'Listening — tap to send'
       if (composer === 'listening') return tap
