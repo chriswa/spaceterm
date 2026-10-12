@@ -12,6 +12,17 @@ import { showToast } from '../lib/toast'
  */
 export type UpdateKind = 'restart' | 'install' | 'reload'
 
+/**
+ * Each of them takes this client away until it comes back by itself, and the
+ * page is blocked meanwhile (UpdateBlocker.tsx). Control goes Away first, so
+ * nothing is said to a device that has stopped listening. A no-op on the
+ * server when this device does not hold it.
+ */
+function letGoOfControl(kind: UpdateKind): void {
+  window.api.log(`[update] ${kind}: letting go of Control first`)
+  window.api.receptionist.hold('release')
+}
+
 interface UpdateActionsState {
   running: Record<UpdateKind, boolean>
   /** Restart the server. It reloads every client once it is back; only a failure comes back. */
@@ -31,7 +42,7 @@ export const useUpdateActionsStore = create<UpdateActionsState>((set, get) => {
     restart: async () => {
       if (get().running.restart) return
       mark('restart', true)
-      showToast('Restarting server…')
+      letGoOfControl('restart')
       try {
         await window.api.restartSpaceterm()
       } catch (err) {
@@ -42,7 +53,7 @@ export const useUpdateActionsStore = create<UpdateActionsState>((set, get) => {
     install: async () => {
       if (get().running.install) return
       mark('install', true)
-      showToast('Installing the app…')
+      letGoOfControl('install')
       try {
         const outcome = await window.api.installMobileApp()
         if (outcome.ok) return
@@ -55,10 +66,19 @@ export const useUpdateActionsStore = create<UpdateActionsState>((set, get) => {
     reload: () => {
       if (get().running.reload) return
       mark('reload', true)
+      letGoOfControl('reload')
       requestAnimationFrame(() => requestAnimationFrame(() => window.location.reload()))
     }
   }
 })
+
+/**
+ * What the page is blocked for, if anything. An install outranks the others:
+ * it ends with the app itself replaced, and its screen says so.
+ */
+export function blockingUpdate(running: Record<UpdateKind, boolean>): UpdateKind | null {
+  return running.install ? 'install' : running.restart ? 'restart' : running.reload ? 'reload' : null
+}
 
 /** For tests: nothing under way. */
 export function resetUpdateActions(): void {

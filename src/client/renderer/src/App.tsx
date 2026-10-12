@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from './components/Canvas'
 import { ToastHost } from './components/ToastHost'
+import { UpdateBlocker } from './components/UpdateBlocker'
 import { showToast } from './lib/toast'
 import { RootNode } from './components/RootNode'
 import { TerminalCard, terminalSelectionGetters, terminalSearchOpeners, terminalSearchClosers } from './components/TerminalCard'
@@ -3022,6 +3023,7 @@ export function App() {
       )}
       {/* The phone draws its own, since this canvas is not always mounted there. */}
       {!presentTerminalsExternally && <ToastHost />}
+      {!presentTerminalsExternally && <UpdateBlocker />}
       {keycastEnabled && <KeycastOverlay />}
     </div>
   )

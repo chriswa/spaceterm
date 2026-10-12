@@ -24,6 +24,7 @@ import { ControlTranscript } from '@/components/ControlTranscript'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { SWIPE_SCREENS, useSwipeToDismiss, type SwipeScreen } from './swipe-dismiss'
 import { ToastHost } from '@/components/ToastHost'
+import { UpdateBlocker } from '@/components/UpdateBlocker'
 import { createGate, type Gate } from './gate'
 import { holdCanvas } from './canvas-lifecycle'
 
@@ -221,6 +222,7 @@ export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: C
           }
         />
       )}
+      <UpdateBlocker />
     </>
   )
 }

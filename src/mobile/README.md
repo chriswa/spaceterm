@@ -55,6 +55,11 @@ marches its ants: **↻** (restart
 the server), **Install the app** (the Mac builds and installs it:
 `src/server/mobile-install.ts`, the same `install.sh`) and **Reload client**
 (`updateActionsStore.ts`).
+Pressing any of the three, here or on the Mac, lets go of Control first
+(Away) and then puts up a screen that cannot be dismissed
+(`UpdateBlocker.tsx`) until the page goes: for a restart, until the new server
+answers and the page reloads; for an install, until iOS closes and relaunches
+the app. Only a failure takes it down, with a toast.
 These two sit after Help, where the desktop has fit-to-monitor, and only on the
 phone (`mobileOnly` in `toolbar/registry.tsx`). A reload is not asked for while
 a restart is, which reloads the page anyway, or while the app is behind, whose
