@@ -1011,9 +1011,16 @@ function returnBorrowedSize(nodeId: NodeId, why: string): void {
 /**
  * Archive a node and everything under it: the client's archive, and Control's
  * archive_agent. Returns how many nodes went.
+ *
+ * Every agent in the subtree is told to Control as ended here, not when its
+ * pty exits: the exit arrives after the surface has left the live roster, too
+ * late to say which agent it was, and an agent the user archived by hand was
+ * then one Control could neither read nor bring back.
  */
 function archiveNode(nodeId: NodeId): number {
   const subtree = stateManager.subtreeNodes(nodeId)
+  const inSubtree = new Set(subtree.map((node) => node.id))
+  const ending = receptionistAgents().filter((agent) => inSubtree.has(agent.nodeId))
   // Close any agent-meta branches in the subtree first, so their cards are
   // torn down by their owner rather than swept into the archive entry.
   for (const node of subtree) {
@@ -1025,6 +1032,7 @@ function archiveNode(nodeId: NodeId): number {
     releaseNodeResources(node)
   }
   stateManager.archiveSubtree(nodeId)
+  for (const agent of ending) receptionist?.agentEnded(agent, true)
   return subtree.length
 }
 
