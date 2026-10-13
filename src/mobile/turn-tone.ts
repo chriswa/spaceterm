@@ -18,8 +18,12 @@
  * Each dictation's answers are recorded as one `hands-free-turn-tone` line.
  */
 
-/** How often to ask while the speaker is quiet, in ms; 0 turns the turn tone off. */
-export const TURN_TONE_MS = 75
+/**
+ * How often to ask while the speaker is quiet, in ms; 0 turns the turn tone
+ * off. Off since October 12, 2026: it had served its purpose and was only in
+ * the way. 75 is the pace it was tuned at.
+ */
+export const TURN_TONE_MS = 0
 
 /** p = 0 sounds A3, p = 1 three octaves up at A6; whole semitones, so a change is a step you can hear. */
 const LOW_HZ = 220

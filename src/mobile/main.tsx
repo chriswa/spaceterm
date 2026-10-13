@@ -16,13 +16,14 @@ import { installDiagnostics } from './diagnostics'
 import { installMemoryProbe } from './memory-probe'
 import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
-import { installHeldMicrophone } from './held-microphone'
+import { installHeldMicrophone, onHoldStateChange } from './held-microphone'
 import { installStayAwake } from './stay-awake'
 import { followHandsFree, installDuckOthers } from './duck-others'
 import { DownlinkWatch, watchedTransport } from './downlink-watch'
 import { installHandsFree, useHandsFree } from './hands-free'
 import { installControlTones } from './control-tones'
-import { playCue } from './cues'
+import { playCue, playHandsFreeCue } from './cues'
+import { installReadyCue } from './ready-cue'
 import { Dictation } from './dictation'
 import { useDictationSession } from './dictation-session'
 import { thinkingCueScope } from '@/lib/thinking-cue'
@@ -151,6 +152,8 @@ if (!token) {
     followHandsFree()
     // Listens for "Control" on the held microphone; see hands-free.ts.
     installHandsFree(window.api)
+    // A tone as the hands-free switch turns white: ready to listen.
+    installReadyCue(onHoldStateChange, () => playHandsFreeCue('handsFreeReady'))
     // The sonar carries on while Control's voice is made, and its turns end
     // with a tone when it says nothing or fails — where replies are Aloud.
     thinkingCueScope.alsoSynthesizing = true

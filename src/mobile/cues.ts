@@ -14,7 +14,9 @@
  *
  * Hands-free has tones of its own as well as its haptics, heard whatever
  * Replies is set to and through the Ring/Silent switch (`playHandsFreeCue`,
- * played by the app): `dictationStart`, two notes up, as its words begin to
+ * played by the app): `handsFreeReady`, three soft steps up, as the
+ * microphone is held and listening after hands-free is turned on
+ * (ready-cue.ts); `dictationStart`, two notes up, as its words begin to
  * be taken down; `dictationEnd`, two notes down, as they are sent; and
  * `conversationClosed`, three soft steps down, as the conversation window
  * runs out and "Control" is needed again; and `controlShutdown`, an octave
@@ -32,22 +34,24 @@ import { controlMode, useReceptionistStore } from '@/stores/receptionistStore'
 import { recordMobileEvent } from './mobile-events'
 import { nativeCues } from './native-microphone'
 
-export type Cue = 'error' | 'nothingToSay' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown'
+export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown'
 
 /**
- * Hands-free's tones (`playHandsFreeCue`), beside its haptics: words being
- * taken down — two notes up; taken down and sent — two notes down; the
+ * Hands-free's tones (`playHandsFreeCue`), beside its haptics: ready to
+ * listen — three steps up, the conversation window's closing turned round;
+ * words being taken down — two notes up; taken down and sent — two notes down; the
  * conversation window running out — three steps down; and "Control,
  * shutdown" — an octave down, held low, unlike any of them. Asked for in
  * October 2026, to be heard whatever Replies is set to and whatever the
  * Ring/Silent switch says.
  */
-export type HandsFreeCue = 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown'
+export type HandsFreeCue = 'handsFreeReady' | 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   error: [[196, 0.20], [0, 0.07], [196, 0.30]],
   nothingToSay: [[784, 0.10], [0, 0.04], [523, 0.16]],
+  handsFreeReady: [[440, 0.08], [0, 0.03], [659, 0.08], [0, 0.03], [880, 0.18]],
   conversationClosed: [[880, 0.08], [0, 0.03], [659, 0.08], [0, 0.03], [440, 0.18]],
   dictationStart: [[659, 0.08], [0, 0.03], [988, 0.12]],
   dictationEnd: [[988, 0.08], [0, 0.03], [659, 0.12]],
@@ -55,7 +59,7 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
 }
 
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
-const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2 }
+const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2 }
 
 /** Replies are Aloud here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
 export function cuesAudible(): boolean {

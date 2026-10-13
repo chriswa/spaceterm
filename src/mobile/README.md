@@ -445,6 +445,7 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 
 | Sound | Means |
 |---|---|
+| three soft steps up | hands-free is ready: the microphone is held and listening — the switch has just turned white (`ready-cue.ts`) |
 | two notes up | hands-free has begun taking your words down |
 | two notes down | they have been taken down and sent |
 | three soft steps down | the conversation window closed; "Control" is needed again |
@@ -685,7 +686,8 @@ all up and play them together, loudly. Each Smart Turn verdict on the phone
 is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
 **Hearing the turn model.** To tune `turnThreshold` by ear, the turn tone
-(`TURN_TONE_MS` in `turn-tone.ts`, 75 — set it to 0 to turn it off) plays
+(`TURN_TONE_MS` in `turn-tone.ts`; off, at 0, since October 12 — 75 turns it
+on) plays
 Smart Turn's answers. While a dictation is being taken down and you have stopped
 talking — by the phone's voice-activity model, about 160 ms after your last
 word, so room noise does not count — Smart Turn is then asked that often and each answer plays as a short tone, pitched from A3 (p = 0) to
