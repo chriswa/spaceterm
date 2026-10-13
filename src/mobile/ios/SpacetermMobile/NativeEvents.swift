@@ -179,15 +179,42 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
     /// A launch, and how the last run ended. iOS ends a backgrounded app with no
     /// event at all — for memory, or because it was swiped away — so a previous
     /// run last seen in the background, not terminated, ended one of those ways.
+    /// An AirPods incident still open (NativeMicrophone.swift `openBadState`), kept across launches.
+    static let lastBadStateKey = "spaceterm.airpodsBadState"
+    private static let bootedAtKey = "spaceterm.bootedAt"
+
+    /**
+     * The iPhone was restarted since the app last ran: when, and whether an
+     * AirPods incident was still open then — the scenario where only a
+     * restart brought the AirPods back.
+     */
+    private func noteRestart() {
+        let defaults = UserDefaults.standard
+        let bootedAt = Date().addingTimeInterval(-ProcessInfo.processInfo.systemUptime)
+        let previous = defaults.object(forKey: Self.bootedAtKey) as? Date
+        defaults.set(bootedAt, forKey: Self.bootedAtKey)
+        guard let previous, abs(bootedAt.timeIntervalSince(previous)) > 60 else { return }
+        var detail: [String: Any] = ["bootedAt": clock.string(from: bootedAt), "previousBootedAt": clock.string(from: previous)]
+        if let open = defaults.dictionary(forKey: Self.lastBadStateKey) {
+            detail["openAirPodsIncident"] = open
+            defaults.removeObject(forKey: Self.lastBadStateKey)
+        }
+        record("iphone-restarted", detail)
+    }
+
     private func recordLaunch() {
         let defaults = UserDefaults.standard
-        record("app-launch", [
+        noteRestart()
+        var launch: [String: Any] = [
             "previousRun": defaults.string(forKey: Self.runStateKey) ?? "none",
             "previousLastAlive": defaults.string(forKey: Self.lastAliveKey) ?? "never",
             "ios": UIDevice.current.systemVersion,
             "nativeVersion": Bundle.main.object(forInfoDictionaryKey: "SpacetermNativeVersion") as? String ?? "",
             "session": Self.session(),
-        ])
+        ]
+        // An AirPods incident open when the last run ended — killed or relaunched mid-incident.
+        if let open = defaults.dictionary(forKey: Self.lastBadStateKey) { launch["openAirPodsIncident"] = open }
+        record("app-launch", launch)
         setRunState("foreground")
         markAlive()
     }

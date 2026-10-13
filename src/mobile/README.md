@@ -448,7 +448,7 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 | two notes up | hands-free has begun taking your words down |
 | two notes down | they have been taken down and sent |
 | three soft steps down | the conversation window closed; "Control" is needed again |
-| an octave down, held low | "Control, shutdown": Control is away until you say "Control" again |
+| an octave down, held low | "Let me turn this off" (or "Control, shutdown"): Control is away until you say "Control" again |
 
 ## Hands-free: "Control, …"
 
@@ -493,8 +493,15 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   that the server needs restarting; "Control" works as before meanwhile. Speech checks of two words or fewer are logged
   (`[hands-free] speech check heard …`), to find what the model hears in
   nothing at all.
-- **"Control, shutdown"** — or "shutdown" alone in the window — sends
-  Control away at once, for when someone in the room needs you. Nothing is
+- **"Let me turn this off"** sends Control away at once, for when someone
+  in the room needs you — and to them it sounds like you dealing with your
+  phone. It needs no "Control" first: speech whose first second the Mac hears
+  as "let me…" is watched until it ends (half a second's quiet, four seconds
+  at most), and the whole of it is checked, as the window's speech is; only
+  the phrase and nothing else counts. "Control, let me turn this off", the
+  phrase in the window, a whole message of it sent to Control, and the older
+  "Control, shutdown" (or "shutdown" alone in the window) all do the same.
+  Nothing is
   shut down: it is the transcript's **Away**, so Control stops speaking, and
   what it has to tell you waits for your return. The window closes there and
   then with a tone of its own (an octave down, held low), so nothing more is
@@ -503,7 +510,7 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   unless you had it on Silent, to tell you anything you missed. (Alone, it
   takes Control only when no device holds it, so a misheard wake word never
   takes it from another.) It is a fixed phrase, matched on the whole
-  dictation by the phone and the server (`src/shared/control-shutdown.ts`) —
+  of what was said by the phone and the server (`src/shared/control-shutdown.ts`) —
   never inside a longer request — and the model is only told it happened.
   Asking in other words ("Control, be quiet") still goes to the model, whose
   `go_quiet` sends it away the same way, but leaves the window to run out.
@@ -518,7 +525,9 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
 - **Nothing leaves the phone** until you start talking with nobody talking
   just before (`wake-listener.ts`). Only the first second of that goes to the Mac, where
   Voice Operator checks whether it starts with "control", with Apple's
-  on-device model (`POST /v1/wake-word?match=start`) — never Wispr. Audio is
+  on-device model (`POST /v1/wake-word?match=start`) — never Wispr; and when
+  that second was heard as "let me…", the rest of that one burst of speech,
+  to the same model, to tell whether it was "let me turn this off". Audio is
   otherwise only ever in an eight-second buffer in memory.
 - **Interrupting Control.** In the app, Control's voice is played by the app
   itself (`NativeMicrophone.swift`), through the microphone's own engine with
@@ -674,6 +683,17 @@ only if it is fresh; otherwise, or when a newer cue replaces it, a
 all up and play them together, loudly. Each Smart Turn verdict on the phone
 is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
+**Hearing the turn model.** To tune `turnThreshold` by ear, set `"turnToneMs": 75`
+in `~/.spaceterm/hands-free.json` (0 or absent turns it off; it takes effect
+at once). While a dictation is being taken down, Smart Turn is then asked
+that often and each answer plays as a short tone, pitched from A3 (p = 0) to
+A6 (p = 1) in semitones, held twice as long at or above the threshold
+(`turn-tone.ts`). The model takes 70–130 ms an answer, so that is the
+real pace. Each dictation's answers are one `hands-free-turn-tone` line,
+`samples` as [ms, p]; these asks are not in `voice-decisions.jsonl`.
+
+    jq -c 'select(.kind == "hands-free-turn-tone") | .detail' ~/.spaceterm/mobile-events.jsonl
+
     jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
     jq -c 'select(.kind | test("^cue"))' ~/.spaceterm/mobile-events.jsonl
 
@@ -694,6 +714,29 @@ are waited for. The microphone merely held open for hands-free shows nothing
 there. It uses only the strip above the island — iOS widens the island for Now
 Playing and the like, and a page cannot see that — so the island's top (an
 iPhone 17's) is the one measurement, in `mobile.css`.
+
+
+### AirPods incidents
+
+The AirPods' bad spells, and the iPhone restarts that ended them, are kept
+apart as well, in `~/.spaceterm/airpods-incidents.jsonl` — the same lines,
+written by the server (`isAirPodsIncident`, `src/server/mobile-events.ts`):
+
+- `airpods-bad-state` — a Bluetooth microphone that came up faster than
+  24 kHz without high quality on, or sent only digital silence. With what
+  came before: the rate, the previous start's rate, the inputs iOS offered,
+  seconds since the app launched and since the AirPods connected, whether
+  the session was given up first, high quality supported / enabled before
+  and after asking.
+- `airpods-recovered` — sound from it again, and how.
+- `iphone-restarted` — the app's first launch after a restart, from the
+  boot time (`NativeEvents.swift`), with any incident still open then: the
+  scenario where only a restart brought the AirPods back.
+- `app-launch` with an incident still open — the app killed or relaunched
+  mid-incident.
+
+Every microphone start, good or bad, is a `native-mic-start` in the main
+record with the same context, so a good one can be set beside a bad one.
 
 ## Running it
 

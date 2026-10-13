@@ -540,7 +540,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
          * one of hands-free's best sessions (01:45, October 13). Not for a
          * dictation, which must start at once.
          */
-        var highQuality: [String: Any] = ["asked": false]
+        var highQuality: [String: Any] = ["asked": false, "rateAtActivation": session.sampleRate]
+        if #available(iOS 26.0, *), let port = session.currentRoute.inputs.first, let bluetooth = port.bluetoothMicrophoneExtension {
+            highQuality["supportedAtActivation"] = bluetooth.highQualityRecording.isSupported
+            highQuality["enabledAtActivation"] = bluetooth.highQualityRecording.isEnabled
+        }
         if plan.headphones, #available(iOS 26.0, *), session.sampleRate > Self.voiceProcessingRate,
            isBluetooth(session.currentRoute.inputs.first) {
             highQuality["asked"] = true
@@ -555,6 +559,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                 highQuality["supported"] = bluetooth.highQualityRecording.isSupported
                 highQuality["enabled"] = bluetooth.highQualityRecording.isEnabled
             }
+            highQuality["rateAfter"] = session.sampleRate
         }
         let input = engine.inputNode
         /**
@@ -620,6 +625,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             up = mode
             lastError = nil
             if mode == .microphone {
+                noteMicrophoneStart(started, plan: plan, why: why)
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
                 events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "headphones": plan.headphones, "highQuality": started.highQuality, "released": plan.deactivateFirst, "route": NativeEvents.describeRoute(session.currentRoute)])
@@ -804,7 +810,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if let stall {
                 log("the microphone is stalled: \(stall.rawValue) for \(Int(Self.stallSeconds)) s, on \(inputName())")
                 let session = AVAudioSession.sharedInstance()
-                events.record("native-mic-stalled", ["why": stall.rawValue, "input": inputName(), "sampleRate": session.sampleRate, "voiceProcessing": voiceProcessing, "available": Self.describeInputs(session), "route": NativeEvents.describeRoute(session.currentRoute)])
+                let detail: [String: Any] = ["why": stall.rawValue, "input": inputName(), "sampleRate": session.sampleRate, "voiceProcessing": voiceProcessing, "available": Self.describeInputs(session), "route": NativeEvents.describeRoute(session.currentRoute)]
+                events.record("native-mic-stalled", detail)
+                if stall == .digitalSilence, Self.isBluetooth(session.currentRoute.inputs.first) {
+                    openBadState("a Bluetooth microphone sending only digital silence", detail)
+                }
             } else {
                 log("the microphone has sound again, after \(stallRestarts) restart(s)")
                 events.record("native-mic-sound-again", ["after": was?.rawValue ?? "", "restarts": stallRestarts, "input": inputName()])
@@ -822,6 +832,59 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         lastStallRestart = Date()
         events.record("native-mic-stall-restart", ["why": stall.rawValue, "attempt": stallRestarts, "inPlace": inPlace])
         scheduleRestart("a stalled microphone (\(stall.rawValue))", after: 0, inPlace: inPlace)
+    }
+
+    // MARK: - AirPods incidents
+
+    /**
+     * The record of the AirPods going bad, for telling good starts from bad
+     * ones and what came before each (src/mobile/README.md, "AirPods
+     * incidents"). A start on Bluetooth at more than 24 kHz, and a Bluetooth
+     * microphone sending only zeros, open an incident (`airpods-bad-state`);
+     * sound from it closes it (`airpods-recovered`). One still open is kept
+     * across launches (`NativeEvents.lastBadStateKey`), so an iPhone restart
+     * after it is recorded as one (`iphone-restarted`, NativeEvents.swift).
+     */
+    private var badState: [String: Any]?
+    private var lastHeadsetCameAt: Date?
+    private var lastMicrophoneRate: Double?
+    private let launchedAt = Date()
+
+    private func noteMicrophoneStart(_ started: Started, plan: Plan, why: String) {
+        let session = AVAudioSession.sharedInstance()
+        let input = session.currentRoute.inputs.first
+        var detail: [String: Any] = [
+            "why": why, "sampleRate": started.sampleRate, "previousRate": lastMicrophoneRate ?? 0,
+            "sinceLaunchS": Int(Date().timeIntervalSince(launchedAt)),
+            "sinceHeadsetCameS": lastHeadsetCameAt.map { Int(Date().timeIntervalSince($0)) } ?? -1,
+            "released": plan.deactivateFirst, "forDictation": forDictation, "headphones": plan.headphones,
+            "highQuality": started.highQuality, "options": session.categoryOptions.rawValue,
+            "available": Self.describeInputs(session), "input": input.map { "\($0.portName) (\($0.portType.rawValue))" } ?? "none",
+        ]
+        if #available(iOS 17.0, *) { detail["inputMuted"] = AVAudioApplication.shared.isInputMuted }
+        lastMicrophoneRate = started.sampleRate
+        events.record("native-mic-start", detail)
+        if Self.isBluetooth(input), session.sampleRate > Self.voiceProcessingRate,
+           (started.highQuality["enabled"] as? Bool) != true {
+            openBadState("a Bluetooth microphone came up at \(Int(session.sampleRate)) Hz", detail)
+        }
+    }
+
+    private func openBadState(_ reason: String, _ detail: [String: Any]) {
+        guard badState == nil else { return }
+        let at = ISO8601DateFormatter().string(from: Date())
+        badState = ["reason": reason, "at": at]
+        UserDefaults.standard.set(["reason": reason, "at": at], forKey: NativeEvents.lastBadStateKey)
+        var record = detail
+        record["reason"] = reason
+        events.record("airpods-bad-state", record)
+    }
+
+    private func closeBadState(_ how: String) {
+        guard let open = badState else { return }
+        badState = nil
+        UserDefaults.standard.removeObject(forKey: NativeEvents.lastBadStateKey)
+        events.record("airpods-recovered", ["how": how, "badState": open, "input": inputName(), "sampleRate": AVAudioSession.sharedInstance().sampleRate])
     }
 
     /// Every input iOS offers now: whether the AirPods are there at all, beside what the route says.
@@ -901,6 +964,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let (pcm, stall, heard) = capture.drain(stallSeconds: Self.stallSeconds)
         // Only real sound ends a stall: a restart resets the clock, which is not the same.
         if stall != nil || heard { noteStall(stall) }
+        if heard, stall == nil, badState != nil { closeBadState("sound from the microphone") }
         guard !pcm.isEmpty, let webView else { return }
         if unanswered >= Self.maxUnanswered {
             if !dropping {
@@ -1264,6 +1328,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                 ]
                 if let previous { detail["previous"] = NativeEvents.describeRoute(previous) }
                 self.events.record("audio-route-change", detail)
+                if why == .newDeviceAvailable { self.lastHeadsetCameAt = Date() }
                 self.sendState()
                 if self.wanted, !self.forDictation, why == .newDeviceAvailable || why == .oldDeviceUnavailable { self.noteHeadphones() }
                 if self.running, why == .newDeviceAvailable || why == .oldDeviceUnavailable {

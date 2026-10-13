@@ -3,12 +3,14 @@ import { MobileEventsLog } from './mobile-events'
 
 function setup(written = '') {
   const lines: Record<string, unknown>[] = []
+  const incidents: Record<string, unknown>[] = []
   const log = new MobileEventsLog({
     append: (text) => lines.push(...text.trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>)),
+    appendIncident: (text) => incidents.push(...text.trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>)),
     now: () => new Date('2026-10-05T12:00:00Z'),
     readTail: () => written,
   })
-  return { log, lines }
+  return { log, lines, incidents }
 }
 
 const event = (page: string, n: number, kind = 'visibility') => ({ t: '2026-10-05T11:59:59Z', page, n, kind, src: 'page' })
@@ -54,5 +56,18 @@ describe('MobileEventsLog', () => {
     log.write('nope', 'c')
     log.write([null, { kind: 'x' }, event('a', 0)], 'c')
     expect(lines).toHaveLength(1)
+  })
+
+  it('keeps the AirPods incidents, and the restarts after them, in a file of their own too', () => {
+    const { log, lines, incidents } = setup()
+    log.write([
+      event('a', 0, 'native-mic-start'),
+      { ...event('a', 1, 'airpods-bad-state'), detail: { reason: 'a Bluetooth microphone came up at 48000 Hz' } },
+      event('a', 2, 'iphone-restarted'),
+      { ...event('a', 3, 'app-launch'), detail: { previousRun: 'background' } },
+      { ...event('a', 4, 'app-launch'), detail: { openAirPodsIncident: { reason: 'x' } } },
+    ], 'c')
+    expect(lines).toHaveLength(5)
+    expect(incidents.map((l) => l.n)).toEqual([1, 2, 4])
   })
 })

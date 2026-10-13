@@ -16,6 +16,23 @@ import { SOCKET_DIR, type MobileEventRecord } from '../shared/protocol'
 
 export const MOBILE_EVENTS_PATH = join(SOCKET_DIR, 'mobile-events.jsonl')
 
+/**
+ * The AirPods' bad spells, and the iPhone restarts that ended them, apart
+ * from everything else: ~/.spaceterm/airpods-incidents.jsonl, the same lines
+ * as in the record. Each is an `airpods-bad-state` (with what came before
+ * the start: rate, inputs, how long since launch and since the AirPods came),
+ * an `airpods-recovered`, an `iphone-restarted` (with any incident still open
+ * when it happened), or an `app-launch` with one still open.
+ */
+export const AIRPODS_INCIDENTS_PATH = join(SOCKET_DIR, 'airpods-incidents.jsonl')
+const INCIDENT_KINDS = new Set(['airpods-bad-state', 'airpods-recovered', 'iphone-restarted'])
+
+/** Whether a line belongs in the AirPods incidents file too. */
+export function isAirPodsIncident(event: { kind: string; detail?: unknown }): boolean {
+  if (INCIDENT_KINDS.has(event.kind)) return true
+  return event.kind === 'app-launch' && typeof event.detail === 'object' && event.detail !== null && 'openAirPodsIncident' in event.detail
+}
+
 /** Bounds on what one batch may write: the phone is trusted, but not to be sane forever. */
 const MAX_BATCH = 500
 const MAX_LINE = 8000
@@ -25,6 +42,8 @@ const TAIL_BYTES = 512 * 1024
 
 export interface MobileEventsDeps {
   append(text: string): void
+  /** Lines for the AirPods incidents file (`AIRPODS_INCIDENTS_PATH`). */
+  appendIncident(text: string): void
   now(): Date
   /** The end of what is already written, or '' when there is none. */
   readTail(): string
@@ -49,6 +68,7 @@ function readTail(): string {
 
 const REAL_DEPS: MobileEventsDeps = {
   append: (text) => appendFile(MOBILE_EVENTS_PATH, text, () => {}),
+  appendIncident: (text) => appendFile(AIRPODS_INCIDENTS_PATH, text, () => {}),
   now: () => new Date(),
   readTail,
 }
@@ -87,6 +107,7 @@ export class MobileEventsLog {
     if (!Array.isArray(events)) return
     const at = this.deps.now().toISOString()
     let text = ''
+    let incidents = ''
     for (const raw of events.slice(0, MAX_BATCH)) {
       if (!isRecord(raw)) continue
       const last = this.written.get(raw.page) ?? -1
@@ -99,8 +120,10 @@ export class MobileEventsLog {
       let line = JSON.stringify({ ...raw, receivedAt: at, client })
       if (line.length > MAX_LINE) line = JSON.stringify({ t: raw.t, page: raw.page, n: raw.n, kind: raw.kind, src: raw.src, receivedAt: at, client, truncated: line.length })
       text += line + '\n'
+      if (isAirPodsIncident(raw)) incidents += line + '\n'
     }
     if (text) this.deps.append(text)
+    if (incidents) this.deps.appendIncident(incidents)
   }
 }
 
