@@ -390,7 +390,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         guard mode != .off else { return }
         lastBringUp = Date()
         noteOtherAudio()
-        let old = engine, oldUp = up, hadTap = up == .microphone
+        let old = engine, hadTap = up == .microphone
         // Its player goes with it; the new engine's comes back in `broughtUp`.
         player = nil
         // Made here so a configuration change it announces while starting is known to be its own.
@@ -398,22 +398,22 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         self.engine = engine
         up = .off
         transitioning = true
-        // Playback to play-and-record or back, other audio playing alongside: given up first, and music told
-        // it may carry on. Changed on the active session instead, the category change paused Spotify, and
-        // under hands-free nothing ever told it to carry on (October 12: silent the whole time). Only in the
-        // foreground, as iOS will not let an app in the background record again once it has given up.
-        let switchingCategory = oldUp != .off && (oldUp == .speaker) != (mode == .speaker)
-            && UIApplication.shared.applicationState == .active
         let plan = Plan(
             microphone: mode == .microphone, others: others,
-            // A change to what other audio gets applies only with a deactivation between, which lets music back up.
-            deactivateFirst: sessionOthers != nil && (sessionOthers != others || switchingCategory),
+            /**
+             * A change to what other audio gets applies only with a deactivation between, which lets music
+             * back up — but never just before the microphone comes up. A deactivation followed at once by
+             * play-and-record brought the AirPods' microphone link up at 48 kHz sending only zeros, every
+             * time it happened (October 12–13: 23:30, 00:02, 00:03, and both 00:26 and 00:29 hands-free
+             * starts, after which the AirPods needed the iPhone restarting); started without one, it came
+             * up at 24 kHz and heard. So a microphone keeps the treatment the session was activated with
+             * until its next activation, and music is only let back up when the microphone goes.
+             */
+            deactivateFirst: mode != .microphone && sessionOthers != nil && sessionOthers != others,
             voiceDucking: voiceDucking,
             // Echo cancellation is for hands-free, which listens through Control's voice. A dictation
             // stops Control first, so it goes without, and without voice processing's ways with the route.
-            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && forDictation),
-            letOthersResume: mode == .microphone && !forDictation && oldUp != .microphone
-                && UIApplication.shared.applicationState == .active
+            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && forDictation)
         )
         let capture = self.capture
         audioQueue.async {
@@ -431,21 +431,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         /// Voice processing's ducking of other audio, at its most rather than its least (`voiceDucking`).
         let voiceDucking: Bool
         let voiceProcessingAllowed: Bool
-        /**
-         * Hands-free's microphone, coming up: once its session is active —
-         * the AirPods on their microphone link, and Spotify paused by that,
-         * as it pauses whenever its output goes — give the session up at
-         * once, telling others they may carry on, and take it straight back,
-         * before the engine starts. Spotify resumes onto the microphone link
-         * and plays on under hands-free; without it, hands-free's whole
-         * session was silent (October 13), and music came back only when
-         * hands-free was turned off. Seen to work on October 12, when a
-         * deactivation between two microphone sessions resumed Spotify on
-         * the link and it played on. Only in the foreground — the user has
-         * just turned hands-free on — as iOS will not let an app in the
-         * background record once it has given its session up.
-         */
-        let letOthersResume: Bool
     }
 
     private struct Started {
@@ -490,10 +475,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // The rate voice processing has worked at over AirPods: see below.
         try? session.setPreferredSampleRate(Self.voiceProcessingRate)
         try session.setActive(true)
-        if plan.letOthersResume {
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
-            try session.setActive(true)
-        }
         let input = engine.inputNode
         /**
          * Voice processing over a Bluetooth route faster than 24 kHz sent only
@@ -558,7 +539,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if mode == .microphone {
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
-                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "letOthersResume": plan.letOthersResume, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("awake, playing to \(outputName()) (\(why))")
                 events.record("native-awake-running", ["why": why, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
@@ -750,7 +731,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         guard let stall, pendingRestart == nil, !transitioning,
               Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds,
               Date().timeIntervalSince(lastStallRestart) > Self.stallBackoff(stallRestarts) else { return }
-        let inPlace = stallRestarts != 1
+        // Zeros from the input: in place only. A new engine on a dead Bluetooth link took nine seconds
+        // and left it worse; it is for an engine that delivers nothing at all.
+        let inPlace = stall == .digitalSilence || stallRestarts != 1
         stallRestarts += 1
         lastStallRestart = Date()
         events.record("native-mic-stall-restart", ["why": stall.rawValue, "attempt": stallRestarts, "inPlace": inPlace])
