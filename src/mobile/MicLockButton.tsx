@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
-import { nativeMicrophoneAvailable } from './native-microphone'
+import { nativeMicrophoneAvailable, onNativeSampleRate } from './native-microphone'
 import { Spark } from './Spark'
 
 /** Whether the microphone is held open (held-microphone.ts), as it changes. */
@@ -8,6 +8,13 @@ export function useHoldState(): HoldState {
   const [hold, setHold] = useState(holdState)
   useEffect(() => onHoldStateChange(setHold), [])
   return hold
+}
+
+/** The app's microphone link's rate, in Hz, as it changes; undefined while it does not run. */
+function useNativeSampleRate(): number | undefined {
+  const [rate, setRate] = useState<number | undefined>(undefined)
+  useEffect(() => onNativeSampleRate(setRate), [])
+  return rate
 }
 
 /**
@@ -22,6 +29,9 @@ export function MicLockButton() {
   const hold = useHoldState()
   const on = hold !== 'off'
   const app = nativeMicrophoneAvailable()
+  // While hands-free holds the app's microphone: its link's rate in kHz, 24 or 48 on AirPods. Shown only.
+  const rate = useNativeSampleRate()
+  const badge = app && hold === 'held' && rate ? String(Math.round(rate / 1000)) : null
   const label = on
     ? `${hold === 'preparing' ? 'Getting the microphone ready' : app ? 'Always listening for "Control"' : 'Microphone held open'} — tap to stop`
     : app ? 'Always listen for "Control"' : 'Hold the microphone open with AirPods'
@@ -40,6 +50,7 @@ export function MicLockButton() {
         {/* Shut while it holds the microphone; open while it does not. */}
         <path d={on ? 'M8 11V7a4 4 0 0 1 8 0v4' : 'M8 11V7a4 4 0 0 1 7.5-2'} />
       </svg>
+      {badge && <span className="m-mic-lock__rate" title={`Microphone at ${badge} kHz`} aria-hidden="true">{badge}</span>}
     </button>
   )
 }

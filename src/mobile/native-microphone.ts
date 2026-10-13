@@ -50,6 +50,8 @@ interface NativeState {
    * not say; `voiceProcessing` alone stands for it then.
    */
   echoFree?: boolean
+  /** The microphone link's rate while running, e.g. 24000 or 48000; an older app does not say. */
+  sampleRate?: number
   /** The app plays hands-free's tones itself (`cue`); an older app does not say. */
   cues?: boolean
   /** Running, but the input sends only exact zeros — AirPods whose microphone is elsewhere, say. */
@@ -119,6 +121,7 @@ const listeners = new Set<(block: Float32Array) => void>()
 const speechListeners = new Set<(event: NativeSpeechEvent) => void>()
 const stateWaiters = new Set<(state: NativeState) => void>()
 const outputListeners = new Set<(output: NativeOutput | undefined) => void>()
+const stateFollowers = new Set<(state: NativeState) => void>()
 
 function decode(pcmBase64: string): Float32Array {
   const bytes = Uint8Array.from(atob(pcmBase64), (c) => c.charCodeAt(0))
@@ -153,6 +156,7 @@ function install(): void {
       state = next
       if (outputChanged) for (const fn of outputListeners) fn(nativeOutput())
       for (const fn of [...stateWaiters]) fn(next)
+      for (const fn of stateFollowers) fn(next)
     },
     speech(event) {
       for (const fn of speechListeners) fn(event)
@@ -207,6 +211,23 @@ export const nativeSpeech = {
     speechListeners.add(fn)
     return () => { speechListeners.delete(fn) }
   },
+}
+
+/**
+ * The microphone link's rate while the app's microphone runs, in Hz, as it
+ * changes; undefined when it is not running, in a browser, or from an older
+ * app. For hands-free's badge: display only.
+ */
+export function onNativeSampleRate(fn: (rate: number | undefined) => void): () => void {
+  install()
+  let last: number | undefined = state.running ? state.sampleRate : undefined
+  fn(last)
+  const follow = (next: NativeState) => {
+    const rate = next.running ? next.sampleRate : undefined
+    if (rate !== last) { last = rate; fn(rate) }
+  }
+  stateFollowers.add(follow)
+  return () => { stateFollowers.delete(follow) }
 }
 
 /** Where the app says sound goes now. */

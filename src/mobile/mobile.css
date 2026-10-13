@@ -373,6 +373,24 @@ textarea, input, [contenteditable="true"], .cm-content {
    while it is off; a spark round it while it waits for the microphone; white, locked,
    while it holds it — the same white as the microphone's own look then. */
 .m-mic-lock { position: relative; }
+/* Hands-free's microphone link's rate in kHz, at the top right (MicLockButton.tsx): 24, or 48. */
+.m-mic-lock__rate {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--m-surface);
+  color: var(--m-text);
+  box-shadow: 0 0 0 1.5px var(--m-raised);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
 .m-mic-lock--preparing {
   background: #000;
   color: #fff;
