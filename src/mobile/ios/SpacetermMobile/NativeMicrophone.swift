@@ -116,14 +116,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private var currentStall: Converter.Stall?
     /// Microphone starts that failed in a row, for the delay before the next.
     private var failedStarts = 0
-    /**
-     * This stall's Bluetooth link has been given up and taken again
-     * (`Plan.relinkBluetooth`); once per stall, as it costs the AirPods a
-     * moment off their microphone link.
-     */
-    private var relinkedThisStall = false
-    /// The next bring-up relinks (`Plan.relinkBluetooth`).
-    private var relinkNext = false
     /// An interruption with no end heard by then is taken to have none coming.
     private static let interruptionGraceSeconds: TimeInterval = 1
 
@@ -401,8 +393,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         self.engine = engine
         up = .off
         transitioning = true
-        let relink = relinkNext && mode == .microphone
-        relinkNext = false
         // Playback to play-and-record or back, other audio playing alongside: given up first, and music told
         // it may carry on. Changed on the active session instead, the category change paused Spotify, and
         // under hands-free nothing ever told it to carry on (October 12: silent the whole time). Only in the
@@ -416,8 +406,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             deactivateFirst: sessionOthers != nil && (sessionOthers != others || switchingCategory),
             notifyOthers: others != .mute,
             voiceDucking: voiceDucking,
-            voiceProcessingAllowed: voiceProcessingAllowed,
-            relinkBluetooth: relink
+            // Echo cancellation is for hands-free, which listens through Control's voice. A dictation
+            // stops Control first, so it goes without, and without voice processing's ways with the route.
+            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && muteForDictation)
         )
         let capture = self.capture
         audioQueue.async {
@@ -436,21 +427,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         /// Voice processing's ducking of other audio, at its most rather than its least (`voiceDucking`).
         let voiceDucking: Bool
         let voiceProcessingAllowed: Bool
-        /**
-         * Give the session up, wait, and take it again choosing the Bluetooth
-         * microphone by name: for a Bluetooth microphone sending only exact
-         * zeros, whose link a restart alone left dead. Only in the
-         * foreground, as iOS will not let an app in the background start
-         * recording again once its session is given up.
-         *
-         * (There was a `highQuality` too, iOS 26's
-         * `bluetoothHighQualityRecording` for a dictation, October 12 2026.
-         * It saved no time, and the AirPods' microphone went dead the first
-         * time hands-free's voice-processing link followed one of its
-         * full-bandwidth dictations — the input came up at 48 kHz and sent
-         * zeros. One kind of link for both now: the hands-free profile.)
-         */
-        let relinkBluetooth: Bool
     }
 
     private struct Started {
@@ -470,11 +446,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // The input node is made on first use: touched on an engine that never recorded, it would make one.
         if hadTap { old.inputNode.removeTap(onBus: 0) }
         let session = AVAudioSession.sharedInstance()
-        if plan.relinkBluetooth {
-            try? session.setActive(false, options: [])
-            // Long enough for the link to drop, as it would with the AirPods taken out.
-            Thread.sleep(forTimeInterval: 0.5)
-        } else if plan.deactivateFirst {
+        if plan.deactivateFirst {
             try? session.setActive(false, options: plan.notifyOthers ? .notifyOthersOnDeactivation : [])
         }
         // Without `mixWithOthers` the session is non-mixable: activating it stops other audio.
@@ -497,15 +469,24 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         try session.setCategory(.playAndRecord, mode: .default, options: options)
         // iOS silences haptics while recording unless told otherwise; hands-free's cue is one.
         try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
+        // The rate voice processing has worked at over AirPods: see below.
+        try? session.setPreferredSampleRate(Self.voiceProcessingRate)
         try session.setActive(true)
-        if plan.relinkBluetooth, let port = session.availableInputs?.first(where: { isBluetooth($0) }) {
-            try? session.setPreferredInput(port)
-        }
         let input = engine.inputNode
+        /**
+         * Voice processing over a Bluetooth route faster than 24 kHz sent only
+         * exact zeros, every time (October 12–13 2026: the AirPods' route came
+         * up at 48 kHz and every voice-processed start was silent, while 24 kHz
+         * ones heard, and 48 kHz ones without voice processing heard too). So
+         * there it is left off, and said so: no echo cancellation, and no
+         * ducking of music through it, but a microphone that hears.
+         */
+        let sessionRate = session.sampleRate
+        let wideBluetooth = sessionRate > Self.voiceProcessingRate && isBluetooth(session.currentRoute.inputs.first)
         // Echo cancellation, against what the player plays. Set before anything is connected.
         var voiceProcessing = false
         var voiceProcessingError: String?
-        if plan.voiceProcessingAllowed {
+        if plan.voiceProcessingAllowed, !wideBluetooth {
             do {
                 try input.setVoiceProcessingEnabled(true)
                 voiceProcessing = true
@@ -516,6 +497,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             } catch {
                 voiceProcessingError = error.localizedDescription
             }
+        } else if plan.voiceProcessingAllowed {
+            voiceProcessingError = "left off: a Bluetooth route at \(Int(sessionRate)) Hz, where it hears only silence"
         }
         let player = attachPlayer(to: engine)
         let format = input.outputFormat(forBus: 0)
@@ -553,7 +536,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if mode == .microphone {
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
-                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "relinked": plan.relinkBluetooth, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("awake, playing to \(outputName()) (\(why))")
                 events.record("native-awake-running", ["why": why, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
@@ -732,32 +715,18 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             currentStall = stall
             if let stall {
                 log("the microphone is stalled: \(stall.rawValue) for \(Int(Self.stallSeconds)) s, on \(inputName())")
-                events.record("native-mic-stalled", ["why": stall.rawValue, "input": inputName(), "route": NativeEvents.describeRoute(AVAudioSession.sharedInstance().currentRoute)])
+                let session = AVAudioSession.sharedInstance()
+                events.record("native-mic-stalled", ["why": stall.rawValue, "input": inputName(), "sampleRate": session.sampleRate, "voiceProcessing": voiceProcessing, "available": Self.describeInputs(session), "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("the microphone has sound again, after \(stallRestarts) restart(s)")
                 events.record("native-mic-sound-again", ["after": was?.rawValue ?? "", "restarts": stallRestarts, "input": inputName()])
                 stallRestarts = 0
-                relinkedThisStall = false
             }
             sendState()
         }
         guard let stall, pendingRestart == nil, !transitioning,
               Date().timeIntervalSince(lastBringUp) > Self.minSecondsBetweenRebuilds,
               Date().timeIntervalSince(lastStallRestart) > Self.stallBackoff(stallRestarts) else { return }
-        // Zeros from a Bluetooth microphone, and a restart in place already tried: its link is dead.
-        // Given up and taken again, once, if iOS lets this app record again afterwards.
-        let session = AVAudioSession.sharedInstance()
-        if stall == .digitalSilence, stallRestarts >= 1, !relinkedThisStall, Self.isBluetooth(session.currentRoute.inputs.first),
-           UIApplication.shared.applicationState == .active {
-            relinkedThisStall = true
-            stallRestarts += 1
-            lastStallRestart = Date()
-            log("\(inputName()) is sending only digital silence — giving its link up and taking it again")
-            events.record("native-mic-relink-bluetooth", ["input": inputName(), "available": Self.describeInputs(session), "route": NativeEvents.describeRoute(session.currentRoute)])
-            relinkNext = true
-            scheduleRestart("the Bluetooth microphone sent only silence", after: 0)
-            return
-        }
         let inPlace = stallRestarts != 1
         stallRestarts += 1
         lastStallRestart = Date()
@@ -769,6 +738,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private static func describeInputs(_ session: AVAudioSession) -> [String] {
         (session.availableInputs ?? []).map { "\($0.portName) (\($0.portType.rawValue))" }
     }
+
+    /// Asked for, and the most voice processing is given over Bluetooth: see `start`.
+    nonisolated private static let voiceProcessingRate: Double = 24_000
 
     nonisolated private static func isBluetooth(_ port: AVAudioSessionPortDescription?) -> Bool {
         guard let type = port?.portType else { return false }

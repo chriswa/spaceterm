@@ -590,10 +590,17 @@ A stall is either no audio from the engine or only exact zeros from the
 input (`native-mic-stalled` says which). The app restarts for it in place,
 then on a new engine, then less and less often (`native-mic-stall-restart`),
 never every two seconds — that flipped the route between the earpiece and
-the AirPods, the badge with it. Exact zeros from a Bluetooth microphone after a
-restart in place get its link given up and taken again, once, in the
-foreground (`native-mic-relink-bluetooth`, with every input iOS offers);
-there is no switch to the iPhone's own microphone. The page is told
+the AirPods, the badge with it. There is no switch to the iPhone's own microphone, and no giving the
+Bluetooth link up to take it again: tried October 13, that left the AirPods
+without their music link to the phone until they were put back in the case.
+
+Voice processing (echo cancellation) is for hands-free only, and is left off
+over a Bluetooth route faster than 24 kHz (`voiceProcessingRate`, asked for
+as the preferred rate): there every voice-processed start heard only exact
+zeros, while 24 kHz ones heard, and 48 kHz ones without it did too. Each
+time, the restarts that followed went on to leave the AirPods' link to the
+phone broken. `native-mic-running` has the rate and whether it was on;
+`native-mic-stalled` has the rate and every input iOS offers. The page is told
 (`native-silent-input`), and the hold shows it waiting. A dictation goes
 orange on the first sample that is not exactly zero: a live microphone in a
 quiet room sends noise at once (95 heartbeats with the microphone running,
