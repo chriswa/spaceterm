@@ -523,36 +523,35 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             return Started(player: player, voiceProcessing: false, voiceProcessingError: nil, sampleRate: 0, ms: ms())
         }
         options.formUnion([.defaultToSpeaker, .allowBluetooth])
-        /**
-         * Hands-free on headphones asks for iOS 26's AirPods high-quality
-         * recording, with the hands-free profile as the fallback. iOS
-         * sometimes brings the AirPods' microphone link up at 48 kHz on its
-         * own, and there it sent only exact zeros unless this had been asked
-         * for — every such start, with voice processing or without (October
-         * 12–13) — while every 48 kHz start that asked for it heard. Not for a
-         * dictation: Apple says it may add input latency, and the button must
-         * start at once.
-         */
-        var highQuality: [String: Any] = ["asked": false]
-        if plan.headphones, #available(iOS 26.0, *) {
-            highQuality["asked"] = true
-            do {
-                try session.setCategory(.playAndRecord, mode: .default, options: options.union(.bluetoothHighQualityRecording))
-            } catch {
-                highQuality["refused"] = error.localizedDescription
-                try session.setCategory(.playAndRecord, mode: .default, options: options)
-            }
-        } else {
-            try session.setCategory(.playAndRecord, mode: .default, options: options)
-        }
+        try session.setCategory(.playAndRecord, mode: .default, options: options)
         // iOS silences haptics while recording unless told otherwise; hands-free's cue is one.
         try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
-        // The rate voice processing has worked at over AirPods: see below. Not with high quality, which is 48 kHz.
-        if !plan.headphones { try? session.setPreferredSampleRate(Self.voiceProcessingRate) }
+        // The rate voice processing has worked at over AirPods, and that hands-free's best sessions ran at.
+        try? session.setPreferredSampleRate(Self.voiceProcessingRate)
         try session.setActive(true)
-        if plan.headphones, #available(iOS 26.0, *), let port = session.currentRoute.inputs.first {
-            highQuality["input"] = "\(port.portName) (\(port.portType.rawValue))"
-            if let bluetooth = port.bluetoothMicrophoneExtension {
+        /**
+         * Hands-free on headphones, come up at more than 24 kHz anyway: ask
+         * for iOS 26's AirPods high-quality recording, on the active session.
+         * iOS sometimes brings the AirPods' microphone link up at 48 kHz on
+         * its own, and there it sent only exact zeros unless this had been
+         * asked for — every such start, with voice processing or without
+         * (October 12–13) — while every 48 kHz start that asked for it heard.
+         * At 24 kHz nothing changes: that link heard every time, and was the
+         * one of hands-free's best sessions (01:45, October 13). Not for a
+         * dictation, which must start at once.
+         */
+        var highQuality: [String: Any] = ["asked": false]
+        if plan.headphones, #available(iOS 26.0, *), session.sampleRate > Self.voiceProcessingRate,
+           isBluetooth(session.currentRoute.inputs.first) {
+            highQuality["asked"] = true
+            highQuality["rateBefore"] = session.sampleRate
+            do {
+                try session.setCategory(.playAndRecord, mode: .default, options: options.union(.bluetoothHighQualityRecording))
+                try session.setActive(true)
+            } catch {
+                highQuality["refused"] = error.localizedDescription
+            }
+            if let port = session.currentRoute.inputs.first, let bluetooth = port.bluetoothMicrophoneExtension {
                 highQuality["supported"] = bluetooth.highQualityRecording.isSupported
                 highQuality["enabled"] = bluetooth.highQualityRecording.isEnabled
             }

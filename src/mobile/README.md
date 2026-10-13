@@ -288,11 +288,13 @@ The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
 on the main thread that froze the screen after every dictation.
 
-Hands-free on headphones asks for iOS 26's AirPods high-quality recording
-(`bluetoothHighQualityRecording`), with the hands-free profile as the
-fallback: iOS sometimes brings the AirPods' microphone link up at 48 kHz on
-its own, and there it sent only exact zeros unless this had been asked for,
-while every 48 kHz start that asked for it heard. A dictation does not ask,
+Hands-free on headphones that comes up at more than 24 kHz anyway asks, on
+the active session, for iOS 26's AirPods high-quality recording
+(`bluetoothHighQualityRecording`): iOS sometimes brings the AirPods'
+microphone link up at 48 kHz on its own, and there it sent only exact zeros
+unless this had been asked for, while every 48 kHz start that asked for it
+heard. At 24 kHz nothing changes: that link heard every time, and was the
+one of hands-free's best session so far. A dictation does not ask,
 as it may add input latency. (A dictation asked for it on October 12; then
 hands-free with voice processing following one of its dictations came up
 dead.) `native-mic-running`'s `highQuality` says whether it took.
