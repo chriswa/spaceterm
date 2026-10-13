@@ -48,6 +48,15 @@ describe('splitSentences', () => {
   it('keeps an unterminated tail', () => {
     expect(splitSentences('One. Two').map((s) => s.text)).toEqual(['One.', 'Two'])
   })
+
+  it('does not end a sentence at a dot inside a number', () => {
+    const text = 'It costs 0.18 ms. Version 1.4.1 shipped, 3.5x faster. Pi is 3.14. Then .5 more'
+    const sentences = splitSentences(text)
+    expect(sentences.map((s) => s.text)).toEqual([
+      'It costs 0.18 ms.', 'Version 1.4.1 shipped, 3.5x faster.', 'Pi is 3.14.', 'Then .5 more',
+    ])
+    for (const s of sentences) expect(text.slice(s.start, s.end)).toBe(s.text)
+  })
 })
 
 describe('splitSpeech', () => {
@@ -75,6 +84,13 @@ describe('RemoteSpeech', () => {
     expect(job).toMatchObject({ id: 'rs_1', state: 'in_progress', playback_state: 'queued' })
     await settle()
     expect(h.sent.map((m) => m.type === 'speech-audio' && [m.index, m.count])).toEqual([[0, 3], [1, 3], [2, 3]])
+  })
+
+  it('synthesizes a decimal whole, never as two sentences', async () => {
+    const h = harness()
+    await h.backend.speak('Sampling costs 0.18 ms. That is 2.5 times faster.')
+    await settle()
+    expect(h.synthesized.map(([text]) => text)).toEqual(['Sampling costs 0.18 ms.', 'That is 2.5 times faster.'])
   })
 
   it('is speaking once the phone starts, has heard what it finished, and completes on the last', async () => {

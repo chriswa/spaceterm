@@ -64,10 +64,16 @@ const KEEP_FINISHED = 32
  * Split for speaking: each sentence with its place in the text, so what the
  * client has played maps back to a character offset. Whitespace between
  * sentences belongs to neither.
+ *
+ * A `.`, `!` or `?` only ends a sentence where whitespace or the end of the
+ * text follows it (closing quotes and brackets aside). One with a character
+ * straight after it is inside a word — `3.14`, `1.4.1`, `foo.ts` — and each
+ * sentence is synthesized on its own, so splitting there would read a decimal
+ * as two numbers with a sentence's pause between them.
  */
 export function splitSentences(text: string): Sentence[] {
   const out: Sentence[] = []
-  for (const match of text.matchAll(/[^.!?]+(?:[.!?]+["')\]]*|$)/g)) {
+  for (const match of text.matchAll(/(?:[^.!?]|[.!?]+(?=[^\s.!?"')\]]))+(?:[.!?]+["')\]]*|$)/g)) {
     const raw = match[0]
     const lead = raw.length - raw.trimStart().length
     const trimmed = raw.trim()
