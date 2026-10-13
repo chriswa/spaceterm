@@ -50,10 +50,10 @@ export function renderDirectories(directories: readonly RosterDirectory[], handl
   return directories.map(directory => `[${handleOf(directory.nodeId)}] ${directory.cwd}`).join('\n')
 }
 
-/** Per-agent characters of the last agent message shown in the roster. */
-const ROSTER_LAST_MESSAGE_CHARS = 400
-/** Per-agent characters of the request that message answered. */
-const ROSTER_LAST_REQUEST_CHARS = 160
+/** Characters of an agent's last message that agent_details shows. */
+const DETAILS_LAST_MESSAGE_CHARS = 1_500
+/** Characters of the request that message answered. */
+const DETAILS_LAST_REQUEST_CHARS = 500
 /** Characters a `read` returns, newest first, so the end of the turn survives. */
 const READ_CHARS = 6_000
 const SEARCH_HITS = 6
@@ -73,36 +73,62 @@ export const STATE_WORDS: Record<ClaudeState, string> = {
 export const NO_SIDE_QUESTIONS = 'ask_agent: unavailable — it was started before side questions existed, and takes them after a restart'
 
 /**
- * The roster as the model sees it each turn: one block per agent, named if the
- * agent has a name yet. The last request and reply are what lets "the one doing
- * the water simulation" find its agent without a tool call.
+ * The list_agents roster: one line per agent, most worth checking first, with
+ * only what a glance across every agent needs — who it is, whether it has
+ * news, what it is doing, and whether its cache is warm. It is called often
+ * and stays in Control's session until compaction, so everything else about
+ * an agent is left to agent_details, for the one agent that needs it.
  */
 export function renderRoster(
   agents: readonly RosterAgent[],
   nameOf: (nodeId: NodeId) => string | undefined,
-  readTranscript: (path: string) => TranscriptMessage[],
   handleOf: (nodeId: NodeId) => string,
   now = Date.now(),
 ): string {
   if (!agents.length) return 'No agents are running.'
   return [...agents].sort(byRelevance).map(agent => {
-    const name = nameOf(agent.nodeId)
-    const lines = [`${agentToken(handleOf(agent.nodeId), name)}${name ? '' : ' (no name yet)'}: ${agent.title}`]
-    if (agent.unread) lines.push('  UNREAD: it has news the user has not looked at')
-    if (agent.cwd) lines.push(`  directory: ${path.basename(agent.cwd)}`)
-    lines.push(`  state: ${STATE_WORDS[agent.state]}${agent.stateSince ? `, for ${ago(now - agent.stateSince)}` : ''}`)
-    if (agent.lastActivityAt) lines.push(`  last active: ${ago(now - agent.lastActivityAt)} ago`)
-    if (agent.cacheWarmUntil !== undefined) lines.push(`  cache: ${cacheWords(agent, now)}`)
-    if (agent.takesSideQuestions === false) lines.push(`  ${NO_SIDE_QUESTIONS}`)
-    if (agent.startedAt) lines.push(`  started: ${ago(now - agent.startedAt)} ago`)
-    if (agent.messagingId) lines.push(`  messaging id: ${agent.messagingId}`)
-    const messages = agent.transcriptPath ? readTranscript(agent.transcriptPath) : []
-    const request = lastUserMessage(messages)
-    if (request) lines.push(`  last asked: ${clip(request, ROSTER_LAST_REQUEST_CHARS)}`)
-    const reply = lastAgentProse(messages)
-    if (reply) lines.push(`  last said: ${clip(reply, ROSTER_LAST_MESSAGE_CHARS)}`)
-    return lines.join('\n')
+    const fields = [`${agentHeading(agent, nameOf, handleOf)}: ${agent.title}`]
+    if (agent.unread) fields.push('UNREAD')
+    fields.push(`state: ${stateWords(agent, now)}`)
+    if (agent.cacheWarmUntil !== undefined) fields.push(`cache: ${cacheWords(agent, now)}`)
+    return fields.join(' | ')
   }).join('\n')
+}
+
+/**
+ * The agent_details tool: one agent in depth — what the roster shows, and
+ * what it leaves out, up to the start of its last exchange.
+ */
+export function renderAgentDetails(
+  agent: RosterAgent,
+  nameOf: (nodeId: NodeId) => string | undefined,
+  messages: TranscriptMessage[],
+  handleOf: (nodeId: NodeId) => string,
+  now = Date.now(),
+): string {
+  const lines = [`${agentHeading(agent, nameOf, handleOf)}: ${agent.title}`]
+  if (agent.unread) lines.push('  UNREAD: it has news the user has not looked at')
+  if (agent.cwd) lines.push(`  directory: ${path.basename(agent.cwd)}`)
+  lines.push(`  state: ${stateWords(agent, now)}`)
+  if (agent.lastActivityAt) lines.push(`  last active: ${ago(now - agent.lastActivityAt)} ago`)
+  if (agent.cacheWarmUntil !== undefined) lines.push(`  cache: ${cacheWords(agent, now)}`)
+  if (agent.takesSideQuestions === false) lines.push(`  ${NO_SIDE_QUESTIONS}`)
+  if (agent.startedAt) lines.push(`  started: ${ago(now - agent.startedAt)} ago`)
+  if (agent.messagingId) lines.push(`  messaging id: ${agent.messagingId}`)
+  const request = lastUserMessage(messages)
+  if (request) lines.push(`  last asked: ${clip(request, DETAILS_LAST_REQUEST_CHARS)}`)
+  const reply = lastAgentProse(messages)
+  if (reply) lines.push(`  last said: ${clip(reply, DETAILS_LAST_MESSAGE_CHARS)}`)
+  return lines.join('\n')
+}
+
+function agentHeading(agent: RosterAgent, nameOf: (nodeId: NodeId) => string | undefined, handleOf: (nodeId: NodeId) => string): string {
+  const name = nameOf(agent.nodeId)
+  return `${agentToken(handleOf(agent.nodeId), name)}${name ? '' : ' (no name yet)'}`
+}
+
+function stateWords(agent: RosterAgent, now: number): string {
+  return `${STATE_WORDS[agent.state]}${agent.stateSince ? `, for ${ago(now - agent.stateSince)}` : ''}`
 }
 
 /**

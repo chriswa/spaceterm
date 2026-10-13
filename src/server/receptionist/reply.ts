@@ -35,7 +35,8 @@ export type ToolCall = (
   /** At least one of `title` and `name`. */
   | { tool: 'rename_agent'; agent: string; title?: string; name?: GivenName }
   | { tool: 'recall'; search: string }
-  | { tool: 'list_agents'; namedOnly?: boolean }
+  | { tool: 'list_agents' }
+  | { tool: 'agent_details'; agent: string }
   | { tool: 'find_agent'; query: string }
   | { tool: 'nearby' }
   | { tool: 'force_user_camera'; target: string }
@@ -64,7 +65,7 @@ export function silencedIfQuiet(reply: Reply): Reply {
  * so they run at once, never waiting for speech.
  */
 export function isLookup(call: ToolCall): boolean {
-  return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'find_agent' || call.tool === 'nearby' ||
+  return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
     call.tool === 'backlog_next'
 }
 
@@ -159,7 +160,7 @@ function parseSayPart(value: unknown): SayPart {
 /** Every tool, so a wrong name is answered with the right ones rather than a guess at its fields. */
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   read: true, ask_agent: true, monitor: true, send: true, interrupt: true, archive_agent: true, unarchive_agent: true,
-  spawn: true, rename_agent: true, recall: true, list_agents: true, find_agent: true, nearby: true, force_user_camera: true, go_quiet: true,
+  spawn: true, rename_agent: true, recall: true, list_agents: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true, go_quiet: true,
   backlog_add: true, backlog_next: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
@@ -186,7 +187,7 @@ function parseToolCall(value: unknown): ToolCall {
     if (!target) throw new Error('"force_user_camera" needs a "target"')
     return { tool: 'force_user_camera', target }
   }
-  if (value.tool === 'list_agents') return value.named_only === true ? { tool: 'list_agents', namedOnly: true } : { tool: 'list_agents' }
+  if (value.tool === 'list_agents') return { tool: 'list_agents' }
   if (value.tool === 'find_agent') {
     if (typeof value.query !== 'string' || !value.query.trim()) throw new Error('"find_agent" needs a "query"')
     return { tool: 'find_agent', query: value.query.trim() }
@@ -214,6 +215,8 @@ function parseToolCall(value: unknown): ToolCall {
     case 'ask_agent':
       if (typeof value.question !== 'string' || !value.question.trim()) throw new Error('"ask_agent" needs a "question"')
       return { tool: 'ask_agent', agent, question: value.question.trim() }
+    case 'agent_details':
+      return { tool: 'agent_details', agent }
     case 'monitor':
       return { tool: 'monitor', agent }
     case 'send':

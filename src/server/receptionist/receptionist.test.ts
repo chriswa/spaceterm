@@ -603,23 +603,27 @@ describe('Receptionist', () => {
     expect(h.spoken).toHaveLength(1)
   })
 
-  it('lists just the named agents, with handle and name, when asked for named_only', async () => {
+  it('lists each agent on one line, leaving its last exchange to agent_details', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: `{${KEVIN}} is here.` }]),
-        reply([], [{ tool: 'list_agents', named_only: true }]),
+        reply([], [{ tool: 'list_agents' }]),
         (turn) => {
-          expect(turn.prompt).toContain(`list_agents (named only):\n{Kevin:${KEVIN}}: water sim`)
+          expect(turn.prompt).not.toContain('last said')
+          expect(turn.prompt).not.toContain('42 litres')
+          return reply([], [{ tool: 'agent_details', agent: KEVIN }])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain(`agent_details:\n{${KEVIN}} (no name yet): water sim`)
+          expect(turn.prompt).toContain('last asked: Make the water simulation conserve volume.')
+          expect(turn.prompt).toContain('last said: Volume is conserved now; I measured 42 litres in the big tank.')
           expect(turn.prompt).not.toContain('login page')
-          return reply([{ from: 'control', text: 'Found him.' }])
+          return reply([{ from: 'control', text: 'Kevin measured 42 litres.' }])
         },
       ],
     })
-    await h.receptionist.hear('who is around?', 'spoken')
+    await h.receptionist.hear('what did the water agent find?', 'spoken')
     await flush()
-    await h.receptionist.hear('which one is Kevin?', 'spoken')
-    await flush()
-    expect(h.turns).toHaveLength(3)
+    expect(h.spoken).toHaveLength(1)
   })
 
   it('finds an agent with Jev, reporting confidences and the chance of none', async () => {

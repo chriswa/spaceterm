@@ -34,7 +34,7 @@ import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import {
-  cacheWords, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+  cacheWords, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
 
 /**
@@ -1676,7 +1676,7 @@ export class Receptionist {
         continue
       }
       if (call.tool === 'list_agents') {
-        results.push(call.namedOnly ? this.listNamedAgents(agents, handles) : this.listAgents(agents, handles))
+        results.push(this.listAgents(agents, handles))
         continue
       }
       if (call.tool === 'nearby') {
@@ -1740,11 +1740,14 @@ export class Receptionist {
       // Not one being archived: its name goes back to the pool with it. Nor one
       // being given a name: it is about to have the one Control chose.
       const naming = call.tool === 'rename_agent' && call.name !== undefined
-      if (call.tool !== 'read' && call.tool !== 'archive_agent' && !naming) this.named(agent.nodeId, handles)
+      if (call.tool !== 'read' && call.tool !== 'agent_details' && call.tool !== 'archive_agent' && !naming) this.named(agent.nodeId, handles)
       const who = this.describe(agent, handles)
       switch (call.tool) {
         case 'read':
           results.push(this.read(agent, this.token(agent.nodeId, handles), call.search, false))
+          break
+        case 'agent_details':
+          results.push(this.agentDetails(agent, handles))
           break
         case 'monitor':
           done.push(this.watchFromNow(agent, 'Control called monitor') === 'reported'
@@ -2393,10 +2396,10 @@ export class Receptionist {
     return `nearby:\n${lines.length ? lines.join('\n') : 'nothing is on the canvas.'}`
   }
 
-  /** The list_agents tool: every live agent, and the directories. */
+  /** The list_agents tool: every live agent, a line each, and the directories. */
   private listAgents(agents: readonly RosterAgent[], handles: Handles): string {
     const handleOf = (nodeId: NodeId) => handles.of(nodeId) ?? nodeId
-    const sections = [`AGENTS:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, this.deps.readTranscript, handleOf)}`]
+    const sections = [`AGENTS:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, handleOf)}`]
     const directoryList = this.deps.directories()
     const directoryHandles = this.directoryHandles(directoryList)
     const directories = renderDirectories(directoryList, nodeId => directoryHandles.of(nodeId) ?? nodeId)
@@ -2404,18 +2407,11 @@ export class Receptionist {
     return `list_agents:\n${sections.join('\n\n')}`
   }
 
-  /**
-   * list_agents with named_only: just the handle, name and title of every agent
-   * that has a name. A few hundred tokens instead of the full list's thousands,
-   * for when the user names an agent and the only question is which handle
-   * that is.
-   */
-  private listNamedAgents(agents: readonly RosterAgent[], handles: Handles): string {
-    const lines = agents.flatMap(agent => {
-      const name = this.deps.names.get(agent.nodeId)?.name
-      return name ? [`${this.token(agent.nodeId, handles)}: ${agent.title}`] : []
-    })
-    return `list_agents (named only):\n${lines.length ? lines.join('\n') : 'No agent has a name yet.'}`
+  /** The agent_details tool: one agent in depth, up to the start of its last exchange. */
+  private agentDetails(agent: RosterAgent, handles: Handles): string {
+    const messages = agent.transcriptPath ? this.deps.readTranscript(agent.transcriptPath) : []
+    const details = renderAgentDetails(agent, nodeId => this.deps.names.get(nodeId)?.name, messages, nodeId => handles.of(nodeId) ?? nodeId)
+    return `agent_details:\n${details}`
   }
 
   /** The find_agent tool: Jev's ranking, best first, with confidences. */
