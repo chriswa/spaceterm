@@ -60,6 +60,7 @@ import { retainServerSync, addNodeUpdateInterceptor, sendMove, sendBatchMove, se
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
 import { isDisposable } from '../../../shared/node-utils'
+import { AGENT_META_ENABLED } from '../../../shared/feature-flags'
 import {
   sendAgentMetaToggle,
   sendAgentMetaRescan,
@@ -2775,11 +2776,11 @@ export function App() {
           archivedChildren={rootArchivedChildren}
           onOpenArchiveSearch={handleOpenArchiveSearch}
           onAddNode={handleAddNode}
-          agentMeta={{
+          agentMeta={AGENT_META_ENABLED ? {
             available: agentMetaAvailable[ROOT_NODE_ID] ?? false,
             open: metaGroups.some((g) => g.hostId === ROOT_NODE_ID && g.groupKind === 'meta'),
             onToggle: handleAgentMetaToggle
-          }}
+          } : undefined}
           rootCwd={{ value: rootCwd, onChange: handleRootCwdChange }}
           onReparentTarget={handleReparentTarget}
         />
@@ -2884,11 +2885,11 @@ export function App() {
             cwd={d.cwd}
             gitStatus={d.gitStatus}
             onCwdChange={handleDirectoryCwdChange}
-            agentMeta={{
+            agentMeta={AGENT_META_ENABLED ? {
               available: agentMetaAvailable[d.id] ?? false,
               open: metaGroups.some((g) => g.hostId === d.id && g.groupKind === 'meta'),
               onToggle: handleAgentMetaToggle
-            }}
+            } : undefined}
           />
         ))}
         {metaGroups.map((g) => (

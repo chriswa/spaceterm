@@ -69,6 +69,7 @@ import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
 import { PromptedCommands } from './prompted-command'
+import { AGENT_META_ENABLED } from '../shared/feature-flags'
 import { AgentMetaManager } from './agent-meta-manager'
 import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
@@ -2554,7 +2555,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'agent-meta-toggle': {
-      const open = agentMetaManager.toggle(msg.nodeId)
+      // The button is withheld in the client, but the socket is reachable by
+      // scripts and mods too, so the refusal belongs here as well.
+      const open = AGENT_META_ENABLED ? agentMetaManager.toggle(msg.nodeId) : false
       send(client.link, { type: 'agent-meta-toggle-result', seq: msg.seq, open })
       break
     }
@@ -3678,8 +3681,14 @@ async function startServer(): Promise<void> {
     },
     (nodeId, available) => broadcastToAll({ type: 'agent-meta-availability', nodeId, available })
   )
-  agentMetaAvailability.start()
-  agentMetaManager.restoreFromState()
+  // Both ways in stay shut while the feature is parked: no availability sweep
+  // means no button could light up even if one were rendered, and no restore
+  // means a branch recorded as open before it was parked stays closed rather
+  // than reappearing with no way to dismiss it.
+  if (AGENT_META_ENABLED) {
+    agentMetaAvailability.start()
+    agentMetaManager.restoreFromState()
+  }
 
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes
