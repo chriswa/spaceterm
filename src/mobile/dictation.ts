@@ -306,15 +306,14 @@ export class Dictation {
    * At a pause: the probability, 0..1, that the speaker has finished, from the
    * server's turn model on everything sent so far — the audio up to now is
    * sent first. Null when it cannot say: no session yet, no model, a failure,
-   * or no answer within `TURN_CHECK_TIMEOUT_MS`. `probe`: the turn tone
-   * asking, not a pause (turn-tone.ts).
+   * or no answer within `TURN_CHECK_TIMEOUT_MS`.
    */
-  async checkTurn(probe = false): Promise<number | null> {
+  async checkTurn(): Promise<number | null> {
     if (!this.id || this.stopped) return null
     this.flush()
     try {
       return await Promise.race([
-        this.api.turnCheck(this.id, probe),
+        this.api.turnCheck(this.id),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), TURN_CHECK_TIMEOUT_MS)),
       ])
     } catch (err) {

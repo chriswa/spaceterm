@@ -64,6 +64,8 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
   /** Hands-free's own tones, apart from the page's cues. */
   const tones: string[] = []
   const haptics: string[] = []
+  /** What the turn tone was handed: each turn answer, and whether it ended the dictation. */
+  const turnTones: Array<[number, boolean]> = []
   const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
   let quietFor = 10_000
   const records: Array<{ kind: string; detail?: Record<string, unknown> }> = []
@@ -97,7 +99,7 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
     quietForMs: () => quietFor,
     playCue: (cue) => { cues.push(cue) },
     handsFreeCue: (cue) => { tones.push(cue) },
-    turnTone: () => {},
+    turnTone: (p, ends) => { turnTones.push([p, ends]) },
     haptic: (pattern) => { haptics.push(pattern) },
     beginDictation: async (options: DictationOptions) => {
       const d = {
@@ -110,8 +112,7 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
       return {
         finish: async () => { d.finished = true; return transcript },
         cancel: () => { d.cancelled = true },
-        // The turn tone's asks (probes) are not pauses: only pauses are counted.
-        checkTurn: async (probe) => { if (!probe) d.turnChecks++; return turn },
+        checkTurn: async () => { d.turnChecks++; return turn },
       }
     },
     othersDictating: () => false,
@@ -147,7 +148,7 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
     }
   }
   return {
-    hear, said, checked, modes, cues, tones, dictations, records, uninstall, ducks, sayCalls,
+    hear, said, checked, modes, cues, tones, turnTones, dictations, records, uninstall, ducks, sayCalls,
     setTranscript: (text: string) => { transcript = text },
     interrupts: () => interrupts,
     setControlSpeaking: (on: boolean) => { controlSpeaking = on },
@@ -210,6 +211,20 @@ describe('hands-free mode', () => {
     // Still unsure, but a short request's patience is three seconds.
     await h.hear(quiet(2500))
     expect(h.said).toEqual(['what is Kevin doing?'])
+  })
+
+  it('hands the turn tone exactly the answers the pauses got, asking nothing more', async () => {
+    h = harness({ turn: 0.08 })
+    await h.hear(quiet(1500), speech(2500), quiet(1000), speech(1500), quiet(1000))
+    expect(h.dictations[0].turnChecks).toBe(2)
+    expect(h.turnTones).toEqual([[0.08, false], [0.08, false]])
+  })
+
+  it('marks the answer that ended the dictation', async () => {
+    h = harness({ turn: 0.93 })
+    await h.hear(quiet(1500), speech(2500), quiet(1000))
+    expect(h.dictations[0].turnChecks).toBe(1)
+    expect(h.turnTones).toEqual([[0.93, true]])
   })
 
   it('stays quiet when the Mac says the speech did not start with "control"', async () => {

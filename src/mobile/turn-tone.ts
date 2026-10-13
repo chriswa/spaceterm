@@ -1,29 +1,21 @@
 /**
- * The turn tone: a tuning aid for hands-free's turn threshold. While a
- * dictation is being taken down and the speaker has fallen quiet, the turn
- * model (Smart Turn, on the Mac) is asked every `TURN_TONE_MS` whether they
- * sound finished, and each answer is played at once as a short tone — low
- * for "still going", high for "finished" — so how its verdict moves through
- * a pause can be heard. A tone at or above the threshold is held a little
- * longer: that is a verdict that would end the dictation at a pause.
+ * The turn tone: a tuning aid for hands-free's turn threshold. Every answer
+ * the turn model (Smart Turn, on the Mac) gives at a pause in a dictation —
+ * the very answers that decide whether the dictation ends there
+ * (hands-free.ts `askAboutPause`) — is played at once as a short tone, low
+ * for "still going", high for "finished", so the data the decision runs on
+ * can be heard. The answer that ended the dictation is held a little longer.
  *
- * Quiet is the phone's voice-activity model (Silero VAD) saying nobody is
- * talking, from about 160 ms after the last word — speech, not loudness, so
- * a noisy room does not hold the tones off. Talking again silences them, and
- * an answer that arrives after the speaker has started again is not played.
+ * It asks nothing of its own: an earlier version questioned the model ten
+ * times a second through every pause, which was a different series from the
+ * one that decides. Those answers are in the record already, one
+ * `hands-free-turn` line each.
  *
- * Switched by `TURN_TONE_MS` below: 0 turns it off. The model answers in
- * about 70–130 ms, and one question waits for the last, so the tones come no
- * faster than that.
- * Each dictation's answers are recorded as one `hands-free-turn-tone` line.
+ * Switched by `TURN_TONE_ON` below, off by default.
  */
 
-/**
- * How often to ask while the speaker is quiet, in ms; 0 turns the turn tone
- * off. Off since October 12, 2026: it had served its purpose and was only in
- * the way. 75 is the pace it was tuned at.
- */
-export const TURN_TONE_MS = 0
+/** Whether the turn tone plays. Off since October 12, 2026: it had served its purpose and was only in the way. */
+export const TURN_TONE_ON = false
 
 /** p = 0 sounds A3, p = 1 three octaves up at A6; whole semitones, so a change is a step you can hear. */
 const LOW_HZ = 220
@@ -34,55 +26,11 @@ export function turnTonePitch(p: number): number {
   return LOW_HZ * 2 ** (semitones / 12)
 }
 
-/** Short enough to sit between answers; longer where the verdict would end the dictation. */
+/** Short for an answer the dictation went on past; longer for the one that ended it. */
 export const TURN_TONE_SECONDS = 0.035
 export const TURN_TONE_ENDING_SECONDS = 0.07
 
-/** While the speaker talks, how often to look for them stopping: about a frame. */
-const QUIET_POLL_MS = 30
-
-/** The most answers kept for the record: ten minutes at ten a second. */
-const MAX_SAMPLES = 6000
-
-export interface TurnToneDeps {
-  /** Ask the turn model about the dictation so far; null when it cannot say. */
-  check(): Promise<number | null>
-  /** The speaker is not talking: only then is anything asked or played. */
-  quiet(): boolean
-  play(frequency: number, seconds: number): void
-  sleep(ms: number): Promise<void>
-  now(): number
-}
-
-/**
- * While quiet: ask, play the answer, wait out the rest of the interval, and
- * again, until `stop` — which returns every answer played as [ms since the
- * start, p].
- */
-export function startTurnTone(intervalMs: number, threshold: number, deps: TurnToneDeps): { stop(): Array<[number, number]> } {
-  let running = true
-  const samples: Array<[number, number]> = []
-  const start = deps.now()
-  void (async () => {
-    while (running) {
-      if (!deps.quiet()) {
-        await deps.sleep(QUIET_POLL_MS)
-        continue
-      }
-      const asked = deps.now()
-      const p = await deps.check().catch(() => null)
-      if (!running) break
-      if (p !== null && deps.quiet()) {
-        if (samples.length < MAX_SAMPLES) samples.push([Math.round(asked - start), Math.round(p * 1000) / 1000])
-        deps.play(turnTonePitch(p), p >= threshold ? TURN_TONE_ENDING_SECONDS : TURN_TONE_SECONDS)
-      }
-      await deps.sleep(Math.max(0, intervalMs - (deps.now() - asked)))
-    }
-  })()
-  return {
-    stop() {
-      running = false
-      return samples
-    },
-  }
+/** The tone for one answer: `ends`, whether that answer ended the dictation. */
+export function turnTone(p: number, ends: boolean): { frequency: number; seconds: number } {
+  return { frequency: turnTonePitch(p), seconds: ends ? TURN_TONE_ENDING_SECONDS : TURN_TONE_SECONDS }
 }

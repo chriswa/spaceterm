@@ -235,7 +235,8 @@ export function playHandsFreeCue(cue: HandsFreeCue): void {
 
 /**
  * One tone of the turn tone (turn-tone.ts), a tuning aid: played as
- * hands-free's tones are, but not recorded — there are ten a second.
+ * hands-free's tones are, but not recorded — its answer is, as a
+ * `hands-free-turn` line.
  */
 export function playTurnTone(frequency: number, seconds: number): void {
   const gain = 0.2

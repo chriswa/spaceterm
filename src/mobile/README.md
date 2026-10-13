@@ -686,17 +686,12 @@ all up and play them together, loudly. Each Smart Turn verdict on the phone
 is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
 **Hearing the turn model.** To tune `turnThreshold` by ear, the turn tone
-(`TURN_TONE_MS` in `turn-tone.ts`; off, at 0, since October 12 — 75 turns it
-on) plays
-Smart Turn's answers. While a dictation is being taken down and you have stopped
-talking — by the phone's voice-activity model, about 160 ms after your last
-word, so room noise does not count — Smart Turn is then asked that often and each answer plays as a short tone, pitched from A3 (p = 0) to
-A6 (p = 1) in semitones, held twice as long at or above the threshold
-(`turn-tone.ts`). The model takes 70–130 ms an answer, so that is the
-real pace. Each dictation's answers are one `hands-free-turn-tone` line,
-`samples` as [ms, p]; these asks are not in `voice-decisions.jsonl`.
-
-    jq -c 'select(.kind == "hands-free-turn-tone") | .detail' ~/.spaceterm/mobile-events.jsonl
+(`TURN_TONE_ON` in `turn-tone.ts`; off since October 12) plays each of
+Smart Turn's answers at a pause — the same answers that decide whether the
+dictation ends there, with no questions of its own — as a short tone,
+pitched from A3 (p = 0) to A6 (p = 1) in semitones, held twice as long for
+the answer that ended the dictation. Those answers are the
+`hands-free-turn` lines above.
 
     jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
     jq -c 'select(.kind | test("^cue"))' ~/.spaceterm/mobile-events.jsonl
