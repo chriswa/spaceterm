@@ -19,6 +19,7 @@ import { initAudioSession } from './audio-session'
 import { installHeldMicrophone } from './held-microphone'
 import { installStayAwake } from './stay-awake'
 import { followHandsFree, installDuckOthers } from './duck-others'
+import { DownlinkWatch, watchedTransport } from './downlink-watch'
 import { installHandsFree, useHandsFree } from './hands-free'
 import { installControlTones } from './control-tones'
 import { playCue } from './cues'
@@ -88,7 +89,10 @@ if (!token) {
   // `window.api` must exist before App's modules run, as on the desktop.
   // What the page is sent and spends on it, reported once a minute; see page-work.ts.
   const work = new PageWork()
-  void installApi(meteredTransport(webSocketTransport(gatewayUrl(token)), work), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
+  // The socket's life and every gap in what the Mac sends, for the record; see downlink-watch.ts.
+  const downlink = new DownlinkWatch({ record: recordMobileEvent, visible: () => document.visibilityState === 'visible' })
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') downlink.shown() })
+  void installApi(meteredTransport(watchedTransport(webSocketTransport(gatewayUrl(token)), downlink), work), browserPlatform(), 'spaceterm-mobile', phoneDevice()).then(async (client) => {
     forwardLogs((message) => client.clientLog(message))
     // The stores everything here reads — the nodes, Control's, the restart
     // flag — kept current for the page's whole life, not only while the

@@ -431,6 +431,7 @@ const remoteSpeech = new RemoteSpeech({
     return client !== undefined
   },
   isConnected: (clientId) => findClient(clientId) !== undefined,
+  buffered: (clientId) => findClient(clientId)?.link.buffered?.(),
   record: (clientId, kind, detail) => {
     const client = findClient(clientId)
     if (client?.name === MOBILE_CLIENT_NAME) mobileEventsLog.server(kind, clientLabel(client), detail)

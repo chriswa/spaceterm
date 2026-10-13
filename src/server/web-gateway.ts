@@ -27,6 +27,14 @@ export const DEFAULT_WEB_PORT = 7391
 const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
 /** A phone on LTE vanishes without a FIN. Pinged this often; missing a pong ends it. */
 const HEARTBEAT_MS = 30_000
+/**
+ * Logged: a pong this late, and output backed up past this much. For a
+ * stalled downlink — October 12, a sentence of speech and the wake word's
+ * answer reached the phone 27 s late while the phone's own messages kept
+ * arriving — so the next one says whether the socket here was backing up.
+ */
+const SLOW_PONG_MS = 2000
+const BACKED_UP_BYTES = 256 * 1024
 
 export interface WebGatewayOptions {
   port: number
@@ -148,6 +156,21 @@ export function startWebGateway(options: WebGatewayOptions): http.Server {
 
   function connect(ws: WebSocket): void {
     let alive = true
+    let pingSentAt = 0
+    /** Since when output has been backed up past `BACKED_UP_BYTES`, and the most it reached. */
+    let backedUp: { since: number; peak: number } | undefined
+    const noteBuffered = () => {
+      const buffered = ws.bufferedAmount
+      if (buffered > BACKED_UP_BYTES) {
+        if (!backedUp) {
+          backedUp = { since: Date.now(), peak: buffered }
+          options.log(`[web-gateway] output backing up: ${Math.round(buffered / 1024)} KB not yet sent`)
+        } else backedUp.peak = Math.max(backedUp.peak, buffered)
+      } else if (backedUp) {
+        options.log(`[web-gateway] output backed up for ${Date.now() - backedUp.since}ms, at most ${Math.round(backedUp.peak / 1024)} KB`)
+        backedUp = undefined
+      }
+    }
     const connection = options.accept({
       write(text) {
         if (ws.readyState !== WebSocket.OPEN) return
@@ -157,7 +180,9 @@ export function startWebGateway(options: WebGatewayOptions): http.Server {
           return
         }
         ws.send(text)
-      }
+        noteBuffered()
+      },
+      buffered: () => ws.bufferedAmount,
     })
     const heartbeat = setInterval(() => {
       if (!alive) {
@@ -165,9 +190,15 @@ export function startWebGateway(options: WebGatewayOptions): http.Server {
         return
       }
       alive = false
+      pingSentAt = Date.now()
       ws.ping()
+      noteBuffered()
     }, HEARTBEAT_MS)
-    ws.on('pong', () => { alive = true })
+    ws.on('pong', () => {
+      alive = true
+      const ms = Date.now() - pingSentAt
+      if (ms > SLOW_PONG_MS) options.log(`[web-gateway] slow pong: ${ms}ms (${Math.round(ws.bufferedAmount / 1024)} KB not yet sent)`)
+    })
     ws.on('message', (data) => connection.feed(data.toString()))
     ws.on('close', () => {
       clearInterval(heartbeat)

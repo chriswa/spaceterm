@@ -1,5 +1,6 @@
 import AVFoundation
 import CallKit
+import Network
 import UIKit
 import WebKit
 
@@ -7,7 +8,9 @@ import WebKit
 /// audio and lifecycle record (src/mobile/mobile-events.ts, kept on the Mac in
 /// ~/.spaceterm/mobile-events.jsonl): launches, going to the background and
 /// coming back, the screen locking, calls, interruptions, AirPods coming and
-/// going, the input being muted, and a heartbeat while the app is alive.
+/// going, the input being muted, the network path changing (`network-path`:
+/// Wi-Fi or cellular, the VPN's interface, satisfied or not), and a heartbeat
+/// while the app is alive.
 ///
 /// The page is the wrong place to notice most of this: iOS suspends the web
 /// view's process in the background while the app itself keeps running (it
@@ -46,6 +49,8 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
     private var observers: [NSObjectProtocol] = []
     private var captureObservation: NSKeyValueObservation?
     private let calls = CXCallObserver()
+    /// The network path, for telling a stalled connection to the Mac from the phone's network going.
+    private let pathMonitor = NWPathMonitor()
     private lazy var callWatcher = CallWatcher { [weak self] detail in self?.record("phone-call", detail) }
     /// Since when the audio session has been interrupted with no end heard.
     private var interruptedSince: Date?
@@ -81,6 +86,11 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
         observeApp()
         observeAudio()
         calls.setDelegate(callWatcher, queue: .main)
+        pathMonitor.pathUpdateHandler = { path in
+            let detail = Self.describe(path)
+            DispatchQueue.main.async { MainActor.assumeIsolated { self.record("network-path", detail) } }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "spaceterm.network-path"))
         heartbeat = Timer.scheduledTimer(withTimeInterval: Self.heartbeatSeconds, repeats: true) { _ in
             MainActor.assumeIsolated { self.beat() }
         }
@@ -313,6 +323,22 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
             out["backgroundTimeLeft"] = left > 100_000 ? "unlimited" : Int(left)
         }
         return out
+    }
+
+    nonisolated static func describe(_ path: NWPath) -> [String: Any] {
+        let status: String
+        switch path.status {
+        case .satisfied: status = "satisfied"
+        case .unsatisfied: status = "unsatisfied"
+        case .requiresConnection: status = "requires connection"
+        @unknown default: status = "unknown"
+        }
+        return [
+            "status": status,
+            "interfaces": path.availableInterfaces.map { "\($0.name) (\(String(describing: $0.type)))" },
+            "expensive": path.isExpensive,
+            "constrained": path.isConstrained,
+        ]
     }
 
     static func describeRoute(_ route: AVAudioSessionRouteDescription) -> [String: Any] {

@@ -535,6 +535,22 @@ interruption has gone unended, and whether the page answers a ping.
 `src: "server"` lines are what the server saw: the phone connecting and
 disconnecting, and speech jobs sent to it and how each ended.
 
+For a stalled connection — speech and the wake word's answer arriving
+seconds late — each side says its part. The server records every sentence of
+speech as it leaves (`speech-audio-sent`: size, how long it took to make, and
+how much was already queued to the phone), and `electron.log` has the web
+gateway's `[web-gateway] output backing up` / `backed up for` and `slow
+pong`. The page records each sentence's arrival (`speech-audio-received`,
+with `lateMs` against the server's clock), the socket opening and closing
+(`socket`), nothing from the Mac for 8 s (`downlink-quiet`) and the gap when
+it is heard from again (`downlink-gap`, with what arrived), and on being
+shown again how long since the Mac was last heard from
+(`downlink-on-visible`; `downlink-watch.ts`). The app records the network
+path changing (`network-path`: the interfaces, the VPN's among them, and
+whether the path is satisfied).
+
+    jq -c 'select(.kind | test("speech-audio|socket|downlink|network-path|app-foreground|app-active|visibility|screen-"))' ~/.spaceterm/mobile-events.jsonl
+
 Nothing is fired into the void. The app numbers its events (`nativeSeq`) and
 keeps them in a file until the server has written them: the page records
 them, the server acknowledges the batch, and only then does the page tell the

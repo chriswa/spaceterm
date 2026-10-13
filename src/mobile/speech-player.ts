@@ -143,6 +143,12 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
 
   const offAudio = api.onAudio((sentence) => {
     const { id, index, count, sampleRate, pcm } = sentence
+    // Each sentence as it arrives, beside the server's `speech-audio-sent`: a late one says how late.
+    recordMobileEvent('speech-audio-received', {
+      id: id.slice(0, 11), index, count, kb: Math.round(pcm.length / 1024),
+      ...(sentence.sentAt !== undefined ? { lateMs: Date.now() - sentence.sentAt } : {}),
+      visible: document.visibilityState === 'visible',
+    })
     let native = nativeJobs.get(id)
     if (!native && !jobs.has(id) && appCanPlay()) {
       native = { count }

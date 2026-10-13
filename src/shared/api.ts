@@ -314,7 +314,7 @@ export interface HandsFreeApi {
  * has played. See `src/server/remote-speech.ts`.
  */
 export interface RemoteSpeechApi {
-  onAudio(callback: (audio: { id: string; index: number; count: number; sampleRate: number; pcm: string }) => void): () => void
+  onAudio(callback: (audio: { id: string; index: number; count: number; sampleRate: number; pcm: string; sentAt?: number }) => void): () => void
   onStop(callback: (id: string) => void): () => void
   progress(id: string, index: number, event: SpeechProgressEvent): void
 }

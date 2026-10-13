@@ -199,7 +199,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onTuning: (cb) => onHandsFreeTuning((m) => cb(m.tuning))
     },
     remoteSpeech: {
-      onAudio: (cb) => on('speech-audio', ({ id, index, count, sampleRate, pcm }) => cb({ id, index, count, sampleRate, pcm })),
+      onAudio: (cb) => on('speech-audio', ({ id, index, count, sampleRate, pcm, sentAt }) => cb({ id, index, count, sampleRate, pcm, sentAt })),
       onStop: (cb) => on('speech-stop', (m) => cb(m.id)),
       progress: (id, index, event) => client.speechProgress(id, index, event)
     },

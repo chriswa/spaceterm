@@ -1371,6 +1371,8 @@ export interface SpeechAudioMessage {
   count: number
   sampleRate: number
   pcm: string
+  /** When the server sent it, epoch ms: how late it arrived, for the phone's record. Absent from an older server. */
+  sentAt?: number
 }
 
 /**

@@ -5,4 +5,6 @@
  */
 export interface ClientLink {
   write(text: string): void
+  /** Bytes written but not yet sent on, where the transport can say: a WebSocket backing up. */
+  buffered?(): number
 }

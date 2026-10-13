@@ -25,6 +25,8 @@ export interface RemoteSpeechDeps {
   newId?(): string
   /** A job starting and ending, for the phone's audio record (mobile-events.ts). */
   record?(clientId: string, kind: string, detail: Record<string, unknown>): void
+  /** Bytes queued to the client and not yet sent on, where its link can say. */
+  buffered?(clientId: string): number | undefined
 }
 
 /** A sentence to speak. `start`/`end` index the job's whole text — see `joinSpeechParts`. */
@@ -188,6 +190,7 @@ export class RemoteSpeech {
     for (const [index, sentence] of job.sentences.entries()) {
       // Dropped while it waited its turn in the lane, or between sentences.
       if (job.state !== 'in_progress') return
+      const synthStarted = Date.now()
       const audio = await this.deps.synthesize(sentence.text, sentence.voice, job.abort.signal)
       if (job.state !== 'in_progress') return
       if (!audio) {
@@ -197,6 +200,7 @@ export class RemoteSpeech {
       }
       // s16le mono: two bytes a sample.
       job.audio[index] = { seconds: audio.pcm.byteLength / 2 / audio.sampleRate, words: audio.words }
+      const sentAt = Date.now()
       const sent = this.deps.send(job.clientId, {
         type: 'speech-audio',
         id: job.id,
@@ -204,6 +208,15 @@ export class RemoteSpeech {
         count: job.sentences.length,
         sampleRate: audio.sampleRate,
         pcm: Buffer.from(audio.pcm).toString('base64'),
+        sentAt,
+      })
+      // When each sentence left, and what was queued ahead of it: beside the phone's
+      // `speech-audio-received`, it says where a late one waited.
+      const buffered = this.deps.buffered?.(job.clientId)
+      this.deps.record?.(job.clientId, 'speech-audio-sent', {
+        id: job.id.slice(0, 11), index, count: job.sentences.length,
+        kb: Math.round(audio.pcm.byteLength * 4 / 3 / 1024), synthMs: sentAt - synthStarted,
+        ...(buffered !== undefined ? { bufferedKb: Math.round(buffered / 1024) } : {}),
       })
       if (!sent) {
         this.end(job, 'cancelled_by_client')
