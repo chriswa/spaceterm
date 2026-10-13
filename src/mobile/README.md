@@ -262,10 +262,16 @@ it, so "Control" still cuts it off (`echoFree` in the app's state). On the
 phone's own speaker hands-free keeps voice processing, which does pause
 Spotify.
 
-No microphone session is ever preceded by a deactivation: a deactivation
-followed at once by the microphone brought the AirPods' microphone link up
-at 48 kHz sending only zeros, every time — twice on October 13 the AirPods
-then needed the iPhone restarting. So a microphone keeps the treatment of
+Switching the app's active session between playback and play-and-record
+pauses Spotify until a deactivation lets it carry on. So leaving the
+microphone the session is given up first; going to hands-free's microphone
+from the engine kept up for Control it is given up too, half a second before
+the microphone (`releasePauseSeconds`). A dictation from that engine still
+switches in place, for speed, and pauses Spotify until Control is done.
+Otherwise no microphone is preceded by a deactivation, and never at once: a
+deactivation followed at once by the microphone brought the AirPods'
+microphone link up at 48 kHz sending only zeros, every time — twice on
+October 13 the AirPods then needed the iPhone restarting. So a microphone keeps the treatment of
 other audio it was activated with, and music is let back up when the
 microphone goes. `other-audio` says when other audio plays, but counts the
 page's own sonar and cues, which go through WebKit's process, as other
@@ -436,6 +442,7 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 | two notes up | hands-free has begun taking your words down |
 | two notes down | they have been taken down and sent |
 | three soft steps down | the conversation window closed; "Control" is needed again |
+| an octave down, held low | "Control, shutdown": Control is away until you say "Control" again |
 
 ## Hands-free: "Control, …"
 
@@ -480,6 +487,17 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   that the server needs restarting; "Control" works as before meanwhile. Speech checks of two words or fewer are logged
   (`[hands-free] speech check heard …`), to find what the model hears in
   nothing at all.
+- **"Control, shutdown"** — or "shutdown" alone in the window — sends
+  Control away at once, for when someone in the room needs you. Nothing is
+  shut down: it is the transcript's **Away**, so Control stops speaking, and
+  what it has to tell you waits for your return. The window closes there and
+  then with a tone of its own (an octave down, held low), so nothing more is
+  taken down for Control; the hold stays on, and the next "Control, …"
+  brings Control back, aloud unless you had it on Silent. It is a fixed phrase, matched on the whole
+  dictation by the phone and the server (`src/shared/control-shutdown.ts`) —
+  never inside a longer request — and the model is only told it happened.
+  Asking in other words ("Control, be quiet") still goes to the model, whose
+  `go_quiet` sends it away the same way, but leaves the window to run out.
 - **"Control." on its own, then a breath** is fine: that first pause is not
   put to the turn model (which would call "Control." finished), and it waits
   five seconds (`afterWakeWordMs`) for the rest.

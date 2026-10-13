@@ -411,7 +411,22 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         guard mode != .off else { return }
         lastBringUp = Date()
         noteOtherAudio()
-        let old = engine, hadTap = up == .microphone
+        let old = engine, oldUp = up, hadTap = up == .microphone
+        /**
+         * Switching the active session between playback and play-and-record
+         * pauses Spotify, and it stays paused until a deactivation lets it
+         * carry on (October 13, 01:30: the music cut out for the tone and
+         * Control's voice after a dictation, and was gone for the next).
+         * Leaving the microphone, the session is given up first. Going to
+         * hands-free's microphone from the engine kept up for Control, it is
+         * given up too, with `releasePause` before the microphone — given up
+         * and the microphone at once was what brought the AirPods up dead.
+         * Not for a dictation, which must start at once: from that engine it
+         * still switches in place, and pauses Spotify.
+         */
+        let leavingMicrophone = oldUp == .microphone && mode == .speaker
+        let releaseBeforeHandsFree = oldUp == .speaker && mode == .microphone && !forDictation
+            && UIApplication.shared.applicationState == .active
         // Its player goes with it; the new engine's comes back in `broughtUp`.
         player = nil
         // Made here so a configuration change it announces while starting is known to be its own.
@@ -430,7 +445,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
              * up at 24 kHz and heard. So a microphone keeps the treatment the session was activated with
              * until its next activation, and music is only let back up when the microphone goes.
              */
-            deactivateFirst: mode != .microphone && sessionOthers != nil && sessionOthers != others,
+            deactivateFirst: (mode != .microphone && sessionOthers != nil && (sessionOthers != others || leavingMicrophone))
+                || releaseBeforeHandsFree,
+            releasePause: releaseBeforeHandsFree ? Self.releasePauseSeconds : 0,
             voiceDucking: voiceDucking,
             // Echo cancellation is for hands-free, which listens through Control's voice. A dictation
             // stops Control first, so it goes without, and without voice processing's ways with the route.
@@ -450,6 +467,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let microphone: Bool
         let others: Others
         let deactivateFirst: Bool
+        /// Seconds between giving the session up and taking it again: see `bringUp`.
+        let releasePause: TimeInterval
         /// Voice processing's ducking of other audio, at its most rather than its least (`voiceDucking`).
         let voiceDucking: Bool
         let voiceProcessingAllowed: Bool
@@ -484,6 +503,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let session = AVAudioSession.sharedInstance()
         if plan.deactivateFirst {
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            if plan.releasePause > 0 { Thread.sleep(forTimeInterval: plan.releasePause) }
         }
         // Always `mixWithOthers`: without it, activating the session would interrupt — pause — other audio.
         var options: AVAudioSession.CategoryOptions
@@ -573,10 +593,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if mode == .microphone {
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
-                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "headphones": plan.headphones, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "headphones": plan.headphones, "released": plan.deactivateFirst, "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("awake, playing to \(outputName()) (\(why))")
-                events.record("native-awake-running", ["why": why, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-awake-running", ["why": why, "others": plan.others.rawValue, "ms": started.ms, "released": plan.deactivateFirst, "route": NativeEvents.describeRoute(session.currentRoute)])
             }
             // A new engine: anything still to be said starts again on it, from the sentence it was in.
             rescheduleSpeech()
@@ -779,6 +799,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private static func describeInputs(_ session: AVAudioSession) -> [String] {
         (session.availableInputs ?? []).map { "\($0.portName) (\($0.portType.rawValue))" }
     }
+
+    /// Between giving the session up and hands-free's microphone: see `bringUp`.
+    private static let releasePauseSeconds: TimeInterval = 0.5
 
     /// Asked for, and the most voice processing is given over Bluetooth: see `start`.
     nonisolated private static let voiceProcessingRate: Double = 24_000
