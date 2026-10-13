@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { useReceptionistStore } from '@/stores/receptionistStore'
-import { DUCK_RELEASE_MS, installDuckOthers } from './duck-others'
+import { DUCK_RELEASE_MS, followHandsFree, installDuckOthers } from './duck-others'
+import { useHandsFree } from './hands-free'
 
 const holder = { mine: true, muted: false } as NonNullable<ReturnType<typeof useReceptionistStore.getState>['holder']>
 const set = (phase: 'thinking' | 'speaking' | 'ready', muted = false) =>
@@ -38,5 +39,19 @@ describe('installDuckOthers', () => {
     set('speaking', true)
     expect(posted).toEqual([])
     stop()
+  })
+})
+
+describe('followHandsFree', () => {
+  it('says when hands-free starts and stops taking a dictation down, once each', () => {
+    useHandsFree.setState({ phase: 'listening' })
+    const posted: boolean[] = []
+    const stop = followHandsFree((on) => posted.push(on))
+    useHandsFree.setState({ phase: 'hearing' })
+    useHandsFree.setState({ phase: 'sending' })
+    useHandsFree.setState({ phase: 'listening' })
+    expect(posted).toEqual([true, false])
+    stop()
+    useHandsFree.setState({ phase: 'off' })
   })
 })

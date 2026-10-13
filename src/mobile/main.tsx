@@ -18,7 +18,7 @@ import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
 import { installHeldMicrophone } from './held-microphone'
 import { installStayAwake } from './stay-awake'
-import { installDuckOthers } from './duck-others'
+import { followHandsFree, installDuckOthers } from './duck-others'
 import { installHandsFree, useHandsFree } from './hands-free'
 import { installControlTones } from './control-tones'
 import { playCue } from './cues'
@@ -144,6 +144,7 @@ if (!token) {
     // Control heard with the phone locked: the app stays awake while this phone holds it.
     installStayAwake()
     installDuckOthers()
+    followHandsFree()
     // Listens for "Control" on the held microphone; see hands-free.ts.
     installHandsFree(window.api)
     // The sonar carries on while Control's voice is made, and its turns end

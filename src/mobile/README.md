@@ -236,7 +236,18 @@ decides what other audio gets (`Others` in `NativeMicrophone.swift`):
   hidden inside it;
 - **turned down** while Control thinks or speaks aloud here
   (`duck-others.ts`, which waits `DUCK_RELEASE_MS` before letting go);
-- **left alone** otherwise, hands-free's held microphone included.
+- **left alone** otherwise.
+
+Hands-free's held microphone never changes the session for any of this, as
+each change would drop the AirPods' microphone link. Music plays on under it
+— the session is given up first, music told it may carry on, when the app
+goes from playback to the microphone in the foreground; changed in place,
+that paused Spotify for the whole session — and voice processing turns it
+down instead (`voiceProcessingOtherAudioDuckingConfiguration`, at its most
+rather than its least), which works on the running engine, in the background
+too: while hands-free takes a dictation down (`followHandsFree` in
+`duck-others.ts`, `hands-free-dictating`) and while Control is busy.
+`native-voice-ducking` shows each change.
 
 iOS applies any of these only when a session is activated, so each change
 brings the app's session up again, deactivated between with

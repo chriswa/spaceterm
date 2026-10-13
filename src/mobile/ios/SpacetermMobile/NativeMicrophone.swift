@@ -149,6 +149,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             case "stop": stop()
             // Control is thinking or speaking aloud here: other apps' audio — music — turned down meanwhile.
             case "duck-others": setDuckForControl((message.body as? [String: Any])?["on"] as? Bool ?? false)
+            // Hands-free is taking a dictation down: other audio turned down meanwhile (`voiceDucking`).
+            case "hands-free-dictating": setDuckForHandsFree((message.body as? [String: Any])?["on"] as? Bool ?? false)
             // A page that has just loaded wants the state now — for the output badge — not at the next change.
             case "state": sendState()
             case "stay-awake": setStayAwake((message.body as? [String: Any])?["on"] as? Bool ?? false)
@@ -339,8 +341,43 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             queue("other audio's treatment changed")
             return
         }
+        applyVoiceDucking()
         guard mode != .off, up != .off, sessionOthers != others else { return }
         bringUp(why: others == .duck ? "turning other audio down" : "letting other audio back up")
+    }
+
+    /**
+     * Music under hands-free. Its held microphone's session is never changed
+     * for other audio (`others`), but voice processing ducks other audio
+     * itself, by a level that can be changed on the running engine — no
+     * session change, no restart, the AirPods' link untouched, and so in the
+     * background too. Down while hands-free takes a dictation and while
+     * Control thinks and speaks; at its least otherwise, so music plays on.
+     */
+    private var duckForHandsFree = false
+    private var voiceDucking: Bool { wanted && !muteForDictation && (duckForHandsFree || duckForControl) }
+    /// The level last set on the running engine's voice processing; nil when none is set.
+    private var appliedVoiceDucking: Bool?
+
+    private func setDuckForHandsFree(_ on: Bool) {
+        guard on != duckForHandsFree else { return }
+        duckForHandsFree = on
+        events.record("native-duck-others", ["on": on, "for": "hands-free", "up": up.rawValue, "otherAudioPlaying": AVAudioSession.sharedInstance().isOtherAudioPlaying])
+        applyVoiceDucking()
+    }
+
+    /// Set voice processing's ducking of other audio on the running engine, if it has voice processing.
+    /// Mid-change, the engine coming up takes it from its plan.
+    private func applyVoiceDucking() {
+        guard #available(iOS 17.0, *), !transitioning, up == .microphone, voiceProcessing else { return }
+        let on = voiceDucking
+        guard on != appliedVoiceDucking else { return }
+        appliedVoiceDucking = on
+        let input = engine.inputNode
+        audioQueue.async {
+            input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: on ? .max : .min)
+        }
+        events.record("native-voice-ducking", ["on": on, "otherAudioPlaying": AVAudioSession.sharedInstance().isOtherAudioPlaying])
     }
 
     /// The engine made to match what is wanted now, or once the change running has finished.
@@ -356,7 +393,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let mode = self.mode
         guard mode != .off else { return }
         lastBringUp = Date()
-        let old = engine, hadTap = up == .microphone
+        let old = engine, oldUp = up, hadTap = up == .microphone
         // Its player goes with it; the new engine's comes back in `broughtUp`.
         player = nil
         // Made here so a configuration change it announces while starting is known to be its own.
@@ -366,12 +403,19 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         transitioning = true
         let relink = relinkNext && mode == .microphone
         relinkNext = false
+        // Playback to play-and-record or back, other audio playing alongside: given up first, and music told
+        // it may carry on. Changed on the active session instead, the category change paused Spotify, and
+        // under hands-free nothing ever told it to carry on (October 12: silent the whole time). Only in the
+        // foreground, as iOS will not let an app in the background record again once it has given up.
+        let switchingCategory = oldUp != .off && (oldUp == .speaker) != (mode == .speaker) && others != .mute
+            && UIApplication.shared.applicationState == .active
         let plan = Plan(
             microphone: mode == .microphone, others: others,
             // A change to what other audio gets applies only with a deactivation between. Music is
             // told it may come back unless it is about to be stopped again: no blip of it between.
-            deactivateFirst: sessionOthers != nil && sessionOthers != others,
+            deactivateFirst: sessionOthers != nil && (sessionOthers != others || switchingCategory),
             notifyOthers: others != .mute,
+            voiceDucking: voiceDucking,
             voiceProcessingAllowed: voiceProcessingAllowed,
             relinkBluetooth: relink
         )
@@ -389,6 +433,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let others: Others
         let deactivateFirst: Bool
         let notifyOthers: Bool
+        /// Voice processing's ducking of other audio, at its most rather than its least (`voiceDucking`).
+        let voiceDucking: Bool
         let voiceProcessingAllowed: Bool
         /**
          * Give the session up, wait, and take it again choosing the Bluetooth
@@ -465,7 +511,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                 voiceProcessing = true
                 // Its default turns every other app's audio — and the page's cues — right down.
                 if #available(iOS 17.0, *) {
-                    input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+                    input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: plan.voiceDucking ? .max : .min)
                 }
             } catch {
                 voiceProcessingError = error.localizedDescription
@@ -500,6 +546,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             voiceProcessing = started.voiceProcessing
             if let error = started.voiceProcessingError { events.record("voice-processing-failed", ["error": error]) }
             sessionOthers = plan.others
+            appliedVoiceDucking = started.voiceProcessing ? plan.voiceDucking : nil
             failedStarts = 0
             up = mode
             lastError = nil
@@ -515,6 +562,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             rescheduleSpeech()
             sendState()
             startTimer()
+            // Asked for while it came up.
+            applyVoiceDucking()
         case .failure(let error):
             player = nil
             voiceProcessing = false

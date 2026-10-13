@@ -1,5 +1,6 @@
 import { useReceptionistStore, type ReceptionistState } from '@/stores/receptionistStore'
-import { nativeDuckOthers } from './native-microphone'
+import { nativeDuckOthers, nativeHandsFreeDictating } from './native-microphone'
+import { useHandsFree, type HandsFreePhase } from './hands-free'
 
 /**
  * Other apps' audio — Spotify, say — turned down while Control thinks and
@@ -9,6 +10,11 @@ import { nativeDuckOthers } from './native-microphone'
  * microphone stops other audio outright, without asking, and the app keeps
  * it stopped a moment after, so a dictation flows into Control thinking
  * without the music swelling between. Nothing in a browser.
+ *
+ * Under hands-free the app leaves its session alone and turns music down
+ * through voice processing instead, which it can do on the running
+ * microphone, in the background too: while Control is busy, as here, and
+ * while hands-free takes a dictation down (`followHandsFree`).
  *
  * Down at once; back up only once Control has been quiet for
  * `DUCK_RELEASE_MS`, so the gap between the sonar and the answer, or between
@@ -20,6 +26,20 @@ export const DUCK_RELEASE_MS = 1500
 /** Control is busy where it is heard: held here, unmuted, and not ready. */
 export function controlAudibleBusy(state: Pick<ReceptionistState, 'phase' | 'holder'>): boolean {
   return state.phase !== 'ready' && state.holder?.mine === true && !state.holder.muted
+}
+
+/** Hands-free is taking a dictation down: from the words heard until they are sent. */
+export function handsFreeDictating(phase: HandsFreePhase): boolean {
+  return phase === 'hearing' || phase === 'sending'
+}
+
+/** Tell the app each time hands-free starts or stops taking a dictation down. */
+export function followHandsFree(post: (on: boolean) => void = nativeHandsFreeDictating): () => void {
+  let on = false
+  return useHandsFree.subscribe(({ phase }) => {
+    const want = handsFreeDictating(phase)
+    if (want !== on) { on = want; post(want) }
+  })
 }
 
 export function installDuckOthers(post: (on: boolean) => void = nativeDuckOthers): () => void {

@@ -232,6 +232,11 @@ export function nativeDuckOthers(on: boolean): void {
   handler()?.postMessage({ action: 'duck-others', on })
 }
 
+/** Hands-free is taking a dictation down, or has stopped: the app turns other audio down meanwhile (duck-others.ts). */
+export function nativeHandsFreeDictating(on: boolean): void {
+  handler()?.postMessage({ action: 'hands-free-dictating', on })
+}
+
 /**
  * The phone's haptic signals for the microphone, from the app; nothing in a
  * browser (iOS gives a page no vibration):
