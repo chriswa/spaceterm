@@ -805,16 +805,22 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * count as other audio here too.
      */
     private var otherAudioPlaying: Bool?
+    /// `secondaryAudioShouldBeSilencedHint`: another app's own, non-mixable audio playing — Spotify, not the
+    /// page's sounds, which mix — when last looked at.
+    private var otherAppPlaying: Bool?
 
     private func noteOtherAudio() {
         let session = AVAudioSession.sharedInstance()
         let playing = session.isOtherAudioPlaying
-        guard playing != otherAudioPlaying else { return }
+        let appPlaying = session.secondaryAudioShouldBeSilencedHint
+        guard playing != otherAudioPlaying || appPlaying != otherAppPlaying else { return }
         let was = otherAudioPlaying
         otherAudioPlaying = playing
+        otherAppPlaying = appPlaying
         guard was != nil else { return }
         events.record("other-audio", [
-            "playing": playing, "up": up.rawValue, "others": sessionOthers?.rawValue ?? "inactive",
+            "playing": playing, "otherApp": appPlaying, "appState": UIApplication.shared.applicationState == .active ? "active" : "not active",
+            "up": up.rawValue, "others": sessionOthers?.rawValue ?? "inactive",
             "voiceDucking": appliedVoiceDucking ?? false, "voiceProcessing": voiceProcessing,
             "category": session.category.rawValue, "mode": session.mode.rawValue,
             "route": NativeEvents.describeRoute(session.currentRoute),
