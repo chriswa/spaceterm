@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { DictationApi, HandsFreeApi } from '../shared/api'
 import type { HandsFreeTuning } from '../shared/protocol'
-import { playCue, quietForMs, type Cue } from './cues'
+import { playCue, playHandsFreeCue, quietForMs, type Cue, type HandsFreeCue } from './cues'
 import { noteUserInterrupted } from './control-tones'
 import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, holdsMicrophone, onHoldStateChange, type Capture } from './held-microphone'
@@ -104,6 +104,8 @@ export interface HandsFreeDeps {
   /** How long this device has been silent; 0 while it plays. */
   quietForMs(): number
   playCue(cue: Cue): void
+  /** One of hands-free's own tones: heard whatever Replies is set to. */
+  handsFreeCue(cue: HandsFreeCue): void
   /** A tap the user can feel: the wake word was heard. Nothing, where there is no way to. */
   haptic(pattern: HapticPattern): void
   /** A dictation on the held microphone. */
@@ -131,6 +133,7 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
   onHoldStateChange,
   quietForMs,
   playCue,
+  handsFreeCue: playHandsFreeCue,
   haptic: nativeHaptic,
   beginDictation: (options) => Dictation.begin(api.dictation, options),
   // Its own dictation counts as one while it is hearing; see `hearing` below.
@@ -264,7 +267,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     useHandsFree.setState({ conversation: false, secondsLeft: null })
     log(`conversation window closed (${why}): "Control" again from here`)
     record('hands-free-conversation', { open: false, why })
-    if (why !== 'microphone') deps.playCue('conversationClosed')
+    if (why !== 'microphone') deps.handsFreeCue('conversationClosed')
     // Ran out: felt too, in a pocket, as three.
     if (why === 'silence') deps.haptic('triple')
   }
@@ -385,6 +388,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   const respond = async ({ start, spokeMs }: WakeCandidate, interrupted = false, wakeWordStart = true) => {
     setPhase('hearing')
     deps.haptic('tap')
+    deps.handsFreeCue('dictationStart')
     openConversation()
     let dictation: HandsFreeDictation | undefined
     try {
@@ -410,6 +414,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       utteranceDictation = undefined
       endUtterance = undefined
       deps.haptic('double')
+      deps.handsFreeCue('dictationEnd')
       record('hands-free-ended', { reason })
       if (reason === 'lost') {
         log('the microphone stopped mid-dictation')

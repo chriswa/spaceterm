@@ -56,6 +56,8 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
   const checked: number[] = []
   const modes: string[] = []
   const cues: string[] = []
+  /** Hands-free's own tones, apart from the page's cues. */
+  const tones: string[] = []
   const haptics: string[] = []
   const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
   let quietFor = 10_000
@@ -88,6 +90,7 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
     onHoldStateChange: (fn) => { holdChanged = fn; return () => {} },
     quietForMs: () => quietFor,
     playCue: (cue) => { cues.push(cue) },
+    handsFreeCue: (cue) => { tones.push(cue) },
     haptic: (pattern) => { haptics.push(pattern) },
     beginDictation: async (options: DictationOptions) => {
       const d = {
@@ -124,7 +127,7 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
     }
   }
   return {
-    hear, said, checked, modes, cues, dictations, records, uninstall, ducks, sayCalls,
+    hear, said, checked, modes, cues, tones, dictations, records, uninstall, ducks, sayCalls,
     setTranscript: (text: string) => { transcript = text },
     interrupts: () => interrupts,
     setControlSpeaking: (on: boolean) => { controlSpeaking = on },
@@ -164,8 +167,9 @@ describe('hands-free mode', () => {
     expect(h.dictations[0].backlogSeconds).toBeGreaterThan(1)
     await h.hear(speech(1500), quiet(3500))
     expect(h.said).toEqual(['what is Kevin doing?'])
-    // One tap as it was heard, two as it was sent; no tones.
+    // One tap and two notes up as it was heard, two taps and two notes down as it was sent.
     expect(h.hapticPatterns).toEqual(['tap', 'double'])
+    expect(h.tones).toEqual(['dictationStart', 'dictationEnd'])
     expect(h.cues).toEqual([])
     expect(useHandsFree.getState().phase).toBe('listening')
   })
@@ -335,7 +339,7 @@ describe('hands-free mode', () => {
       expect(useHandsFree.getState().conversation).toBe(true)
       await h.hear(quiet(5500))
       expect(useHandsFree.getState().conversation).toBe(false)
-      expect(h.cues.at(-1)).toBe('conversationClosed')
+      expect(h.tones.at(-1)).toBe('conversationClosed')
       expect(h.hapticPatterns.at(-1)).toBe('triple')
       await h.hear(quiet(1000), speech(1500), quiet(500))
       expect(h.modes.at(-1)).toBe('wake-word')
@@ -388,7 +392,7 @@ describe('hands-free mode', () => {
       await inConversation(h)
       await h.hear(quiet(1000), speech(1500), quiet(3500))
       expect(h.records.some((r) => r.kind === 'hands-free-server-too-old')).toBe(true)
-      expect(h.cues).toContain('conversationClosed')
+      expect(h.tones).toContain('conversationClosed')
       // "Control" still works, as before the window; it just does not open one any more.
       expect(h.dictations).toHaveLength(2)
       expect(useHandsFree.getState().conversation).toBe(false)
@@ -425,7 +429,7 @@ describe('hands-free mode', () => {
       h.stallHold()
       await h.elapse(15_000)
       expect(useHandsFree.getState().conversation).toBe(false)
-      expect(h.cues).not.toContain('conversationClosed')
+      expect(h.tones).not.toContain('conversationClosed')
 
       h.uninstall()
       h = harness()

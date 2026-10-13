@@ -50,6 +50,8 @@ interface NativeState {
    * not say; `voiceProcessing` alone stands for it then.
    */
   echoFree?: boolean
+  /** The app plays hands-free's tones itself (`cue`); an older app does not say. */
+  cues?: boolean
   /** Running, but the input sends only exact zeros — AirPods whose microphone is elsewhere, say. */
   silentInput?: boolean
   /** Where sound goes now, e.g. "Speaker" or "AirPods Pro"; an older app does not say. */
@@ -239,6 +241,18 @@ export function keepAppAwake(on: boolean): void {
 /** Other apps' audio turned down, or let back up, by the app (duck-others.ts). Nothing in a browser. */
 export function nativeDuckOthers(on: boolean): void {
   handler()?.postMessage({ action: 'duck-others', on })
+}
+
+/** Hands-free's tones, played by the app, whose sound the Ring/Silent switch does not silence (cues.ts). */
+export const nativeCues = {
+  /** The app plays them, and has an engine up to play them on. */
+  available(): boolean {
+    return handler() !== undefined && state.cues === true && (state.running || state.awake === true)
+  },
+  /** `segments`: (frequency Hz, seconds) pairs, frequency 0 a rest. */
+  play(name: string, segments: Array<[number, number]>, gain: number): void {
+    handler()?.postMessage({ action: 'cue', name, segments, gain })
+  },
 }
 
 /** Hands-free is taking a dictation down, or has stopped: the app turns other audio down meanwhile (duck-others.ts). */

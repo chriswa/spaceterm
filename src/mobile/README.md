@@ -427,7 +427,15 @@ Control, unmuted; on Silent or Released the phone makes no sound of its own
 | sonar, a soft repeating echo | Control is thinking, or its voice is being made (`thinking-cue.ts`) |
 | "beep boop", soft, stepping down | Control finished and chose to say nothing — not a failure (`control-tones.ts`) |
 | two low notes | something failed: the microphone, a transcription, or Control |
-| three soft steps down | hands-free's conversation window closed; "Control" is needed again |
+
+Hands-free's own tones play whatever Replies is set to, and the app plays
+them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
+
+| Sound | Means |
+|---|---|
+| two notes up | hands-free has begun taking your words down |
+| two notes down | they have been taken down and sent |
+| three soft steps down | the conversation window closed; "Control" is needed again |
 
 ## Hands-free: "Control, …"
 

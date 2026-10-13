@@ -1,19 +1,23 @@
 /**
  * The phone's audio cues — few, and only where Control is heard.
  *
- * The microphone's states are haptics on the phone, not tones
- * (`nativeHaptic`, native-microphone.ts): a tone at the start or end of a
- * dictation competed with the ducking and echo cancellation around the
- * microphone, and played into AirPods still switching profile. What is left
- * is what only a sound can say, and only when Replies are Aloud (`cuesAudible`)
- * — on Silent or Released the phone makes no sound of its own:
+ * The microphone's states are haptics on the phone (`nativeHaptic`,
+ * native-microphone.ts); a button dictation has no tone, which competed with
+ * the ducking around the microphone and played into AirPods still switching
+ * profile. These play only when Replies are Aloud (`cuesAudible`) — on
+ * Silent or Released the phone makes no sound of its own:
  *
  * - `error`: something failed — the microphone, a transcription, or Control
  *   itself. Two low notes, the same pitch.
  * - `nothingToSay`: Control finished thinking and chose to say nothing. Not a
  *   failure: a soft "beep boop".
- * - `conversationClosed`: hands-free's conversation window has closed, and
- *   "Control" is needed again. Three soft steps down.
+ *
+ * Hands-free has tones of its own as well as its haptics, heard whatever
+ * Replies is set to and through the Ring/Silent switch (`playHandsFreeCue`,
+ * played by the app): `dictationStart`, two notes up, as its words begin to
+ * be taken down; `dictationEnd`, two notes down, as they are sent; and
+ * `conversationClosed`, three soft steps down, as the conversation window
+ * runs out and "Control" is needed again.
  *
  * The sonar while Control thinks, or waits for its voice to be made, is
  * thinking-cue.ts, shared with the desktop.
@@ -25,18 +29,30 @@
 
 import { controlMode, useReceptionistStore } from '@/stores/receptionistStore'
 import { recordMobileEvent } from './mobile-events'
+import { nativeCues } from './native-microphone'
 
-export type Cue = 'error' | 'nothingToSay' | 'conversationClosed'
+export type Cue = 'error' | 'nothingToSay' | 'conversationClosed' | 'dictationStart' | 'dictationEnd'
+
+/**
+ * Hands-free's tones (`playHandsFreeCue`), beside its haptics: words being
+ * taken down — two notes up; taken down and sent — two notes down; and the
+ * conversation window running out — three steps down. Asked for in October
+ * 2026, to be heard whatever Replies is set to and whatever the Ring/Silent
+ * switch says.
+ */
+export type HandsFreeCue = 'dictationStart' | 'dictationEnd' | 'conversationClosed'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   error: [[196, 0.20], [0, 0.07], [196, 0.30]],
   nothingToSay: [[784, 0.10], [0, 0.04], [523, 0.16]],
   conversationClosed: [[880, 0.08], [0, 0.03], [659, 0.08], [0, 0.03], [440, 0.18]],
+  dictationStart: [[659, 0.08], [0, 0.03], [988, 0.12]],
+  dictationEnd: [[988, 0.08], [0, 0.03], [659, 0.12]],
 }
 
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
-const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, conversationClosed: 0.2 }
+const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2 }
 
 /** Replies are Aloud here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
 export function cuesAudible(): boolean {
@@ -193,6 +209,24 @@ export function playCue(cue: Cue): void {
     recordMobileEvent('cue-dropped', { cue, why: 'replies are not aloud here' })
     return
   }
+  playInPage(cue)
+}
+
+/**
+ * One of hands-free's tones: whatever Replies is set to, and in the app
+ * played by the app — the page's sound is WebKit's ambient type, which the
+ * Ring/Silent switch silences, and the app's session is not. In a browser,
+ * or from an app too old to play them, the page plays it.
+ */
+export function playHandsFreeCue(cue: HandsFreeCue): void {
+  if (nativeCues.available()) {
+    nativeCues.play(cue, SEGMENTS[cue].map(([freq, dur]) => [freq, dur / SPEEDUP]), GAINS[cue])
+    return
+  }
+  playInPage(cue)
+}
+
+function playInPage(cue: Cue): void {
   const gainValue = GAINS[cue]
   try {
     const ctx = ensureContext()
