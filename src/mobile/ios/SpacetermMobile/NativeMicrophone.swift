@@ -615,7 +615,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         switch result {
         case .success(let started):
             player = started.player
-            started.player.volume = ducked ? Self.duckedVolume : 1
+            started.player.volume = speechVolume(voiceProcessing: started.voiceProcessing)
             voiceProcessing = started.voiceProcessing
             if let error = started.voiceProcessingError { events.record("voice-processing-failed", ["error": error]) }
             sessionOthers = plan.others
@@ -1154,7 +1154,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             log("cue without segments and gain")
             return
         }
-        guard !transitioning, up != .off, engineRunning, let player, let buffer = Self.toneBuffer(segments, gain: gain) else {
+        // Shares the player with Control's voice, which is a quarter as loud through echo cancellation:
+        // the tone made up for that, so it sounds as it does elsewhere.
+        let toneGain = voiceProcessing ? min(0.9, gain / Double(Self.echoCancelledSpeechVolume)) : gain
+        guard !transitioning, up != .off, engineRunning, let player, let buffer = Self.toneBuffer(segments, gain: toneGain) else {
             events.record("native-cue-dropped", ["cue": name, "why": transitioning ? "the engine is coming up" : "no engine running"])
             return
         }
@@ -1183,6 +1186,23 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         return buffer
     }
 
+    /**
+     * Control's voice, as loud as it is played. Through echo cancellation —
+     * hands-free on the phone's own speaker, the only microphone that uses
+     * it — at a quarter, about 12 dB down: Voice Operator made its speech
+     * 12 dB louder through a limiter (voiceop ebc95c7, October 12), and from
+     * then the speaker's echo outran the cancellation, and hands-free heard
+     * Control's replies as the user speaking, cut them off and sent them back
+     * to it (04:09:23 and 04:09:29, October 13: "Nothing urgent."). That puts
+     * it back where the cancellation coped. Everywhere else — AirPods, a
+     * dictation, the engine kept for Control — at full. Ducked, a quarter of that.
+     */
+    private static let echoCancelledSpeechVolume: Float = 0.25
+
+    private func speechVolume(voiceProcessing: Bool) -> Float {
+        (voiceProcessing ? Self.echoCancelledSpeechVolume : 1) * (ducked ? Self.duckedVolume : 1)
+    }
+
     /// Control's voice turned down while the user may be talking over it, and back up.
     private static let duckedVolume: Float = 0.25
     private var ducked = false
@@ -1190,7 +1210,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func duckSpeech(_ on: Bool) {
         guard on != ducked else { return }
         ducked = on
-        player?.volume = on ? Self.duckedVolume : 1
+        player?.volume = speechVolume(voiceProcessing: voiceProcessing)
         events.record("native-speech-duck", ["on": on])
     }
 
