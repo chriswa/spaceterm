@@ -361,7 +361,9 @@ const dictationPresence = new DictationPresence((speaking) => receptionist?.user
 /** Phone dictation, relayed through Voice Operator. See remote-dictation.ts. */
 const remoteDictation = new RemoteDictation(new VoiceOperator(), {
   onSpeaking: (speaking) => dictationPresence.phone(speaking),
-  turnProbability: async (audio, dictation) => {
+  turnProbability: async (audio, dictation, probe) => {
+    // The turn tone asks many times a second: hearing it is the record.
+    if (probe) return turnDetector.probability(audio)
     const asked = performance.now()
     try {
       const p = await turnDetector.probability(audio)
@@ -1944,8 +1946,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'dictation-turn-check': {
       const seq = msg.seq
       const asked = performance.now()
-      void remoteDictation.turnComplete(client.id, msg.id).then((outcome) => {
-        if (outcome.ok && outcome.value !== null) serverLog(`[turn] p(finished)=${outcome.value.toFixed(2)} in ${Math.round(performance.now() - asked)}ms`)
+      const probe = msg.probe === true
+      void remoteDictation.turnComplete(client.id, msg.id, probe).then((outcome) => {
+        if (outcome.ok && outcome.value !== null && !probe) serverLog(`[turn] p(finished)=${outcome.value.toFixed(2)} in ${Math.round(performance.now() - asked)}ms`)
         send(client.link, outcome.ok
           ? { type: 'dictation-turn-result', seq, probability: outcome.value }
           : { type: 'server-error', seq, message: outcome.error })

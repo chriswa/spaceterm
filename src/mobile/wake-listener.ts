@@ -350,6 +350,11 @@ export class UtteranceEndpointer {
   private wakeWordOnly = false
   private done = false
 
+  /** Whether the speaker is talking now, by the voice-activity gate: false from about 160 ms after their last word. */
+  get speaking(): boolean {
+    return this.gate.speaking
+  }
+
   constructor(
     private readonly tuning: HandsFreeTuning = DEFAULT_TUNING, private readonly alreadyMs = 0, alreadySpokeMs = 0,
     private readonly wakeWordStart = true,

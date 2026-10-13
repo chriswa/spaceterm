@@ -473,7 +473,8 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   1.3 MB, run in ONNX Runtime web at about 0.3 ms per 32 ms frame), so music,
   a fan or a noisy room never count as talk and never block it; without the
   model, loudness stands in.
-- **The conversation window.** "Control" opens it, and the microphone gets a
+- **The conversation window.** "Control" opens it, as does turning hands-free
+  on (not the microphone reopening itself after a stall), and the microphone gets a
   blue ring: from then on anything you say starts a dictation without
   "Control" — your first word kept — including cutting Control off mid-reply
   (when it speaks through echo cancellation). The Mac checks only that it was
@@ -683,10 +684,11 @@ only if it is fresh; otherwise, or when a newer cue replaces it, a
 all up and play them together, loudly. Each Smart Turn verdict on the phone
 is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
-**Hearing the turn model.** To tune `turnThreshold` by ear, set `"turnToneMs": 75`
-in `~/.spaceterm/hands-free.json` (0 or absent turns it off; it takes effect
-at once). While a dictation is being taken down, Smart Turn is then asked
-that often and each answer plays as a short tone, pitched from A3 (p = 0) to
+**Hearing the turn model.** To tune `turnThreshold` by ear, the turn tone
+(`TURN_TONE_MS` in `turn-tone.ts`, 75 — set it to 0 to turn it off) plays
+Smart Turn's answers. While a dictation is being taken down and you have stopped
+talking — by the phone's voice-activity model, about 160 ms after your last
+word, so room noise does not count — Smart Turn is then asked that often and each answer plays as a short tone, pitched from A3 (p = 0) to
 A6 (p = 1) in semitones, held twice as long at or above the threshold
 (`turn-tone.ts`). The model takes 70–130 ms an answer, so that is the
 real pace. Each dictation's answers are one `hands-free-turn-tone` line,

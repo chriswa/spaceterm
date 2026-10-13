@@ -2,13 +2,14 @@ import { create } from 'zustand'
 import type { DictationApi, HandsFreeApi } from '../shared/api'
 import { isControlShutdown, LET_ME_TURN_THIS_OFF } from '../shared/control-shutdown'
 import type { HandsFreeTuning } from '../shared/protocol'
-import { playCue, playHandsFreeCue, quietForMs, type Cue, type HandsFreeCue } from './cues'
+import { playCue, playHandsFreeCue, playTurnTone, quietForMs, type Cue, type HandsFreeCue } from './cues'
 import { noteUserInterrupted } from './control-tones'
 import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, holdsMicrophone, onHoldStateChange, type Capture } from './held-microphone'
 import { nativeHaptic, nativeSpeech, type HapticPattern } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
 import { nativePlayback } from './speech-player'
+import { startTurnTone, TURN_TONE_MS } from './turn-tone'
 import { Downsampler, pcmToBase64 } from './pcm'
 import { loadFrameScorer, type FrameScorer } from './speech-detector'
 import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, WakeListener, levelDb, type ScoredFrame, type WakeCandidate } from './wake-listener'
@@ -51,7 +52,7 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * after it Control says it had not finished and carries on. What survives of
  * Control's voice in the microphone is recorded per reply (`hands-free-echo`).
  *
- * After "Control", a conversation window opens: speech starts a dictation
+ * After "Control", and as hands-free is turned on, a conversation window opens: speech starts a dictation
  * without the wake word — the Mac checks only that it was words, not a cough
  * or filler — and so can cut Control off, echo cancellation permitting. It
  * stays open while either side is speaking and closes, with a tone, once
@@ -95,8 +96,8 @@ export function cleanHandsFreeText(text: string): string {
 export interface HandsFreeDictation {
   finish(): Promise<string>
   cancel(): void
-  /** At a pause: probability 0..1 that the speaker has finished; null when it cannot say. */
-  checkTurn(): Promise<number | null>
+  /** At a pause: probability 0..1 that the speaker has finished; null when it cannot say. `probe`: the turn tone asking. */
+  checkTurn(probe?: boolean): Promise<number | null>
 }
 
 /** Everything outside this module it touches, so a test can supply its own. */
@@ -112,6 +113,8 @@ export interface HandsFreeDeps {
   playCue(cue: Cue): void
   /** One of hands-free's own tones: heard whatever Replies is set to. */
   handsFreeCue(cue: HandsFreeCue): void
+  /** One tone of the turn tone, a tuning aid (turn-tone.ts). */
+  turnTone(frequency: number, seconds: number): void
   /** A tap the user can feel: the wake word was heard. Nothing, where there is no way to. */
   haptic(pattern: HapticPattern): void
   /** A dictation on the held microphone. */
@@ -140,6 +143,7 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
   quietForMs,
   playCue,
   handsFreeCue: playHandsFreeCue,
+  turnTone: playTurnTone,
   haptic: nativeHaptic,
   beginDictation: (options) => Dictation.begin(api.dictation, options),
   // Its own dictation counts as one while it is hearing; see `hearing` below.
@@ -460,6 +464,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     deps.handsFreeCue('dictationStart')
     openConversation()
     let dictation: HandsFreeDictation | undefined
+    let turnTone: ReturnType<typeof startTurnTone> | undefined
     try {
       if (!capture) throw new Error('the microphone went away')
       // Ends on what the turn model and the endpointer hear — or, if audio stops coming, on the clock.
@@ -474,11 +479,24 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
           return audio
         },
       })
-      utterance = new UtteranceEndpointer(tuning, backlogMs, spokeMs, wakeWordStart)
+      const endpointer = new UtteranceEndpointer(tuning, backlogMs, spokeMs, wakeWordStart)
+      utterance = endpointer
       utteranceDictation = dictation
       endUtterance = ended
       void deps.sleep(tuning.maxUtteranceMs + 10_000).then(() => ended('lost'))
+      const asking = dictation
+      if (TURN_TONE_MS > 0) {
+        turnTone = startTurnTone(TURN_TONE_MS, tuning.turnThreshold, {
+          check: () => asking.checkTurn(true), quiet: () => !endpointer.speaking,
+          play: deps.turnTone, sleep: deps.sleep, now: () => performance.now(),
+        })
+      }
       const reason = await end
+      if (turnTone) {
+        // What the tone played, for a look at how the verdict moves: [ms into the dictation, p].
+        record('hands-free-turn-tone', { intervalMs: TURN_TONE_MS, threshold: tuning.turnThreshold, reason, samples: turnTone.stop() })
+        turnTone = undefined
+      }
       utterance = undefined
       utteranceDictation = undefined
       endUtterance = undefined
@@ -509,6 +527,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       deps.playCue('error')
       if (interrupted) carryOn()
     } finally {
+      turnTone?.stop()
       utterance = undefined
       utteranceDictation = undefined
       endUtterance = undefined
@@ -658,12 +677,16 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
 
   /** Bumped whenever the microphone goes: a wait for it to come back counts only for the loss it began at. */
   let micLosses = 0
+  /** The microphone went with holding still on: when it comes back, that is a reopening, not hands-free turned on. */
+  let reopening = false
 
   /**
    * Follow the hold: listen to the held microphone while there is one. The
    * app reopens its microphone when it stalls — routinely, after a cue or
    * Control's voice takes the audio session — so a hold still turned on keeps
    * the conversation window open for `conversationMs`, waiting for it.
+   * Turning hands-free on opens the window too, so the first words need no
+   * "Control"; a reopened microphone leaves it as it was.
    */
   const follow = () => {
     const next = deps.heldCapture()
@@ -675,6 +698,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       downsampler = undefined
       endUtterance?.('lost')
       const loss = ++micLosses
+      reopening = deps.holdWanted()
       if (!deps.holdWanted()) closeConversation('microphone')
       else if (conversation) {
         log('the microphone is reopening: the conversation window waits for it')
@@ -694,6 +718,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     if (useHandsFree.getState().phase === 'off') setPhase('listening')
     log(`listening for "${WAKE_WORD}" (${next.describe()})`)
     record('hands-free-mic', { listening: true, capture: next.describe() })
+    if (!reopening) openConversation()
+    reopening = false
   }
   follow()
   const offHold = deps.onHoldStateChange(follow)

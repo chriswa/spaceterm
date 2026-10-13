@@ -36,8 +36,12 @@ const fakeDetector: FrameScorer = {
 
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
-/** `isWords`: the speech check's answer, or one per check, numbered from 0. */
-function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null,
+/**
+ * `isWords`: the speech check's answer, or one per check, numbered from 0.
+ * `justTurnedOn`: start in the window that turning hands-free on opens;
+ * otherwise it has run out, and "Control" is needed.
+ */
+function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null,
   heardShutdown = (() => undefined) as (mode: 'wake-word' | 'speech') => 'whole' | 'start' | undefined } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
@@ -93,6 +97,7 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
     quietForMs: () => quietFor,
     playCue: (cue) => { cues.push(cue) },
     handsFreeCue: (cue) => { tones.push(cue) },
+    turnTone: () => {},
     haptic: (pattern) => { haptics.push(pattern) },
     beginDictation: async (options: DictationOptions) => {
       const d = {
@@ -105,7 +110,8 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
       return {
         finish: async () => { d.finished = true; return transcript },
         cancel: () => { d.cancelled = true },
-        checkTurn: async () => { d.turnChecks++; return turn },
+        // The turn tone's asks (probes) are not pauses: only pauses are counted.
+        checkTurn: async (probe) => { if (!probe) d.turnChecks++; return turn },
       }
     },
     othersDictating: () => false,
@@ -117,7 +123,19 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
     interruptControl: () => { interrupts++; controlSpeaking = false },
   }
   const uninstall = installHandsFree(deps.api, deps)
-  const ready = settle()
+  const feed = (part: Float32Array) => { for (let i = 0; i < part.length; i += 1600) for (const fn of listeners) fn(part.subarray(i, i + 1600)) }
+  const ready = settle().then(async () => {
+    if (justTurnedOn) return
+    // Let the window turning it on opened run out, in a silent room whatever the test has set, and forget its closing tone and taps.
+    const [speaking, quietBefore] = [controlSpeaking, quietFor]
+    controlSpeaking = false
+    quietFor = 10_000
+    for (let i = 0; i < 16; i++) { feed(quiet(1000)); await settle() }
+    controlSpeaking = speaking
+    quietFor = quietBefore
+    tones.length = 0
+    haptics.length = 0
+  })
   /** Feed audio in microphone-sized blocks, letting promises run between them. */
   const hear = async (...parts: Float32Array[]) => {
     await ready
@@ -301,6 +319,30 @@ describe('hands-free mode', () => {
   })
 
   describe('the conversation window', () => {
+    it('opens as hands-free is turned on: the first words need no "Control"', async () => {
+      h = harness({ justTurnedOn: true, transcript: 'What is Kevin doing?' })
+      expect(useHandsFree.getState().conversation).toBe(true)
+      expect(useHandsFree.getState().secondsLeft).toBe(15)
+      await h.hear(quiet(1000), speech(1500), quiet(3500))
+      expect(h.modes).toEqual(['speech'])
+      expect(h.said).toEqual(['What is Kevin doing?'])
+    })
+
+    it('turned on and left quiet, closes after conversationMs, as after "Control"', async () => {
+      h = harness({ justTurnedOn: true })
+      await h.hear(quiet(15_500))
+      expect(useHandsFree.getState().conversation).toBe(false)
+      expect(h.tones).toEqual(['conversationClosed'])
+    })
+
+    it('is not opened again by the microphone reopening after it ran out', async () => {
+      h = harness()
+      await h.hear()
+      h.stallHold()
+      h.reopenHold()
+      expect(useHandsFree.getState().conversation).toBe(false)
+    })
+
     /** "Control, …" sent: the window is open. */
     async function inConversation(h: ReturnType<typeof harness>) {
       await h.hear(quiet(1500), speech(1500), quiet(3500))

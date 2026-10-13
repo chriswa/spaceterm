@@ -799,8 +799,8 @@ export class ServerClient {
   }
 
   /** Whether the speaker sounds finished, 0..1; null without a turn model. */
-  async dictationTurnCheck(id: string): Promise<number | null> {
-    const resp = await this.request({ type: 'dictation-turn-check', id })
+  async dictationTurnCheck(id: string, probe?: boolean): Promise<number | null> {
+    const resp = await this.request({ type: 'dictation-turn-check', id, ...(probe ? { probe } : {}) })
     if (resp.type === 'dictation-turn-result') return resp.probability
     return unexpected(resp)
   }

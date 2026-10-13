@@ -271,8 +271,9 @@ export interface DictationApi {
   /**
    * At a pause: the probability, 0..1, that the speaker has finished — the
    * server's turn model on the audio sent so far. Null when it has none.
+   * `probe`: the turn tone asking, not a pause — the server keeps no record of it.
    */
-  turnCheck(id: string): Promise<number | null>
+  turnCheck(id: string, probe?: boolean): Promise<number | null>
 }
 
 /**

@@ -78,6 +78,10 @@ textarea, input, [contenteditable="true"], .cm-content {
 .app {
   padding-bottom: var(--m-bar-height);
 }
+/* Toasts too: Toast.tsx stacks them up from the bottom of their own box. */
+.toast-container {
+  bottom: var(--m-bar-height);
+}
 
 /*
  * Readouts | voice | getting around (BottomBar.tsx). The middle column is

@@ -41,7 +41,11 @@ const MAX_WAIT_MS = 60_000
 const FREQUENCY_HZ = 494
 const SEGMENT_DURATION_S = 0.24
 const SEGMENT_GAP_S = 0.06
-const SEGMENT_GAINS = [0.045, 0.0225, 0.01125, 0.005625, 0.0028125]
+/**
+ * Each echo half the one before. The loudest peaks near -25 dBFS and the
+ * echoes never overlap, so there is ample headroom before clipping.
+ */
+const SEGMENT_GAINS = [0.05625, 0.028125, 0.0140625, 0.00703125, 0.003515625]
 
 /**
  * Everything the cue reaches outside itself. jsdom has no Web Audio, so the
