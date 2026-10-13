@@ -411,7 +411,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             voiceDucking: voiceDucking,
             // Echo cancellation is for hands-free, which listens through Control's voice. A dictation
             // stops Control first, so it goes without, and without voice processing's ways with the route.
-            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && forDictation)
+            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && forDictation),
+            letOthersResume: mode == .microphone && !forDictation && oldUp != .microphone
+                && UIApplication.shared.applicationState == .active
         )
         let capture = self.capture
         audioQueue.async {
@@ -429,6 +431,21 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         /// Voice processing's ducking of other audio, at its most rather than its least (`voiceDucking`).
         let voiceDucking: Bool
         let voiceProcessingAllowed: Bool
+        /**
+         * Hands-free's microphone, coming up: once its session is active —
+         * the AirPods on their microphone link, and Spotify paused by that,
+         * as it pauses whenever its output goes — give the session up at
+         * once, telling others they may carry on, and take it straight back,
+         * before the engine starts. Spotify resumes onto the microphone link
+         * and plays on under hands-free; without it, hands-free's whole
+         * session was silent (October 13), and music came back only when
+         * hands-free was turned off. Seen to work on October 12, when a
+         * deactivation between two microphone sessions resumed Spotify on
+         * the link and it played on. Only in the foreground — the user has
+         * just turned hands-free on — as iOS will not let an app in the
+         * background record once it has given its session up.
+         */
+        let letOthersResume: Bool
     }
 
     private struct Started {
@@ -473,6 +490,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // The rate voice processing has worked at over AirPods: see below.
         try? session.setPreferredSampleRate(Self.voiceProcessingRate)
         try session.setActive(true)
+        if plan.letOthersResume {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try session.setActive(true)
+        }
         let input = engine.inputNode
         /**
          * Voice processing over a Bluetooth route faster than 24 kHz sent only
@@ -537,7 +558,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if mode == .microphone {
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
-                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "letOthersResume": plan.letOthersResume, "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("awake, playing to \(outputName()) (\(why))")
                 events.record("native-awake-running", ["why": why, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
@@ -758,7 +779,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * Whether other audio plays, recorded each time it changes, with what
      * this app's audio is doing then: which of this app's moves, if any,
      * paused Spotify — or let it carry on. iOS says nothing to another app
-     * when that app pauses itself, so this is sampled.
+     * when that app pauses itself, so this is sampled. Beware: the page's
+     * own sounds, the sonar and the cues, play through WebKit's process and
+     * count as other audio here too.
      */
     private var otherAudioPlaying: Bool?
 

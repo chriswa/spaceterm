@@ -249,9 +249,15 @@ music down instead (`voiceProcessingOtherAudioDuckingConfiguration`, at its
 most rather than its least), which works on the running engine, in the
 background too — only while hands-free takes a dictation down
 (`followHandsFree` in `duck-others.ts`, `hands-free-dictating`).
-`native-voice-ducking` shows each change. Going from playback to the
-microphone in the foreground, the session is given up first, music told it
-may carry on; changed in place, that paused Spotify.
+`native-voice-ducking` shows each change. But turning hands-free on
+pauses Spotify by itself: its output, the AirPods' music link, goes when
+they switch to their microphone link, and Spotify pauses whenever its output
+goes, as for headphones unplugged. So as hands-free's session comes up, in
+the foreground, it is given up at once — telling others they may carry on —
+and taken straight back, before the engine starts; Spotify resumes onto the
+microphone link (`letOthersResume` on `native-mic-running`). `other-audio`
+says when it plays, but counts the page's own sonar and cues, which go
+through WebKit's process, as other audio too.
 
 iOS applies any session's treatment of other audio only when it is
 activated, so each change brings the app's session up again, deactivated
