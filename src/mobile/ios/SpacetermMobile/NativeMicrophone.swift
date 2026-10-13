@@ -61,8 +61,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     /// What the engine is up for: listening (and playing), only playing, or nothing.
     private enum Mode: String { case off, speaker, microphone }
     /// What the engine should be up for. The microphone, when wanted, plays Control's voice too.
-    /// Kept up after a dictation without Control held too, to keep other audio stopped for `muteHoldSeconds`.
-    private var mode: Mode { wanted ? .microphone : stayAwake || mutingAfterDictation ? .speaker : .off }
+    /// Kept up after a dictation without Control held too, to keep other audio down for `duckHoldSeconds`.
+    private var mode: Mode { wanted ? .microphone : stayAwake || duckingAfterDictation ? .speaker : .off }
     /// What the engine is up for now.
     private var up = Mode.off
     /// The microphone is running — what the page means by `running`.
@@ -132,11 +132,12 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let action = (message.body as? [String: Any])?["action"] as? String
         MainActor.assumeIsolated {
             switch action {
-            // `mute`: a dictation's microphone, which stops other audio while it is open; hands-free's held one does not.
+            // `mute`: a dictation's microphone, which turns other audio down while it is open (`forDictation`);
+            // hands-free's held one does not. The key's name is from when it stopped it.
             // (`duck` is what a page from before October 13 2026 sends for the same.)
             // (`highQuality`, from a page of October 12 2026, is ignored: see `Plan`.)
             case "start": start(
-                mute: ((message.body as? [String: Any])?["mute"] ?? (message.body as? [String: Any])?["duck"]) as? Bool ?? false
+                forDictation: ((message.body as? [String: Any])?["mute"] ?? (message.body as? [String: Any])?["duck"]) as? Bool ?? false
             )
             case "stop": stop()
             // Control is thinking or speaking aloud here: other apps' audio — music — turned down meanwhile.
@@ -157,9 +158,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func start(mute: Bool) {
+    private func start(forDictation: Bool) {
         wanted = true
-        muteForDictation = mute
+        self.forDictation = forDictation
         // A new attempt: the page waits for running or an error, and an old error would answer it.
         lastError = nil
         if running {
@@ -178,8 +179,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func stop() {
         wanted = false
         // Other audio stays stopped a little longer: Control is about to think, and music swelling in the gap was jarring.
-        if muteForDictation { holdMute() }
-        muteForDictation = false
+        if forDictation { holdDucking() }
+        forDictation = false
         let was = up
         events.record("native-mic-stopped")
         if was == .microphone { log("stopped") }
@@ -278,50 +279,52 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     /**
      * What this app's session does to other apps' audio — music: plays
-     * alongside it, turns it down, or stops it. Stopped while a dictation's
-     * microphone is open and for `muteHoldSeconds` after (October 2026: the
-     * user wanted silence while dictating, as the sign it was listening, and
-     * turned down was jarring as it swelled back); turned down while Control
-     * thinks and speaks aloud here (`duck-others`). Either way it comes back:
-     * leaving `mute` or `duck` deactivates the session with
-     * `notifyOthersOnDeactivation`, which tells music it may carry on — what
-     * WebKit never did. Hands-free's held microphone leaves it alone
-     * throughout, Control speaking included: see `others`.
+     * alongside it, or turns it down. Down while a dictation's microphone is
+     * open and for `duckHoldSeconds` after, and while Control thinks and
+     * speaks aloud here (`duck-others`); leaving that deactivates the session
+     * with `notifyOthersOnDeactivation`, which lets music back up.
+     *
+     * Never stopped. iOS has no way for one app to mute another: the only
+     * "stop" is a non-mixable session, which interrupts it, and Spotify takes
+     * an interruption as a pause. That was the dictation's "mute" from
+     * October 12 to 13 2026 — a pause, resumed by the notification after.
+     * Hands-free's held microphone leaves the session alone throughout and
+     * turns music down through voice processing instead: see `others`.
      */
-    private enum Others: String { case mix, duck, mute }
+    private enum Others: String { case mix, duck }
     private var others: Others {
         // Hands-free's held microphone is never brought up again for other audio's sake. Each change
         // deactivates the session between, which dropped the AirPods out of their microphone link
         // (a blip of music each time), left the microphone delivering nothing for ten seconds or
         // more, and — with the screen locked — lost it for good: iOS will not let an app in the
         // background start recording again (October 2026, every hands-free turn).
-        if wanted { return muteForDictation ? .mute : .mix }
-        if mutingAfterDictation { return .mute }
+        if wanted { return forDictation ? .duck : .mix }
+        if duckingAfterDictation { return .duck }
         return duckForControl ? .duck : .mix
     }
     /// What the active session was activated with; nil while it is not active. iOS applies it only on activation.
     private var sessionOthers: Others?
-    private var muteForDictation = false
+    private var forDictation = false
     private var duckForControl = false
-    /// A dictation has just ended: other audio stays stopped until `muteHold` runs out.
-    private var mutingAfterDictation = false
-    private var muteHold: DispatchWorkItem?
-    private static let muteHoldSeconds: TimeInterval = 2
+    /// A dictation has just ended: other audio stays down until `duckHold` runs out.
+    private var duckingAfterDictation = false
+    private var duckHold: DispatchWorkItem?
+    private static let duckHoldSeconds: TimeInterval = 2
 
-    private func holdMute() {
-        mutingAfterDictation = true
-        muteHold?.cancel()
+    private func holdDucking() {
+        duckingAfterDictation = true
+        duckHold?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.muteHold = nil
-                self.mutingAfterDictation = false
-                self.events.record("native-mute-hold-ended", ["up": self.up.rawValue, "others": self.others.rawValue])
+                self.duckHold = nil
+                self.duckingAfterDictation = false
+                self.events.record("native-duck-hold-ended", ["up": self.up.rawValue, "others": self.others.rawValue])
                 self.reconcileNow("the hold on other audio ran out")
             }
         }
-        muteHold = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.muteHoldSeconds, execute: work)
+        duckHold = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duckHoldSeconds, execute: work)
     }
 
     private func setDuckForControl(_ on: Bool) {
@@ -343,11 +346,12 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * for other audio (`others`), but voice processing ducks other audio
      * itself, by a level that can be changed on the running engine — no
      * session change, no restart, the AirPods' link untouched, and so in the
-     * background too. Down while hands-free takes a dictation and while
-     * Control thinks and speaks; at its least otherwise, so music plays on.
+     * background too. Down only while hands-free takes a dictation down, at
+     * its least otherwise: down for Control's turns too, the music was down
+     * nearly the whole of a conversation (October 13).
      */
     private var duckForHandsFree = false
-    private var voiceDucking: Bool { wanted && !muteForDictation && (duckForHandsFree || duckForControl) }
+    private var voiceDucking: Bool { wanted && !forDictation && duckForHandsFree }
     /// The level last set on the running engine's voice processing; nil when none is set.
     private var appliedVoiceDucking: Bool?
 
@@ -385,6 +389,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let mode = self.mode
         guard mode != .off else { return }
         lastBringUp = Date()
+        noteOtherAudio()
         let old = engine, oldUp = up, hadTap = up == .microphone
         // Its player goes with it; the new engine's comes back in `broughtUp`.
         player = nil
@@ -397,18 +402,16 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // it may carry on. Changed on the active session instead, the category change paused Spotify, and
         // under hands-free nothing ever told it to carry on (October 12: silent the whole time). Only in the
         // foreground, as iOS will not let an app in the background record again once it has given up.
-        let switchingCategory = oldUp != .off && (oldUp == .speaker) != (mode == .speaker) && others != .mute
+        let switchingCategory = oldUp != .off && (oldUp == .speaker) != (mode == .speaker)
             && UIApplication.shared.applicationState == .active
         let plan = Plan(
             microphone: mode == .microphone, others: others,
-            // A change to what other audio gets applies only with a deactivation between. Music is
-            // told it may come back unless it is about to be stopped again: no blip of it between.
+            // A change to what other audio gets applies only with a deactivation between, which lets music back up.
             deactivateFirst: sessionOthers != nil && (sessionOthers != others || switchingCategory),
-            notifyOthers: others != .mute,
             voiceDucking: voiceDucking,
             // Echo cancellation is for hands-free, which listens through Control's voice. A dictation
             // stops Control first, so it goes without, and without voice processing's ways with the route.
-            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && muteForDictation)
+            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && forDictation)
         )
         let capture = self.capture
         audioQueue.async {
@@ -423,7 +426,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let microphone: Bool
         let others: Others
         let deactivateFirst: Bool
-        let notifyOthers: Bool
         /// Voice processing's ducking of other audio, at its most rather than its least (`voiceDucking`).
         let voiceDucking: Bool
         let voiceProcessingAllowed: Bool
@@ -447,14 +449,13 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         if hadTap { old.inputNode.removeTap(onBus: 0) }
         let session = AVAudioSession.sharedInstance()
         if plan.deactivateFirst {
-            try? session.setActive(false, options: plan.notifyOthers ? .notifyOthersOnDeactivation : [])
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
         }
-        // Without `mixWithOthers` the session is non-mixable: activating it stops other audio.
+        // Always `mixWithOthers`: without it, activating the session would interrupt — pause — other audio.
         var options: AVAudioSession.CategoryOptions
         switch plan.others {
         case .mix: options = [.mixWithOthers]
         case .duck: options = [.mixWithOthers, .duckOthers]
-        case .mute: options = []
         }
         if !plan.microphone {
             // Playback alone, which records nothing and so shows no microphone in use.
@@ -547,6 +548,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             startTimer()
             // Asked for while it came up.
             applyVoiceDucking()
+            noteOtherAudio()
         case .failure(let error):
             player = nil
             voiceProcessing = false
@@ -752,6 +754,29 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         [3, 3, 10, 30][min(restarts, 3)] + (restarts > 3 ? 30 : 0)
     }
 
+    /**
+     * Whether other audio plays, recorded each time it changes, with what
+     * this app's audio is doing then: which of this app's moves, if any,
+     * paused Spotify — or let it carry on. iOS says nothing to another app
+     * when that app pauses itself, so this is sampled.
+     */
+    private var otherAudioPlaying: Bool?
+
+    private func noteOtherAudio() {
+        let session = AVAudioSession.sharedInstance()
+        let playing = session.isOtherAudioPlaying
+        guard playing != otherAudioPlaying else { return }
+        let was = otherAudioPlaying
+        otherAudioPlaying = playing
+        guard was != nil else { return }
+        events.record("other-audio", [
+            "playing": playing, "up": up.rawValue, "others": sessionOthers?.rawValue ?? "inactive",
+            "voiceDucking": appliedVoiceDucking ?? false, "voiceProcessing": voiceProcessing,
+            "category": session.category.rawValue, "mode": session.mode.rawValue,
+            "route": NativeEvents.describeRoute(session.currentRoute),
+        ])
+    }
+
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: Self.sendInterval, repeats: true) { _ in
@@ -762,6 +787,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func onTick() {
         tick += 1
         // Every 2 s, in case the page reloaded and missed the last change.
+        // Once a second: other audio — Spotify — starting or stopping, beside what this app was doing.
+        if tick % 10 == 0 { noteOtherAudio() }
         if tick % 20 == 0 {
             sendState()
             recover("the engine was found stopped")

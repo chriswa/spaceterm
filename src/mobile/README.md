@@ -229,33 +229,36 @@ dictation uses the app's own microphone (`held-microphone.ts`), and the
 page's idle type is ambient, WebKit's one type that mixes. The app then
 decides what other audio gets (`Others` in `NativeMicrophone.swift`):
 
-- **stopped** while a dictation's microphone is open, and for two seconds
-  after (`muteHoldSeconds`), so a dictation flows into Control thinking
-  without the music swelling between. Silence is the sign it is listening,
-  and the AirPods' switch between their music and microphone links is
-  hidden inside it;
-- **turned down** while Control thinks or speaks aloud here
-  (`duck-others.ts`, which waits `DUCK_RELEASE_MS` before letting go);
+- **turned down** while a dictation's microphone is open, and for two
+  seconds after (`duckHoldSeconds`), so a dictation flows into Control
+  thinking without the music swelling between; and while Control thinks or
+  speaks aloud here (`duck-others.ts`, which waits `DUCK_RELEASE_MS` before
+  letting go);
 - **left alone** otherwise.
 
-Hands-free's held microphone never changes the session for any of this, as
-each change would drop the AirPods' microphone link. Music plays on under it
-— the session is given up first, music told it may carry on, when the app
-goes from playback to the microphone in the foreground; changed in place,
-that paused Spotify for the whole session — and voice processing turns it
-down instead (`voiceProcessingOtherAudioDuckingConfiguration`, at its most
-rather than its least), which works on the running engine, in the background
-too: while hands-free takes a dictation down (`followHandsFree` in
-`duck-others.ts`, `hands-free-dictating`) and while Control is busy.
-`native-voice-ducking` shows each change.
+Never paused. iOS has no way for one app to mute another: the only way to
+stop it is a non-mixable session, which interrupts it, and Spotify takes an
+interruption as a pause. From October 12 to 13 the dictation did exactly
+that ("muted"), with the music told to carry on after; now every session
+of the app's mixes. `other-audio` records each time other audio starts or
+stops, with what the app's audio was doing then.
 
-iOS applies any of these only when a session is activated, so each change
-brings the app's session up again, deactivated between with
-`notifyOthersOnDeactivation` — which tells music it may carry on — unless it
-is about to be stopped again. Ambient's cost: the Ring/Silent switch
-silences the page's own sounds, the sonar and the cues. `native-duck-others`,
-`native-mute-hold-ended` and the `others` field on `native-awake-running` /
-`native-mic-running` show it.
+Hands-free's held microphone never changes the session for any of this, as
+each change would drop the AirPods' microphone link. Voice processing turns
+music down instead (`voiceProcessingOtherAudioDuckingConfiguration`, at its
+most rather than its least), which works on the running engine, in the
+background too — only while hands-free takes a dictation down
+(`followHandsFree` in `duck-others.ts`, `hands-free-dictating`).
+`native-voice-ducking` shows each change. Going from playback to the
+microphone in the foreground, the session is given up first, music told it
+may carry on; changed in place, that paused Spotify.
+
+iOS applies any session's treatment of other audio only when it is
+activated, so each change brings the app's session up again, deactivated
+between with `notifyOthersOnDeactivation`, which lets music back up.
+Ambient's cost: the Ring/Silent switch silences the page's own sounds, the
+sonar and the cues. `native-duck-others`, `native-duck-hold-ended` and the
+`others` field on `native-awake-running` / `native-mic-running` show it.
 
 The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and

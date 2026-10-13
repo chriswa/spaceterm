@@ -289,9 +289,10 @@ export interface NativeCaptureHandle {
 
 /**
  * Start the app's microphone. Needs no tap. Rejects with the app's reason.
- * `mute`: for one dictation, so other apps' audio — music — stops while it
- * is open and for a moment after, then carries on; hands-free's held
- * microphone does not, or music would stay stopped the whole time it is on.
+ * `mute`: for one dictation, so other apps' audio — music — is turned down
+ * while it is open and for a moment after (the name is from when it was
+ * stopped, which iOS does by pausing it); hands-free's held microphone
+ * turns it down another way, only while it takes a dictation down.
  */
 export async function openNativeMicrophone({ mute = false }: { mute?: boolean } = {}): Promise<NativeCaptureHandle> {
   install()

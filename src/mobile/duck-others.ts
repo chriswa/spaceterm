@@ -7,14 +7,14 @@ import { useHandsFree, type HandsFreePhase } from './hands-free'
  * speaks aloud on this phone: the sonar, then its answer. The iPhone app
  * does the turning down (NativeMicrophone.swift `duck-others`), on the audio
  * session it keeps up while this phone holds Control. A dictation's own
- * microphone stops other audio outright, without asking, and the app keeps
- * it stopped a moment after, so a dictation flows into Control thinking
+ * microphone turns other audio down too, without asking, and the app keeps
+ * it down a moment after, so a dictation flows into Control thinking
  * without the music swelling between. Nothing in a browser.
  *
  * Under hands-free the app leaves its session alone and turns music down
  * through voice processing instead, which it can do on the running
- * microphone, in the background too: while Control is busy, as here, and
- * while hands-free takes a dictation down (`followHandsFree`).
+ * microphone, in the background too — only while hands-free takes a
+ * dictation down (`followHandsFree`); Control's turns there leave it be.
  *
  * Down at once; back up only once Control has been quiet for
  * `DUCK_RELEASE_MS`, so the gap between the sonar and the answer, or between
