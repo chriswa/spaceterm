@@ -219,7 +219,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // No engine, no voice: whatever was still to be said will not be.
         failSpeech(why: why)
         player = nil
-        cuePlayer = nil
         let old = engine, hadTap = up == .microphone
         up = .off
         transitioning = true
@@ -415,7 +414,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let old = engine, hadTap = up == .microphone
         // Its player goes with it; the new engine's comes back in `broughtUp`.
         player = nil
-        cuePlayer = nil
         // Made here so a configuration change it announces while starting is known to be its own.
         let engine = AVAudioEngine()
         self.engine = engine
@@ -469,7 +467,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     private struct Started {
         let player: AVAudioPlayerNode
-        let cuePlayer: AVAudioPlayerNode
         let voiceProcessing: Bool
         let voiceProcessingError: String?
         let sampleRate: Double
@@ -499,10 +496,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             try session.setCategory(.playback, mode: .default, options: options)
             try session.setActive(true)
             let player = attachPlayer(to: engine)
-            let cuePlayer = attachPlayer(to: engine)
             engine.prepare()
             try engine.start()
-            return Started(player: player, cuePlayer: cuePlayer, voiceProcessing: false, voiceProcessingError: nil, sampleRate: 0, ms: ms())
+            return Started(player: player, voiceProcessing: false, voiceProcessingError: nil, sampleRate: 0, ms: ms())
         }
         options.formUnion([.defaultToSpeaker, .allowBluetooth])
         try session.setCategory(.playAndRecord, mode: .default, options: options)
@@ -541,14 +537,13 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             voiceProcessingError = "left off: a Bluetooth route at \(Int(sessionRate)) Hz, where it hears only silence"
         }
         let player = attachPlayer(to: engine)
-        let cuePlayer = attachPlayer(to: engine)
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { throw Failure("the input has no format (sample rate 0)") }
         capture.reset(converter: AVAudioConverter(from: format, to: Converter.outFormat))
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in capture.handle(buffer) }
         engine.prepare()
         try engine.start()
-        return Started(player: player, cuePlayer: cuePlayer, voiceProcessing: voiceProcessing, voiceProcessingError: voiceProcessingError, sampleRate: format.sampleRate, ms: ms())
+        return Started(player: player, voiceProcessing: voiceProcessing, voiceProcessingError: voiceProcessingError, sampleRate: format.sampleRate, ms: ms())
     }
 
     /// The player Control's voice goes through, on a new engine.
@@ -566,7 +561,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         switch result {
         case .success(let started):
             player = started.player
-            cuePlayer = started.cuePlayer
             started.player.volume = ducked ? Self.duckedVolume : 1
             voiceProcessing = started.voiceProcessing
             if let error = started.voiceProcessingError { events.record("voice-processing-failed", ["error": error]) }
@@ -593,7 +587,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             noteOtherAudio()
         case .failure(let error):
             player = nil
-        cuePlayer = nil
             voiceProcessing = false
             sessionOthers = nil
             sessionOnHeadphones = false
@@ -1025,9 +1018,6 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
 
     // MARK: - Hands-free's tones
 
-    /// Hands-free's tones, mixed with Control's voice on the same engine.
-    private var cuePlayer: AVAudioPlayerNode?
-
     /**
      * One of hands-free's tones (src/mobile/cues.ts `playHandsFreeCue`):
      * dictation starting, dictation ending, the conversation window running
@@ -1035,6 +1025,12 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * WebKit's ambient type, which the Ring/Silent switch silences; this
      * engine's session is not. `segments`: (frequency Hz, seconds) pairs,
      * frequency 0 a rest; `gain` 0–1.
+     *
+     * Through the player Control's voice goes through, queued with it: a
+     * second player node on the engine was the one change in the build after
+     * which Spotify went unheard under every microphone (October 13), so
+     * there is only the one. A tone is cut off with Control's voice when that
+     * is stopped or started again.
      */
     private func playCue(_ body: [String: Any]) {
         let name = body["name"] as? String ?? "?"
@@ -1042,12 +1038,12 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             log("cue without segments and gain")
             return
         }
-        guard !transitioning, up != .off, engineRunning, let cuePlayer, let buffer = Self.toneBuffer(segments, gain: gain) else {
+        guard !transitioning, up != .off, engineRunning, let player, let buffer = Self.toneBuffer(segments, gain: gain) else {
             events.record("native-cue-dropped", ["cue": name, "why": transitioning ? "the engine is coming up" : "no engine running"])
             return
         }
-        cuePlayer.scheduleBuffer(buffer, completionHandler: nil)
-        if !cuePlayer.isPlaying { cuePlayer.play() }
+        player.scheduleBuffer(buffer, completionHandler: nil)
+        if !player.isPlaying { player.play() }
         events.record("native-cue", ["cue": name, "ms": Int(Double(buffer.frameLength) / SpeechQueue.format.sampleRate * 1000), "gain": gain])
     }
 
