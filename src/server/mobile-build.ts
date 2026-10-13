@@ -26,6 +26,15 @@ export interface MobileBuildDeps {
   build(outDir: string): Promise<{ ok: boolean; output: string }>
   /** Replace `target` with `staged`. */
   swap(staged: string, target: string): void
+  /**
+   * Date the build at `target` to `ms` — when it began reading its sources,
+   * not when it was written — so a source saved while it built is newer than
+   * it, and is built next. Dated by its finish, such an edit was older than
+   * the build and never built: October 13, an agent's edit landed mid-build,
+   * the phone was served a bundle using an import from before the edit, and
+   * it rendered a black screen ("Can't find variable: onHoldStateChange").
+   */
+  stamp(target: string, ms: number): void
   log(message: string): void
 }
 
@@ -85,6 +94,9 @@ export function realMobileBuildDeps(repoRoot: string, outDir: string, log: (m: s
         child.on('exit', (code) => resolve({ ok: code === 0, output }))
       })
     },
+    stamp(target, ms) {
+      fs.utimesSync(path.join(target, 'index.html'), ms / 1000, ms / 1000)
+    },
     swap(staged, target) {
       const old = `${target}.old`
       fs.rmSync(old, { recursive: true, force: true })
@@ -112,6 +124,7 @@ export async function refreshMobileBuild(outDir: string, deps: MobileBuildDeps):
   }
   try {
     deps.swap(staging, outDir)
+    deps.stamp(outDir, started)
   } catch (err) {
     deps.log(`[mobile-build] Built, but could not swap it in: ${err instanceof Error ? err.message : String(err)}`)
     return 'failed'

@@ -8,6 +8,7 @@ function deps(over: Partial<MobileBuildDeps> = {}) {
     builtAt: () => 100,
     build: async (dir) => { calls.push(`build ${dir}`); return { ok: true, output: '' } },
     swap: (staged, target) => { calls.push(`swap ${staged} -> ${target}`) },
+    stamp: () => undefined,
     log: () => undefined,
     ...over
   }
@@ -25,6 +26,16 @@ describe('refreshMobileBuild', () => {
     const { d, calls } = deps()
     await expect(refreshMobileBuild('/out/mobile', d)).resolves.toBe('rebuilt')
     expect(calls).toEqual(['build /out/mobile.next', 'swap /out/mobile.next -> /out/mobile'])
+  })
+
+  it('dates the build to when it began, so a source saved while it built is built next', async () => {
+    const stamps: number[] = []
+    const { d } = deps({ stamp: (_target, ms) => { stamps.push(ms) } })
+    const before = Date.now()
+    await refreshMobileBuild('/out/mobile', d)
+    expect(stamps).toHaveLength(1)
+    expect(stamps[0]).toBeGreaterThanOrEqual(before)
+    expect(stamps[0]).toBeLessThanOrEqual(Date.now())
   })
 
   it('does nothing when current', async () => {
