@@ -288,10 +288,14 @@ The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
 on the main thread that froze the screen after every dictation.
 
-A dictation's microphone once asked for iOS 26's AirPods high-quality
-recording (`bluetoothHighQualityRecording`). It saved no time, and the
-AirPods' microphone went dead the first time hands-free followed one of its
-dictations, so both use the hands-free profile now.
+Hands-free on headphones asks for iOS 26's AirPods high-quality recording
+(`bluetoothHighQualityRecording`), with the hands-free profile as the
+fallback: iOS sometimes brings the AirPods' microphone link up at 48 kHz on
+its own, and there it sent only exact zeros unless this had been asked for,
+while every 48 kHz start that asked for it heard. A dictation does not ask,
+as it may add input latency. (A dictation asked for it on October 12; then
+hands-free with voice processing following one of its dictations came up
+dead.) `native-mic-running`'s `highQuality` says whether it took.
 
 The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
@@ -492,8 +496,11 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   shut down: it is the transcript's **Away**, so Control stops speaking, and
   what it has to tell you waits for your return. The window closes there and
   then with a tone of its own (an octave down, held low), so nothing more is
-  taken down for Control; the hold stays on, and the next "Control, …"
-  brings Control back, aloud unless you had it on Silent. It is a fixed phrase, matched on the whole
+  taken down for Control; the hold stays on, and the next "Control" —
+  even on its own, with nothing after it — brings Control back, aloud
+  unless you had it on Silent, to tell you anything you missed. (Alone, it
+  takes Control only when no device holds it, so a misheard wake word never
+  takes it from another.) It is a fixed phrase, matched on the whole
   dictation by the phone and the server (`src/shared/control-shutdown.ts`) —
   never inside a longer request — and the model is only told it happened.
   Asking in other words ("Control, be quiet") still goes to the model, whose

@@ -491,6 +491,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         let sampleRate: Double
         /// How long the blocking part took, from the old engine stopping to the new one running.
         let ms: Int
+        /// Whether high-quality recording was asked for, refused, supported by the input, and on.
+        var highQuality: [String: Any] = [:]
     }
 
     /// The blocking part of a bring-up, on `audioQueue`: the old engine stopped, the session set and activated, `engine` started.
@@ -521,12 +523,40 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             return Started(player: player, voiceProcessing: false, voiceProcessingError: nil, sampleRate: 0, ms: ms())
         }
         options.formUnion([.defaultToSpeaker, .allowBluetooth])
-        try session.setCategory(.playAndRecord, mode: .default, options: options)
+        /**
+         * Hands-free on headphones asks for iOS 26's AirPods high-quality
+         * recording, with the hands-free profile as the fallback. iOS
+         * sometimes brings the AirPods' microphone link up at 48 kHz on its
+         * own, and there it sent only exact zeros unless this had been asked
+         * for — every such start, with voice processing or without (October
+         * 12–13) — while every 48 kHz start that asked for it heard. Not for a
+         * dictation: Apple says it may add input latency, and the button must
+         * start at once.
+         */
+        var highQuality: [String: Any] = ["asked": false]
+        if plan.headphones, #available(iOS 26.0, *) {
+            highQuality["asked"] = true
+            do {
+                try session.setCategory(.playAndRecord, mode: .default, options: options.union(.bluetoothHighQualityRecording))
+            } catch {
+                highQuality["refused"] = error.localizedDescription
+                try session.setCategory(.playAndRecord, mode: .default, options: options)
+            }
+        } else {
+            try session.setCategory(.playAndRecord, mode: .default, options: options)
+        }
         // iOS silences haptics while recording unless told otherwise; hands-free's cue is one.
         try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
-        // The rate voice processing has worked at over AirPods: see below.
-        try? session.setPreferredSampleRate(Self.voiceProcessingRate)
+        // The rate voice processing has worked at over AirPods: see below. Not with high quality, which is 48 kHz.
+        if !plan.headphones { try? session.setPreferredSampleRate(Self.voiceProcessingRate) }
         try session.setActive(true)
+        if plan.headphones, #available(iOS 26.0, *), let port = session.currentRoute.inputs.first {
+            highQuality["input"] = "\(port.portName) (\(port.portType.rawValue))"
+            if let bluetooth = port.bluetoothMicrophoneExtension {
+                highQuality["supported"] = bluetooth.highQualityRecording.isSupported
+                highQuality["enabled"] = bluetooth.highQualityRecording.isEnabled
+            }
+        }
         let input = engine.inputNode
         /**
          * Voice processing over a Bluetooth route faster than 24 kHz sent only
@@ -563,7 +593,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in capture.handle(buffer) }
         engine.prepare()
         try engine.start()
-        return Started(player: player, voiceProcessing: voiceProcessing, voiceProcessingError: voiceProcessingError, sampleRate: format.sampleRate, ms: ms())
+        return Started(player: player, voiceProcessing: voiceProcessing, voiceProcessingError: voiceProcessingError, sampleRate: format.sampleRate, ms: ms(), highQuality: highQuality)
     }
 
     /// The player Control's voice goes through, on a new engine.
@@ -593,7 +623,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if mode == .microphone {
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
-                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "headphones": plan.headphones, "released": plan.deactivateFirst, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "headphones": plan.headphones, "highQuality": started.highQuality, "released": plan.deactivateFirst, "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("awake, playing to \(outputName()) (\(why))")
                 events.record("native-awake-running", ["why": why, "others": plan.others.rawValue, "ms": started.ms, "released": plan.deactivateFirst, "route": NativeEvents.describeRoute(session.currentRoute)])
