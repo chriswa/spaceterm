@@ -251,17 +251,25 @@ background too — only while hands-free takes a dictation down
 (`followHandsFree` in `duck-others.ts`, `hands-free-dictating`).
 `native-voice-ducking` shows each change.
 
-Turning hands-free on pauses Spotify, and nothing here undoes that: the
-AirPods' music link goes when they switch to their microphone link, and
-Spotify pauses when its output goes. The one way to tell it to carry on is a
-deactivation, and a deactivation followed at once by the microphone brought
-the AirPods' microphone link up at 48 kHz sending only zeros, every time —
-twice on October 13 the AirPods then needed the iPhone restarting. So no
-microphone session is ever preceded by a deactivation: it keeps the
-treatment of other audio it was activated with, and music is let back up
-when the microphone goes. `other-audio` says when other audio plays, but
-counts the page's own sonar and cues, which go through WebKit's process, as
-other audio too.
+On headphones — AirPods, any Bluetooth or wired set — hands-free runs as a
+dictation does: no voice processing, and music turned down for the whole
+session (`holdOnHeadphones`, decided when it starts and when a headset
+comes or goes). Voice processing's voice-chat mode was what paused Spotify
+for the whole of hands-free; a dictation, without it, had Spotify play on.
+In an ear nothing played leaks into the microphone, so there is nothing to
+cancel: the app still plays Control's voice and hands-free listens through
+it, so "Control" still cuts it off (`echoFree` in the app's state). On the
+phone's own speaker hands-free keeps voice processing, which does pause
+Spotify.
+
+No microphone session is ever preceded by a deactivation: a deactivation
+followed at once by the microphone brought the AirPods' microphone link up
+at 48 kHz sending only zeros, every time — twice on October 13 the AirPods
+then needed the iPhone restarting. So a microphone keeps the treatment of
+other audio it was activated with, and music is let back up when the
+microphone goes. `other-audio` says when other audio plays, but counts the
+page's own sonar and cues, which go through WebKit's process, as other
+audio too.
 
 iOS applies any session's treatment of other audio only when it is
 activated, so each change brings the app's session up again, deactivated

@@ -42,6 +42,14 @@ interface NativeState {
   running: boolean
   /** The input in use, e.g. "iPhone Microphone" or "AirPods Pro". */
   input?: string
+  /**
+   * Running, and nothing it plays leaks into the microphone: echo cancellation
+   * is on, or the sound goes into an ear (hands-free on AirPods goes without
+   * it, as voice processing paused Spotify). Control's voice can then play
+   * through the app with hands-free listening through it. An older app does
+   * not say; `voiceProcessing` alone stands for it then.
+   */
+  echoFree?: boolean
   /** Running, but the input sends only exact zeros — AirPods whose microphone is elsewhere, say. */
   silentInput?: boolean
   /** Where sound goes now, e.g. "Speaker" or "AirPods Pro"; an older app does not say. */
@@ -159,16 +167,17 @@ function install(): void {
  */
 export const nativeSpeech = {
   /**
-   * With the microphone on, only with echo cancellation on: played by the app
-   * without it, Control's voice would be heard as someone talking — turning
-   * itself down, and keeping "Control" from ever counting. Then the page
-   * plays it, and hands-free stands aside, as before. With it off there is
+   * With the microphone on, only where nothing played leaks into it
+   * (`echoFree`): echo cancellation on, or the sound in an ear. On the
+   * phone's speaker without echo cancellation, Control's voice would be heard
+   * as someone talking — turning itself down, and keeping "Control" from ever
+   * counting. Then the page plays it, and hands-free stands aside. With it off there is
    * nobody listening to hear it, and the app plays it: a page in the
    * background may not be able to.
    */
   available(): boolean {
     if (handler() === undefined || state.speech !== true) return false
-    return state.running ? state.voiceProcessing === true : state.awake === true
+    return state.running ? state.voiceProcessing === true || state.echoFree === true : state.awake === true
   },
   voiceProcessing(): boolean {
     return state.voiceProcessing === true

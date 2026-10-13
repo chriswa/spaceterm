@@ -11,6 +11,8 @@ function fakeApp({ speech, voiceProcessing = speech }: { speech: boolean; voiceP
     running: () => window.spacetermNativeMicrophone?.state({ running: true, input: 'iPhone Microphone', speech, voiceProcessing }),
     /** Up without the microphone, keeping the app awake: no echo cancellation, and none needed. */
     awake: () => window.spacetermNativeMicrophone?.state({ running: false, awake: true, speech, voiceProcessing: false }),
+    /** Up for hands-free on AirPods: no echo cancellation, and nothing played reaches the microphone. */
+    inAnEar: () => window.spacetermNativeMicrophone?.state({ running: true, input: 'AirPods', speech, voiceProcessing: false, echoFree: true }),
     event: (id: string, index: number, event: 'started' | 'finished' | 'failed') => window.spacetermNativeMicrophone?.speech({ id, index, event, outputDb: -18 }),
   }
 }
@@ -43,6 +45,16 @@ beforeEach(() => vi.stubGlobal('AudioContext', undefined))
 afterEach(() => { stopPlayer?.(); stopPlayer = undefined; vi.unstubAllGlobals() })
 
 describe('speech in the app', () => {
+  it('goes to the app on headphones without echo cancellation, nothing played reaching the microphone there', async () => {
+    const app = fakeApp({ speech: true, voiceProcessing: false })
+    const { startSpeechPlayer } = await load()
+    const remote = fakeApi()
+    stopPlayer = startSpeechPlayer(remote.api, () => {})
+    app.inAnEar()
+    remote.sentence('rs_1', 0, 1)
+    expect(app.posted.filter((m) => m.action === 'speech-play')).toHaveLength(1)
+  })
+
   it('goes to the app to play, with echo cancellation, and its progress goes to the server as before', async () => {
     const app = fakeApp({ speech: true })
     const { startSpeechPlayer, nativePlayback } = await load()

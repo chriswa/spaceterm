@@ -161,6 +161,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private func start(forDictation: Bool) {
         wanted = true
         self.forDictation = forDictation
+        if !forDictation { noteHeadphones() }
         // A new attempt: the page waits for running or an error, and an old error would answer it.
         lastError = nil
         if running {
@@ -228,6 +229,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.sessionOthers = nil
+                    self.sessionOnHeadphones = false
                     self.finishTransition()
                 }
             }
@@ -298,7 +300,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // (a blip of music each time), left the microphone delivering nothing for ten seconds or
         // more, and — with the screen locked — lost it for good: iOS will not let an app in the
         // background start recording again (October 2026, every hands-free turn).
-        if wanted { return forDictation ? .duck : .mix }
+        // On headphones hands-free runs as a dictation does — no voice processing, music turned down for
+        // the whole session — since voice processing is what paused Spotify (`headphones`).
+        if wanted { return forDictation || holdOnHeadphones ? .duck : .mix }
         if duckingAfterDictation { return .duck }
         return duckForControl ? .duck : .mix
     }
@@ -306,6 +310,21 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     private var sessionOthers: Others?
     private var forDictation = false
     private var duckForControl = false
+    /**
+     * Hands-free is on headphones: decided when it starts, and again only
+     * when a headset comes or goes — not read off the route each time, which
+     * flickers to the earpiece while the link changes and would bring the
+     * engine up again for nothing. See `Plan.headphones`.
+     */
+    private var holdOnHeadphones = false
+    /// The running engine came up for hands-free on headphones, without voice processing.
+    private var sessionOnHeadphones = false
+
+    private func noteHeadphones() {
+        let session = AVAudioSession.sharedInstance()
+        holdOnHeadphones = Self.headphones(session.currentRoute)
+            || (session.availableInputs ?? []).contains { Self.isBluetooth($0) || $0.portType == .headsetMic }
+    }
     /// A dictation has just ended: other audio stays down until `duckHold` runs out.
     private var duckingAfterDictation = false
     private var duckHold: DispatchWorkItem?
@@ -413,7 +432,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             voiceDucking: voiceDucking,
             // Echo cancellation is for hands-free, which listens through Control's voice. A dictation
             // stops Control first, so it goes without, and without voice processing's ways with the route.
-            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && forDictation)
+            voiceProcessingAllowed: voiceProcessingAllowed && !(mode == .microphone && forDictation),
+            headphones: mode == .microphone && !forDictation && holdOnHeadphones
         )
         let capture = self.capture
         audioQueue.async {
@@ -431,6 +451,16 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         /// Voice processing's ducking of other audio, at its most rather than its least (`voiceDucking`).
         let voiceDucking: Bool
         let voiceProcessingAllowed: Bool
+        /**
+         * Hands-free on headphones goes without voice processing, as a
+         * dictation does. Its voice-chat mode is what paused Spotify for the
+         * whole of hands-free (October 13: a dictation, without it, had
+         * Spotify play on, turned down, for a minute and a half), and in an
+         * ear nothing played leaks into the microphone for it to cancel —
+         * Control's voice included, so hands-free still listens through it
+         * (`echoFree`, sent to the page). On the phone's own speaker it stays.
+         */
+        let headphones: Bool
     }
 
     private struct Started {
@@ -486,10 +516,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
          */
         let sessionRate = session.sampleRate
         let wideBluetooth = sessionRate > Self.voiceProcessingRate && isBluetooth(session.currentRoute.inputs.first)
+
         // Echo cancellation, against what the player plays. Set before anything is connected.
         var voiceProcessing = false
         var voiceProcessingError: String?
-        if plan.voiceProcessingAllowed, !wideBluetooth {
+        if plan.voiceProcessingAllowed, !wideBluetooth, !plan.headphones {
             do {
                 try input.setVoiceProcessingEnabled(true)
                 voiceProcessing = true
@@ -500,7 +531,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             } catch {
                 voiceProcessingError = error.localizedDescription
             }
-        } else if plan.voiceProcessingAllowed {
+        } else if plan.voiceProcessingAllowed, wideBluetooth {
             voiceProcessingError = "left off: a Bluetooth route at \(Int(sessionRate)) Hz, where it hears only silence"
         }
         let player = attachPlayer(to: engine)
@@ -532,6 +563,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             voiceProcessing = started.voiceProcessing
             if let error = started.voiceProcessingError { events.record("voice-processing-failed", ["error": error]) }
             sessionOthers = plan.others
+            sessionOnHeadphones = plan.headphones
             appliedVoiceDucking = started.voiceProcessing ? plan.voiceDucking : nil
             failedStarts = 0
             up = mode
@@ -539,7 +571,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             if mode == .microphone {
                 expectAudio(why)
                 log("running on \(inputName()) at \(Int(started.sampleRate)) Hz, echo cancellation \(voiceProcessing ? "on" : "OFF") (\(why))")
-                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
+                events.record("native-mic-running", ["why": why, "sampleRate": started.sampleRate, "voiceProcessing": voiceProcessing, "others": plan.others.rawValue, "ms": started.ms, "headphones": plan.headphones, "route": NativeEvents.describeRoute(session.currentRoute)])
             } else {
                 log("awake, playing to \(outputName()) (\(why))")
                 events.record("native-awake-running", ["why": why, "others": plan.others.rawValue, "ms": started.ms, "route": NativeEvents.describeRoute(session.currentRoute)])
@@ -555,6 +587,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             player = nil
             voiceProcessing = false
             sessionOthers = nil
+            sessionOnHeadphones = false
             failSpeech(why: "the audio engine would not start")
             let nsError = error as NSError
             events.record("native-mic-failed", ["mode": mode.rawValue, "why": why, "error": error.localizedDescription, "domain": nsError.domain, "code": nsError.code, "appState": UIApplication.shared.applicationState == .background ? "background" : "foreground"])
@@ -748,6 +781,11 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
     /// Asked for, and the most voice processing is given over Bluetooth: see `start`.
     nonisolated private static let voiceProcessingRate: Double = 24_000
 
+    /// Sound goes into an ear, not the room: AirPods or any Bluetooth or wired headphones.
+    nonisolated private static func headphones(_ route: AVAudioSessionRouteDescription) -> Bool {
+        route.outputs.contains { [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .headphones].contains($0.portType) }
+    }
+
     nonisolated private static func isBluetooth(_ port: AVAudioSessionPortDescription?) -> Bool {
         guard let type = port?.portType else { return false }
         return type == .bluetoothHFP || type == .bluetoothLE || type == .bluetoothA2DP
@@ -883,6 +921,9 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             state["input"] = inputName()
             // Running, but the input sends only zeros: AirPods whose microphone is elsewhere, say.
             if currentStall == .digitalSilence { state["silentInput"] = true }
+            // Nothing played leaks into the microphone: Control's voice can play through the engine with
+            // hands-free listening through it, voice processing or not.
+            if voiceProcessing || sessionOnHeadphones { state["echoFree"] = true }
         }
         // Where sound goes now, whatever the microphone is doing: the badge on the page's microphone button.
         if let output = AVAudioSession.sharedInstance().currentRoute.outputs.first {
@@ -1113,6 +1154,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
                 if let previous { detail["previous"] = NativeEvents.describeRoute(previous) }
                 self.events.record("audio-route-change", detail)
                 self.sendState()
+                if self.wanted, !self.forDictation, why == .newDeviceAvailable || why == .oldDeviceUnavailable { self.noteHeadphones() }
                 if self.running, why == .newDeviceAvailable || why == .oldDeviceUnavailable {
                     self.scheduleRestart("a headset came or went")
                 }
