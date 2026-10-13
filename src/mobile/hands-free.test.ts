@@ -37,7 +37,8 @@ const fakeDetector: FrameScorer = {
 const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
 /** `isWords`: the speech check's answer, or one per check, numbered from 0. */
-function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null } = {}) {
+function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null,
+  heardShutdown = (() => undefined) as (mode: 'wake-word' | 'speech') => 'whole' | 'start' | undefined } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
     sampleRate: RATE,
@@ -75,9 +76,10 @@ function harness({ isWakeWord = true, isWords = true as boolean | ((nth: number)
           modes.push(mode)
           // An old server answers every check as the wake-word question, and does not say so.
           if (oldServer) return { match: isWakeWord }
+          const shutdown = heardShutdown(mode)
           return mode === 'speech'
-            ? { match: typeof isWords === 'function' ? isWords(modes.filter((m) => m === 'speech').length - 1) : isWords, answered: 'speech' as const, wakeWord: saidWakeWord }
-            : { match: isWakeWord, answered: 'wake-word' as const }
+            ? { match: typeof isWords === 'function' ? isWords(modes.filter((m) => m === 'speech').length - 1) : isWords, answered: 'speech' as const, wakeWord: saidWakeWord, shutdown }
+            : { match: isWakeWord, answered: 'wake-word' as const, shutdown }
         },
         say: (text, interrupted) => { sayCalls.push({ text, interrupted }); if (text) said.push(text) },
         onTuning: (cb) => { tuningListener = cb; return () => {} },
@@ -455,6 +457,99 @@ describe('hands-free mode', () => {
       await h.hear(quiet(1000), speech(1500), quiet(3500))
       expect(h.interrupts()).toBe(1)
       expect(h.sayCalls.at(-1)).toEqual({ text: 'No, stop.', interrupted: true })
+    })
+  })
+
+  describe('"Control, shutdown"', () => {
+    it('is sent like any words, and closes the window at once, with its own tone', async () => {
+      h = harness({ transcript: 'Control, shut down.' })
+      await h.hear(quiet(1500), speech(1500), quiet(3500))
+      expect(h.sayCalls).toEqual([{ text: 'shut down.', interrupted: false }])
+      expect(useHandsFree.getState().conversation).toBe(false)
+      expect(h.tones).toEqual(['dictationStart', 'dictationEnd', 'controlShutdown'])
+      expect(h.records.some((r) => r.kind === 'hands-free-shutdown')).toBe(true)
+      // Words after it need "Control" again.
+      h.setTranscript('Sure, I can look at that.')
+      await h.hear(quiet(1000), speech(1500), quiet(3500))
+      expect(h.modes.at(-1)).toBe('wake-word')
+    })
+
+    it('works alone in the conversation window, cutting Control off', async () => {
+      h = harness()
+      await h.hear(quiet(1500), speech(1500), quiet(3500))
+      expect(useHandsFree.getState().conversation).toBe(true)
+      h.setControlSpeaking(true)
+      h.setTranscript('Shutdown.')
+      await h.hear(quiet(1000), speech(800), quiet(3500))
+      expect(h.interrupts()).toBe(1)
+      expect(h.sayCalls.at(-1)).toEqual({ text: 'Shutdown.', interrupted: true })
+      expect(useHandsFree.getState().conversation).toBe(false)
+      expect(h.tones.at(-1)).toBe('controlShutdown')
+    })
+
+    it('"let me turn this off" in the window does the same', async () => {
+      h = harness()
+      await h.hear(quiet(1500), speech(1500), quiet(3500))
+      h.setTranscript('Let me turn this off.')
+      await h.hear(quiet(1000), speech(1200), quiet(3500))
+      expect(h.sayCalls.at(-1)).toEqual({ text: 'Let me turn this off.', interrupted: false })
+      expect(useHandsFree.getState().conversation).toBe(false)
+      expect(h.tones.at(-1)).toBe('controlShutdown')
+    })
+
+    it('does not count inside a longer request', async () => {
+      h = harness({ transcript: 'Control, shut down the dev server.' })
+      await h.hear(quiet(1500), speech(2500), quiet(3500))
+      expect(h.said).toEqual(['shut down the dev server.'])
+      expect(useHandsFree.getState().conversation).toBe(true)
+      expect(h.tones).not.toContain('controlShutdown')
+    })
+  })
+
+  describe('"let me turn this off", without "Control"', () => {
+    /** Its start heard as the start of the phrase; the whole of it, checked later, as `whole`. */
+    const startThen = (whole: 'whole' | undefined) => (mode: 'wake-word' | 'speech') => mode === 'wake-word' ? 'start' as const : whole
+
+    it('waits for the speech to end, checks the whole of it, and sends Control away with the tone', async () => {
+      h = harness({ isWakeWord: false, heardShutdown: startThen('whole') })
+      await h.hear(quiet(1500), speech(1500), quiet(1000))
+      expect(h.modes).toEqual(['wake-word', 'speech'])
+      // The whole utterance went to be checked, not just its first second.
+      expect(h.checked[1]).toBeGreaterThan(h.checked[0])
+      expect(h.dictations).toHaveLength(0)
+      expect(h.sayCalls).toEqual([{ text: 'let me turn this off', interrupted: false }])
+      expect(h.tones).toEqual(['controlShutdown'])
+      expect(useHandsFree.getState().conversation).toBe(false)
+      expect(h.records.some((r) => r.kind === 'hands-free-shutdown' && r.detail?.how === 'heard')).toBe(true)
+    })
+
+    it('over Control\'s voice, leaves cutting it off to the server letting go', async () => {
+      h = harness({ isWakeWord: false, heardShutdown: startThen('whole') })
+      h.setControlSpeaking(true)
+      await h.hear(quiet(1500), speech(1500), quiet(1000))
+      expect(h.interrupts()).toBe(0)
+      expect(h.sayCalls).toEqual([{ text: 'let me turn this off', interrupted: false }])
+    })
+
+    it('does nothing when the whole of it was something else', async () => {
+      h = harness({ isWakeWord: false, heardShutdown: startThen(undefined) })
+      await h.hear(quiet(1500), speech(1500), quiet(1000))
+      expect(h.modes).toEqual(['wake-word', 'speech'])
+      expect(h.sayCalls).toEqual([])
+      expect(h.tones).toEqual([])
+    })
+
+    it('lets go of speech that runs on, unchecked', async () => {
+      h = harness({ isWakeWord: false, heardShutdown: startThen('whole') })
+      await h.hear(quiet(1500), speech(6000), quiet(1000))
+      expect(h.modes).toEqual(['wake-word'])
+      expect(h.sayCalls).toEqual([])
+    })
+
+    it('is not watched for at all when its start is not heard as the phrase', async () => {
+      h = harness({ isWakeWord: false })
+      await h.hear(quiet(1500), speech(1500), quiet(1000))
+      expect(h.modes).toEqual(['wake-word'])
     })
   })
 

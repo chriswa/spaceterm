@@ -2028,6 +2028,12 @@ export interface WakeWordResultMessage {
   mode?: 'wake-word' | 'speech'
   /** For `speech`: the words began with the wake word ("Control." alone, in the window). */
   wakeWord?: boolean
+  /**
+   * The words were "let me turn this off" (`whole`), or could be its start
+   * (`start`): see `wakeFreeShutdown` in control-shutdown.ts. Absent from
+   * servers that predate it.
+   */
+  shutdown?: 'whole' | 'start'
 }
 
 /**

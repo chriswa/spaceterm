@@ -456,6 +456,11 @@ const CATCH_UP_REQUEST = "Catch me up on what I haven't read."
 const EMPTY_INTERRUPTION = "The user cut you off, but nothing they said was caught. Say in a few words that you hadn't finished, then carry on from where you were cut off."
 /** The note for a turn stopped before it spoke, when the user then said nothing to Control: see `resumeIfStopped`. */
 const STOPPED_FOR_NOTHING = 'The user started talking while you were working on your reply, so you stopped; nothing they said was for you. Carry on from where you stopped.'
+/** Told with the next message after "let me turn this off" or "Control, shutdown": see `sentAway`. */
+const SENT_AWAY = 'The user said a fixed phrase that sends you away ("let me turn this off" or "Control, shutdown"), handled without you: someone near them needs their attention, ' +
+  'so they sent you away, as choosing Away does, until they next say "Control". It was not a request for you to act on.'
+/** Told instead when the phrase stopped a turn: see `resumeIfStopped`. */
+const SENT_AWAY_MID_TURN = `${SENT_AWAY} It stopped you; carry on from where you stopped, away.`
 /** Told with the next message when an answer was aborted part-way, its message kept in the session. */
 const ABORTED_MID_ANSWER = 'You were stopped part-way through your last answer, because the user started talking: none of it was said, and none of its actions were done.'
 
@@ -552,9 +557,10 @@ export class Receptionist {
   /**
    * What the user's talking stopped, until their words for Control arrive:
    * a reply being spoken, or a turn still working towards one. Resumed if
-   * none do: see `resumeIfStopped`.
+   * none do: see `resumeIfStopped`. `sent-away`: either, and then the user
+   * sent Control away (see `sentAway`).
    */
-  private stoppedForUser: 'speaking' | 'thinking' | undefined
+  private stoppedForUser: 'speaking' | 'thinking' | 'sent-away' | undefined
   /** The user's words from a turn stopped before its message reached the session, or that failed: said with the next turn. */
   private carriedWords: string | undefined
   /** Failed turns the carried words have already been through: see `MAX_TURN_RETRIES`. */
@@ -668,6 +674,20 @@ export class Receptionist {
   }
 
   /**
+   * The user said or sent a phrase that sends Control away — "let me turn
+   * this off", "Control, shutdown" (control-shutdown.ts): the
+   * caller has let go of Control, and the model is told why rather than given
+   * the words. Whatever the user's talking stopped carries on, away — its
+   * actions still taken, its words for when they are back — as it would after
+   * a dictation with nothing for Control. `cutOff` as for `heardNothing`.
+   */
+  sentAway(cutOff: boolean): void {
+    if (cutOff || this.stoppedForUser) this.stoppedForUser = 'sent-away'
+    else this.notes.push(SENT_AWAY)
+    if (!this.held) this.resumeIfStopped()
+  }
+
+  /**
    * Whether the user is talking, on any device: from the moment a dictation
    * starts until its words have been handed on, or are known to be none
    * (see dictation-presence.ts). The moment they start, whatever Control is
@@ -719,8 +739,8 @@ export class Receptionist {
     const stopped = this.stoppedForUser
     this.stoppedForUser = undefined
     if (!stopped || this.closing) return false
-    this.notes.push(stopped === 'speaking' ? EMPTY_INTERRUPTION : STOPPED_FOR_NOTHING)
-    this.trace('resumed', 'Carried on: nothing you said was for Control')
+    this.notes.push(stopped === 'speaking' ? EMPTY_INTERRUPTION : stopped === 'thinking' ? STOPPED_FOR_NOTHING : SENT_AWAY_MID_TURN)
+    this.trace('resumed', stopped === 'sent-away' ? 'Carried on, away: you sent Control away' : 'Carried on: nothing you said was for Control')
     void this.runTurn(undefined)
     return true
   }

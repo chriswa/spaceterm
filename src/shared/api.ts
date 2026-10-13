@@ -285,6 +285,8 @@ export interface WakeWordCheckResult {
   error?: string
   answered?: 'wake-word' | 'speech'
   wakeWord?: boolean
+  /** The words were "let me turn this off", or could be its start: see `WakeWordResultMessage.shutdown`. */
+  shutdown?: 'whole' | 'start'
 }
 
 /**

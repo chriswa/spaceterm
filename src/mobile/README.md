@@ -710,8 +710,9 @@ finished sentence Smart Turn called unfinished, can be found and listened to.
 
 While a dictation is sending your voice to be transcribed, an orange **MIC**
 sits above the Dynamic Island (`MicIndicator.tsx`); it pulses while the words
-are waited for. The microphone merely held open for hands-free shows nothing
-there. It uses only the strip above the island — iOS widens the island for Now
+are waited for. While the microphone is merely held open for hands-free, the
+same place shows “let me turn this off” in cyan, a reminder of the phrase
+that sends Control away; MIC replaces it whenever it shows. It uses only the strip above the island — iOS widens the island for Now
 Playing and the like, and a page cannot see that — so the island's top (an
 iPhone 17's) is the one measurement, in `mobile.css`.
 

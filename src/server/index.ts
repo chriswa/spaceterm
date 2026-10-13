@@ -17,6 +17,7 @@ import {
   resolveNonClaudeResumeId
 } from './resume-target'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
+import { isControlShutdown } from '../shared/control-shutdown'
 import { hookPayloadAgentType, isForeignAgentHook } from './hook-agent'
 import { agentTypeOrDefault, type AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
@@ -1967,7 +1968,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         if (!outcome.ok) serverLog(`[hands-free] ${outcome.error}`)
         else if (outcome.match) serverLog(`[hands-free] wake word heard on ${client.device?.label ?? client.id.slice(0, 8)}`)
         send(client.link, outcome.ok
-          ? { type: 'wake-word-result', seq, match: outcome.match, mode, ...(outcome.wakeWord !== undefined ? { wakeWord: outcome.wakeWord } : {}) }
+          ? { type: 'wake-word-result', seq, match: outcome.match, mode, ...(outcome.wakeWord !== undefined ? { wakeWord: outcome.wakeWord } : {}), ...(outcome.shutdown ? { shutdown: outcome.shutdown } : {}) }
           : { type: 'wake-word-result', seq, match: false, error: outcome.error, mode })
       })
       break
@@ -1983,7 +1984,26 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // A dictation for Control caught nothing for it. Whatever its start
       // stopped carries on; hands-free having cut Control off itself counts.
       if (!text) {
+        // "Control." alone brings Control back from away, as words would —
+        // but only when nobody holds it: a misheard wake word with nothing
+        // after it must not take Control from another device.
+        if (msg.type === 'receptionist-hands-free' && client.device && !stateManager.getReceptionistHolder()) {
+          serverLog(`[receptionist] "Control." alone from ${client.device.label}: back from away`)
+          setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
+        }
         receptionist.heardNothing(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
+        remoteDictation.delivered(client.id)
+        break
+      }
+      // "Let me turn this off" or "Control, shutdown" (control-shutdown.ts),
+      // said hands-free or as a whole message: away, at once and without
+      // asking the model, until "Control" again brings it back. Let go before
+      // the dictation that carried the words does, so nothing resumes on this
+      // device first.
+      if (isControlShutdown(text)) {
+        serverLog(`[receptionist] "${text}" from ${client.device?.label ?? 'a client'}: away until "Control" again`)
+        setReceptionistHolder(null)
+        receptionist.sentAway(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
         remoteDictation.delivered(client.id)
         break
       }

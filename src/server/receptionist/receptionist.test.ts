@@ -839,6 +839,92 @@ describe('Receptionist', () => {
     expect(h.spoken).toHaveLength(2)
   })
 
+  it('after "Control, shutdown" cut it off, carries on away rather than saying it had not finished', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('The user said a fixed phrase that sends you away')
+          expect(turn.prompt).toContain('carry on from where you stopped, away')
+          expect(turn.prompt).not.toContain("hadn't finished")
+          expect(turn.prompt).toContain('THE USER IS AWAY')
+          return reply([])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain('THE USER SAYS: go on')
+          return reply([{ from: 'control', text: 'The solver works.' }])
+        },
+      ],
+      speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is done. Kevin here. The sol'.length },
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    // As the server does: let go of Control, then tell the receptionist why.
+    h.receptionist.setListener(undefined)
+    h.receptionist.sentAway(true)
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.spoken).toHaveLength(1)
+    // "Control, …" again: taken back, then heard.
+    h.receptionist.setListener(h.listener)
+    await h.receptionist.hear('go on', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    expect(said(h).at(-1)).toContain('The solver works.')
+  })
+
+  it('after "Control, shutdown", "Control." alone brings it back to tell what was missed', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Watching Sally.' }], [{ tool: 'monitor', agent: SALLY }]),
+        reply([]),
+        (turn) => {
+          expect(turn.prompt).toContain('THE USER IS BACK')
+          expect(turn.prompt).not.toContain('THE USER SAYS')
+          return reply([{ from: 'control', text: 'Sally finished while you were away.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('tell me when Sally is done', 'spoken')
+    await flush()
+    h.receptionist.setListener(undefined)
+    h.receptionist.sentAway(false)
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(said(h)).toHaveLength(1)
+    // As the server does for an empty hands-free dictation while nobody holds Control: take it, then nothing heard.
+    h.receptionist.userSpeaking(true)
+    h.receptionist.setListener(h.listener)
+    h.receptionist.heardNothing(false)
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(said(h).at(-1)).toContain('Sally finished while you were away.')
+  })
+
+  it('after "Control, shutdown" with nothing under way, starts no turn, and is told why with the next', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Hi.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('The user said a fixed phrase that sends you away')
+          expect(turn.prompt).not.toContain('carry on from where you stopped')
+          expect(turn.prompt).toContain('THE USER SAYS: I am back')
+          return reply([{ from: 'control', text: 'Welcome back.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('hello', 'spoken')
+    await flush()
+    h.receptionist.setListener(undefined)
+    h.receptionist.sentAway(false)
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    h.receptionist.setListener(h.listener)
+    await h.receptionist.hear('I am back', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
   it('never overlaps two messages to the session, and says when a reply was talked over', async () => {
     let releaseStale: ((text: string) => void) | undefined
     const h = harness({

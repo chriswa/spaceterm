@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { DictationApi, HandsFreeApi } from '../shared/api'
+import { isControlShutdown, LET_ME_TURN_THIS_OFF } from '../shared/control-shutdown'
 import type { HandsFreeTuning } from '../shared/protocol'
 import { playCue, playHandsFreeCue, quietForMs, type Cue, type HandsFreeCue } from './cues'
 import { noteUserInterrupted } from './control-tones'
@@ -55,6 +56,11 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * or filler — and so can cut Control off, echo cancellation permitting. It
  * stays open while either side is speaking and closes, with a tone, once
  * neither has for `conversationMs`; Control thinking does not hold it open.
+ * "Let me turn this off" or "Control, shutdown" (control-shutdown.ts) closes
+ * it at once, with a tone of its own, as the server sends Control away:
+ * nothing more is taken down until "Control" again. "Let me turn this off"
+ * needs no "Control": speech whose start the Mac hears as the start of it is
+ * watched until it ends, and the whole of it checked (`watchForShutdown`).
  *
  * The phone logs nothing heard: only that a candidate was or was not the
  * word, and its timings. The Mac keeps what was heard, with the audio, in
@@ -158,6 +164,10 @@ const MAX_QUEUED_FRAMES = 100
 /** Frames without speech (about half a second) before Control, turned down for someone talking, comes back up. */
 const UNDUCK_FRAMES = 16
 const FRAME_SECONDS = 512 / 16_000
+/** Quiet (about half a second) that ends speech watched for "let me turn this off", so the whole of it is checked. */
+const SHUTDOWN_END_FRAMES = 16
+/** Speech watched for it that runs past this (about four seconds) is something longer, and let go. */
+const SHUTDOWN_MAX_FRAMES = 125
 
 /** What the microphone heard while Control's voice played through the app: how much of it got past echo cancellation. */
 interface Echo {
@@ -223,6 +233,12 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   /** Bumped at every pause and every resumption: a turn verdict counts only for the pause it was asked about. */
   let pauseNumber = 0
   let checkError: string | undefined
+  /**
+   * Speech outside the window whose start was heard as the start of "let me
+   * turn this off": where it began, and how many frames it has gone on and
+   * been quiet for, until it ends and the whole of it is checked.
+   */
+  let shutdownWatch: { start: number; frames: number; quietFrames: number } | undefined
   let heardSamples = 0
   let lastReport = 0
 
@@ -256,10 +272,11 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
 
   /**
    * `silence`: the window ran out; `server`: the server cannot run it. Both
-   * say so with a tone. The microphone going — turned off, or not back within
-   * `conversationMs` — closes it quietly.
+   * say so with a tone. `shutdown`: "Control, shutdown", with its own. The
+   * microphone going — turned off, or not back within `conversationMs` —
+   * closes it quietly.
    */
-  const closeConversation = (why: 'silence' | 'microphone' | 'server') => {
+  const closeConversation = (why: 'silence' | 'microphone' | 'server' | 'shutdown') => {
     if (!conversation) return
     conversation = false
     listener.setConversation(false)
@@ -267,7 +284,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     useHandsFree.setState({ conversation: false, secondsLeft: null })
     log(`conversation window closed (${why}): "Control" again from here`)
     record('hands-free-conversation', { open: false, why })
-    if (why !== 'microphone') deps.handsFreeCue('conversationClosed')
+    if (why === 'shutdown') deps.handsFreeCue('controlShutdown')
+    else if (why !== 'microphone') deps.handsFreeCue('conversationClosed')
     // Ran out: felt too, in a pocket, as three.
     if (why === 'silence') deps.haptic('triple')
   }
@@ -291,8 +309,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   }
 
   /** `wakeWord`: the words began with "control" — always so for a wake-word match; for speech, as heard. */
-  const check = (clip: Int16Array, mode: 'wake-word' | 'speech'): Promise<{ match: boolean; wakeWord: boolean }> =>
-    api.handsFree.checkWakeWord(pcmToBase64(clip), mode).then(({ match, error, answered, wakeWord }) => {
+  const check = (clip: Int16Array, mode: 'wake-word' | 'speech'): Promise<{ match: boolean; wakeWord: boolean; shutdown?: 'whole' | 'start' }> =>
+    api.handsFree.checkWakeWord(pcmToBase64(clip), mode).then(({ match, error, answered, wakeWord, shutdown }) => {
       if (error && error !== checkError) log(`cannot check the wake word: ${error}`)
       checkError = error
       if (mode === 'speech' && !error && answered !== 'speech') {
@@ -305,7 +323,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
         }
         return { match, wakeWord: match }
       }
-      return { match, wakeWord: mode === 'wake-word' ? match : wakeWord === true }
+      return { match, wakeWord: mode === 'wake-word' ? match : wakeWord === true, shutdown }
     }, (err) => {
       log(`wake-word check failed: ${err instanceof Error ? err.message : String(err)}`)
       return { match: false, wakeWord: false }
@@ -372,6 +390,56 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     }
   }
 
+  /**
+   * A phrase that sends Control away (control-shutdown.ts): the server lets go
+   * of Control on these words, and the phone stops taking anything down for
+   * it — the window closes, with the tone, or the tone alone if it was shut.
+   * `dictated` after "Control" or in the window; `heard` without either.
+   */
+  const sendAway = (text: string, interrupted: boolean, how: 'dictated' | 'heard') => {
+    log(`sending Control away (${how})`)
+    api.handsFree.say(text, interrupted)
+    record('hands-free-shutdown', { interrupted, how })
+    if (conversation) closeConversation('shutdown')
+    else deps.handsFreeCue('controlShutdown')
+  }
+
+  /**
+   * Each frame while listening, for speech being watched for "let me turn this
+   * off": once it has been quiet for `SHUTDOWN_END_FRAMES`, the whole of it,
+   * out of the listener's buffer, is checked on the Mac as the window's speech
+   * is — and if it was the phrase and nothing else, Control is sent away.
+   * Speech that runs on is something longer, and let go unchecked.
+   */
+  const watchForShutdown = () => {
+    const watch = shutdownWatch
+    if (!watch) return
+    watch.frames++
+    watch.quietFrames = listener.speaking ? 0 : watch.quietFrames + 1
+    if (watch.frames > SHUTDOWN_MAX_FRAMES) {
+      shutdownWatch = undefined
+      record('hands-free-shutdown-check', { verdict: 'too-long' })
+      return
+    }
+    if (watch.quietFrames < SHUTDOWN_END_FRAMES) return
+    shutdownWatch = undefined
+    const clip = listener.audioSince(watch.start)
+    checking++
+    useHandsFree.setState({ checking: true })
+    void check(clip, 'speech').then(({ shutdown }) => {
+      checking--
+      if (checking === 0) useHandsFree.setState({ checking: false })
+      const whole = shutdown === 'whole'
+      record('hands-free-shutdown-check', { verdict: whole ? 'whole' : 'not-it', ms: Math.round((clip.length / 16_000) * 1000) })
+      if (whole && useHandsFree.getState().phase === 'listening' && capture) {
+        sendAway(LET_ME_TURN_THIS_OFF.join(' '), false, 'heard')
+        return
+      }
+      log('not "let me turn this off" after all')
+      if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
+    })
+  }
+
   /** Control was cut off and nothing was caught after "Control": it says it had not finished, and carries on. */
   const carryOn = () => {
     log('cut Control off, then caught nothing: it carries on')
@@ -387,6 +455,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
    */
   const respond = async ({ start, spokeMs }: WakeCandidate, interrupted = false, wakeWordStart = true) => {
     setPhase('hearing')
+    shutdownWatch = undefined
     deps.haptic('tap')
     deps.handsFreeCue('dictationStart')
     openConversation()
@@ -432,7 +501,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
         return
       }
       log(`${text.length} chars to Control (ended on ${reason}${interrupted ? ', having cut it off' : ''})`)
-      api.handsFree.say(text, interrupted)
+      if (isControlShutdown(text)) sendAway(text, interrupted, 'dictated')
+      else api.handsFree.say(text, interrupted)
     } catch (err) {
       log(`dictation failed: ${err instanceof Error ? err.message : String(err)}`)
       dictation?.cancel()
@@ -498,6 +568,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       // Deaf to "Control" until this ends: the phone is talking, or another dictation has the floor.
       if (!stoodAside) record('hands-free-stood-aside', { why: deps.othersDictating() ? 'another dictation' : 'this phone is playing' })
       stoodAside = true
+      shutdownWatch = undefined
       return
     }
     if (stoodAside) {
@@ -512,13 +583,18 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       const overControl = deps.nativeSpeech().playing
       checking++
       useHandsFree.setState({ checking: true })
-      void check(candidate.clip, mode).then(({ match, wakeWord }) => {
+      void check(candidate.clip, mode).then(({ match, wakeWord, shutdown }) => {
         checking--
         if (checking === 0) useHandsFree.setState({ checking: false })
         log(match
           ? mode === 'speech' ? 'words, in the conversation window: dictating from its start' : 'it starts with the wake word: dictating from its start'
           : mode === 'speech' ? 'not words (a cough, filler, nothing)' : 'not the wake word')
         record('wake-word', { match, mode, wakeWord, noSpeechBeforeMs: candidate.noSpeechBeforeMs, spokeMs: candidate.spokeMs, overControl })
+        if (!match && mode === 'wake-word' && shutdown && useHandsFree.getState().phase === 'listening' && capture) {
+          // Perhaps "let me turn this off", which needs no "Control": wait for it to end, then check the whole of it.
+          log('it may be "let me turn this off": checking the whole of it once it ends')
+          shutdownWatch = { start: candidate.start, frames: 0, quietFrames: 0 }
+        }
         if (!match || useHandsFree.getState().phase !== 'listening' || !capture) {
           // Not for Control: back up, unless they are still talking.
           if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
@@ -535,6 +611,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
         void respond(candidate, interrupting, wakeWord)
       })
     }
+    watchForShutdown()
   }
 
   /** Score queued frames in order — at once for loudness, a frame at a time through the model. */

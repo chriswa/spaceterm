@@ -17,7 +17,8 @@
  * played by the app): `dictationStart`, two notes up, as its words begin to
  * be taken down; `dictationEnd`, two notes down, as they are sent; and
  * `conversationClosed`, three soft steps down, as the conversation window
- * runs out and "Control" is needed again.
+ * runs out and "Control" is needed again; and `controlShutdown`, an octave
+ * dropping into a long low note, for "Control, shutdown".
  *
  * The sonar while Control thinks, or waits for its voice to be made, is
  * thinking-cue.ts, shared with the desktop.
@@ -31,16 +32,17 @@ import { controlMode, useReceptionistStore } from '@/stores/receptionistStore'
 import { recordMobileEvent } from './mobile-events'
 import { nativeCues } from './native-microphone'
 
-export type Cue = 'error' | 'nothingToSay' | 'conversationClosed' | 'dictationStart' | 'dictationEnd'
+export type Cue = 'error' | 'nothingToSay' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown'
 
 /**
  * Hands-free's tones (`playHandsFreeCue`), beside its haptics: words being
- * taken down — two notes up; taken down and sent — two notes down; and the
- * conversation window running out — three steps down. Asked for in October
- * 2026, to be heard whatever Replies is set to and whatever the Ring/Silent
- * switch says.
+ * taken down — two notes up; taken down and sent — two notes down; the
+ * conversation window running out — three steps down; and "Control,
+ * shutdown" — an octave down, held low, unlike any of them. Asked for in
+ * October 2026, to be heard whatever Replies is set to and whatever the
+ * Ring/Silent switch says.
  */
-export type HandsFreeCue = 'dictationStart' | 'dictationEnd' | 'conversationClosed'
+export type HandsFreeCue = 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
@@ -49,10 +51,11 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   conversationClosed: [[880, 0.08], [0, 0.03], [659, 0.08], [0, 0.03], [440, 0.18]],
   dictationStart: [[659, 0.08], [0, 0.03], [988, 0.12]],
   dictationEnd: [[988, 0.08], [0, 0.03], [659, 0.12]],
+  controlShutdown: [[523, 0.10], [262, 0.36]],
 }
 
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
-const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2 }
+const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2 }
 
 /** Replies are Aloud here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
 export function cuesAudible(): boolean {

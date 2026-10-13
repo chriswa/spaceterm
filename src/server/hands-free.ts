@@ -1,3 +1,4 @@
+import { wakeFreeShutdown } from '../shared/control-shutdown'
 import type { HandsFreeTuning } from '../shared/protocol'
 import type { SpeechResponse, VoiceOperator } from './voice-operator'
 
@@ -20,8 +21,11 @@ export const WAKE_WORD = 'control'
  */
 export const DEFAULT_IGNORED_WORDS: readonly string[] = ['hmm', 'hm', 'mm', 'mmm', 'mhm', 'uh', 'um', 'er', 'ah', 'uh-huh']
 
-/** `wakeWord`: for a `speech` check, whether the words began with the wake word. `heard`: what Apple's model wrote down. */
-export type WakeWordOutcome = { ok: true; match: boolean; wakeWord?: boolean; heard?: string } | { ok: false; error: string }
+/**
+ * `wakeWord`: for a `speech` check, whether the words began with the wake word. `heard`: what Apple's model wrote down.
+ * `shutdown`: it was "let me turn this off", or the start of it — see `wakeFreeShutdown`.
+ */
+export type WakeWordOutcome = { ok: true; match: boolean; wakeWord?: boolean; heard?: string; shutdown?: 'whole' | 'start' } | { ok: false; error: string }
 
 type Voice = Pick<VoiceOperator, 'checkWakeWord'>
 
@@ -60,11 +64,12 @@ export async function checkWakeWord(
     return { ok: false, error: `Voice Operator could not check the wake word: ${body?.detail ?? body?.error ?? `HTTP ${response.status}`}` }
   }
   const heard = typeof body.heard === 'string' ? { heard: body.heard } : {}
-  if (mode === 'wake-word') return { ok: true, match: body.match, ...heard }
+  const shutdown = heard.heard === undefined ? undefined : wakeFreeShutdown(heard.heard)
+  if (mode === 'wake-word') return { ok: true, match: body.match, ...heard, ...shutdown ? { shutdown } : {} }
   const words = spokenWords(heard.heard ?? '')
   const real = withoutIgnored(words, ignoredWords)
   if (words.length > 0 && words.length <= 2) log(`speech check heard "${words.join(' ')}"${real.length ? '' : ' — ignored'}`)
-  return { ok: true, match: real.length > 0, wakeWord: words[0] === WAKE_WORD, ...heard }
+  return { ok: true, match: real.length > 0, wakeWord: words[0] === WAKE_WORD, ...heard, ...shutdown ? { shutdown } : {} }
 }
 
 const TUNING_KEYS: ReadonlyArray<keyof HandsFreeTuning> = [

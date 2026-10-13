@@ -76,6 +76,23 @@ describe('checkWakeWord, in the conversation window', () => {
   })
 })
 
+describe('checkWakeWord, for "let me turn this off"', () => {
+  const pcm = new Uint8Array([0, 0])
+  const heard = (text: string, match = false) => ({
+    checkWakeWord: async () => ({ status: 200, body: { match, heard: text } }),
+  })
+
+  it('says when the start of speech could be the phrase, though it is not the wake word', async () => {
+    expect(await checkWakeWord(heard('Let me turn'), pcm)).toEqual({ ok: true, match: false, heard: 'Let me turn', shutdown: 'start' })
+    expect(await checkWakeWord(heard('Let me think'), pcm)).toEqual({ ok: true, match: false, heard: 'Let me think' })
+  })
+
+  it('says when the whole of it was the phrase, and nothing else', async () => {
+    expect(await checkWakeWord(heard('Let me turn this off.', true), pcm, 'speech')).toMatchObject({ ok: true, match: true, shutdown: 'whole' })
+    expect(await checkWakeWord(heard('Let me turn this off and on.', true), pcm, 'speech')).not.toHaveProperty('shutdown')
+  })
+})
+
 describe('parseHandsFreeTuning, the conversation keys', () => {
   it('takes conversationMs as a number and ignoredWords as a list of words', () => {
     expect(parseHandsFreeTuning(JSON.stringify({ conversationMs: 20000, ignoredWords: ['you', 'thank you'] }))).toEqual({

@@ -455,11 +455,14 @@ textarea, input, [contenteditable="true"], .cm-content {
  * screen. The island is not something a page can measure, and iOS widens it
  * for Now Playing and the like, so this keeps clear of its sides altogether:
  * only its top is used — an iPhone 17's, 11 pt down, centred. The orange is
- * the one iOS uses for its own microphone dot.
+ * the one iOS uses for its own microphone dot. While always-on mode merely
+ * holds the microphone, the strip reminds of "let me turn this off" in iOS's
+ * cyan instead, until "MIC" replaces it.
  */
 :root {
   --m-island-top: 11px;
   --m-mic-orange: #ff9f0a;
+  --m-mic-reminder: #64d2ff;
 }
 .m-mic-label {
   position: fixed;
@@ -479,6 +482,7 @@ textarea, input, [contenteditable="true"], .cm-content {
   animation: m-mic-label-in 180ms ease-out;
 }
 .m-mic-label--waiting { animation: m-mic-label-wait 1s ease-in-out infinite; }
+.m-mic-label--reminder { color: var(--m-mic-reminder); text-transform: uppercase; }
 @keyframes m-mic-label-in { from { opacity: 0; } }
 @keyframes m-mic-label-wait { 50% { opacity: 0.25; } }
 /* Sideways, the island is at the side, and there is no strip above it. */
