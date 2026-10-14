@@ -1,4 +1,4 @@
-import type { QueuedTransition, ClaudeState } from './types'
+import type { QueuedTransition, ClaudeState, TransitionSource } from './types'
 import type { PtySessionId } from '../../shared/ids'
 
 /**
@@ -25,7 +25,7 @@ export const TRANSITION_DRAIN_INTERVAL_MS = 50
 export type ApplyFn = (
   surfaceId: PtySessionId,
   newState: ClaudeState,
-  source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
+  source: TransitionSource,
   event: string,
   /**
    * When the event actually happened. Passed through so applyTransition can
@@ -57,7 +57,7 @@ export class TransitionQueue {
   enqueue(
     surfaceId: PtySessionId,
     newState: ClaudeState,
-    source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
+    source: TransitionSource,
     event: string,
     sourceTime: number,
     detail?: string

@@ -21,6 +21,8 @@ interface Harness {
   observer: SessionStatusObserver
   lines: SessionStatusObservation[]
   reported: Reported[]
+  /** Every `onSample` call, as `surfaceId:status@statusUpdatedAt`. */
+  sampled: string[]
   setRegistry(files: Record<string, unknown>): void
   setSurfaces(surfaces: ObservedSurface[]): void
   tick(): void
@@ -31,6 +33,7 @@ function harness(now = 5_000): Harness {
   let surfaces: ObservedSurface[] = []
   const lines: SessionStatusObservation[] = []
   const reported: Reported[] = []
+  const sampled: string[] = []
   const deps: SessionStatusObserverDeps = {
     registry: {
       listPidFiles: () => Object.keys(files),
@@ -45,12 +48,14 @@ function harness(now = 5_000): Harness {
   const observer = new SessionStatusObserver(
     () => surfaces,
     (surfaceId, status, waitingFor) => reported.push([surfaceId, status, waitingFor]),
+    (surfaceId, record) => sampled.push(`${surfaceId}:${record.status}@${record.statusUpdatedAt}`),
     deps
   )
   return {
     observer,
     lines,
     reported,
+    sampled,
     setRegistry: (next) => { files = next },
     setSurfaces: (next) => { surfaces = next },
     tick: () => observer.observe()
@@ -220,6 +225,24 @@ describe('SessionStatusObserver', () => {
     })
     h.tick()
     expect(h.reported[1]).toEqual([surfaceId, 'waiting', 'dialog open'])
+  })
+
+  it('samples every tick, even when nothing changed, for consumers that wait out time', () => {
+    // The state machine's registry backstop holds off for a grace period after
+    // an idle; a tick on which only the clock moved is the one that has to
+    // reach it, and it is exactly the tick the log and the footer dedupe away.
+    const h = harness()
+    h.setRegistry({ '100.json': { pid: 100, sessionId: 'sess-a', status: 'idle', statusUpdatedAt: 1_000 } })
+    h.setSurfaces([surface('working')])
+    h.tick()
+    h.tick()
+    expect(h.sampled).toEqual(['surface-1:idle@1000', 'surface-1:idle@1000'])
+    expect(h.lines).toHaveLength(1)
+
+    // No record, no sample: there is no status to act on.
+    h.setRegistry({})
+    h.tick()
+    expect(h.sampled).toHaveLength(2)
   })
 
   it('does not redraw the footer when only our own state moves', () => {

@@ -1,12 +1,15 @@
 /**
- * Observation-only recorder for Claude Code's session registry.
+ * Recorder for Claude Code's session registry.
  *
  * Every tick it reads `~/.claude/sessions/*.json` (see `session-registry.ts`),
  * joins each record to the surface running that Claude session, and appends a
  * line to `~/.spaceterm/session-status-logs/<surfaceId>.jsonl` whenever either
- * side changes. It sets no state and enqueues no transition; the point is to
+ * side changes. It sets no state itself. It was built observation-only, to
  * accumulate enough paired observations that a decision about *using* the
- * registry can be made from data rather than from one bug report.
+ * registry could be made from data rather than from one bug report; five weeks
+ * of them made the case for one use — `idle` as the backstop that ends a
+ * 'working' turn — which the state machine takes from `onSample`
+ * (`ClaudeStateMachine.handleSessionStatus`). Everything else stays logged only.
  *
  * The comparison is the payload. `agreement` scores each observation against
  * the hypothesis in `expectedStates()`, so the analysis is a grep:
@@ -87,6 +90,14 @@ export type OnSessionStatus = (
   status: CcSessionStatus | null,
   waitingFor: string | null
 ) => void
+
+/**
+ * Reports every joined record on every tick, undeduped. That is the point: a
+ * consumer judging how long a status has stood (the state machine's registry
+ * backstop waits out a grace period) needs to be asked again when only time
+ * has moved, which is exactly the tick an edge-triggered callback skips.
+ */
+export type OnSessionSample = (surfaceId: PtySessionId, record: SessionRegistryRecord) => void
 
 export interface SessionStatusObservation {
   timestamp: string
@@ -192,6 +203,7 @@ export class SessionStatusObserver {
   private readonly deps: SessionStatusObserverDeps
   private readonly listSurfaces: () => ObservedSurface[]
   private readonly onStatus: OnSessionStatus
+  private readonly onSample: OnSessionSample
   private cancel: (() => void) | null = null
   /** surfaceId → last written fingerprint, so an unchanged tick writes nothing. */
   private lastLogged = new Map<PtySessionId, string>()
@@ -201,10 +213,12 @@ export class SessionStatusObserver {
   constructor(
     listSurfaces: () => ObservedSurface[],
     onStatus: OnSessionStatus,
+    onSample: OnSessionSample,
     deps: SessionStatusObserverDeps = REAL_SESSION_STATUS_OBSERVER_DEPS
   ) {
     this.listSurfaces = listSurfaces
     this.onStatus = onStatus
+    this.onSample = onSample
     this.deps = deps
     if (deps === REAL_SESSION_STATUS_OBSERVER_DEPS) {
       fs.mkdirSync(SESSION_STATUS_LOG_DIR, { recursive: true })
@@ -244,6 +258,8 @@ export class SessionStatusObserver {
       // and for a Claude Code too old to publish one. Neither is a *pairing*,
       // so there is nothing to log.
       if (record === undefined) continue
+
+      this.onSample(surface.surfaceId, record)
 
       const mark = fingerprint(record, surface.state)
       if (this.lastLogged.get(surface.surfaceId) === mark) continue

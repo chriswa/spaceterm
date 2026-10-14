@@ -3642,8 +3642,10 @@ async function startServer(): Promise<void> {
   // --- Claude Code's own session status, paired with ours ---
   // Reads ~/.claude/sessions/<pid>.json, logs how its busy/waiting/idle status
   // compares to the state we inferred at the same moment, and puts it in the
-  // card footer next to that state. It drives no transition: claudeState is
-  // still decided entirely by hooks and the transcript.
+  // card footer next to that state. Its one input to claudeState is `idle` as a
+  // backstop for a 'working' surface whose turn ended without a Stop hook (see
+  // ClaudeStateMachine.handleSessionStatus); hooks and the transcript decide
+  // everything else.
   sessionStatusObserver = new SessionStatusObserver(() => {
     const surfaces: ObservedSurface[] = []
     for (const node of Object.values(stateManager.getState().nodes)) {
@@ -3659,6 +3661,8 @@ async function startServer(): Promise<void> {
     return surfaces
   }, (surfaceId, status, waitingFor) => {
     stateManager.updateCcSessionStatus(surfaceId, status, waitingFor)
+  }, (surfaceId, record) => {
+    claudeStateMachine.handleSessionStatus(surfaceId, record.status ?? null, record.statusUpdatedAt)
   })
 
   // --- Git status polling for directory nodes ---

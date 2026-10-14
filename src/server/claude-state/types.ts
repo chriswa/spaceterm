@@ -53,6 +53,15 @@ export interface StateMachineDeps {
 }
 
 /**
+ * Where a queued transition originated. Written once so the queue, the machine
+ * and the decision log cannot drift apart when a source is added.
+ *
+ * - `registry` — Claude Code's own per-process status file, see
+ *   `ClaudeStateMachine.handleSessionStatus`.
+ */
+export type TransitionSource = 'hook' | 'jsonl' | 'status-line' | 'ledger' | 'registry'
+
+/**
  * A state transition waiting in the queue to be processed.
  *
  * Events from hooks, JSONL, and status-line are held for TRANSITION_DELAY_MS
@@ -66,7 +75,7 @@ export interface QueuedTransition {
   surfaceId: PtySessionId
   newState: ClaudeState
   /** Where this transition originated — determines logging and priority */
-  source: 'hook' | 'jsonl' | 'status-line' | 'ledger'
+  source: TransitionSource
   /** Human-readable event name for decision logs (e.g. 'hook:Stop', 'jsonl:assistant') */
   event: string
   /** Optional extra context for the decision log (e.g. tool name, notification type) */

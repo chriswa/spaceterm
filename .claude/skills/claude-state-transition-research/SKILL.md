@@ -47,9 +47,11 @@ spinner. This log pairs that status with the state we decided at the same
 moment: `cc.status` / `cc.waitingFor` / `cc.statusUpdatedAt` against
 `spaceterm.state` / `spaceterm.decidedAt`, plus `agreement`
 (`agree` / `disagree` / `no-opinion`) and `lagMs` (ours minus theirs — positive
-means the registry knew first). **Nothing in the state machine reads this**; it
-is observation only, so a decision to use it can rest on days of paired samples.
-Grep `"agreement":"disagree"` for the cases worth explaining. It is the only
+means the registry knew first). **The state machine acts on one status only:
+`idle`**, as a backstop that ends a 'working' turn when no Stop hook did — see
+`ClaudeStateMachine.handleSessionStatus` and the `registry:idle:turn-idle` row in
+the signal table. `busy` and `waiting` stay observation only. Grep
+`"agreement":"disagree"` for the cases worth explaining. It is the only
 signal that catches an Esc interrupt, which fires no hook and appends nothing to
 the transcript. Claude-only: Codex publishes per-thread write locks and Cursor
 nothing comparable.
@@ -93,6 +95,7 @@ ledger in `src/server/claude-state/background-ledger.ts`.
 | JSONL `user` array with "interrupted by user" | jsonl | stopped |
 | JSONL `user` array with "rejected" | jsonl | stopped |
 | JSONL `<task-notification>` completion / queue-op | jsonl | updates the ledger; may drain working_background → stopped |
+| Claude Code registry `idle` for 3s+ while we show working | registry | **working_background** if the ledger is non-empty, else stopped (`registry:idle:turn-idle`) — only from working, never sets unread; source time is `statusUpdatedAt`+2s so a newer prompt wins via the watermark. Ends idle compactions, Esc interrupts and lost Stops |
 | reconciliation sweep (5s, yellow surfaces only) | ledger | drains working_background → stopped when liveness probes say all launches finished |
 
 ### Signals that DON'T change state

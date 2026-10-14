@@ -17,7 +17,8 @@
  * - Stale sweep catches sessions that silently stop producing events
  */
 
-import type { StateMachineDeps, ClaudeState } from './types'
+import type { StateMachineDeps, ClaudeState, TransitionSource } from './types'
+import type { CcSessionStatus } from './session-registry'
 import type { SessionFileEntry } from '../session-file-watcher'
 import { TransitionQueue } from './transition-queue'
 import { DecisionLogger } from './decision-logger'
@@ -54,14 +55,43 @@ const BG_DRAINED_SUFFIX = ':bg-drained'
  * Turn-idle transitions carry this suffix so applyTransition can gate them.
  *
  * These are the "the main turn ended, but no Stop hook said so" signals —
- * currently just a finished manual `/compact`. They resolve to
- * stopped/working_background exactly like a Stop, but unlike a Stop they are
+ * a finished manual `/compact`, and Claude Code's registry saying idle (see
+ * handleSessionStatus). They resolve to stopped/working_background exactly
+ * like a Stop, but unlike a Stop they are
  * *inferred*, so they must never override a waiting state: a surface blocked on
  * a permission/plan/question prompt IS idle by any outside measure, and turning
  * that white would both lose the prompt's colour and hand the sticky-waiting
  * invariant (10) a back door that isn't a targeted clear.
  */
 const TURN_IDLE_SUFFIX = ':turn-idle'
+
+/**
+ * How long Claude Code's session registry must have been saying `idle` before
+ * we take its word over a 'working' we inferred.
+ *
+ * On an ordinary turn end the registry flips first and the Stop hook follows
+ * within ~1s, so the grace keeps the backstop out of the way of the real
+ * signal. Across 10,978 paired samples (2026-09-08 → 10-13) a 1s grace already
+ * had zero counterexamples; 3s is margin, and costs nothing next to the hours a
+ * stuck surface used to sit orange.
+ */
+const REGISTRY_IDLE_GRACE_MS = 3_000
+
+/**
+ * How far transcript entries can trail the registry's flip to idle and still
+ * count as part of the turn it ended.
+ *
+ * Claude Code marks itself idle and *then* flushes the final assistant entry,
+ * which our watcher delivers later still: in the paired samples 20 working
+ * signals landed within 250ms of the idle and one at 750ms, and every later one
+ * coincided with the registry going busy again. The backstop's source time is
+ * the idle plus this tolerance, so the stale guard in applyTransition does the
+ * rest: a straggler inside it doesn't block the correction, and anything newer
+ * (a new prompt, a new turn) suppresses it.
+ */
+const REGISTRY_IDLE_STRAGGLER_MS = 2_000
+
+const REGISTRY_IDLE_EVENT = `registry:idle${TURN_IDLE_SUFFIX}`
 
 // ─── ClaudeStateMachine ─────────────────────────────────────────────────────
 
@@ -113,6 +143,13 @@ export class ClaudeStateMachine {
    * leak into a later turn.
    */
   private manualCompactPending = new Set<PtySessionId>()
+
+  /**
+   * surfaceId → the registry `statusUpdatedAt` whose idle we already enqueued a
+   * correction for. The registry is sampled every couple of seconds and an idle
+   * stands until the next turn, so without this every sample would re-enqueue.
+   */
+  private registryIdleHandled = new Map<PtySessionId, number>()
 
   /**
    * surfaceId → source timestamp of the last transition actually applied.
@@ -395,6 +432,47 @@ export class ClaudeStateMachine {
    */
   handleStatusLine(_surfaceId: string): void {
     // intentionally empty — see doc comment
+  }
+
+  /**
+   * Process a sample of Claude Code's own session status (its per-process
+   * `~/.claude/sessions/<pid>.json`, read by SessionStatusObserver).
+   *
+   * This is the backstop for 'working' — the one state with no exit of its own
+   * when the signal that should end it never comes. Every way a turn can end
+   * without a Stop hook used to leave the surface orange until the user next
+   * typed: an Esc interrupt (no hook, often no transcript entry), a lost Stop,
+   * and Claude Code compacting an *idle* session before its prompt cache
+   * expires. That last one fires PreCompact outside any turn — with `trigger`
+   * either 'auto' or 'manual', so the manual-/compact path can't key on it —
+   * and ends with neither a Stop nor the local-command stdout compact-finished
+   * waits for. Five of those in the week the feature appeared, one stuck 35h.
+   *
+   * The registry is trusted here, where idle_prompt was rejected (see the
+   * Notification note in handleHook), because it models attention separately:
+   * a pending permission, question or plan is `waiting`, never `idle`. So an
+   * attention state we don't model cannot arrive as a plain completion.
+   *
+   * It only ever *ends* a working turn: busy/waiting stay observation-only,
+   * since hooks are faster for those and carry what the colour needs (which
+   * prompt, which tool). Over 10,978 paired samples there were 42 cases of
+   * idle-for-3s-while-we-said-working, and every one was followed by a user
+   * prompt or SessionEnd, i.e. genuinely idle.
+   */
+  handleSessionStatus(
+    surfaceId: PtySessionId,
+    status: CcSessionStatus | null,
+    statusUpdatedAt: number | undefined,
+    now: number = Date.now()
+  ): void {
+    if (status !== 'idle' || statusUpdatedAt === undefined) return
+    if (this.deps.getClaudeState(surfaceId) !== 'working') return
+    // Leave an ordinary turn end to its Stop hook, which follows the
+    // registry's flip within about a second.
+    if (now - statusUpdatedAt < REGISTRY_IDLE_GRACE_MS) return
+    if (this.registryIdleHandled.get(surfaceId) === statusUpdatedAt) return
+    this.registryIdleHandled.set(surfaceId, statusUpdatedAt)
+    this.enqueueTurnIdle(surfaceId, 'registry', REGISTRY_IDLE_EVENT, statusUpdatedAt + REGISTRY_IDLE_STRAGGLER_MS)
   }
 
   /**
@@ -772,7 +850,7 @@ export class ClaudeStateMachine {
   private applyTransition(
     surfaceId: PtySessionId,
     newState: ClaudeState,
-    source: 'hook' | 'jsonl' | 'status-line' | 'ledger',
+    source: TransitionSource,
     event: string,
     sourceTime: number,
     detail?: string
@@ -853,6 +931,18 @@ export class ClaudeStateMachine {
       return
     }
 
+    // ── Guard: the registry backstop only ends a 'working' turn ──────────────
+    // It was enqueued because the surface was orange while Claude Code said
+    // idle. If the surface has since gone anywhere else — a Stop already
+    // resolved it, a prompt opened a waiting state — the correction is moot,
+    // and from 'working_background' it would wrongly re-decide the ledger.
+    if (event === REGISTRY_IDLE_EVENT && prevState !== 'working') {
+      this.decisionLogger.log(surfaceId, {
+        timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, sourceTime, detail, suppressed: true
+      })
+      return
+    }
+
     // ── Guard: an inferred turn-idle never overrides a waiting state ──────────
     // A TURN_IDLE_SUFFIX event (a finished manual /compact) infers "the turn
     // ended" from something other than a Stop. A surface waiting on a permission
@@ -860,9 +950,10 @@ export class ClaudeStateMachine {
     // so without this the indicator could drop the waiting colour and the user
     // would lose the only cue that Claude needs an answer. The real Stop hook is
     // exempt: it is direct evidence, not an inference, and a Stop over a waiting
-    // state has always meant the prompt is moot. The guard stays even though the
-    // one current signal cannot realistically fire mid-prompt — it is what keeps
-    // "inferred idle" a safe category to add to.
+    // state has always meant the prompt is moot. Neither current signal can
+    // realistically fire mid-prompt (the registry reports a prompt as `waiting`,
+    // and the registry backstop is separately gated to 'working') — the guard is
+    // what keeps "inferred idle" a safe category to add to.
     if (event.endsWith(TURN_IDLE_SUFFIX) && isWaitingState) {
       this.decisionLogger.log(surfaceId, {
         timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, sourceTime, detail, suppressed: true
@@ -932,8 +1023,13 @@ export class ClaudeStateMachine {
     // and waiting_plan (Claude needs plan approval).
     // We only set unread on state *changes* to avoid re-flagging when the state
     // is set to the same value (e.g. multiple 'working' transitions in a row).
+    //
+    // Not for a registry correction. It ends a turn we failed to see end, not
+    // one with fresh output: after an Esc interrupt the user is at the keyboard,
+    // and after an idle compaction there is nothing new to read. A ding there,
+    // possibly an hour after the user last looked, would be a false alarm.
     let unread: boolean | undefined
-    if (prevState !== effectiveState) {
+    if (prevState !== effectiveState && event !== REGISTRY_IDLE_EVENT) {
       if (
         effectiveState === 'stopped' ||
         effectiveState === 'potential_error' ||
@@ -967,13 +1063,13 @@ export class ClaudeStateMachine {
    * still holds outstanding launches, else 'stopped' (white + tone).
    *
    * Shared by every end-of-turn signal so they can't drift apart — the Stop hook
-   * (authoritative) and the inferred ones (currently just a finished manual
-   * /compact), which pass an event carrying TURN_IDLE_SUFFIX so applyTransition
+   * (authoritative) and the inferred ones (a finished manual /compact, Claude
+   * Code's registry saying idle), which pass an event carrying TURN_IDLE_SUFFIX so applyTransition
    * can hold them back from waiting states.
    */
   private enqueueTurnIdle(
     surfaceId: PtySessionId,
-    source: 'hook' | 'jsonl',
+    source: 'hook' | 'jsonl' | 'registry',
     event: string,
     time: number
   ): void {

@@ -2,10 +2,11 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { DECISION_LOG_DIR } from '../../shared/protocol'
 import type { PtySessionId } from '../../shared/ids'
+import type { TransitionSource } from './types'
 
 export interface DecisionLogEntry {
   timestamp: string
-  source: 'hook' | 'jsonl' | 'client' | 'ledger' | 'status-line'
+  source: TransitionSource | 'client'
   event: string
   prevState: string
   newState: string

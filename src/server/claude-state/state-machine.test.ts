@@ -380,6 +380,144 @@ const cases: Case[] = [
     },
   },
   {
+    // Claude Code compacts an idle session on its own before the prompt cache
+    // expires (canonical observation 2026-10-14T00:13:03Z, surface ce439165).
+    // PreCompact fires outside any turn — here with trigger 'manual', which it
+    // also reports — and nothing afterwards ends the turn: no Stop, no stdout.
+    // Only the registry's idle can.
+    name: 'idle compaction ends on the registry\'s idle, without a ding',
+    run: (sm, deps) => {
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      sm.handleClientMarkUnread(S, false)
+      hook(sm, 'PreCompact', { trigger: 'manual' })
+      hook(sm, 'SessionStart', { source: 'compact' })
+      hook(sm, 'PostCompact', { trigger: 'manual' })
+      jsonl(sm, [{ type: 'user', isCompactSummary: true, message: { content: 'This session is being continued from a previous conversation…' } }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+
+      const idleAt = now()
+      // Inside the grace window the Stop hook may still be on its way.
+      sm.handleSessionStatus(S, 'idle', idleAt, idleAt + 1_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+
+      sm.handleSessionStatus(S, 'idle', idleAt, idleAt + 3_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      // A correction, not a completion: the user had read the surface and
+      // nothing new arrived, so it must not glow or play the tone.
+      assertEq(deps.getClaudeStatusUnread(S), false)
+    },
+  },
+  {
+    // The same feature also reports trigger 'auto', which is why the backstop
+    // cannot be keyed on the hook's trigger the way manual /compact is.
+    name: 'idle compaction reported as trigger=auto also ends on the registry\'s idle',
+    run: (sm, deps) => {
+      hook(sm, 'Stop')
+      hook(sm, 'PreCompact', { trigger: 'auto' })
+      hook(sm, 'PostCompact', { trigger: 'auto' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      const idleAt = now()
+      sm.handleSessionStatus(S, 'idle', idleAt, idleAt + 3_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+    },
+  },
+  {
+    // Claude Code flips idle and then flushes the final assistant entry, which
+    // the watcher delivers later still. That straggler is part of the turn that
+    // ended, so it must not hold the surface orange.
+    name: 'registry idle is not blocked by a transcript straggler that trails it',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      const idleAt = now()
+      jsonl(sm, [{ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }])
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      sm.handleSessionStatus(S, 'idle', idleAt, idleAt + 3_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+    },
+  },
+  {
+    // A registry read that is older than the turn we are now in — the user
+    // typed again after it — must not end the new turn. The backstop's source
+    // time puts it behind the prompt, so the watermark suppresses it.
+    name: 'an idle older than a newer prompt does not end the newer turn',
+    run: (sm, deps) => {
+      const idleAt = now()
+      clock += 10_000
+      hook(sm, 'UserPromptSubmit', { prompt: 'next' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      sm.handleSessionStatus(S, 'idle', idleAt, clock + 1)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    // An idle with backgrounded work still running is yellow, exactly as a Stop
+    // would leave it.
+    name: 'registry idle with outstanding background work → working_background',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      sm.flushForTest()
+      const idleAt = now()
+      sm.handleSessionStatus(S, 'idle', idleAt, idleAt + 3_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+    },
+  },
+  {
+    // Only 'working' has no exit of its own. A waiting state is the user's to
+    // resolve, and the registry calls that `waiting`, not idle — but even a
+    // stray idle must not take the prompt's colour away.
+    name: 'registry idle never touches a waiting state, and busy/waiting never act',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      hook(sm, 'PreToolUse', { tool_use_id: 't1' })
+      hook(sm, 'PermissionRequest', { tool_name: 'Bash' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+      const at = now()
+      sm.handleSessionStatus(S, 'idle', at, at + 3_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+
+      hook(sm, 'PostToolUse', { tool_use_id: 't1' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      const later = now()
+      sm.handleSessionStatus(S, 'busy', later, later + 60_000)
+      sm.handleSessionStatus(S, 'waiting', later, later + 60_000)
+      sm.handleSessionStatus(S, null, undefined, later + 60_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    // The ordinary case: the Stop hook lands inside the grace window and the
+    // registry has nothing left to correct — no second decision, no re-ding.
+    name: 'a turn the Stop hook already ended is left alone by the registry',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      const idleAt = now()
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      sm.handleClientMarkUnread(S, false)
+      sm.handleSessionStatus(S, 'idle', idleAt, idleAt + 3_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+      assertEq(deps.getClaudeStatusUnread(S), false)
+    },
+  },
+  {
     // No Notification kind drives state. idle_prompt in particular was evaluated
     // as a backstop for turns ending without a Stop and rejected: it is Claude
     // Code's generic "needs your attention at the prompt" signal, so an attention
