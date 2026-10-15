@@ -417,6 +417,7 @@ export class FakeBridge implements Api {
     restartFlagStatus: () => this.reply('node.restartFlagStatus', this.responses.restartFlag),
     onUsageReport: (cb) => subscribe(this.usageReport, cb),
     onMobileBuildChanged: () => () => undefined,
+    onReloadRequested: () => () => undefined,
     usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport),
     watchSystemStats: (cb) => subscribe(this.systemStats, cb),
     pauseCanvas: (paused) => this.record('node.pauseCanvas', paused)

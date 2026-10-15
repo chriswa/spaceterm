@@ -283,6 +283,22 @@ const SERVER_RESTART_EXIT_CODE = 75
 let shutdownServer: ((exitCode?: number) => Promise<void>) | null = null
 let serverRestartScheduled = false
 
+/**
+ * Begin a graceful restart, for a client's ↻ or Control's restart_server.
+ * Returns why it cannot, or undefined once it is under way. `ack` is sent
+ * first: the shutdown waits a moment so that it leaves before every client's
+ * connection closes.
+ */
+function restartServer(requestedBy: string, ack: () => void = () => {}): string | undefined {
+  if (serverRestartScheduled) return 'Server restart is already in progress'
+  if (!shutdownServer) return 'Server restart is unavailable during startup'
+  serverRestartScheduled = true
+  serverLog(`[restart] Restart requested by ${requestedBy}`)
+  ack()
+  setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+  return undefined
+}
+
 const clients = new Set<ClientConnection>()
 
 let daemonClient: DaemonClient
@@ -1693,20 +1709,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'server-restart': {
-      if (serverRestartScheduled) {
-        send(client.link, { type: 'server-error', seq: msg.seq, message: 'Server restart is already in progress' })
-        break
-      }
-      if (!shutdownServer) {
-        send(client.link, { type: 'server-error', seq: msg.seq, message: 'Server restart is unavailable during startup' })
-        break
-      }
-      serverRestartScheduled = true
-      serverLog('[restart] Restart requested by client')
-      send(client.link, { type: 'server-restarted', seq: msg.seq })
-      // Give the acknowledgement a chance to leave the Unix socket before the
-      // graceful shutdown closes all client connections.
-      setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+      const refused = restartServer('client', () => send(client.link, { type: 'server-restarted', seq: msg.seq }))
+      if (refused) send(client.link, { type: 'server-error', seq: msg.seq, message: refused })
       break
     }
 
@@ -3512,6 +3516,8 @@ async function startServer(): Promise<void> {
     },
     // Letting go of Control, as the transcript's Release does (`receptionist-hold`).
     letGo: () => setReceptionistHolder(null),
+    restartServer: () => restartServer('Control'),
+    reloadPages: () => broadcastToAll({ type: 'reload-page' }),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),

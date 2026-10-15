@@ -1416,6 +1416,14 @@ export interface MobileBuildChangedMessage {
   type: 'mobile-build-changed'
 }
 
+/**
+ * Unsolicited broadcast: reload the page, as the toolbar's reload does.
+ * Control's refresh_clients, which lets go of Control first.
+ */
+export interface ReloadPageMessage {
+  type: 'reload-page'
+}
+
 /** To watching clients only: the system monitor, or null when mini-stats is not running (PUSH). */
 export interface SystemStatsMessage {
   type: 'system-stats'
@@ -2188,3 +2196,4 @@ export type ServerMessage =
   | SpeechStopMessage
   | MobileAppInstallResultMessage
   | MobileBuildChangedMessage
+  | ReloadPageMessage

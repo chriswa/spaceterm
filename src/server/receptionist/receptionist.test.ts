@@ -91,6 +91,8 @@ function harness(opts: {
   replies: Script[]
   /** Status the speech job ends in. Defaults to completing. */
   speechEnds?: Partial<SpeechStatus>
+  /** Why restart_server cannot restart the server; by default it can. */
+  restartRefused?: string
   /** Where Control speaks to begin with, in place of the recording fake. */
   speech?: SpeechBackend
   /** What the user is looking at; by default nothing has said. */
@@ -323,6 +325,8 @@ function harness(opts: {
     markRead: (nodeId) => { wire.push(`read ${nodeId}`); unread.delete(nodeId) },
     // As the server does: no device holds Control, so nobody hears it.
     letGo: () => { wire.push('let go'); receptionist.setListener(undefined) },
+    restartServer: () => { wire.push('restart server'); return opts.restartRefused },
+    reloadPages: () => wire.push('reload pages'),
     directories: () => [{ nodeId: DIR_ID, cwd: '/Users/me/spaceterm' }],
     userView: opts.userView ?? (() => undefined),
     spawn: (directory, title, prompt) => { wire.push(`spawn ${directory} ${title}: ${prompt}`); return SALLY_ID },
@@ -1393,6 +1397,37 @@ describe('Receptionist', () => {
     await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(3)
+  })
+
+  it.each([
+    ['restart_server', 'restart server'],
+    ['refresh_clients', 'reload pages'],
+  ] as const)('%s lets go of Control before it runs, and says nothing', async (tool, done) => {
+    const h = harness({ replies: [reply([{ from: 'control', text: 'Done.' }], [{ tool }])] })
+    await h.receptionist.hear(tool === 'restart_server' ? 'restart the server' : 'refresh the pages', 'spoken')
+    await flush()
+    expect(h.wire).toEqual(['let go', done])
+    expect(said(h)).toEqual([])
+  })
+
+  it('tells the model when restart_server could not restart the server', async () => {
+    const h = harness({
+      restartRefused: 'Server restart is already in progress',
+      replies: [
+        reply([], [{ tool: 'restart_server' }]),
+        (turn) => {
+          expect(turn.prompt).toContain(QUIET_OVER)
+          expect(turn.prompt).toContain('restart_server did not restart the server: Server restart is already in progress')
+          return reply([{ from: 'control', text: 'It was already restarting.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('restart the server', 'spoken')
+    await flush()
+    h.receptionist.setListener(h.listener)
+    void h.receptionist.hear('did it work?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
   })
 
   it('after go_quiet, coming back by talking tells it it is heard again with the user\'s words, in one turn', async () => {

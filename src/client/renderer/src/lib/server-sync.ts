@@ -4,6 +4,7 @@ import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useAutoStampsEnabledStore } from '../stores/autoStampsEnabledStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useRestartRequiredStore } from '../stores/restartRequiredStore'
+import { useUpdateActionsStore } from '../stores/updateActionsStore'
 import { useReceptionistStore, isThinkingWithinEarshot } from '../stores/receptionistStore'
 import { useAgentNamesStore } from '../stores/agentNamesStore'
 import { receptionistHolderOf, type NodeData, type NodeStamp } from '../../../../shared/state'
@@ -173,6 +174,14 @@ export async function initServerSync(): Promise<void> {
   cleanupFns.push(
     window.api.node.onRestartRequired((required, reason) => {
       useRestartRequiredStore.getState().set(required, reason)
+    })
+  )
+
+  // Control's refresh_clients: the same reload as the toolbar's, blocked page and all.
+  cleanupFns.push(
+    window.api.node.onReloadRequested(() => {
+      window.api.log('[update] reload: asked by the server')
+      useUpdateActionsStore.getState().reload()
     })
   )
 

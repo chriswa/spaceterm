@@ -25,8 +25,8 @@ import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
 } from './self-interruption'
 import {
-  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet,
-  type Reply, type SayPart, type SpokenPart, type ToolCall,
+  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet, goesQuiet,
+  type QuietTool, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
@@ -274,6 +274,10 @@ export interface ReceptionistDeps {
    * no device holds it, every button shows it, and nobody hears it. See go_quiet.
    */
   letGo(): void
+  /** Restart the server gracefully, as the ↻ button does. Returns why it cannot, if it cannot. */
+  restartServer(): string | undefined
+  /** Have every connected client reload its page, as the toolbar's reload does. */
+  reloadPages(): void
   /**
    * What the user is looking at: the screen of the device holding Control
    * (or, failing that, the one that last moved), and the nodes nearest
@@ -1497,6 +1501,24 @@ export class Receptionist {
     }
   }
 
+  /** What a tool that goes quiet does once Control is let go of, and the line saying so. */
+  private goQuiet(tool: QuietTool): string {
+    const unheard = 'no device holds Control, so nobody hears you'
+    switch (tool) {
+      case 'go_quiet':
+        return `go_quiet disconnected you at once, saying nothing: ${unheard}`
+      case 'restart_server': {
+        const refused = this.deps.restartServer()
+        this.deps.log({ event: 'restart-server', ...(refused ? { refused } : {}) })
+        return refused ? `restart_server did not restart the server: ${refused}. ${unheard}` : `restart_server is restarting the server: ${unheard}`
+      }
+      case 'refresh_clients':
+        this.deps.reloadPages()
+        this.deps.log({ event: 'refresh-clients' })
+        return `refresh_clients told every page to reload: ${unheard}`
+    }
+  }
+
   /** The agent has stopped: tell the model what it last said. */
   private fireMonitor(nodeId: NodeId, state: ClaudeState): void {
     const agents = this.deps.agents()
@@ -2051,11 +2073,12 @@ export class Receptionist {
       }
       // Taken down by `stageReads`, with the turn it waits on.
       if (call.tool === 'mark_read') continue
-      if (call.tool === 'go_quiet') {
-        serverLog('[receptionist] go_quiet: letting go of Control')
+      if (goesQuiet(call)) {
+        // Away first, so that nothing more is said, whatever happens next.
+        serverLog(`[receptionist] ${call.tool}: letting go of Control`)
         this.quieted = true
         this.deps.letGo()
-        done.push('go_quiet disconnected you at once, saying nothing: no device holds Control, so nobody hears you')
+        done.push(this.goQuiet(call.tool))
         continue
       }
       const nodeId = this.resolve(call.agent, handles, agents)

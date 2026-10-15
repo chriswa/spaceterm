@@ -213,6 +213,8 @@ export interface NodeApi {
   onUsageReport(callback: (snapshot: UsageSnapshot) => void): () => void
   /** The server is serving a new mobile web build (PUSH). */
   onMobileBuildChanged(callback: () => void): () => void
+  /** The server asks every page to reload: Control's refresh_clients (PUSH). */
+  onReloadRequested(callback: () => void): () => void
   /** The latest AI usage reading (PULL), or null until there is one. */
   usageReportStatus(): Promise<UsageSnapshot | null>
   /**

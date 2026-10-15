@@ -70,7 +70,7 @@ export type ServerEventType =
   | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'system-stats'
-  | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
+  | 'speech-audio' | 'speech-stop' | 'mobile-build-changed' | 'reload-page'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
@@ -279,6 +279,7 @@ export class ServerClient {
       case 'speech-audio':
       case 'speech-stop':
       case 'mobile-build-changed':
+      case 'reload-page':
       case 'agent-meta-availability':
       case 'receptionist-status':
       case 'receptionist-holder':

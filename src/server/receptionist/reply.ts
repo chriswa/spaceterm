@@ -41,6 +41,8 @@ export type ToolCall = (
   | { tool: 'nearby' }
   | { tool: 'force_user_camera'; target: string }
   | { tool: 'go_quiet' }
+  | { tool: 'restart_server' }
+  | { tool: 'refresh_clients' }
   | { tool: 'backlog_add'; item: string }
   /** Mark the agent read once the user has heard this reply: see deferred-reads.ts. */
   | { tool: 'mark_read'; agent: string }
@@ -53,12 +55,24 @@ export interface Reply {
   tools: ToolCall[]
 }
 
+const QUIET_TOOLS = ['go_quiet', 'restart_server', 'refresh_clients'] as const
+export type QuietTool = typeof QUIET_TOOLS[number]
+
 /**
- * A reply that calls go_quiet, with nothing said: the user asked for silence,
- * so not one more word is spoken, whatever the model wrote.
+ * Tools after which nobody hears Control: go_quiet, because the user asked for
+ * silence, and restart_server and refresh_clients, which take every client
+ * away. Each lets go of Control the moment it runs.
+ */
+export function goesQuiet(call: ToolCall): call is { tool: QuietTool } {
+  return (QUIET_TOOLS as readonly string[]).includes(call.tool)
+}
+
+/**
+ * A reply that goes quiet, with nothing said: not one more word is spoken,
+ * whatever the model wrote, since nobody is left to hear it.
  */
 export function silencedIfQuiet(reply: Reply): Reply {
-  if (!reply.tools.some(call => call.tool === 'go_quiet')) return reply
+  if (!reply.tools.some(goesQuiet)) return reply
   return { say: [], tools: reply.tools }
 }
 
@@ -114,6 +128,8 @@ export function actionHeadline(call: ToolCall): string {
     case 'rename_agent': return `RENAMED ${who(call.agent)}: ${[call.name?.name, call.title && `"${call.title}"`].filter(Boolean).join(' ')}`
     case 'force_user_camera': return `TOOK YOU TO ${call.target}`
     case 'go_quiet': return 'WENT QUIET'
+    case 'restart_server': return 'RESTARTED THE SERVER'
+    case 'refresh_clients': return 'REFRESHED EVERY PAGE'
     default: return showToolCall(call)
   }
 }
@@ -164,6 +180,7 @@ function parseSayPart(value: unknown): SayPart {
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   read: true, ask_agent: true, monitor: true, send: true, interrupt: true, archive_agent: true, unarchive_agent: true,
   spawn: true, rename_agent: true, recall: true, list_agents: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true, go_quiet: true,
+  restart_server: true, refresh_clients: true,
   backlog_add: true, backlog_next: true, mark_read: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
@@ -176,7 +193,7 @@ function parseToolCall(value: unknown): ToolCall {
   // The shape of a native tool call, which a model without its instructions falls back on.
   if ('input' in value) throw new Error(`a tool call's fields go beside "tool", not under "input"`)
   if (value.tool === 'nearby') return { tool: 'nearby' }
-  if (value.tool === 'go_quiet') return { tool: 'go_quiet' }
+  if ((QUIET_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as QuietTool }
   if (value.tool === 'backlog_next') {
     const about = typeof value.about === 'string' ? value.about.trim() : ''
     return about ? { tool: 'backlog_next', about } : { tool: 'backlog_next' }
