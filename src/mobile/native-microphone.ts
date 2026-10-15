@@ -112,6 +112,17 @@ export function nativeMicrophoneAvailable(): boolean {
 }
 
 let state: NativeState = { running: false }
+/**
+ * The page has told the app's microphone to stop, and the app has not yet
+ * said it has. `state` still says running meanwhile — about half a second —
+ * but the app is taking its engine down and drops a cue sent to it then
+ * ("the engine is coming up").
+ */
+let stopping = false
+/** Called once the app's microphone has finished stopping. */
+const stopWaiters = new Set<() => void>()
+/** The longest a cue waits for the app's microphone to finish stopping. */
+const STOP_SETTLE_MS = 1500
 /** Bumped whenever the engine Control's voice would play through comes up or goes down. */
 let engineChanges = 0
 let lastAudio = 0
@@ -154,6 +165,8 @@ function install(): void {
       const outputChanged = next.output !== state.output || next.outputType !== state.outputType
       if (outputChanged) recordMobileEvent('audio-output', { output: next.output ?? null, type: next.outputType ?? null, was: state.output ?? null })
       state = next
+      stopping = false
+      for (const fn of [...stopWaiters]) fn()
       if (outputChanged) for (const fn of outputListeners) fn(nativeOutput())
       for (const fn of [...stateWaiters]) fn(next)
       for (const fn of stateFollowers) fn(next)
@@ -266,9 +279,29 @@ export function nativeDuckOthers(on: boolean): void {
 
 /** Hands-free's tones, played by the app, whose sound the Ring/Silent switch does not silence (cues.ts). */
 export const nativeCues = {
-  /** The app plays them, and has an engine up to play them on. */
+  /** The app plays them, and has an engine up to play them on — not one it is taking down. */
   available(): boolean {
-    return handler() !== undefined && state.cues === true && (state.running || state.awake === true)
+    return handler() !== undefined && state.cues === true && !stopping && (state.running || state.awake === true)
+  },
+  /**
+   * Call `fn` once the app's microphone has finished stopping, if it is
+   * stopping — at once otherwise, and after `STOP_SETTLE_MS` at most. A cue
+   * asked for as a dictation ends, such as the microphone button's, then
+   * finds out whether the app still has an engine to play it on.
+   */
+  whenSettled(fn: () => void): void {
+    if (!stopping) {
+      fn()
+      return
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const done = () => {
+      clearTimeout(timer)
+      stopWaiters.delete(done)
+      fn()
+    }
+    timer = setTimeout(done, STOP_SETTLE_MS)
+    stopWaiters.add(done)
   },
   /** `segments`: (frequency Hz, seconds) pairs, frequency 0 a rest. */
   play(name: string, segments: Array<[number, number]>, gain: number): void {
@@ -382,6 +415,7 @@ export async function openNativeMicrophone({ mute = false }: { mute?: boolean } 
       closed = true
       listeners.clear()
       recordMobileEvent('mic-closed', { source: 'native' })
+      stopping = true
       post.postMessage({ action: 'stop' })
     },
   }

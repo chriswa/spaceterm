@@ -247,13 +247,19 @@ export function playHeardUnattachedCue(): void {
   playWhateverReplies('heardUnattached')
 }
 
-/** Played by the app where it can, so the Ring/Silent switch does not silence it; else by the page. */
+/**
+ * Played by the app where it can, so the Ring/Silent switch does not silence
+ * it; else by the page. Asked for as the app's microphone stops, it waits for
+ * that to finish: the app drops a cue sent while it takes its engine down.
+ */
 function playWhateverReplies(cue: HandsFreeCue | 'heardUnattached'): void {
-  if (nativeCues.available()) {
-    nativeCues.play(cue, SEGMENTS[cue].map(([freq, dur]) => [freq, dur / SPEEDUP]), GAINS[cue])
-    return
-  }
-  playInPage(cue)
+  nativeCues.whenSettled(() => {
+    if (nativeCues.available()) {
+      nativeCues.play(cue, SEGMENTS[cue].map(([freq, dur]) => [freq, dur / SPEEDUP]), GAINS[cue])
+      return
+    }
+    playInPage(cue)
+  })
 }
 
 function playInPage(cue: Cue): void {
