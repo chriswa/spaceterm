@@ -695,7 +695,7 @@ is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
 **Seeing the turn model.** While hands-free is hearing you, the orange
 microphone button carries Smart Turn's latest answer at a pause — the same
-answer that decides whether the dictation ends there — as a magenta rim
+answer that decides whether the dictation ends there — as a deep violet rim
 filling from the bottom up (`turnFill` in `mic-button.ts`). The top is
 `turnThreshold`: within 5% of it the rim is whole, and at it the dictation
 ends. Those answers are the `hands-free-turn` lines above.

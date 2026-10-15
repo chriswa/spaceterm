@@ -238,7 +238,7 @@ textarea, input, [contenteditable="true"], .cm-content {
    window, draining as its quiet runs out; a spark round the rim is a wait
    (Spark.tsx) — the microphone starting, amber when trying again; orange is
    your voice leaving the phone, solid with its level while it goes (in
-   hands-free, a magenta rim rising to the turn threshold), with a
+   hands-free, a deep violet rim rising to the turn threshold), with a
    white spark while the words are waited for; red with "!" is a failure. The orange is the MIC label's
    (MicIndicator.tsx) and iOS's own dot. */
 .m-mic {
@@ -328,8 +328,9 @@ textarea, input, [contenteditable="true"], .cm-content {
   transition: stroke-dashoffset 1s linear;
 }
 /* Hands-free hearing you: the turn model's latest answer at a pause, a
-   magenta rim filling from the bottom up (clip-path set in MicButton.tsx).
-   The top is the threshold that ends the dictation. */
+   deep violet rim filling from the bottom up (clip-path set in MicButton.tsx).
+   The top is the threshold that ends the dictation. Dark against the orange
+   (about 6:1), and a hue apart from the near-black level bars. */
 .m-mic__turn {
   position: absolute;
   inset: 0;
@@ -340,7 +341,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 .m-mic__turn circle {
   fill: none;
-  stroke: #ff2bd6;
+  stroke: #3b0a8f;
   stroke-width: 3;
 }
 /* Where sound goes now (audio-output.ts), at the top right: speaker, ear, or headphones. */

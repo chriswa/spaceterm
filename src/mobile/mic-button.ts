@@ -35,7 +35,7 @@ export interface MicInputs {
  * - `connecting`: dark, a gold spark running round the rim. A tap was taken; the microphone is starting (AirPods can take seconds). Don't talk yet.
  * - `retrying`: amber icon, an amber spark. The microphone did not start the first time; trying once more by itself.
  * - `hearing`: solid orange with level bars. Your voice is being recorded — talk.
- *   In hands-free, a magenta rim rises from the bottom with the turn model's latest answer at a pause, whole at the threshold.
+ *   In hands-free, a deep violet rim rises from the bottom with the turn model's latest answer at a pause, whole at the threshold.
  * - `transcribing`: orange, a white spark round it. Recording over; waiting for the words.
  * - `error`: solid red with "!". It failed; the message says why. A tap tries again.
  *
