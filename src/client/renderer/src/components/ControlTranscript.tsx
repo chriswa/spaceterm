@@ -4,6 +4,7 @@ import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { controlMode, useReceptionistStore, type ControlMode } from '../stores/receptionistStore'
 import { ChoiceGroup } from './ChoiceGroup'
 import { ControlHolderBadge } from './ControlHolderBadge'
+import { ControlBacklogBadge } from './ControlBacklogBadge'
 import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
 import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
 import { openReplies, partViews, segments, words, type PartView } from '../lib/control-consumption'
@@ -361,6 +362,7 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
         </div>
       )}
       <ControlHolderBadge />
+      <ControlBacklogBadge />
       <form
         className="control-transcript__composer"
         onSubmit={(e) => { e.preventDefault(); send() }}

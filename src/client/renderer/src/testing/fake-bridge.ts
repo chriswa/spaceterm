@@ -178,6 +178,7 @@ export class FakeBridge implements Api {
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly receptionistUnread = new Set<(unread: { count: number; first?: number }) => void>()
+  private readonly receptionistBacklog = new Set<(count: number) => void>()
   private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
   private readonly receptionistSpeaking = new Set<(speaking: { of: number; parts: number[] } | null) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
@@ -281,6 +282,7 @@ export class FakeBridge implements Api {
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     receptionistUnread: (unread: { count: number; first?: number }): void => { for (const fn of this.receptionistUnread) fn(unread) },
+    receptionistBacklog: (count: number): void => { for (const fn of this.receptionistBacklog) fn(count) },
     receptionistSpeaking: (speaking: { of: number; parts: number[] } | null): void => {
       for (const fn of this.receptionistSpeaking) fn(speaking)
     },
@@ -462,6 +464,7 @@ export class FakeBridge implements Api {
     stopReplay: () => this.record('receptionist.stopReplay'),
     readAloud: () => this.record('receptionist.readAloud'),
     onUnread: (cb) => subscribe(this.receptionistUnread, cb),
+    onBacklog: (cb) => subscribe(this.receptionistBacklog, cb),
     onReplaying: (cb) => subscribe(this.receptionistReplaying, cb),
     onSpeaking: (cb) => subscribe(this.receptionistSpeaking, cb),
     transcript: (before) => this.reply('receptionist.transcript', this.responses.controlTranscript(before), before),

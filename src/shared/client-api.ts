@@ -67,6 +67,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
   const onReceptionistStatus = latest('receptionist-status')
   const onReceptionistHolder = latest('receptionist-holder')
   const onReceptionistUnread = latest('receptionist-unread')
+  const onReceptionistBacklog = latest('receptionist-backlog')
   const onAgentNames = latest('agent-names')
   const onHandsFreeTuning = latest('hands-free-tuning')
 
@@ -213,6 +214,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       stopReplay: () => client.stopReceptionistReplay(),
       readAloud: () => client.readReceptionistAloud(),
       onUnread: (cb) => onReceptionistUnread(({ count, first }) => cb({ count, ...(first === undefined ? {} : { first }) })),
+      onBacklog: (cb) => onReceptionistBacklog(({ count }) => cb(count)),
       onReplaying: (cb) => on('receptionist-replaying', ({ playing, refused }) => cb(playing, refused)),
       onSpeaking: (cb) => on('receptionist-speaking', (m) => cb(m.speaking)),
       transcript: (before) => client.receptionistTranscript(before, TRANSCRIPT_PAGE),

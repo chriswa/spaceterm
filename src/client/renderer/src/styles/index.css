@@ -4011,6 +4011,11 @@ html, body, #root {
   font-weight: 600;
   color: #fff;
 }
+/* How much Control has set aside for later: news, not a warning, so the app's purple rather than red. */
+.control-transcript__holder-badge--backlog {
+  background: #cba6f7;
+  color: #11111b;
+}
 
 .control-transcript__entry--log {
   /* What Control did, as a pill on Control's side, coloured by what it did. */

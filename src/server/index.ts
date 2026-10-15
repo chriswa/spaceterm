@@ -329,6 +329,8 @@ let forkTitler: ForkTitler
 /** Undefined until startup builds it; Claude state changes arrive before then. */
 let receptionist: Receptionist | undefined
 /** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
+/** Control's backlog, built with it: its size goes to every client for the transcript's badge. */
+let receptionistBacklog: Backlog | undefined
 let receptionistSpeaker: string | undefined
 let agentNames: NameRegistry
 /** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
@@ -1092,6 +1094,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, receptionistHolderMessage())
   send(link, { type: 'receptionist-unread', ...receptionist?.unread() ?? { count: 0 } })
   send(link, { type: 'agent-names', names: agentNameMap() })
+  send(link, { type: 'receptionist-backlog', count: receptionistBacklog?.size ?? 0 })
   send(link, { type: 'hands-free-tuning', tuning: handsFreeTuning })
 
   // Availability is pushed on change, which a client that connected after the
@@ -3395,6 +3398,7 @@ async function startServer(): Promise<void> {
     store: fileStore(NAMES_FILE),
   })
   receptionist = new Receptionist({
+  receptionistBacklog = new Backlog({ onSize: (count) => broadcastToAll({ type: 'receptionist-backlog', count }) })
     askModel: askReceptionistModel,
     agents: receptionistAgents,
     readTranscript,
@@ -3414,7 +3418,7 @@ async function startServer(): Promise<void> {
     // Jev weighs whether news that arrives mid-reply should cut it short: see self-interruption.ts.
     judgeInterruption: jevJudge(agentSearchDeps.runJev),
     // Kept on disk: what Control set aside outlasts its compacted memory. Jev picks what comes next: see backlog.ts.
-    backlog: new Backlog(),
+    backlog: receptionistBacklog,
     // Kept on disk too: a restart must not cost the user an answer Control promised them.
     watches: new Watches(),
     ended: new EndedAgents(),

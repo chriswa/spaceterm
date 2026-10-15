@@ -1641,6 +1641,15 @@ export interface ReceptionistUnreadMessage {
 }
 
 /**
+ * How many items are on Control's backlog (see `backlog.ts`), for the badge
+ * at the foot of its transcript. Sent on connect and broadcast on every change.
+ */
+export interface ReceptionistBacklogMessage {
+  type: 'receptionist-backlog'
+  count: number
+}
+
+/**
  * How far Control's voice has got through the reply at `of` in the record:
  * `parts[i]` characters of its part `i`, as stored. Null once nothing is being
  * spoken. Broadcast as it changes; not replayed.
@@ -2146,6 +2155,7 @@ export type ServerMessage =
   | ReceptionistStatusMessage
   | ReceptionistHolderMessage
   | ReceptionistUnreadMessage
+  | ReceptionistBacklogMessage
   | ReceptionistReplayingMessage
   | ReceptionistSpeakingMessage
   | CameraFollowMessage

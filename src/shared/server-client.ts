@@ -73,7 +73,7 @@ export type ServerEventType =
   | 'speech-audio' | 'speech-stop' | 'mobile-build-changed'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
-  | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-replaying' | 'receptionist-speaking'
+  | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
   | 'hands-free-tuning'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -287,6 +287,7 @@ export class ServerClient {
       case 'receptionist-notice':
       case 'receptionist-transcript-appended':
       case 'receptionist-unread':
+      case 'receptionist-backlog':
       case 'receptionist-replaying':
       case 'receptionist-speaking':
       case 'hands-free-tuning':

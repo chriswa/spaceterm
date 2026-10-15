@@ -30,6 +30,19 @@ describe('Backlog', () => {
     expect(backlog.take([5])).toEqual([])
   })
 
+  it('announces its size whenever it changes, and only then', () => {
+    const store = memoryStore()
+    new Backlog({ store }).add('already there', 1)
+    const sizes: number[] = []
+    const backlog = new Backlog({ store, onSize: (size) => sizes.push(size) })
+    backlog.add('second', 2)
+    const taken = backlog.take([0, 1])
+    backlog.settle(taken.slice(0, 1))
+    backlog.restore(taken.slice(1))
+    backlog.take([0])
+    expect(sizes).toEqual([2, 0, 1, 0])
+  })
+
   it('survives a restart', () => {
     const store = memoryStore()
     new Backlog({ store }).add('Leon finished', 7)

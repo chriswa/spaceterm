@@ -45,10 +45,15 @@ export class Backlog {
    */
   private out: BacklogItem[] = []
   private readonly store: NameRegistryStore
+  /** Told the number of items whenever it changes, for the badge in Control's transcript. */
+  private readonly onSize: (size: number) => void
+  private lastSize = 0
 
-  constructor(deps: { store?: NameRegistryStore } = {}) {
+  constructor(deps: { store?: NameRegistryStore; onSize?: (size: number) => void } = {}) {
     this.store = deps.store ?? fileStore(BACKLOG_FILE)
+    this.onSize = deps.onSize ?? (() => undefined)
     this.load()
+    this.lastSize = this.items.length
   }
 
   get size(): number {
@@ -111,8 +116,12 @@ export class Backlog {
     }
   }
 
+  /** Every change goes through here, so it is also where a change in size is announced. */
   private save(): void {
     this.store.save(JSON.stringify({ items: this.items, ...(this.out.length ? { out: this.out } : {}) }))
+    if (this.items.length === this.lastSize) return
+    this.lastSize = this.items.length
+    this.onSize(this.lastSize)
   }
 }
 
