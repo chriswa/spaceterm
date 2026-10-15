@@ -52,24 +52,32 @@ export function withoutIgnored(words: readonly string[], ignored: readonly strin
  * window — is it words at all, rather than a cough or filler? `log` hears the
  * words of a short `speech` clip (two words or fewer), so that what the model
  * hears in nothing at all can be found and ignored; nothing longer is logged.
+ *
+ * Either way Voice Operator is asked only for the words (`match=speech`), and
+ * the wake word is judged here. Its own `match=start` answers with the words
+ * only when they matched — empty otherwise — so "let me turn this off", which
+ * is not the wake word, could never be seen behind it. The words of a
+ * wake-word check that is neither the wake word nor the phrase are still not
+ * passed on, so room speech is not kept in the voice record.
  */
 export async function checkWakeWord(
   voice: Voice, pcm: Uint8Array, mode: 'wake-word' | 'speech' = 'wake-word',
   ignoredWords: readonly string[] = DEFAULT_IGNORED_WORDS, log: (message: string) => void = () => {},
 ): Promise<WakeWordOutcome> {
-  const response: SpeechResponse = await voice.checkWakeWord(pcm, WAKE_WORD, mode === 'speech' ? 'speech' : 'start')
+  const response: SpeechResponse = await voice.checkWakeWord(pcm, WAKE_WORD, 'speech')
   if (!response) return { ok: false, error: 'Voice Operator is not running, so the wake word cannot be checked' }
   const body = response.body as { match?: unknown; heard?: unknown; error?: string; detail?: string } | undefined
-  if (response.status !== 200 || typeof body?.match !== 'boolean') {
+  if (response.status !== 200 || typeof body?.match !== 'boolean' || typeof body.heard !== 'string') {
     return { ok: false, error: `Voice Operator could not check the wake word: ${body?.detail ?? body?.error ?? `HTTP ${response.status}`}` }
   }
-  const heard = typeof body.heard === 'string' ? { heard: body.heard } : {}
-  const shutdown = heard.heard === undefined ? undefined : wakeFreeShutdown(heard.heard)
-  if (mode === 'wake-word') return { ok: true, match: body.match, ...heard, ...shutdown ? { shutdown } : {} }
-  const words = spokenWords(heard.heard ?? '')
+  const heard = body.heard
+  const words = spokenWords(heard)
+  const wakeWord = words[0] === WAKE_WORD
+  const shutdown = wakeFreeShutdown(heard)
+  if (mode === 'wake-word') return { ok: true, match: wakeWord, ...wakeWord || shutdown ? { heard } : {}, ...shutdown ? { shutdown } : {} }
   const real = withoutIgnored(words, ignoredWords)
   if (words.length > 0 && words.length <= 2) log(`speech check heard "${words.join(' ')}"${real.length ? '' : ' — ignored'}`)
-  return { ok: true, match: real.length > 0, wakeWord: words[0] === WAKE_WORD, ...heard, ...shutdown ? { shutdown } : {} }
+  return { ok: true, match: real.length > 0, wakeWord, heard, ...shutdown ? { shutdown } : {} }
 }
 
 const TUNING_KEYS: ReadonlyArray<keyof HandsFreeTuning> = [

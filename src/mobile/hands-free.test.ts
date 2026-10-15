@@ -673,6 +673,16 @@ describe('hands-free mode', () => {
       expect(h.sayCalls).toEqual([{ text: 'let me turn this off', interrupted: false }])
     })
 
+    it('keeps Control turned down from the first syllable until it is sent away', async () => {
+      h = harness({ isWakeWord: false, heardShutdown: startThen('whole') })
+      h.setControlSpeaking(true)
+      await h.hear(quiet(1500), speech(1500), quiet(1000))
+      const kinds = h.records.filter((r) => r.kind === 'hands-free-duck' || r.kind === 'hands-free-shutdown')
+        .map((r) => r.kind === 'hands-free-duck' ? `duck:${r.detail?.on}` : 'shutdown')
+      // Never back up in the quiet after the phrase while the whole of it is checked.
+      expect(kinds.slice(0, 2)).toEqual(['duck:true', 'shutdown'])
+    })
+
     it('sends nothing when the whole of it was something else — without "Control", so the sad tune', async () => {
       h = harness({ isWakeWord: false, heardShutdown: startThen(undefined) })
       await h.hear(quiet(1500), speech(1500), quiet(1000))

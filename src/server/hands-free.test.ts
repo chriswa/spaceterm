@@ -22,20 +22,47 @@ describe('parseHandsFreeTuning', () => {
   })
 })
 
+/**
+ * Voice Operator's `/v1/wake-word` as it really answers (WakeWordCheck.swift),
+ * hearing `text` in the clip: `speech` says whether there were words and gives
+ * them; `start` and `only` give the words only when they matched, and empty
+ * otherwise. A fake that gave the words either way hid that "let me turn this
+ * off" could never be seen behind a `start` check.
+ */
+function voiceHearing(text: string) {
+  const asked: string[] = []
+  const words = (t: string) => t.toLowerCase().replace(/[^\p{L}'\s]/gu, ' ').split(/\s+/).filter(Boolean)
+  return {
+    asked,
+    checkWakeWord: async (_pcm: Uint8Array, word: string, match: 'start' | 'only' | 'speech') => {
+      asked.push(`${word} ${match}`)
+      if (match === 'speech') return { status: 200, body: { match: words(text).length > 0, heard: text } }
+      const heard = words(text)
+      const matched = match === 'start' ? heard[0] === word : heard.length === 1 && heard[0] === word
+      return { status: 200, body: { match: matched, heard: matched ? text : '' } }
+    },
+  }
+}
+
 describe('checkWakeWord', () => {
   const pcm = new Uint8Array([0, 0])
 
-  it('passes the verdict through', async () => {
-    const asked: string[] = []
-    const voice = {
-      checkWakeWord: async (_pcm: Uint8Array, word: string, match: string) => {
-        asked.push(`${word} ${match}`)
-        return { status: 200, body: { match: true, heard: 'Control, what is' } }
-      },
-    }
-    expect(await checkWakeWord(voice, pcm)).toEqual({ ok: true, match: true, heard: 'Control, what is' })
-    // The start of what was said, not a word on its own.
-    expect(asked).toEqual(['control start'])
+  it('says whether the words began with the wake word', async () => {
+    expect(await checkWakeWord(voiceHearing('Control, what is'), pcm)).toEqual({ ok: true, match: true, heard: 'Control, what is' })
+    expect(await checkWakeWord(voiceHearing('Control.'), pcm)).toMatchObject({ ok: true, match: true })
+    expect(await checkWakeWord(voiceHearing('It is under control'), pcm)).toMatchObject({ ok: true, match: false })
+    expect(await checkWakeWord(voiceHearing('Controller'), pcm)).toMatchObject({ ok: true, match: false })
+  })
+
+  it('asks Voice Operator for the words, and judges the wake word itself', async () => {
+    const voice = voiceHearing('Control, what is')
+    await checkWakeWord(voice, pcm)
+    await checkWakeWord(voice, pcm, 'speech')
+    expect(voice.asked).toEqual(['control speech', 'control speech'])
+  })
+
+  it('passes on no words of speech that is neither the wake word nor the phrase', async () => {
+    expect(await checkWakeWord(voiceHearing('I was telling Sam about dinner'), pcm)).toEqual({ ok: true, match: false })
   })
 
   it('explains a Voice Operator that is not running, or too old', async () => {
@@ -47,12 +74,7 @@ describe('checkWakeWord', () => {
 
 describe('checkWakeWord, in the conversation window', () => {
   const pcm = new Uint8Array([0, 0])
-  const heard = (text: string) => ({
-    checkWakeWord: async (_pcm: Uint8Array, _word: string, match: string) => {
-      expect(match).toBe('speech')
-      return { status: 200, body: { match: text.trim() !== '', heard: text } }
-    },
-  })
+  const heard = voiceHearing
 
   it('counts any real words as speech, and says when they began with the wake word', async () => {
     expect(await checkWakeWord(heard('Yes.'), pcm, 'speech')).toEqual({ ok: true, match: true, wakeWord: false, heard: 'Yes.' })
@@ -78,18 +100,17 @@ describe('checkWakeWord, in the conversation window', () => {
 
 describe('checkWakeWord, for "let me turn this off"', () => {
   const pcm = new Uint8Array([0, 0])
-  const heard = (text: string, match = false) => ({
-    checkWakeWord: async () => ({ status: 200, body: { match, heard: text } }),
-  })
+  const heard = voiceHearing
 
   it('says when the start of speech could be the phrase, though it is not the wake word', async () => {
     expect(await checkWakeWord(heard('Let me turn'), pcm)).toEqual({ ok: true, match: false, heard: 'Let me turn', shutdown: 'start' })
-    expect(await checkWakeWord(heard('Let me think'), pcm)).toEqual({ ok: true, match: false, heard: 'Let me think' })
+    expect(await checkWakeWord(heard('Let me turn this off.'), pcm)).toEqual({ ok: true, match: false, heard: 'Let me turn this off.', shutdown: 'whole' })
+    expect(await checkWakeWord(heard('Let me think'), pcm)).toEqual({ ok: true, match: false })
   })
 
   it('says when the whole of it was the phrase, and nothing else', async () => {
-    expect(await checkWakeWord(heard('Let me turn this off.', true), pcm, 'speech')).toMatchObject({ ok: true, match: true, shutdown: 'whole' })
-    expect(await checkWakeWord(heard('Let me turn this off and on.', true), pcm, 'speech')).not.toHaveProperty('shutdown')
+    expect(await checkWakeWord(heard('Let me turn this off.'), pcm, 'speech')).toMatchObject({ ok: true, match: true, shutdown: 'whole' })
+    expect(await checkWakeWord(heard('Let me turn this off and on.'), pcm, 'speech')).not.toHaveProperty('shutdown')
   })
 })
 

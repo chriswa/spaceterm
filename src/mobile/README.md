@@ -568,8 +568,11 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   the page holds it, and only with a headset (`held-microphone.ts`).
 - **Nothing leaves the phone** until you start talking with nobody talking
   just before (`wake-listener.ts`). Only the first second of that goes to the Mac, where
-  Voice Operator checks whether it starts with "control", with Apple's
-  on-device model (`POST /v1/wake-word?match=start`) — never Wispr; and when
+  Voice Operator writes it down with Apple's on-device model
+  (`POST /v1/wake-word?match=speech`) — never Wispr — and the server judges
+  whether it starts with "control" or "let me…" (`src/server/hands-free.ts`;
+  Voice Operator's own `match=start` gives no words back for a miss, so it
+  could never see the phrase), passing on no words that were neither; and when
   that second was heard as "let me…", the rest of that one burst of speech,
   to the same model, to tell whether it was "let me turn this off". Audio is
   otherwise only ever in an eight-second buffer in memory.

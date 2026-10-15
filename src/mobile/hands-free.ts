@@ -405,6 +405,17 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   }
 
   /**
+   * Control, turned down for someone talking, comes back up once they have
+   * been quiet a while — unless what they said is still being decided: a
+   * check under way, or speech watched for "let me turn this off", which
+   * ends in quiet and would otherwise bring Control back for the moment
+   * before it is sent away.
+   */
+  const unduckIfDone = () => {
+    if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0 && !shutdownWatch) setDuck(false)
+  }
+
+  /**
    * The pending tone, as things stand: on while listening outside the
    * conversation window and what may be speech is undecided — under way and
    * not yet checked, or being checked for "Control". Off as a dictation
@@ -455,7 +466,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       if (frame.p < SpeechGate.STOP) quietRun++
     }
     if (!ducked && speechRun >= SpeechGate.START_FRAMES) setDuck(true)
-    if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
+    unduckIfDone()
     if (!listening) return
     echo ??= { frames: 0, speechFrames: 0, run: 0, longestRun: 0, sumDb: 0, maxDb: -120, ducks: ducked ? 1 : 0 }
     const db = levelDb(frame.pcm)
@@ -522,7 +533,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       log('not "let me turn this off" after all')
       // Nor "Control": thrown away.
       if (useHandsFree.getState().phase === 'listening' && capture) deps.handsFreeCue('notWakeWord')
-      if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
+      unduckIfDone()
     })
   }
 
@@ -711,7 +722,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
         }
         if (!match || useHandsFree.getState().phase !== 'listening' || !capture) {
           // Not for Control: back up, unless they are still talking.
-          if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
+          unduckIfDone()
           return
         }
         // Said over Control's reply, here or on the Mac: cut it off — its record keeps how much was heard.
