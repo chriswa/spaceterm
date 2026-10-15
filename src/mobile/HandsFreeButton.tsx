@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
 import { nativeMicrophoneAvailable, onNativeSampleRate } from './native-microphone'
-import { endSilence, useHandsFree } from './hands-free'
+import { endSilence, turnFill, useHandsFree } from './hands-free'
 import { Spark } from './Spark'
 
 /** Whether the microphone is held open (held-microphone.ts), as it changes. */
@@ -21,15 +21,6 @@ function useNativeSampleRate(): number | undefined {
 /** Fill an end gauge `fill` (0..1) of the way up, from the bottom. */
 const clipTo = (fill: number) => `inset(${(100 * (1 - Math.max(0, Math.min(1, fill)))).toFixed(1)}% 0 0 0)`
 
-/** The button's radius in its gauges' 42-unit box. */
-const R = 21
-
-/** A line across the left half of the disc, `at` (0..1) of the way up: where the turn model's threshold is. */
-export function thresholdLine(at: number): { x1: number; x2: number; y: number } {
-  const y = 2 * R * (1 - Math.max(0, Math.min(1, at)))
-  return { x1: R - Math.sqrt(Math.max(0, R * R - (y - R) ** 2)), x2: R, y }
-}
-
 /**
  * The hands-free button, right of the microphone: a tap holds the microphone
  * open (held-microphone.ts), and another lets it go. In the app, holding it is
@@ -39,11 +30,10 @@ export function thresholdLine(at: number): { x1: number; x2: number; y: number }
  * of a page opening a microphone.
  *
  * While hands-free is taking a dictation, the button shows the two things
- * that can end it, a half each, filling from the bottom like a glass.
- * Left, green: the turn model's latest answer at a pause (Smart Turn), 0 to
- * 1, snapping to each answer; a red line across it marks the threshold that
- * ends the dictation, while the model is being asked. Right: the quiet since
- * you last spoke, the top the patience that ends it regardless. Both stay up while what you said is sent,
+ * that can end it, a half each, filling from the bottom like a glass; whichever reaches the top first
+ * ends it. Left: the turn model's latest answer at a pause (Smart Turn), the
+ * top its threshold. Right: the quiet since you last spoke, the top the
+ * patience that ends it regardless. Both stay up while what you said is sent,
  * so you can see which one ended it.
  */
 export function HandsFreeButton() {
@@ -55,8 +45,6 @@ export function HandsFreeButton() {
   const badge = app && hold === 'held' && rate ? String(Math.round(rate / 1000)) : null
   const phase = useHandsFree((s) => s.phase)
   const turn = useHandsFree((s) => s.turn)
-  const sampling = useHandsFree((s) => s.sampling)
-  const line = sampling === null ? null : thresholdLine(sampling)
   const ending = phase === 'hearing' || phase === 'sending'
 
   // The quiet gauge, moved once a frame from the endpointer — not through React.
@@ -86,15 +74,10 @@ export function HandsFreeButton() {
       {ending && (
         <>
           <svg className="m-hands-free__gauge m-hands-free__gauge--turn" viewBox="0 0 42 42" aria-hidden="true"
-            style={{ clipPath: clipTo(turn?.p ?? 0) }}>
+            style={{ clipPath: clipTo(turn ? turnFill(turn.p, turn.threshold) : 0) }}>
             {/* The left half of the disc. */}
             <path d="M21 0A21 21 0 0 0 21 42Z" />
           </svg>
-          {line && (
-            <svg className="m-hands-free__gauge m-hands-free__threshold" viewBox="0 0 42 42" aria-hidden="true">
-              <line x1={line.x1} x2={line.x2} y1={line.y} y2={line.y} />
-            </svg>
-          )}
           <svg ref={quietRef} className="m-hands-free__gauge m-hands-free__gauge--quiet" viewBox="0 0 42 42" aria-hidden="true"
             style={{ clipPath: clipTo(0) }}>
             <path d="M21 0A21 21 0 0 1 21 42Z" />

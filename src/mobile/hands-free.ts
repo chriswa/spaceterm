@@ -88,9 +88,11 @@ export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
  * the threshold it was held to — shown on the hands-free button
  * (HandsFreeButton.tsx). Null until the first pause and once they carry on;
  * kept while what was said is sent, so what ended it can be seen.
+ * `sampling`: the threshold the answers are held to, while the turn model is
+ * being asked about a pause (`TURN_SAMPLE_MS`); null otherwise.
  */
-export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; turn: TurnAnswer | null }>(
-  () => ({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null }),
+export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; turn: TurnAnswer | null; sampling: number | null }>(
+  () => ({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null }),
 )
 
 let readEndSilence: () => number | null = () => null
@@ -107,20 +109,6 @@ export function endSilence(): number | null {
 
 /** One answer from the turn model: `p`, 0..1, that the speaker has finished; at or above `threshold`, the dictation ends. */
 export interface TurnAnswer { p: number; threshold: number }
-
-/** Within this fraction of the threshold, the turn gauge is drawn whole: it reads as "there". */
-export const TURN_NEAR = 0.95
-
-/**
- * How far up the turn gauge (HandsFreeButton.tsx) is filled, 0..1, from the bottom: the turn
- * model's answer as a share of the threshold that ends the dictation, so the
- * top of the ring is the threshold. Whole at or near it.
- */
-export function turnFill(p: number, threshold: number): number {
-  if (threshold <= 0) return 1
-  const share = Math.max(0, p) / threshold
-  return share >= TURN_NEAR ? 1 : share
-}
 
 /**
  * What Wispr wrote, as Control should get it: the wake word off the front,
@@ -214,6 +202,12 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => {
 const BACKGROUND_REPORT_MS = 60_000
 /** While listening, how often to record the room: how loud, and how much of it was speech. */
 const LEVELS_REPORT_MS = 30_000
+/**
+ * Through a pause, the turn model is asked again this often — a series of
+ * answers, not one — or as soon as the last answer is back, if that took
+ * longer. One question at a time: the Mac answers in 60–180 ms.
+ */
+const TURN_SAMPLE_MS = 500
 /** Frames waiting on a slow speech detector beyond this (about 3 s) are dropped, and listening starts afresh. */
 const MAX_QUEUED_FRAMES = 100
 /** Frames without speech (about half a second) before Control, turned down for someone talking, comes back up. */
@@ -249,7 +243,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     const was = useHandsFree.getState().phase
     if (was === phase) return
     // Sending keeps the last answer, beside the quiet that may have ended it instead.
-    useHandsFree.setState(phase === 'sending' ? { phase } : { phase, turn: null })
+    useHandsFree.setState(phase === 'sending' ? { phase, sampling: null } : { phase, turn: null, sampling: null })
     record('hands-free-phase', { from: was, to: phase })
   }
 
@@ -289,14 +283,19 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let utterance: UtteranceEndpointer | undefined
   let utteranceDictation: HandsFreeDictation | undefined
   let endUtterance: ((reason: EndReason) => void) | undefined
-  /** Bumped at every pause and every resumption: a turn verdict counts only for the pause it was asked about. */
+  /** Bumped at every pause, every resumption, and the dictation's end: a turn verdict counts only for the pause it was asked about. */
   let pauseNumber = 0
+  /** No more asking about this pause: the dictation has ended. Its last answer stays shown. */
+  const stopSampling = () => {
+    pauseNumber++
+    if (useHandsFree.getState().sampling !== null) useHandsFree.setState({ sampling: null })
+  }
   /**
    * The pause is over — they carried on, or a new one is being asked about:
    * any verdict on it is moot, so it is neither acted on nor shown.
    */
   const pauseOver = () => {
-    pauseNumber++
+    stopSampling()
     if (useHandsFree.getState().turn) useHandsFree.setState({ turn: null })
   }
   let checkError: string | undefined
@@ -563,6 +562,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       endUtterance = ended
       void deps.sleep(tuning.maxUtteranceMs + 10_000).then(() => ended('lost'))
       const reason = await end
+      stopSampling()
       utterance = undefined
       utteranceDictation = undefined
       endUtterance = undefined
@@ -601,19 +601,34 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     }
   }
 
-  /** A pause: if the turn model is sure enough they have finished, and they have not started again, end here. */
-  const askAboutPause = async (talkMs: number) => {
+  /**
+   * A pause: ask the turn model every `TURN_SAMPLE_MS` for as long as it
+   * lasts, and end here the first time it is sure enough they have finished.
+   * Stops when they carry on — an answer arriving after that is about a pause
+   * that is over, and is dropped — or when the dictation ends some other way.
+   */
+  const samplePause = async (talkMs: number) => {
     pauseOver()
-    const asked = pauseNumber
+    const pause = pauseNumber
     const dictation = utteranceDictation
     if (!dictation) return
-    const p = await dictation.checkTurn()
-    const current = asked === pauseNumber && dictation === utteranceDictation
-    log(`pause after ${(talkMs / 1000).toFixed(1)}s: ${p === null ? 'no turn verdict' : `p(finished)=${p.toFixed(2)}`}${current ? '' : ', but they carried on'}`)
-    const ends = current && p !== null && p >= tuning.turnThreshold
-    record('hands-free-turn', { talkMs: Math.round(talkMs), p, threshold: tuning.turnThreshold, ends, carriedOn: !current })
-    if (current && p !== null) useHandsFree.setState({ turn: { p, threshold: tuning.turnThreshold } })
-    if (ends) endUtterance?.('finished')
+    useHandsFree.setState({ sampling: tuning.turnThreshold })
+    for (let sample = 1; pause === pauseNumber; sample++) {
+      const next = deps.sleep(TURN_SAMPLE_MS)
+      const p = await dictation.checkTurn()
+      const current = pause === pauseNumber
+      log(`pause after ${(talkMs / 1000).toFixed(1)}s, sample ${sample}: ${p === null ? 'no turn verdict' : `p(finished)=${p.toFixed(2)}`}${current ? '' : ', but it is over'}`)
+      const ends = current && p !== null && p >= tuning.turnThreshold
+      record('hands-free-turn', { talkMs: Math.round(talkMs), sample, p, threshold: tuning.turnThreshold, ends, carriedOn: !current })
+      if (!current) return
+      if (p !== null) useHandsFree.setState({ turn: { p, threshold: tuning.turnThreshold } })
+      if (ends) {
+        stopSampling()
+        endUtterance?.('finished')
+        return
+      }
+      await next
+    }
   }
 
   /** One scored frame, routed by phase: to the endpointer while dictating, else to the wake-word listener. */
@@ -645,7 +660,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
           // "Control." and a breath: the turn model would call that finished. Wait for the rest.
           log('pause after the wake word alone: waiting for the rest, not asking the turn model')
           record('hands-free-pause', { talkMs: event.talkMs, wakeWordOnly: true })
-        } else void askAboutPause(event.talkMs)
+        } else void samplePause(event.talkMs)
       }
       return
     }
