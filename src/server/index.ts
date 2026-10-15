@@ -3505,6 +3505,11 @@ async function startServer(): Promise<void> {
       const node = stateManager.getNode(nodeId)
       if (node?.type === 'terminal' && node.alive) sessionManager.write(node.sessionId, '\x1b')
     },
+    // As the user's own click on the unread badge (`set-claude-status-unread`).
+    markRead: (nodeId) => {
+      const node = stateManager.getNode(nodeId)
+      if (node?.type === 'terminal') claudeStateMachine.handleClientMarkUnread(node.sessionId, false)
+    },
     // Letting go of Control, as the transcript's Release does (`receptionist-hold`).
     letGo: () => setReceptionistHolder(null),
     log: appendReceptionistLog,

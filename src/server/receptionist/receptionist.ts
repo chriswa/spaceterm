@@ -7,6 +7,7 @@ import { INTERRUPTED_MARKER } from '../unheard'
 import { joinSpeechParts, speechPartStarts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import { ConsumptionLedger, type ConsumedHow, type Via } from './consumption'
+import { DeferredReads, type DeferredRead } from './deferred-reads'
 import type { NamedVoice, VoiceGender } from './name-voice-table'
 import { RECEPTIONIST_NAME, RECEPTIONIST_VOICE } from './name-voice-table'
 import type { NameProblem } from './name-registry'
@@ -266,6 +267,8 @@ export interface ReceptionistDeps {
   send(nodeId: NodeId, text: string): void
   /** Press Escape in an agent's terminal. */
   interrupt(nodeId: NodeId): void
+  /** Mark an agent read, as the user's own click on its unread badge does: see deferred-reads.ts. */
+  markRead(nodeId: NodeId): void
   /**
    * Let go of Control, exactly as the Control button does when it lets go:
    * no device holds it, every button shows it, and nobody hears it. See go_quiet.
@@ -558,6 +561,10 @@ export class Receptionist {
   private mutedMidReply = false
   /** What the user has taken in of each reply, against what the model believes: see consumption.ts. */
   private readonly ledger = new ConsumptionLedger()
+  /** Agents told of, marked read once the user answers having heard it all: see deferred-reads.ts. */
+  private readonly reads = new DeferredReads()
+  /** What mark_read asked for this turn, until its reply is written: see `stageReads`. */
+  private staged: { attempt: Attempt; reads: DeferredRead[] } | undefined
   /** A replay is playing: Control holds its tongue, as while the user dictates. See `replay`. */
   private replaying = false
   /** Where replays play, apart from Control's own speech, so that neither cuts the other off. Made on the first replay. */
@@ -970,6 +977,62 @@ export class Receptionist {
       for (const { at: of, part, from, to } of read) this.deps.record.consumed(of, part, from, to, 'read')
       for (const { at: of, lengths } of lost) this.deps.record.amendHeard(of, lengths)
     })
+    const { done, dropped } = this.reads.settle(at, replyAt => this.ledger.whole(replyAt))
+    this.markRead(done)
+    if (dropped.length) this.traceReads(dropped, 'left unread: you had not taken in all of what told you of it')
+  }
+
+  /**
+   * mark_read's agents, taken down when a step of `attempt` is accepted, for
+   * the reply that ends the turn: see `speak`. A turn superseded before it
+   * says anything leaves them behind with it.
+   */
+  private stageReads(attempt: Attempt, calls: readonly ToolCall[], agents: readonly RosterAgent[], handles: Handles): void {
+    if (this.staged?.attempt !== attempt) this.staged = { attempt, reads: [] }
+    for (const call of calls) {
+      if (call.tool !== 'mark_read') continue
+      const agent = agents.find(candidate => candidate.nodeId === this.resolve(call.agent, handles, agents))
+      if (!agent || this.staged.reads.some(read => read.nodeId === agent.nodeId)) continue
+      this.staged.reads.push({ nodeId: agent.nodeId, ...(agent.stateSince !== undefined ? { stateSince: agent.stateSince } : {}) })
+    }
+  }
+
+  private takeStaged(attempt: Attempt): DeferredRead[] {
+    if (this.staged?.attempt !== attempt) return []
+    const { reads } = this.staged
+    this.staged = undefined
+    return reads
+  }
+
+  /**
+   * The user answered, having heard all of what told them of these agents:
+   * each is marked read, unless it has moved on since — stopped again, or
+   * gone back to work — and so has news they have not heard.
+   */
+  private markRead(reads: readonly DeferredRead[]): void {
+    if (!reads.length) return
+    const agents = this.deps.agents()
+    const marked: DeferredRead[] = []
+    const movedOn: DeferredRead[] = []
+    for (const read of reads) {
+      const agent = agents.find(candidate => candidate.nodeId === read.nodeId)
+      if (!agent?.unread || marked.some(done => done.nodeId === read.nodeId)) continue
+      if (agent.stateSince !== read.stateSince) {
+        movedOn.push(read)
+        continue
+      }
+      this.deps.markRead(read.nodeId)
+      marked.push(read)
+    }
+    if (marked.length) this.traceReads(marked, 'marked read: you answered after hearing all of what told you of it')
+    if (movedOn.length) this.traceReads(movedOn, 'left unread: it has news since what you heard')
+  }
+
+  /** What became of mark_read, for the transcript's activity log and the log. */
+  private traceReads(reads: readonly DeferredRead[], what: string): void {
+    const tokens = reads.map(read => this.traceToken(read.nodeId))
+    this.trace('mark-read', `${tokens.join(', ')} ${what}`)
+    this.deps.log({ event: 'mark-read', nodeIds: reads.map(read => read.nodeId), what })
   }
 
   /** Runs `change` to the ledger, and says what waits for the user if that moved. */
@@ -1718,6 +1781,7 @@ export class Receptionist {
       }
       // Bookkeeping waits on nothing, so it is done the moment a reply is accepted.
       await this.runTools(reply.tools.filter(isBookkeeping), agents, handles)
+      this.stageReads(attempt, reply.tools, agents, handles)
       // An out-of-date name in front of a handle is no reason to refuse a
       // reply: the handle decides, the real name is spoken, and the model is
       // told with its next message.
@@ -1985,6 +2049,8 @@ export class Receptionist {
         this.backlogAdd(call.item)
         continue
       }
+      // Taken down by `stageReads`, with the turn it waits on.
+      if (call.tool === 'mark_read') continue
       if (call.tool === 'go_quiet') {
         serverLog('[receptionist] go_quiet: letting go of Control')
         this.quieted = true
@@ -2757,6 +2823,8 @@ export class Receptionist {
   private async speak(
     attempt: Attempt, body: string, reply: Reply, taken: BacklogItem[], events: readonly ReceptionistEvent[], withWords: boolean,
   ): Promise<boolean> {
+    // What mark_read asked for waits on this reply, or on nothing if it is never said.
+    const reads = this.takeStaged(attempt)
     // Never over the user. Talked over while it waited, the reply is never said.
     if (!await this.mayAct(attempt)) {
       this.noteUnspoken(reply)
@@ -2796,6 +2864,8 @@ export class Receptionist {
     // Read after the actions' awaits: muting while they ran writes this reply.
     const reading = this.reading
     const at = this.writeReply(froms, spoken, reading)
+    if (at !== undefined && spoken.length) this.reads.defer(at, reads)
+    else if (reads.length) this.traceReads(reads, 'left unread: the reply that told you of it said nothing')
     // After the reply, so the transcript's activity log reads as it happened: silence, then the watch kept.
     this.keepWatchingUntold(events, reply, withWords)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools, ...(reading ? { muted: true } : {}) })
@@ -3022,6 +3092,10 @@ export class Receptionist {
       this.deps.record.amendHeard(spokenAt, lengths, waiting)
       this.ledger.heard(spokenAt, lengths, waiting)
       if (waiting) this.onUnread(this.ledger.unread())
+      if (!this.ledger.whole(spokenAt)) {
+        const dropped = this.reads.cut(spokenAt)
+        if (dropped.length) this.traceReads(dropped, 'left unread: the reply that told you of it was cut off')
+      }
     }
     const kept = redactSpoken(spoken, heard)
     const audible = kept.map(part => part.text).join(' ')

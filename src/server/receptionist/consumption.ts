@@ -175,6 +175,12 @@ export class ConsumptionLedger {
     return { read: [], lost }
   }
 
+  /** Whether the user has taken in every word of the reply at `at`; false for one not followed. */
+  whole(at: number): boolean {
+    const reply = this.replies.get(at)
+    return reply !== undefined && complete(reply)
+  }
+
   /** Replies with words waiting for the user, and where the oldest is. */
   unread(): { count: number; first?: number } {
     const unread = [...this.replies].filter(([, reply]) => reply.waiting && !complete(reply))

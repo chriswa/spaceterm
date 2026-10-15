@@ -42,6 +42,8 @@ export type ToolCall = (
   | { tool: 'force_user_camera'; target: string }
   | { tool: 'go_quiet' }
   | { tool: 'backlog_add'; item: string }
+  /** Mark the agent read once the user has heard this reply: see deferred-reads.ts. */
+  | { tool: 'mark_read'; agent: string }
   /** `about` describes a particular item to take, rather than whichever matters most. */
   | { tool: 'backlog_next'; about?: string }
 )
@@ -73,9 +75,10 @@ export function isLookup(call: ToolCall): boolean {
  * Control's own bookkeeping: changes nothing the user hears about, and has no
  * result the model must wait for, so it is done as soon as a reply is
  * accepted, never waiting for speech and never costing another step.
+ * mark_read is only taken down then: what it asks for waits on the user.
  */
 export function isBookkeeping(call: ToolCall): boolean {
-  return call.tool === 'backlog_add'
+  return call.tool === 'backlog_add' || call.tool === 'mark_read'
 }
 
 /** Tools that do something for the user, and so get a spoken confirmation, said once they have run. */
@@ -161,7 +164,7 @@ function parseSayPart(value: unknown): SayPart {
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   read: true, ask_agent: true, monitor: true, send: true, interrupt: true, archive_agent: true, unarchive_agent: true,
   spawn: true, rename_agent: true, recall: true, list_agents: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true, go_quiet: true,
-  backlog_add: true, backlog_next: true,
+  backlog_add: true, backlog_next: true, mark_read: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
 
@@ -226,6 +229,8 @@ function parseToolCall(value: unknown): ToolCall {
       return { tool: 'interrupt', agent }
     case 'archive_agent':
       return { tool: 'archive_agent', agent }
+    case 'mark_read':
+      return { tool: 'mark_read', agent }
     case 'unarchive_agent':
       return { tool: 'unarchive_agent', agent }
     case 'rename_agent': {

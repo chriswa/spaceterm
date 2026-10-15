@@ -143,17 +143,20 @@ function harness(opts: {
   voiceTick?: () => Promise<void>
   /** What Spaceterm is waiting on the user for, read as each message leaves; by default nothing, on the Mac. */
   status?: () => StatusSample
+  /** Agents with news the user has not looked at; by default none. */
+  unread?: NodeId[]
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
   const gone = world.gone
+  const unread = new Set(opts.unread ?? [])
   const agents = (): RosterAgent[] => [
     {
       nodeId: KEVIN_ID, title: 'water sim', cwd: '/src/fluids', state: states.get(KEVIN_ID)!, stateSince: world.since.get(KEVIN_ID), transcriptPath: '/t/kevin.jsonl', claudeSessionId: 'kevin-session',
       ...(opts.kevinCacheWarmUntil !== undefined ? { cacheWarmUntil: opts.kevinCacheWarmUntil, cacheWarmTokens: 38_000 } : {}),
     },
     { nodeId: SALLY_ID, title: 'login page', cwd: '/src/web', state: states.get(SALLY_ID)!, stateSince: world.since.get(SALLY_ID), transcriptPath: '/t/sally.jsonl', claudeSessionId: 'sally-session' },
-  ].filter(agent => !gone.has(agent.nodeId))
+  ].filter(agent => !gone.has(agent.nodeId)).map(agent => unread.has(agent.nodeId) ? { ...agent, unread: true } : agent)
   /** Every message sent, in order, with the session it went to. */
   const turns: SessionTurn[] = []
   const replies = [...opts.replies]
@@ -317,6 +320,7 @@ function harness(opts: {
     notify: (text) => notices.push(text),
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
     interrupt: (nodeId) => wire.push(`escape ${nodeId}`),
+    markRead: (nodeId) => { wire.push(`read ${nodeId}`); unread.delete(nodeId) },
     // As the server does: no device holds Control, so nobody hears it.
     letGo: () => { wire.push('let go'); receptionist.setListener(undefined) },
     directories: () => [{ nodeId: DIR_ID, cwd: '/Users/me/spaceterm' }],
@@ -4542,5 +4546,92 @@ describe('Receptionist muted, and what the user has taken in', () => {
       await flush()
       expect(said(h).at(-1)).toContain('Sally finished.')
     })
+  })
+})
+
+describe('Receptionist: mark_read waits on the user', () => {
+  const report = (): string => reply(
+    [{ from: KEVIN, text: 'Volume is conserved now.' }],
+    [{ tool: 'mark_read', agent: KEVIN }],
+  )
+  const reads = (h: ReturnType<typeof harness>): string[] => h.wire.filter(line => line.startsWith('read '))
+
+  it('marks the agent read once the user answers a reply they heard all of', async () => {
+    const h = harness({ unread: [KEVIN_ID], replies: [report(), reply([{ from: 'control', text: 'Sure.' }])] })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    expect(said(h).at(-1)).toContain('Volume is conserved now.')
+    // Heard, but not yet answered: the user may not have been listening.
+    expect(reads(h)).toEqual([])
+    await h.receptionist.hear('great, thanks', 'spoken')
+    await flush()
+    expect(reads(h)).toEqual([`read ${KEVIN_ID}`])
+    expect(h.traces.at(-1)).toMatchObject({ what: 'mark-read', text: expect.stringContaining('marked read') })
+  })
+
+  it('never marks it read when the reply was cut off, however the user answers', async () => {
+    const speech = handPlayed()
+    const h = harness({ unread: [KEVIN_ID], speech: speech.backend, replies: [report(), reply([{ from: 'control', text: 'Sure.' }])] })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    speech.heard('Kevin here. Volume'.length)
+    await flush()
+    h.receptionist.userSpeaking(true)
+    await flush()
+    void h.receptionist.hear('wait, what about Sally?', 'spoken')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(reads(h)).toEqual([])
+    expect(h.traces.some(trace => trace.what === 'mark-read' && trace.text.includes('cut off'))).toBe(true)
+  })
+
+  it('leaves an agent unread that has news since the reply that told of it', async () => {
+    const h = harness({ unread: [KEVIN_ID], replies: [report(), reply([{ from: 'control', text: 'Sure.' }]), reply([], [])] })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    h.setState(KEVIN_ID, 'working')
+    h.setState(KEVIN_ID, 'stopped')
+    await flush()
+    await h.receptionist.hear('great', 'spoken')
+    await flush()
+    expect(reads(h)).toEqual([])
+    expect(h.traces.some(trace => trace.what === 'mark-read' && trace.text.includes('news since'))).toBe(true)
+  })
+
+  it('drops it with a reply that is never said', async () => {
+    const h = harness({
+      unread: [KEVIN_ID],
+      replies: [() => new Promise<string>(() => {}), reply([{ from: 'control', text: 'Sally is on the login page.' }]), reply([{ from: 'control', text: 'Sure.' }])],
+    })
+    void h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    // The user talks over the turn before it answers: its mark_read, had it come, would never be heard.
+    h.receptionist.userSpeaking(true)
+    void h.receptionist.hear('actually, Sally?', 'spoken')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    await h.receptionist.hear('ok', 'spoken')
+    await flush()
+    expect(reads(h)).toEqual([])
+  })
+
+  it('takes a muted reply as heard when the user types their answer, and not when they speak it', async () => {
+    const listen = (h: ReturnType<typeof harness>) => h.receptionist.setListener({ ...h.listener, reading: true })
+    const typed = harness({ unread: [KEVIN_ID], replies: [report(), reply([{ from: 'control', text: 'Sure.' }])] })
+    listen(typed)
+    await typed.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    await typed.receptionist.hear('push it', 'typed')
+    await flush()
+    expect(reads(typed)).toEqual([`read ${KEVIN_ID}`])
+
+    const spoken = harness({ unread: [KEVIN_ID], replies: [report(), reply([{ from: 'control', text: 'Sure.' }])] })
+    listen(spoken)
+    await spoken.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    await spoken.receptionist.hear('push it', 'spoken')
+    await flush()
+    expect(reads(spoken)).toEqual([])
   })
 })

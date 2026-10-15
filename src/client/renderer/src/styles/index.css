@@ -4092,7 +4092,8 @@ html, body, #root {
 .control-transcript__entry--trace[data-what^="backlog"] { --ct-why: #f9e2af; }
 .control-transcript__entry--trace[data-what="watch"],
 .control-transcript__entry--trace[data-what="fired"],
-.control-transcript__entry--trace[data-what="unwatch"] { --ct-why: #94e2d5; }
+.control-transcript__entry--trace[data-what="unwatch"],
+.control-transcript__entry--trace[data-what="mark-read"] { --ct-why: #94e2d5; }
 .control-transcript__entry--trace[data-what="unspoken"],
 .control-transcript__entry--trace[data-what="cut-in"],
 .control-transcript__entry--trace[data-what="stopped"],

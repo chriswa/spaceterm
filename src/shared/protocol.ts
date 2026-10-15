@@ -1739,7 +1739,9 @@ export type ControlTranscriptEntry = {
  * firing, or ending; a reply that was never spoken; Control cutting its own
  * reply short for news; a turn that failed (`failed`), which the view shows
  * even with the activity hidden, since Control said so out loud; Control's
- * session compacted to a summary (`compacted`), also always shown.
+ * session compacted to a summary (`compacted`), also always shown; an agent
+ * Control told of marked read once the user answered, or left unread
+ * (`mark-read`).
  */
 export type ControlTraceKind =
   | 'events' | 'requeued'
@@ -1747,6 +1749,7 @@ export type ControlTraceKind =
   | 'watch' | 'fired' | 'unwatch'
   | 'unspoken' | 'cut-in' | 'stopped' | 'resumed'
   | 'failed' | 'compacted'
+  | 'mark-read'
 
 /** One activity entry: a line, and the detail behind it when there is more to say. */
 export interface ControlTrace {
