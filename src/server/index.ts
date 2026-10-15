@@ -328,9 +328,9 @@ let potentialErrorDetector: PotentialErrorDetector
 let forkTitler: ForkTitler
 /** Undefined until startup builds it; Claude state changes arrive before then. */
 let receptionist: Receptionist | undefined
-/** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
 /** Control's backlog, built with it: its size goes to every client for the transcript's badge. */
 let receptionistBacklog: Backlog | undefined
+/** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
 let receptionistSpeaker: string | undefined
 let agentNames: NameRegistry
 /** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
@@ -1093,8 +1093,8 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, receptionistStatus())
   send(link, receptionistHolderMessage())
   send(link, { type: 'receptionist-unread', ...receptionist?.unread() ?? { count: 0 } })
-  send(link, { type: 'agent-names', names: agentNameMap() })
   send(link, { type: 'receptionist-backlog', count: receptionistBacklog?.size ?? 0 })
+  send(link, { type: 'agent-names', names: agentNameMap() })
   send(link, { type: 'hands-free-tuning', tuning: handsFreeTuning })
 
   // Availability is pushed on change, which a client that connected after the
@@ -3397,8 +3397,8 @@ async function startServer(): Promise<void> {
     isLive: (nodeId) => stateManager.getNode(nodeId) !== undefined,
     store: fileStore(NAMES_FILE),
   })
-  receptionist = new Receptionist({
   receptionistBacklog = new Backlog({ onSize: (count) => broadcastToAll({ type: 'receptionist-backlog', count }) })
+  receptionist = new Receptionist({
     askModel: askReceptionistModel,
     agents: receptionistAgents,
     readTranscript,

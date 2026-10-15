@@ -361,8 +361,8 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
           <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
         </div>
       )}
-      <ControlHolderBadge />
       <ControlBacklogBadge />
+      <ControlHolderBadge />
       <form
         className="control-transcript__composer"
         onSubmit={(e) => { e.preventDefault(); send() }}
