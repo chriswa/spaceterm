@@ -139,11 +139,22 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   useModalDismiss(variant === 'modal', dialogRef, onDismiss)
   /** The oldest reply with words waiting when the view opened: the view opens on it. */
   const [firstUnread] = useState(() => useReceptionistStore.getState().unread.first)
+  const firstUnreadNow = useReceptionistStore((s) => s.unread.first)
+  /**
+   * What waited when Read aloud was pressed: pressed, it is as good as heard,
+   * so the button goes at once rather than when the server says it is read.
+   * Back only for something new waiting, or if the reading was refused.
+   */
+  const [askedAloud, setAskedAloud] = useState<number | undefined>(undefined)
+  const readingAloud = askedAloud !== undefined && askedAloud === firstUnreadNow
   /** The part this device is replaying, if any. */
   const [replaying, setReplaying] = useState<{ of: number; part: number } | null>(null)
   useEffect(() => window.api.receptionist.onReplaying((playing, refused) => {
     setReplaying(playing)
-    if (refused) setError(`Could not play that: ${refused}.`)
+    if (refused) {
+      setError(`Could not play that: ${refused}.`)
+      setAskedAloud(undefined)
+    }
   }), [])
   /** How far Control's voice has got through the reply it is saying, if any. */
   const [speaking, setSpeaking] = useState<{ of: number; parts: number[] } | null>(null)
@@ -354,7 +365,15 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
         // it is read at once, and nothing goes to Control. Not offered while
         // Control speaks, which a reading would only wait behind.
         <div className="control-transcript__unread-bar" role="group" aria-label="Unread replies">
-          {!voicing && <button className="control-transcript__button" onClick={() => window.api.receptionist.readAloud()}>Read aloud</button>}
+          {!voicing && !readingAloud && (
+            <button
+              className="control-transcript__button"
+              onClick={() => {
+                setAskedAloud(firstUnreadNow)
+                window.api.receptionist.readAloud()
+              }}
+            >Read aloud</button>
+          )}
           <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
         </div>
       )}
