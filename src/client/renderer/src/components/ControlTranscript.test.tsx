@@ -22,6 +22,7 @@ beforeEach(() => {
   // Open, as it always is while drawn, with nothing left pending from the last test.
   useControlTranscriptStore.getState().setOpen(false)
   useControlTranscriptStore.getState().setOpen(true)
+  useControlTranscriptStore.getState().setDraft('')
 })
 
 afterEach(cleanup)
@@ -53,6 +54,25 @@ describe('ControlTranscript', () => {
     act(() => bridge.emit.transcriptAppended([user(500, 'what is Kevin doing?'), reply(600, 'Testing.')]))
     expect(document.querySelector('.control-transcript__entry--pending')).toBeNull()
     expect(screen.getByText('Testing.')).toBeTruthy()
+  })
+
+  it('keeps what is typed and not sent through closing and reopening, and remembers it on this device', async () => {
+    const first = render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Nothing said to Control yet')
+    fireEvent.change(screen.getByPlaceholderText('Message Control'), { target: { value: 'half a thought' } })
+    first.unmount()
+    // Closing clears what was pending, never the draft.
+    useControlTranscriptStore.getState().setOpen(false)
+    useControlTranscriptStore.getState().setOpen(true)
+    expect(localStorage.getItem('controlTranscript.draft')).toBe('half a thought')
+
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Nothing said to Control yet')
+    const box = screen.getByPlaceholderText('Message Control') as HTMLTextAreaElement
+    expect(box.value).toBe('half a thought')
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(bridge.lastCall('receptionist.say')).toEqual(['half a thought'])
+    expect(localStorage.getItem('controlTranscript.draft')).toBeNull()
   })
 
   it('keeps a newline on shift-enter, and sends nothing empty', async () => {

@@ -2,11 +2,16 @@ import { create } from 'zustand'
 import type { ControlTranscriptEntry } from '../../../../shared/protocol'
 
 const ACTIVITY_KEY = 'controlTranscript.activity'
+const DRAFT_KEY = 'controlTranscript.draft'
 /** What the box was called before it was Activity, so a device that had it ticked still does. */
 const OLD_KEY = 'controlTranscript.reasoning'
 
 function readActivity(): boolean {
   try { return (localStorage.getItem(ACTIVITY_KEY) ?? localStorage.getItem(OLD_KEY)) === 'true' } catch { return false }
+}
+
+function readDraft(): string {
+  try { return localStorage.getItem(DRAFT_KEY) ?? '' } catch { return '' }
 }
 
 interface ControlTranscriptState {
@@ -22,8 +27,15 @@ interface ControlTranscriptState {
    * backlog, watches, replies never spoken. Remembered on this device.
    */
   activity: boolean
+  /**
+   * What is typed in the box and not yet sent. Kept here, not in the view, so
+   * it outlives closing the transcript; remembered on this device, so it
+   * outlives a reload too.
+   */
+  draft: string
   setOpen: (open: boolean) => void
   setActivity: (activity: boolean) => void
+  setDraft: (draft: string) => void
   /** A message just sent to Control. Ignored while the transcript is closed. */
   addPending: (text: string) => void
   /** Entries the record gained: the messages among them are no longer pending. */
@@ -41,10 +53,18 @@ export const useControlTranscriptStore = create<ControlTranscriptState>((set) =>
   open: false,
   pending: [],
   activity: readActivity(),
+  draft: readDraft(),
   setOpen: (open) => set(open ? { open } : { open, pending: [] }),
   setActivity: (activity) => {
     try { localStorage.setItem(ACTIVITY_KEY, String(activity)) } catch { /* a private window: this visit only */ }
     set({ activity })
+  },
+  setDraft: (draft) => {
+    try {
+      if (draft) localStorage.setItem(DRAFT_KEY, draft)
+      else localStorage.removeItem(DRAFT_KEY)
+    } catch { /* a private window: this visit only */ }
+    set({ draft })
   },
   addPending: (text) => set((s) => (s.open ? { pending: [...s.pending, text] } : s)),
   settle: (added) => set((s) => ({ pending: settlePending(s.pending, added) })),
