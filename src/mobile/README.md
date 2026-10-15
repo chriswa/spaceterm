@@ -330,18 +330,15 @@ Paused, a mounted canvas still re-renders on agent updates and holds every
 card, so it is only mounted while it might be looked at
 (`canvas-lifecycle.ts`):
 
-- **A fresh start opens on Control's transcript with no canvas at all.** It
-  first mounts when you leave the transcript — closing it, the rocket's
-  surface list, or an agent's name in it.
+- **Every start, a reload included, opens on Control's transcript with no
+  canvas at all.** It first mounts when you leave the transcript — closing
+  it, the rocket's surface list, or an agent's name in it.
 - **Five minutes in Control mode unmounts it** — transcript up, another app in
   front, or the phone asleep — with the terminal view and composer that are
   part of it. An open composer keeps it.
 - **Coming back** to the transcript leaves it unmounted. Coming back to the
   canvas or a terminal mounts it again, and App restores the camera and focus
   it saved, which puts you back on the same view or in the same terminal.
-- A reload (after a dropped connection) goes back to whichever view it was on
-  (`mobile.view` in sessionStorage); only a fresh start opens on the
-  transcript.
 
 What the canvas did that the rest of the phone needs now lives outside it:
 the server sync, which fills the stores everything reads, is held by

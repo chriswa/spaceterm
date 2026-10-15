@@ -6,7 +6,7 @@ import { deferCameraScaleWhileMoving } from '@/hooks/useCamera'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
 import { browserPlatform, forwardLogs, canvasOnScreen } from './browser-platform'
 import { controlModeGate, installControlMode } from './control-mode'
-import { canvasLifecycle, lastView, rememberView } from './canvas-lifecycle'
+import { canvasLifecycle } from './canvas-lifecycle'
 import { retainServerSync } from '@/lib/server-sync'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { useClientStalenessStore } from '@/stores/clientStalenessStore'
@@ -71,13 +71,9 @@ if (!token) {
 } else {
   // Before anything renders: the canvas must never mount a live terminal in a card.
   useSurfacePresenterStore.getState().setExternal(true)
-  // A fresh start opens on Control's transcript, with no canvas; a reload goes
-  // back to whichever it was on. See canvas-lifecycle.ts.
-  const startView = lastView()
-  if (startView === 'control') useControlTranscriptStore.getState().setOpen(true)
-  useControlTranscriptStore.subscribe((s, prev) => {
-    if (s.open !== prev.open) rememberView(s.open ? 'control' : 'canvas')
-  })
+  // Every start, a reload included, opens on Control's transcript, with no
+  // canvas until it is dismissed. See canvas-lifecycle.ts.
+  useControlTranscriptStore.getState().setOpen(true)
   // A zoom scales the cards as drawn and redraws them once it settles: redrawn
   // at every scale, a zoom-out ran WebKit out of memory. See useCamera.
   deferCameraScaleWhileMoving(true)
@@ -134,7 +130,7 @@ if (!token) {
     // snapshots before the canvas's cards mount and ask for theirs.
     const canvasMounted = canvasLifecycle({
       controlMode,
-      startMounted: startView === 'canvas',
+      startMounted: false,
       log: (message) => window.api.log(message),
     })
     canvasMounted.subscribe((mounted) => recordMobileEvent('canvas', { mounted }))

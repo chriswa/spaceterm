@@ -9,8 +9,8 @@ import { createGate, type Gate } from './gate'
  * a mounted canvas still re-renders on every agent update and holds every
  * card in memory, so it is not kept for long:
  *
- * - A fresh start opens on Control's transcript with no canvas at all, and
- *   the canvas first mounts when you leave the transcript.
+ * - Every start, a reload included, opens on Control's transcript with no
+ *   canvas at all, and the canvas first mounts when you leave the transcript.
  * - Leaving Control mode — closing the transcript, or the screen coming back
  *   on with the canvas or a terminal in front — always mounts it.
  * - After `IDLE_MS` in Control mode, it is unmounted. Coming back to the
@@ -43,7 +43,7 @@ export function holdCanvas(): () => void {
 
 export interface CanvasLifecycleDeps {
   controlMode: Gate
-  /** Mounted from the start: a reload that was on the canvas, not a fresh start. */
+  /** Mounted from the start, rather than on first leaving Control mode. */
   startMounted: boolean
   /** Something that must not lose the canvas under it, such as an open composer. */
   pinned?: () => boolean
@@ -85,20 +85,4 @@ export function canvasLifecycle({
     mounted.set(true)
   })
   return { get on() { return mounted.on }, subscribe: mounted.subscribe }
-}
-
-const VIEW_KEY = 'mobile.view'
-
-/**
- * Which view the page was last on, Control's transcript or the canvas, kept
- * across a reload (sessionStorage is the web view's, and goes with the app):
- * a reload after a dropped connection goes back to it, and a fresh start —
- * nothing kept — opens on the transcript.
- */
-export function rememberView(view: 'control' | 'canvas'): void {
-  try { sessionStorage.setItem(VIEW_KEY, view) } catch { /* private mode */ }
-}
-
-export function lastView(): 'control' | 'canvas' {
-  try { return sessionStorage.getItem(VIEW_KEY) === 'canvas' ? 'canvas' : 'control' } catch { return 'control' }
 }
