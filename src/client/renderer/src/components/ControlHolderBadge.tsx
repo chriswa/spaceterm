@@ -13,23 +13,9 @@ export function holderBadgeText(holder: ReceptionistHolding | null): string | nu
   return `Control is attached to ${holder.label}`
 }
 
-// DEBUG(holder-badge): shows both badges at once, whoever holds Control, so
-// their wording and styling can be tuned side by side. Remove this flag, its
-// branch in `ControlHolderBadge`, and the `skipIf` in the test.
-export const DEBUG_SHOW_BOTH_HOLDER_BADGES = true
-
 /** The badge over the box to type in, under the unread bar: see `holderBadgeText`. */
 export function ControlHolderBadge() {
   const text = useReceptionistStore((s) => holderBadgeText(s.holder))
-  // DEBUG(holder-badge): remove this branch with the flag above.
-  if (DEBUG_SHOW_BOTH_HOLDER_BADGES) {
-    return (
-      <>
-        <div className="control-transcript__holder-badge" role="status">{holderBadgeText({ label: 'Phone', mine: false, muted: false })}</div>
-        <div className="control-transcript__holder-badge" role="status">{holderBadgeText(null)}</div>
-      </>
-    )
-  }
   if (!text) return null
   return <div className="control-transcript__holder-badge" role="status">{text}</div>
 }

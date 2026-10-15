@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup, screen, act } from '@testing-library/react'
-import { ControlHolderBadge, DEBUG_SHOW_BOTH_HOLDER_BADGES, holderBadgeText } from './ControlHolderBadge'
+import { ControlHolderBadge, holderBadgeText } from './ControlHolderBadge'
 import { useReceptionistStore } from '../stores/receptionistStore'
 
 afterEach(cleanup)
@@ -21,8 +21,7 @@ describe('holderBadgeText', () => {
 })
 
 describe('ControlHolderBadge', () => {
-  // DEBUG(holder-badge): remove the skipIf with the flag.
-  it.skipIf(DEBUG_SHOW_BOTH_HOLDER_BADGES)('follows the holder as the server moves Control', () => {
+  it('follows the holder as the server moves Control', () => {
     act(() => useReceptionistStore.getState().setHolder({ deviceId: 'desktop', label: 'Mac' }, 'desktop'))
     render(<ControlHolderBadge />)
     expect(screen.queryByRole('status')).toBeNull()
