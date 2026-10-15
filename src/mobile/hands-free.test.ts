@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { HandsFreeTuning } from '../shared/protocol'
 import type { DictationOptions } from './dictation'
 import type { Capture } from './held-microphone'
-import { cleanHandsFreeText, installHandsFree, useHandsFree, type HandsFreeDeps } from './hands-free'
+import { cleanHandsFreeText, installHandsFree, turnFill, useHandsFree, type HandsFreeDeps } from './hands-free'
 import type { FrameScorer } from './speech-detector'
 
 /**
@@ -659,5 +659,19 @@ describe('cleanHandsFreeText', () => {
   it('leaves "control" alone anywhere but first, and is empty when nothing else was said', () => {
     expect(cleanHandsFreeText('Take control of the build.')).toBe('Take control of the build.')
     expect(cleanHandsFreeText('Control.')).toBe('')
+  })
+})
+
+describe('the turn gauge', () => {
+  it('rises with the answer, the threshold at the top', () => {
+    expect(turnFill(0, 0.6)).toBe(0)
+    expect(turnFill(0.15, 0.6)).toBeCloseTo(0.25)
+    expect(turnFill(0.3, 0.6)).toBeLessThan(turnFill(0.45, 0.6))
+  })
+
+  it('is whole at the threshold, just short of it, or past it', () => {
+    expect(turnFill(0.6, 0.6)).toBe(1)
+    expect(turnFill(0.58, 0.6)).toBe(1)
+    expect(turnFill(0.9, 0.6)).toBe(1)
   })
 })

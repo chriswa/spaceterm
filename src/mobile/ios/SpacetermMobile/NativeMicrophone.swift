@@ -1043,7 +1043,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         var state: [String: Any] = ["running": running, "awake": up == .speaker && engineRunning, "speech": true, "voiceProcessing": voiceProcessing, "haptics": 2, "cues": true]
         if running {
             state["input"] = inputName()
-            // The microphone link's rate, for hands-free's badge (MicLockButton.tsx). Read only.
+            // The microphone link's rate, for hands-free's badge (HandsFreeButton.tsx). Read only.
             state["sampleRate"] = Int(AVAudioSession.sharedInstance().sampleRate)
             // Running, but the input sends only zeros: AirPods whose microphone is elsewhere, say.
             if currentStall == .digitalSilence { state["silentInput"] = true }

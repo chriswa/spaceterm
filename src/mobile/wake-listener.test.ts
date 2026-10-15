@@ -120,6 +120,26 @@ describe('UtteranceEndpointer', () => {
     expect(kinds(run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000), speech(2000), silence(3500)))).toContain('ended:silence')
   })
 
+  it('says how far the quiet has got towards ending it, from nothing while they speak to whole when it ends', () => {
+    const endpointer = new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000)
+    run(endpointer, speech(2000))
+    expect(endpointer.silence()).toBe(0)
+    run(endpointer, silence(1500))
+    // Half of a short request's three seconds.
+    expect(endpointer.silence()).toBeGreaterThan(0.4)
+    expect(endpointer.silence()).toBeLessThan(0.6)
+    run(endpointer, speech(500))
+    expect(endpointer.silence()).toBe(0)
+    expect(kinds(run(endpointer, silence(3500)))).toContain('ended:silence')
+    expect(endpointer.silence()).toBe(1)
+  })
+
+  it('measures the quiet after "Control." alone against the longer wait for the rest', () => {
+    const endpointer = new UtteranceEndpointer(DEFAULT_TUNING, 1800, 600)
+    run(endpointer, silence(2500))
+    expect(endpointer.silence()).toBeCloseTo(0.5, 1)
+  })
+
   it('does not hear loud sound that is not speech as talking', () => {
     expect(kinds(run(new UtteranceEndpointer(DEFAULT_TUNING, 0, 2000), speech(2000), noise(3500)))).toContain('ended:silence')
   })

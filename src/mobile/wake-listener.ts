@@ -381,20 +381,40 @@ export class UtteranceEndpointer {
         break
       }
       if (this.gate.speaking) continue
-      const quietMs = ms(this.at - this.lastSpeech) + SpeechGate.HANGOVER_FRAMES * FRAME_MS
+      const quietMs = this.quietMs()
       if (!this.pauseReported && quietMs >= this.tuning.pauseCheckMs) {
         this.pauseReported = true
         this.pauses++
         this.wakeWordOnly = this.wakeWordStart && this.pauses === 1 && this.spokeMs < this.tuning.wakeWordOnlyMs
         events.push({ kind: 'pause', talkMs: Math.round(talkMs), wakeWordOnly: this.wakeWordOnly })
       }
-      const patience = this.wakeWordOnly ? Math.max(this.tuning.afterWakeWordMs, endSilenceFor(talkMs, this.tuning)) : endSilenceFor(talkMs, this.tuning)
-      if (quietMs >= patience) {
+      if (quietMs >= this.patienceMs()) {
         this.done = true
         events.push({ kind: 'ended', reason: 'silence' })
         break
       }
     }
     return events
+  }
+
+  /**
+   * How far the quiet has got towards ending the dictation by itself, 0..1: 0
+   * while they speak, 1 when it ends on silence. Held where it was once ended.
+   */
+  silence(): number {
+    if (this.gate.speaking || this.at === 0) return 0
+    return Math.min(1, this.quietMs() / this.patienceMs())
+  }
+
+  /** Quiet since the last speech, counting the gate's hangover, which was quiet too. */
+  private quietMs(): number {
+    return ms(this.at - this.lastSpeech) + SpeechGate.HANGOVER_FRAMES * FRAME_MS
+  }
+
+  /** How much quiet ends it: `endSilenceFor`, and after the wake word alone at least `afterWakeWordMs`. */
+  private patienceMs(): number {
+    const talkMs = this.alreadyMs + ms(this.at)
+    const patience = endSilenceFor(talkMs, this.tuning)
+    return this.wakeWordOnly ? Math.max(this.tuning.afterWakeWordMs, patience) : patience
   }
 }

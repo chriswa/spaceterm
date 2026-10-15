@@ -194,7 +194,7 @@ describe('bringing the hold back', () => {
 })
 
 describe('the hold, as the button and the ear know it', () => {
-  it('prepares, takes the microphone, and lets it go — silently, the lock button showing it', async () => {
+  it('prepares, takes the microphone, and lets it go — silently, the hands-free button showing it', async () => {
     const browser = fakeBrowser('AirPods Pro')
     const held = await load()
     const states: string[] = []

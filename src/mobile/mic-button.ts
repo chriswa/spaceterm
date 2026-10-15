@@ -35,7 +35,6 @@ export interface MicInputs {
  * - `connecting`: dark, a gold spark running round the rim. A tap was taken; the microphone is starting (AirPods can take seconds). Don't talk yet.
  * - `retrying`: amber icon, an amber spark. The microphone did not start the first time; trying once more by itself.
  * - `hearing`: solid orange with level bars. Your voice is being recorded — talk.
- *   In hands-free, a deep violet rim rises from the bottom with the turn model's latest answer at a pause, whole at the threshold.
  * - `transcribing`: orange, a white spark round it. Recording over; waiting for the words.
  * - `error`: solid red with "!". It failed; the message says why. A tap tries again.
  *
@@ -62,18 +61,4 @@ export function micLook(i: MicInputs): MicLook {
 export function conversationLeft(secondsLeft: number | null, fullest: number): number {
   if (secondsLeft === null || fullest <= 0) return 0
   return Math.max(0, Math.min(1, secondsLeft / fullest))
-}
-
-/** Within this fraction of the threshold, the turn ring is drawn whole: it reads as "there". */
-export const TURN_NEAR = 0.95
-
-/**
- * How far up the turn ring is filled, 0..1, from the bottom: the turn
- * model's answer as a share of the threshold that ends the dictation, so the
- * top of the ring is the threshold. Whole at or near it.
- */
-export function turnFill(p: number, threshold: number): number {
-  if (threshold <= 0) return 1
-  const share = Math.max(0, p) / threshold
-  return share >= TURN_NEAR ? 1 : share
 }

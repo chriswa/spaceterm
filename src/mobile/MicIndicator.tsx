@@ -1,6 +1,6 @@
 import { LET_ME_TURN_THIS_OFF } from '../shared/control-shutdown'
 import { useMicActivity } from './dictation'
-import { useHoldState } from './MicLockButton'
+import { useHoldState } from './HandsFreeButton'
 
 /**
  * "MIC" in orange above the Dynamic Island while what you say is being

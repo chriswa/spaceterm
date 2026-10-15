@@ -237,8 +237,7 @@ textarea, input, [contenteditable="true"], .cm-content {
    brightening while what it heard is checked; a blue ring is the conversation
    window, draining as its quiet runs out; a spark round the rim is a wait
    (Spark.tsx) — the microphone starting, amber when trying again; orange is
-   your voice leaving the phone, solid with its level while it goes (in
-   hands-free, a deep violet rim rising to the turn threshold), with a
+   your voice leaving the phone, solid with its level while it goes, with a
    white spark while the words are waited for; red with "!" is a failure. The orange is the MIC label's
    (MicIndicator.tsx) and iOS's own dot. */
 .m-mic {
@@ -327,23 +326,6 @@ textarea, input, [contenteditable="true"], .cm-content {
   stroke-linecap: round;
   transition: stroke-dashoffset 1s linear;
 }
-/* Hands-free hearing you: the turn model's latest answer at a pause, a
-   deep violet rim filling from the bottom up (clip-path set in MicButton.tsx).
-   The top is the threshold that ends the dictation. Dark against the orange
-   (about 6:1), and a hue apart from the near-black level bars. */
-.m-mic__turn {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  transition: clip-path 150ms ease-out;
-}
-.m-mic__turn circle {
-  fill: none;
-  stroke: #3b0a8f;
-  stroke-width: 3;
-}
 /* Where sound goes now (audio-output.ts), at the top right: speaker, ear, or headphones. */
 .m-mic__output {
   position: absolute;
@@ -387,12 +369,28 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-mic__bars i:nth-child(2) { --m-bar-k: 1; }
 .m-mic__bars i:nth-child(3) { --m-bar-k: 0.75; }
 .m-mic__bars i:nth-child(4) { --m-bar-k: 0.4; }
-/* Hands-free's switch (MicLockButton.tsx), right of the microphone: closed
-   while it is off; a spark round it while it waits for the microphone; white, locked,
+/* The hands-free button (HandsFreeButton.tsx), right of the microphone: dark
+   while it is off; a spark round it while it waits for the microphone; white
    while it holds it — the same white as the microphone's own look then. */
-.m-mic-lock { position: relative; }
-/* Hands-free's microphone link's rate in kHz, at the top right (MicLockButton.tsx): 24, or 48. */
-.m-mic-lock__rate {
+.m-hands-free { position: relative; }
+/* While hands-free takes a dictation: what may end it, a half of the rim each,
+   filled from the bottom (clip-path set in HandsFreeButton.tsx); whichever
+   reaches the top first ends it. Left, deep violet: Smart Turn's latest answer,
+   the top its threshold. Right, teal: the quiet against the patience. Both
+   dark against the white, and apart from the microphone's orange. */
+.m-hands-free__gauge {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.m-hands-free__gauge path { fill: none; stroke-width: 3; }
+.m-hands-free__gauge--turn { transition: clip-path 150ms ease-out; }
+.m-hands-free__gauge--turn path { stroke: #3b0a8f; }
+.m-hands-free__gauge--quiet path { stroke: #00796b; }
+/* Hands-free's microphone link's rate in kHz, at the top right (HandsFreeButton.tsx): 24, or 48. */
+.m-hands-free__rate {
   position: absolute;
   top: -3px;
   right: -3px;
@@ -409,12 +407,12 @@ textarea, input, [contenteditable="true"], .cm-content {
   text-align: center;
   pointer-events: none;
 }
-.m-mic-lock--preparing {
+.m-hands-free--preparing {
   background: #000;
   color: #fff;
   box-shadow: inset 0 0 0 2px #fff;
 }
-.m-mic-lock--held { background: #fff; color: #11111b; }
+.m-hands-free--held { background: #fff; color: #11111b; }
 .m-mic__error {
   position: fixed;
   left: 50%;

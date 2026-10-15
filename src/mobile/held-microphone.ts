@@ -211,7 +211,7 @@ export function onHoldStateChange(fn: (state: HoldState) => void): () => void {
 /**
  * Tell the button the hold taking or letting go of the microphone: the moment
  * the always-on mode really starts or stops, not the tap that asked. Silent:
- * the lock button shows it, and the microphone reopening itself after a stall
+ * the hands-free button shows it, and the microphone reopening itself after a stall
  * used to sound as a release and a take, over and over.
  */
 function announce(): void {

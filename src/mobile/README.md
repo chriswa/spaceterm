@@ -67,7 +67,7 @@ replacement loads the new page (`clientStalenessStore.ts`). The build writes
 `build.json` (its id and the native fingerprint from `ios/native-version.mjs`),
 which `install.sh` also stamps into the app — see `update-check.ts`.
 
-The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control, the microphone and its lock in the middle, the toolbar's rocket, which carries the notifications, on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as [AI Spend Tracker](https://github.com/chriswa/ai-spend-tracker)'s menu-bar bars,
+The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usage on the left, Control, the microphone and the hands-free button in the middle, the toolbar's rocket, which carries the notifications, on the right. It stays up over the toolbar sheet, where the rocket closes the sheet again, and over the terminal view, which stops above it (costing a few rows); it goes while the composer is open, which has its own microphone. Its left shows AI usage as [AI Spend Tracker](https://github.com/chriswa/ai-spend-tracker)'s menu-bar bars,
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
@@ -379,7 +379,7 @@ conversation window, or a composer's dictation:
 | Look | Means |
 |---|---|
 | grey | the microphone is closed |
-| outlined, a gold spark running round | hands-free is on, waiting for the microphone (the lock shows the spark too) |
+| outlined, a gold spark running round | hands-free is on, waiting for the microphone (the hands-free button shows the spark too) |
 | white, lock badge, thin white ring | hands-free holds it; nothing leaves the phone until "Control" |
 | white, thick bright ring | hands-free heard speech and is asking the Mac whether it was for Control |
 | blue ring, draining | the conversation window: just talk. The ring is the quiet left before "Control" is needed again |
@@ -461,8 +461,8 @@ the same way as hands-free's tones (`playHeardUnattachedCue`).
 
 ## Hands-free: "Control, …"
 
-The lock right of the microphone (`MicLockButton.tsx`), always on the bar, is
-the always-listen switch: a tap turns it on, and another off. While it
+The hands-free button right of the microphone (`HandsFreeButton.tsx`, an ear
+with a voice arriving at it), always on the bar, is the always-listen switch: a tap turns it on, and another off. While it
 holds the microphone, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
 phone taps once (a haptic) and the button turns orange; nothing waits on that, since
@@ -473,7 +473,16 @@ words and intonation whether you sound finished, and if it is at least 85%
 sure, the dictation ends there. If it is not, a pause still ends it once it
 outlasts a patience that grows with how long you have been talking — three
 seconds for a quick request, up to twenty seconds five minutes into a
-monologue. Two taps mean it was heard and sent: "Control" comes off the
+monologue. A long enough pause after "Control" alone waits at least five
+seconds instead, and Smart Turn is not asked about it; ten minutes in all
+ends it regardless.
+
+While a dictation runs, the hands-free button's rim shows both, each filling
+from the bottom, and whichever reaches the top first ends it: **left, deep
+violet**, Smart Turn's answer at the latest pause, empty while you talk and
+whole within 5% of the threshold; **right, teal**, the quiet since you last
+spoke, against the patience. Both hold while what you said is sent, so you
+can see which one ended it. Two taps mean it was heard and sent: "Control" comes off the
 front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as a tap's.
 
 - **Only "Control" said first counts**, with nobody talking just before it;
@@ -693,12 +702,10 @@ only if it is fresh; otherwise, or when a newer cue replaces it, a
 all up and play them together, loudly. Each Smart Turn verdict on the phone
 is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
-**Seeing the turn model.** While hands-free is hearing you, the orange
-microphone button carries Smart Turn's latest answer at a pause — the same
-answer that decides whether the dictation ends there — as a deep violet rim
-filling from the bottom up (`turnFill` in `mic-button.ts`). The top is
-`turnThreshold`: within 5% of it the rim is whole, and at it the dictation
-ends. Those answers are the `hands-free-turn` lines above.
+**Seeing the turn model.** The left half of the hands-free button's rim is
+Smart Turn's latest answer at a pause (`turnFill` in `hands-free.ts`), the
+right half the quiet against the patience (`UtteranceEndpointer.silence`);
+see "Hands-free" above. Those answers are the `hands-free-turn` lines above.
 
     jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
     jq -c 'select(.kind | test("^cue"))' ~/.spaceterm/mobile-events.jsonl

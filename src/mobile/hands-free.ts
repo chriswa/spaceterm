@@ -18,7 +18,7 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * what's Kevin doing?" — and stop when you are done.
  *
  * Runs whenever this phone holds its microphone open (held-microphone.ts) —
- * the lock beside the microphone button (MicLockButton.tsx) *is* the always-listen switch. What the microphone hears
+ * the hands-free button beside the microphone button (HandsFreeButton.tsx) *is* the always-listen switch. What the microphone hears
  * goes through `WakeListener`, on the phone, scored frame by frame for speech
  * by a voice-activity model (speech-detector.ts) — so music or a noisy room is
  * not speech. Nothing leaves the phone unless the user starts talking with
@@ -79,15 +79,42 @@ export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
  * `checking`: speech was heard and is being checked on the Mac — for "Control",
  * or for being words — and nothing has been decided yet.
  * `turn`: the turn model's latest answer at a pause in this dictation, with
- * the threshold it was held to — shown on the microphone (MicButton.tsx).
- * Null until the first pause, and whenever the phase changes.
+ * the threshold it was held to — shown on the hands-free button
+ * (HandsFreeButton.tsx). Null until the first pause and once they carry on;
+ * kept while what was said is sent, so what ended it can be seen.
  */
 export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; turn: TurnAnswer | null }>(
   () => ({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null }),
 )
 
+let readEndSilence: () => number | null = () => null
+
+/**
+ * How far the quiet has got towards ending hands-free's dictation by itself,
+ * 0..1 (UtteranceEndpointer.silence); null with no dictation. Read once a
+ * frame by the hands-free button — not a store, which would redraw it every
+ * 32 ms of audio.
+ */
+export function endSilence(): number | null {
+  return readEndSilence()
+}
+
 /** One answer from the turn model: `p`, 0..1, that the speaker has finished; at or above `threshold`, the dictation ends. */
 export interface TurnAnswer { p: number; threshold: number }
+
+/** Within this fraction of the threshold, the turn gauge is drawn whole: it reads as "there". */
+export const TURN_NEAR = 0.95
+
+/**
+ * How far up the turn gauge (HandsFreeButton.tsx) is filled, 0..1, from the bottom: the turn
+ * model's answer as a share of the threshold that ends the dictation, so the
+ * top of the ring is the threshold. Whole at or near it.
+ */
+export function turnFill(p: number, threshold: number): number {
+  if (threshold <= 0) return 1
+  const share = Math.max(0, p) / threshold
+  return share >= TURN_NEAR ? 1 : share
+}
 
 /**
  * What Wispr wrote, as Control should get it: the wake word off the front,
@@ -204,7 +231,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   const setPhase = (phase: HandsFreePhase) => {
     const was = useHandsFree.getState().phase
     if (was === phase) return
-    useHandsFree.setState({ phase, turn: null })
+    // Sending keeps the last answer, beside the quiet that may have ended it instead.
+    useHandsFree.setState(phase === 'sending' ? { phase } : { phase, turn: null })
     record('hands-free-phase', { from: was, to: phase })
   }
 
@@ -727,8 +755,10 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   }
   follow()
   const offHold = deps.onHoldStateChange(follow)
+  readEndSilence = () => utterance?.silence() ?? null
 
   return () => {
+    readEndSilence = () => null
     offHold()
     offTuning()
     unlisten?.()

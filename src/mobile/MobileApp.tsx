@@ -16,7 +16,7 @@ import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
 import { MicButton } from './MicButton'
 import { useDictationSession } from './dictation-session'
 import { ControlButton } from './ControlButton'
-import { MicLockButton } from './MicLockButton'
+import { HandsFreeButton } from './HandsFreeButton'
 import { BottomBar } from './BottomBar'
 import { installPressFeedback } from './press-feedback'
 import { MicIndicator } from './MicIndicator'
@@ -212,7 +212,7 @@ export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: C
                   setComposerFor(focusedTerminal)
                 } : undefined}
               />
-              <MicLockButton />
+              <HandsFreeButton />
             </>
           }
           end={

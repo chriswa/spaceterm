@@ -1,7 +1,7 @@
 import type { HoldState } from './held-microphone'
 
 /**
- * Hands-free ready: the switch (MicLockButton.tsx) turning from white on black
+ * Hands-free ready: the hands-free button (HandsFreeButton.tsx) turning from white on black
  * to black on white — the microphone held and listening — sounds
  * `handsFreeReady` (cues.ts), so it is heard as well as seen. Only the first
  * time after the hold is turned on: the app's microphone stalling and coming

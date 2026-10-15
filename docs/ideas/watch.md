@@ -13,7 +13,7 @@ phone's bottom bar and nothing else on screen:
 | Button | Phone today | Wire today |
 |---|---|---|
 | Talk | `MicButton.tsx`: tap to speak, tap again to send | `dictation-start {forControl}` … `receptionist-say` |
-| Always listen | `MicLockButton.tsx`: hands-free on/off | none: client-only, `setHoldMicrophone` → `NativeMicrophone.swift` |
+| Hands-free | `HandsFreeButton.tsx`: hands-free on/off | none: client-only, `setHoldMicrophone` → `NativeMicrophone.swift` |
 | Replies | Away / Aloud (no Silent: nothing to read it on) | `receptionist-hold`: `release` / `speak-here` |
 
 Replies in the AirPods, speech picked up by the watch, the phone asleep in a
