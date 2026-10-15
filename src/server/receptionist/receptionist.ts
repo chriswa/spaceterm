@@ -592,10 +592,12 @@ export class Receptionist {
    * sent Control away (see `sentAway`).
    */
   private stoppedForUser: 'speaking' | 'thinking' | 'sent-away' | undefined
-  /** The user's words from a turn stopped before its message reached the session, or that failed: said with the next turn. */
-  private carriedWords: string | undefined
-  /** Failed turns the carried words have already been through: see `MAX_TURN_RETRIES`. */
-  private carriedFailures = 0
+  /**
+   * The user's words from a turn stopped before its message reached the
+   * session, or that failed, or that the last server left: said with the
+   * next turn's first message, whenever that leaves. See `ask`.
+   */
+  private carried: Carried | undefined
   /** Turns failed in a row, which sets how long the next retry waits: see `retryLater`. */
   private failedTurns = 0
   /** Bumped by each retry scheduled; while one is pending, news waits for it rather than starting a turn. */
@@ -655,8 +657,11 @@ export class Receptionist {
     this.listenerId = opts.listener?.id
     this.reading = opts.listener?.reading === true
     // What the user said that the last server never answered: the next turn says it again.
-    this.carriedWords = deps.news.takeLeftWords()
-    if (this.carriedWords !== undefined) this.notes.push(RESTARTED_BEFORE_ANSWER)
+    const left = deps.news.takeLeftWords()
+    if (left !== undefined) {
+      this.carried = { words: left, failures: 0, unsent: [] }
+      this.notes.push(RESTARTED_BEFORE_ANSWER)
+    }
     // What they missed while away is still theirs to hear: waiting for them, or for the turn that tells them.
     const away = deps.news.awayNews()
     this.returnNews = away.returnNews
@@ -1447,7 +1452,7 @@ export class Receptionist {
     }
     // Waiting out a failure: news that arrives meanwhile goes with the retry.
     if (this.backingOff) return
-    if (!this.events.length && !(this.listening && this.returnNews) && this.carriedWords === undefined) return
+    if (!this.events.length && !(this.listening && this.returnNews) && this.carried === undefined) return
     void this.runTurn(undefined)
   }
 
@@ -1500,11 +1505,9 @@ export class Receptionist {
     this.interim = undefined
     const heard = message?.text
     // Words a stopped turn never got to the session are said again, ahead of these.
-    const carried = this.carriedWords
-    this.carriedWords = undefined
-    const carriedFailures = this.carriedFailures
-    this.carriedFailures = 0
-    const words = carried === undefined ? heard : heard === undefined ? carried : `${carried} ${heard}`
+    const carried = this.carried
+    this.carried = undefined
+    const words = joinWords(carried?.words, heard)
     // The reply this turn supersedes will never be heard: what backlog_next
     // gave it goes back now, in time to be counted in this turn's message.
     if (this.taken && !this.taken.attempt.isCurrent) this.putBack(this.taken.items)
@@ -1522,8 +1525,10 @@ export class Receptionist {
     this.keepAway()
     const unquieted = !away && this.quieted
     if (unquieted) this.quieted = false
-    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, unquieted, this.deps.backlog.size, this.watching(), pulled?.described)
-    const body = render(words)
+    // As things stand at the turn's start, however late its message leaves: words carried to it change, nothing else does.
+    const backlogSize = this.deps.backlog.size
+    const watching = this.watching()
+    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, unquieted, backlogSize, watching, pulled?.described)
     // With the user's words, the events are in the transcript already, as what came with them.
     if (words === undefined && (events.length || news)) {
       this.trace('events', `${events.length ? `News: ${events.map(eventHeadline).join('; ')}` : 'You were back'}${away ? ', with nobody listening' : ''}`,
@@ -1535,13 +1540,18 @@ export class Receptionist {
     // Taken before this message joins the record, for a session that has forgotten what led up to it.
     const earlier = this.deps.record.recent(RECAP_MESSAGES)
     // Carried words are in the record already, from the turn that first heard them.
-    if (message) {
-      const at = this.deps.record.append([{ role: 'user', content: carried === undefined ? body : render(message.text) }])[0]
+    const entry = message ? render(message.text) : undefined
+    if (message && entry !== undefined) {
+      const at = this.deps.record.append([{ role: 'user', content: entry }])[0]
       if (at !== undefined) this.settle(message.via, at)
+    }
+    const opening: OpeningMessage = {
+      words, failures: carried?.failures ?? 0, unsent: carried?.unsent ?? [], entry,
+      render: said => `${render(said)}\n\n${FORMAT_REMINDER}`,
     }
     let monitoring = false
     try {
-      const reply = await this.converse(attempt, body, earlier, away, taken)
+      const reply = await this.converse(attempt, opening, earlier, away, taken)
       if (!attempt.isCurrent) {
         this.requeue(attempt, events, news, unquieted)
         this.putBack(taken)
@@ -1559,21 +1569,17 @@ export class Receptionist {
         this.missed.events.push(...events)
         this.keepAway()
       }
-      monitoring = await this.speak(attempt, body, heard === undefined ? reply : acknowledgeSends(reply), taken, events, words !== undefined)
+      monitoring = await this.speak(attempt, render(opening.words), heard === undefined ? reply : acknowledgeSends(reply), taken, events, opening.words !== undefined)
     } catch (err) {
       this.putBack(taken)
+      // Stopped before the session got the user's words, `ask` carried them on to the next message.
       const unsent = err instanceof Unsent && err.first
-      // Stopped before the session got the user's words: the next turn says them.
-      if (unsent && words !== undefined) {
-        this.carriedWords = words
-        this.carriedFailures = carriedFailures
-      }
       if (!attempt.isCurrent) { this.requeue(attempt, events, news, unquieted); return }
-      // Failed with the words: tried again a little later, unless they have been tried enough.
-      const givenUp = words !== undefined && !unsent && carriedFailures >= MAX_TURN_RETRIES
-      if (words !== undefined && !unsent && !givenUp) {
-        this.carriedWords = words
-        this.carriedFailures = carriedFailures + 1
+      // Failed with the words, and any carried to them: tried again a little later, unless they have been tried enough.
+      const { words: sent, failures } = opening
+      const givenUp = sent !== undefined && !unsent && failures >= MAX_TURN_RETRIES
+      if (sent !== undefined && !unsent && !givenUp) {
+        this.carried = { words: sent, failures: failures + 1, unsent: [] }
         this.notes.push(RETRYING_AFTER_ERROR)
       }
       const newsRetried = this.retryNews(attempt, events)
@@ -1582,7 +1588,7 @@ export class Receptionist {
       serverLog(`[receptionist] turn failed: ${message}`)
       this.deps.log({ event: 'turn-failed', heard: heard ?? null, error: message })
       this.onError(`The receptionist could not answer: ${message}`)
-      const wait = this.carriedWords !== undefined || newsRetried ? this.retryLater() : undefined
+      const wait = this.carried !== undefined || newsRetried ? this.retryLater() : undefined
       // Muted, the toast says it. Only words that will not be tried again are apologised for.
       const apologise = givenUp && this.listening && !this.reading
       // Into the transcript as well as the toast: the toast is gone in seconds, and a
@@ -1663,11 +1669,12 @@ export class Receptionist {
    * final reply, or undefined if the attempt lost ownership.
    */
   private async converse(
-    attempt: Attempt, body: string, earlier: readonly RecordMessage[], away: boolean, taken: BacklogItem[],
+    attempt: Attempt, opening: OpeningMessage, earlier: readonly RecordMessage[], away: boolean, taken: BacklogItem[],
   ): Promise<Reply | undefined> {
-    let message = body
+    // Each step after the first: what the model is told of its last reply.
+    let message = ''
     for (let step = 1; step <= MAX_STEPS; step++) {
-      const answer = await this.ask(attempt, `${message}\n\n${FORMAT_REMINDER}`, step === 1 ? earlier : [], step === 1)
+      const answer = await this.ask(attempt, step === 1 ? opening : `${message}\n\n${FORMAT_REMINDER}`, step === 1 ? earlier : [])
       if (!attempt.isCurrent) return undefined
       this.deps.log({
         event: 'model-step', step, raw: answer.text, sessionId: answer.sessionId, source: answer.source ?? null,
@@ -1748,11 +1755,26 @@ export class Receptionist {
    * `earlier` is the conversation leading up to this message, repeated to a
    * session that has forgotten it — a new one, or one compacted to a summary —
    * so it never loses the thread of what was just said.
+   *
+   * A turn's first message is its `opening`, rendered only as it leaves. The
+   * user's words from a message that never reached the session go with the
+   * next to leave, ahead of its own, and are carried here, before the queue
+   * moves on: a turn begun while the message ahead of it waited has already
+   * looked for them, and found none. On 2026-10-15 a message waiting out a
+   * compaction learned only 13 seconds after the user spoke over it that it
+   * had never got there; its words went with the turn after next, alone, and
+   * Control took "make it orange" for a change of mind after "make it yellow".
    */
-  private ask(attempt: Attempt, prompt: string, earlier: readonly RecordMessage[], first: boolean): Promise<SessionAnswer> {
+  private ask(attempt: Attempt, prompt: string | OpeningMessage, earlier: readonly RecordMessage[]): Promise<SessionAnswer> {
+    const opening = typeof prompt === 'string' ? undefined : prompt
+    const first = opening !== undefined
     const run = async (): Promise<SessionAnswer> => {
+      if (opening) this.joinCarried(opening)
       // Superseded while queued: never sent, so there is nothing to answer.
-      if (!attempt.isCurrent) throw new Unsent(first)
+      if (!attempt.isCurrent) {
+        if (opening) this.carryUnsent(opening)
+        throw new Unsent(first)
+      }
       // The time limit kills the call; the attempt's own signal aborts the
       // turn in the daemon, which answers at once, so the queue moves on and
       // the session is never left busy.
@@ -1764,7 +1786,8 @@ export class Receptionist {
       const notes = this.notes.splice(0)
       const consumption = this.ledger.note()
       if (consumption) notes.push(consumption)
-      const recap = forgets(session) ? renderRecap(earlier) : undefined
+      // Words that never reached the session are this message's own to say, not the recap's.
+      const recap = forgets(session) ? renderRecap(opening ? withoutUnsent(earlier, opening.unsent) : earlier) : undefined
       if (recap && session?.compactsAt !== undefined && session.compactsAt !== this.compactionShown) {
         // Shown when the compacted session is next used, which can be an hour after the compaction itself.
         this.compactionShown = session.compactsAt
@@ -1778,7 +1801,7 @@ export class Receptionist {
       const statusNote = statusToTell(status, session?.toldStatus, session !== undefined && forgets(session))
       const message = [
         handover !== undefined ? `${HANDOVER_HEADING}\n${handover}` : undefined,
-        recap, statusNote, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, prompt,
+        recap, statusNote, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, opening ? opening.render(opening.words) : prompt,
       ].filter(Boolean).join('\n\n')
       try {
         const answer = await this.askWhenFree(
@@ -1787,6 +1810,7 @@ export class Receptionist {
         if (answer.aborted && !answer.aborted.promptInSession) {
           // The session never saw this message: what it carried goes with the next.
           this.notes.unshift(...notes)
+          if (opening) this.carryUnsent(opening)
           throw new Unsent(first)
         }
         if (handover !== undefined) this.handover = undefined
@@ -1823,6 +1847,28 @@ export class Receptionist {
     const next = this.queue.then(run, run)
     this.queue = next.catch(() => undefined)
     return next
+  }
+
+  /** Words carried since `opening`'s turn began go with it, ahead of its own: they were said first. */
+  private joinCarried(opening: OpeningMessage): void {
+    const late = this.carried
+    if (!late) return
+    this.carried = undefined
+    opening.words = joinWords(late.words, opening.words)
+    opening.failures = Math.max(late.failures, opening.failures)
+    opening.unsent = [...late.unsent, ...opening.unsent]
+  }
+
+  /** `opening` never reached the session: its words, with what was carried to it, go with the next message instead. */
+  private carryUnsent(opening: OpeningMessage): void {
+    if (opening.words === undefined) return
+    const unsent = opening.entry === undefined ? opening.unsent : [...opening.unsent, opening.entry]
+    const since = this.carried
+    this.carried = {
+      words: joinWords(opening.words, since?.words)!,
+      failures: Math.max(opening.failures, since?.failures ?? 0),
+      unsent: [...unsent, ...since?.unsent ?? []],
+    }
   }
 
   /**
@@ -3176,6 +3222,50 @@ function storedReply(froms: readonly string[], spoken: readonly SpokenPart[]): s
  */
 function forgets(session: SavedSession | undefined): boolean {
   return !session || (session.compactsAt !== undefined && Date.now() >= session.compactsAt)
+}
+
+/**
+ * The user's words carried to the next message: see `Receptionist.carried`.
+ * `unsent` is the record's entries for those of them whose message never
+ * reached the session — to leave out of a recap, which repeats only what the
+ * session once had. Words carried for a retry, or by a restart, may have got
+ * there, and are told as said again: they have none.
+ */
+interface Carried {
+  words: string
+  /** Failed turns the words have already been through: see `MAX_TURN_RETRIES`. */
+  failures: number
+  unsent: readonly string[]
+}
+
+/** A turn's first message, rendered as it leaves, with whatever words were carried to it by then: see `Receptionist.ask`. */
+interface OpeningMessage {
+  /** The user's words it says: the turn's own, after any carried to it. */
+  words: string | undefined
+  failures: number
+  /** The record's entries for carried words that never reached the session. */
+  unsent: readonly string[]
+  /** The record's entry for the turn's own words, if it has any. */
+  entry: string | undefined
+  render(words: string | undefined): string
+}
+
+function joinWords(before: string | undefined, after: string | undefined): string | undefined {
+  return before === undefined ? after : after === undefined ? before : `${before} ${after}`
+}
+
+/** `earlier` less the user's entries in `unsent`, each matched once, latest first. */
+function withoutUnsent(earlier: readonly RecordMessage[], unsent: readonly string[]): readonly RecordMessage[] {
+  if (!unsent.length) return earlier
+  const left = [...unsent]
+  const kept: RecordMessage[] = []
+  for (let i = earlier.length - 1; i >= 0; i--) {
+    const message = earlier[i]
+    const at = message.role === 'user' ? left.lastIndexOf(message.content) : -1
+    if (at >= 0) left.splice(at, 1)
+    else kept.unshift(message)
+  }
+  return kept
 }
 
 /** The conversation leading up to a message, for a session that has forgotten it. */
