@@ -3998,7 +3998,7 @@ html, body, #root {
 .control-transcript__meta { font-size: 11px; color: var(--ct-dim); padding: 0 4px; }
 .control-transcript__silent { font-size: 12px; font-style: italic; color: var(--ct-dim); }
 
-/* Where Control is, when it is not here: on another device, or stopped. Over the box to type in, under the unread bar. */
+/* Where Control is, when it is not here: attached to another device, or unattached. Over the box to type in, under the unread bar. */
 .control-transcript__holder-badge {
   align-self: center;
   flex-shrink: 0;

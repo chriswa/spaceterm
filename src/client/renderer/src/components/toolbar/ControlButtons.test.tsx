@@ -51,7 +51,7 @@ describe('ControlButton', () => {
     heldBy('Phone')
     expect(container.querySelector('.control-cross')).not.toBeNull()
     expect(button.className).toContain('toolbar__control--away')
-    expect(button.dataset.tooltip).toMatch(/Control is on your Phone\. Click to open the transcript/)
+    expect(button.dataset.tooltip).toMatch(/Control is attached to your Phone\. Click to open the transcript/)
     expect(container.querySelector('.control-badge--where')?.textContent).toBe('Phone')
 
     heldBy('here')
@@ -84,10 +84,10 @@ describe('ControlButton', () => {
     expect(sound()).toBeNull()
     heldBy('here')
     expect(sound()).not.toBeNull()
-    expect(tooltip()).toMatch(/Control is here, speaking aloud/)
+    expect(tooltip()).toMatch(/Control is attached here, speaking aloud/)
     act(() => useReceptionistStore.getState().setHolder({ deviceId: FAKE_DEVICE_ID, label: 'Mac', muted: true }, FAKE_DEVICE_ID))
     expect(sound()).toBeNull()
-    expect(tooltip()).toMatch(/Control is here, in text/)
+    expect(tooltip()).toMatch(/Control is attached here, in text/)
   })
 
   it('has no sound while released, whatever mute the server remembers here', () => {
@@ -95,7 +95,7 @@ describe('ControlButton', () => {
     for (const muted of [[], [FAKE_DEVICE_ID]]) {
       act(() => useReceptionistStore.getState().setHolder({ deviceId: 'other', label: 'Phone' }, FAKE_DEVICE_ID, muted))
       expect(container.querySelector('.control-headset__sound')).toBeNull()
-      expect(container.querySelector('button')!.dataset.tooltip).toMatch(/Control is on your Phone\. Click/)
+      expect(container.querySelector('button')!.dataset.tooltip).toMatch(/Control is attached to your Phone\. Click/)
       act(() => useReceptionistStore.getState().setHolder(null, FAKE_DEVICE_ID, muted))
       expect(container.querySelector('.control-headset__sound')).toBeNull()
     }

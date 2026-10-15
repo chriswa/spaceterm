@@ -27,7 +27,7 @@ describe('ControlHolderBadge', () => {
     render(<ControlHolderBadge />)
     expect(screen.queryByRole('status')).toBeNull()
     act(() => useReceptionistStore.getState().setHolder({ deviceId: 'phone-1', label: 'Phone' }, 'desktop'))
-    expect(screen.getByRole('status').textContent).toBe('Control is active on Phone')
+    expect(screen.getByRole('status').textContent).toBe('Control is attached to Phone')
     act(() => useReceptionistStore.getState().setHolder(null, 'desktop'))
     expect(screen.getByRole('status').textContent).toMatch(/can't reach you/)
   })

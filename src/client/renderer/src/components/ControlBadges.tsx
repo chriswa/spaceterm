@@ -74,8 +74,8 @@ export function ControlBadges({ busy }: { busy?: ReactNode }) {
 /** What the button shows, in words, for a label or tooltip: where Control is, and here, whether it speaks or writes. */
 export function controlWhereabouts(holder: ReceptionistHolding | null, mutedHere: boolean): string {
   switch (controlMode({ holder, mutedHere })) {
-    case 'speak': return 'Control is here, speaking aloud'
-    case 'text': return 'Control is here, in text'
-    case 'released': return holder ? `Control is on your ${holder.label}` : 'Nobody holds Control'
+    case 'speak': return 'Control is attached here, speaking aloud'
+    case 'text': return 'Control is attached here, in text'
+    case 'released': return holder ? `Control is attached to your ${holder.label}` : 'Control is unattached'
   }
 }

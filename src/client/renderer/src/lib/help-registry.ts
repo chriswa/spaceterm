@@ -149,7 +149,7 @@ export const helpGroups: HelpGroup[] = [
     entries: [
       { keys: 'Click a crab icon',        name: 'Jump to Claude surface' },
       { keys: 'Drag crab icons',          name: 'Reorder Claude surfaces' },
-      { keys: 'Click the headset',        name: 'Control transcript', notes: 'Shows and hides your conversation with Control; take, release, mute and unmute Control at its foot' },
+      { keys: 'Click the headset',        name: 'Control transcript', notes: 'Shows and hides your conversation with Control; attach, detach, mute and unmute Control at its foot' },
       { keys: 'Click the speaker',        name: 'Let Control speak up', notes: 'Control may speak unprompted when something it is watching for happens' },
     ],
   },

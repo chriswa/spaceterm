@@ -35,7 +35,7 @@ describe('the phone’s Control button', () => {
     const { container } = render(<ControlButton />)
     expect(container.querySelector('.control-cross')).not.toBeNull()
     expect(container.querySelector('.control-badge--where')).toBeNull()
-    expect(button().getAttribute('aria-label')).toMatch(/Nobody holds Control/)
+    expect(button().getAttribute('aria-label')).toMatch(/Control is unattached/)
 
     act(() => useReceptionistStore.getState().setHolder({ deviceId: 'desktop', label: 'Mac' }, FAKE_DEVICE_ID))
     expect(container.querySelector('.control-badge--where')?.textContent).toBe('Mac')
@@ -44,7 +44,7 @@ describe('the phone’s Control button', () => {
     hold()
     expect(container.querySelector('.control-cross')).toBeNull()
     expect(container.querySelector('.control-badge--where')).toBeNull()
-    expect(button().getAttribute('aria-label')).toMatch(/Control is here/)
+    expect(button().getAttribute('aria-label')).toMatch(/Control is attached here/)
   })
 
   it('has sound coming from the headset only while Control speaks here: not released, not in text', () => {
@@ -54,12 +54,12 @@ describe('the phone’s Control button', () => {
 
     hold()
     expect(sound()).not.toBeNull()
-    expect(button().getAttribute('aria-label')).toMatch(/Control is here, speaking aloud/)
+    expect(button().getAttribute('aria-label')).toMatch(/Control is attached here, speaking aloud/)
 
     hold(true)
     expect(sound()).toBeNull()
     expect(container.querySelector('.control-cross')).toBeNull()
-    expect(button().getAttribute('aria-label')).toMatch(/Control is here, in text/)
+    expect(button().getAttribute('aria-label')).toMatch(/Control is attached here, in text/)
 
     // Released while the server remembers this phone unmuted: still no sound.
     act(() => useReceptionistStore.getState().setHolder(null, FAKE_DEVICE_ID, []))
