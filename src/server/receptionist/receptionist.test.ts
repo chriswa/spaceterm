@@ -783,6 +783,64 @@ describe('Receptionist', () => {
     expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin is done.'.length, 'Kevin here. The '.length] }])
   })
 
+  it('puts an agent\'s part the user cut off on the backlog, in its own words, and takes it off once the agent says it again', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(KEVIN, ' said, which they did not hear all of, is on your backlog now, word for word. Never retell it in your own voice.'))
+          expect(h.backlog.all().map(item => item.text)).toEqual([
+            expect.stringMatching(namedToken(KEVIN, ' was cut off: the user talked over it before hearing all of what it said, so it has yet to tell them this in its own voice: "The solver works and the tests pass."')),
+          ])
+          expect(h.backlog.all()[0]!.agents).toEqual([KEVIN_ID])
+          return reply([{ from: 'control', text: 'Yes.' }, { from: KEVIN, text: 'The solver works and the tests pass.' }])
+        },
+      ],
+      speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is done. Kevin here. The sol'.length },
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    await h.receptionist.hear('wait, is Kevin done?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('leaves an agent\'s cut-off part on the backlog when the next reply tells it in Control\'s own voice', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: KEVIN, text: 'The solver works and the tests pass.' }, { from: 'control', text: 'Want me to tell him to commit?' }]),
+        reply([{ from: 'control', text: 'Kevin finished the solver and the tests pass.' }]),
+      ],
+      speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin here. The sol'.length },
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    await h.receptionist.hear('sorry, what?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.all().map(item => item.text)).toEqual([expect.stringContaining('"The solver works and the tests pass."')])
+  })
+
+  it('leaves Control\'s own cut-off words off the backlog', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done, and so is Sally.' }]),
+        (turn) => {
+          expect(turn.prompt).not.toContain('on your backlog now')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+      speechEnds: { state: 'interrupted_by_user', character_offset: 'Kevin is'.length },
+    })
+    await h.receptionist.hear('how is everyone?', 'spoken')
+    await flush()
+    await h.receptionist.hear('wait', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(0)
+  })
+
   it('drops a reply still held back when the user\'s words arrive, and tells the model none of it was heard', async () => {
     // Voice Operator holds a job queued while the user dictates, and plays it once they stop.
     const wire: string[] = []

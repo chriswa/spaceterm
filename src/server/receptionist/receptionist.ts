@@ -27,7 +27,7 @@ import {
   actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet,
   type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
-import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
+import { ageWords, cacheNote, MAX_ITEM_CHARS, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
 import type { Watches, WatchKind } from './watches'
 import type { EndedAgent, EndedAgents } from './ended-agents'
@@ -508,6 +508,10 @@ export class Receptionist {
   private lastSpoken?: SpokenPart[]
   /** Where `lastSpoken` is in the record, so an interruption can mark it there too. */
   private lastSpokenAt?: number
+  /** `lastSpoken` as the model wrote it, so an agent's part the user missed goes on the backlog in its own words. */
+  private lastSaid?: readonly SayPart[]
+  /** Agents' parts the user cut off, on the backlog until the next reply says them again or leaves them there: see `backlogUnheard`. */
+  private unheard: UnheardPart[] = []
   /** News waiting for a turn: `deps.news`, which outlives the server. */
   private readonly events: PendingNews
   /** A self-interruption check is under way; see `maybeInterruptSelf`. */
@@ -2649,6 +2653,7 @@ export class Receptionist {
     // saw them: "{Kevin} is now Ruth." says Kevin.
     const { spoken, speakers } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
+    this.settleUnheard(reply.say, agents)
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
     this.deps.backlog.settle(taken.splice(0))
     // And so is what the turn was about. A server that stops from here on says it was cut off: see carry-over.ts.
@@ -2667,6 +2672,7 @@ export class Receptionist {
     if (reading) return false
     this.lastSpoken = spoken
     this.lastSpokenAt = at
+    this.lastSaid = reply.say
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))
     if (!parts.length) return false
     this.deps.carryOver.speaking(true)
@@ -2821,6 +2827,57 @@ export class Receptionist {
   }
 
   /**
+   * Put each agent's part of the last reply that the user did not hear to the
+   * end on the backlog, in the agent's own words, and return their tokens.
+   * Told only "they heard this much", Control used to tell the rest in its own
+   * voice, which is just what the agents' voices exist to prevent; on the
+   * backlog it is said again by the agent, now or later (`settleUnheard`).
+   */
+  private backlogUnheard(said: readonly SayPart[], spoken: readonly SpokenPart[], lengths: readonly number[]): string[] {
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    const tokens: string[] = []
+    said.forEach((part, i) => {
+      if (part.from === CONTROL || !spoken[i] || (lengths[i] ?? 0) >= spoken[i].text.length) return
+      const nodeId = this.resolve(stripBraces(part.from), handles, agents)
+      // A handle that is no agent was spoken in Control's own voice: see `renderSpeech`.
+      if (!nodeId) return
+      const token = this.token(nodeId, handles)
+      const opening = `${token} was cut off: the user talked over it before hearing all of what it said, so it has yet to tell them this in its own voice: "`
+      const room = MAX_ITEM_CHARS - opening.length - 1
+      const text = part.text.length <= room ? part.text : `${part.text.slice(0, room - 1)}…`
+      const item = `${opening}${text}"`
+      this.backlogAdd(item)
+      this.unheard.push({ nodeId, text: part.text, item })
+      if (!tokens.includes(token)) tokens.push(token)
+    })
+    return tokens
+  }
+
+  /**
+   * A reply is being said after agents' parts were cut off: any it has the
+   * agent say again comes off the backlog, and the rest stay there for later.
+   */
+  private settleUnheard(say: readonly SayPart[], agents: readonly RosterAgent[]): void {
+    const pending = this.unheard
+    if (!pending.length) return
+    this.unheard = []
+    const handles = this.handles(agents)
+    for (const part of pending) {
+      const replay = say
+        .filter(candidate => candidate.from !== CONTROL && this.resolve(stripBraces(candidate.from), handles, agents) === part.nodeId)
+        .map(candidate => candidate.text).join(' ')
+      if (!replay || !saysAgain(replay, part.text)) continue
+      const at = this.deps.backlog.all().findIndex(item => item.text === part.item)
+      // Taken already, by backlog_next.
+      if (at < 0) continue
+      // Off for good: it is being said.
+      this.deps.backlog.settle(this.deps.backlog.take([at]))
+      this.trace('backlog-take', `Off the backlog, said again: ${part.item}`)
+    }
+  }
+
+  /**
    * Control cut its own reply short for news, for the transcript's activity log:
    * the news, Jev's odds, and the words it dropped. What the user heard of the
    * reply is struck out on the reply itself, as for any cut.
@@ -2875,8 +2932,10 @@ export class Receptionist {
     const heard = await this.channel.heardPrefix()
     const spoken = this.lastSpoken
     const spokenAt = this.lastSpokenAt
+    const said = this.lastSaid
     this.lastSpoken = undefined
     this.lastSpokenAt = undefined
+    this.lastSaid = undefined
     const muted = this.mutedMidReply
     this.mutedMidReply = false
     if (heard === undefined || !spoken) return false
@@ -2897,12 +2956,16 @@ export class Receptionist {
       this.notes.push(`${audible === INTERRUPTED_MARKER ? 'None of your last reply was heard' : `Your last reply was cut short: they heard only "${audible}"`}, because Voice Operator could not turn it into speech. What they did not hear is shown to them as text, which they may not have read yet; do not assume they know it.`)
       return true
     }
+    // Struck out rather than left waiting to be read: an agent's own words go on the backlog, so a summary never stands in for them.
+    const struck = cause === 'self' || cause === 'user'
+    const backlogged = struck && said ? this.backlogUnheard(said, spoken, heardLengths(spoken, heard)) : []
+    const agentsNote = backlogged.length ? ` ${unheardAgentsNote(backlogged)}` : ''
     if (cause === 'self') {
-      this.notes.push(`You stopped your own last reply to bring the news below, and have just said "${HANG_ON}". The user heard only: "${audible}". Give the news first; say again only what of the rest still stands and matters.`)
+      this.notes.push(`You stopped your own last reply to bring the news below, and have just said "${HANG_ON}". The user heard only: "${audible}". Give the news first; say again only what of the rest still stands and matters.${agentsNote}`)
       return true
     }
     // Talked over, held back while they dictated, or lost with the phone's page: either way, only this much was heard.
-    this.notes.push(cutOffNote(audible === INTERRUPTED_MARKER ? undefined : audible))
+    this.notes.push(cutOffNote(audible === INTERRUPTED_MARKER ? undefined : audible) + agentsNote)
     // Cut off by leaving, or by moving: said again when they are back, since
     // the note above may go with a turn they cannot hear.
     if (this.missed) this.missed.cutOff = audible
@@ -2913,6 +2976,28 @@ export class Receptionist {
 
 /** Why a reply stopped short of the user: see `noteInterruption`. */
 type Interruption = 'user' | 'self' | 'lost' | 'failed'
+
+/** An agent's part the user cut off, and the backlog item that keeps it: see `Receptionist.backlogUnheard`. */
+type UnheardPart = { nodeId: NodeId; text: string; item: string }
+
+/**
+ * Whether `replay` says `part` again: most of its words are in it. An agent
+ * saying something else leaves its cut-off part on the backlog, since taking
+ * it off wrongly loses it, while leaving it on wrongly only brings it up twice.
+ */
+function saysAgain(replay: string, part: string): boolean {
+  const words = (text: string): string[] => text.toLowerCase().match(/[a-z0-9']{4,}/g) ?? []
+  const said = new Set(words(replay))
+  const wanted = [...new Set(words(part))]
+  return wanted.filter(word => said.has(word)).length * 2 >= wanted.length
+}
+
+/** Told when agents' parts were cut off and put on the backlog: see `Receptionist.backlogUnheard`. */
+function unheardAgentsNote(tokens: readonly string[]): string {
+  const who = tokens.join(' and ')
+  return `What ${who} said, which they did not hear all of, is on your backlog now, word for word. Never retell it in your own voice. ` +
+    `If it still matters now, have ${who} say it again in ${tokens.length === 1 ? 'its' : 'their'} own voice, word for word, which takes it off your backlog; otherwise leave it there for later.`
+}
 
 function emptyNews(): ReturnNews {
   return { events: [], unheard: false }
