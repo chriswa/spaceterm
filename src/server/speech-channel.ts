@@ -358,7 +358,7 @@ export class SpeechChannel {
    * cue could outlive the thing it was waiting for.
    *
    * `heardUntil`: the listener stopped hearing the answer then, before this
-   * was asked — see `SpeechBackend.drop`.
+   * was asked — see `VoiceOperator.drop`.
    */
   async cancel(heardUntil?: number): Promise<boolean> {
     const job = this.job

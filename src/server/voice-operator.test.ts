@@ -33,6 +33,25 @@ describe('VoiceOperator.speak', () => {
   })
 })
 
+describe('VoiceOperator.drop', () => {
+  it('says when the listener stopped hearing it, if before now, for Voice Operator to count up to', async () => {
+    const urls: string[] = []
+    const vo = new VoiceOperator({
+      readDiscovery: () => ({ port: 8123 }),
+      fetch: async (input, init) => {
+        urls.push(`${init?.method} ${String(input)}`)
+        return new Response(JSON.stringify({ id: 'job-1', state: 'cancelled_by_client', character_offset: 12 }), { status: 410 })
+      },
+    })
+    await vo.drop('job-1')
+    await vo.drop('job-1', 1_792_081_234_567.4)
+    expect(urls).toEqual([
+      'DELETE http://127.0.0.1:8123/v1/speech/job-1',
+      'DELETE http://127.0.0.1:8123/v1/speech/job-1?heard_until=1792081234567',
+    ])
+  })
+})
+
 describe('joinSpeechParts', () => {
   it('joins with a single space, and passes plain text through', () => {
     expect(joinSpeechParts([{ text: 'One.' }, { text: 'Two.' }, { text: 'Three.' }])).toBe('One. Two. Three.')

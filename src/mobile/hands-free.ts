@@ -158,6 +158,8 @@ export interface HandsFreeDeps {
   record(kind: string, detail?: Record<string, unknown>): void
   /** Control's voice as the app plays it, with echo cancellation — or not playing. */
   nativeSpeech(): { playing: boolean; outputDb?: number; voiceProcessing: boolean }
+  /** Whether Control's voice is playing anywhere, as the server says — on the Mac, through Voice Operator, too. */
+  controlSpeaking(): boolean
   /** Turn Control's voice down while someone may be talking over it, and back up. */
   duckSpeech(on: boolean): void
   /**
@@ -169,29 +171,35 @@ export interface HandsFreeDeps {
   interruptControl(cutInMsAgo: number): void
 }
 
-const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
-  api,
-  log: (message) => window.api?.log(`[hands-free] ${message}`),
-  heldCapture,
-  holdWanted: holdsMicrophone,
-  onHoldStateChange,
-  quietForMs,
-  playCue,
-  handsFreeCue: playHandsFreeCue,
-  haptic: nativeHaptic,
-  beginDictation: (options) => Dictation.begin(api.dictation, options),
-  // Its own dictation counts as one while it is hearing; see `hearing` below.
-  othersDictating: () => Dictation.live > (useHandsFree.getState().phase === 'hearing' ? 1 : 0),
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  loadScorer: () => loadFrameScorer((message) => window.api?.log(`[hands-free] ${message}`)),
-  record: (kind, detail) => recordMobileEvent(kind, detail),
-  nativeSpeech: () => ({ playing: nativePlayback.playing(), outputDb: nativePlayback.outputDb(), voiceProcessing: nativeSpeech.voiceProcessing() }),
-  duckSpeech: (on) => nativeSpeech.duck(on),
-  interruptControl: (cutInMsAgo) => {
-    noteUserInterrupted()
-    window.api.receptionist.stop(cutInMsAgo)
-  },
-})
+const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => {
+  // As broadcast word by word (receptionist-speaking): a page loaded mid-reply hears of it at the next word.
+  let controlSpeaking = false
+  window.api.receptionist.onSpeaking((speaking) => { controlSpeaking = speaking !== null })
+  return {
+    api,
+    log: (message) => window.api?.log(`[hands-free] ${message}`),
+    heldCapture,
+    holdWanted: holdsMicrophone,
+    onHoldStateChange,
+    quietForMs,
+    playCue,
+    handsFreeCue: playHandsFreeCue,
+    haptic: nativeHaptic,
+    beginDictation: (options) => Dictation.begin(api.dictation, options),
+    // Its own dictation counts as one while it is hearing; see `hearing` below.
+    othersDictating: () => Dictation.live > (useHandsFree.getState().phase === 'hearing' ? 1 : 0),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    loadScorer: () => loadFrameScorer((message) => window.api?.log(`[hands-free] ${message}`)),
+    record: (kind, detail) => recordMobileEvent(kind, detail),
+    nativeSpeech: () => ({ playing: nativePlayback.playing(), outputDb: nativePlayback.outputDb(), voiceProcessing: nativeSpeech.voiceProcessing() }),
+    duckSpeech: (on) => nativeSpeech.duck(on),
+    controlSpeaking: () => controlSpeaking,
+    interruptControl: (cutInMsAgo) => {
+      noteUserInterrupted()
+      window.api.receptionist.stop(cutInMsAgo)
+    },
+  }
+}
 
 /** While the page is hidden, how often to note that audio is still arriving. */
 const BACKGROUND_REPORT_MS = 60_000
@@ -649,13 +657,15 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
           if (ducked && quietRun >= UNDUCK_FRAMES && checking === 0) setDuck(false)
           return
         }
-        // Said over Control's reply: cut it off — its record keeps how much was heard.
-        const interrupting = deps.nativeSpeech().playing
+        // Said over Control's reply, here or on the Mac: cut it off — its record keeps how much was heard.
+        // Stopped from here even when the Mac plays it, so the stop is dated to when they began, not to the dictation's start.
+        const here = deps.nativeSpeech().playing
+        const interrupting = here || deps.controlSpeaking()
         if (interrupting) {
           // From the first syllable, in audio heard — so a check that took a while costs none of it — plus any still waiting to be scored.
           const cutInMsAgo = Math.round(listener.msSince(candidate.start) + queued.length * FRAME_SECONDS * 1000)
-          log(`${mode === 'speech' ? 'words over its own reply' : '"Control" over its own reply'}: cutting it off as of ${cutInMsAgo}ms ago, when they began`)
-          record('hands-free-interrupt', { mode, cutInMsAgo })
+          log(`${mode === 'speech' ? 'words' : '"Control"'} over its reply${here ? '' : ' on another device'}: cutting it off as of ${cutInMsAgo}ms ago, when they began`)
+          record('hands-free-interrupt', { mode, cutInMsAgo, here })
           deps.interruptControl(cutInMsAgo)
         }
         // Began with "Control", window or not: "Control." and a breath waits for the rest.

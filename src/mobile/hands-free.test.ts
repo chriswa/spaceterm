@@ -69,6 +69,8 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
   const records: Array<{ kind: string; detail?: Record<string, unknown> }> = []
   /** Control's voice playing through the app, with echo cancellation. */
   let controlSpeaking = false
+  /** Control's voice playing on another device — the Mac — as the server says. */
+  let speakingElsewhere = false
   const ducks: boolean[] = []
   let interrupts = 0
   /** How long before each cut the user began talking, as hands-free told the server. */
@@ -122,8 +124,9 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
     loadScorer: async () => fakeDetector,
     record: (kind, detail) => { records.push({ kind, detail }) },
     nativeSpeech: () => ({ playing: controlSpeaking, outputDb: -18, voiceProcessing: true }),
+    controlSpeaking: () => controlSpeaking || speakingElsewhere,
     duckSpeech: (on) => { ducks.push(on) },
-    interruptControl: (cutInMsAgo) => { interrupts++; cutIns.push(cutInMsAgo); controlSpeaking = false },
+    interruptControl: (cutInMsAgo) => { interrupts++; cutIns.push(cutInMsAgo); controlSpeaking = false; speakingElsewhere = false },
   }
   const uninstall = installHandsFree(deps.api, deps)
   const feed = (part: Float32Array) => { for (let i = 0; i < part.length; i += 1600) for (const fn of listeners) fn(part.subarray(i, i + 1600)) }
@@ -156,6 +159,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
     cutIns,
     answerChecks: async () => { for (const answer of heldChecks.splice(0)) answer(); await settle() },
     setControlSpeaking: (on: boolean) => { controlSpeaking = on },
+    setSpeakingElsewhere: (on: boolean) => { speakingElsewhere = on },
     haptics: () => haptics.length,
     hapticPatterns: haptics,
     setQuietFor: (ms: number) => { quietFor = ms },
@@ -335,6 +339,20 @@ describe('hands-free mode', () => {
     // Three seconds of speech by then, to within a block or two.
     expect(h.cutIns[0]).toBeGreaterThanOrEqual(2900)
     expect(h.cutIns[0]).toBeLessThanOrEqual(3200)
+  })
+
+  it('cuts Control off on the Mac too, dated to when they began — not left to the dictation\'s start', async () => {
+    h = harness({ slowChecks: true })
+    h.setSpeakingElsewhere(true)
+    await h.hear(quiet(1500), speech(1000), speech(1000))
+    await h.answerChecks()
+    expect(h.interrupts()).toBe(1)
+    expect(h.cutIns[0]).toBeGreaterThanOrEqual(1900)
+    expect(h.records.find((r) => r.kind === 'hands-free-interrupt')?.detail).toMatchObject({ here: false })
+    // Nothing was playing here, so there was nothing to turn down.
+    expect(h.ducks).toEqual([])
+    await h.hear(speech(1000), quiet(3500))
+    expect(h.sayCalls).toEqual([{ text: 'what is Kevin doing?', interrupted: true }])
   })
 
   it('turns Control down for anyone speaking, and back up once it was not "Control" and they stopped', async () => {

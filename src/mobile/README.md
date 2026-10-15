@@ -157,7 +157,10 @@ now** to ask for it after all. While Control speaks, the word being said is
 lit and the rest of the reply dim. Talked over hands-free, the cut is dated to
 your first syllable, not to the moment the Mac decided you were talking to
 Control: from then on Control was turned down under your voice, and unheard
-(`cutInMsAgo` in `ReceptionistStopMessage`).
+(`cutInMsAgo` in `ReceptionistStopMessage`). The same holds when Control is
+speaking on the Mac: the phone stops it, dated the same way, and Voice
+Operator counts back to then (`heard_until`). The Mac's own push-to-talk needs
+none of this — Voice Operator stops the voice on the key going down.
 
 Words still waiting for you — written while muted, or cut off while you were
 away or had moved to another device — sit under the red Unread line, with a
