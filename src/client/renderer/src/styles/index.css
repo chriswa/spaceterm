@@ -4004,9 +4004,10 @@ html, body, #root {
   margin-top: 6px;
   padding: 3px 12px;
   border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--ct-dim) 45%, transparent);
+  background: #c4314b;
   font-size: 12px;
-  color: var(--ct-dim);
+  font-weight: 600;
+  color: #fff;
 }
 
 .control-transcript__entry--log {
