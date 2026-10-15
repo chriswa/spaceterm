@@ -46,9 +46,8 @@ export interface RemoteDictationHooks {
   /**
    * The turn model (turn-detector.ts): the probability, from 16 kHz audio
    * ending now, that the speaker has finished. Undefined when there is none.
-   * `probe`: the turn tone asking (src/mobile/turn-tone.ts), not a pause.
    */
-  turnProbability?: (audio: Float32Array, dictation: string, probe: boolean) => Promise<number | undefined>
+  turnProbability?: (audio: Float32Array, dictation: string) => Promise<number | undefined>
   /** Run `fn` after `ms`, returning a way to call it off. */
   schedule?: (ms: number, fn: () => void) => () => void
 }
@@ -187,7 +186,7 @@ export class RemoteDictation {
    * dictation's last eight seconds, as received so far. `null` when there is
    * no turn model, so the client falls back on silence alone.
    */
-  async turnComplete(owner: string, id: string, probe = false): Promise<DictationOutcome<number | null>> {
+  async turnComplete(owner: string, id: string): Promise<DictationOutcome<number | null>> {
     const session = this.owned(owner, id)
     if (!session) return { ok: false, error: 'That dictation has already ended' }
     if (!session.recent || !this.hooks.turnProbability) return { ok: true, value: null }
@@ -198,7 +197,7 @@ export class RemoteDictation {
       offset += block.length
     }
     try {
-      return { ok: true, value: (await this.hooks.turnProbability(audio, id, probe)) ?? null }
+      return { ok: true, value: (await this.hooks.turnProbability(audio, id)) ?? null }
     } catch (err) {
       return { ok: false, error: `The turn model failed: ${err instanceof Error ? err.message : String(err)}` }
     }

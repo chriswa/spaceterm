@@ -693,13 +693,12 @@ only if it is fresh; otherwise, or when a newer cue replaces it, a
 all up and play them together, loudly. Each Smart Turn verdict on the phone
 is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
-**Hearing the turn model.** To tune `turnThreshold` by ear, the turn tone
-(`TURN_TONE_ON` in `turn-tone.ts`; off since October 12) plays each of
-Smart Turn's answers at a pause — the same answers that decide whether the
-dictation ends there, with no questions of its own — as a short tone,
-pitched from A3 (p = 0) to A6 (p = 1) in semitones, held twice as long for
-the answer that ended the dictation. Those answers are the
-`hands-free-turn` lines above.
+**Seeing the turn model.** While hands-free is hearing you, the orange
+microphone button carries Smart Turn's latest answer at a pause — the same
+answer that decides whether the dictation ends there — as a magenta rim
+filling from the bottom up (`turnFill` in `mic-button.ts`). The top is
+`turnThreshold`: within 5% of it the rim is whole, and at it the dictation
+ends. Those answers are the `hands-free-turn` lines above.
 
     jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
     jq -c 'select(.kind | test("^cue"))' ~/.spaceterm/mobile-events.jsonl

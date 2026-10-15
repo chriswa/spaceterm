@@ -12,7 +12,7 @@ import { useHoldState } from './MicLockButton'
 import { useHandsFree, type HandsFreePhase } from './hands-free'
 import { nativeMicrophoneAvailable } from './native-microphone'
 import { micLevel } from './mic-level'
-import { conversationLeft, micLook, type MicInputs, type MicLook } from './mic-button'
+import { conversationLeft, micLook, turnFill, type MicInputs, type MicLook } from './mic-button'
 import { outputKind, useAudioOutput, type OutputKind } from './audio-output'
 
 /**
@@ -54,6 +54,7 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
   const transcribing = useMicActivity((s) => s.transcribing > 0)
   const composer = useDictationSession((s) => s.mic.kind)
   const checking = useHandsFree((s) => s.checking)
+  const turn = useHandsFree((s) => s.turn)
   const output = useAudioOutput()
   const look = micLook({ error: error !== null, own: mic.kind, composer, capturing, transcribing, hold, handsFree, conversation, checking })
 
@@ -209,6 +210,14 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
           <svg className="m-mic__ring" viewBox="0 0 52 52" aria-hidden="true">
             <circle cx="26" cy="26" r={RING_R} pathLength="100" strokeDasharray="100"
               strokeDashoffset={100 * (1 - conversationLeft(secondsLeft, fullest.current))} />
+          </svg>
+        )}
+        {look === 'hearing' && turn && (
+          // The turn model's latest answer at a pause, filling the rim from the
+          // bottom up; whole at the threshold that ends the dictation.
+          <svg className="m-mic__turn" viewBox="0 0 52 52" aria-hidden="true"
+            style={{ clipPath: `inset(${(100 * (1 - turnFill(turn.p, turn.threshold))).toFixed(1)}% 0 0 0)` }}>
+            <circle cx="26" cy="26" r={RING_R} />
           </svg>
         )}
         {/* Waiting on what a press, or the hold, asked for: a spark round the rim. */}

@@ -2,14 +2,13 @@ import { create } from 'zustand'
 import type { DictationApi, HandsFreeApi } from '../shared/api'
 import { isControlShutdown, LET_ME_TURN_THIS_OFF } from '../shared/control-shutdown'
 import type { HandsFreeTuning } from '../shared/protocol'
-import { playCue, playHandsFreeCue, playTurnTone, quietForMs, type Cue, type HandsFreeCue } from './cues'
+import { playCue, playHandsFreeCue, quietForMs, type Cue, type HandsFreeCue } from './cues'
 import { noteUserInterrupted } from './control-tones'
 import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, holdsMicrophone, onHoldStateChange, type Capture } from './held-microphone'
 import { nativeHaptic, nativeSpeech, type HapticPattern } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
 import { nativePlayback } from './speech-player'
-import { turnTone, TURN_TONE_ON } from './turn-tone'
 import { Downsampler, pcmToBase64 } from './pcm'
 import { loadFrameScorer, type FrameScorer } from './speech-detector'
 import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, WakeListener, levelDb, type ScoredFrame, type WakeCandidate } from './wake-listener'
@@ -79,10 +78,16 @@ export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
  * rounded up — full while anyone is speaking, since that holds it.
  * `checking`: speech was heard and is being checked on the Mac — for "Control",
  * or for being words — and nothing has been decided yet.
+ * `turn`: the turn model's latest answer at a pause in this dictation, with
+ * the threshold it was held to — shown on the microphone (MicButton.tsx).
+ * Null until the first pause, and whenever the phase changes.
  */
-export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean }>(
-  () => ({ phase: 'off', conversation: false, secondsLeft: null, checking: false }),
+export const useHandsFree = create<{ phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; turn: TurnAnswer | null }>(
+  () => ({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null }),
 )
+
+/** One answer from the turn model: `p`, 0..1, that the speaker has finished; at or above `threshold`, the dictation ends. */
+export interface TurnAnswer { p: number; threshold: number }
 
 /**
  * What Wispr wrote, as Control should get it: the wake word off the front,
@@ -113,8 +118,6 @@ export interface HandsFreeDeps {
   playCue(cue: Cue): void
   /** One of hands-free's own tones: heard whatever Replies is set to. */
   handsFreeCue(cue: HandsFreeCue): void
-  /** The turn model's answer at a pause, and whether it ended the dictation: the turn tone plays it, when on (turn-tone.ts). */
-  turnTone(p: number, ends: boolean): void
   /** A tap the user can feel: the wake word was heard. Nothing, where there is no way to. */
   haptic(pattern: HapticPattern): void
   /** A dictation on the held microphone. */
@@ -143,11 +146,6 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
   quietForMs,
   playCue,
   handsFreeCue: playHandsFreeCue,
-  turnTone: (p, ends) => {
-    if (!TURN_TONE_ON) return
-    const { frequency, seconds } = turnTone(p, ends)
-    playTurnTone(frequency, seconds)
-  },
   haptic: nativeHaptic,
   beginDictation: (options) => Dictation.begin(api.dictation, options),
   // Its own dictation counts as one while it is hearing; see `hearing` below.
@@ -201,7 +199,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   const setPhase = (phase: HandsFreePhase) => {
     const was = useHandsFree.getState().phase
     if (was === phase) return
-    useHandsFree.setState({ phase })
+    useHandsFree.setState({ phase, turn: null })
     record('hands-free-phase', { from: was, to: phase })
   }
 
@@ -535,7 +533,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     log(`pause after ${(talkMs / 1000).toFixed(1)}s: ${p === null ? 'no turn verdict' : `p(finished)=${p.toFixed(2)}`}${current ? '' : ', but they carried on'}`)
     const ends = current && p !== null && p >= tuning.turnThreshold
     record('hands-free-turn', { talkMs: Math.round(talkMs), p, threshold: tuning.turnThreshold, ends, carriedOn: !current })
-    if (p !== null) deps.turnTone(p, ends)
+    if (current && p !== null) useHandsFree.setState({ turn: { p, threshold: tuning.turnThreshold } })
     if (ends) endUtterance?.('finished')
   }
 

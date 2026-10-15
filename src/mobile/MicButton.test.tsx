@@ -8,6 +8,7 @@ import { useDictationSession } from './dictation-session'
 import * as cues from './cues'
 import { MicButton } from './MicButton'
 import { MicLockButton } from './MicLockButton'
+import { useHandsFree } from './hands-free'
 
 let bridge: FakeBridge
 
@@ -21,6 +22,7 @@ afterEach(() => {
   cleanup()
   setHoldMicrophone(false)
   useDictationSession.setState({ mic: { kind: 'idle' } })
+  useHandsFree.setState({ phase: 'off', turn: null })
 })
 
 const mic = () => screen.getByRole('button', { name: /Talk to|Cut .* off|dictating/ })
@@ -153,5 +155,24 @@ describe('a tap, from press to sound', () => {
     fireEvent.click(screen.getByRole('button', { name: /Failed — tap to try again/ }))
     expect(container.querySelector('.m-mic--connecting')).not.toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+describe('the turn ring', () => {
+  it('shows the turn model\'s answer only while hands-free is hearing you', () => {
+    useHandsFree.setState({ phase: 'hearing', turn: null })
+    const { container } = render(<MicButton />)
+    expect(container.querySelector('.m-mic--hearing')).not.toBeNull()
+    expect(container.querySelector('.m-mic__turn')).toBeNull()
+
+    act(() => useHandsFree.setState({ turn: { p: 0.15, threshold: 0.6 } }))
+    expect(container.querySelector<SVGElement>('.m-mic__turn')?.style.clipPath).toBe('inset(75.0% 0 0 0)')
+
+    act(() => useHandsFree.setState({ turn: { p: 0.6, threshold: 0.6 } }))
+    expect(container.querySelector<SVGElement>('.m-mic__turn')?.style.clipPath).toBe('inset(0.0% 0 0 0)')
+
+    // Sending: the white spark has the rim.
+    act(() => useHandsFree.setState({ phase: 'sending' }))
+    expect(container.querySelector('.m-mic__turn')).toBeNull()
   })
 })

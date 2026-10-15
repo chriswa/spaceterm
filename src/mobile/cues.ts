@@ -253,35 +253,6 @@ function playWhateverReplies(cue: HandsFreeCue | 'heardUnattached'): void {
   playInPage(cue)
 }
 
-/**
- * One tone of the turn tone (turn-tone.ts), a tuning aid: played as
- * hands-free's tones are, but not recorded — its answer is, as a
- * `hands-free-turn` line.
- */
-export function playTurnTone(frequency: number, seconds: number): void {
-  const gain = 0.2
-  if (nativeCues.available()) {
-    nativeCues.play('turn-tone', [[frequency, seconds]], gain)
-    return
-  }
-  try {
-    const ctx = ensureContext()
-    if (ctx.state !== 'running') return
-    const osc = ctx.createOscillator()
-    const env = ctx.createGain()
-    osc.frequency.value = frequency
-    const t = ctx.currentTime
-    env.gain.setValueAtTime(0, t)
-    env.gain.linearRampToValueAtTime(gain, t + FADE_S)
-    env.gain.setValueAtTime(gain, t + seconds - FADE_S)
-    env.gain.linearRampToValueAtTime(0, t + seconds)
-    osc.connect(env).connect(ctx.destination)
-    osc.start(t)
-    osc.stop(t + seconds)
-    noteSounding(ctx, t + seconds)
-  } catch { /* no audio: the aid is silent */ }
-}
-
 function playInPage(cue: Cue): void {
   const gainValue = GAINS[cue]
   try {

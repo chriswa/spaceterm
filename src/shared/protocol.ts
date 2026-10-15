@@ -420,8 +420,6 @@ export interface DictationTurnCheckMessage {
   type: 'dictation-turn-check'
   seq: number
   id: string
-  /** Asked by the turn tone (src/mobile/turn-tone.ts), many times a second: not logged or kept in the voice record. */
-  probe?: boolean
 }
 
 /**

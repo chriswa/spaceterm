@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { conversationLeft, micLook, type MicInputs } from './mic-button'
+import { conversationLeft, micLook, turnFill, type MicInputs } from './mic-button'
 
 const QUIET: MicInputs = {
   error: false, own: 'idle', composer: 'idle', capturing: false, transcribing: false,
@@ -51,5 +51,19 @@ describe('the conversation window’s ring', () => {
     expect(conversationLeft(5, 10)).toBe(0.5)
     expect(conversationLeft(0, 15)).toBe(0)
     expect(conversationLeft(null, 15)).toBe(0)
+  })
+})
+
+describe('the turn ring', () => {
+  it('rises with the answer, the threshold at the top', () => {
+    expect(turnFill(0, 0.6)).toBe(0)
+    expect(turnFill(0.15, 0.6)).toBeCloseTo(0.25)
+    expect(turnFill(0.3, 0.6)).toBeLessThan(turnFill(0.45, 0.6))
+  })
+
+  it('is whole at the threshold, just short of it, or past it', () => {
+    expect(turnFill(0.6, 0.6)).toBe(1)
+    expect(turnFill(0.58, 0.6)).toBe(1)
+    expect(turnFill(0.9, 0.6)).toBe(1)
   })
 })
