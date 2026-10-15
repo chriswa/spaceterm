@@ -8,7 +8,7 @@ import { useReceptionistStore, type ReceptionistHolding } from '../stores/recept
  * working but can neither speak nor write to the user until a device takes it.
  */
 export function holderBadgeText(holder: ReceptionistHolding | null): string | null {
-  if (!holder) return "Control can't reach you: it is unattached"
+  if (!holder) return "Control is unattached — can't respond"
   if (holder.mine) return null
   return `Control is attached to ${holder.label}`
 }
