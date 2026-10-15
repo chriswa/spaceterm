@@ -3998,6 +3998,17 @@ html, body, #root {
 .control-transcript__meta { font-size: 11px; color: var(--ct-dim); padding: 0 4px; }
 .control-transcript__silent { font-size: 12px; font-style: italic; color: var(--ct-dim); }
 
+/* Where Control is, when it is not here: on another device, or stopped. */
+.control-transcript__holder-badge {
+  align-self: center;
+  margin-top: 6px;
+  padding: 3px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ct-dim) 45%, transparent);
+  font-size: 12px;
+  color: var(--ct-dim);
+}
+
 .control-transcript__entry--log {
   /* What Control did, as a pill on Control's side, coloured by what it did. */
   --ct-pill: #6c7086;
