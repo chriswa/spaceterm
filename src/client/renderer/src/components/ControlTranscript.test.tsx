@@ -374,6 +374,28 @@ describe('ControlTranscript and what the user took in', () => {
     act(() => useReceptionistStore.setState({ phase: 'ready' }))
     expect(bar().getByRole('button', { name: 'Read aloud' })).toBeTruthy()
     expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
+
+    // Gone while it thinks too: the server would refuse to read over its turn.
+    act(() => useReceptionistStore.setState({ phase: 'thinking' }))
+    expect(screen.queryByRole('group', { name: 'Unread replies' })).toBeNull()
+  })
+
+  it('says why a reading was refused only until Control is done, or something plays', async () => {
+    useReceptionistStore.setState({ phase: 'ready', unread: { count: 1, first: 0 } })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Nothing said to Control yet')
+    fireEvent.click(screen.getByRole('button', { name: 'Read aloud' }))
+    // The two crossed: Control began a turn as the button was pressed.
+    act(() => useReceptionistStore.setState({ phase: 'thinking' }))
+    act(() => bridge.emit.receptionistReplaying(null, 'Control is thinking'))
+    expect(screen.getByRole('alert').textContent).toBe('Could not play that: Control is thinking.')
+    act(() => useReceptionistStore.setState({ phase: 'ready' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    act(() => bridge.emit.receptionistReplaying(null, 'Control is talking'))
+    expect(screen.getByRole('alert')).toBeTruthy()
+    act(() => bridge.emit.receptionistReplaying({ of: 0, part: 0 }))
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('follows the voice only once the word being said nears the edge of the view', () => {

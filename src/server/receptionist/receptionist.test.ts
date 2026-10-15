@@ -4433,6 +4433,27 @@ describe('Receptionist muted, and what the user has taken in', () => {
     expect(h.speaking.at(-1)).toBeUndefined()
   })
 
+  it('refuses a reading while Control thinks, saying so, not that it is talking', async () => {
+    let answer: ((text: string) => void) | undefined
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works.' }]),
+        () => new Promise<string>((resolve) => { answer = resolve }),
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('The solver works'))
+    void h.receptionist.hear('and Sally?', 'spoken')
+    await flush()
+    expect(await h.receptionist.readAloud(h.listener.speech)).toBe('Control is thinking')
+    expect(await h.receptionist.replay(at, 1, h.listener.speech, () => {})).toBe('Control is thinking')
+    answer?.(reply([{ from: 'control', text: 'Sally is at work.' }]))
+    await flush()
+    expect(await h.receptionist.replay(at, 1, h.listener.speech, () => {})).toBeUndefined()
+  })
+
   describe('holding its tongue through a replay', () => {
     /** Speech that plays until `finish` is called. */
     function playingUntilFinished(): { speech: SpeechBackend; finish: () => void } {

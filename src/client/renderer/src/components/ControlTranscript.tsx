@@ -150,10 +150,18 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   const readingAloud = askedAloud !== undefined && askedAloud === firstUnreadNow
   /** The part this device is replaying, if any. */
   const [replaying, setReplaying] = useState<{ of: number; part: number } | null>(null)
+  /**
+   * Why the last replay or reading would not start. Its own line, not
+   * `error`, which a loaded page clears: this goes when its reason does —
+   * Control done with its turn — or when the user asks again, or something
+   * plays.
+   */
+  const [refusal, setRefusal] = useState<string | null>(null)
   useEffect(() => window.api.receptionist.onReplaying((playing, refused) => {
     setReplaying(playing)
+    if (playing) setRefusal(null)
     if (refused) {
-      setError(`Could not play that: ${refused}.`)
+      setRefusal(`Could not play that: ${refused}.`)
       setAskedAloud(undefined)
     }
   }), [])
@@ -161,6 +169,9 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   const [speaking, setSpeaking] = useState<{ of: number; parts: number[] } | null>(null)
   useEffect(() => window.api.receptionist.onSpeaking(setSpeaking), [])
   const voicing = useReceptionistStore((s) => s.phase === 'speaking' || s.phase === 'synthesizing')
+  /** Control is thinking, saying something or reading aloud: the server refuses a reading until it is done. */
+  const busy = useReceptionistStore((s) => s.phase !== 'ready')
+  useEffect(() => { if (!busy) setRefusal(null) }, [busy])
   const unread = useReceptionistStore((s) => s.unread.count)
 
   /** The newest page when `before` is undefined, else the page before that offset. */
@@ -360,17 +371,19 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
         )}
       </div>
       {error && <div className="control-transcript__error" role="alert">{error}</div>}
-      {unread > 0 && !voicing && !readingAloud && (
+      {refusal && <div className="control-transcript__error" role="alert">{refusal}</div>}
+      {unread > 0 && !busy && !readingAloud && (
         // The ways to be done with what waits: hear it read out here, word
         // by word as the transcript lights it, or say it is read. Either way
         // it is read at once, and nothing goes to Control. Neither is offered
-        // while Control speaks or what waits is being read aloud: the user is
-        // listening, and the bar is back, if anything still waits, once the
-        // voice stops.
+        // while Control thinks or speaks or what waits is being read aloud:
+        // the server would refuse to read over a turn, and the bar is back,
+        // if anything still waits, once Control is done.
         <div className="control-transcript__unread-bar" role="group" aria-label="Unread replies">
           <button
             className="control-transcript__button"
             onClick={() => {
+              setRefusal(null)
               setAskedAloud(firstUnreadNow)
               window.api.receptionist.readAloud()
             }}

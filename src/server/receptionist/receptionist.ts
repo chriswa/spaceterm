@@ -986,11 +986,12 @@ export class Receptionist {
    * replay is no turn, though it shows as Control speaking does (`readOut`).
    * While it plays, Control holds anything it would say, as while the user
    * dictates; and what the user hears of it counts as taken in. `onPlaying`
-   * hears it start and stop. Refused while Control is speaking, or for a
-   * reply with no voices on record.
+   * hears it start and stop. Refused while Control is busy (`busy`), or for
+   * a reply with no voices on record.
    */
   async replay(of: number, part: number, speech: SpeechBackend, onPlaying: (playing: boolean) => void): Promise<string | undefined> {
-    if (this.channel.isProducing()) return 'Control is talking'
+    const busy = this.busy()
+    if (busy) return busy
     const reading = this.readingOf(of, part, 0, part)
     if (!reading) return 'That reply was recorded before replies kept their voices'
     const channel = this.replayOn(speech)
@@ -1013,10 +1014,11 @@ export class Receptionist {
    * it is no turn, plays on the replay channel, holds Control while it plays,
    * and shows as Control speaking does (`readOut`). All of it counts as taken
    * in at once, so the Unread line goes as it starts; the transcript lights
-   * each word as it is said instead. Refused while Control is speaking.
+   * each word as it is said instead. Refused while Control is busy (`busy`).
    */
   async readAloud(speech: SpeechBackend): Promise<string | undefined> {
-    if (this.channel.isProducing()) return 'Control is talking'
+    const busy = this.busy()
+    if (busy) return busy
     const firsts = new Map<number, { part: number; from: number }>()
     for (const { at, part, from } of this.ledger.unreadParts()) if (!firsts.has(at)) firsts.set(at, { part, from })
     const readings = [...firsts].flatMap(([at, first]) => this.readingOf(at, first.part, first.from) ?? [])
@@ -1032,6 +1034,18 @@ export class Receptionist {
       this.setReplaying(false)
     }
     return undefined
+  }
+
+  /**
+   * Why a replay or a reading cannot start now, if it cannot: Control's own
+   * turn is under way. Thinking counts as much as talking, since a turn may
+   * speak at any moment of it. The transcript hides Read aloud whenever
+   * Control's phase is other than ready, so for a reading this is said only
+   * when the two cross; a part's play button is always there.
+   */
+  private busy(): string | undefined {
+    if (!this.channel.isProducing()) return undefined
+    return this.channel.phase === 'thinking' ? 'Control is thinking' : 'Control is talking'
   }
 
   /**
