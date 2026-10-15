@@ -29,8 +29,8 @@ const clipTo = (fill: number) => `inset(${(100 * (1 - Math.max(0, Math.min(1, fi
  * starts without the headset renegotiating. Inside the tap, as iOS requires
  * of a page opening a microphone.
  *
- * While hands-free is taking a dictation, its rim shows the two things that
- * can end it, each filling from the bottom; whichever reaches the top first
+ * While hands-free is taking a dictation, the button shows the two things
+ * that can end it, a half each, filling from the bottom like a glass; whichever reaches the top first
  * ends it. Left: the turn model's latest answer at a pause (Smart Turn), the
  * top its threshold. Right: the quiet since you last spoke, the top the
  * patience that ends it regardless. Both stay up while what you said is sent,
@@ -75,12 +75,12 @@ export function HandsFreeButton() {
         <>
           <svg className="m-hands-free__gauge m-hands-free__gauge--turn" viewBox="0 0 42 42" aria-hidden="true"
             style={{ clipPath: clipTo(turn ? turnFill(turn.p, turn.threshold) : 0) }}>
-            {/* The left half, bottom to top, a gap at each end so the halves read as two. */}
-            <path d="M18.96 40.39A19.5 19.5 0 0 1 18.96 1.61" />
+            {/* The left half of the disc. */}
+            <path d="M21 0A21 21 0 0 0 21 42Z" />
           </svg>
           <svg ref={quietRef} className="m-hands-free__gauge m-hands-free__gauge--quiet" viewBox="0 0 42 42" aria-hidden="true"
             style={{ clipPath: clipTo(0) }}>
-            <path d="M23.04 40.39A19.5 19.5 0 0 0 23.04 1.61" />
+            <path d="M21 0A21 21 0 0 1 21 42Z" />
           </svg>
         </>
       )}
@@ -93,7 +93,7 @@ export function HandsFreeButton() {
 /** An ear, with the sound of a voice arriving at it: always listening, nothing to hold. */
 function HandsFreeIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg className="m-hands-free__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M10 9.5a5.5 5.5 0 0 1 11 0c0 3.2-3.2 4.2-3.2 7.3a3.3 3.3 0 0 1-6 1.9" />
       <path d="M13.3 9.5a2.2 2.2 0 0 1 4.4 0c0 1.3-1.3 1.7-1.7 2.8" />
       <path d="M6 8a5.7 5.7 0 0 1 0 8" />

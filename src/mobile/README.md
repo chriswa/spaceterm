@@ -480,11 +480,11 @@ monologue. A long enough pause after "Control" alone waits at least five
 seconds instead, and Smart Turn is not asked about it; ten minutes in all
 ends it regardless.
 
-While a dictation runs, the hands-free button's rim shows both, each filling
-from the bottom, and whichever reaches the top first ends it: **left, deep
-violet**, Smart Turn's answer at the latest pause, empty while you talk and
-whole within 5% of the threshold; **right, teal**, the quiet since you last
-spoke, against the patience. Both hold while what you said is sent, so you
+While a dictation runs, the hands-free button shows both, a half each,
+filling from the bottom, and whichever reaches the top first ends it:
+**left, green**, Smart Turn's answer at the latest pause, empty while you
+talk and full within 5% of the threshold; **right, magenta**, the quiet
+since you last spoke, against the patience. Both hold while what you said is sent, so you
 can see which one ended it. Two taps mean it was heard and sent: "Control" comes off the
 front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as a tap's.
 
@@ -705,7 +705,7 @@ only if it is fresh; otherwise, or when a newer cue replaces it, a
 all up and play them together, loudly. Each Smart Turn verdict on the phone
 is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
-**Seeing the turn model.** The left half of the hands-free button's rim is
+**Seeing the turn model.** The left half of the hands-free button is
 Smart Turn's latest answer at a pause (`turnFill` in `hands-free.ts`), the
 right half the quiet against the patience (`UtteranceEndpointer.silence`);
 see "Hands-free" above. Those answers are the `hands-free-turn` lines above.

@@ -373,11 +373,12 @@ textarea, input, [contenteditable="true"], .cm-content {
    while it is off; a spark round it while it waits for the microphone; white
    while it holds it — the same white as the microphone's own look then. */
 .m-hands-free { position: relative; }
-/* While hands-free takes a dictation: what may end it, a half of the rim each,
-   filled from the bottom (clip-path set in HandsFreeButton.tsx); whichever
-   reaches the top first ends it. Left, deep violet: Smart Turn's latest answer,
-   the top its threshold. Right, teal: the quiet against the patience. Both
-   dark against the white, and apart from the microphone's orange. */
+/* While hands-free takes a dictation: what may end it, a half of the button
+   each, filled from the bottom (clip-path set in HandsFreeButton.tsx);
+   whichever reaches the top first ends it. Left, green: Smart Turn's latest
+   answer, the top its threshold. Right, magenta: the quiet against the
+   patience. Light enough for the dark icon over them, strong enough to see on
+   the white, and apart from the microphone's orange. */
 .m-hands-free__gauge {
   position: absolute;
   inset: 0;
@@ -385,10 +386,11 @@ textarea, input, [contenteditable="true"], .cm-content {
   height: 100%;
   pointer-events: none;
 }
-.m-hands-free__gauge path { fill: none; stroke-width: 3; }
 .m-hands-free__gauge--turn { transition: clip-path 150ms ease-out; }
-.m-hands-free__gauge--turn path { stroke: #3b0a8f; }
-.m-hands-free__gauge--quiet path { stroke: #00796b; }
+.m-hands-free__gauge--turn path { fill: #4ade80; }
+.m-hands-free__gauge--quiet path { fill: #f472d0; }
+/* Over the gauges, which are positioned and would otherwise cover it. */
+.m-hands-free__icon { position: relative; }
 /* Hands-free's microphone link's rate in kHz, at the top right (HandsFreeButton.tsx): 24, or 48. */
 .m-hands-free__rate {
   position: absolute;
