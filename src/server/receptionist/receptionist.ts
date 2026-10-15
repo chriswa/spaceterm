@@ -30,6 +30,7 @@ import {
 import { ageWords, cacheNote, MAX_ITEM_CHARS, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
 import type { Watches, WatchKind } from './watches'
+import { FORGOTTEN_MS, type BackBurner } from './back-burner'
 import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
@@ -145,6 +146,8 @@ export interface ReceptionistDeps {
   backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore' | 'settle'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
   watches: Watches
+  /** Agents the user took out of Control's hands to work with directly: see back-burner.ts. */
+  backBurner: BackBurner
   /** The agents known to have ended, kept across server restarts: see ended-agents.ts. */
   ended: EndedAgents
   /** News not yet told to Control, kept across server restarts: see pending-news.ts. */
@@ -408,6 +411,11 @@ const INTERRUPT_SETTLE_MS = 800
  * used up, and the real answer went untold.
  */
 export const STOP_HOLD_MS = 2_000
+/** Characters of what a forgotten agent last said that its backlog item keeps: see `forgetLater`. */
+const FORGOTTEN_LAST_SAID_CHARS = 300
+/** Told when the user takes an agent over: see `userTookOver`. */
+const BACK_BURNER_NOTE = 'They are working with it directly: say nothing more of it unless they ask. ' +
+  'If it then sits stopped without them for a while, it comes onto your backlog, to bring up once they are back with you.'
 /**
  * How often the voice is asked where it is while a reply plays. Its change
  * feed moves a sentence at a time; only asking outright says which word.
@@ -524,6 +532,10 @@ export class Receptionist {
   private readonly monitors: Watches
   /** Watched agents whose stop is being held before it is reported, each with its own hold: see `holdStop`. */
   private readonly holding = new Map<NodeId, object>()
+  /** Agents the user is working with directly: `deps.backBurner`, which outlives the server. See `userTookOver`. */
+  private readonly burner: BackBurner
+  /** Settled agents on the back burner, each with its own wait to be counted forgotten: see `forgetLater`. */
+  private readonly forgetting = new Map<NodeId, object>()
   /**
    * Agents no longer live — their session ended, or Control archived them —
    * as they were last seen, newest last. Their transcripts outlive them, so
@@ -628,6 +640,7 @@ export class Receptionist {
     this.onSpeaking = opts.onSpeaking ?? (() => undefined)
     this.ledger.restore(deps.record.tail())
     this.monitors = deps.watches
+    this.burner = deps.backBurner
     this.ended = deps.ended
     this.events = deps.news
     // What the last server never got to tell the model goes with the first message.
@@ -1173,6 +1186,10 @@ export class Receptionist {
       // The reply to the wake-up is not news: a monitor waits for a real stop.
       return
     }
+    if (this.burner.takenAt(nodeId) !== undefined) {
+      if (isSettled(state)) void this.forgetLater(nodeId)
+      else this.forgetting.delete(nodeId)
+    }
     const waiting = this.monitors.get(nodeId)
     if (!waiting) return
     if (!isSettled(state)) {
@@ -1202,16 +1219,61 @@ export class Receptionist {
    * have it in hand, and hear from it directly, so Control stops watching it.
    * Without this, a watch kept through silence (see `keepWatchingUntold`)
    * would wake Control at every stop of a session the user is working in.
+   *
+   * One Control had in hand — watched, or watched until recently — goes on
+   * the back burner rather than out of mind: it comes onto the backlog if it
+   * then sits settled without the user (see `forgetLater`), so that coming
+   * back to Control brings it up. Typing into it again starts that wait over.
    */
   userTookOver(nodeId: NodeId): void {
     this.holding.delete(nodeId)
-    if (!this.monitors.delete(nodeId)) return
+    this.forgetting.delete(nodeId)
+    const watched = this.monitors.delete(nodeId)
+    if (!watched && this.burner.takenAt(nodeId) === undefined && !this.burner.wasRecent(nodeId)) return
+    const already = this.burner.put(nodeId)
     const agents = this.deps.agents()
-    if (agents.some(agent => agent.nodeId === nodeId)) {
-      this.notes.push(`The user typed into ${this.token(nodeId, this.handles(agents))} themselves, so you are no longer watching it.`)
+    const agent = agents.find(candidate => candidate.nodeId === nodeId)
+    // Typed into it with nothing to start it working, it is settled already: the wait starts now.
+    if (agent && isSettled(agent.state)) void this.forgetLater(nodeId)
+    if (already) return
+    if (agent) {
+      const token = this.token(nodeId, this.handles(agents))
+      this.notes.push(`${watched ? `The user typed into ${token} themselves, so you are no longer watching it.` : `The user typed into ${token} themselves.`} ${BACK_BURNER_NOTE}`)
     }
-    this.trace('unwatch', `Stopped watching ${this.traceToken(nodeId)}: you typed into it yourself`)
-    this.deps.log({ event: 'taken-over', nodeId })
+    this.trace('unwatch', watched
+      ? `Stopped watching ${this.traceToken(nodeId)}: you typed into it yourself, so it is on the back burner`
+      : `${this.traceToken(nodeId)} is on the back burner: you typed into it yourself`)
+    this.deps.log({ event: 'taken-over', nodeId, watched })
+  }
+
+  /**
+   * An agent on the back burner has settled: if it stays that way for
+   * `FORGOTTEN_MS` from when it settled or the user last typed into it,
+   * whichever came later, the user has likely forgotten it, and it goes on
+   * the backlog — not said, since the user may be working elsewhere without
+   * Control, but brought up at the next pause when they are back with it.
+   * Brought up once: it is then off the back burner.
+   */
+  private async forgetLater(nodeId: NodeId): Promise<void> {
+    const wait = {}
+    this.forgetting.set(nodeId, wait)
+    const takenAt = this.burner.takenAt(nodeId)
+    const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
+    if (takenAt === undefined || !agent || !isSettled(agent.state)) return
+    const from = Math.max(agent.stateSince ?? takenAt, takenAt)
+    await this.deps.sleep(Math.max(0, from + FORGOTTEN_MS - Date.now()))
+    if (this.forgetting.get(nodeId) !== wait || this.closing) return
+    this.forgetting.delete(nodeId)
+    const agents = this.deps.agents()
+    const now = agents.find(candidate => candidate.nodeId === nodeId)
+    if (!now || !isSettled(now.state) || this.burner.takenAt(nodeId) !== takenAt) return
+    this.burner.remove(nodeId)
+    const lastSaid = now.transcriptPath ? lastAgentProse(this.deps.readTranscript(now.transcriptPath)) : ''
+    const quoted = lastSaid.replace(/\s+/g, ' ').trim().slice(-FORGOTTEN_LAST_SAID_CHARS)
+    this.deps.log({ event: 'back-burner-forgotten', nodeId })
+    this.backlogAdd(`${this.token(nodeId, this.handles(agents))} may have been forgotten: the user took it over to work with it directly, ` +
+      `then it sat ${Math.round(FORGOTTEN_MS / 60_000)} minutes with nothing more from them, ${STATE_WORDS[now.state]}` +
+      `${now.unread ? ', and they had not looked at it since' : ''}.${quoted ? ` It last said: "${quoted}"` : ''}`)
   }
 
   /**
@@ -1228,6 +1290,9 @@ export class Receptionist {
     const monitored = this.monitors.delete(nodeId)
     this.holding.delete(nodeId)
     this.reportedStops.delete(nodeId)
+    // Ended while the user had it in hand: theirs to know of, not news.
+    this.burner.remove(nodeId)
+    this.forgetting.delete(nodeId)
     const handle = this.handles([...this.deps.agents().filter(live => live.nodeId !== nodeId), agent]).of(nodeId)!
     this.remember(agent, handle)
     // A stop not yet told is the same news with less in it: the end replaces it.
@@ -1255,6 +1320,9 @@ export class Receptionist {
     // Already at work on it: its next stop is the one.
     const atWork = agent !== undefined && !isSettled(agent.state)
     this.monitors.set(nodeId, { kind: atWork ? 'next-stop' : kind, ...(agent?.stateSince !== undefined && { since: agent.stateSince }) })
+    // Back in Control's hands, if it was on the back burner.
+    this.burner.involve(nodeId)
+    this.forgetting.delete(nodeId)
     this.trace('watch', `Watching ${this.traceToken(nodeId)} for its next stop: ${why}`)
   }
 
@@ -1281,6 +1349,11 @@ export class Receptionist {
       // At work, its next stop is the one, as `watch` has it; stopped since, that stop was it.
       if (!settled || stoppedSince) this.monitors.set(nodeId, { ...watch, kind: 'next-stop' })
       if (stoppedSince) void this.holdStop(nodeId)
+    }
+    for (const [nodeId] of this.burner.entries()) {
+      const agent = agents.find(candidate => candidate.nodeId === nodeId)
+      if (!agent) this.burner.remove(nodeId)
+      else if (isSettled(agent.state)) void this.forgetLater(nodeId)
     }
     this.resumeQuestions()
     // What the last server never got to tell, or to answer.
@@ -1353,6 +1426,8 @@ export class Receptionist {
     this.monitors.delete(nodeId)
     this.holding.delete(nodeId)
     if (!agent) return
+    // Watched until now: typing into it soon after puts it on the back burner.
+    this.burner.involve(nodeId)
     this.reportedStops.set(nodeId, agent.stateSince)
     const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
     const token = this.token(nodeId, this.handles(agents))

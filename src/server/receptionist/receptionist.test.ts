@@ -15,6 +15,7 @@ import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
 import { INTERRUPTION_QUIET_MS, MID_TOPIC_PAUSE_MS, PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
+import { BackBurner, FORGOTTEN_MS } from './back-burner'
 import { EndedAgents } from './ended-agents'
 import { PendingNews } from './pending-news'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
@@ -130,6 +131,8 @@ function harness(opts: {
   world?: AgentWorld
   /** Where watches are kept, from an earlier server; by default nothing is watched. */
   watchStore?: NameRegistryStore
+  /** Where the back burner is kept, from an earlier server; by default nothing is on it. */
+  burnerStore?: NameRegistryStore
   /** Where the ended agents are kept, from an earlier server; by default none have ended. */
   endedStore?: NameRegistryStore
   /** Where news not yet told is kept, from an earlier server; by default there is none. */
@@ -298,6 +301,7 @@ function harness(opts: {
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     backlog,
     watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
+    backBurner: new BackBurner({ store: opts.burnerStore ?? memoryStore() }),
     ended: new EndedAgents({ store: opts.endedStore ?? memoryStore() }),
     news: new PendingNews({ store: opts.newsStore ?? memoryStore() }),
     carryOver: new CarryOver({ store: opts.carryStore ?? memoryStore() }),
@@ -2505,6 +2509,145 @@ describe('Receptionist: watching an agent until the user is told', () => {
   })
 })
 
+describe('Receptionist: the back burner', () => {
+  /** Waits that end at once, except the wait for an agent to be forgotten, which ends when `forget` is called. */
+  function heldForgetting() {
+    const waits: Array<() => void> = []
+    return {
+      sleep: (ms: number) => ms > STOP_HOLD_MS ? new Promise<void>((resolve) => { waits.push(resolve) }) : Promise.resolve(),
+      forget: () => { for (const resolve of waits.splice(0)) resolve() },
+      get waiting() { return waits.length },
+    }
+  }
+  const monitorSally = reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }])
+
+  it('sets an agent the user took over aside once it sits stopped without them, and says nothing meanwhile', async () => {
+    const wait = heldForgetting()
+    const h = harness({ sleep: wait.sleep, replies: [monitorSally] })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.receptionist.userTookOver(SALLY_ID)
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    expect(h.backlog.size).toBe(0)
+    wait.forget()
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    expect(h.backlog.all().map(item => item.text)).toEqual([expect.stringMatching(namedToken(SALLY, ' may have been forgotten'))])
+    expect(h.backlog.all()[0]!.agents).toEqual([SALLY_ID])
+  })
+
+  it('tells the model the agent is on the back burner when it takes it over', async () => {
+    const h = harness({
+      sleep: heldForgetting().sleep,
+      replies: [
+        monitorSally,
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' themselves, so you are no longer watching it. They are working with it directly'))
+          return reply([{ from: 'control', text: 'Nothing new.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.receptionist.userTookOver(SALLY_ID)
+    await h.receptionist.hear('anything new?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('starts the wait over each time the user types into it again', async () => {
+    const wait = heldForgetting()
+    const h = harness({ sleep: wait.sleep, replies: [monitorSally] })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.receptionist.userTookOver(SALLY_ID)
+    h.setState(SALLY_ID, 'stopped')
+    h.receptionist.userTookOver(SALLY_ID)
+    h.setState(SALLY_ID, 'working')
+    wait.forget()
+    await flush()
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('puts an agent whose watch fired a moment ago on the back burner too', async () => {
+    const wait = heldForgetting()
+    const h = harness({
+      sleep: wait.sleep,
+      replies: [monitorSally, reply([{ from: 'control', text: `{${SALLY}} is done.` }])],
+    })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    h.receptionist.userTookOver(SALLY_ID)
+    h.setState(SALLY_ID, 'working')
+    h.setState(SALLY_ID, 'stopped')
+    wait.forget()
+    await flush()
+    expect(h.backlog.size).toBe(1)
+  })
+
+  it('leaves alone an agent Control never had in hand', async () => {
+    const wait = heldForgetting()
+    const h = harness({ sleep: wait.sleep, replies: [] })
+    h.receptionist.userTookOver(SALLY_ID)
+    h.setState(SALLY_ID, 'stopped')
+    wait.forget()
+    await flush()
+    expect(h.backlog.size).toBe(0)
+    expect(wait.waiting).toBe(0)
+  })
+
+  it('takes it off the back burner when Control watches it again, or it ends', async () => {
+    const wait = heldForgetting()
+    const h = harness({
+      sleep: wait.sleep,
+      replies: [monitorSally, monitorSally],
+    })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.receptionist.userTookOver(SALLY_ID)
+    await h.receptionist.hear('watch Sally again', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'waiting_permission')
+    wait.forget()
+    await flush()
+    // Watched: its stop is news, not something forgotten.
+    expect(h.backlog.size).toBe(0)
+
+    const ended = harness({ sleep: wait.sleep, replies: [monitorSally] })
+    await ended.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    ended.receptionist.userTookOver(SALLY_ID)
+    ended.setState(SALLY_ID, 'stopped')
+    ended.end(SALLY_ID)
+    wait.forget()
+    await flush()
+    expect(ended.backlog.size).toBe(0)
+    expect(ended.turns).toHaveLength(1)
+  })
+
+  it('keeps the back burner across a server restart', async () => {
+    const world = agentWorld()
+    const burnerStore = memoryStore()
+    const before = harness({ world, burnerStore, sleep: heldForgetting().sleep, replies: [monitorSally] })
+    await before.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    before.receptionist.userTookOver(SALLY_ID)
+    // It stops while no server is looking.
+    changeState(world, SALLY_ID, 'stopped')
+    const waits: number[] = []
+    const after = harness({ world, burnerStore, sleep: async (ms) => { waits.push(ms) }, replies: [] })
+    after.receptionist.resumeWatches()
+    await flush()
+    expect(waits.some(ms => ms > FORGOTTEN_MS - 60_000 && ms <= FORGOTTEN_MS)).toBe(true)
+    expect(after.backlog.size).toBe(1)
+  })
+})
+
 describe('Receptionist across a server restart mid-reply', () => {
   const HEARD = 'Kevin is done. Kevin here. The sol'.length
   /** Speech that plays until it is dropped, and is then found to have got `HEARD` characters in. */
@@ -3997,7 +4140,7 @@ describe("Receptionist: the transcript's activity log", () => {
     await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.receptionist.userTookOver(SALLY_ID)
-    expect(lines(h).at(-1)).toMatch(new RegExp(`^unwatch: Stopped watching \\{\\w+:${SALLY}\\}: you typed into it yourself$`))
+    expect(lines(h).at(-1)).toMatch(new RegExp(`^unwatch: Stopped watching \\{\\w+:${SALLY}\\}: you typed into it yourself, so it is on the back burner$`))
   })
 })
 
