@@ -4011,9 +4011,9 @@ html, body, #root {
   font-weight: 600;
   color: #fff;
 }
-/* How much Control has set aside for later: news, not a warning, so the app's purple rather than red. */
+/* How much Control has set aside for later: news, not a warning, so not red; sky blue, as the app's purple is on too many buttons to stand out. */
 .control-transcript__holder-badge--backlog {
-  background: #cba6f7;
+  background: #89dceb;
   color: #11111b;
 }
 
