@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState } from 'react'
 import { usePerfStore } from '../../stores/perfStore'
 import { useCameraLockStore } from '../../stores/cameraLockStore'
-import { useNotificationSoundStore } from '../../stores/notificationSoundStore'
+import { useNotificationSoundStore, useBellMode, type BellMode } from '../../stores/notificationSoundStore'
+import { ControlCross } from '../ControlBadges'
 import { useCopyCleanupStore } from '../../stores/copyCleanupStore'
 import { useAutoStampsEnabledStore } from '../../stores/autoStampsEnabledStore'
 import { sendAutoStampsEnabled } from '../../lib/server-sync'
@@ -288,17 +289,27 @@ export function StepOutButton({ onClick }: { onClick: () => void }) {
   )
 }
 
+const BELL_TOOLTIPS: Record<BellMode, string> = {
+  off: 'Notification Sound — Play sound when surfaces need attention, while Control is attached here',
+  rings: 'Notification Sound — Disable sound on new unread surfaces',
+  held: 'Notification Sound — On, but silent while Control is attached elsewhere. Click to disable',
+}
+
 export function NotificationSoundToggle() {
-  const enabled = useNotificationSoundStore(s => s.enabled)
+  const mode = useBellMode()
   const toggle = useNotificationSoundStore(s => s.toggle)
   return (
     <button
-      className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
+      className={'toolbar__btn' + (mode !== 'off' ? ' toolbar__btn--active' : '')}
       onClick={toggle}
-      data-tooltip={enabled ? 'Notification Sound — Disable sound on new unread surfaces' : 'Notification Sound — Play sound when surfaces need attention'}
+      data-bell={mode}
+      data-tooltip={BELL_TOOLTIPS[mode]}
       data-tooltip-no-flip
     >
-      <BellIcon />
+      <span className="toolbar__bell">
+        <BellIcon />
+        {mode === 'held' && <ControlCross className="control-cross--small" />}
+      </span>
     </button>
   )
 }
