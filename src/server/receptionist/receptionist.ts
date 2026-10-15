@@ -28,7 +28,7 @@ import {
   type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
-import { decidePause, PAUSE_MS, type PauseJudgement, type PauseVerdict } from './backlog-pause'
+import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
 import type { Watches, WatchKind } from './watches'
 import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
@@ -590,6 +590,8 @@ export class Receptionist {
   private pauses = 0
   /** The pause last put to Jev, so that each is judged once. */
   private pauseJudged = -1
+  /** When the user last cut Control off to talk: nothing comes up from the backlog for a while after. See `maybePull`. */
+  private interruptedAt: number | undefined
 
   private readonly onError: (message: string) => void
   /** The server is shutting down: nothing new starts. See `shutdown`. */
@@ -712,6 +714,7 @@ export class Receptionist {
     if (!this.channel.isProducing()) return
     const stopped = this.lastSpoken ? 'speaking' : 'thinking'
     this.stoppedForUser ??= stopped
+    this.interruptedAt = Date.now()
     serverLog(`[receptionist] the user started talking: stopping a turn that was ${stopped}`)
     this.deps.log({ event: 'stopped-for-user', stopped })
     this.trace('stopped', stopped === 'speaking' ? 'Stopped mid-reply: you started talking' : 'Stopped before replying: you started talking')
@@ -1946,21 +1949,28 @@ export class Receptionist {
   /**
    * A reply has finished and Control is idle with something on its backlog:
    * ask Jev whether the user is ready for it (backlog-pause.ts), and bring it
-   * up at once, after `PAUSE_MS` of quiet, or not this pause. Anything that
-   * breaks the quiet meanwhile — the user talking, an event, any other turn —
-   * moves `pauses` on, and the item stays put. Every verdict is logged, for tuning.
+   * up after as much quiet as the verdict asks — none, a moment, or long
+   * enough to end a topic — and never within `INTERRUPTION_QUIET_MS` of the
+   * user cutting Control off to talk. Anything that breaks the quiet
+   * meanwhile — the user talking, an event, any other turn — moves `pauses`
+   * on, and the item stays put. Every verdict is logged, for tuning.
    */
   private async maybePull(): Promise<void> {
     const pause = this.pauses
     if (!this.deps.backlog.size || !this.quietSince(pause) || this.pauseJudged === pause) return
     this.pauseJudged = pause
-    const verdict = await decidePause(this.recentConversation(), (c) => this.deps.judgePause(c))
+    const verdict = await decidePause(pauseDialogue(this.deps.record.recent(RECAP_MESSAGES)), (c) => this.deps.judgePause(c))
     serverLog(`[receptionist] backlog pause: ${verdict.reason}` +
       `${verdict.reason === 'judged' ? ` now ${verdict.probabilities.now.toFixed(2)}, after pause ${verdict.probabilities.afterPause.toFixed(2)}` : ''} → ${verdict.when}`)
     this.deps.log({ event: 'backlog-pause', ...verdict })
-    this.tracePause(verdict)
-    if (verdict.when === 'not-yet') return
-    if (verdict.when === 'after-pause') await this.deps.sleep(PAUSE_MS)
+    if (verdict.when === 'not-yet') {
+      this.tracePause(verdict, 0)
+      return
+    }
+    const sinceInterruption = this.interruptedAt === undefined ? Infinity : Date.now() - this.interruptedAt
+    const wait = Math.max(PAUSE_WAIT_MS[verdict.when], INTERRUPTION_QUIET_MS - sinceInterruption)
+    this.tracePause(verdict, wait)
+    if (wait > 0) await this.deps.sleep(wait)
     if (!this.quietSince(pause)) return
     const pulled = await this.takeFromBacklog(undefined)
     if (!pulled.items.length) return
@@ -1999,17 +2009,22 @@ export class Receptionist {
     this.trace('backlog-back', `Back on the backlog, since ${why}: ${back.map(item => item.text).join(' / ')}`)
   }
 
-  /** Why a pause did or did not bring up the backlog, for the transcript's activity log. `now` brings it up, which `backlog-take` shows. */
-  private tracePause(verdict: PauseVerdict): void {
-    if (verdict.when === 'now') return
+  /**
+   * Why a pause did or did not bring up the backlog, and how long it waits, for
+   * the transcript's activity log. One brought up at once is shown by `backlog-take`.
+   */
+  private tracePause(verdict: PauseVerdict, wait: number): void {
     if (verdict.reason === 'judge-failed') {
       this.trace('backlog-wait', 'Backlog held: could not judge whether you were ready for something new', verdict.error)
       return
     }
-    const odds = `Ready now ${percent(verdict.probabilities.now)}, after ${PAUSE_MS / 1000} seconds of quiet ${percent(verdict.probabilities.afterPause)}.`
-    this.trace('backlog-wait', verdict.when === 'after-pause'
-      ? `Backlog waits for ${PAUSE_MS / 1000} seconds of quiet before bringing anything up`
-      : 'Backlog held: you seem to be in the middle of a topic', odds)
+    if (wait <= 0) return
+    const seconds = Math.round(wait / 1000)
+    const why = wait > PAUSE_WAIT_MS[verdict.when] ? 'you cut me off to talk'
+      : verdict.when === 'mid-topic' ? 'you seem to be in the middle of a topic'
+        : 'in case you have more to say'
+    const odds = `Ready now ${percent(verdict.probabilities.now)}, after ${PAUSE_WAIT_MS['after-pause'] / 1000} seconds of quiet ${percent(verdict.probabilities.afterPause)}.`
+    this.trace('backlog-wait', `Backlog waits for ${seconds} seconds of quiet: ${why}`, odds)
   }
 
   /** The last few exchanges with the user, as Jev is shown them. */

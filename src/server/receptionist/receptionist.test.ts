@@ -13,7 +13,7 @@ import {
 import type { RosterAgent } from './roster'
 import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
-import { PAUSE_MS } from './backlog-pause'
+import { INTERRUPTION_QUIET_MS, MID_TOPIC_PAUSE_MS, PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
 import { EndedAgents } from './ended-agents'
 import { PendingNews } from './pending-news'
@@ -3513,7 +3513,12 @@ describe('Receptionist backlog at a pause', () => {
   const READY_AFTER = { now: 0.1, afterPause: 0.9 }
   const NOT_READY = { now: 0.1, afterPause: 0.2 }
 
-  /** A sleep that holds each pause until `wake` ends the oldest still held, and lets every other wait through. */
+  /**
+   * A sleep that holds each pause until `wake` ends the oldest still held, and
+   * lets every other wait through. A pause is any wait from `PAUSE_MS` to
+   * `MID_TOPIC_PAUSE_MS`: what is left of the quiet after an interruption is
+   * not a round number.
+   */
   function heldPause() {
     const pauses: number[] = []
     const held: Array<() => void> = []
@@ -3521,7 +3526,7 @@ describe('Receptionist backlog at a pause', () => {
       pauses,
       wake: () => held.shift()?.(),
       sleep: (ms: number) => {
-        if (ms !== PAUSE_MS) return Promise.resolve()
+        if (ms < PAUSE_MS || ms > MID_TOPIC_PAUSE_MS) return Promise.resolve()
         pauses.push(ms)
         return new Promise<void>((resolve) => { held.push(resolve) })
       },
@@ -3632,21 +3637,88 @@ describe('Receptionist backlog at a pause', () => {
     expect(h.backlog.size).toBe(0)
   })
 
-  it('brings up nothing when Jev says the user is not ready, or cannot say', async () => {
-    for (const judgePause of [async () => NOT_READY, async () => { throw new Error('no jev') }]) {
-      const pause = heldPause()
-      const h = harness({
-        backlog: ['Leon finished.'],
-        judgePause,
-        sleep: pause.sleep,
-        replies: [reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }])],
-      })
-      await h.receptionist.hear('check on the agent', 'spoken')
-      await flush()
-      expect(pause.pauses).toEqual([])
-      expect(h.turns).toHaveLength(1)
-      expect(h.backlog.size).toBe(1)
-    }
+  it('brings it up only after a long quiet when Jev says the user is still on a topic', async () => {
+    const pause = heldPause()
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => NOT_READY,
+      sleep: pause.sleep,
+      replies: [
+        reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG')
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('check on the agent', 'spoken')
+    await flush()
+    expect(pause.pauses).toEqual([MID_TOPIC_PAUSE_MS])
+    expect(h.turns).toHaveLength(1)
+    pause.wake()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('brings up nothing when Jev cannot say', async () => {
+    const pause = heldPause()
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => { throw new Error('no jev') },
+      sleep: pause.sleep,
+      replies: [reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }])],
+    })
+    await h.receptionist.hear('check on the agent', 'spoken')
+    await flush()
+    expect(pause.pauses).toEqual([])
+    expect(h.turns).toHaveLength(1)
+    expect(h.backlog.size).toBe(1)
+  })
+
+  it('shows Jev the dialogue, one line a message', async () => {
+    let shown = ''
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async (conversation) => { shown = conversation; throw new Error('enough') },
+      replies: [reply([{ from: 'control', text: 'Sent to Sally.' }])],
+    })
+    await h.receptionist.hear('tell Sally to carry on', 'spoken')
+    await flush()
+    expect(shown).toBe('USER: tell Sally to carry on\nRECEPTIONIST: Sent to Sally.')
+  })
+
+  it('waits out a quiet after the user cuts Control off to talk, even when Jev says now', async () => {
+    const pause = heldPause()
+    let h: ReturnType<typeof harness> | undefined
+    h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => READY_NOW,
+      sleep: pause.sleep,
+      replies: [
+        () => {
+          h!.receptionist.userSpeaking(true)
+          return reply([{ from: 'control', text: 'Kevin is still working.' }])
+        },
+        reply([{ from: 'control', text: 'Sure.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG')
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is Kevin doing', 'spoken')
+    await flush()
+    h.receptionist.userSpeaking(false)
+    await h.receptionist.hear('never mind, tell me about Sally', 'spoken')
+    await flush()
+    expect(pause.pauses).toHaveLength(1)
+    expect(pause.pauses[0]).toBeGreaterThan(INTERRUPTION_QUIET_MS - 1_000)
+    expect(pause.pauses[0]).toBeLessThanOrEqual(INTERRUPTION_QUIET_MS)
+    expect(h.turns).toHaveLength(2)
+    pause.wake()
+    await flush()
+    expect(h.turns).toHaveLength(3)
   })
 
   it('asks nothing when the backlog is empty', async () => {
@@ -3767,14 +3839,16 @@ describe("Receptionist: the transcript's activity log", () => {
   it('shows the backlog held back while the user is mid-topic, with the odds', async () => {
     const h = harness({
       backlog: ['Leon finished.'],
-      judgePause: async () => ({ now: 0.44, afterPause: 0.38 }),
+      judgePause: async () => ({ now: 0.34, afterPause: 0.31 }),
+      // The long quiet never ends, so nothing comes up.
+      sleep: (ms) => ms === MID_TOPIC_PAUSE_MS ? new Promise(() => undefined) : Promise.resolve(),
       replies: [reply([{ from: 'control', text: 'Which one, Kevin or Sally?' }])],
     })
     await h.receptionist.hear('check on the agent', 'spoken')
     await flush()
     expect(h.traces).toEqual([{
-      what: 'backlog-wait', text: 'Backlog held: you seem to be in the middle of a topic',
-      detail: `Ready now 44%, after ${PAUSE_MS / 1000} seconds of quiet 38%.`,
+      what: 'backlog-wait', text: `Backlog waits for ${MID_TOPIC_PAUSE_MS / 1000} seconds of quiet: you seem to be in the middle of a topic`,
+      detail: `Ready now 34%, after ${PAUSE_MS / 1000} seconds of quiet 31%.`,
     }])
   })
 
