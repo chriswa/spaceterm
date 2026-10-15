@@ -3838,9 +3838,10 @@ html, body, #root {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid var(--ct-border);
-  background: var(--ct-control);
-  color: var(--ct-text);
+  /* Cyan, the colour Control thinks in, so it stands off the text it floats over. */
+  border: none;
+  background: #59d7ed;
+  color: #11131a;
   display: flex;
   align-items: center;
   justify-content: center;
