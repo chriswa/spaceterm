@@ -301,7 +301,6 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
                 <span className="control-transcript__spinner" />
               </div>
             )}
-            <ControlHolderBadge />
           </div>
         </div>
         {!atBottom && (
@@ -325,6 +324,7 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
           <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
         </div>
       )}
+      <ControlHolderBadge />
       <form
         className="control-transcript__composer"
         onSubmit={(e) => { e.preventDefault(); send() }}
