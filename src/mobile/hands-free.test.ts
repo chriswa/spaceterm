@@ -41,7 +41,7 @@ const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(
  * `justTurnedOn`: start in the window that turning hands-free on opens;
  * otherwise it has run out, and "Control" is needed.
  */
-function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null,
+function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null,
   heardShutdown = (() => undefined) as (mode: 'wake-word' | 'speech') => 'whole' | 'start' | undefined } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
@@ -71,6 +71,10 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
   let controlSpeaking = false
   const ducks: boolean[] = []
   let interrupts = 0
+  /** How long before each cut the user began talking, as hands-free told the server. */
+  const cutIns: number[] = []
+  /** With `slowChecks`, checks wait here for `answerChecks`: the Mac taking its time. */
+  const heldChecks: Array<() => void> = []
   const sayCalls: Array<{ text: string; interrupted?: boolean }> = []
   const deps: HandsFreeDeps = {
     api: {
@@ -78,6 +82,7 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
         checkWakeWord: async (pcm, mode = 'wake-word') => {
           checked.push(pcm.length)
           modes.push(mode)
+          if (slowChecks) await new Promise<void>((resolve) => { heldChecks.push(resolve) })
           // An old server answers every check as the wake-word question, and does not say so.
           if (oldServer) return { match: isWakeWord }
           const shutdown = heardShutdown(mode)
@@ -118,7 +123,7 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
     record: (kind, detail) => { records.push({ kind, detail }) },
     nativeSpeech: () => ({ playing: controlSpeaking, outputDb: -18, voiceProcessing: true }),
     duckSpeech: (on) => { ducks.push(on) },
-    interruptControl: () => { interrupts++; controlSpeaking = false },
+    interruptControl: (cutInMsAgo) => { interrupts++; cutIns.push(cutInMsAgo); controlSpeaking = false },
   }
   const uninstall = installHandsFree(deps.api, deps)
   const feed = (part: Float32Array) => { for (let i = 0; i < part.length; i += 1600) for (const fn of listeners) fn(part.subarray(i, i + 1600)) }
@@ -148,6 +153,8 @@ function harness({ justTurnedOn = false, isWakeWord = true, isWords = true as bo
     hear, said, checked, modes, cues, tones, dictations, records, uninstall, ducks, sayCalls,
     setTranscript: (text: string) => { transcript = text },
     interrupts: () => interrupts,
+    cutIns,
+    answerChecks: async () => { for (const answer of heldChecks.splice(0)) answer(); await settle() },
     setControlSpeaking: (on: boolean) => { controlSpeaking = on },
     haptics: () => haptics.length,
     hapticPatterns: haptics,
@@ -301,6 +308,20 @@ describe('hands-free mode', () => {
     expect(h.dictations).toHaveLength(1)
     await h.hear(speech(1000), quiet(3500))
     expect(h.sayCalls).toEqual([{ text: 'what is Kevin doing?', interrupted: true }])
+  })
+
+  it('dates the cut to when they began talking, not to when the Mac said it was "Control"', async () => {
+    h = harness({ slowChecks: true })
+    h.setControlSpeaking(true)
+    await h.hear(quiet(1500), speech(1000))
+    // The check takes two more seconds of them talking over Control, turned down and unheard.
+    await h.hear(speech(2000))
+    expect(h.interrupts()).toBe(0)
+    await h.answerChecks()
+    expect(h.interrupts()).toBe(1)
+    // Three seconds of speech by then, to within a block or two.
+    expect(h.cutIns[0]).toBeGreaterThanOrEqual(2900)
+    expect(h.cutIns[0]).toBeLessThanOrEqual(3200)
   })
 
   it('turns Control down for anyone speaking, and back up once it was not "Control" and they stopped', async () => {

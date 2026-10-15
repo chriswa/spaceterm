@@ -887,6 +887,14 @@ export interface SpeechProgressMessage {
 /** Stop Control mid-answer, without letting go of it: a talk button pressed over it. */
 export interface ReceptionistStopMessage {
   type: 'receptionist-stop'
+  /**
+   * How long before this was sent the user began talking over Control, by the
+   * phone's audio clock: hands-free cuts Control off only once the Mac has
+   * checked the speech was for it, and Control was talked over, unheard, from
+   * the first syllable. What was heard is counted up to then. Absent for a
+   * press, which is its own moment.
+   */
+  cutInMsAgo?: number
 }
 
 /**

@@ -143,7 +143,7 @@ describe('RemoteSpeech', () => {
     const h = harness({ connected: false })
     expect(speechStatus(await h.backend.speak(TEXT))?.id).toBe('sp_mac')
     await h.backend.drop('sp_mac')
-    expect(h.fallback.drop).toHaveBeenCalledWith('sp_mac')
+    expect(h.fallback.drop).toHaveBeenCalledWith('sp_mac', undefined)
   })
 
   it('speaks parts sentence by sentence, each in its own voice, with offsets into the joined text', async () => {
@@ -213,6 +213,29 @@ describe('RemoteSpeech', () => {
 
     it('without word timings, counts none of it rather than guessing', async () => {
       expect(await cutInto(2.1)).toBe("That's a change to the app, so an agent should do it. *INTERRUPTED*")
+    })
+
+    it('a cut dated to when the listener began talking counts what was heard by then, not what has played since', async () => {
+      const h = harness({ synthesize: fourSeconds, words: timed })
+      await h.backend.speak(QUESTION)
+      await settle()
+      const now = Date.now()
+      // The first sentence finished, and the second began, while the Mac was still checking what they said over it.
+      h.speech.progress(PHONE, 'rs_1', 0, 'started', now - 6400)
+      h.speech.progress(PHONE, 'rs_1', 0, 'finished', now - 2400)
+      h.speech.progress(PHONE, 'rs_1', 1, 'started', now - 2400)
+      // They began 3.4 s into the first sentence, as "do" (3.33 s) was sounding.
+      const dropped = speechStatus(await h.backend.drop('rs_1', now - 3000))!
+      expect(redactUnheard(QUESTION, dropped.character_offset!)).toBe("That's a change to the app, so an agent should *INTERRUPTED*")
+    })
+
+    it('a cut dated before the reply began counts none of it', async () => {
+      const h = harness({ synthesize: fourSeconds, words: timed })
+      await h.backend.speak(QUESTION)
+      await settle()
+      const now = Date.now()
+      h.speech.progress(PHONE, 'rs_1', 0, 'started', now - 1000)
+      expect(speechStatus(await h.backend.drop('rs_1', now - 1500))!.character_offset).toBe(0)
     })
   })
 

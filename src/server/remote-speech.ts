@@ -35,8 +35,8 @@ interface Sentence { text: string; start: number; end: number; voice?: string }
 /** A sentence's audio as sent: how long it runs, and where its words fall, when they were timed. */
 interface SentenceAudio { seconds: number; words?: TimedWord[] }
 
-/** The sentence the client is playing, and when it said it started. */
-interface Playing { index: number; startedAt: number; audio: SentenceAudio }
+/** A sentence the client said it started playing, and when. */
+interface Started { at: number; audio: SentenceAudio }
 
 interface Job {
   id: string
@@ -51,7 +51,13 @@ interface Job {
   offset: number
   /** Each sentence's audio, once synthesized. */
   audio: SentenceAudio[]
-  playing?: Playing
+  /**
+   * When the client said each sentence started and finished, by index: so
+   * that what was heard can be told at any moment, not just now — a cut can
+   * be dated to before it was asked for. See `heardAt`.
+   */
+  started: Map<number, Started>
+  finished: Map<number, number>
   version: number
   abort: AbortController
   changed: Set<() => void>
@@ -131,7 +137,7 @@ export class RemoteSpeech {
     return {
       speak: (content, voice) => this.deps.isConnected(clientId) ? this.speak(clientId, content, voice) : fallback.speak(content, voice),
       status: (id, opts, init, timeoutMs) => this.jobs.has(id) ? this.status(id, opts, init?.signal ?? undefined) : fallback.status(id, opts, init, timeoutMs),
-      drop: (id) => this.jobs.has(id) ? this.drop(id) : fallback.drop(id),
+      drop: (id, heardUntil) => this.jobs.has(id) ? this.drop(id, heardUntil) : fallback.drop(id, heardUntil),
     }
   }
 
@@ -141,11 +147,11 @@ export class RemoteSpeech {
     if (!job || job.clientId !== clientId || job.state !== 'in_progress') return
     if (event === 'started') {
       const audio = job.audio[index]
-      if (audio) job.playing = { index, startedAt: now, audio }
+      if (audio) job.started.set(index, { at: now, audio })
       if (job.playback !== 'speaking') this.change(job, () => { job.playback = 'speaking' })
     } else if (event === 'finished') {
       if (!job.sentences[index]) return
-      if (job.playing?.index === index) job.playing = undefined
+      job.finished.set(index, now)
       this.change(job, () => {
         job.offset = Math.max(job.offset, heardThrough(job.sentences, index))
         if (index === job.sentences.length - 1) job.state = 'completed'
@@ -179,6 +185,8 @@ export class RemoteSpeech {
       playback: 'queued',
       offset: 0,
       audio: [],
+      started: new Map(),
+      finished: new Map(),
       version: 1,
       abort: new AbortController(),
       changed: new Set(),
@@ -255,16 +263,17 @@ export class RemoteSpeech {
     const body = this.snapshot(job)
     // Mid-speech, where the voice is now: word by word through the sentence
     // playing, as Voice Operator reports the speech it plays itself.
-    if (job.state === 'in_progress') body.character_offset = this.heardOffset(job, Date.now())
+    if (job.state === 'in_progress') body.character_offset = this.heardAt(job, Date.now())
     return { status: httpStatus(job.state), body }
   }
 
-  private async drop(id: string, now = Date.now()): Promise<SpeechResponse> {
+  private async drop(id: string, heardUntil?: number, now = Date.now()): Promise<SpeechResponse> {
     const job = this.jobs.get(id)
     if (!job) return { status: 404, body: { error: 'unknown_job' } }
     if (job.state === 'in_progress') {
-      this.cutOff(job, now)
-      this.end(job, 'cancelled_by_client')
+      const at = Math.min(heardUntil ?? now, now)
+      this.cutOff(job, at)
+      this.end(job, 'cancelled_by_client', at < now ? { backdatedMs: now - at, heardByNow: this.heardAt(job, now) } : {})
     }
     return { status: httpStatus(job.state), body: this.snapshot(job) }
   }
@@ -287,23 +296,37 @@ export class RemoteSpeech {
    *
    * Untimed audio, from an older Voice Operator or words it could not align,
    * counts nothing of the sentence rather than guessing.
+   *
+   * `at` may be before now: hands-free cuts Control off only once the Mac
+   * has heard that what the user said over it was words, and they stopped
+   * hearing it when they began. So the cut can land earlier than what the
+   * client has since said it finished.
    */
-  private cutOff(job: Job, now: number): void {
-    job.offset = this.heardOffset(job, now)
+  private cutOff(job: Job, at: number): void {
+    job.offset = this.heardAt(job, at)
   }
 
-  /** How much of the job has been heard at `now`, without changing the job: see `cutOff`. */
-  private heardOffset(job: Job, now: number): number {
-    const playing = job.playing
-    if (!playing) return job.offset
-    const elapsed = (now - playing.startedAt) / 1000
-    if (elapsed >= playing.audio.seconds) return Math.max(job.offset, heardThrough(job.sentences, playing.index))
-    const word = playing.audio.words?.filter((w) => w.start <= elapsed).at(-1)
-    return word ? Math.max(job.offset, job.sentences[playing.index].start + word.characterEnd) : job.offset
+  /** How much of the job had been heard at `at`, without changing the job: see `cutOff`. */
+  private heardAt(job: Job, at: number): number {
+    let heard = 0
+    for (const [index, finishedAt] of job.finished) {
+      if (finishedAt <= at) heard = Math.max(heard, heardThrough(job.sentences, index))
+    }
+    for (const [index, started] of job.started) {
+      const elapsed = (at - started.at) / 1000
+      if (elapsed < 0) continue
+      if (elapsed >= started.audio.seconds) {
+        heard = Math.max(heard, heardThrough(job.sentences, index))
+        continue
+      }
+      const word = started.audio.words?.filter((w) => w.start <= elapsed).at(-1)
+      if (word) heard = Math.max(heard, job.sentences[index].start + word.characterEnd)
+    }
+    return heard
   }
 
-  private end(job: Job, state: Exclude<SpeechStatus['state'], 'in_progress'>): void {
-    this.deps.record?.(job.clientId, 'speech-job-ended', { id: job.id.slice(0, 11), state, heardChars: job.offset })
+  private end(job: Job, state: Exclude<SpeechStatus['state'], 'in_progress'>, detail: Record<string, unknown> = {}): void {
+    this.deps.record?.(job.clientId, 'speech-job-ended', { id: job.id.slice(0, 11), state, heardChars: job.offset, ...detail })
     this.change(job, () => { job.state = state })
     job.abort.abort()
     // Stop the client too, unless it is the one that finished.

@@ -154,7 +154,10 @@ What you cut Control off in the middle of shows once you interrupt: the words
 you never heard struck out, and, as dashed struck pills, "not done, cut off",
 the actions that were waiting on them and so never ran, each with **Do it
 now** to ask for it after all. While Control speaks, the word being said is
-lit and the rest of the reply dim.
+lit and the rest of the reply dim. Talked over hands-free, the cut is dated to
+your first syllable, not to the moment the Mac decided you were talking to
+Control: from then on Control was turned down under your voice, and unheard
+(`cutInMsAgo` in `ReceptionistStopMessage`).
 
 Words still waiting for you — written while muted, or cut off while you were
 away or had moved to another device — sit under the red Unread line, with a

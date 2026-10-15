@@ -17,6 +17,8 @@ function fakeBackend(script: {
   const spoken: Array<{ content: SpeechContent; voice?: string }> = []
   const statusCalls: StatusCall[] = []
   const drops: string[] = []
+  /** When each drop said the listener stopped hearing, if it said. */
+  const heardUntils: Array<number | undefined> = []
   const statuses = [...(script.statuses ?? [{ state: 'completed' }])]
   let pendingSpeak: ((response: SpeechResponse) => void) | undefined
   let holdSpeak = false
@@ -31,13 +33,14 @@ function fakeBackend(script: {
       const next = statuses.length > 1 ? statuses.shift()! : statuses[0]
       return { status: 200, body: { id, ...next } }
     },
-    drop: async (id) => {
+    drop: async (id, heardUntil) => {
       drops.push(id)
+      heardUntils.push(heardUntil)
       return { status: 410, body: { id, state: 'cancelled_by_client', ...script.dropped } }
     },
   }
   return {
-    backend, spoken, statusCalls, drops,
+    backend, spoken, statusCalls, drops, heardUntils,
     holdSpeak: () => { holdSpeak = true },
     releaseSpeak: (response: SpeechResponse) => pendingSpeak?.(response),
   }
@@ -170,6 +173,19 @@ describe('SpeechChannel', () => {
     expect(await h.channel.cancel()).toBe(true)
     expect(vo.drops).toEqual(['job-1'])
     expect(await h.channel.heardPrefix()).toBe(0)
+  })
+
+  it('a cancel dated to when the listener began talking asks the backend to count what was heard up to then', async () => {
+    const vo = fakeBackend({
+      statuses: [{ state: 'in_progress', playback_state: 'speaking', version: 2 }],
+      dropped: { character_offset: 4 },
+    })
+    const h = harness(vo.backend, { stallBetweenPolls: true })
+    await h.channel.deliver(h.channel.begin('thinking'), 'Kevin finished the migration.')
+    await flush()
+    expect(await h.channel.cancel(1_000)).toBe(true)
+    expect(vo.heardUntils).toEqual([1_000])
+    expect(await h.channel.heardPrefix()).toBe(4)
   })
 
   it('a new begin drops the answer the last run left queued, and counts it as cut off where it got to', async () => {

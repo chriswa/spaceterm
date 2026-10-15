@@ -129,7 +129,16 @@ export function speechStatus(response: SpeechResponse): SpeechStatus | undefined
  * Mac, or `RemoteSpeech`, which plays on a phone. Both answer in Voice
  * Operator's job format, so Control follows either the same way.
  */
-export type SpeechBackend = Pick<VoiceOperator, 'speak' | 'status' | 'drop'>
+export type SpeechBackend = Pick<VoiceOperator, 'speak' | 'status'> & {
+  /**
+   * Drop a job, wherever it is in its lifecycle, answering with how far the
+   * listener got. `heardUntil` (epoch ms, this server's clock): they stopped
+   * hearing it then, not now — they began talking over it, and the cut was
+   * only decided later. `RemoteSpeech` counts what was heard up to then;
+   * Voice Operator cannot look back, and counts up to the drop.
+   */
+  drop(speechId: string, heardUntil?: number): Promise<SpeechResponse>
+}
 
 export class VoiceOperator {
   constructor(private readonly deps: VoiceOperatorDeps = REAL_VOICE_OPERATOR_DEPS) {}

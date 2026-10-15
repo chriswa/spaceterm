@@ -346,8 +346,12 @@ export interface ReceptionistStatus {
  * a camera move is an instruction for now, not state.
  */
 export interface ReceptionistApi {
-  /** Stop Control mid-answer without letting go of it, as a talk button pressed over it does. */
-  stop(): void
+  /**
+   * Stop Control mid-answer without letting go of it, as a talk button pressed
+   * over it does. `cutInMsAgo`: the user began talking over it that long ago,
+   * so what was heard is counted up to then — see `ReceptionistStopMessage`.
+   */
+  stop(cutInMsAgo?: number): void
   /**
    * Where Control speaks, said outright. Holding (`take`, `release`) and
    * muting (`mute`, `unmute`) are independent; `speak-here` is both at once.

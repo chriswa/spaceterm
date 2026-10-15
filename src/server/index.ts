@@ -120,6 +120,11 @@ const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 0
 const FORK_SETTLE_TIMEOUT_MS = 30_000
 /** How long Control's unarchive_agent waits for the agent to be ready, as a fork waits to settle. */
 const UNARCHIVE_READY_TIMEOUT_MS = FORK_SETTLE_TIMEOUT_MS
+/**
+ * The furthest back a phone's stop may date the cut (`ReceptionistStopMessage.cutInMsAgo`):
+ * hands-free's check takes a second or two, and anything far past that is a fault, not a cut-in.
+ */
+const MAX_CUT_IN_MS = 10_000
 
 /** Spaceterm project root (two levels up from src/server/). */
 
@@ -1740,7 +1745,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'receptionist-stop': {
-      void receptionist?.cancel()
+      // Talked over before the phone could stop it: heard up to when they began, within reason.
+      const ago = msg.cutInMsAgo
+      void receptionist?.cancel(typeof ago === 'number' && ago > 0 ? Date.now() - Math.min(ago, MAX_CUT_IN_MS) : undefined)
       break
     }
 

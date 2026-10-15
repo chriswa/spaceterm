@@ -849,8 +849,8 @@ export class ServerClient {
   /** The device this client runs on. */
   get device(): ClientDevice { return this.options.device }
 
-  stopReceptionist(): void {
-    this.fireAndForget({ type: 'receptionist-stop' })
+  stopReceptionist(cutInMsAgo?: number): void {
+    this.fireAndForget({ type: 'receptionist-stop', ...(cutInMsAgo === undefined ? {} : { cutInMsAgo }) })
   }
 
   /** Where Control speaks: see `ReceptionistHoldMessage`. */
